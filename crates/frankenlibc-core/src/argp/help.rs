@@ -261,6 +261,11 @@ pub struct Fmt {
     /// Text already handed to the underlying stream.
     pub out: Vec<u8>,
     buf: Vec<u8>,
+    /// Everything the C stream's fixed buffer has held, by offset. Shrinking
+    /// it (flush, memmove of a tail, moving the write point back) leaves the
+    /// old bytes in place past the live data, and the wrap scan can read one
+    /// of them (`byte`); recorded so the decision matches glibc's.
+    mem: Vec<u8>,
     cap: usize,
     point_offs: usize,
     point_col: isize,
@@ -274,6 +279,7 @@ impl Fmt {
         Self {
             out: Vec::new(),
             buf: Vec::new(),
+            mem: Vec::new(),
             cap: FMT_INIT_BUF,
             point_offs: 0,
             point_col: 0,
@@ -291,6 +297,7 @@ impl Fmt {
         }
         self.update();
         self.out.extend_from_slice(&self.buf);
+        self.remember();
         self.buf.clear();
         self.point_offs = 0;
         if self.cap < amount {
@@ -411,6 +418,7 @@ impl Fmt {
                 let cut = buf as isize + (r - self.point_col);
                 if nl < self.buf.len() {
                     let cut = cut.max(buf as isize) as usize;
+                    self.remember();
                     self.buf.drain(cut..nl);
                     self.point_col = 0;
                     buf += r as usize + 1;
@@ -418,6 +426,7 @@ impl Fmt {
                     self.point_col += len as isize;
                     let excess = (self.point_col - r).max(0) as usize;
                     let keep = self.buf.len().saturating_sub(excess);
+                    self.remember();
                     self.buf.truncate(keep);
                     break;
                 }
@@ -425,7 +434,14 @@ impl Fmt {
             }
 
             let wmargin = self.wmargin as usize;
-            // Scan back from just past the margin for a word start.
+            // Scan back from just past the margin for a word start. When the
+            // text reaches the margin exactly and its newline has not arrived
+            // yet, "just past the margin" is one byte past the data: glibc
+            // reads whatever an earlier fill left in its buffer there (see
+            // `mem`), and breaks there if that is a blank -- keeping the last
+            // word and emitting the margin indent on a line of its own
+            // (`gencat --help`'s "--new" line) -- or wraps the word otherwise
+            // (`localedef --help`'s "--no-hard-links" line). bd-l60w8w.
             let start = buf as isize + (r + 1 - self.point_col);
             let mut p = start;
             while p >= buf as isize && !is_blank(self.byte(p)) {
@@ -470,6 +486,8 @@ impl Fmt {
             }
 
             let end_of_buffer = nextline == buf + len + 1;
+            // The break fell one past the data (see the scan above).
+            let mut break_past_data = end_of_buffer;
             if (if end_of_buffer {
                 self.cap.saturating_sub(nl) < wmargin + 1
             } else {
@@ -487,9 +505,11 @@ impl Fmt {
                     nl += 1;
                 } else {
                     // Emit the finished part to make room.
+                    break_past_data = false;
                     self.out.extend_from_slice(&self.buf[..nl]);
                     self.out.push(b'\n');
                     len += buf;
+                    self.remember();
                     self.buf.drain(..nextline.min(self.buf.len()));
                     let _ = len;
                     buf = 0;
@@ -514,9 +534,22 @@ impl Fmt {
                 self.out.extend(std::iter::repeat_n(b' ', wmargin));
             }
 
+            if break_past_data && nl > 0 {
+                // glibc's remaining length is -1 here (the break consumed one
+                // byte past the data), so its write point resumes one byte
+                // before the indent's end: the next text overwrites the last
+                // indent blank. With the newline that follows, the indent-only
+                // line is wmargin - 1 blanks wide.
+                self.remember();
+                self.buf.truncate(nl - 1);
+                self.point_col = if wmargin != 0 { wmargin as isize } else { -1 };
+                break;
+            }
+
             // Close the gap between the new line start and the next text.
             let tail_end = (buf + len).min(self.buf.len());
             if nl < nextline && nextline <= tail_end {
+                self.remember();
                 self.buf.drain(nl..nextline);
             } else if nl > self.buf.len() {
                 self.buf.resize(nl, b' ');
@@ -531,7 +564,20 @@ impl Fmt {
         if i < 0 {
             return 0;
         }
-        self.buf.get(i as usize).copied().unwrap_or(0)
+        let i = i as usize;
+        self.buf
+            .get(i)
+            .or_else(|| self.mem.get(i))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Record the live buffer in `mem` before it shrinks.
+    fn remember(&mut self) {
+        if self.mem.len() < self.buf.len() {
+            self.mem.resize(self.buf.len(), 0);
+        }
+        self.mem[..self.buf.len()].copy_from_slice(&self.buf);
     }
 
     fn set_byte(&mut self, i: usize, b: u8) {

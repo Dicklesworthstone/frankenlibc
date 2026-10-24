@@ -49,7 +49,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
 | Verification is first-class | Harness CLI, **134 fixture families**, **282 completion-contract artifacts**, **69 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings |
-| Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 active control kernels**, not just design docs |
+| Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 control-kernel modules** with live execution paths, not just design docs (which calls reach them depends on mode; see [Runtime Math Controllers](#runtime-math-controllers)) |
 | Build-time formal infrastructure | SOS polynomial certificates synthesized and verified at build; per-file atomic-barrier coverage audit |
 
 ### Claim-Field Contract
@@ -225,7 +225,7 @@ Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1
 |---|---|
 | Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/usr/bin/wc` |
 
-The checked curated preload smoke battery has 189 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 tracked known failure: `fork_multithreaded_parent` is functionally correct in both modes but exceeds the strict perf-ratio budget, because fork is ~4x glibc (bd-rc0923-epic-eeuy4f.25); the L1 objective gate is blocked on it. Both strict and hardened modes are green, with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions, TZ-aware `localtime`/`date`/`ls -l` across eight zone settings plus a 44-zone 1900-2100 transition sweep, GNU argp parsing/help byte parity and glibc's argp tools `getent`/`iconv`, `//TRANSLIT`/`//IGNORE` iconv and `iconv(1)`, `/etc/hosts` alias lookups, named locales (`en_US.UTF-8` strftime, collation for `sort`/`ls`, wide ctype over every code point), glibc-ordered `getaddrinfo` results, and glibc-mangled `setjmp`/`longjmp` with `__longjmp_chk`, and C++ exceptions thrown from `qsort`/`tsearch`/`pthread_once`/`dl_iterate_phdr`/`fopencookie`/`ftw`/`scandir` callbacks, and `pthread_cancel` of threads blocked in `read`/`sleep`/`nanosleep`/`poll`/`pthread_cond_wait` with cleanup handlers, process-shared/robust/priority-inheritance mutexes and process-shared condition variables across `fork`, and fork/popen/system/posix_spawn while other threads are inside malloc and stdio) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: printf's `'` grouping and a named locale's radix character (in printf and in `strtod`/`scanf` parsing) now follow `LC_NUMERIC` (gate `conformance_diff_printf_grouping`, en_US/de_DE/fr_FR vs glibc), but the `locale_t`-scoped (`*_l`, `uselocale`) variants do not yet use named-locale data (tracked on bd-rc0923-epic-eeuy4f.10). The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
+The checked curated preload smoke battery has 189 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 tracked known failure: `fork_multithreaded_parent` is functionally correct in both modes but exceeds the strict perf-ratio budget, because fork is ~4x glibc (bd-rc0923-epic-eeuy4f.25); the L1 objective gate is blocked on it. Both strict and hardened modes are green, with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions, TZ-aware `localtime`/`date`/`ls -l` across eight zone settings plus a 44-zone 1900-2100 transition sweep, GNU argp parsing/help byte parity and glibc's argp tools `getent`/`iconv`, `//TRANSLIT`/`//IGNORE` iconv and `iconv(1)`, `/etc/hosts` alias lookups, named locales (`en_US.UTF-8` strftime, collation for `sort`/`ls`, wide ctype over every code point), glibc-ordered `getaddrinfo` results, and glibc-mangled `setjmp`/`longjmp` with `__longjmp_chk`, and C++ exceptions thrown from `qsort`/`tsearch`/`pthread_once`/`dl_iterate_phdr`/`fopencookie`/`ftw`/`scandir` callbacks, and `pthread_cancel` of threads blocked in `read`/`sleep`/`nanosleep`/`poll`/`pthread_cond_wait` with cleanup handlers, process-shared/robust/priority-inheritance mutexes and process-shared condition variables across `fork`, and fork/popen/system/posix_spawn while other threads are inside malloc and stdio) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: printf's `'` grouping and a named locale's radix character (in printf and in `strtod`/`scanf` parsing) now follow `LC_NUMERIC` (gate `conformance_diff_printf_grouping`, en_US/de_DE/fr_FR vs glibc), and so do the `locale_t`-scoped variants: the `*_l` functions (including `__strcoll_l`/`__strxfrm_l`, which C++ `std::collate` uses) apply their locale argument and `uselocale` switches the thread's numeric formatting (smoke cases `locale_l_variants` and `locale_decimal_comma`). The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
 
 ---
 
@@ -694,7 +694,7 @@ All five proofs ship as binding artifacts under `tests/conformance/*_completion_
 
 ## Runtime Math Controllers
 
-`crates/frankenlibc-membrane/src/runtime_math/` is ~71 active controller kernels. Decision law per call:
+`crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules. Which calls reach them depends on the mode: in hardened mode allocator and validation calls go through `RuntimeMathKernel::decide` (58 distinct runtime-math symbols in a `perf` profile of an allocation-heavy perl run, 2026-10-06), while the strict-mode hot paths bypass the kernel (no runtime-math or runtime-policy symbol at all in the same perl run under strict). Decision law for a call that reaches the kernel:
 
 ```
 mode + context + risk + budget + pareto + design + barrier + consistency
@@ -1460,7 +1460,8 @@ The remaining hard areas are difficult for real systems reasons, not because the
 
 - The current shipping artifact is the **interpose** shared library, not a fully standalone libc replacement.
 - The deployment model is `LD_PRELOAD`; setuid/setgid binaries are out of scope because the kernel loader ignores `LD_PRELOAD` for them.
-- The preload smoke battery currently has 189 pass / 0 fail / 4 optional skips plus 1 tracked known failure (fork perf, bd-rc0923-epic-eeuy4f.25) across strict and hardened modes; see `docs/planning/COMPATIBILITY.md` for workload status details.
+- The preload smoke battery (`scripts/ld_preload_smoke.sh`), measured 2026-10-06 at 7fafe5bee: 310 pass / 15 fail / 4 optional skips across strict and hardened. All 15 failures are strict-mode perf-ratio checks (a short-lived process over 2.0x glibc's wall time); which cases cross the line changes from run to run with machine load. No correctness case fails. See `docs/planning/COMPATIBILITY.md` for workload status details.
+- Hardened protections stop at signal handlers. Inside a handler, string and memory calls are not bounds-checked and a free of a pointer fl does not own goes to the host allocator (glibc aborts on it, as it would without fl): the interrupted frame may hold arena locks or a pinned reclamation epoch, so the handler must not re-enter the membrane (bd-na6ede; `string_abi.rs` `enter_string_membrane_guard`). A `memcpy` past a 16-byte heap block is clamped and logged in the main program but overflows inside a SIGALRM handler.
 - Hardened mode is fixture-and-oracle-verified for the defined healing taxonomy; that is not a blanket production-readiness claim for arbitrary workloads.
 - Performance: strict-mode overhead is budgeted at < 20 ns/call and hardened-mode at < 200 ns/call; perf gates measure rather than assume, and regressions surface in `scripts/check_perf_regression_gate.sh`.
 - The README summarizes current reality; canonical truth lives in generated reports and gates.
@@ -1904,7 +1905,7 @@ Three properties of this lifecycle matter:
 
 1. **Generation counters identify arena events, not pointer provenance.** Allocation and free advance a `u64` counter (which can wrap). A separately retained old generation can be compared with current metadata, but ordinary C pointers carry only an address. After same-address reuse, address-only lookup returns the new occupant. The arena's quarantine regression test and deterministic reissue model exercise this boundary; they are unit evidence, not a formal proof or a deployed reuse test.
 2. **Quarantine residence makes freed state observable to validation.** A retained arena record identifies the allocation as `Quarantined`. That does not intercept direct caller accesses or ABI paths that bypass validation, including strict `memcpy`. The normal hardened copy path separately checks known bounds and can clamp its copy length; this is not an all-path temporal guarantee.
-3. **Quarantine draining has per-shard limits.** The arena drains when a shard exceeds `QUARANTINE_MAX_BYTES = 64 MB` or the controller's entry-count limit. This is not a global memory cap: live allocations and blocks awaiting deferred reclamation are additional memory.
+3. **Quarantine draining is bounded across the whole arena.** A free drains its shard's oldest entries while the arena as a whole holds more than `QUARANTINE_MAX_BYTES = 64 MB` or more entries than the controller's depth (arena-wide totals, `arena.rs` `drain_quarantine_into`; gate `quarantine_budget_is_global_across_shards`). Until 2026-10 these limits were applied per shard, so 16 shards could hold ~1 GB. The cap covers quarantined blocks only: live allocations and blocks awaiting deferred reclamation are additional memory.
 
 Arena draining updates metadata under the shard lock. The validation pipeline then retires drained backing blocks through EBR (epoch-based reclamation); its full arena-validation path pins an epoch while reading metadata. That guard ends with validation and does not protect a later caller memory access from a racing free.
 
@@ -3806,7 +3807,7 @@ The proof note in `docs/proofs/galois_monotonic_probability_bounds.md` works thr
 Membrane decisions feed three sinks, at different granularities:
 
 1. **Atomic metrics counters** (`metrics.rs`): `(family, decision, profile)` counters incremented with `Relaxed` ordering. Aggregated by the harness for end-of-run summaries.
-2. **Evidence ledger record** (`runtime_math/evidence.rs`): a JSONL record per decision with `(ts_ns, family, decision, latency_ns, healing_action, ptr, size, generation, controller_snapshot_hash, seqno)`. Lock-free MPSC ring buffer.
+2. **Evidence ledger record** (`runtime_math/evidence.rs`): a record with `(ts_ns, family, decision, latency_ns, healing_action, ptr, size, generation, controller_snapshot_hash, seqno)` for every adverse decision (Repair/Deny) the runtime-math kernel makes, and for one in 16384 of its other decisions (`RuntimeMathKernel::decide`, cadence-gated because recording hashes and publishes into the ring). Calls that never reach the kernel (the release fast paths of hot families) are not recorded. Lock-free MPSC ring buffer.
 3. **`FRANKENLIBC_LOG` JSONL stream**: when set, every heal and every deny is appended to the configured file as one JSON record, plus an `exit_summary` record with the counters when the process exits. Allowed calls are not written. Suitable for `tail -f` or `jq`.
 
 What's instrumented at the membrane level:
@@ -3828,7 +3829,7 @@ What's *not* instrumented:
 - Per-string-byte processing counts (same)
 - Internal-controller intermediate values (only the snapshot hash is recorded)
 
-The granularity is "every decision," which gives meaningful aggregation without overwhelming the consumer.
+The granularity is every heal and deny, plus sampled allows, which gives meaningful aggregation without overwhelming the consumer.
 
 ---
 

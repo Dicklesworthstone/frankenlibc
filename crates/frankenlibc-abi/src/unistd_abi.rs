@@ -913,6 +913,34 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
                 runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
                 return alloc;
             }
+            Err(errno::ENAMETOOLONG) => {
+                unsafe { crate::malloc_abi::free(alloc as *mut libc::c_void) };
+                // Longer than a page: walk up instead (see getcwd_by_walking_up).
+                let path = match getcwd_by_walking_up() {
+                    Ok(path) => path,
+                    Err(e) => {
+                        unsafe { set_abi_errno(e) };
+                        return std::ptr::null_mut();
+                    }
+                };
+                let want = if size == 0 { path.len() + 1 } else { size };
+                if path.len() + 1 > want {
+                    unsafe { set_abi_errno(errno::ERANGE) };
+                    return std::ptr::null_mut();
+                }
+                let out = unsafe { crate::malloc_abi::malloc(want) as *mut c_char };
+                if out.is_null() {
+                    unsafe { set_abi_errno(errno::ENOMEM) };
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: `out` holds `want >= path.len() + 1` bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr(), out.cast::<u8>(), path.len());
+                    *out.add(path.len()) = 0;
+                }
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+                return out;
+            }
             Err(e) => {
                 unsafe { crate::malloc_abi::free(alloc as *mut libc::c_void) };
                 unsafe { set_abi_errno(e) };
@@ -934,12 +962,145 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
             buf
         }
+        // Longer than a page: walk up instead (see getcwd_by_walking_up).
+        Err(errno::ENAMETOOLONG) => match getcwd_by_walking_up() {
+            Ok(path) if path.len() < effective_size => {
+                // SAFETY: `buf` holds `effective_size > path.len()` bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr(), buf.cast::<u8>(), path.len());
+                    *buf.add(path.len()) = 0;
+                }
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+                buf
+            }
+            Ok(_) => {
+                unsafe { set_abi_errno(errno::ERANGE) };
+                std::ptr::null_mut()
+            }
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                std::ptr::null_mut()
+            }
+        },
         Err(e) => {
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
             std::ptr::null_mut()
         }
     }
+}
+
+/// The working directory's absolute path by walking `..` up to `/`, naming
+/// each step by its (dev, ino) in the parent. The Linux getcwd syscall fails
+/// with ENAMETOOLONG once the path exceeds a page; glibc then falls back to
+/// this walk, so getcwd still works for deep trees (gnulib test-getcwd, which
+/// builds a path longer than PATH_MAX). fl returned the syscall's error.
+fn getcwd_by_walking_up() -> Result<Vec<u8>, c_int> {
+    fn stat_of(dirfd: c_int, name: &[u8]) -> Result<libc::stat, c_int> {
+        let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+        let mut path = name.to_vec();
+        path.push(0);
+        // SAFETY: `path` is NUL-terminated and `st` is a writable stat buffer.
+        unsafe {
+            syscall::sys_newfstatat(
+                dirfd,
+                path.as_ptr(),
+                st.as_mut_ptr().cast(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )?;
+            Ok(st.assume_init())
+        }
+    }
+    let open_dir = |dirfd: c_int, name: &[u8]| -> Result<c_int, c_int> {
+        let mut path = name.to_vec();
+        path.push(0);
+        // SAFETY: NUL-terminated path.
+        unsafe {
+            syscall::sys_openat(
+                dirfd,
+                path.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                0,
+            )
+        }
+    };
+
+    let root = stat_of(libc::AT_FDCWD, b"/")?;
+    let mut cur = stat_of(libc::AT_FDCWD, b".")?;
+    let mut dirfd = open_dir(libc::AT_FDCWD, b".")?;
+    let mut components: Vec<Vec<u8>> = Vec::new();
+    let mut entries = vec![0u8; 32 * 1024];
+    let result = loop {
+        if cur.st_dev == root.st_dev && cur.st_ino == root.st_ino {
+            break Ok(());
+        }
+        let parent_fd = match open_dir(dirfd, b"..") {
+            Ok(fd) => fd,
+            Err(e) => break Err(e),
+        };
+        let _ = syscall::sys_close(dirfd);
+        dirfd = parent_fd;
+        let parent = match stat_of(dirfd, b".") {
+            Ok(st) => st,
+            Err(e) => break Err(e),
+        };
+        // Find the entry of `parent` that is `cur`. Across a mount point the
+        // d_ino of the entry is the mounted-on inode, so confirm by stat.
+        let mut found: Option<Vec<u8>> = None;
+        'scan: loop {
+            // SAFETY: `entries` is a writable buffer of its length.
+            let n = match unsafe {
+                syscall::sys_getdents64(dirfd, entries.as_mut_ptr(), entries.len())
+            } {
+                Ok(0) => break 'scan,
+                Ok(n) => n,
+                Err(_) => break 'scan,
+            };
+            let mut off = 0usize;
+            while off + 19 <= n {
+                let ino = u64::from_ne_bytes(entries[off..off + 8].try_into().unwrap_or([0; 8]));
+                let reclen = u16::from_ne_bytes([entries[off + 16], entries[off + 17]]) as usize;
+                if reclen == 0 || off + reclen > n {
+                    break;
+                }
+                let name_bytes = &entries[off + 19..off + reclen];
+                let name = &name_bytes[..name_bytes
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(name_bytes.len())];
+                off += reclen;
+                if name == b"." || name == b".." {
+                    continue;
+                }
+                if parent.st_dev == cur.st_dev && ino != cur.st_ino {
+                    continue;
+                }
+                if let Ok(st) = stat_of(dirfd, name)
+                    && st.st_dev == cur.st_dev
+                    && st.st_ino == cur.st_ino
+                {
+                    found = Some(name.to_vec());
+                    break 'scan;
+                }
+            }
+        }
+        match found {
+            Some(name) => components.push(name),
+            None => break Err(errno::ENOENT),
+        }
+        cur = parent;
+    };
+    let _ = syscall::sys_close(dirfd);
+    result?;
+    let mut path = Vec::new();
+    for name in components.iter().rev() {
+        path.push(b'/');
+        path.extend_from_slice(name);
+    }
+    if path.is_empty() {
+        path.push(b'/');
+    }
+    Ok(path)
 }
 
 /// glibc reserved-namespace alias for [`getcwd`].
@@ -2004,7 +2165,10 @@ pub unsafe extern "C" fn fstatat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    if path.is_null() || buf.is_null() {
+    // A NULL path is the kernel's to judge, as in glibc: with AT_EMPTY_PATH it
+    // means `dirfd` itself (Linux >= 6.11; gnulib test-fstatat), without it
+    // the kernel answers EFAULT.
+    if buf.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
@@ -3310,7 +3474,20 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
         }
     }
 
-    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+    getopt_write_stderr(&msg);
+}
+
+/// Write a getopt diagnostic through the `stderr` stream, as glibc does
+/// (`__fxprintf`): a program that reopened or buffered stderr sees it there.
+/// fl wrote to fd 2 directly, so ftell(stderr) never moved (gnulib
+/// test-getopt detects the message that way).
+fn getopt_write_stderr(msg: &[u8]) {
+    let stream = unsafe { crate::stdio_abi::stderr };
+    if stream.is_null() {
+        let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+        return;
+    }
+    let _ = unsafe { crate::stdio_abi::fwrite(msg.as_ptr().cast(), 1, msg.len(), stream) };
 }
 
 /// glibc's long-option diagnostics (`argv[0]: <parts>\n` on stderr), under the
@@ -3332,7 +3509,7 @@ unsafe fn emit_long_getopt_diagnostic(argv: *const *mut c_char, optspec: &[u8], 
         msg.extend_from_slice(part);
     }
     msg.push(b'\n');
-    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+    getopt_write_stderr(&msg);
 }
 
 /// The part of a getopt step that happens BEFORE an option is parsed, shared
@@ -3724,8 +3901,11 @@ unsafe fn parse_getopt_long(
             GETOPT_NEXTCHAR = None;
         }
         let mut next_index = unsafe { libc_optind + 1 };
+        // glibc: an `=` gives the argument even when empty (`--p=` sets optarg
+        // to ""), for required and optional arguments alike, and is an error
+        // on an option that takes none (gnulib test-getopt_long).
         match unsafe { (*opt_ptr).has_arg } {
-            0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+            0 if !inline_value.is_null() => {
                 unsafe {
                     emit_long_getopt_diagnostic(
                         argv,
@@ -3743,7 +3923,7 @@ unsafe fn parse_getopt_long(
                 return Some(b'?' as c_int);
             }
             1 => {
-                if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                if !inline_value.is_null() {
                     unsafe {
                         libc_optarg = inline_value as *mut c_char;
                     }
@@ -3776,7 +3956,7 @@ unsafe fn parse_getopt_long(
                     next_index += 1;
                 }
             }
-            2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+            2 if !inline_value.is_null() => unsafe {
                 libc_optarg = inline_value as *mut c_char;
             },
             _ => {}
@@ -3924,15 +4104,16 @@ unsafe fn getopt_route_w_long(
         GETOPT_NEXTCHAR = None;
     }
     let mut final_index = space_arg_idx;
+    // As for `--name=`: an `=` gives the argument even when empty.
     match unsafe { (*option).has_arg } {
-        0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+        0 if !inline_value.is_null() => {
             unsafe {
                 libc_optopt = (*option).val;
                 libc_optind = final_index;
             }
             return b'?' as c_int;
         }
-        1 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+        1 if !inline_value.is_null() => unsafe {
             libc_optarg = inline_value as *mut c_char;
         },
         1 => {
@@ -3954,7 +4135,7 @@ unsafe fn getopt_route_w_long(
             unsafe { libc_optarg = value };
             final_index += 1;
         }
-        2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+        2 if !inline_value.is_null() => unsafe {
             libc_optarg = inline_value as *mut c_char;
         },
         _ => {}
@@ -5237,7 +5418,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // SAFETY: fork via raw syscall
@@ -5246,7 +5427,6 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
@@ -6856,8 +7036,14 @@ pub unsafe extern "C-unwind" fn sem_timedwait(
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
+    // Register as a waiter before checking the value, as sem_wait does:
+    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
+    // unregistered sem_timedwait slept until its deadline after every post
+    // (CPython's multiprocessing Barrier, built on timed SemLock waits,
+    // stalled for its full timeouts).
+    let _registration = unsafe { sem_register_waiter(sem) };
     loop {
-        let val = atom.load(std::sync::atomic::Ordering::Acquire);
+        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
         if val > 0
             && atom
                 .compare_exchange_weak(
@@ -9641,7 +9827,7 @@ pub unsafe extern "C" fn forkpty(
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Mirror fork()'s ENVIRON_LOCK acquisition: the forkpty child does not exec,
     // so any held environ lock from another parent thread becomes a stuck lock
     // in the child address space. Acquiring here forces serialization with any
@@ -9655,7 +9841,6 @@ pub unsafe extern "C" fn forkpty(
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
@@ -18116,13 +18301,10 @@ pub unsafe extern "C" fn getdtablesize() -> c_int {
 // brk / sbrk — RawSyscall
 // ---------------------------------------------------------------------------
 
-static CURRENT_BRK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// POSIX `brk` — set the program break.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
     let new_brk = syscall::sys_brk(addr as usize);
-    CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
     if new_brk < addr as usize {
         unsafe { set_abi_errno(libc::ENOMEM) };
         -1
@@ -18134,14 +18316,12 @@ pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
 /// POSIX `sbrk` — adjust the program break.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
-    let current = CURRENT_BRK.load(std::sync::atomic::Ordering::Relaxed);
-    let current = if current == 0 {
-        let b = syscall::sys_brk(0);
-        CURRENT_BRK.store(b, std::sync::atomic::Ordering::Relaxed);
-        b
-    } else {
-        current
-    };
+    // Ask the kernel every time. The host allocator (which fl's native paths
+    // use) moves the break with its own brk calls, so a cached value went
+    // stale: an application's own sbrk-based malloc (bash's) was handed memory
+    // the host heap already owned, and the two overwrote each other -- bash
+    // built from source segfaulted in its first getenv.
+    let current = syscall::sys_brk(0);
 
     if increment == 0 {
         return current as *mut c_void;
@@ -18158,7 +18338,6 @@ pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return usize::MAX as *mut c_void;
     }
-    CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
     current as *mut c_void
 }
 
@@ -19061,61 +19240,34 @@ pub unsafe extern "C" fn pthread_getschedparam(
 }
 
 // ===========================================================================
-// Batch: i18n / gettext extensions — Passthrough fallback (no .mo lookup)
+// Batch: i18n / gettext extensions — .mo catalogs via locale_abi::dcigettext
 // ===========================================================================
-//
-// These exports satisfy the gettext ABI surface so binaries that link against
-// the gettext family load and run, but no .mo file lookup is performed and
-// LC_MESSAGES routing is ignored. POSIX/gettext semantics permit returning
-// msgid (or msgid_plural for n != 1) when no translation is available, which
-// is exactly what a fully-untranslated process state looks like, so callers
-// see well-defined behaviour. Replacing this with a real .mo loader is a
-// future implementation step (bd-892vp tracks the rename and NULL guards).
 
-/// GNU `dcgettext` — domain-specific, category-specific gettext.
-///
-/// Passthrough fallback: returns `msgid` unchanged (no translation table
-/// loaded). NULL `msgid` returns NULL without dereferencing.
+/// GNU `dcgettext` — translate `msgid` in `domainname` for `category`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dcgettext(
-    _domainname: *const c_char,
+    domainname: *const c_char,
     msgid: *const c_char,
-    _category: c_int,
+    category: c_int,
 ) -> *mut c_char {
-    if msgid.is_null() {
-        return std::ptr::null_mut();
+    unsafe {
+        crate::locale_abi::dcigettext(domainname, msgid, std::ptr::null(), false, 1, category)
     }
-    msgid as *mut c_char
 }
 
-/// GNU `dcngettext` — domain-specific plural gettext.
-///
-/// Passthrough fallback: returns `msgid` (n == 1) or `msgid_plural`
-/// (otherwise). NULL inputs return NULL without dereferencing.
+/// GNU `dcngettext` — the plural form `n` selects, in `domainname` for `category`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dcngettext(
-    _domainname: *const c_char,
+    domainname: *const c_char,
     msgid: *const c_char,
     msgid_plural: *const c_char,
     n: c_ulong,
-    _category: c_int,
+    category: c_int,
 ) -> *mut c_char {
-    if n == 1 {
-        if msgid.is_null() {
-            return std::ptr::null_mut();
-        }
-        msgid as *mut c_char
-    } else {
-        if msgid_plural.is_null() {
-            return std::ptr::null_mut();
-        }
-        msgid_plural as *mut c_char
-    }
+    unsafe { crate::locale_abi::dcigettext(domainname, msgid, msgid_plural, true, n, category) }
 }
 
-/// GNU `dngettext` — domain-specific plural gettext (LC_MESSAGES).
-///
-/// Passthrough fallback via [`dcngettext`].
+/// GNU `dngettext` — the plural form `n` selects, in `domainname` (LC_MESSAGES).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dngettext(
     domainname: *const c_char,
@@ -19124,7 +19276,7 @@ pub unsafe extern "C" fn dngettext(
     n: c_ulong,
 ) -> *mut c_char {
     unsafe {
-        dcngettext(domainname, msgid, msgid_plural, n, 5 /* LC_MESSAGES */)
+        crate::locale_abi::dcigettext(domainname, msgid, msgid_plural, true, n, libc::LC_MESSAGES)
     }
 }
 
@@ -21436,9 +21588,9 @@ pub unsafe extern "C" fn towctrans(wc: c_uint, desc: WctransT) -> c_uint {
 pub unsafe extern "C" fn strcoll_l(
     s1: *const c_char,
     s2: *const c_char,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_int {
-    unsafe { crate::string_abi::strcoll(s1, s2) }
+    crate::locale_abi::with_locale(locale, || unsafe { crate::string_abi::strcoll(s1, s2) })
 }
 
 /// `strxfrm_l` — locale-aware string transformation.
@@ -21447,9 +21599,11 @@ pub unsafe extern "C" fn strxfrm_l(
     dest: *mut c_char,
     src: *const c_char,
     n: usize,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { crate::string_abi::strxfrm(dest, src, n) }
+    crate::locale_abi::with_locale(locale, || unsafe {
+        crate::string_abi::strxfrm(dest, src, n)
+    })
 }
 
 /// `strftime_l` — locale-aware time formatting.
@@ -21459,9 +21613,11 @@ pub unsafe extern "C" fn strftime_l(
     max: usize,
     format: *const c_char,
     tm: *const c_void,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { crate::time_abi::strftime(s, max, format, tm as *const libc::tm) }
+    crate::locale_abi::with_locale(locale, || unsafe {
+        crate::time_abi::strftime(s, max, format, tm as *const libc::tm)
+    })
 }
 
 // ===========================================================================
@@ -21795,29 +21951,17 @@ pub unsafe extern "C" fn backtrace_symbols_fd(buffer: *const *mut c_void, size: 
 }
 
 // ===========================================================================
-// Batch: bind_textdomain_codeset — Passthrough (UTF-8 only)
+// Batch: bind_textdomain_codeset
 // ===========================================================================
-//
-// FrankenLibC operates exclusively in UTF-8: the wide-char/multibyte path
-// (mbrtowc, mbsrtowcs, etc.) is hardwired to UTF-8 codec, and locale_abi
-// does not maintain a per-domain codeset registry. This export honours the
-// gettext ABI by returning the static string "UTF-8" for any caller that
-// queries or attempts to set a codeset; if a future change adds per-domain
-// codeset routing, it must replace this with a real registry (bd-892vp).
 
-/// `bind_textdomain_codeset` — set/query encoding for a gettext domain.
-///
-/// Passthrough: any non-NULL `domainname` is accepted; the returned pointer
-/// is the static C string `"UTF-8"`, which is the only codeset this libc
-/// ever uses internally. Callers querying a codeset they previously set to
-/// something other than UTF-8 will observe `"UTF-8"`, not their stored
-/// value — the codeset registry is intentionally absent.
+/// `bind_textdomain_codeset` — set/query the encoding of a gettext domain's
+/// translations; NULL when none has been bound (the locale's codeset applies).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bind_textdomain_codeset(
-    _domainname: *const c_char,
-    _codeset: *const c_char,
+    domainname: *const c_char,
+    codeset: *const c_char,
 ) -> *mut c_char {
-    c"UTF-8".as_ptr() as *mut c_char
+    unsafe { crate::locale_abi::bind_textdomain_codeset_impl(domainname, codeset) }
 }
 
 // ===========================================================================
@@ -23430,9 +23574,19 @@ pub unsafe extern "C" fn clone(
     stack: *mut c_void,
     flags: c_int,
     arg: *mut c_void,
-    _args: ...
+    mut args: ...
 ) -> c_int {
-    // clone is extremely ABI-sensitive; delegate to glibc.
+    // clone is extremely ABI-sensitive; delegate to glibc, with its optional
+    // ptid, tls and ctid arguments (read by glibc only under
+    // CLONE_PARENT_SETTID / CLONE_SETTLS / CLONE_CHILD_*TID; uninspected
+    // otherwise). Forwarding only four arguments broke those flags.
+    let (ptid, tls, ctid) = unsafe {
+        (
+            args.next_arg::<*mut c_void>(),
+            args.next_arg::<*mut c_void>(),
+            args.next_arg::<*mut c_void>(),
+        )
+    };
     type CloneFn = unsafe extern "C" fn(
         Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
         *mut c_void,
@@ -23449,7 +23603,7 @@ pub unsafe extern "C" fn clone(
         }
     });
     match *FUNC {
-        Some(f) => unsafe { f(fn_ptr, stack, flags, arg) },
+        Some(f) => unsafe { f(fn_ptr, stack, flags, arg, ptid, tls, ctid) },
         None => {
             unsafe { set_abi_errno(libc::ENOSYS) };
             -1
@@ -27563,6 +27717,13 @@ pub unsafe extern "C" fn utimensat(
 /// `futimens` — change timestamps of an open file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn futimens(fd: c_int, times: *const libc::timespec) -> c_int {
+    // glibc: a negative fd is EBADF before the syscall. The kernel's
+    // utimensat(AT_FDCWD, NULL, ...) would instead update the current
+    // directory and succeed (gnulib test-futimens).
+    if fd < 0 {
+        unsafe { set_abi_errno(libc::EBADF) };
+        return -1;
+    }
     match unsafe { syscall::sys_utimensat(fd, std::ptr::null(), times as *const u8, 0) } {
         Ok(()) => 0,
         Err(e) => {
@@ -29621,7 +29782,7 @@ pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
 pub unsafe extern "C" fn _Fork() -> c_int {
     // _Fork is async-signal-safe fork (C23), no atfork handlers
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
     let ret = syscall::sys_clone_fork(libc::SIGCHLD as usize);
     if ret == Ok(0) {
@@ -30334,6 +30495,214 @@ pub unsafe extern "C" fn getservent_r(
 // Misc string/format extras
 // ===========================================================================
 
+/// A monetary format whose C-locale semantics reduce to fixed-two rendering
+/// plus optional field-width padding.
+#[derive(Clone, Copy)]
+struct SimpleCMonetaryFormat {
+    field_width: usize,
+    left_justify: bool,
+    use_parens: bool,
+}
+
+/// Partially evaluate one simple C-locale monetary directive.
+///
+/// In the C locale, `^` (disable grouping), `!` (suppress the absent currency
+/// symbol), and `+` (select the already-default sign convention) are semantic
+/// identities. A decimal field width and `-` reduce to space padding around the
+/// same fixed-two numeric leaf used by `%n`/`%i`; `(` replaces a strict negative
+/// value's leading minus with enclosing parentheses. Everything else declines
+/// to the general parser.
+///
+/// # Safety
+///
+/// `bytes.add(start)` must point within a valid C string at a `%` byte.
+#[inline]
+unsafe fn simple_c_locale_monetary_directive(
+    bytes: *const u8,
+    start: usize,
+) -> Option<(SimpleCMonetaryFormat, usize)> {
+    // SAFETY: the caller contract says `bytes` addresses a valid C string. Each next
+    // byte is read only after the preceding byte proved non-NUL, so no read goes
+    // beyond the string's terminating byte.
+    unsafe {
+        if *bytes.add(start) != b'%' {
+            return None;
+        }
+
+        let mut i = start + 1;
+        let mut left_justify = false;
+        let mut saw_plus = false;
+        let mut use_parens = false;
+        loop {
+            match *bytes.add(i) {
+                b'^' | b'!' => i += 1,
+                b'-' => {
+                    left_justify = true;
+                    i += 1;
+                }
+                b'+' => {
+                    // The general parser rejects a duplicate `+` and the
+                    // mutually-exclusive `+`/`(` pair. Decline so it remains
+                    // the single source of malformed-format behavior.
+                    if saw_plus || use_parens {
+                        return None;
+                    }
+                    saw_plus = true;
+                    i += 1;
+                }
+                b'(' => {
+                    if use_parens || saw_plus {
+                        return None;
+                    }
+                    use_parens = true;
+                    i += 1;
+                }
+                _ => break,
+            }
+        }
+
+        let mut field_width = 0usize;
+        while (*bytes.add(i)).is_ascii_digit() {
+            field_width = field_width
+                .saturating_mul(10)
+                .saturating_add((*bytes.add(i) - b'0') as usize);
+            i += 1;
+        }
+
+        if *bytes.add(i) == b'.' {
+            if *bytes.add(i + 1) != b'2' {
+                return None;
+            }
+            i += 2;
+        }
+
+        if !matches!(*bytes.add(i), b'n' | b'i') {
+            return None;
+        }
+
+        Some((
+            SimpleCMonetaryFormat {
+                field_width,
+                left_justify,
+                use_parens,
+            },
+            i + 1,
+        ))
+    }
+}
+
+/// Recognize the overwhelmingly common whole-format single directive without
+/// paying a separate validation pass.
+///
+/// # Safety
+///
+/// `format` must be a valid, non-null, NUL-terminated C string.
+#[inline]
+unsafe fn simple_c_locale_monetary_format(format: *const c_char) -> Option<SimpleCMonetaryFormat> {
+    let bytes = format.cast::<u8>();
+    // SAFETY: the caller passes a valid C string; the helper declines unless
+    // byte 0 is `%`, and reads each later byte only after an earlier non-NUL one.
+    let (simple, next) = unsafe { simple_c_locale_monetary_directive(bytes, 0)? };
+    // SAFETY: `next` is one past the accepted conversion byte, which was
+    // non-NUL, so it is at most the index of the string's terminator.
+    if unsafe { *bytes.add(next) } == 0 {
+        Some(simple)
+    } else {
+        None
+    }
+}
+
+/// Validate that a complete C string consists only of literal bytes, `%%`, and
+/// simple fixed-two monetary directives. This pass deliberately happens before
+/// any variadic argument is consumed, so a declined format can still enter the
+/// general parser with its argument cursor untouched.
+///
+/// # Safety
+///
+/// `format` must be a valid, non-null, NUL-terminated C string.
+#[inline]
+unsafe fn simple_c_locale_monetary_sequence(format: *const c_char) -> bool {
+    let bytes = format.cast::<u8>();
+    let mut i = 0usize;
+    let mut saw_conversion = false;
+    loop {
+        // SAFETY: `i` only advances past bytes already proved non-NUL (a
+        // literal, `%%`, or an accepted directive), so it never passes the
+        // terminator of the caller's C string.
+        match unsafe { *bytes.add(i) } {
+            0 => return saw_conversion,
+            b'%' => {
+                // SAFETY: byte `i` is `%`, not NUL, so byte `i + 1` is readable.
+                if unsafe { *bytes.add(i + 1) } == b'%' {
+                    i += 2;
+                } else if let Some((_, next)) =
+                    // SAFETY: byte `i` of the caller's C string is `%`.
+                    unsafe { simple_c_locale_monetary_directive(bytes, i) }
+                {
+                    saw_conversion = true;
+                    i = next;
+                } else {
+                    return false;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+}
+
+/// Render and append one validated simple directive. Returns the new output
+/// offset, or `None` when the fixed rendering plus its terminating NUL would not
+/// fit the caller's buffer.
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `maxsize` bytes.
+#[inline]
+unsafe fn append_simple_c_locale_monetary(
+    out: *mut u8,
+    maxsize: usize,
+    offset: usize,
+    simple: SimpleCMonetaryFormat,
+    value: f64,
+) -> Option<usize> {
+    // IEEE-754 binary64 has at most 309 integral decimal digits. Sign,
+    // decimal point, two fractional digits, and optional parentheses keep the
+    // fixed rendering below 384 bytes; non-finite spellings are shorter still.
+    let mut scratch = [0u8; 384];
+    let mut len = frankenlibc_core::locale::strfmon::strfmon_c_default_into(&mut scratch, value)?;
+    if simple.use_parens && value < 0.0 {
+        // The fixed-two leaf begins every strict negative with `-`. Reuse that
+        // byte for `(` and append `)`, avoiding a second formatting pass or a
+        // magnitude conversion. The binary64 bound above leaves ample room for
+        // the one extra byte.
+        debug_assert_eq!(scratch[0], b'-');
+        scratch[0] = b'(';
+        scratch[len] = b')';
+        len += 1;
+    }
+
+    let field_len = len.max(simple.field_width);
+    let end = offset.checked_add(field_len)?;
+    if end >= maxsize {
+        return None;
+    }
+    let padding = field_len - len;
+    // SAFETY: `end < maxsize` and the caller guarantees `out` is writable for
+    // `maxsize` bytes. Scratch contains `len` initialized bytes and cannot
+    // overlap the caller's output region.
+    unsafe {
+        let field = out.add(offset);
+        if simple.left_justify {
+            std::ptr::copy_nonoverlapping(scratch.as_ptr(), field, len);
+            std::ptr::write_bytes(field.add(len), b' ', padding);
+        } else {
+            std::ptr::write_bytes(field, b' ', padding);
+            std::ptr::copy_nonoverlapping(scratch.as_ptr(), field.add(padding), len);
+        }
+    }
+    Some(end)
+}
+
 /// Shared backend for `strfmon`/`strfmon_l`/`__strfmon_l`: format `format`
 /// (pulling one `f64` per conversion from `pull`) into `s`/`maxsize` using the
 /// C/POSIX-locale monetary conventions implemented in
@@ -30349,12 +30718,123 @@ pub(crate) unsafe fn strfmon_emit(
     s: *mut c_char,
     maxsize: usize,
     format: *const c_char,
-    pull: impl FnMut() -> f64,
+    mut pull: impl FnMut() -> f64,
 ) -> isize {
     if s.is_null() || format.is_null() || maxsize == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
+
+    // Closed C-locale specialization. `%n` and `%i` are identical when the
+    // currency symbol/grouping tables are empty, their implicit precision is
+    // two, and simple flags/width reduce to padding. Partial evaluation deletes
+    // the generic grammar walk and all three heap allocations from the whole
+    // exported call.
+    // SAFETY: `format` is non-null and, per this function's contract, a valid
+    // C string.
+    if let Some(simple) = unsafe { simple_c_locale_monetary_format(format) } {
+        let value = pull();
+        // SAFETY: `s` is non-null and writable for `maxsize` bytes per this
+        // function's contract.
+        let Some(len) =
+            (unsafe { append_simple_c_locale_monetary(s.cast::<u8>(), maxsize, 0, simple, value) })
+        else {
+            // SAFETY: sets thread-local errno.
+            unsafe { set_abi_errno(libc::E2BIG) };
+            return -1;
+        };
+        unsafe {
+            // SAFETY: the append helper reserved this byte inside `maxsize`.
+            *s.cast::<u8>().add(len) = 0;
+        }
+        return len as isize;
+    }
+
+    // Multiple fixed-two directives and their literal separators are still a
+    // closed C-locale language. Validate the whole format before pulling any
+    // variadic arguments, then stream it directly into the caller's buffer.
+    // This deletes the general parser plus its per-output, per-field, and
+    // floating-point heap allocations for formats such as `%n %n`.
+    // SAFETY: `format` is non-null and, per this function's contract, a valid
+    // C string.
+    if unsafe { simple_c_locale_monetary_sequence(format) } {
+        let bytes = format.cast::<u8>();
+        let out = s.cast::<u8>();
+        let mut i = 0usize;
+        let mut written = 0usize;
+        loop {
+            // SAFETY: this walk takes the same steps as the validation pass,
+            // which proved every visited byte up to the terminator readable.
+            match unsafe { *bytes.add(i) } {
+                0 => {
+                    unsafe {
+                        // SAFETY: every append reserved the terminator byte.
+                        *out.add(written) = 0;
+                    }
+                    return written as isize;
+                }
+                // SAFETY: byte `i` is `%`, not NUL, so byte `i + 1` is readable.
+                b'%' if unsafe { *bytes.add(i + 1) } == b'%' => {
+                    let Some(end) = written.checked_add(1) else {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    };
+                    if end >= maxsize {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    }
+                    unsafe {
+                        // SAFETY: `end < maxsize` leaves room for this byte and
+                        // the eventual terminating NUL.
+                        *out.add(written) = b'%';
+                    }
+                    written = end;
+                    i += 2;
+                }
+                b'%' => {
+                    let (simple, next) = unsafe {
+                        // SAFETY: the validation pass accepted this directive.
+                        simple_c_locale_monetary_directive(bytes, i)
+                            .expect("prevalidated simple strfmon directive")
+                    };
+                    let value = pull();
+                    // SAFETY: `out` is writable for `maxsize` bytes per this
+                    // function's contract; the helper bounds-checks `written`.
+                    let Some(end) = (unsafe {
+                        append_simple_c_locale_monetary(out, maxsize, written, simple, value)
+                    }) else {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    };
+                    written = end;
+                    i = next;
+                }
+                byte => {
+                    let Some(end) = written.checked_add(1) else {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    };
+                    if end >= maxsize {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    }
+                    unsafe {
+                        // SAFETY: `end < maxsize` reserves both this literal
+                        // byte and the eventual terminating NUL.
+                        *out.add(written) = byte;
+                    }
+                    written = end;
+                    i += 1;
+                }
+            }
+        }
+    }
+
     let fmt_bytes = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
     let Some(out) = frankenlibc_core::locale::strfmon::strfmon_c(fmt_bytes, pull) else {
         unsafe { set_abi_errno(libc::EINVAL) };

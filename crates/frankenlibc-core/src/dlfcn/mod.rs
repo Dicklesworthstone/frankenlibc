@@ -26,17 +26,20 @@ const BINDING_MASK: i32 = RTLD_LAZY | RTLD_NOW;
 /// "invalid mode for dlopen" where glibc succeeds — and that is the very mode
 /// `incumbent_coverage_ab` uses to load FrankenLibC, so fl rejected the way its
 /// own benchmark harness loads it.
-const MODIFIER_MASK: i32 =
-    RTLD_GLOBAL | RTLD_LOCAL | RTLD_NOLOAD | RTLD_DEEPBIND | RTLD_NODELETE;
+const MODIFIER_MASK: i32 = RTLD_GLOBAL | RTLD_LOCAL | RTLD_NOLOAD | RTLD_DEEPBIND | RTLD_NODELETE;
 
-/// Returns `true` if `flags` represent a valid dlopen mode.
-///
-/// POSIX requires exactly one of RTLD_LAZY or RTLD_NOW to be set.
+/// glibc's `__RTLD_SPROF`, which dlopen also accepts (sprof's profiling mode).
+const RTLD_SPROF: i32 = 0x4000_0000;
+
+/// Returns `true` if `flags` represent a valid dlopen mode, by glibc's rule
+/// (measured on 2.43): some binding bit set -- `RTLD_LAZY | RTLD_NOW` is
+/// accepted -- and no modifier outside NOLOAD/DEEPBIND/GLOBAL/LOCAL/NODELETE
+/// and `__RTLD_SPROF` ("invalid mode parameter").
 #[inline]
 pub fn valid_flags(flags: i32) -> bool {
     let binding = flags & BINDING_MASK;
     let modifiers = flags & !BINDING_MASK;
-    (binding == RTLD_LAZY || binding == RTLD_NOW) && (modifiers & !MODIFIER_MASK) == 0
+    binding != 0 && (modifiers & !(MODIFIER_MASK | RTLD_SPROF)) == 0
 }
 
 /// Returns `true` if `handle` is a recognized pseudo-handle.
@@ -63,8 +66,11 @@ mod tests {
         assert!(valid_flags(RTLD_LAZY | RTLD_GLOBAL));
         assert!(valid_flags(RTLD_NOW | RTLD_NODELETE));
         assert!(!valid_flags(0));
-        assert!(!valid_flags(RTLD_LAZY | RTLD_NOW));
+        assert!(!valid_flags(RTLD_GLOBAL), "a modifier without a binding");
         assert!(!valid_flags(RTLD_LAZY | 0x80000));
+        // glibc 2.43 accepts both binding bits together, and __RTLD_SPROF.
+        assert!(valid_flags(RTLD_LAZY | RTLD_NOW));
+        assert!(valid_flags(RTLD_NOW | 0x4000_0000));
     }
 
     #[test]
@@ -77,7 +83,9 @@ mod tests {
         assert!(valid_flags(RTLD_LAZY | RTLD_DEEPBIND));
         // and in combination with the other modifiers
         assert!(valid_flags(RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND));
-        assert!(valid_flags(RTLD_NOW | RTLD_GLOBAL | RTLD_DEEPBIND | RTLD_NODELETE));
+        assert!(valid_flags(
+            RTLD_NOW | RTLD_GLOBAL | RTLD_DEEPBIND | RTLD_NODELETE
+        ));
         // still exactly one binding bit, DEEPBIND does not substitute for it
         assert!(!valid_flags(RTLD_DEEPBIND));
     }

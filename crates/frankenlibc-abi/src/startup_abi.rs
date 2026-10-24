@@ -808,6 +808,25 @@ unsafe fn call_executable_init(
     Ok(())
 }
 
+/// Bytes of stack below the startup frame cleared before `main` runs.
+const MAIN_STACK_SCRUB_BYTES: usize = 32 * 1024;
+
+/// Zero the stack region the program's `main` frame is about to occupy.
+///
+/// `main`'s uninitialized locals read whatever startup left there. glibc's
+/// startup happens to leave zeros, and real programs depend on that without
+/// knowing it: aa-features-abi builds its `getopt_long` table on the stack
+/// without the NULL terminator, so `--version` works under glibc only because
+/// the next slot is zero; under fl it held a stale pointer and getopt_long
+/// faulted. Clearing the region also keeps startup data out of `main`'s
+/// uninitialized locals. Called from the frame that calls `main`, so this
+/// function's frame (the zeroed array) covers the region `main` reuses.
+#[inline(never)]
+fn scrub_stack_for_main() {
+    let mut region = [0u8; MAIN_STACK_SCRUB_BYTES];
+    core::hint::black_box(&mut region);
+}
+
 unsafe fn startup_phase0_impl(
     main: Option<MainFn>,
     argc: c_int,
@@ -1043,7 +1062,21 @@ unsafe fn startup_phase0_impl(
         crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
     }
 
+    // Build the runtime-math kernel and, hardened, the validation pipeline
+    // before main rather than on first use. A program that caps RLIMIT_AS
+    // before its first decision or small malloc (gnulib's printf-posix2 tests,
+    // `ulimit -v`-style self limits) otherwise built them afterwards: strict
+    // faulted growing the stack for the kernel's ~158 KiB constructor frame,
+    // hardened aborted at exit (stdio flush) on the pipeline's ~8 MB.
+    if publish_environment && process_malloc_is_ours() {
+        crate::runtime_policy::prewarm_kernel();
+        if crate::runtime_policy::mode().heals_enabled() {
+            let _ = crate::membrane_state::try_global_pipeline();
+        }
+    }
+
     path.push(StartupCheckpoint::CallMain);
+    scrub_stack_for_main();
     // SAFETY: callback pointer + argv/envp pointers are validated for phase-0 fixture usage.
     let rc = unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) };
 
@@ -1737,5 +1770,57 @@ pub unsafe extern "C" fn __frankenlibc_is_runtime_math_enabled() -> c_int {
         0
     } else {
         1
+    }
+}
+
+/// Whether the `malloc` fl's own allocations reach is fl's. fl's internal
+/// Rust allocations go through the interposable `malloc` symbol (its GOT
+/// slot, which `libc::malloc`'s address reads), so in a program that brings
+/// its own allocator (jemalloc/mimalloc linked in; the smoke fixture
+/// custom_malloc_init's 8 MB bump arena) building runtime state before main
+/// would allocate it from the program's allocator: the hardened pipeline's
+/// 8 MB bloom filter did not fit and the process aborted at startup. Such a
+/// program keeps the lazy construction it always had.
+///
+/// Comparing with `crate::malloc_abi::malloc as usize` does not work: taking
+/// the address of an exported function also reads the GOT. The test is
+/// whether the reached `malloc` lies inside fl's own loaded image.
+fn process_malloc_is_ours() -> bool {
+    let reached = libc::malloc as usize;
+    own_image_range().is_none_or(|(start, end)| (start..end).contains(&reached))
+}
+
+/// `[start, end)` of this object's PT_LOAD segments, from its own ELF header
+/// (`__ehdr_start`, defined by the linker for the object being linked).
+fn own_image_range() -> Option<(usize, usize)> {
+    unsafe extern "C" {
+        static __ehdr_start: u8;
+    }
+    // SAFETY: `__ehdr_start` is this object's mapped Elf64_Ehdr; the program
+    // headers it locates are mapped with it (PT_PHDR lies in the first
+    // PT_LOAD for the linkers fl supports). Reads are unaligned-safe.
+    unsafe {
+        let base = &raw const __ehdr_start;
+        if core::slice::from_raw_parts(base, 4) != b"\x7fELF" {
+            return None;
+        }
+        let phoff = core::ptr::read_unaligned(base.add(32).cast::<u64>()) as usize;
+        let phentsize = core::ptr::read_unaligned(base.add(54).cast::<u16>()) as usize;
+        let phnum = core::ptr::read_unaligned(base.add(56).cast::<u16>()) as usize;
+        let (mut low, mut high) = (usize::MAX, 0usize);
+        for i in 0..phnum {
+            let ph = base.add(phoff + i * phentsize);
+            if core::ptr::read_unaligned(ph.cast::<u32>()) != 1 {
+                continue; // not PT_LOAD
+            }
+            let vaddr = core::ptr::read_unaligned(ph.add(16).cast::<u64>()) as usize;
+            let memsz = core::ptr::read_unaligned(ph.add(40).cast::<u64>()) as usize;
+            low = low.min(vaddr);
+            high = high.max(vaddr.saturating_add(memsz));
+        }
+        // The header sits at the start of the lowest PT_LOAD (file offset 0),
+        // so it is mapped at `low` plus the load bias: 0 for the shared
+        // object, the link address for a non-PIE link.
+        (high > low).then(|| (base as usize, base as usize + (high - low)))
     }
 }

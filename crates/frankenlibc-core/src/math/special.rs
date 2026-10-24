@@ -2,226 +2,18 @@
 
 #[inline]
 pub fn erf(x: f64) -> f64 {
-    if x.is_finite() && x.abs() < 2.5 {
-        if x < 0.0 {
-            -erf_profile_band(-x)
-        } else {
-            erf_profile_band(x)
-        }
-    } else if x.abs() >= 6.0 {
-        // Saturation short-circuit: `erf(x)` rounds to exactly ±1.0 in f64 for
-        // |x| >= 6 (1 - erf(6) ≈ 2.15e-17 < 2^-53, and glibc returns exactly ±1.0
-        // there), so skip the `libm::erf` call — bit-identical. `±inf` also lands
-        // here (erf(±inf)=±1); NaN (NaN >= 6.0 is false) falls through to
-        // `libm::erf(NaN)=NaN`.
-        1.0_f64.copysign(x)
-    } else {
-        libm::erf(x)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// erf: Cephes/Moshier rational pieces for the profiled [0.5,2.5) band.
-//
-// The libc baseline exercises `erf(x)` over `x in [0.5,2.5)`. `libm::erf`
-// follows the full fdlibm decision tree there, while this path evaluates the
-// two relevant public-domain Cephes rational pieces directly: a no-exp rational
-// for [0,1), and an erfc-shaped exp(-x*x) * P/Q piece for [1,2.5). Public
-// `erfc` is intentionally unchanged because the corresponding sub-1.0
-// complement branch exceeded the 4-ULP glibc contract in dense replay.
-#[allow(clippy::excessive_precision)]
-const ERF_T: [f64; 5] = [
-    9.604_973_739_870_516_387_49e0,
-    9.002_601_972_038_426_892_17e1,
-    2.232_005_345_946_843_192_26e3,
-    7.003_325_141_128_050_754_73e3,
-    5.559_230_130_103_949_627_68e4,
-];
-
-#[allow(clippy::excessive_precision)]
-const ERF_U: [f64; 5] = [
-    3.356_171_416_475_030_996_47e1,
-    5.213_579_497_801_526_797_95e2,
-    4.594_323_829_709_801_279_87e3,
-    2.262_900_006_138_909_342_46e4,
-    4.926_739_426_086_359_210_86e4,
-];
-
-#[allow(clippy::excessive_precision)]
-const ERFC_P: [f64; 9] = [
-    2.461_969_814_735_305_125_24e-10,
-    5.641_895_648_310_688_219_77e-1,
-    7.463_210_564_422_699_126_87e0,
-    4.863_719_709_856_813_666_14e1,
-    1.965_208_329_560_770_982_42e2,
-    5.264_451_949_954_773_586_31e2,
-    9.345_285_271_719_576_075_40e2,
-    1.027_551_886_895_157_102_72e3,
-    5.575_353_353_693_993_275_26e2,
-];
-
-#[allow(clippy::excessive_precision)]
-const ERFC_Q: [f64; 8] = [
-    1.322_819_511_547_449_925_08e1,
-    8.670_721_408_859_897_423_29e1,
-    3.549_377_788_878_198_910_62e2,
-    9.757_085_017_432_054_897_53e2,
-    1.823_909_166_879_097_362_89e3,
-    2.246_337_608_187_109_817_92e3,
-    1.656_663_091_941_613_501_82e3,
-    5.575_353_408_177_276_755_46e2,
-];
-
-#[inline]
-fn erf_profile_band(x: f64) -> f64 {
-    if x < 1.0 {
-        let z = x * x;
-        x * polevl(z, &ERF_T) / p1evl(z, &ERF_U)
-    } else {
-        1.0 - erfc_profile_band_tail(x)
-    }
-}
-
-#[inline]
-fn erfc_profile_band_tail(x: f64) -> f64 {
-    // Use `libm::exp` (pure Rust), NOT `(-x*x).exp()`. The std `f64::exp` lowers
-    // to a call to the `exp` symbol, which in the shipped libc.so is our OWN
-    // interposed `exp` — so this hot erf/erfc path would pay a full membrane
-    // round-trip (runtime_policy decide/observe + re-entry) on every call instead
-    // of a direct inlined polynomial. Same convention/recursion-safety reason the
-    // rest of this file uses `libm::*` (see the tgamma path at the libm::exp(-t)
-    // call below). Bit-identical result.
-    libm::exp(-x * x) * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
-}
-
-// DISPROVEN (cc/BoldFalcon, 2026-06-27): do NOT generalize this grid gate to a plain
-// `(1.0..2.5).contains(|x|)` band to win the general-argument erfc perf gap (fl
-// `libm::erfc` measured ~1.63x slower than glibc on a mixed argument set). The Cephes
-// exp(-x*x)*P/Q rational is a DIFFERENT approximation than glibc's fdlibm and cannot
-// track its bits in general: a dense ULP sweep vs the live host glibc showed the band
-// drifting OFF the 4-ULP erf/erfc contract — 8 ULP by x=3.0, 16 by 4.0, 34 by 7.0,
-// and (decisively) 6 ULP at x=2.20 on worker hz2's glibc 2.42, i.e. it breaks
-// CONTRACT even inside [1,2.5) and the exact figure varies by the worker's glibc
-// version. fl's `libm::erfc` is itself fdlibm-derived (glibc-close, ~<=2 ULP), so
-// routing general args to Cephes is an accuracy REGRESSION, not a free win. The grid
-// gate stays narrow on purpose: it only fires on the exact x = 0.5 + k/32 (k<64)
-// points the glibc_baseline_bench replays, where the divergence is small. The real
-// erfc speed-up needs a glibc-bit-matching fdlibm-erfc port (split exp for accuracy),
-// not a Cephes substitution. Reverted; no host-comparator win exists for this lever.
-#[inline]
-fn is_erfc_profile_grid_tail(x: f64) -> bool {
-    if !(1.0..2.5).contains(&x) {
-        return false;
-    }
-    let scaled = (x - 0.5) * 32.0;
-    let k = scaled as u32;
-    k < 64 && scaled == k as f64
-}
-
-// ---------------------------------------------------------------------------
-// tgamma: Cephes (Moshier) rational minimax on [2,3] (bd-pha1c7).
-//
-// `libm::tgamma` (our musl port) runs ~3.03x slower than glibc's hand-tuned
-// path — the single worst transcendental gap. The fix is NOT a faster version
-// of the same loop: prior sessions exhaustively proved the textbook g=7 Lanczos
-// floors at ~16 ULP even in double-double, and a Lanczos route still pays for a
-// `pow`+`exp` (our pure-Rust libm transcendentals are the slow part, so a
-// Boost-`lanczos13m53` rewrite measured *slower* than libm at ~107 ns).
-//
-// We replace the algorithm entirely with a *transcendental-free* evaluation:
-// reduce x into [2,3] by the recurrence Γ(x+1)=x·Γ(x), then evaluate Cephes's
-// degree-6/degree-7 rational minimax P(x)/Q(x). No log/exp/pow at all — just a
-// short recurrence, two Horner evals and one divide. Measured 29.6 ns vs the
-// old libm path's 68.7 ns (2.3x) and glibc parity (~27 ns), at 0 ULP vs exact
-// factorials / ≤2 ULP vs the closed-form Γ(n+½) reference. Coefficients are
-// Moshier's public-domain Cephes `gamma.c` values, verbatim.
-#[allow(clippy::excessive_precision)]
-const TGAMMA_P: [f64; 7] = [
-    1.601_195_224_767_518_614_07e-4,
-    1.191_351_470_065_863_849_13e-3,
-    1.042_137_975_617_615_699_35e-2,
-    4.763_678_004_571_372_314_64e-2,
-    2.074_482_276_484_359_751_50e-1,
-    4.942_148_268_014_971_007_53e-1,
-    9.999_999_999_999_999_967_96e-1,
-];
-#[allow(clippy::excessive_precision)]
-const TGAMMA_Q: [f64; 8] = [
-    -2.315_818_733_241_201_298_19e-5,
-    5.396_055_804_933_033_978_42e-4,
-    -4.456_419_138_517_972_404_94e-3,
-    1.181_397_852_220_604_355_52e-2,
-    3.582_363_986_054_986_533_73e-2,
-    -2.345_917_957_182_433_485_68e-1,
-    7.143_049_170_302_730_740_85e-2,
-    1.000_000_000_000_000_003_20e0,
-];
-
-#[inline]
-fn polevl(x: f64, c: &[f64]) -> f64 {
-    // Horner: c[0]·xⁿ + … + c[n], leading coefficient first.
-    let mut r = c[0];
-    for &ci in &c[1..] {
-        r = r.mul_add(x, ci);
-    }
-    r
-}
-
-#[inline]
-fn p1evl(x: f64, c: &[f64]) -> f64 {
-    // Horner with an implicit leading 1: xⁿ + c[0]·xⁿ⁻¹ + … + c[n].
-    let mut r = x + c[0];
-    for &ci in &c[1..] {
-        r = r.mul_add(x, ci);
-    }
-    r
-}
-
-/// Γ(x) for `x` in `(0, 13]` via recurrence reduction to `[2,3]` + Cephes
-/// rational minimax. The caller gates the domain; here everything stays finite.
-#[inline]
-#[allow(clippy::approx_constant)] // γ spelled out beside its formula.
-fn tgamma_reduced(mut x: f64) -> f64 {
-    let mut z = 1.0f64;
-    while x >= 3.0 {
-        x -= 1.0;
-        z *= x;
-    }
-    while x < 2.0 {
-        if x < 1.0e-9 {
-            // Γ(x) ≈ 1/(x·(1+γx)) as x→0⁺ (Euler–Mascheroni γ).
-            return z / ((1.0 + 0.577_215_664_901_532_9 * x) * x);
-        }
-        z /= x;
-        x += 1.0;
-    }
-    if x == 2.0 {
-        return z;
-    }
-    x -= 2.0;
-    z * polevl(x, &TGAMMA_P) / polevl(x, &TGAMMA_Q)
+    // CORE-MATH's correctly rounded erf, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::erf differed on 2.2% of inputs in [-6, 6]
+    // (bd-otip6a).
+    crate::math::coremath::erf(x)
 }
 
 #[inline]
 pub fn tgamma(x: f64) -> f64 {
-    // Fast path covers the hot range. Negative args (reflection + poles), zero,
-    // non-finite, and large x (where the recurrence would loop many times / the
-    // result overflows) defer to the libm reference for exact IEEE semantics —
-    // both paths stay within the 4-ULP-vs-glibc math conformance contract.
-    if x > 0.0 && x <= 13.0 {
-        tgamma_reduced(x)
-    } else {
-        // Negative-integer poles: glibc raises FE_INVALID (result NaN); libm
-        // returns NaN without the flag. Re-raise on this cold path via a hardware
-        // 0/0 (NaN + FE_INVALID). (tgamma(0) is handled by libm with FE_DIVBYZERO
-        // already; positive/large/non-integer args raise nothing here.)
-        if x < 0.0 && x.is_finite() && x == x.floor() {
-            let _ = core::hint::black_box(
-                core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
-            );
-        }
-        libm::tgamma(x)
-    }
+    // CORE-MATH's correctly rounded tgamma, which glibc 2.43 ships:
+    // bit-identical to glibc. The Cephes rational / libm::tgamma paths differed
+    // on 65% of inputs (bd-otip6a).
+    crate::math::coremath::tgamma(x)
 }
 
 #[cfg(test)]
@@ -317,164 +109,6 @@ mod tgamma_lanczos_research {
         }
     }
 }
-// ---------------------------------------------------------------------------
-// Negative half-integer lattice (bd-8htzay)
-//
-// x = 1/2 - n (n >= 1, integral) has the closed form
-//     |Gamma(1/2 - n)| = 4^n n! sqrt(pi) / (2n)!
-//     lgamma(x)        = n*ln4 + ln(n!) + (1/2)*ln(pi) - ln((2n)!)
-//     signgam          = (-1)^n
-// (checked: n = 3 gives ln(8*sqrt(pi)/15) = -0.0562437164976740506...).
-//
-// glibc 2.43's lgamma_r is CORRECTLY ROUNDED on this lattice (mpmath at 60
-// digits, n = 1..24), and a correctly rounded value is host-proof, unlike
-// algorithm mimicry: the same release's fromfp re-cut (bd-7ilguh) showed how
-// fragile matching-a-particular-algorithm is across host upgrades. The branch
-// below evaluates the closed form in double-double (~106-bit significand):
-// every term is an exact-argument log, the DD sum accumulates <= 2^-90
-// relative error at the n cap, and the final f64 rounding is therefore the
-// correctly rounded one — CR now, and on whatever glibc ships next. O(n) DD
-// log terms, capped at n <= 4096 (larger |x| stays on the libm-crate
-// deferral in `lgamma_r`, unchanged).
-mod lgamma_half_integer {
-    /// Double-double: (hi, lo) with |lo| <= ulp(hi)/2.
-    type Dd = (f64, f64);
-
-    /// Split of ln(2) to 106-bit precision.
-    #[allow(clippy::approx_constant)] // hi is written exactly, as the split's first half.
-    const LN2: Dd = (
-        0.693_147_180_559_945_286_226_763_982_995_180_413_126_945_495_605_468_75e0,
-        2.319_046_813_846_299_615_494_855_463_875_39e-17,
-    );
-    /// Split of (1/2) ln(pi) to 106-bit precision.
-    const HALF_LN_PI: Dd = (
-        0.572_364_942_924_700_087_071_713_675_676_529_355_823_647_406_457_66e0,
-        5.132_975_581_353_913_12e-18,
-    );
-    /// Split of ln(4) to 106-bit precision.
-    const LN4: Dd = (1.386_294_361_119_890_571_8, 4.638_093_627_692_599_23e-17);
-
-    #[inline]
-    fn quick_two_sum(a: f64, b: f64) -> Dd {
-        let s = a + b;
-        (s, b - (s - a))
-    }
-
-    #[inline]
-    fn two_sum(a: f64, b: f64) -> Dd {
-        let s = a + b;
-        let av = s - b;
-        let bv = s - av;
-        (s, (a - av) + (b - bv))
-    }
-
-    #[inline]
-    fn two_prod(a: f64, b: f64) -> Dd {
-        let p = a * b;
-        (p, a.mul_add(b, -p))
-    }
-
-    #[inline]
-    fn dd_neg(a: Dd) -> Dd {
-        (-a.0, -a.1)
-    }
-
-    #[inline]
-    fn dd_add(a: Dd, b: Dd) -> Dd {
-        let (s, se) = two_sum(a.0, b.0);
-        let (t, te) = two_sum(a.1, b.1);
-        let (hi, mid) = quick_two_sum(s, se + t);
-        quick_two_sum(hi, mid + te)
-    }
-
-    #[inline]
-    fn dd_mul(a: Dd, b: Dd) -> Dd {
-        let (p, pe) = two_prod(a.0, b.0);
-        quick_two_sum(p, pe + a.0 * b.1 + a.1 * b.0)
-    }
-
-    #[inline]
-    fn dd_mul_f64(a: Dd, b: f64) -> Dd {
-        let (p, pe) = two_prod(a.0, b);
-        quick_two_sum(p, pe + a.1 * b)
-    }
-
-    #[inline]
-    fn dd_div(a: Dd, b: Dd) -> Dd {
-        let q1 = a.0 / b.0;
-        // r = a - q1 * b, in DD. (p, pe) carries q1*b.0 to DD precision; only
-        // the q1*b.1 tail is subtracted separately. Subtracting q1*b twice
-        // collapses r to -a and the quotient to ~0 (caught by the standalone
-        // DD probe, bd-8htzay).
-        let (p, pe) = two_prod(q1, b.0);
-        let r = dd_add(dd_add(a, dd_neg((p, pe))), dd_mul_f64((b.1, 0.0), -q1));
-        dd_add((q1, 0.0), dd_mul_f64(r, 1.0 / b.0))
-    }
-
-    #[inline]
-    fn dd_sqrt(x: Dd) -> Dd {
-        let s = x.0.sqrt();
-        // One DD Newton step: s' = s + (x - s^2) / (2 s).
-        let (p, pe) = two_prod(s, s);
-        let corr = dd_mul_f64(dd_add(x, dd_neg((p, pe))), 0.5 / s);
-        dd_add((s, 0.0), corr)
-    }
-
-    /// ln(x) for finite x > 0, ~2^-105 relative error.
-    ///
-    /// x = m * 2^k with m in [sqrt(1/2), sqrt(2)); five squarings bring m
-    /// into [~0.9975, ~1.0025], where the atanh series converges in a handful
-    /// of DD terms: ln m = 32 * ln(m^(1/32)) = 64 * atanh(u) with
-    /// u = (m^(1/32) - 1) / (m^(1/32) + 1).
-    fn dd_ln(x: f64) -> Dd {
-        debug_assert!(x > 0.0 && x.is_finite());
-        let bits = x.to_bits();
-        let mut k = (((bits >> 52) & 0x7ff) as i64) - 1023;
-        let mut m = f64::from_bits((bits & !(0x7ffu64 << 52)) | (1023u64 << 52));
-        if m < core::f64::consts::FRAC_1_SQRT_2 {
-            m *= 2.0;
-            k -= 1;
-        }
-        let mut s = (m, 0.0);
-        for _ in 0..5 {
-            s = dd_sqrt(s);
-        }
-        let u = dd_div(dd_add(s, (-1.0, 0.0)), dd_add(s, (1.0, 0.0)));
-        let u2 = dd_mul(u, u);
-        let mut term = u;
-        let mut acc = (0.0, 0.0);
-        let mut i = 1.0;
-        loop {
-            acc = dd_add(acc, dd_div(term, (i, 0.0)));
-            term = dd_mul(term, u2);
-            i += 2.0;
-            if term.0 == 0.0 || i > 47.0 {
-                break;
-            }
-        }
-        // 2 (atanh factor) * 32 (squarings).
-        let ln_m = dd_mul_f64(acc, 64.0);
-        dd_add(ln_m, dd_mul_f64(LN2, k as f64))
-    }
-
-    /// ln|Gamma(1/2 - n)| for integral n in [1, 4096], correctly rounded.
-    pub(crate) fn lgamma_neg_half_integer(n: u32) -> (f64, i32) {
-        // L = n*ln4 + (1/2)ln(pi) + ln(n!) - ln((2n)!). The ln(n!) terms
-        // cancel against the first n terms of ln((2n)!), leaving exactly
-        // L = n*ln4 + (1/2)ln(pi) - sum_{k=n+1}^{2n} ln k. (A first version
-        // added the k <= n terms instead of dropping them — double-counting
-        // ln(n!) — which the mpmath goldens caught immediately.)
-        let mut l = dd_add(dd_mul_f64(LN4, n as f64), HALF_LN_PI);
-        for k in (n + 1)..=(2 * n) {
-            l = dd_add(l, dd_neg(dd_ln(k as f64)));
-        }
-        let (value, _) = quick_two_sum(l.0, l.1);
-        // Gamma(1/2 - n) = (-4)^n n! sqrt(pi) / (2n)!: the sign is (-1)^n.
-        let sign = if n % 2 == 0 { 1 } else { -1 };
-        (value, sign)
-    }
-}
-
 #[inline]
 pub fn lgamma(x: f64) -> f64 {
     // Derive from lgamma_r so the value matches lgamma_r exactly (the deployed ABI
@@ -485,23 +119,13 @@ pub fn lgamma(x: f64) -> f64 {
 /// Complementary error function: 1 - erf(x).
 #[inline]
 pub fn erfc(x: f64) -> f64 {
-    // Negative saturation short-circuit: erfc(x) = 1 - erf(x) rounds to exactly 2.0
-    // in f64 for x <= -6 (erf(-6) rounds to -1.0; 1-(-0.99999999999999997848) = 2.0),
-    // and glibc returns exactly 2.0 there. 2.0 is a normal value — no underflow flag,
-    // unlike the large-POSITIVE tail below (which must keep raising FE_UNDERFLOW). So
-    // skip the libm::erfc call for the whole x <= -6 tail. Bit-identical. (x=-inf ->
-    // erfc(-inf)=2 also lands here; NaN, x in (-6,...) fall through unchanged.)
-    if x <= -6.0 {
-        return 2.0;
-    }
-    let r = if is_erfc_profile_grid_tail(x) {
-        erfc_profile_band_tail(x)
-    } else {
-        libm::erfc(x)
-    };
+    // CORE-MATH's correctly rounded erfc, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::erfc differed on 31% of inputs (bd-otip6a).
+    let r = crate::math::coremath::erfc(x);
     // erfc(x) for large finite positive x underflows toward 0; glibc raises
-    // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0
-    // is an exact limit (no underflow), so exclude non-finite x.
+    // FE_UNDERFLOW on the subnormal/zero result, which the constant-folded
+    // 2^-1074/4 tail does not. erfc(+inf)=0 is an exact limit (no underflow),
+    // so exclude non-finite x.
     if x.is_finite() && x > 0.0 && r < f64::MIN_POSITIVE {
         let _ = core::hint::black_box(
             core::hint::black_box(f64::MIN_POSITIVE) * core::hint::black_box(f64::MIN_POSITIVE),
@@ -513,52 +137,12 @@ pub fn erfc(x: f64) -> f64 {
 /// Reentrant lgamma: returns `(lgamma(x), signgam)` where `signgam` is +1 or -1.
 #[inline]
 pub fn lgamma_r(x: f64) -> (f64, i32) {
-    // [3,13): lgamma(x) = log(tgamma(x)) reusing fl's fast Cephes `tgamma` + fused
-    // `log` — ~7% faster than `libm::lgamma` and at glibc parity, ≤2 ULP vs glibc
-    // (verified by lgamma_glibc_bench). In this band lgamma ≥ ln 2 ≈ 0.69 > 0 (so
-    // signgam = +1), Γ is finite and positive (no overflow/poles), and there is no
-    // 1-erf-style cancellation. Every other x defers to `libm::lgamma_r` for the
-    // poles (negative integers), the near-zero band around x=1,2, and the large-x
-    // tail where Γ overflows. `crate::math::log`/`tgamma` are direct Rust calls (not
-    // the interposed symbols), so no membrane round-trip / recursion.
-    if x >= 3.0 && x < 13.0 {
-        return (crate::math::log(tgamma(x)), 1);
-    }
-    if (13.0..1.0e15).contains(&x) {
-        // Large-x tail: Stirling asymptotic — lgamma(x) = (x-0.5)·ln(x) - x + ½ln(2π) +
-        // Σ B_{2k}/(2k(2k-1)·x^{2k-1}). Reuses fl's fused `log` + a 5-term Bernoulli series
-        // (converges fast for x ≥ 13); the (x-0.5)·ln(x) leading term is carried with its
-        // fma residual to stay ≤2 ULP vs glibc (verified to 1e15 by lgamma_tail_ab_bench).
-        // ~1.76x faster than libm::lgamma and beats glibc 0.56x. lgamma > 0 here so
-        // signgam = +1; the rare [1e15,∞) tail (near Γ overflow + its FE_OVERFLOW/ERANGE)
-        // stays on libm.
-        const HALF_LN_2PI: f64 = 0.918_938_533_204_672_74;
-        let lnx = crate::math::log(x);
-        let a = x - 0.5;
-        let hi = a * lnx;
-        let lo = a.mul_add(lnx, -hi);
-        let inv = 1.0 / x;
-        let w = inv * inv;
-        let mut s = 1.0_f64 / 1188.0;
-        s = s.mul_add(w, -1.0 / 1680.0);
-        s = s.mul_add(w, 1.0 / 1260.0);
-        s = s.mul_add(w, -1.0 / 360.0);
-        s = s.mul_add(w, 1.0 / 12.0);
-        s *= inv;
-        return (((hi - x) + (HALF_LN_2PI + s)) + lo, 1);
-    }
-    // Negative half-integer lattice: closed form via the exact reflection
-    // |Gamma(1/2-n)| = 4^n n! sqrt(pi)/(2n)! (see lgamma_half_integer above).
-    // n = 1/2 - x is exact f64 arithmetic on this range; integers fail the
-    // integrality test (1/2 - integer is never integral) and keep the pole
-    // handling in the libm-crate deferral below.
-    if x < 0.0 {
-        let nh = 0.5 - x;
-        if nh >= 1.0 && nh <= 4096.0 && nh == nh.trunc() {
-            return lgamma_half_integer::lgamma_neg_half_integer(nh as u32);
-        }
-    }
-    libm::lgamma_r(x)
+    // CORE-MATH's correctly rounded lgamma, which glibc 2.43 ships: value and
+    // sign bit-identical to glibc. The previous log(tgamma) / Stirling / libm
+    // paths differed on 43% of inputs (bd-otip6a); the negative half-integer
+    // closed form (bd-8htzay) is subsumed, since this is correctly rounded on
+    // that lattice too.
+    crate::math::coremath::lgamma_r(x)
 }
 
 // ---------------------------------------------------------------------------
@@ -767,11 +351,9 @@ mod tests {
             let want_sign = if n % 2 == 0 { 1 } else { -1 };
             assert_eq!(sign, want_sign, "signgam(1/2-{n})");
         }
-        // Non-lattice negative x keeps the deferral contract (value unchanged
-        // by the branch): -2.6 is not on the lattice.
+        // Off the lattice too: -2.6 gives glibc 2.43's correctly rounded value.
         let (v, s) = lgamma_r(-2.6);
-        let (lv, ls) = libm::lgamma_r(-2.6);
-        assert_eq!((v.to_bits(), s), (lv.to_bits(), ls));
+        assert_eq!((v.to_bits(), s), (0xbfbe_3602_a772_5dbe, -1));
     }
 
     #[test]

@@ -309,6 +309,33 @@ fn process_global_stdio_child_invocation() {
 /// fail. (bd-el0v8)
 static STREAM_REGISTRY_PROBE_LOCK: Mutex<()> = Mutex::new(());
 
+/// For a test whose assertions probe a process-global resource after fclose
+/// (a registry slot by address, an fd number): in the normal (parallel) run, re-run this binary with only `test`
+/// and require it to pass, returning `true` (the caller returns); in that
+/// child, return `false` so the caller runs its assertions with no other test
+/// thread able to reuse the freed slot. STREAM_REGISTRY_PROBE_LOCK alone was
+/// not enough -- any stream-opening test can take the slot -- and the
+/// assertions still failed 1 run in 15-60 (2026-10-06).
+fn run_alone_in_child(test: &str) -> bool {
+    if std::env::var_os("FRANKENLIBC_REGISTRY_PROBE_CHILD").is_some() {
+        return false;
+    }
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("current test binary path"),
+    )
+    .args(["--exact", test, "--nocapture", "--test-threads", "1"])
+    .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
+    .output()
+    .expect("re-run the test alone");
+    let child_out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && child_out.contains("1 passed"),
+        "isolated {test} failed:\nstdout={child_out}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 fn temp_path(tag: &str) -> PathBuf {
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
@@ -402,7 +429,11 @@ struct CookieState {
     write_calls: usize,
 }
 
-unsafe extern "C-unwind" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: usize) -> isize {
+unsafe extern "C-unwind" fn cookie_read(
+    cookie: *mut c_void,
+    buf: *mut c_char,
+    count: usize,
+) -> isize {
     if cookie.is_null() || buf.is_null() {
         return -1;
     }
@@ -426,7 +457,11 @@ unsafe extern "C-unwind" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, c
     n as isize
 }
 
-unsafe extern "C-unwind" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count: usize) -> isize {
+unsafe extern "C-unwind" fn cookie_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    count: usize,
+) -> isize {
     if cookie.is_null() || buf.is_null() {
         return -1;
     }
@@ -456,7 +491,11 @@ unsafe extern "C-unwind" fn cookie_write(cookie: *mut c_void, buf: *const c_char
     to_write as isize
 }
 
-unsafe extern "C-unwind" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: c_int) -> c_int {
+unsafe extern "C-unwind" fn cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
     if cookie.is_null() || offset.is_null() {
         return -1;
     }
@@ -943,12 +982,30 @@ fn fileno_and_setvbuf_contracts_hold() {
     // SAFETY: `stream` remains valid after setvbuf.
     assert_eq!(unsafe { fputc(b'X' as i32, stream) }, b'X' as i32);
 
-    // After I/O, setvbuf should reject mode changes.
-    // SAFETY: call is valid even when expected to fail.
+    let on_disk = || fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    assert_eq!(on_disk(), 1, "unbuffered fputc reaches the file");
+
+    // glibc accepts setvbuf after I/O (iosetvbuf.c): with no caller buffer,
+    // _IOFBF just flips the mode, so later output is buffered.
+    // SAFETY: `stream` is valid and open.
     assert_eq!(
         unsafe { setvbuf(stream, std::ptr::null_mut(), IOFBF, 1024) },
-        -1
+        0
     );
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fputc(b'Y' as i32, stream) }, b'Y' as i32);
+    assert_eq!(on_disk(), 1, "fully buffered fputc stays staged");
+
+    // _IONBF syncs first: the staged byte is written, not dropped.
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(
+        unsafe { setvbuf(stream, std::ptr::null_mut(), IONBF, 0) },
+        0
+    );
+    assert_eq!(on_disk(), 2, "switching to _IONBF flushes staged output");
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fputc(b'Z' as i32, stream) }, b'Z' as i32);
+    assert_eq!(on_disk(), 3, "unbuffered again");
 
     // setbuf should remain callable without crashing.
     // SAFETY: wrapper over setvbuf for this valid stream.
@@ -2633,10 +2690,10 @@ fn fmemopen_writable_close_still_syncs_caller_buffer() {
 
 #[test]
 fn fmemopen_write_creates_stream() {
-    // bd-el0v8: serialize against other parallel tests that allocate
-    // streams. Address reuse by glibc malloc would otherwise let
-    // another in-flight stream land at the just-freed address and
-    // make the "not in registry after fclose" assertion racy.
+    // Probes the registry by address after fclose: see run_alone_in_child.
+    if run_alone_in_child("fmemopen_write_creates_stream") {
+        return;
+    }
     let _registry_probe = STREAM_REGISTRY_PROBE_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -2948,6 +3005,10 @@ fn fmemopen_append_flush_writes_nul_after_appended_content() {
 
 #[test]
 fn open_memstream_returns_stream_or_null() {
+    // Probes the registry by address after fclose: see run_alone_in_child.
+    if run_alone_in_child("open_memstream_returns_stream_or_null") {
+        return;
+    }
     let mut ptr: *mut c_char = std::ptr::null_mut();
     let mut size: usize = 0;
     let stream = unsafe { open_memstream(&mut ptr, &mut size) };
@@ -3907,8 +3968,10 @@ fn fopen_bad_modes_return_null_with_einval() {
     fs::write(&path, b"test").unwrap();
     let path_c = path_cstring(&path);
 
-    // Test various invalid mode strings
-    let bad_modes = [c"".as_ptr(), c"z".as_ptr(), c"rw".as_ptr(), c"ar".as_ptr()];
+    // Invalid mode strings: empty or a bad first character. ("rw" and "ar"
+    // were listed here, but glibc opens both -- unknown modifier characters
+    // are ignored -- so they are not invalid.)
+    let bad_modes = [c"".as_ptr(), c"z".as_ptr(), c"tr".as_ptr(), c"+r".as_ptr()];
 
     for mode in &bad_modes {
         unsafe { *libc::__errno_location() = 0 };
@@ -3984,6 +4047,11 @@ fn fopen_returns_fresh_fd() {
 
 #[test]
 fn fclose_closes_fd() {
+    // The closed fd number can be reused at once by any parallel test that
+    // opens a file (1 run in 150, 2026-10-06): see run_alone_in_child.
+    if run_alone_in_child("fclose_closes_fd") {
+        return;
+    }
     let path = temp_path("fclose_closes_fd");
     let _ = fs::remove_file(&path);
     let path_c = path_cstring(&path);
@@ -6499,7 +6567,11 @@ unsafe extern "C-unwind" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n:
     take as c_int
 }
 
-unsafe extern "C-unwind" fn funop_write(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+unsafe extern "C-unwind" fn funop_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    n: c_int,
+) -> c_int {
     let s = unsafe { &mut *(cookie as *mut FunopenState) };
     let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, n as usize) };
     s.data.extend_from_slice(bytes);
@@ -6722,7 +6794,11 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         want as c_int
     }
 
-    unsafe extern "C-unwind" fn write_fn(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+    unsafe extern "C-unwind" fn write_fn(
+        cookie: *mut c_void,
+        buf: *const c_char,
+        n: c_int,
+    ) -> c_int {
         // SAFETY: as above.
         let state = unsafe { &mut *(cookie as *mut Cookie) };
         // SAFETY: buf holds `n` readable bytes per the BSD contract.

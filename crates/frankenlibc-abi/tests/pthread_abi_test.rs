@@ -2816,6 +2816,77 @@ fn mutex_prioceiling_regular_mutex_matches_host_libc_error() {
 }
 
 #[test]
+fn mutex_prioceiling_prio_protect_mutex_matches_host_libc() {
+    unsafe {
+        let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+        let mut host_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+        assert_eq!(pthread_mutexattr_init(&mut attr), 0);
+        assert_eq!(libc::pthread_mutexattr_init(&mut host_attr), 0);
+        assert_eq!(
+            pthread_mutexattr_setprotocol(&mut attr, libc::PTHREAD_PRIO_PROTECT),
+            0
+        );
+        assert_eq!(
+            libc::pthread_mutexattr_setprotocol(&mut host_attr, libc::PTHREAD_PRIO_PROTECT),
+            0
+        );
+        assert_eq!(
+            pthread_mutexattr_setprioceiling(
+                (&mut attr as *mut libc::pthread_mutexattr_t).cast(),
+                10
+            ),
+            0
+        );
+        assert_eq!(host_pthread_mutexattr_setprioceiling(&mut host_attr, 10), 0);
+
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        let mut host_mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(pthread_mutex_init(&mut mutex, &attr), 0);
+        assert_eq!(libc::pthread_mutex_init(&mut host_mutex, &host_attr), 0);
+
+        let get = |m: &libc::pthread_mutex_t| {
+            let mut ceiling: c_int = -1;
+            let rc = pthread_mutex_getprioceiling(
+                (m as *const libc::pthread_mutex_t).cast(),
+                &mut ceiling,
+            );
+            (rc, ceiling)
+        };
+        let host_get = |m: &libc::pthread_mutex_t| {
+            let mut ceiling: c_int = -1;
+            let rc = host_pthread_mutex_getprioceiling(m, &mut ceiling);
+            (rc, ceiling)
+        };
+        assert_eq!(get(&mutex), (0, 10));
+        assert_eq!(get(&mutex), host_get(&host_mutex));
+
+        // Replace the ceiling, then reject out-of-range ones (unchanged after).
+        for ceiling in [20, 0, 100, -1] {
+            let mut old: c_int = -1;
+            let mut host_old: c_int = -1;
+            let rc = pthread_mutex_setprioceiling(
+                (&mut mutex as *mut libc::pthread_mutex_t).cast(),
+                ceiling,
+                &mut old,
+            );
+            let host_rc =
+                host_pthread_mutex_setprioceiling(&mut host_mutex, ceiling, &mut host_old);
+            assert_eq!((rc, old), (host_rc, host_old), "setprioceiling({ceiling})");
+            assert_eq!(
+                get(&mutex),
+                host_get(&host_mutex),
+                "after setprioceiling({ceiling})"
+            );
+        }
+        assert_eq!(get(&mutex), (0, 20));
+
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        pthread_mutexattr_destroy(&mut attr);
+        libc::pthread_mutexattr_destroy(&mut host_attr);
+    }
+}
+
+#[test]
 fn mutexattr_setrobust_roundtrip() {
     unsafe {
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();

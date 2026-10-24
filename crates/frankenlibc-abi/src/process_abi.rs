@@ -255,6 +255,10 @@ pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_
         Some(host_fork) => {
             // SAFETY: plain call of host fork; fl's locks are held by the caller.
             let pid = unsafe { host_fork() };
+            if pid == 0 {
+                // The thread-local tid cache still holds the parent's tid.
+                frankenlibc_core::pthread::tls::note_fork_child();
+            }
             if pid < 0 {
                 Err(crate::host_resolve::host_errno(libc::EAGAIN))
             } else {
@@ -301,8 +305,12 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // forks; stacks captured 2026-09-28).
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    // `ready_pipeline`, not `try_global_pipeline`: only a pipeline that exists
+    // has locks to hold across the fork, and building one here gave every
+    // strict process that forks the whole hardened pipeline (8 MB bloom
+    // filter, 16 arena shards) to lock and COW-fault on every later fork.
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -312,7 +320,6 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
@@ -486,23 +493,23 @@ pub unsafe extern "C-unwind" fn waitpid(
         return -1;
     }
 
-    // Sanitize options in hardened mode.
-    let opts = if mode.heals_enabled() && !process::valid_wait_options(options) {
+    // Kernel first: __WALL, __WCLONE and __WNOTHREAD are valid wait4
+    // options (debuggers wait with __WALL); hardened repairs only options
+    // the kernel rejected.
+    let wait = |opts: c_int| unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
+        })
+    };
+    let mut rc = wait(options);
+    if mode.heals_enabled() && rc == Err(libc::EINVAL) && !process::valid_wait_options(options) {
         let sanitized = process::sanitize_wait_options(options);
         global_healing_policy().record(&HealingAction::ClampSize {
             requested: options as usize,
             clamped: sanitized as usize,
         });
-        sanitized
-    } else {
-        options
-    };
-
-    let rc = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
-        })
-    };
+        rc = wait(sanitized);
+    }
 
     match rc {
         Ok(child_pid) => {
@@ -1279,7 +1286,17 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions, error_fd: c_int) -> c_int {
 }
 
 #[inline]
-unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
+unsafe fn child_spawn_fail(
+    err_fd: c_int,
+    err_slot: Option<&std::sync::atomic::AtomicI32>,
+    err: c_int,
+) -> ! {
+    if let Some(slot) = err_slot {
+        // CLONE_VM child: the parent reads this once the vfork-style clone
+        // returns, i.e. after this exit.
+        slot.store(err, std::sync::atomic::Ordering::SeqCst);
+        raw_syscall::sys_exit_group(127)
+    }
     spawn_protocol::child_fail(err_fd, err)
 }
 
@@ -1294,7 +1311,10 @@ struct SpawnChildContext<'a> {
     envp: *const *mut c_char,
     is_path_search: bool,
     original_mask: u64,
+    /// Write end of the error pipe, or -1 when `err_slot` is used.
     err_fd: c_int,
+    /// Shared-memory error report for a `CLONE_VM` child (x86_64).
+    err_slot: Option<&'a std::sync::atomic::AtomicI32>,
 }
 
 /// The spawn child: apply attributes and file actions, then exec. Raw
@@ -1304,20 +1324,21 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
     // child execs or exits.
     let ctx = unsafe { &*ctx };
     let err_fd = ctx.err_fd;
+    let err_slot = ctx.err_slot;
 
     let defaults = ctx
         .spawn_attrs
         .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGDEF != 0)
         .map_or(0, |attr| attr.sigdefault);
     if let Err(error) = spawn_protocol::reset_child_signals(defaults) {
-        unsafe { child_spawn_fail(err_fd, error) };
+        unsafe { child_spawn_fail(err_fd, err_slot, error) };
     }
 
     // Apply spawn attributes if provided
     if let Some(attr) = ctx.spawn_attrs {
         let err = unsafe { apply_spawn_attrs(attr) };
         if err != 0 {
-            unsafe { child_spawn_fail(err_fd, err) };
+            unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
     }
 
@@ -1325,7 +1346,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
     if let Some(fa) = ctx.spawn_actions {
         let err = unsafe { apply_file_actions(fa, err_fd) };
         if err != 0 {
-            unsafe { child_spawn_fail(err_fd, err) };
+            unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
     }
 
@@ -1341,7 +1362,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGMASK != 0)
         .map_or(ctx.original_mask, |attr| attr.sigmask);
     if let Err(error) = spawn_protocol::install_signal_mask(final_mask) {
-        unsafe { child_spawn_fail(err_fd, error) };
+        unsafe { child_spawn_fail(err_fd, err_slot, error) };
     }
 
     // Try execve for each candidate path; reading the slice does not allocate.
@@ -1361,7 +1382,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         // Without a PATH search, preserve the syscall's exact errno
         // (in particular ENOTDIR), rather than folding it into ENOENT.
         if !ctx.is_path_search {
-            unsafe { child_spawn_fail(err_fd, err) };
+            unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
         match err {
             libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
@@ -1370,14 +1391,14 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
             }
             // A terminal error (notably ENOEXEC) wins over an earlier
             // EACCES. posix_spawnp must not run an implicit shell here.
-            _ => unsafe { child_spawn_fail(err_fd, err) },
+            _ => unsafe { child_spawn_fail(err_fd, err_slot, err) },
         }
     }
 
     if saw_eacces {
         final_err = libc::EACCES;
     }
-    unsafe { child_spawn_fail(err_fd, final_err) };
+    unsafe { child_spawn_fail(err_fd, err_slot, final_err) };
 }
 
 /// Stack for a `CLONE_VM` spawn child.
@@ -1559,31 +1580,44 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         vec![path]
     };
 
-    // Use an error-report pipe so the child can report pre-exec failure errno.
-    // `O_CLOEXEC` ensures successful exec closes the write end and the parent
-    // observes EOF as success.
+    // How the child reports a pre-exec failure errno. On x86_64 it is a
+    // CLONE_VM | CLONE_VFORK child (`clone_spawn_child`): it stores the errno in
+    // `child_error`, which the parent reads once the clone returns -- after the
+    // child exec'd or exited -- as glibc does. Elsewhere the child is a full
+    // fork and writes to an O_CLOEXEC pipe whose EOF means success.
+    //
+    // The pipe is not used on x86_64 because its write end leaks into any
+    // fork() another thread makes while the child runs, and the parent's EOF
+    // then waits for that unrelated process to exit: a multithreaded hardened
+    // parent hung in read_child_error with no spawn child left (bd-vgvlej).
+    let child_error = std::sync::atomic::AtomicI32::new(0);
+    let use_pipe = cfg!(not(target_arch = "x86_64"));
     let mut err_pipe = [-1_i32; 2];
-    if let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) } {
-        return e;
+    if use_pipe {
+        if let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) } {
+            return e;
+        }
     }
 
     // The pipe must not become an implicit source/destination in user actions.
     // closefrom is handled separately by excluding this private descriptor.
-    if let Err(error) = spawn_protocol::reserve_error_fd(&mut err_pipe[1], |fd| {
-        spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
-            || spawn_actions.is_some_and(|fa| {
-                fa.actions.iter().any(|action| match action {
-                    SpawnFileAction::Close(value)
-                    | SpawnFileAction::Fchdir(value)
-                    | SpawnFileAction::TcSetPgrp(value) => *value == fd,
-                    SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
-                    SpawnFileAction::Open {
-                        fd: destination, ..
-                    } => *destination == fd,
-                    SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
+    if use_pipe
+        && let Err(error) = spawn_protocol::reserve_error_fd(&mut err_pipe[1], |fd| {
+            spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
+                || spawn_actions.is_some_and(|fa| {
+                    fa.actions.iter().any(|action| match action {
+                        SpawnFileAction::Close(value)
+                        | SpawnFileAction::Fchdir(value)
+                        | SpawnFileAction::TcSetPgrp(value) => *value == fd,
+                        SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
+                        SpawnFileAction::Open {
+                            fd: destination, ..
+                        } => *destination == fd,
+                        SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
+                    })
                 })
-            })
-    }) {
+        })
+    {
         let _ = raw_syscall::sys_close(err_pipe[0]);
         let _ = raw_syscall::sys_close(err_pipe[1]);
         return error;
@@ -1609,6 +1643,7 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         is_path_search,
         original_mask: signal_guard.original,
         err_fd: err_pipe[1],
+        err_slot: (!use_pipe).then_some(&child_error),
     };
     // Use clone3(CLONE_PIDFD) when a pidfd is wanted, so the parent receives
     // it in the same kernel operation that creates the child: pidfd_open
@@ -1654,9 +1689,17 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     // The child does not share this address space. Restore the calling thread's
     // mask now, not after potentially blocking in the error-pipe read.
     drop(signal_guard);
-    let _ = raw_syscall::sys_close(err_pipe[1]);
-    let child_status = spawn_protocol::read_child_error(err_pipe[0]);
-    let _ = raw_syscall::sys_close(err_pipe[0]);
+    let child_status = if use_pipe {
+        let _ = raw_syscall::sys_close(err_pipe[1]);
+        let status = spawn_protocol::read_child_error(err_pipe[0]);
+        let _ = raw_syscall::sys_close(err_pipe[0]);
+        status
+    } else {
+        match child_error.load(std::sync::atomic::Ordering::SeqCst) {
+            0 => Ok(None),
+            error => Ok(Some(error)),
+        }
+    };
 
     match child_status {
         Ok(None) => {

@@ -434,6 +434,14 @@ fn glob_expand_dyn(
     // (`o/` + NOCHECK -> `o`, `{a,b}/` + NOMAGIC -> `{a,b}`). The root `/` is
     // preserved.
     let trailing_slash = pat.len() > 1 && pat.ends_with(b"/");
+    // glibc returns "//" for a pattern of three or more slashes (and "/" for
+    // one or two): it keeps the directory part before the last slash, reduced
+    // to at most two trailing slashes.
+    if pat.len() >= 3 && pat.iter().all(|&b| b == b'/') {
+        return Ok(GlobResult {
+            paths: vec![b"//".to_vec()],
+        });
+    }
     let pat: &[u8] = strip_trailing_slashes(pat);
 
     // If no metacharacters, just check existence.
@@ -549,6 +557,12 @@ fn glob_recursive(
     let mut full_dir = Vec::with_capacity(resolved_prefix.len() + dir_prefix.len());
     full_dir.extend_from_slice(resolved_prefix);
     full_dir.extend_from_slice(dir_prefix);
+    // glibc joins a directory that is exactly "/" without another slash, and
+    // for `//b*n` that directory is the "/" before the last separator:
+    // `//b*n/sh` yields `/bin/sh`, while `///b*n/sh` keeps `///bin/sh`.
+    if resolved_prefix.is_empty() && full_dir == b"//" {
+        full_dir.truncate(1);
+    }
 
     // Read directory entries through the configured filesystem backend.
     let dir_entries = match fs.read_dir(&full_dir) {
@@ -630,8 +644,19 @@ fn glob_recursive(
             // name as a literal prevents metacharacters in it (`*`, `?`, `[` are
             // all legal POSIX filename bytes) from being re-interpreted as
             // pattern syntax on subsequent recursions.
+            // The separator after a WILDCARD component: glibc joins the matched
+            // directory with one '/' for a single slash and with exactly "//"
+            // for any longer run (`/b*n////sh` -> `/bin//sh`), so a pattern
+            // like `/*` + 9997 slashes + `sh` resolves instead of building a
+            // path past PATH_MAX (gnulib test-glob, sourceware PR30635).
+            // Separators inside a literal prefix stay verbatim (split_pattern
+            // keeps those in `dir_prefix`).
+            let extra = rest.iter().take_while(|&&b| b == b'/').count();
             full_path.push(b'/');
-            glob_recursive(&full_path, rest, flags, results, errfunc, fs)?;
+            if extra > 0 {
+                full_path.push(b'/');
+            }
+            glob_recursive(&full_path, &rest[extra..], flags, results, errfunc, fs)?;
         }
     }
 
@@ -739,6 +764,26 @@ mod tests {
         let (dir, tail) = split_pattern(b"/absolute/path", false);
         assert_eq!(dir, b"/absolute/");
         assert_eq!(tail, b"path");
+    }
+
+    #[test]
+    fn slash_runs_join_like_glibc() {
+        let first = |pat: &[u8]| glob_expand(pat, 0).map(|r| r.paths[0].clone());
+        // A run after a wildcard component becomes "//"; a literal prefix
+        // keeps its slashes; a leading "//" directory joins as "/".
+        assert_eq!(first(b"/b*n////sh"), Ok(b"/bin//sh".to_vec()));
+        assert_eq!(first(b"/b*n/sh"), Ok(b"/bin/sh".to_vec()));
+        assert_eq!(first(b"//b*n/sh"), Ok(b"/bin/sh".to_vec()));
+        assert_eq!(first(b"///b*n/sh"), Ok(b"///bin/sh".to_vec()));
+        assert!(first(b"/bin///s?").unwrap().starts_with(b"/bin///s"));
+        // All-slash patterns: "/" for one or two, "//" for more.
+        assert_eq!(first(b"//"), Ok(b"/".to_vec()));
+        assert_eq!(first(b"/////"), Ok(b"//".to_vec()));
+        // Thousands of slashes after a wildcard stay under PATH_MAX.
+        let mut long = b"/*".to_vec();
+        long.extend(std::iter::repeat_n(b'/', 9995));
+        long.extend_from_slice(b"sh");
+        assert_eq!(first(&long), Ok(b"/bin//sh".to_vec()));
     }
 
     #[test]

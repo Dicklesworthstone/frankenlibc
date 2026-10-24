@@ -1,0 +1,68 @@
+name: Native raw resolver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-raw-resolver.yml'
+      - 'scripts/test_native_dns_source.py'
+      - 'crates/frankenlibc-core/Cargo.toml'
+      - 'rust-toolchain.toml'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
+      - 'crates/frankenlibc-core/src/resolv/config.rs'
+      - 'crates/frankenlibc-core/src/resolv/dns.rs'
+      - 'crates/frankenlibc-core/src/resolv/dns_name.rs'
+      - 'crates/frankenlibc-core/tests/raw_dns_transport.rs'
+      - 'crates/frankenlibc-core/tests/dns_nameserver_failover.rs'
+      - 'tests/conformance/raw_res_send_host.c'
+      - 'tests/conformance/raw_res_send_abi.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Compile and execute byte-identical DNS sources and original tests
+        shell: bash
+        run: python3 scripts/test_native_dns_source.py
+      - name: Check the independent host wire-length oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/raw_res_send_host.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/raw-res-send-host"
+          timeout 30 "$RUNNER_TEMP/raw-res-send-host" | tee artifacts/raw-resolver/host.log
+          grep -Fq '18 host-glibc raw-send cases passed' artifacts/raw-resolver/host.log
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all tests/conformance/raw_res_send_host.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/raw-res-send-ubsan"
+          timeout 30 "$RUNNER_TEMP/raw-res-send-ubsan" | tee artifacts/raw-resolver/host-ubsan.log
+          grep -Fq '18 host-glibc raw-send cases passed' artifacts/raw-resolver/host-ubsan.log
+      - name: Check exported host entry point in an isolated resolver namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/raw_res_send_abi.c -pthread -ldl -o "$RUNNER_TEMP/raw-res-send-abi"
+          sudo timeout 30 unshare -n sh -c 'ip link set lo up; exec "$@"' sh "$RUNNER_TEMP/raw-res-send-abi" --host | tee artifacts/raw-resolver/exported-host.log
+          grep -Fq '13 exported raw-send cases passed (host)' artifacts/raw-resolver/exported-host.log
+      - name: Verify validation did not alter tracked source
+        shell: bash
+        run: git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-raw-resolver-source-${{ matrix.runner }}
+          path: artifacts/raw-resolver/**

@@ -14,6 +14,10 @@ pub const SEEK_SET: i32 = 0;
 pub const SEEK_CUR: i32 = 1;
 /// Seek from end of file.
 pub const SEEK_END: i32 = 2;
+/// Seek to the next data region at or after the offset (Linux 3.1).
+pub const SEEK_DATA: i32 = 3;
+/// Seek to the next hole at or after the offset (Linux 3.1).
+pub const SEEK_HOLE: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // access() mode constants
@@ -109,10 +113,15 @@ pub fn valid_fd(fd: i32) -> bool {
     fd >= 0
 }
 
-/// Returns `true` if `whence` is a valid `lseek` whence value.
+/// Returns `true` if `whence` is a valid `lseek` whence value, including
+/// Linux's SEEK_DATA/SEEK_HOLE, which cp, tar and rsync use to copy sparse
+/// files (the kernel answers EINVAL/ENXIO where a file system lacks them).
 #[inline]
 pub fn valid_whence(whence: i32) -> bool {
-    matches!(whence, SEEK_SET | SEEK_CUR | SEEK_END)
+    matches!(
+        whence,
+        SEEK_SET | SEEK_CUR | SEEK_END | SEEK_DATA | SEEK_HOLE
+    )
 }
 
 /// Returns `true` if `mode` is a valid `access()` mode argument.
@@ -363,12 +372,14 @@ mod tests {
         assert!(valid_whence(SEEK_SET));
         assert!(valid_whence(SEEK_CUR));
         assert!(valid_whence(SEEK_END));
+        assert!(valid_whence(SEEK_DATA));
+        assert!(valid_whence(SEEK_HOLE));
     }
 
     #[test]
     fn valid_whence_rejects_unknown() {
         assert!(!valid_whence(-1));
-        assert!(!valid_whence(3));
+        assert!(!valid_whence(5));
         assert!(!valid_whence(100));
         assert!(!valid_whence(i32::MIN));
         assert!(!valid_whence(i32::MAX));

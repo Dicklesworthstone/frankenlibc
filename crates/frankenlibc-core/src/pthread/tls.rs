@@ -461,7 +461,47 @@ fn table_remove(tid: i32) -> *mut TlsEntry {
 /// Get the calling thread's kernel TID.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn current_tid() -> i32 {
-    syscall::sys_gettid()
+    if TID_CACHE_DISABLED.load(Ordering::Relaxed) {
+        return syscall::sys_gettid();
+    }
+    let epoch = TID_CACHE_EPOCH.load(Ordering::Acquire);
+    if let Ok((tid, cached_epoch)) = CACHED_TID.try_with(core::cell::Cell::get)
+        && tid > 0
+        && cached_epoch == epoch
+    {
+        return tid;
+    }
+    let tid = syscall::sys_gettid();
+    let _ = CACHED_TID.try_with(|cached| cached.set((tid, epoch)));
+    tid
+}
+
+std::thread_local! {
+    /// This thread's kernel tid and the fork epoch it was read in. Every
+    /// pthread_getspecific/setspecific needs the tid, and asking the kernel
+    /// each time made them a syscall each (glibc reads it from the TCB);
+    /// OpenSSL calls them constantly.
+    static CACHED_TID: core::cell::Cell<(i32, u32)> = const { core::cell::Cell::new((0, 0)) };
+}
+
+/// Bumped in a fork child: it inherits the forking thread's TLS, cached tid
+/// included, under a new tid.
+static TID_CACHE_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Set before the first native-backend thread is cloned: those threads share
+/// their creator's TLS (no CLONE_SETTLS), so a TLS-cached tid would be the
+/// creator's.
+static TID_CACHE_DISABLED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Call first thing in a fork child, before anything reads a TLS key.
+pub fn note_fork_child() {
+    TID_CACHE_EPOCH.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Call before cloning a thread that shares its creator's TLS.
+pub(crate) fn disable_tid_cache() {
+    TID_CACHE_DISABLED.store(true, Ordering::SeqCst);
 }
 
 // ---------------------------------------------------------------------------

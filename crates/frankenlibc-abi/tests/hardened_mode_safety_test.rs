@@ -414,3 +414,94 @@ fn valid_inputs_pass_through_without_healing() {
     unsafe { memset(buf.as_mut_ptr().cast(), 0xAB as c_int, 16) };
     assert!(buf.iter().all(|&b| b == 0xAB));
 }
+
+/// Env var that turns `hardened_bounded_string_ops_child` into the real case.
+const BOUNDED_STRING_CHILD_ENV: &str = "FRANKENLIBC_BOUNDED_STRING_HEAL_CHILD";
+
+/// Child half of `hardened_bounded_string_ops_heal_only_real_overreads`: the
+/// runtime mode is resolved once per process, so hardened mode needs its own.
+#[test]
+fn hardened_bounded_string_ops_child() {
+    use frankenlibc_abi::malloc_abi::{free, malloc};
+    use frankenlibc_abi::string_abi::{strncasecmp, strncmp, strncpy};
+    use std::ffi::c_char;
+    use std::sync::atomic::Ordering;
+
+    if std::env::var_os(BOUNDED_STRING_CHILD_ENV).is_none() {
+        return;
+    }
+    let heals = || {
+        frankenlibc_membrane::heal::global_healing_policy()
+            .total_heals
+            .load(Ordering::Relaxed)
+    };
+    unsafe {
+        // A tracked 4-byte allocation holding a terminated string, like the
+        // `tm_zone` Python copies with `strncpy(janname, tm->tm_zone, 9)`.
+        let zone = malloc(4).cast::<c_char>();
+        zone.copy_from_nonoverlapping(c"EDT".as_ptr(), 4);
+        let before = heals();
+        let mut dst = [0x55u8; 12];
+        strncpy(dst.as_mut_ptr().cast(), zone, 9);
+        let padded = dst[..9] == *b"EDT\0\0\0\0\0\0" && dst[9] == 0x55;
+        let cmp_ok = strncmp(zone, c"EDT".as_ptr(), 8) == 0
+            && strncmp(zone, c"EDTX".as_ptr(), 8) < 0
+            && strncasecmp(zone, c"edt".as_ptr(), 8) == 0;
+        let false_heals = heals() - before;
+
+        // The same calls on an UNTERMINATED tracked allocation do over-read:
+        // those must still be repaired.
+        let raw = malloc(4).cast::<c_char>();
+        raw.copy_from_nonoverlapping(c"ABCD".as_ptr(), 4);
+        let before = heals();
+        let mut dst = [0u8; 12];
+        strncpy(dst.as_mut_ptr().cast(), raw, 9);
+        let _ = strncmp(raw, c"ABCDEFG".as_ptr(), 8);
+        let _ = strncasecmp(raw, c"abcdefg".as_ptr(), 8);
+        let real_heals = heals() - before;
+
+        free(zone.cast());
+        free(raw.cast());
+        println!("BOUNDED_STRING {padded} {cmp_ok} {false_heals} {real_heals}");
+    }
+}
+
+/// Hardened strncpy/strncmp/strncasecmp clamp `n` to a tracked allocation's
+/// extent, but a source terminated inside its allocation is never read past
+/// the NUL, so nothing was repaired. They used to record a heal anyway, on
+/// every such call in ordinary programs (Python's time-module init, OpenSSL's
+/// config loader), skewing the repair counters and the runtime risk signal.
+#[test]
+fn hardened_bounded_string_ops_heal_only_real_overreads() {
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let output = std::process::Command::new(&current_exe)
+        .args([
+            "--exact",
+            "hardened_bounded_string_ops_child",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_MODE", "hardened")
+        .env(BOUNDED_STRING_CHILD_ENV, "1")
+        .output()
+        .expect("spawn child");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let Some(at) = stdout.find("BOUNDED_STRING ") else {
+        panic!(
+            "child printed no verdict. status: {:?}\nstdout:\n{stdout}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let fields: Vec<&str> = stdout[at..]
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    assert_eq!(fields[1], "true", "strncpy must NUL-pad to n: {stdout}");
+    assert_eq!(fields[2], "true", "compare results: {stdout}");
+    assert_eq!(fields[3], "0", "terminated sources recorded heals: {stdout}");
+    assert_eq!(fields[4], "3", "unterminated sources must each heal: {stdout}");
+}

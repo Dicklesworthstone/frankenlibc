@@ -193,6 +193,10 @@ KEY_DTOR_BIN="${BIN_DIR}/fixture_pthread_key_destructors"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -o "${KEY_DTOR_BIN}"
 EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
 cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -o "${EXIT_SEQUENCE_BIN}"
+STRICT_STRING_OVERFLOW_BIN="${BIN_DIR}/fixture_strict_string_overflow"
+cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_strict_string_overflow.c" -o "${STRICT_STRING_OVERFLOW_BIN}"
+HARDENED_UAF_HEAL_BIN="${BIN_DIR}/fixture_hardened_uaf_heal"
+cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_hardened_uaf_heal.c" -o "${HARDENED_UAF_HEAL_BIN}" -ldl
 MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
 cc -O2 "${ROOT}/tests/integration/fixture_malloc_misuse.c" -o "${MALLOC_MISUSE_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
@@ -203,12 +207,95 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
+cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
+GLOB_RESET_BIN="${BIN_DIR}/fixture_glob_reset"
+cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -o "${GLOB_RESET_BIN}"
+MEMCHR_PAGE_BOUNDARY_BIN="${BIN_DIR}/fixture_memchr_page_boundary"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_memchr_page_boundary.c" -o "${MEMCHR_PAGE_BOUNDARY_BIN}"
+REMOVE_DIR_FTELL_EBADF_BIN="${BIN_DIR}/fixture_remove_dir_ftell_ebadf"
+cc -O2 -Wno-unused-result "${ROOT}/tests/integration/fixture_remove_dir_ftell_ebadf.c" -o "${REMOVE_DIR_FTELL_EBADF_BIN}"
+STDIO_OFFSETS_CLOSE_FLAGS_BIN="${BIN_DIR}/fixture_stdio_offsets_close_flags"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_offsets_close_flags.c" -o "${STDIO_OFFSETS_CLOSE_FLAGS_BIN}"
+COREUTILS_GNULIB_MISC_BIN="${BIN_DIR}/fixture_coreutils_gnulib_misc"
+cc -O2 -Wno-format "${ROOT}/tests/integration/fixture_coreutils_gnulib_misc.c" -o "${COREUTILS_GNULIB_MISC_BIN}"
+STDIO_CLOSED_STD_READ_ERRORS_BIN="${BIN_DIR}/fixture_stdio_closed_std_read_errors"
+cc -O2 -Wno-unused-result "${ROOT}/tests/integration/fixture_stdio_closed_std_read_errors.c" -o "${STDIO_CLOSED_STD_READ_ERRORS_BIN}"
+GETCWD_DEEP_BIN="${BIN_DIR}/fixture_getcwd_deep"
+cc -O2 "${ROOT}/tests/integration/fixture_getcwd_deep.c" -o "${GETCWD_DEEP_BIN}"
+RWLOCK_WRITER_PREFERENCE_BIN="${BIN_DIR}/fixture_rwlock_writer_preference"
+cc -O2 "${ROOT}/tests/integration/fixture_rwlock_writer_preference.c" -o "${RWLOCK_WRITER_PREFERENCE_BIN}" -lpthread
+LOCALE_DECIMAL_COMMA_BIN="${BIN_DIR}/fixture_locale_decimal_comma"
+cc -O2 "${ROOT}/tests/integration/fixture_locale_decimal_comma.c" -o "${LOCALE_DECIMAL_COMMA_BIN}"
+# A decimal-comma locale for it (glibc and fl both honor LOCPATH); without
+# localedef or the de_DE source the fixture prints its skip line on both sides.
+DECIMAL_COMMA_LOCPATH="${BIN_DIR}/locpath"
+mkdir -p "${DECIMAL_COMMA_LOCPATH}"
+localedef -i de_DE -f UTF-8 "${DECIMAL_COMMA_LOCPATH}/de_DE.UTF-8" >/dev/null 2>&1 || true
+LOCALE_L_VARIANTS_BIN="${BIN_DIR}/fixture_locale_l_variants"
+cc -O2 "${ROOT}/tests/integration/fixture_locale_l_variants.c" -o "${LOCALE_L_VARIANTS_BIN}"
+STDIO_READ_WINDOW_BIN="${BIN_DIR}/fixture_stdio_read_window"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_read_window.c" -o "${STDIO_READ_WINDOW_BIN}"
+REGEX_UTF8_BIN="${BIN_DIR}/fixture_regex_utf8"
+cc -O2 "${ROOT}/tests/integration/fixture_regex_utf8.c" -o "${REGEX_UTF8_BIN}"
+APP_MALLOC_SPAWNS_THREAD_BIN="${BIN_DIR}/fixture_app_malloc_spawns_thread"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_malloc_spawns_thread.c" -o "${APP_MALLOC_SPAWNS_THREAD_BIN}" -lpthread
+LANGINFO_TIME_MBRTOWC_NULL_BIN="${BIN_DIR}/fixture_langinfo_time_mbrtowc_null"
+cc -O2 "${ROOT}/tests/integration/fixture_langinfo_time_mbrtowc_null.c" -o "${LANGINFO_TIME_MBRTOWC_NULL_BIN}"
+FPURGE_FREOPEN_BIN="${BIN_DIR}/fixture_fpurge_freopen"
+cc -O2 "${ROOT}/tests/integration/fixture_fpurge_freopen.c" -o "${FPURGE_FREOPEN_BIN}"
+MALLOC_ENOMEM_BIN="${BIN_DIR}/fixture_malloc_enomem"
+cc -O2 "${ROOT}/tests/integration/fixture_malloc_enomem.c" -o "${MALLOC_ENOMEM_BIN}"
+GNU_REGEX_API_BIN="${BIN_DIR}/fixture_gnu_regex_api"
+cc -O2 "${ROOT}/tests/integration/fixture_gnu_regex_api.c" -o "${GNU_REGEX_API_BIN}"
+APP_SBRK_MALLOC_BIN="${BIN_DIR}/fixture_app_sbrk_malloc"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_sbrk_malloc.c" -o "${APP_SBRK_MALLOC_BIN}"
+SIGNAL_HANDLER_REALLOC_BIN="${BIN_DIR}/fixture_signal_handler_realloc"
+cc -O2 "${ROOT}/tests/integration/fixture_signal_handler_realloc.c" -o "${SIGNAL_HANDLER_REALLOC_BIN}"
+LONG_DOUBLE_MATH_BIN="${BIN_DIR}/fixture_long_double_math"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_long_double_math.c" -o "${LONG_DOUBLE_MATH_BIN}" -lm
+THREAD_KEY_DTOR_TEARDOWN_BIN="${BIN_DIR}/fixture_thread_key_dtor_teardown"
+cc -O2 -fno-builtin -pthread "${ROOT}/tests/integration/fixture_thread_key_dtor_teardown.c" -o "${THREAD_KEY_DTOR_TEARDOWN_BIN}"
+SEM_TIMEDWAIT_WAKE_BIN="${BIN_DIR}/fixture_sem_timedwait_wake"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_sem_timedwait_wake.c" -o "${SEM_TIMEDWAIT_WAKE_BIN}"
+ARG_PASSTHROUGH_BIN="${BIN_DIR}/fixture_arg_passthrough"
+cc -O2 "${ROOT}/tests/integration/fixture_arg_passthrough.c" -o "${ARG_PASSTHROUGH_BIN}"
+VM_ADVICE_BIN="${BIN_DIR}/fixture_vm_advice"
+cc -O2 "${ROOT}/tests/integration/fixture_vm_advice.c" -o "${VM_ADVICE_BIN}"
+LSEEK_SPARSE_BIN="${BIN_DIR}/fixture_lseek_sparse"
+cc -O2 "${ROOT}/tests/integration/fixture_lseek_sparse.c" -o "${LSEEK_SPARSE_BIN}"
+SOCKET_FAMILIES_BIN="${BIN_DIR}/fixture_socket_families"
+cc -O2 "${ROOT}/tests/integration/fixture_socket_families.c" -o "${SOCKET_FAMILIES_BIN}"
+SIGNAL_BACKTRACE_BIN="${BIN_DIR}/fixture_signal_backtrace"
+cc -O2 -rdynamic "${ROOT}/tests/integration/fixture_signal_backtrace.c" -o "${SIGNAL_BACKTRACE_BIN}"
+SIGNAL_WAITS_BIN="${BIN_DIR}/fixture_signal_waits"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_signal_waits.c" -o "${SIGNAL_WAITS_BIN}"
+THREAD_STACK_BOUNDS_BIN="${BIN_DIR}/fixture_thread_stack_bounds"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_thread_stack_bounds.c" -o "${THREAD_STACK_BOUNDS_BIN}"
+WCSCOLL_LOCALE_BIN="${BIN_DIR}/fixture_wcscoll_locale"
+cc -O2 "${ROOT}/tests/integration/fixture_wcscoll_locale.c" -o "${WCSCOLL_LOCALE_BIN}"
+GETTEXT_CATALOGS_BIN="${BIN_DIR}/fixture_gettext_catalogs"
+cc -O2 "${ROOT}/tests/integration/fixture_gettext_catalogs.c" -o "${GETTEXT_CATALOGS_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
 cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
 FORK_MT_BIN="${BIN_DIR}/fixture_fork_mt"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_fork_mt.c" -o "${FORK_MT_BIN}"
 PTHREAD_ROBUST_BIN="${BIN_DIR}/fixture_pthread_robust"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_robust.c" -o "${PTHREAD_ROBUST_BIN}"
+PTHREAD_PSHARED_IPC_BIN="${BIN_DIR}/fixture_pthread_pshared_ipc"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_pshared_ipc.c" -o "${PTHREAD_PSHARED_IPC_BIN}"
+PTHREAD_MUTEX_DESTROYED_BIN="${BIN_DIR}/fixture_pthread_mutex_destroyed"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_mutex_destroyed.c" -o "${PTHREAD_MUTEX_DESTROYED_BIN}"
+DLOPEN_CTOR_THREADS_BIN="${BIN_DIR}/fixture_dlopen_ctor_threads"
+DLOPEN_CTOR_THREADS_LIB="${BIN_DIR}/libfixture_dlopen_ctor_threads.so"
+cc -O1 -fPIC -shared -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads_lib.c" -o "${DLOPEN_CTOR_THREADS_LIB}"
+cc -O1 -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads.c" -o "${DLOPEN_CTOR_THREADS_BIN}" -ldl
+GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
+cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
+RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_rlimit_as_first.c" -o "${RLIMIT_AS_FIRST_BIN}"
+FLOCKFILE_THREADS_BIN="${BIN_DIR}/fixture_flockfile_threads"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_flockfile_threads.c" -o "${FLOCKFILE_THREADS_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
@@ -219,6 +306,8 @@ FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
 cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
 REGEX_CTX_BIN="${BIN_DIR}/fixture_regex_search_context"
 cc -O2 "${ROOT}/tests/integration/fixture_regex_search_context.c" -o "${REGEX_CTX_BIN}"
+SPAWN_FORK_BIN="${BIN_DIR}/fixture_spawn_concurrent_fork"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_spawn_concurrent_fork.c" -o "${SPAWN_FORK_BIN}"
 MALLOC_SIGNAL_BIN="${BIN_DIR}/fixture_malloc_signal_reentry"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_malloc_signal_reentry.c" -o "${MALLOC_SIGNAL_BIN}"
 
@@ -738,7 +827,7 @@ run_optional_case() {
 # case that PASSES fails the run, so the entry must be removed with the fix.
 # Tracked known failures: "mode:case=bead". Each must fail; an unexpected pass
 # is XPASS (a failure) so the entry is removed once fixed.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-hardened:malloc_signal_reentry=bd-na6ede}"
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
 xfails=0
 
 known_failure_bead() {
@@ -818,6 +907,12 @@ EOF
   run_optional_case "sqlite3" "${mode}" "sqlite_memory_select" sqlite3 :memory: "select 41 + 1;" || mode_failed=1
   run_optional_case "redis-cli" "${mode}" "redis_cli_version" redis-cli --version || mode_failed=1
   run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
+  # Its getopt_long table lacks the NULL terminator: works only if main's
+  # stack starts zeroed, as glibc's startup leaves it (segfaulted under fl).
+  # It exits 1 by design; the wrapper prints that status (139 on the crash)
+  # so the case itself exits 0 and the status is compared as output.
+  run_optional_case "aa-features-abi" "${mode}" "aa_features_abi_unknown_option" \
+    /bin/sh -c 'aa-features-abi --version; echo "exit=$?"' || mode_failed=1
 
   # --- real-world corpus (bd-rc0923-epic-eeuy4f.4) ---
   local tree="${CORPUS_DIR}/tree"
@@ -853,8 +948,83 @@ EOF
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then
     run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
+    run_corpus_case "${mode}" "strict_string_overflow_parity" "${STRICT_STRING_OVERFLOW_BIN}" || mode_failed=1
+  else
+    # String/memory ops through a quarantined (freed) block heal to zero length.
+    run_corpus_case "${mode}" "hardened_uaf_heal" "${HARDENED_UAF_HEAL_BIN}" || mode_failed=1
   fi
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
+  # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.
+  run_corpus_case "${mode}" "thread_stack_bounds" "${THREAD_STACK_BOUNDS_BIN}" || mode_failed=1
+  # pthread_kill/sigqueue at the main thread; EINTR from semaphore waits.
+  run_corpus_case "${mode}" "signal_waits" "${SIGNAL_WAITS_BIN}" || mode_failed=1
+  # backtrace() inside signal handlers unwinds through fl's restorer.
+  run_corpus_case "${mode}" "signal_backtrace" "${SIGNAL_BACKTRACE_BIN}" || mode_failed=1
+  # socket()/socketpair() leave family and type to the kernel.
+  run_corpus_case "${mode}" "socket_families" "${SOCKET_FAMILIES_BIN}" || mode_failed=1
+  # lseek SEEK_DATA/SEEK_HOLE (sparse-file copies).
+  run_corpus_case "${mode}" "lseek_sparse" "${LSEEK_SPARSE_BIN}" || mode_failed=1
+  # madvise/mmap/msync values the kernel accepts are not rewritten.
+  run_corpus_case "${mode}" "vm_advice" "${VM_ADVICE_BIN}" || mode_failed=1
+  # sigaction queries, mkostemp flags, waitpid __WALL, listen(-1).
+  run_corpus_case "${mode}" "arg_passthrough" "${ARG_PASSTHROUGH_BIN}" || mode_failed=1
+  # sem_post wakes sem_timedwait waiters (thread and process) at once.
+  run_corpus_case "${mode}" "sem_timedwait_wake" "${SEM_TIMEDWAIT_WAKE_BIN}" || mode_failed=1
+  # qsort keeps equal keys in input order, as glibc's merge sort does.
+  run_corpus_case "${mode}" "qsort_stable" "${QSORT_STABLE_BIN}" || mode_failed=1
+  # Key destructors run after thread-locals are gone; memmove there must not abort.
+  run_corpus_case "${mode}" "thread_key_dtor_teardown" "${THREAD_KEY_DTOR_TEARDOWN_BIN}" || mode_failed=1
+  # long double math: x87 argument slots in, ST(0) out (floorl, frexpl, sincosl, ...).
+  run_corpus_case "${mode}" "long_double_math" "${LONG_DOUBLE_MATH_BIN}" || mode_failed=1
+  # realloc of pre-signal memory inside a signal handler (perl POSIX::SigAction).
+  run_corpus_case "${mode}" "signal_handler_realloc" "${SIGNAL_HANDLER_REALLOC_BIN}" || mode_failed=1
+  # An application's own sbrk-based malloc (bash's lib/malloc) beside fl's.
+  run_corpus_case "${mode}" "app_sbrk_malloc" "${APP_SBRK_MALLOC_BIN}" || mode_failed=1
+  # glob resets glob_t on every return (make globfrees unconditionally).
+  run_corpus_case "${mode}" "glob_reset" "${GLOB_RESET_BIN}" || mode_failed=1
+  # GNU re_compile_pattern/re_search: newline_anchor, regs growth, errors (sed).
+  run_corpus_case "${mode}" "gnu_regex_api" "${GNU_REGEX_API_BIN}" || mode_failed=1
+  # Every failed allocation leaves errno == ENOMEM (gnulib test-*-gnu).
+  run_corpus_case "${mode}" "malloc_enomem" "${MALLOC_ENOMEM_BIN}" || mode_failed=1
+  # memchr/memccpy stop at the first match before an unmapped page (gnulib test-memchr).
+  run_corpus_case "${mode}" "memchr_page_boundary" "${MEMCHR_PAGE_BOUNDARY_BIN}" || mode_failed=1
+  # __fpurge position and freopen(stderr) identity (gnulib test-fpurge/-perror2).
+  run_corpus_case "${mode}" "fpurge_freopen" "${FPURGE_FREOPEN_BIN}" || mode_failed=1
+  # remove() of an empty dir; ftello EBADF on a closed fd (gnulib canonicalize/ftello4).
+  run_corpus_case "${mode}" "remove_dir_ftell_ebadf" "${REMOVE_DIR_FTELL_EBADF_BIN}" || mode_failed=1
+  # LC_TIME items 50..158 (ALTMON, wide names); mbrtowc(pwc, NULL) (gnulib).
+  run_corpus_case "${mode}" "langinfo_time_mbrtowc_null" "${LANGINFO_TIME_MBRTOWC_NULL_BIN}" || mode_failed=1
+  # coreutils gnulib-tests: stdio offsets/close/_flags, printf %b/%wN, getopt,
+  # strtod, fnmatch, futimens, rwlock writer preference.
+  run_corpus_case "${mode}" "stdio_offsets_close_flags" "${STDIO_OFFSETS_CLOSE_FLAGS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "coreutils_gnulib_misc" "${COREUTILS_GNULIB_MISC_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "rwlock_writer_preference" "${RWLOCK_WRITER_PREFERENCE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "getcwd_deep" "${GETCWD_DEEP_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "app_malloc_spawns_thread" "${APP_MALLOC_SPAWNS_THREAD_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "regex_utf8" "${REGEX_UTF8_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "stdio_read_window" "${STDIO_READ_WINDOW_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "locale_l_variants" env TZ=UTC "${LOCALE_L_VARIANTS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "locale_decimal_comma" env LOCPATH="${DECIMAL_COMMA_LOCPATH}" "${LOCALE_DECIMAL_COMMA_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "stdio_closed_std_read_errors" "${STDIO_CLOSED_STD_READ_ERRORS_BIN}" || mode_failed=1
+  # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
+  run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
+import faulthandler, subprocess, sys
+faulthandler.dump_c_stack(open("/dev/null", "w"))
+r = subprocess.run([sys.executable, "-X", "faulthandler", "-c", "import faulthandler; faulthandler._sigsegv()"],
+                   capture_output=True, text=True)
+print("rc", r.returncode, "c-stack frames" , r.stderr.count("Binary file") > 2, "ext-modules", "Extension modules:" in r.stderr)' || mode_failed=1
+  # CPython 3.14 sizes its C stack from pthread_getattr_np; wrong bounds made
+  # every finished thread leak its arguments (refcounts stayed raised).
+  run_optional_case "python3" "${mode}" "python_thread_refcounts" python3 -c '
+import sys, _thread, threading, time
+class B: pass
+b = B()
+for _ in range(3):
+    _thread.start_new_thread(lambda a: None, (b,))
+    time.sleep(0.1)
+t = threading.Thread(target=lambda a: None, args=(b,)); t.start(); t.join()
+print("refcount", sys.getrefcount(b), "thread", sys.getrefcount(t))
+print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_optional_case "node" "${mode}" "node_eval" node -e 'console.log([1, 2, 3].map((x) => x * 7).join(","))' || mode_failed=1
   # Local time (bd-rc0923-epic-eeuy4f.11): zone files, POSIX rules, edge values.
   local tz_case=0
@@ -869,6 +1039,11 @@ EOF
   run_corpus_case "${mode}" "strftime_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "strftime_locale_c_utf8" /usr/bin/env LANG=C.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
+  # LC_MESSAGES: .mo catalogs, plural rules, LANGUAGE, codeset conversion.
+  run_corpus_case "${mode}" "gettext_catalogs_en_us" /usr/bin/env LANG=en_US.UTF-8 "${GETTEXT_CATALOGS_BIN}" || mode_failed=1
+  # LC_COLLATE for wide strings: wcscoll signs and wcsxfrm key order.
+  run_corpus_case "${mode}" "wcscoll_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${WCSCOLL_LOCALE_BIN}" || mode_failed=1
+  run_optional_case "dpkg" "${mode}" "gettext_dpkg_help_en_us" /usr/bin/env LANG=en_US.UTF-8 dpkg --help || mode_failed=1
   # LC_CTYPE: wide classification/case/width, every code point.
   for wide_locale in C C.UTF-8 en_US.UTF-8; do
     run_corpus_case "${mode}" "wide_ctype_${wide_locale//[.-]/_}" "${WIDE_CTYPE_BIN}" "${wide_locale}" || mode_failed=1
@@ -889,6 +1064,18 @@ EOF
   # Process-shared, robust and PI mutexes; process-shared condvars
   # (bd-rc0923-epic-eeuy4f.15).
   run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "pthread_pshared_ipc" "${PTHREAD_PSHARED_IPC_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "dlopen_ctor_threads" "${DLOPEN_CTOR_THREADS_BIN}" "${DLOPEN_CTOR_THREADS_LIB}" || mode_failed=1
+  # strncpy guard page, fstatat NULL, popen with stdio closed, glob slash
+  # runs, UTF-8 fnmatch, huge printf fields, printf EINVAL/ENOMEM (found by
+  # a gnulib testdir).
+  run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
+  # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
+  run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
+  # flockfile(stdout) + putc from several threads: flockfile held the stream
+  # registry lock while blocking on the stream lock (deadlock).
+  run_corpus_case "${mode}" "flockfile_threads" "${FLOCKFILE_THREADS_BIN}" || mode_failed=1
   # fork/popen/system/posix_spawn while other threads are in malloc and stdio
   # (bd-rc0923-epic-eeuy4f.5).
   run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1
@@ -896,11 +1083,18 @@ EOF
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "argp_help_layout" "${ARGP_BIN}" help || mode_failed=1
+  # glibc's own argp tools: lines that fill the right margin exactly, where
+  # glibc's wrap depends on its buffer's leftover bytes (bd-l60w8w) -- one
+  # keeps the last word (gencat), one wraps it (localedef).
+  run_corpus_case "${mode}" "argp_gencat_help" /usr/bin/gencat --help || mode_failed=1
+  run_corpus_case "${mode}" "argp_localedef_help" /usr/bin/localedef --help || mode_failed=1
   # re_search/REG_STARTEND from an offset keep the preceding bytes as ^/\</\b
   # context (sed s///g restarts).
   run_corpus_case "${mode}" "regex_search_context" "${REGEX_CTX_BIN}" || mode_failed=1
   # malloc/free from a signal handler while every thread allocates.
   run_corpus_case "${mode}" "malloc_signal_reentry" "${MALLOC_SIGNAL_BIN}" || mode_failed=1
+  # posix_spawn while another thread forks long-lived children.
+  run_corpus_case "${mode}" "spawn_concurrent_fork" "${SPAWN_FORK_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1

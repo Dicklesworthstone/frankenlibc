@@ -106,18 +106,40 @@ impl KernelSigaction {
     }
 }
 
+// The x86_64 Linux signal restorer: the kernel returns here when a handler
+// returns, and it must issue a bare rt_sigreturn. Unwinders (libgcc, used by
+// glibc's backtrace) look up a return address's FDE at `ra - 1`; with the
+// restorer at a function boundary that lands in the PREVIOUS function's FDE,
+// and backtrace() from a signal handler stopped there -- or crashed, inside
+// a SIGSEGV handler (CPython's faulthandler). glibc's __restore_rt is
+// preceded by a nop for this reason. Here the nop has no FDE either, so the
+// unwinder falls back to recognizing the exact bytes at `ra`
+// (48 c7 c0 0f 00 00 00 0f 05: mov $15,%rax; syscall) and reads the
+// interrupted registers from the ucontext the kernel pushed.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-#[unsafe(naked)]
-unsafe extern "C" fn signal_restorer_trampoline() {
-    // SAFETY: this is the x86_64 Linux signal restorer sequence. The kernel
-    // enters here after a user handler returns and expects a bare rt_sigreturn
-    // syscall with no Rust prologue/epilogue.
-    std::arch::naked_asm!("mov rax, 15", "syscall", "ud2",);
+std::arch::global_asm!(
+    ".pushsection .text.frankenlibc_signal_restorer,\"ax\",@progbits",
+    ".p2align 4",
+    "nop",
+    ".globl frankenlibc_signal_restorer",
+    ".hidden frankenlibc_signal_restorer",
+    ".type frankenlibc_signal_restorer,@function",
+    "frankenlibc_signal_restorer:",
+    "mov rax, 15",
+    "syscall",
+    "ud2",
+    ".size frankenlibc_signal_restorer, . - frankenlibc_signal_restorer",
+    ".popsection",
+);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+unsafe extern "C" {
+    fn frankenlibc_signal_restorer();
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn signal_restorer_trampoline_addr() -> usize {
-    signal_restorer_trampoline as *const () as usize
+    frankenlibc_signal_restorer as *const () as usize
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -197,6 +219,18 @@ pub enum SignalCriticalSectionKind {
 
 impl SignalCriticalSectionKind {
     const COUNT: usize = Self::StdioRegistryFlush as usize + 1;
+    const ALL: [Self; Self::COUNT] = [
+        Self::MallocArenaLockAcquire,
+        Self::MallocFastbinMutation,
+        Self::MallocLargebinLink,
+        Self::PtrValidatorTlsCache,
+        Self::PtrValidatorArenaLookup,
+        Self::PtrValidatorFingerprint,
+        Self::PtrValidatorCanaryCheck,
+        Self::RuntimePolicyDecision,
+        Self::SetjmpContextTransfer,
+        Self::StdioRegistryFlush,
+    ];
 
     const fn risk_ppm(self) -> u32 {
         match self {
@@ -363,6 +397,7 @@ struct SignalTls {
     critical_depth: AtomicU32,
     classification: AtomicU8,
     deferred_signals: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1],
+    deferred_pending: AtomicU64,
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -377,6 +412,7 @@ fn new_signal_tls() -> SignalTls {
         critical_depth: AtomicU32::new(0),
         classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
         deferred_signals: [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1],
+        deferred_pending: AtomicU64::new(0),
     }
 }
 
@@ -391,6 +427,7 @@ thread_local! {
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
     static DEFERRED_SIGNALS: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1] =
         const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
+    static DEFERRED_PENDING: AtomicU64 = const { AtomicU64::new(0) };
 }
 
 fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
@@ -428,6 +465,23 @@ fn with_deferred_signals<R>(
     }
 }
 
+/// Per-thread summary of `DEFERRED_SIGNALS`: bit `signum - 1` is set after a
+/// deferral bumps that signal's count, and cleared (all at once) before the
+/// counts are read. Every critical-section exit -- every hardened malloc and
+/// free -- flushes, and nearly always nothing is pending; scanning all 64
+/// slots to learn that was ~460 instructions, 18% of a hardened malloc+free
+/// (bd-rc0923-epic-eeuy4f.9).
+fn with_deferred_pending<R>(f: impl FnOnce(&AtomicU64) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_pending))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DEFERRED_PENDING.with(f)
+    }
+}
+
 static SIGNAL_DEFERRED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 static SIGNAL_FLUSHED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 static SIGNAL_IMMEDIATE_DELIVERIES: AtomicU64 = AtomicU64::new(0);
@@ -459,41 +513,78 @@ fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
 
-/// Classification per (kind, nested), computed once. `u8::MAX` = not yet.
-static HJI_CLASSIFICATIONS: [[AtomicU8; 2]; SignalCriticalSectionKind::COUNT] =
-    [const { [const { AtomicU8::new(u8::MAX) }; 2] }; SignalCriticalSectionKind::COUNT];
-
-/// The HJI reachability verdict for entering a `kind` critical section,
-/// nested (`depth > 1`) or not.
+/// The HJI reachability verdict for entering a `kind` critical section, not
+/// nested and nested (`depth > 1`): the state a freshly built
+/// `HjiReachabilityController` settles on after `HJI_WARMUP_OBSERVATIONS`
+/// observations of the kind's constant (risk, latency, adverse) inputs.
 ///
-/// Every entry ran HJI_WARMUP_OBSERVATIONS (64) controller updates of the same
-/// constant (risk, latency, adverse) input into a per-thread controller, so
-/// the verdict was that input's fixed point up to a ~4% (0.95^64) trace of the
-/// previous entry's kind. Every malloc and every free enter a critical section:
-/// 128 updates per malloc+free, ~64% of hardened malloc+free's 4.3us
-/// (bd-rc0923-epic-eeuy4f.9). The verdict of a freshly warmed controller is
-/// now computed once per input and reused; racing first computations agree.
+/// Those inputs are compile-time constants, so the verdicts are too; this
+/// table is pinned against the live controller by the signal_abi_test gate
+/// `hji_classification_table_matches_the_controller`, which fails if the
+/// controller or a kind's inputs change. Computing them at run time had two
+/// costs: every malloc and free ran 128 controller updates (~64% of hardened
+/// malloc+free's 4.3 us, bd-rc0923-epic-eeuy4f.9), and once cached per
+/// process, the first computation of a kind could come after the program
+/// capped RLIMIT_AS, where the controller's allocation aborted the process
+/// (gnulib test-printf-posix2, inside realloc); building all 20 before main
+/// instead cost every hardened process ~1.7M instructions.
+const HJI_CLASSIFICATION_TABLE: [[SignalSafetyClassification; 2];
+    SignalCriticalSectionKind::COUNT] = {
+    use SignalSafetyClassification::{MaskRequired as M, Safe as S};
+    // [not nested, nested], in SignalCriticalSectionKind order.
+    [
+        [M, M], // MallocArenaLockAcquire
+        [M, M], // MallocFastbinMutation
+        [M, M], // MallocLargebinLink
+        [S, S], // PtrValidatorTlsCache
+        [S, S], // PtrValidatorArenaLookup
+        [S, S], // PtrValidatorFingerprint
+        [S, S], // PtrValidatorCanaryCheck
+        [S, S], // RuntimePolicyDecision
+        [M, M], // SetjmpContextTransfer
+        [S, S], // StdioRegistryFlush
+    ]
+};
+
 fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
     let depth = with_signal_critical_depth(|value| value.load(Ordering::Relaxed));
-    let adverse = depth > 1;
-    let slot = &HJI_CLASSIFICATIONS[kind as usize][usize::from(adverse)];
-    let cached = slot.load(Ordering::Relaxed);
-    if cached != u8::MAX {
-        return SignalSafetyClassification::from_u8(cached);
-    }
+    HJI_CLASSIFICATION_TABLE[kind as usize][usize::from(depth > 1)]
+}
+
+/// What the table pins: the live controller's verdict.
+fn compute_hji_classification(
+    kind: SignalCriticalSectionKind,
+    adverse: bool,
+) -> SignalSafetyClassification {
     let mut controller = HjiReachabilityController::new();
     for _ in 0..HJI_WARMUP_OBSERVATIONS {
         controller.observe(kind.risk_ppm(), kind.latency_ns(), adverse);
     }
-    let classification = match controller.state() {
+    match controller.state() {
         ReachState::Safe => SignalSafetyClassification::Safe,
         ReachState::Approaching | ReachState::Calibrating => {
             SignalSafetyClassification::DeferSignal
         }
         ReachState::Breached => SignalSafetyClassification::MaskRequired,
-    };
-    slot.store(classification.as_u8(), Ordering::Relaxed);
-    classification
+    }
+}
+
+/// Every (kind, nested) entry where [`HJI_CLASSIFICATION_TABLE`] disagrees
+/// with the live controller, as `kind:nested table=.. live=..` (empty when
+/// the table is current). For the signal_abi_test gate.
+#[doc(hidden)]
+pub fn hji_classification_table_mismatches_for_tests() -> Vec<String> {
+    let mut mismatches = Vec::new();
+    for kind in SignalCriticalSectionKind::ALL {
+        for adverse in [false, true] {
+            let table = HJI_CLASSIFICATION_TABLE[kind as usize][usize::from(adverse)];
+            let live = compute_hji_classification(kind, adverse);
+            if table != live {
+                mismatches.push(format!("{kind:?}:{adverse} table={table:?} live={live:?}"));
+            }
+        }
+    }
+    mismatches
 }
 
 fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
@@ -525,23 +616,33 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
         let _ = context;
         slot.count.fetch_add(1, Ordering::Relaxed);
     });
+    // After the count: a flush that sees this bit is guaranteed to see the
+    // count; one that cleared the mask earlier leaves the bit for the next.
+    with_deferred_pending(|mask| mask.fetch_or(1u64 << (signum - 1), Ordering::Release));
     SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
 }
 
 fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
+    // Only this thread and its own signal handlers touch the mask and slots. A
+    // plain load first keeps the common nothing-pending exit free of a locked
+    // RMW; a handler that defers after the swap leaves its bit for the next
+    // flush, and one that ran before it is in `bits`.
+    let mut bits = with_deferred_pending(|mask| {
+        if mask.load(Ordering::Relaxed) == 0 {
+            0
+        } else {
+            mask.swap(0, Ordering::Acquire)
+        }
+    });
+    if bits == 0 {
+        return Vec::new();
+    }
     with_deferred_signals(|pending| {
         let mut out = Vec::new();
-        for signum in 1..=MAX_TRACKED_SIGNAL as c_int {
+        while bits != 0 {
+            let signum = bits.trailing_zeros() as c_int + 1;
+            bits &= bits - 1;
             let slot = &pending[signum as usize];
-            // A plain load first: every critical-section exit (every malloc
-            // and free) scans all slots, and 64 unconditional atomic swaps were
-            // the largest cost of hardened malloc+free once the HJI loop was
-            // gone (bd-rc0923-epic-eeuy4f.9). Only this thread and its own
-            // signal handlers touch these slots, and a handler that runs
-            // between the load and the swap is caught by the swap.
-            if slot.count.load(Ordering::Relaxed) == 0 {
-                continue;
-            }
             let count = slot.count.swap(0, Ordering::Relaxed);
             if count != 0 {
                 let siginfo = if slot.has_siginfo.swap(0, Ordering::Relaxed) != 0 {
@@ -599,6 +700,9 @@ unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+    // The handler may allocate while its thread was interrupted holding an
+    // allocator lock: keep its allocations off every lock (bd-na6ede).
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
 }
@@ -618,6 +722,8 @@ unsafe extern "C" fn signal_siginfo_trampoline(
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+    // See `signal_handler_trampoline`.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, info, context) };
 }
@@ -1352,7 +1458,15 @@ pub unsafe extern "C" fn sigaction(
         return -1;
     }
 
-    if !signal_core::catchable_signal(signum) {
+    // glibc: out-of-range signals and its internal SIGCANCEL/SIGSETXID
+    // (32, 33 -- which the host's threads really use in interpose mode) are
+    // EINVAL; SIGKILL/SIGSTOP only when a new action is given, so querying
+    // every handler from 1 to NSIG succeeds.
+    let uncatchable = signum == libc::SIGKILL || signum == libc::SIGSTOP;
+    if !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+        || (uncatchable && !act.is_null())
+    {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;

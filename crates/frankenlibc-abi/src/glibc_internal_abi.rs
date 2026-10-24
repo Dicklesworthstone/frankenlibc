@@ -318,22 +318,29 @@ pub unsafe extern "C" fn pthread_kill_other_threads_np() -> c_int {
 pub unsafe extern "C" fn pthread_mutex_consistent_np(mutex: *mut c_void) -> c_int {
     unsafe { super::pthread_abi::pthread_mutex_consistent(mutex.cast()) }
 }
-// pthread_mutex_getprioceiling: native regular-mutex contract.
+// pthread_mutex_getprioceiling: the ceiling of a PRIO_PROTECT mutex; EINVAL otherwise.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_getprioceiling(
-    _mutex: *const c_void,
-    _prioceiling: *mut c_int,
+    mutex: *const c_void,
+    prioceiling: *mut c_int,
 ) -> c_int {
-    libc::EINVAL
+    unsafe {
+        super::pthread_abi::native_pthread_mutex_getprioceiling(
+            mutex.cast_mut().cast(),
+            prioceiling,
+        )
+    }
 }
-// pthread_mutex_setprioceiling: native regular-mutex contract.
+// pthread_mutex_setprioceiling: replace a PRIO_PROTECT mutex's ceiling.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_setprioceiling(
-    _mutex: *mut c_void,
-    _prioceiling: c_int,
-    _old: *mut c_int,
+    mutex: *mut c_void,
+    prioceiling: c_int,
+    old: *mut c_int,
 ) -> c_int {
-    libc::EINVAL
+    unsafe {
+        super::pthread_abi::native_pthread_mutex_setprioceiling(mutex.cast(), prioceiling, old)
+    }
 }
 // pthread_mutexattr_getkind_np: GNU alias for pthread_mutexattr_gettype
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -747,7 +754,7 @@ pub unsafe extern "C" fn strfromf64(
 ) -> c_int {
     unsafe { crate::string_abi::strfromd(str, n, fmt, fp) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfromf64x(
     str: *mut c_char,
     n: SizeT,
@@ -758,7 +765,7 @@ pub unsafe extern "C" fn strfromf64x(
 }
 /// Parse a `strfrom`-style `%[flags][width][.precision]CONV` format string into
 /// a `FmtSpec` (defaults to `%g` if the conversion can't be parsed).
-unsafe fn parse_f128_fmt(fmt: *const c_char) -> frankenlibc_core::float128::FmtSpec {
+pub(crate) unsafe fn parse_f128_fmt(fmt: *const c_char) -> frankenlibc_core::float128::FmtSpec {
     use frankenlibc_core::float128::FmtSpec;
     let mut spec = FmtSpec {
         conv: b'g',
@@ -1492,19 +1499,21 @@ pub unsafe extern "C" fn __res_mkquery(
     pos as c_int
 }
 
-// __res_nclose: close resolver state. We use global config, so this is a no-op.
+// __res_nclose: release only native allocations owned by this resolver state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nclose(_statp: *mut c_void) {
-    // Our native resolver uses a global LazyLock config — nothing to close.
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::close(_statp) }
 }
 
-// __res_ninit: initialize resolver state. We forward to res_init.
+// __res_ninit: initialize independent caller-owned resolver configuration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_ninit(_statp: *mut c_void) -> c_int {
-    unsafe { super::unistd_abi::res_init() }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::init(_statp) }
 }
 
-// __res_nmkquery: per-state mkquery — forward to __res_mkquery (ignoring state).
+// __res_nmkquery: build from the caller state, including RD and AD options.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nmkquery(
     _statp: *mut c_void,
@@ -1518,10 +1527,11 @@ pub unsafe extern "C" fn __res_nmkquery(
     buf: *mut c_void,
     buflen: c_int,
 ) -> c_int {
-    unsafe { __res_mkquery(op, dname, class, typ, data, datalen, newrr, buf, buflen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::mkquery(_statp, op, dname, class, typ, data, datalen, newrr, buf, buflen) }
 }
 
-// __res_nquery: per-state query — forward to __res_query (ignoring state).
+// __res_nquery: query through the caller endpoints and update its error slot.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nquery(
     _statp: *mut c_void,
@@ -1531,10 +1541,11 @@ pub unsafe extern "C" fn __res_nquery(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::query(_statp, dname, class, typ, answer, anslen) }
 }
 
-// __res_nquerydomain: per-state querydomain — forward to __res_querydomain.
+// __res_nquerydomain: use the caller state for an exact combined name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nquerydomain(
     _statp: *mut c_void,
@@ -1545,10 +1556,11 @@ pub unsafe extern "C" fn __res_nquerydomain(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { __res_querydomain(name, domain, class, typ, answer, anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::querydomain(_statp, name, domain, class, typ, answer, anslen) }
 }
 
-// __res_nsearch: per-state search — forward to __res_search.
+// __res_nsearch: apply the caller search list, ndots and search option flags.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nsearch(
     _statp: *mut c_void,
@@ -1558,10 +1570,11 @@ pub unsafe extern "C" fn __res_nsearch(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::search(_statp, dname, class, typ, answer, anslen) }
 }
 
-// __res_nsend: per-state send — forward to __res_send.
+// __res_nsend: send through a snapshot of the caller endpoints and options.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nsend(
     _statp: *mut c_void,
@@ -1570,7 +1583,8 @@ pub unsafe extern "C" fn __res_nsend(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { __res_send(msg, msglen, answer, anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::send(_statp, msg, msglen, answer, anslen) }
 }
 // __res_ownok: check if owner name is valid (like dnok)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1687,8 +1701,8 @@ pub unsafe extern "C" fn __res_search(
 ) -> c_int {
     unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
 }
-// __res_send: send a pre-formatted DNS query and return the raw response.
-// Uses our global resolver config (nameservers from /etc/resolv.conf).
+// __res_send: raw messages use the same peer/question-bound UDP/TCP engine
+// as native host lookup. Do not maintain a second, ID-only UDP receiver here.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_send(
     msg: *const c_void,
@@ -1696,70 +1710,61 @@ pub unsafe extern "C" fn __res_send(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    use frankenlibc_core::resolv::dns::DNS_MAX_UDP_SIZE;
-    use std::net::UdpSocket;
+    use frankenlibc_core::dns_transport::{QueryError, raw};
+    use frankenlibc_core::resolv::dns::DNS_HEADER_SIZE;
+    use std::io::ErrorKind;
 
-    if msg.is_null() || answer.is_null() || msglen < 12 || anslen <= 0 {
-        return -1;
+    let fail = |error: QueryError| {
+        let code = match error {
+            QueryError::InvalidQuery => libc::EINVAL,
+            QueryError::InvalidResponse => libc::EMSGSIZE,
+            QueryError::ResponseCode(_) | QueryError::RetryableResponse(_) => libc::EAGAIN,
+            QueryError::Io(error) => error.raw_os_error().unwrap_or_else(|| match error.kind() {
+                ErrorKind::TimedOut | ErrorKind::WouldBlock => libc::ETIMEDOUT,
+                ErrorKind::ConnectionRefused => libc::ECONNREFUSED,
+                ErrorKind::ConnectionReset | ErrorKind::UnexpectedEof => libc::ECONNRESET,
+                ErrorKind::Interrupted => libc::EINTR,
+                ErrorKind::PermissionDenied => libc::EACCES,
+                ErrorKind::InvalidInput => libc::EINVAL,
+                _ => libc::EIO,
+            }),
+        };
+        // SAFETY: errno storage belongs to this thread.
+        unsafe { set_abi_errno(code) };
+        -1
+    };
+    if msg.is_null()
+        || answer.is_null()
+        || msglen < DNS_HEADER_SIZE as c_int
+        || msglen > u16::MAX as c_int
+        || anslen < DNS_HEADER_SIZE as c_int
+    {
+        return fail(QueryError::InvalidQuery);
     }
     if tracked_region_too_short_addr(msg as usize, msglen as usize)
         || tracked_output_too_short(answer, anslen as usize)
     {
-        return -1;
+        return fail(QueryError::InvalidQuery);
     }
 
-    let query = unsafe { std::slice::from_raw_parts(msg as *const u8, msglen as usize) };
-    let tx_id = u16::from_be_bytes([query[0], query[1]]);
-
-    // Use our cached resolver config.
-    let config = &*super::unistd_abi::RESOLV_CONFIG;
-    let timeout = config.query_timeout();
-    let mut recv_buf = vec![0u8; DNS_MAX_UDP_SIZE.max(anslen as usize)];
-
-    for _attempt in 0..config.attempts {
-        for ns in &config.nameservers {
-            let dest = std::net::SocketAddr::new(*ns, frankenlibc_core::resolv::config::DNS_PORT);
-            let bind_addr = if ns.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
-            let sock = match UdpSocket::bind(bind_addr) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let _ = sock.set_read_timeout(Some(timeout));
-            let _ = sock.set_write_timeout(Some(timeout));
-
-            if sock.send_to(query, dest).is_err() {
-                continue;
-            }
-
-            match sock.recv_from(&mut recv_buf) {
-                Ok((n, _)) => {
-                    if n < 12 {
-                        continue;
-                    }
-                    // Verify transaction ID.
-                    let resp_id = u16::from_be_bytes([recv_buf[0], recv_buf[1]]);
-                    if resp_id != tx_id {
-                        continue;
-                    }
-                    // Check QR bit (response).
-                    if (recv_buf[2] & 0x80) == 0 {
-                        continue;
-                    }
-                    let copy_len = n.min(anslen as usize);
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            recv_buf.as_ptr(),
-                            answer as *mut u8,
-                            copy_len,
-                        );
-                    }
-                    return copy_len as c_int;
-                }
-                Err(_) => continue,
-            }
-        }
+    // SAFETY: caller owns a readable message; signed lengths, null pointers
+    // and tracked allocation extents have been checked before socket I/O.
+    let query = unsafe { std::slice::from_raw_parts(msg.cast::<u8>(), msglen as usize) };
+    let config = raw::Config::from(&*super::unistd_abi::RESOLV_CONFIG);
+    let reply = match raw::send(query, &config) {
+        Ok(reply) => reply,
+        Err(error) => return fail(error),
+    };
+    // Construct the mutable output only AFTER the transport no longer borrows
+    // the query. Callers may reuse their message buffer as the answer buffer.
+    // SAFETY: writable caller storage with the checked advertised extent.
+    let out = unsafe { std::slice::from_raw_parts_mut(answer.cast::<u8>(), anslen as usize) };
+    match reply.copy_answer(out) {
+        // TCP may report more bytes than fit in out, with TC marked there.
+        // The wire limit bounds this conversion even for a huge caller buffer.
+        Ok(length) => length as c_int,
+        Err(error) => fail(error),
     }
-    -1
 }
 
 // __res_state: return a pointer to the per-thread resolver state.
@@ -2228,23 +2233,23 @@ pub unsafe extern "C" fn __uselocale(loc: *mut c_void) -> *mut c_void {
 pub unsafe extern "C" fn __duplocale(loc: *mut c_void) -> *mut c_void {
     unsafe { crate::locale_abi::duplocale(loc) }
 }
-// __dcgettext/__dgettext: native — return msgid untranslated (C locale passthrough)
+// __dcgettext/__dgettext: glibc's internal aliases of dcgettext/dgettext.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __dcgettext(
     domainname: *const c_char,
     msgid: *const c_char,
     category: c_int,
 ) -> *mut c_char {
-    let _ = (domainname, category);
-    msgid as *mut c_char
+    unsafe {
+        crate::locale_abi::dcigettext(domainname, msgid, std::ptr::null(), false, 1, category)
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __dgettext(
     domainname: *const c_char,
     msgid: *const c_char,
 ) -> *mut c_char {
-    let _ = domainname;
-    msgid as *mut c_char
+    unsafe { crate::locale_abi::dgettext(domainname, msgid) }
 }
 
 // ==========================================================================
@@ -4374,26 +4379,25 @@ pub unsafe extern "C" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> 
         }
     }
 }
-// __open/__open64: native syscall
+// __open/__open64: glibc's internal aliases of open, which is variadic: the
+// mode is the third argument with O_CREAT/O_TMPFILE. It is taken as a fixed
+// third parameter, as `open` does (the same register on x86_64); these used
+// to pass mode 0, creating files with no permissions.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __open(pathname: *const c_char, flags: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_open(pathname as *const u8, flags, 0) } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __open(
+    pathname: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __open64(pathname: *const c_char, flags: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_open(pathname as *const u8, flags, 0) } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __open64(
+    pathname: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
 }
 // __overflow: glibc stdio vtable helper — native file overflow bridge
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4414,7 +4418,12 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
             libc::EOF
         };
     }
-    unsafe { crate::stdio_abi::fputc(c, fp) }
+    let rc = unsafe { crate::stdio_abi::fputc(c, fp) };
+    // Publish the write window again (fputc's fast path clears it), so the
+    // following inline putc_unlocked calls store straight into the buffer
+    // until it fills -- the write-side twin of __uflow's republish.
+    crate::stdio_abi::republish_read_window(fp);
+    rc
 }
 // __poll: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4844,11 +4853,11 @@ pub unsafe extern "C" fn __xpg_sigpause(sig: c_int) -> c_int {
     }
 }
 // --- Native math: long-double classification (long double = f64 in this ABI) ---
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __signbitl(x: f64) -> c_int {
     (x.to_bits() >> 63) as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isinfl(x: f64) -> c_int {
     if x == f64::INFINITY {
         1
@@ -4858,11 +4867,11 @@ pub unsafe extern "C" fn __isinfl(x: f64) -> c_int {
         0
     }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isnanl(x: f64) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
@@ -5439,7 +5448,12 @@ pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    unsafe { crate::io_internal_abi::_IO_default_uflow(fp) }
+    // The inlined getc_unlocked calls this when its read window is empty:
+    // after the refill, publish the new window so the following bytes are
+    // read inline (bd-ygc3li).
+    let ch = unsafe { crate::io_internal_abi::_IO_default_uflow(fp) };
+    crate::stdio_abi::republish_read_window(fp);
+    ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
@@ -5447,7 +5461,9 @@ pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    unsafe { crate::io_internal_abi::_IO_file_underflow(fp) }
+    let ch = unsafe { crate::io_internal_abi::_IO_file_underflow(fp) };
+    crate::stdio_abi::republish_read_window(fp);
+    ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {
@@ -5752,7 +5768,7 @@ pub unsafe extern "C" fn chflags(path: *const c_char, flags: c_ulong) -> c_int {
     -1
 }
 // copysignl: native — copy sign of y to x
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn copysignl(x: f64, y: f64) -> f64 {
     f64::from_bits((x.to_bits() & 0x7FFF_FFFF_FFFF_FFFF) | (y.to_bits() & 0x8000_0000_0000_0000))
 }
@@ -5785,8 +5801,27 @@ pub unsafe extern "C" fn dladdr1(
     addr: *const c_void,
     info: *mut c_void,
     extra_info: *mut *mut c_void,
-    _flags: c_int,
+    flags: c_int,
 ) -> c_int {
+    // The host knows every object it loaded and returns its link_map /
+    // ElfW(Sym) for RTLD_DL_LINKMAP / RTLD_DL_SYMENT. Callers dereference
+    // them on success: CPython's faulthandler reads map->l_addr, and
+    // segfaulted on the NULL left here before.
+    #[cfg(not(feature = "standalone"))]
+    if !addr.is_null()
+        && !info.is_null()
+        && let Some(host) = crate::host_resolve::host_dladdr1_cached()
+    {
+        type Dladdr1Fn =
+            unsafe extern "C" fn(*const c_void, *mut c_void, *mut *mut c_void, c_int) -> c_int;
+        // SAFETY: the cache holds the host's dladdr1, of this C signature.
+        let host_fn: Dladdr1Fn = unsafe { std::mem::transmute(host) };
+        let rc = unsafe { host_fn(addr, info, extra_info, flags) };
+        if rc != 0 {
+            return rc;
+        }
+    }
+    // Objects only fl's own loader knows: dladdr's answer, no extra info.
     if !extra_info.is_null() {
         unsafe { *extra_info = std::ptr::null_mut() };
     }
@@ -5994,7 +6029,7 @@ pub unsafe extern "C" fn fdetach(path: *const c_char) -> c_int {
     -1
 }
 // frexpl: native — decompose into significand * 2^exp (0.5 <= |frac| < 1.0)
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn frexpl(x: f64, exp: *mut c_int) -> f64 {
     if x == 0.0 || x.is_nan() || x.is_infinite() {
         if !exp.is_null() {
@@ -6608,7 +6643,7 @@ pub unsafe extern "C" fn isinff(x: f32) -> c_int {
         0
     }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn isinfl(x: f64) -> c_int {
     if x == f64::INFINITY {
         1
@@ -6622,11 +6657,11 @@ pub unsafe extern "C" fn isinfl(x: f64) -> c_int {
 pub unsafe extern "C" fn isnanf(x: f32) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn isnanl(x: f64) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
@@ -6659,7 +6694,7 @@ pub unsafe extern "C" fn lchmod(pathname: *const c_char, mode: c_uint) -> c_int 
     }
 }
 // ldexpl: native — x * 2^exp via repeated doubling/halving
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ldexpl(x: f64, exp: c_int) -> f64 {
     native_ldexp(x, exp)
 }
@@ -6710,7 +6745,7 @@ pub unsafe extern "C" fn mkstemps64(template: *mut c_char, suffixlen: c_int) -> 
     unsafe { crate::stdlib_abi::mkstemps(template, suffixlen) }
 }
 // modfl: native — split into integer + fractional parts
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
     if x.is_nan() || x.is_infinite() {
         if !iptr.is_null() {
@@ -7302,7 +7337,7 @@ pub unsafe extern "C" fn ruserpass(
     -1
 }
 // scalbnl: native — x * 2^n (same as ldexp)
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbnl(x: f64, n: c_int) -> f64 {
     native_ldexp(x, n)
 }
@@ -7419,11 +7454,10 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
                 )
             })
         } {
-            if err == libc::ETIMEDOUT {
-                unsafe { crate::errno_abi::set_abi_errno(err) };
-                return -1;
-            }
-            if err != libc::EAGAIN && err != libc::EINTR {
+            // A signal handler interrupting the wait fails it with EINTR, even
+            // under SA_RESTART, as glibc's sem_clockwait does: CPython's lock
+            // acquire waits here and must return to run Python signal handlers.
+            if err != libc::EAGAIN {
                 unsafe { crate::errno_abi::set_abi_errno(err) };
                 return -1;
             }

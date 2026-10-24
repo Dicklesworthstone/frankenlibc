@@ -827,6 +827,14 @@ fn lookup_active_ffi_pcc_certificate(
 }
 
 fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
+    // A certificate is reached only through the trace context, and only
+    // `entrypoint_scope` sets one -- which it skips under strict passthrough.
+    // There the lookup can only find the fallback context (no certificate), but
+    // it paid a `__tls_get_addr` round-trip to learn that on every strict
+    // malloc/calloc/memcpy (bd-rc0923-epic-eeuy4f.26).
+    if strict_passthrough_active() {
+        return None;
+    }
     if !ensure_ffi_pcc_verified() {
         return None;
     }
@@ -1675,6 +1683,27 @@ fn ensure_minimal_panic_hook() {
                     };
                 }
                 let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+                // The location is usually inside std (thread_local's `with`,
+                // RefCell borrow), so print the caller chain too, as
+                // `object(+offset)` lines: the process is about to abort, and
+                // without this a report names no fl function at all.
+                #[cfg(not(feature = "standalone"))]
+                {
+                    const TRACE: &[u8] = b"frankenlibc: panic backtrace:\n";
+                    let _ = unsafe {
+                        syscall::sys_write(libc::STDERR_FILENO, TRACE.as_ptr(), TRACE.len())
+                    };
+                    let mut frames = [std::ptr::null_mut::<std::ffi::c_void>(); 48];
+                    // SAFETY: `frames` holds 48 slots; both calls only read them.
+                    unsafe {
+                        let n = crate::unistd_abi::backtrace(frames.as_mut_ptr(), 48);
+                        crate::unistd_abi::backtrace_symbols_fd(
+                            frames.as_ptr(),
+                            n,
+                            libc::STDERR_FILENO,
+                        );
+                    }
+                }
             }
             PANIC_HOOK_WRITE_STATE.store(PANIC_HOOK_WRITE_IDLE, AtomicOrdering::Release);
         }));
@@ -1790,6 +1819,14 @@ fn record_last_explainability(
     };
 
     let _ = with_last_explainability(|slot| *slot = Some(explainability));
+}
+
+/// Build the runtime-math kernel now if no call has yet. Process startup does
+/// this before main: built lazily, the kernel's first use can come after the
+/// program has capped RLIMIT_AS, where its ~158 KiB construction frame cannot
+/// grow the stack and faults (gnulib test-dprintf-posix2 under strict).
+pub(crate) fn prewarm_kernel() {
+    let _ = kernel();
 }
 
 #[inline]
@@ -2708,6 +2745,19 @@ pub(crate) fn observe(
                 // getaddrinfo and the hardened-mode getnameinfo_full path.
                 | ApiFamily::Resolver
         )
+    {
+        return;
+    }
+
+    // Allocators call mmap/munmap/madvise/mremap from inside their own
+    // critical sections. Building the kernel here allocates through the
+    // `malloc` symbol, which a program may define itself (Bun/mimalloc
+    // export malloc): mimalloc's first mmap re-entered mimalloc mid-init,
+    // got NULL, and fl aborted with "memory allocation of 408 bytes failed"
+    // (the Claude Code binary, `--version`). Observe into an existing kernel
+    // only.
+    if family == ApiFamily::VirtualMemory
+        && KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY
     {
         return;
     }

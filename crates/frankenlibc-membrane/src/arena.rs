@@ -17,8 +17,232 @@ use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::lattice::SafetyState;
 use crate::tls_cache::bump_shard_epoch;
 
-/// Maximum quarantine queue size in bytes.
+/// Maximum quarantine size in bytes, across all shards.
 const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
+
+/// Where arena blocks (header + user bytes + canary) come from.
+///
+/// Defaults to the Rust global allocator. Inside libc.so that allocator IS the
+/// library's own exported `malloc`, so every arena block took a second trip
+/// through the allocator entry -- the reentrant bootstrap path and its
+/// globally locked host-allocation table -- once to allocate and once to free;
+/// that table was a third of hardened time with eight threads. The ABI layer
+/// installs the host allocator directly instead.
+#[derive(Clone, Copy)]
+pub struct RawBlockAllocator {
+    /// Allocate `size` bytes aligned to `align` (a power of two); null on failure.
+    pub alloc: unsafe fn(size: usize, align: usize) -> *mut u8,
+    /// Release a block returned by `alloc` with the same `size` and `align`.
+    pub dealloc: unsafe fn(ptr: *mut u8, size: usize, align: usize),
+}
+
+static RAW_BLOCK_ALLOCATOR: std::sync::OnceLock<RawBlockAllocator> = std::sync::OnceLock::new();
+
+/// Use `allocator` for every arena block. Only possible before the first block
+/// is allocated -- blocks must be freed by the allocator that made them -- so
+/// returns false (and changes nothing) once the default is in use.
+pub fn install_raw_block_allocator(allocator: RawBlockAllocator) -> bool {
+    RAW_BLOCK_ALLOCATOR.set(allocator).is_ok()
+}
+
+fn raw_block_allocator() -> &'static RawBlockAllocator {
+    RAW_BLOCK_ALLOCATOR.get_or_init(|| RawBlockAllocator {
+        alloc: global_alloc_block,
+        dealloc: global_dealloc_block,
+    })
+}
+
+unsafe fn global_alloc_block(size: usize, align: usize) -> *mut u8 {
+    match std::alloc::Layout::from_size_align(size, align) {
+        // SAFETY: the layout is valid and non-zero (it always includes the header).
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+unsafe fn global_dealloc_block(ptr: *mut u8, size: usize, align: usize) {
+    if let Ok(layout) = std::alloc::Layout::from_size_align(size, align) {
+        // SAFETY: the caller passes a block from `global_alloc_block` with this layout.
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+}
+
+/// Release an arena block through the allocator that made it.
+///
+/// # Safety
+///
+/// `raw_base` came from this arena's block allocator with this size and
+/// alignment, and is released exactly once.
+unsafe fn release_block(raw_base: usize, total_size: usize, align: usize) {
+    // SAFETY: forwarded caller contract.
+    unsafe { (raw_block_allocator().dealloc)(raw_base as *mut u8, total_size, align) };
+}
+
+/// Node storage for a shard's address index (`ArenaShard::addr_to_slot`).
+///
+/// The index is a `BTreeMap`, which allocates a node on roughly every sixth
+/// insert and frees one as entries drain from quarantine. Through the global
+/// allocator each of those was a trip through the library's own exported
+/// `malloc` -- the reentrant bootstrap path, its locked host-allocation table
+/// and the stats -- and with the frees it was ~15% of a hardened malloc+free
+/// (bd-rc0923-epic-eeuy4f.9). The pool keeps freed nodes on per-layout free
+/// lists and carves new ones from chunks taken from the raw block allocator
+/// (the host allocator inside libc.so), so the index never re-enters `malloc`.
+///
+/// Exclusivity: a pool is reachable only through the allocator handles of one
+/// shard's map, and that map is only touched with the shard's lock held, so
+/// the pool's cells are never accessed concurrently.
+struct IndexNodePool {
+    state: std::cell::UnsafeCell<IndexNodePoolState>,
+}
+
+struct IndexNodePoolState {
+    /// (size, align, free-list head) for each node layout seen; a BTreeMap of
+    /// one key/value type uses two (leaf and internal nodes).
+    bins: [(usize, usize, *mut u8); INDEX_POOL_BINS],
+    /// Unused tail of the newest chunk.
+    cursor: usize,
+    end: usize,
+    /// Intrusive list of chunks (first word of each), released on drop.
+    chunks: *mut u8,
+}
+
+const INDEX_POOL_BINS: usize = 4;
+const INDEX_POOL_CHUNK: usize = 64 * 1024;
+const INDEX_POOL_CHUNK_ALIGN: usize = 64;
+
+// SAFETY: see the exclusivity note on `IndexNodePool`: every access happens
+// under the owning shard's lock, which also orders accesses across threads.
+unsafe impl Send for IndexNodePool {}
+// SAFETY: as above.
+unsafe impl Sync for IndexNodePool {}
+
+impl IndexNodePool {
+    fn new() -> Self {
+        Self {
+            state: std::cell::UnsafeCell::new(IndexNodePoolState {
+                bins: [(0, 0, std::ptr::null_mut()); INDEX_POOL_BINS],
+                cursor: 0,
+                end: 0,
+                chunks: std::ptr::null_mut(),
+            }),
+        }
+    }
+}
+
+impl Drop for IndexNodePool {
+    fn drop(&mut self) {
+        let state = self.state.get_mut();
+        let mut chunk = state.chunks;
+        while !chunk.is_null() {
+            // SAFETY: each chunk stores the next chunk pointer in its first word.
+            let next = unsafe { chunk.cast::<*mut u8>().read() };
+            // SAFETY: the chunk came from the block allocator with this layout.
+            unsafe { release_block(chunk as usize, INDEX_POOL_CHUNK, INDEX_POOL_CHUNK_ALIGN) };
+            chunk = next;
+        }
+    }
+}
+
+/// Allocator handle given to a shard's index map.
+#[derive(Clone)]
+struct IndexNodeAlloc(std::sync::Arc<IndexNodePool>);
+
+impl IndexNodeAlloc {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(IndexNodePool::new()))
+    }
+
+    /// Bin for `layout`, claiming an empty one on first sight; `None` once all
+    /// are taken by other layouts (never for a BTreeMap, which has two).
+    fn bin(state: &mut IndexNodePoolState, layout: std::alloc::Layout) -> Option<usize> {
+        let key = (layout.size(), layout.align());
+        if let Some(index) = state.bins.iter().position(|b| (b.0, b.1) == key) {
+            return Some(index);
+        }
+        let index = state.bins.iter().position(|b| b.0 == 0)?;
+        state.bins[index] = (key.0, key.1, std::ptr::null_mut());
+        Some(index)
+    }
+}
+
+// SAFETY: clones share one pool through the `Arc`, so a block from either is
+// freed by the other, and the pool (with every block) lives until the last
+// clone drops.
+unsafe impl std::alloc::AllocatorClone for IndexNodeAlloc {}
+
+// SAFETY: blocks handed out are distinct, sized and aligned for their layout,
+// and stay valid until deallocated through this pool (whose chunks outlive
+// every node: the map drops its nodes before the last handle drops the pool).
+unsafe impl std::alloc::Allocator for IndexNodeAlloc {
+    fn allocate(
+        &self,
+        layout: std::alloc::Layout,
+    ) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
+        let fits_pool = layout.size() >= std::mem::size_of::<*mut u8>()
+            && layout.align() <= INDEX_POOL_CHUNK_ALIGN
+            && layout.size() <= INDEX_POOL_CHUNK / 4;
+        // SAFETY: exclusive access per the pool's invariant.
+        let state = unsafe { &mut *self.0.state.get() };
+        let bin = if fits_pool {
+            Self::bin(state, layout)
+        } else {
+            None
+        };
+        let Some(bin) = bin else {
+            // SAFETY: valid non-zero layout; released through `deallocate`.
+            let ptr = unsafe { (raw_block_allocator().alloc)(layout.size(), layout.align()) };
+            return std::ptr::NonNull::new(ptr)
+                .map(|p| std::ptr::NonNull::slice_from_raw_parts(p, layout.size()))
+                .ok_or(std::alloc::AllocError);
+        };
+        let head = state.bins[bin].2;
+        if !head.is_null() {
+            // SAFETY: free nodes store the next free node in their first word.
+            state.bins[bin].2 = unsafe { head.cast::<*mut u8>().read() };
+            // SAFETY: `head` is a non-null node of this layout.
+            let ptr = unsafe { std::ptr::NonNull::new_unchecked(head) };
+            return Ok(std::ptr::NonNull::slice_from_raw_parts(ptr, layout.size()));
+        }
+        let mut start = state.cursor.next_multiple_of(layout.align());
+        if state.cursor == 0 || start + layout.size() > state.end {
+            // SAFETY: valid non-zero layout; the chunk is released on drop.
+            let chunk =
+                unsafe { (raw_block_allocator().alloc)(INDEX_POOL_CHUNK, INDEX_POOL_CHUNK_ALIGN) };
+            if chunk.is_null() {
+                return Err(std::alloc::AllocError);
+            }
+            // SAFETY: the chunk is at least one word and suitably aligned.
+            unsafe { chunk.cast::<*mut u8>().write(state.chunks) };
+            state.chunks = chunk;
+            state.cursor = chunk as usize + INDEX_POOL_CHUNK_ALIGN;
+            state.end = chunk as usize + INDEX_POOL_CHUNK;
+            start = state.cursor.next_multiple_of(layout.align());
+        }
+        state.cursor = start + layout.size();
+        // SAFETY: `start` lies inside the current chunk and is non-zero.
+        let ptr = unsafe { std::ptr::NonNull::new_unchecked(start as *mut u8) };
+        Ok(std::ptr::NonNull::slice_from_raw_parts(ptr, layout.size()))
+    }
+
+    unsafe fn deallocate(&self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) {
+        // SAFETY: exclusive access per the pool's invariant.
+        let state = unsafe { &mut *self.0.state.get() };
+        let bin = state
+            .bins
+            .iter()
+            .position(|b| (b.0, b.1) == (layout.size(), layout.align()));
+        match bin {
+            Some(bin) => {
+                // SAFETY: the node is at least one word (checked at allocation).
+                unsafe { ptr.as_ptr().cast::<*mut u8>().write(state.bins[bin].2) };
+                state.bins[bin].2 = ptr.as_ptr();
+            }
+            // SAFETY: came from the raw block allocator with this layout.
+            None => unsafe { release_block(ptr.as_ptr() as usize, layout.size(), layout.align()) },
+        }
+    }
+}
 
 /// Number of shards for arena locks (power of 2).
 ///
@@ -56,24 +280,38 @@ pub struct QuarantineEntry {
 /// A single shard of the arena.
 struct ArenaShard {
     slots: Vec<ArenaSlot>,
-    /// Map from user_base address to slot index.
-    addr_to_slot: std::collections::BTreeMap<usize, usize>,
+    /// Map from user_base address to slot index (nodes from `IndexNodePool`).
+    addr_to_slot: std::collections::BTreeMap<usize, usize, IndexNodeAlloc>,
     /// Free slot indices for reuse.
     free_list: Vec<usize>,
     /// Quarantine queue for freed allocations.
     quarantine: VecDeque<QuarantineEntry>,
     /// Total bytes in quarantine.
     quarantine_bytes: usize,
+    /// Entries drained from quarantine by batched frees and not yet handed
+    /// out for retirement (see `drain_quarantine_batched`).
+    retire_pending: Vec<QuarantineEntry>,
+    /// Total `total_size` of `retire_pending`.
+    retire_pending_bytes: usize,
 }
+
+/// Drained entries a batched free accumulates per shard before handing them
+/// out for retirement in one go...
+const RETIRE_BATCH: usize = 64;
+/// ...or as soon as they hold this many bytes, so parking never keeps more
+/// than ~1 MiB per shard (or one large block) from being reclaimed.
+const RETIRE_BATCH_BYTES: usize = 1024 * 1024;
 
 impl ArenaShard {
     fn new() -> Self {
         Self {
             slots: Vec::new(),
-            addr_to_slot: std::collections::BTreeMap::new(),
+            addr_to_slot: std::collections::BTreeMap::new_in(IndexNodeAlloc::new()),
             free_list: Vec::new(),
             quarantine: VecDeque::new(),
             quarantine_bytes: 0,
+            retire_pending: Vec::new(),
+            retire_pending_bytes: 0,
         }
     }
 }
@@ -97,16 +335,17 @@ impl Drop for ArenaShard {
             let offset = slot.user_base.saturating_sub(slot.raw_base);
             let total_size = offset + slot.user_size + CANARY_SIZE;
             let align = offset.max(1);
-            if let Ok(layout) = std::alloc::Layout::from_size_align(total_size, align) {
-                // SAFETY: slot.raw_base was returned by std::alloc::alloc with this layout.
-                unsafe { std::alloc::dealloc(slot.raw_base as *mut u8, layout) };
-            }
+            // SAFETY: slot.raw_base came from the block allocator with this layout.
+            unsafe { release_block(slot.raw_base, total_size, align) };
         }
         while let Some(entry) = self.quarantine.pop_front() {
-            if let Ok(layout) = std::alloc::Layout::from_size_align(entry.total_size, entry.align) {
-                // SAFETY: entry.raw_base was returned by std::alloc::alloc with this layout.
-                unsafe { std::alloc::dealloc(entry.raw_base as *mut u8, layout) };
-            }
+            // SAFETY: entry.raw_base came from the block allocator with this layout.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
+        }
+        // Drained by batched frees but never handed out for retirement.
+        for entry in self.retire_pending.drain(..) {
+            // SAFETY: as above; parked entries are released only here.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
         }
     }
 }
@@ -119,6 +358,10 @@ pub struct AllocationArena {
     large: Mutex<std::collections::BTreeSet<usize>>,
     /// Global generation counter.
     next_generation: std::sync::atomic::AtomicU64,
+    /// Bytes and entries quarantined across all shards (the sum of the
+    /// shards' own counts, maintained where frees enter and drains leave).
+    quarantine_total_bytes: std::sync::atomic::AtomicUsize,
+    quarantine_total_entries: std::sync::atomic::AtomicUsize,
 }
 
 /// Result of a successful allocation in the arena.
@@ -161,6 +404,8 @@ impl AllocationArena {
             shards: shards.into_boxed_slice(),
             large: Mutex::new(std::collections::BTreeSet::new()),
             next_generation: std::sync::atomic::AtomicU64::new(1),
+            quarantine_total_bytes: std::sync::atomic::AtomicUsize::new(0),
+            quarantine_total_entries: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -201,10 +446,10 @@ impl AllocationArena {
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Allocate raw memory via system allocator
-        let layout = std::alloc::Layout::from_size_align(total_size, align).ok()?;
-        // SAFETY: Layout is valid.
-        let raw_ptr = unsafe { std::alloc::alloc(layout) };
+        // Allocate raw memory from the block allocator.
+        std::alloc::Layout::from_size_align(total_size, align).ok()?;
+        // SAFETY: size and alignment form a valid, non-zero layout.
+        let raw_ptr = unsafe { (raw_block_allocator().alloc)(total_size, align) };
         if raw_ptr.is_null() {
             return None;
         }
@@ -281,27 +526,52 @@ impl AllocationArena {
     /// @separation-frame: `F` (memory outside arena slot/quarantine metadata).
     /// @separation-alias: `quarantine_enter`.
     pub fn free(&self, user_ptr: *mut u8) -> (FreeResult, Vec<QuarantineEntry>) {
+        let (result, _, drained) = self.free_with_size(user_ptr);
+        (result, drained)
+    }
+
+    /// [`Self::free`] that also returns the user size of the block it freed
+    /// (0 unless the result is `Freed`/`FreedWithCanaryCorruption`), read from
+    /// the slot this call already locked -- callers that need the size for
+    /// accounting otherwise paid a second locked index search to learn it.
+    pub fn free_with_size(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        self.free_impl(user_ptr, false)
+    }
+
+    /// [`Self::free_with_size`] whose drained entries are handed out in
+    /// batches of `RETIRE_BATCH` per shard (usually none): what the validation
+    /// pipeline retires through EBR, where each hand-out has a fixed cost.
+    pub fn free_batched(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        self.free_impl(user_ptr, true)
+    }
+
+    fn free_impl(
+        &self,
+        user_ptr: *mut u8,
+        batched: bool,
+    ) -> (FreeResult, usize, Vec<QuarantineEntry>) {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
 
-        let (canary_ok, drained) = {
+        let (canary_ok, user_size, drained) = {
             let mut shard = self.shards[shard_idx].lock();
 
             let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
-                return (FreeResult::ForeignPointer, Vec::new());
+                return (FreeResult::ForeignPointer, 0, Vec::new());
             };
 
             let slot = &mut shard.slots[slot_idx];
 
             match slot.state {
                 SafetyState::Freed | SafetyState::Quarantined => {
-                    return (FreeResult::DoubleFree, Vec::new());
+                    return (FreeResult::DoubleFree, 0, Vec::new());
                 }
                 SafetyState::Invalid => {
-                    return (FreeResult::InvalidPointer, Vec::new());
+                    return (FreeResult::InvalidPointer, 0, Vec::new());
                 }
                 _ => {}
             }
+            let user_size = slot.user_size;
 
             // Verify canary before freeing
             let canary_ok = self.verify_canary_for_slot(slot);
@@ -326,24 +596,30 @@ impl AllocationArena {
             let total_size = offset + slot.user_size + CANARY_SIZE;
             let align = offset;
 
-            shard.quarantine.push_back(QuarantineEntry {
-                user_base,
-                raw_base,
-                total_size,
-                align,
-            });
-            shard.quarantine_bytes += total_size;
+            self.enqueue_quarantine(
+                &mut shard,
+                QuarantineEntry {
+                    user_base,
+                    raw_base,
+                    total_size,
+                    align,
+                },
+            );
 
             // Drain quarantine if over limit (returns entries without deallocating)
-            let drained = self.drain_quarantine(&mut shard);
+            let drained = if batched {
+                self.drain_quarantine_batched(&mut shard)
+            } else {
+                self.drain_quarantine(&mut shard)
+            };
 
-            (canary_ok, drained)
+            (canary_ok, user_size, drained)
         }; // shard lock is released here!
 
         if canary_ok {
-            (FreeResult::Freed, drained)
+            (FreeResult::Freed, user_size, drained)
         } else {
-            (FreeResult::FreedWithCanaryCorruption, drained)
+            (FreeResult::FreedWithCanaryCorruption, user_size, drained)
         }
     }
 
@@ -480,9 +756,59 @@ impl AllocationArena {
 
     fn drain_quarantine(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
         let mut drained = Vec::new();
+        self.drain_quarantine_into(shard, &mut drained);
+        drained
+    }
 
+    /// Like `drain_quarantine`, but parks drained entries in the shard and
+    /// hands them out only in batches of `RETIRE_BATCH`. Once the quarantine
+    /// is full every free drains an entry, and each hand-out costs the caller a
+    /// boxed EBR retirement and an epoch advance (a lock and a scan of every
+    /// thread slot) -- per free, that was a large part of a hardened
+    /// malloc+free. Parked entries are already out of the index and quarantine
+    /// (exactly as returned ones); only their blocks' release is delayed.
+    fn drain_quarantine_batched(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
+        let mut pending = std::mem::take(&mut shard.retire_pending);
+        let before = pending.len();
+        self.drain_quarantine_into(shard, &mut pending);
+        shard.retire_pending_bytes += pending[before..]
+            .iter()
+            .map(|entry| entry.total_size)
+            .sum::<usize>();
+        if pending.len() >= RETIRE_BATCH || shard.retire_pending_bytes >= RETIRE_BATCH_BYTES {
+            shard.retire_pending = Vec::with_capacity(RETIRE_BATCH);
+            shard.retire_pending_bytes = 0;
+            pending
+        } else {
+            shard.retire_pending = pending;
+            Vec::new()
+        }
+    }
+
+    /// Append a freed block to `shard`'s quarantine, keeping the shard's and
+    /// the arena-wide totals together (the drain bound reads both).
+    fn enqueue_quarantine(&self, shard: &mut ArenaShard, entry: QuarantineEntry) {
+        shard.quarantine_bytes += entry.total_size;
+        self.quarantine_total_bytes
+            .fetch_add(entry.total_size, std::sync::atomic::Ordering::Relaxed);
+        self.quarantine_total_entries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        shard.quarantine.push_back(entry);
+    }
+
+    fn drain_quarantine_into(&self, shard: &mut ArenaShard, drained: &mut Vec<QuarantineEntry>) {
+        // The budget and the controller's depth bound the whole arena: checked
+        // per shard only, they let a hardened process hold 16x (one budget per
+        // shard) the documented 64 MB of freed memory -- a realloc- or
+        // printf-heavy loop grew to ~1.1 GB resident. A free drains its own
+        // shard's oldest entries while the arena is over budget, so one shard
+        // may still use the whole window when frees concentrate there.
+        let depth = crate::quarantine_controller::current_depth();
         while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
-            || shard.quarantine.len() > crate::quarantine_controller::current_depth()
+            || shard.quarantine.len() > depth
+            || self.quarantine_total_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                > QUARANTINE_MAX_BYTES
+            || self.quarantine_total_entries.load(std::sync::atomic::Ordering::Relaxed) > depth
         {
             let Some(entry) = shard.quarantine.pop_front() else {
                 break;
@@ -503,11 +829,13 @@ impl AllocationArena {
             }
 
             shard.quarantine_bytes = shard.quarantine_bytes.saturating_sub(entry.total_size);
+            self.quarantine_total_bytes
+                .fetch_sub(entry.total_size, std::sync::atomic::Ordering::Relaxed);
+            self.quarantine_total_entries
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
             drained.push(entry);
         }
-
-        drained
     }
 
     /// Immediate deallocation of drained entries.
@@ -516,13 +844,9 @@ impl AllocationArena {
     /// this entry's grace period, and each entry must be reclaimed exactly once.
     pub(crate) unsafe fn deallocate_drained(drained: &[QuarantineEntry]) {
         for entry in drained {
-            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
-                .expect("valid layout");
             // SAFETY: the caller guarantees each drained entry came from this
             // arena and has not already been handed to deferred reclamation.
-            unsafe {
-                std::alloc::dealloc(entry.raw_base as *mut u8, layout);
-            }
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
         }
     }
 }
@@ -662,6 +986,35 @@ mod tests {
         }
     }
 
+    /// The documented 64 MB is the whole quarantine, not each shard's: 160 MB
+    /// of 1 MiB frees must leave at most (and close to) 64 MB held.
+    #[test]
+    fn quarantine_budget_is_global_across_shards() {
+        let arena = AllocationArena::new();
+        for _ in 0..160 {
+            let ptr = arena.allocate(1 << 20).expect("allocation should succeed");
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(result, FreeResult::Freed);
+        }
+        let held: usize = arena.shards.iter().map(|s| s.lock().quarantine_bytes).sum();
+        assert_eq!(
+            held,
+            arena
+                .quarantine_total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "the arena total is the sum of the shards"
+        );
+        assert!(
+            held <= QUARANTINE_MAX_BYTES,
+            "quarantine holds {held} bytes, over the {QUARANTINE_MAX_BYTES}-byte budget"
+        );
+        // Still a real window: within one block of the whole budget.
+        assert!(held > QUARANTINE_MAX_BYTES - (2 << 20), "held only {held} bytes");
+    }
+
     #[test]
     fn free_promotes_slot_to_quarantined_with_new_generation() {
         let arena = AllocationArena::new();
@@ -715,13 +1068,15 @@ mod tests {
             if idx == 0 {
                 oldest_user = user;
             }
-            shard.quarantine.push_back(QuarantineEntry {
-                user_base: user,
-                raw_base: raw,
-                total_size,
-                align,
-            });
-            shard.quarantine_bytes += total_size;
+            arena.enqueue_quarantine(
+                &mut shard,
+                QuarantineEntry {
+                    user_base: user,
+                    raw_base: raw,
+                    total_size,
+                    align,
+                },
+            );
         }
 
         assert_eq!(
@@ -1103,13 +1458,15 @@ mod tests {
         shard.slots.push(slot1);
         let slot1_idx = shard.slots.len() - 1;
         shard.addr_to_slot.insert(user1, slot1_idx);
-        shard.quarantine.push_back(QuarantineEntry {
-            user_base: user1,
-            raw_base: raw1,
-            total_size,
-            align,
-        });
-        shard.quarantine_bytes += total_size;
+        arena.enqueue_quarantine(
+            &mut shard,
+            QuarantineEntry {
+                user_base: user1,
+                raw_base: raw1,
+                total_size,
+                align,
+            },
+        );
 
         let raw2 = alloc_block(total_size, align);
         let user2 = raw2 + align;
@@ -1123,13 +1480,15 @@ mod tests {
         shard.slots.push(slot2);
         let slot2_idx = shard.slots.len() - 1;
         shard.addr_to_slot.insert(user2, slot2_idx);
-        shard.quarantine.push_back(QuarantineEntry {
-            user_base: user2,
-            raw_base: raw2,
-            total_size,
-            align,
-        });
-        shard.quarantine_bytes += total_size;
+        arena.enqueue_quarantine(
+            &mut shard,
+            QuarantineEntry {
+                user_base: user2,
+                raw_base: raw2,
+                total_size,
+                align,
+            },
+        );
 
         assert!(
             shard.quarantine_bytes > QUARANTINE_MAX_BYTES,

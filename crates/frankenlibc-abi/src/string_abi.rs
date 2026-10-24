@@ -20,7 +20,7 @@ use frankenlibc_membrane::runtime_math::clifford::{
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
-use crate::malloc_abi::{known_remaining, known_remaining_strict};
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -89,7 +89,22 @@ impl Drop for StringMembraneGuard {
 }
 
 fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
-    if string_raw_passthrough_active() {
+    // `string_raw_passthrough_active()`, with the allocator-reentry test and
+    // the signal-handler test answered by one reentry-slot lookup.
+    if runtime_policy::bootstrap_passthrough_active()
+        || runtime_policy::runtime_policy_tls_access_active()
+        || crate::pthread_abi::pthread_tls_access_active()
+    {
+        return None;
+    }
+    let (in_allocator_reentry, in_signal_handler) =
+        crate::malloc_abi::allocator_reentry_and_signal_state();
+    // A signal handler must not re-enter the membrane/policy state the frame
+    // it interrupted on this thread may be in the middle of (bd-na6ede).
+    if in_allocator_reentry
+        || in_signal_handler
+        || frankenlibc_membrane::ptr_validator::in_validation_context()
+    {
         return None;
     }
     if runtime_policy::is_runtime_ready() {
@@ -4824,6 +4839,14 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
                 }
                 return std::ptr::null_mut();
             }
+            // A word read past a match could fault when the range crosses into a
+            // page the caller only covered with an overshooting `n`.
+            if (p as usize & (MEMCHR_PAGE - 1)) + n > MEMCHR_PAGE {
+                return match unsafe { memchr_page_bounded(p, needle, n) } {
+                    Some(idx) => unsafe { (p as *mut u8).add(idx).cast() },
+                    None => std::ptr::null_mut(),
+                };
+            }
             let mut i = 0usize;
             unsafe {
                 while i + 8 <= n {
@@ -4855,8 +4878,14 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             }
             return std::ptr::null_mut();
         }
-        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
-        return match frankenlibc_core::string::mem::memchr(bytes, needle, n) {
+        // One-page range (the common case): no later page to protect.
+        let found = if (s as usize & (MEMCHR_PAGE - 1)) + n <= MEMCHR_PAGE {
+            let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
+            frankenlibc_core::string::mem::memchr(bytes, needle, n)
+        } else {
+            unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
+        };
+        return match found {
             Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
             None => std::ptr::null_mut(),
         };
@@ -4868,6 +4897,53 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
     // above on every call for registers it never touches. Measured there: a flat
     // 14.0 Ir per call at every length, equal to the prologue/epilogue count.
     unsafe { memchr_validating(s, c, n) }
+}
+
+const MEMCHR_PAGE: usize = 4096;
+
+/// First `needle` in `[s, s + n)`, never touching a page beyond the one holding
+/// the first match. memchr stops at the first occurrence (Austin Group 454), so
+/// callers may pass an `n` running past the object into an unmapped page; the
+/// core scan reads whole SIMD blocks of its slice and faulted there (gnulib
+/// test-memchr, SIGSEGV). It is handed one page-bounded segment at a time.
+///
+/// # Safety
+///
+/// Every byte of `[s, s + n)` up to and including the first match is readable.
+#[inline]
+unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    let mut off = 0usize;
+    while off < n {
+        let addr = (s as usize).wrapping_add(off);
+        let seg = (MEMCHR_PAGE - (addr & (MEMCHR_PAGE - 1))).min(n - off);
+        // SAFETY: `[s + off, s + off + seg)` lies in one page, which holds an
+        // unexamined byte the caller vouches for, so the whole page is mapped.
+        let bytes = unsafe { std::slice::from_raw_parts(s.add(off), seg) };
+        if let Some(idx) = frankenlibc_core::string::mem::memchr(bytes, needle, seg) {
+            return Some(off + idx);
+        }
+        off += seg;
+    }
+    None
+}
+
+/// `memccpy` that reads `src` only up to the first `c`, like glibc: `n` may run
+/// past the source object (e.g. `memccpy(dst, str, 0, sizeof dst)` on a string
+/// ending at a page edge), which the core's whole-range scan faulted on.
+///
+/// # Safety
+///
+/// `src` is readable up to and including the first `c` (or for `n` bytes), and
+/// `dst` is writable for as many bytes as are copied.
+#[inline]
+unsafe fn memccpy_page_bounded(dst: *mut u8, src: *const u8, c: u8, n: usize) -> *mut c_void {
+    let found = unsafe { memchr_page_bounded(src, c, n) };
+    let len = found.map_or(n, |i| i + 1);
+    unsafe { std::ptr::copy(src, dst, len) };
+    match found {
+        Some(_) => unsafe { dst.add(len).cast() },
+        None => std::ptr::null_mut(),
+    }
 }
 
 #[cold]
@@ -4934,8 +5010,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
-        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-        if let Some(idx) = frankenlibc_core::string::mem::memchr(bytes, c as u8, scan_len) {
+        if let Some(idx) = memchr_page_bounded(s.cast::<u8>(), c as u8, scan_len) {
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -5144,18 +5219,15 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return unsafe { scan_c_string(s, None).0 };
     }
 
-    // Strict-mode fast path (the DEFAULT deployed mode): an untracked string has the
-    // raw page-safe scan semantics, but an allocator-tracked span is still a known
-    // safety boundary. Retain that cheap bound so an unterminated tracked buffer does
-    // not make the strict fast path read into the next allocation. This preserves the
-    // untracked hot path while matching the bounded behavior of the full path below.
+    // Strict-mode fast path (the DEFAULT deployed mode): glibc's result for the same
+    // memory. Strict means "no repair rewrites"; it used to cap the scan at the
+    // allocation's tracked size, so a string overflowing its allocation measured as
+    // the allocation size (strcpy of 26 bytes into malloc(8): 8, glibc 26), a silent
+    // repair that belongs to hardened (bd-rc0923-epic-eeuy4f.8). The page-safe
+    // scanner never crosses into an unmapped page.
     if runtime_policy::strict_passthrough_active() {
-        // `known_remaining_strict`: the mode was just established one line above,
-        // so re-deriving it inside the probe is redundant work on this hot path.
-        let bound = known_remaining_strict(s as usize);
-        // SAFETY: `bound`, when present, is derived from allocator bookkeeping;
-        // otherwise the page-safe scanner preserves ordinary libc scan semantics.
-        return unsafe { scan_c_string(s, bound).0 };
+        // SAFETY: strlen's contract (a NUL-terminated string); page-safe scan.
+        return unsafe { scan_c_string(s, None).0 };
     }
 
     // NOT SPLIT, and this is load-bearing. `strlen`'s entry carries the largest
@@ -5633,21 +5705,24 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
         (None, Some(b)) => b.min(n),
         (None, None) => n,
     };
-    let adverse = repair && cmp_limit < n;
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
     // SWAR word-at-a-time compare via the shared page-guarded scan_strcmp, bounded
     // by `cmp_limit`; byte-identical to the old scalar loop.
-    let (result, span) = unsafe {
+    let (result, span, hit_limit) = unsafe {
         let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
         if hit_limit {
-            (0, i)
+            (0, i, true)
         } else {
             let a = *s1.add(i) as u8;
             let b = *s2.add(i) as u8;
-            ((a as c_int) - (b as c_int), i.saturating_add(1))
+            ((a as c_int) - (b as c_int), i.saturating_add(1), false)
         }
     };
+    // Only a compare that actually ran into the clamp was repaired: one that
+    // stopped at a difference or a NUL first never needed the bytes past it
+    // (OpenSSL's `strncmp(name, "...", n)` against short allocations).
+    let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
         record_truncation(n, cmp_limit);
@@ -5952,7 +6027,10 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
 
     let safe_src_len = if repair {
         match known_remaining(src as usize) {
-            Some(b) if b < n => {
+            // strncpy stops reading at the NUL: a source shorter than `n` that
+            // is terminated inside its allocation is the ordinary case (Python's
+            // `strncpy(janname, tm->tm_zone, 9)`), not an over-read to repair.
+            Some(b) if b < n && !unsafe { scan_c_string(src, Some(b)) }.1 => {
                 adverse = true;
                 global_healing_policy().record(&HealingAction::ClampSize {
                     requested: n,
@@ -5960,6 +6038,7 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
                 });
                 b
             }
+            Some(b) if b < n => b,
             _ => n,
         }
     } else {
@@ -5990,7 +6069,12 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
     // is clamped to safe_dst_len, and everything after it is NUL-filled — exactly
     // what the scalar loop produced.
     let copy_len = unsafe {
-        let k = scan_c_string(src, Some(safe_src_len)).0;
+        // `safe_src_len` is `n` whenever the source's extent is unknown: a cap,
+        // not a promise of readable bytes. `scan_c_string` loads whole windows
+        // under its bound and faulted on a string ending just before an
+        // unmapped page (gnulib test-strncpy, hardened); this scanner reads
+        // only up to the NUL or the bound.
+        let k = scan_c_string_nul_or_bound(src, safe_src_len).0;
         let copy_len = k.min(safe_dst_len);
         raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
         if copy_len < safe_dst_len {
@@ -6307,8 +6391,10 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
     // SAFETY: strict mode preserves raw strncat behavior; hardened mode bounds writes.
     let (work, adverse) = unsafe {
         let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
-        let src_scan_bound = Some(src_bound.unwrap_or(usize::MAX).min(n));
-        let (src_len, src_terminated) = scan_c_string(src, src_scan_bound);
+        // A cap (`n`) unless the source extent is known: scan to the NUL or
+        // the bound without loading past either (see strncpy_core).
+        let src_scan_bound = src_bound.unwrap_or(usize::MAX).min(n);
+        let (src_len, src_terminated) = scan_c_string_nul_or_bound(src, src_scan_bound);
         if repair {
             match dst_bound {
                 Some(0) => {
@@ -6811,14 +6897,10 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             return haystack as *mut c_char;
         }
         return unsafe {
-            // `known_remaining_strict`, not `known_remaining`: the mode was established
-            // by the `strict_passthrough_active()` test that opens this block, and the
-            // general entry point re-tests it on entry -- twice here, once per operand.
-            // Same three sources probed in the same order, same answer; only the
-            // redundant mode check goes. This is the identical substitution `strlen`'s
-            // strict path already carries; this site was simply missed.
-            let needle_bound = known_remaining_strict(needle as usize);
-            let hay_bound = known_remaining_strict(haystack as usize);
+            // Strict: glibc's result for the same memory, so no allocation-size cap on
+            // either scan (that truncation is a hardened repair; see `strlen`).
+            let needle_bound = None;
+            let hay_bound = None;
             let (needle_len, _) = scan_c_string(needle, needle_bound);
             if needle_len == 0 {
                 haystack as *mut c_char
@@ -7750,12 +7832,18 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
         (None, Some(b)) => b.min(n),
         (None, None) => n,
     };
-    let adverse = repair && cmp_limit < n;
-
     // SAFETY: bounded compare within cmp_limit.
     // Fused SWAR case-compare (shared scan_strcasecmp), byte-identical to the old
     // scalar tolower loop; bounded by cmp_limit and page-cross guarded.
-    let result = unsafe { scan_strcasecmp::<true>(s1, s2, cmp_limit).0 };
+    let (result, span) = unsafe { scan_strcasecmp::<true>(s1, s2, cmp_limit) };
+    // Repaired only if the compare ran into the clamp: equal through all
+    // `cmp_limit` bytes with no NUL among them (a NUL at the last byte also
+    // reports `span == cmp_limit`, so look at it). As in strncmp.
+    // SAFETY: `cmp_limit - 1` was just read by the scan.
+    let hit_limit = result == 0
+        && span == cmp_limit
+        && (cmp_limit == 0 || unsafe { *s1.add(cmp_limit - 1) } != 0);
+    let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
         record_truncation(n, cmp_limit);
@@ -9173,14 +9261,7 @@ pub unsafe extern "C" fn memccpy(
         if n == 0 || dst.is_null() || src.is_null() {
             return std::ptr::null_mut();
         }
-        return unsafe {
-            let d_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
-            let s_slice = std::slice::from_raw_parts(src.cast::<u8>(), n);
-            match frankenlibc_core::string::memccpy(d_slice, s_slice, c as u8, n) {
-                Some(idx) => (dst as *mut u8).add(idx).cast(),
-                None => std::ptr::null_mut(),
-            }
-        };
+        return unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, n) };
     }
 
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
@@ -9250,14 +9331,7 @@ pub unsafe extern "C" fn memccpy(
     );
 
     // SAFETY: `copy_len` is original `n` or clamped to known bounds.
-    let result = unsafe {
-        let d_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), copy_len);
-        let s_slice = std::slice::from_raw_parts(src.cast::<u8>(), copy_len);
-        match frankenlibc_core::string::memccpy(d_slice, s_slice, c as u8, copy_len) {
-            Some(idx) => (dst as *mut u8).add(idx).cast(),
-            None => std::ptr::null_mut(),
-        }
-    };
+    let result = unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, copy_len) };
 
     record_string_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(
@@ -10245,6 +10319,17 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
 const RE_BK_PLUS_QM: u64 = 1 << 1;
+const RE_CONTEXT_INDEP_OPS: u64 = 1 << 4;
+const RE_CONTEXT_INVALID_OPS: u64 = 1 << 5;
+const RE_INVALID_INTERVAL_ORD: u64 = 1 << 21;
+const RE_INTERVALS: u64 = 1 << 9;
+const RE_NEWLINE_ALT: u64 = 1 << 11;
+const RE_NO_BK_REFS: u64 = 1 << 14;
+const RE_CONTEXT_INVALID_DUP: u64 = 1 << 24;
+const RE_UNMATCHED_RIGHT_PAREN_ORD: u64 = 1 << 17;
+const RE_DOT_NEWLINE: u64 = 1 << 6;
+const RE_DOT_NOT_NULL: u64 = 1 << 7;
+const RE_HAT_LISTS_NOT_NEWLINE: u64 = 1 << 8;
 const RE_LIMITED_OPS: u64 = 1 << 10;
 const RE_NO_BK_BRACES: u64 = 1 << 12;
 const RE_NO_BK_PARENS: u64 = 1 << 13;
@@ -10254,14 +10339,47 @@ const RE_NO_SUB: u64 = 1 << 25;
 const REGS_ALLOCATED_SHIFT: u8 = 1;
 const REGS_ALLOCATED_MASK: u8 = 0b11 << REGS_ALLOCATED_SHIFT;
 const REGS_UNALLOCATED: u8 = 0;
-const REGS_FIXED: u8 = 2;
+const REGS_REALLOCATE: u8 = 1;
 const REGEX_FLAG_FASTMAP_ACCURATE: u8 = 1 << 3;
 const REGEX_FLAG_NO_SUB: u8 = 1 << 4;
+const REGEX_FLAG_NOT_BOL: u8 = 1 << 5;
+const REGEX_FLAG_NOT_EOL: u8 = 1 << 6;
+const REGEX_FLAG_NEWLINE_ANCHOR: u8 = 1 << 7;
 
 #[repr(C)]
 struct RegexHandle {
     magic: u64,
     compiled: *mut frankenlibc_core::string::regex::CompiledRegex,
+    /// `re_compile_pattern` only: the pattern and cflags, so the re_search family
+    /// can honour a caller-toggled `newline_anchor` bit (GNU reads it at match
+    /// time; sed sets it per regex for `s///M`). Empty for `regcomp` handles.
+    pattern: Vec<u8>,
+    cflags: c_int,
+    /// Lazily compiled `cflags ^ REG_NEWLINE_ANCHOR` variant of `compiled`.
+    toggled: std::sync::atomic::AtomicPtr<frankenlibc_core::string::regex::CompiledRegex>,
+}
+
+/// glibc's `__re_error_msgid` text for a compile error code, NUL-terminated
+/// (what `re_compile_pattern` returns; sed prints it verbatim).
+fn regex_error_cstr(code: c_int) -> &'static core::ffi::CStr {
+    use frankenlibc_core::string::regex;
+    match code {
+        regex::REG_ECOLLATE => c"Invalid collation character",
+        regex::REG_ECTYPE => c"Invalid character class name",
+        regex::REG_EESCAPE => c"Trailing backslash",
+        regex::REG_ESUBREG => c"Invalid back reference",
+        regex::REG_EBRACK => c"Unmatched [, [^, [:, [., or [=",
+        regex::REG_EPAREN => c"Unmatched ( or \\(",
+        regex::REG_EBRACE => c"Unmatched \\{",
+        regex::REG_BADBR => c"Invalid content of \\{\\}",
+        regex::REG_ERANGE => c"Invalid range end",
+        regex::REG_ESPACE => c"Memory exhausted",
+        regex::REG_BADRPT => c"Invalid preceding regular expression",
+        regex::REG_EEND => c"Premature end of regular expression",
+        regex::REG_ESIZE => c"Regular expression too big",
+        regex::REG_ERPAREN => c"Unmatched ) or \\)",
+        _ => c"Invalid regular expression",
+    }
 }
 
 #[repr(C)]
@@ -10300,6 +10418,54 @@ fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
     if syntax & RE_NO_SUB != 0 {
         cflags |= regex::REG_NOSUB;
     }
+    if syntax & RE_DOT_NOT_NULL == 0 {
+        cflags |= regex::REG_DOT_NUL;
+    }
+    if syntax & RE_DOT_NEWLINE == 0 {
+        cflags |= regex::REG_DOT_NOT_NEWLINE;
+    }
+    if syntax & RE_HAT_LISTS_NOT_NEWLINE != 0 {
+        cflags |= regex::REG_LIST_NOT_NEWLINE;
+    }
+    if uses_extended_syntax {
+        if syntax & RE_CONTEXT_INVALID_OPS == 0 {
+            cflags |= if syntax & RE_CONTEXT_INDEP_OPS != 0 {
+                regex::REG_CONTEXT_INDEP_OPS
+            } else {
+                regex::REG_LEADING_OPS_LITERAL
+            };
+        }
+        if syntax & RE_INVALID_INTERVAL_ORD != 0 {
+            cflags |= regex::REG_INVALID_INTERVAL_ORD;
+        }
+    }
+    if syntax & RE_INTERVALS == 0 {
+        cflags |= regex::REG_NO_INTERVALS;
+    }
+    // BRE without RE_BK_PLUS_QM (e.g. the default syntax 0, which coreutils
+    // tac uses for -r separators): unescaped `+`/`?` are the operators.
+    if !uses_extended_syntax && syntax & (RE_BK_PLUS_QM | RE_LIMITED_OPS) == 0 {
+        cflags |= regex::REG_PLUS_QM_OPS;
+    }
+    if syntax & RE_NO_BK_REFS != 0 {
+        cflags |= regex::REG_NO_BK_REFS;
+    }
+    if !uses_extended_syntax && syntax & RE_CONTEXT_INVALID_DUP == 0 {
+        cflags |= regex::REG_DUP_STACKS;
+    }
+    // Unmatched close paren: ordinary under RE_UNMATCHED_RIGHT_PAREN_ORD,
+    // else "Unmatched ) or \)" (coreutils expr).
+    match (
+        uses_extended_syntax,
+        syntax & RE_UNMATCHED_RIGHT_PAREN_ORD != 0,
+    ) {
+        (true, false) => cflags |= regex::REG_RPAREN_ERROR,
+        (false, true) => cflags |= regex::REG_RPAREN_ORD,
+        _ => {}
+    }
+    if syntax & RE_NEWLINE_ALT != 0 {
+        cflags |= regex::REG_NEWLINE_ALT;
+    }
     cflags
 }
 
@@ -10326,6 +10492,57 @@ unsafe fn regex_compiled_from_buffer(
         return None;
     }
     Some(unsafe { &*handle.compiled })
+}
+
+/// The compiled regex and eflags a GNU `re_search`/`re_match` call must use: the
+/// buffer's `newline_anchor`, `not_bol` and `not_eol` bits are read at match time,
+/// as glibc does, so a caller may flip them after `re_compile_pattern`.
+unsafe fn regex_compiled_for_search(
+    buffer: *const c_void,
+) -> Option<(
+    &'static frankenlibc_core::string::regex::CompiledRegex,
+    c_int,
+)> {
+    use frankenlibc_core::string::regex;
+    use std::sync::atomic::Ordering;
+
+    let base = unsafe { regex_compiled_from_buffer(buffer) }?;
+    let layout = unsafe { &*(buffer as *const RegexBufferLayout) };
+    let mut eflags = 0;
+    if layout.flags & REGEX_FLAG_NOT_BOL != 0 {
+        eflags |= regex::REG_NOTBOL;
+    }
+    if layout.flags & REGEX_FLAG_NOT_EOL != 0 {
+        eflags |= regex::REG_NOTEOL;
+    }
+    let handle = unsafe { &*(layout.buffer as *const RegexHandle) };
+    let want_anchor = layout.flags & REGEX_FLAG_NEWLINE_ANCHOR != 0;
+    if handle.pattern.is_empty() || base.newline_mode() == want_anchor {
+        return Some((base, eflags));
+    }
+    let mut toggled = handle.toggled.load(Ordering::Acquire);
+    if toggled.is_null() {
+        let Ok(variant) =
+            regex::regex_compile_bytes(&handle.pattern, handle.cflags ^ regex::REG_NEWLINE_ANCHOR)
+        else {
+            return Some((base, eflags));
+        };
+        let fresh = Box::into_raw(variant);
+        toggled = match handle.toggled.compare_exchange(
+            core::ptr::null_mut(),
+            fresh,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => fresh,
+            Err(winner) => {
+                // SAFETY: `fresh` was never published.
+                let _ = unsafe { Box::from_raw(fresh) };
+                winner
+            }
+        };
+    }
+    Some((unsafe { &*toggled }, eflags))
 }
 
 /// Initialize a `regex_t` whose prior contents are indeterminate.
@@ -10355,6 +10572,11 @@ unsafe fn regex_release_buffer(layout: &mut RegexBufferLayout) {
         if !handle.compiled.is_null() {
             // SAFETY: compiled was allocated via Box::into_raw during compilation.
             let _ = unsafe { Box::from_raw(handle.compiled) };
+        }
+        let toggled = handle.toggled.load(std::sync::atomic::Ordering::Acquire);
+        if !toggled.is_null() {
+            // SAFETY: published by regex_compiled_for_search via Box::into_raw.
+            let _ = unsafe { Box::from_raw(toggled) };
         }
     }
 
@@ -10424,54 +10646,82 @@ fn legacy_regex_concat<'a>(
     Ok(std::borrow::Cow::Owned(haystack))
 }
 
+/// Copy a match into the caller's `re_registers`, managing their storage by the
+/// buffer's `regs_allocated` state exactly as glibc's `re_copy_regs` does:
+/// UNALLOCATED allocates `re_nsub + 2` fresh slots and switches the buffer to
+/// REALLOCATE; REALLOCATE grows a too-small array (sed reuses one `re_registers`
+/// across regexes of different group counts); FIXED uses the caller's array.
+/// Slots past the pattern's groups are set to -1.
 unsafe fn legacy_regex_write_regs(
+    buffer: *const c_void,
     regs: *mut c_void,
     matches: &[frankenlibc_core::string::regex::RegMatch],
-    offset: c_int,
 ) {
-    if regs.is_null() {
+    if regs.is_null() || buffer.is_null() {
+        return;
+    }
+    let layout = unsafe { &mut *(buffer as *mut RegexBufferLayout) };
+    let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
+    let nregs = layout.re_nsub + 1;
+    let need = nregs + 1;
+    let bytes = need * core::mem::size_of::<c_int>();
+
+    match (layout.flags & REGS_ALLOCATED_MASK) >> REGS_ALLOCATED_SHIFT {
+        REGS_UNALLOCATED => {
+            let starts = unsafe { crate::malloc_abi::malloc(bytes) } as *mut c_int;
+            let ends = unsafe { crate::malloc_abi::malloc(bytes) } as *mut c_int;
+            if starts.is_null() || ends.is_null() {
+                unsafe {
+                    crate::malloc_abi::free(starts.cast());
+                    crate::malloc_abi::free(ends.cast());
+                }
+                return;
+            }
+            regs.start = starts;
+            regs.end = ends;
+            regs.num_regs = need;
+            regex_set_regs_allocated(&mut layout.flags, REGS_REALLOCATE);
+        }
+        REGS_REALLOCATE if need > regs.num_regs => {
+            let starts = unsafe { crate::malloc_abi::realloc(regs.start.cast(), bytes) };
+            if starts.is_null() {
+                return;
+            }
+            regs.start = starts as *mut c_int;
+            let ends = unsafe { crate::malloc_abi::realloc(regs.end.cast(), bytes) };
+            if ends.is_null() {
+                return;
+            }
+            regs.end = ends as *mut c_int;
+            regs.num_regs = need;
+        }
+        _ => {}
+    }
+    if regs.start.is_null() || regs.end.is_null() {
         return;
     }
 
-    let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
-    let needed = matches.len().max(2);
-    if regs.num_regs == 0 || regs.start.is_null() || regs.end.is_null() {
-        // SAFETY: ABI calloc returns suitably aligned zeroed storage for c_int arrays.
-        let starts = unsafe { crate::malloc_abi::calloc(needed, core::mem::size_of::<c_int>()) }
-            as *mut c_int;
-        // SAFETY: ABI calloc returns suitably aligned zeroed storage for c_int arrays.
-        let ends = unsafe { crate::malloc_abi::calloc(needed, core::mem::size_of::<c_int>()) }
-            as *mut c_int;
-        if starts.is_null() || ends.is_null() {
-            if !starts.is_null() {
-                unsafe { crate::malloc_abi::free(starts.cast()) };
-            }
-            if !ends.is_null() {
-                unsafe { crate::malloc_abi::free(ends.cast()) };
-            }
-            return;
-        }
-        regs.num_regs = needed;
-        regs.start = starts;
-        regs.end = ends;
-    }
-
     for idx in 0..regs.num_regs {
+        let (so, eo) = match matches.get(idx) {
+            Some(m) if idx < nregs => (m.rm_so, m.rm_eo),
+            _ => (-1, -1),
+        };
         unsafe {
-            *regs.start.add(idx) = -1;
-            *regs.end.add(idx) = -1;
-        }
-    }
-
-    for (idx, m) in matches.iter().enumerate().take(regs.num_regs) {
-        if m.rm_so >= 0 {
-            unsafe { *regs.start.add(idx) = offset.saturating_add(m.rm_so) };
-        }
-        if m.rm_eo >= 0 {
-            unsafe { *regs.end.add(idx) = offset.saturating_add(m.rm_eo) };
+            *regs.start.add(idx) = so;
+            *regs.end.add(idx) = eo;
         }
     }
 }
+/// The engine flags the current locale implies: like glibc's regcomp, a
+/// pattern compiled under a UTF-8 LC_CTYPE matches whole characters.
+fn regex_locale_cflags() -> c_int {
+    if crate::locale_abi::mb_cur_max() > 1 {
+        frankenlibc_core::string::regex::REG_UTF8
+    } else {
+        0
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn regcomp(
     preg: *mut c_void,
@@ -10493,13 +10743,21 @@ pub unsafe extern "C" fn regcomp(
         return regex::REG_BADPAT;
     };
 
-    match regex::regex_compile(&pat_bytes, cflags) {
+    // Only the POSIX cflags reach the engine: its higher bits are fl-internal
+    // GNU-syntax selectors, and glibc ignores undefined regcomp flags.
+    let posix_cflags = (cflags
+        & (regex::REG_EXTENDED | regex::REG_ICASE | regex::REG_NEWLINE | regex::REG_NOSUB))
+        | regex_locale_cflags();
+    match regex::regex_compile(&pat_bytes, posix_cflags) {
         Ok(compiled) => {
             let re_nsub = compiled.num_regs().saturating_sub(1);
             let raw_ptr = Box::into_raw(compiled);
             let handle = Box::new(RegexHandle {
                 magic: FRANKEN_REGEX_MAGIC,
                 compiled: raw_ptr,
+                pattern: Vec::new(),
+                cflags,
+                toggled: std::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             });
 
             layout.buffer = Box::into_raw(handle).cast();
@@ -10517,9 +10775,14 @@ pub unsafe extern "C" fn regcomp(
             if cflags & regex::REG_NOSUB != 0 {
                 layout.flags |= REGEX_FLAG_NO_SUB;
             }
+            if cflags & regex::REG_NEWLINE != 0 {
+                layout.flags |= REGEX_FLAG_NEWLINE_ANCHOR;
+            }
             regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
             0
         }
+        // glibc's regcomp reports an unmatched close paren as REG_EPAREN.
+        Err(regex::REG_ERPAREN) => regex::REG_EPAREN,
         Err(code) => code,
     }
 }
@@ -10652,9 +10915,56 @@ pub unsafe extern "C" fn fnmatch(
     let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
     let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
     if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
-        0
-    } else {
-        FNM_NOMATCH
+        return 0;
+    }
+    // In a UTF-8 locale glibc 2.43 ALSO matches by characters: `?` and a
+    // bracket take one character and classes/case folding cover non-ASCII
+    // (gnulib test-fnmatch-3: fnmatch("x?y", "xüy") == 0). It reports a match
+    // when either reading matches -- measured: "?" and "??" both match "Ü",
+    // "???" does not; "[Ü][Ü]" matches "Ü" -- hence byte matching first and
+    // this only on a byte mismatch. Only relevant when a non-ASCII byte is
+    // present; invalid UTF-8 stays byte-only, as in glibc. Extended
+    // (FNM_EXTMATCH) patterns stay on the byte matcher.
+    if crate::locale_abi::mb_cur_max() > 1
+        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
+        && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
+        && let (Ok(p), Ok(s)) = (
+            core::str::from_utf8(pat_bytes),
+            core::str::from_utf8(str_bytes),
+        )
+    {
+        let p: Vec<u32> = p.chars().map(u32::from).collect();
+        let s: Vec<u32> = s.chars().map(u32::from).collect();
+        let matched =
+            frankenlibc_core::string::fnmatch::fnmatch_wide(&p, &s, core_flags, &LocaleWideCtype);
+        return if matched { 0 } else { FNM_NOMATCH };
+    }
+    FNM_NOMATCH
+}
+
+/// Wide-character classes and case folding of the active locale, for
+/// `fnmatch_wide`.
+struct LocaleWideCtype;
+
+impl frankenlibc_core::string::fnmatch::WideCtype for LocaleWideCtype {
+    fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
+        let mut cname = [0u8; 16];
+        if name.len() >= cname.len() {
+            return None;
+        }
+        cname[..name.len()].copy_from_slice(name);
+        // SAFETY: `cname` is NUL-terminated (zero-initialised, name shorter).
+        let desc = unsafe { crate::wchar_abi::wctype(cname.as_ptr()) };
+        if desc == 0 {
+            return None;
+        }
+        // SAFETY: plain classification of a code point.
+        Some(unsafe { crate::wchar_abi::iswctype(c, desc) } != 0)
+    }
+
+    fn fold(&self, c: u32) -> u32 {
+        // SAFETY: plain case mapping of a code point.
+        unsafe { crate::wchar_abi::towlower(c) }
     }
 }
 
@@ -10834,6 +11144,34 @@ pub unsafe extern "C" fn glob(
 
     let gt = pglob as *mut GlobT;
 
+    // Reset the result first, as glibc does: every return -- GLOB_NOMATCH
+    // and the errors included -- leaves a glob_t that globfree accepts.
+    // make's parse_file_seq globs into an uninitialized stack glob_t and
+    // calls globfree unconditionally; the stale pathv aborted make with
+    // "free(): invalid pointer".
+    if !append {
+        unsafe {
+            if flags & glob_core::GLOB_DOOFFS == 0 {
+                (*gt).gl_offs = 0;
+            }
+            (*gt).gl_pathc = 0;
+            (*gt).gl_pathv = std::ptr::null_mut();
+            let offs = (*gt).gl_offs;
+            if offs > 0 {
+                let slots =
+                    crate::malloc_abi::raw_alloc((offs + 1) * std::mem::size_of::<*mut c_char>())
+                        as *mut *mut c_char;
+                if slots.is_null() {
+                    return glob_core::GLOB_NOSPACE;
+                }
+                for i in 0..=offs {
+                    *slots.add(i) = std::ptr::null_mut();
+                }
+                (*gt).gl_pathv = slots;
+            }
+        }
+    }
+
     // Read current state for GLOB_APPEND.
     let (existing_paths, existing_count) = if append {
         let pathc = unsafe { (*gt).gl_pathc };
@@ -10932,12 +11270,11 @@ pub unsafe extern "C" fn glob(
             // Null-terminate.
             unsafe { *pathv.add(offs + total) = std::ptr::null_mut() };
 
-            // Free old pathv array (not the strings — those were moved).
-            if append {
-                let old_pathv = unsafe { (*gt).gl_pathv };
-                if !old_pathv.is_null() {
-                    unsafe { crate::malloc_abi::raw_free(old_pathv.cast()) };
-                }
+            // Free old pathv array (not the strings -- those were moved; a
+            // fresh call's array holds only the GLOB_DOOFFS null slots).
+            let old_pathv = unsafe { (*gt).gl_pathv };
+            if !old_pathv.is_null() {
+                unsafe { crate::malloc_abi::raw_free(old_pathv.cast()) };
             }
 
             // Write glob_t fields.
@@ -11927,8 +12264,12 @@ pub unsafe extern "C" fn strfromf(
 
 /// C23 `strfroml` — convert long double to string with format.
 ///
-/// On x86_64 Linux, long double is 80-bit extended but we use f64 approximation.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// The x86_64 export is the x87 entry point in `math_abi::x87_math_entry`;
+/// this f64 form serves the other targets.
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn strfroml(
     s: *mut c_char,
     n: usize,
@@ -12979,13 +13320,43 @@ pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize
 // Many legacy programs and GNU utilities use this API instead of the newer
 // POSIX regcomp/regexec interface. We implement using our existing regex core.
 
-/// Default syntax bits for the old GNU regex API.
-static RE_SYNTAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The live `re_syntax_options`. As in glibc, that variable IS the syntax
+/// state: programs assign it directly (coreutils expr), `re_set_syntax`
+/// writes it and `re_compile_pattern` reads it. fl kept a private copy that
+/// only `re_set_syntax` updated, so expr compiled with syntax 0 (no
+/// intervals: `a\{1\}` matched nothing). An executable that references the
+/// variable owns a COPY-relocated instance, so resolve the one in use through
+/// the dynamic linker instead of assuming fl's own definition.
+fn re_syntax_options_ptr() -> *mut libc::c_ulong {
+    static PTR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PTR.get_or_init(|| {
+        // SAFETY: RTLD_DEFAULT lookup of a NUL-terminated symbol name.
+        let sym =
+            unsafe { crate::dlfcn_abi::dlsym(std::ptr::null_mut(), c"re_syntax_options".as_ptr()) };
+        if sym.is_null() {
+            // SAFETY: taking the address of fl's own definition.
+            unsafe { std::ptr::addr_of_mut!(crate::glibc_internal_abi::re_syntax_options) as usize }
+        } else {
+            sym as usize
+        }
+    }) as *mut libc::c_ulong
+}
+
+fn current_re_syntax() -> u64 {
+    // SAFETY: the pointer names the process's `re_syntax_options` word.
+    unsafe { std::ptr::read_volatile(re_syntax_options_ptr()) as u64 }
+}
 
 /// `re_set_syntax` — set default syntax options for regex compilation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_set_syntax(syntax: u64) -> u64 {
-    RE_SYNTAX.swap(syntax, std::sync::atomic::Ordering::Relaxed)
+    let ptr = re_syntax_options_ptr();
+    // SAFETY: as `current_re_syntax`; glibc's update is equally unsynchronized.
+    unsafe {
+        let old = std::ptr::read_volatile(ptr);
+        std::ptr::write_volatile(ptr, syntax as libc::c_ulong);
+        old as u64
+    }
 }
 
 /// `re_compile_pattern` — compile a regex pattern (GNU old API).
@@ -13007,8 +13378,11 @@ pub unsafe extern "C" fn re_compile_pattern(
     unsafe { regex_release_buffer(layout) };
 
     let pat_slice = unsafe { core::slice::from_raw_parts(pattern as *const u8, length) };
-    let syntax = RE_SYNTAX.load(std::sync::atomic::Ordering::Relaxed);
-    let cflags = legacy_regex_syntax_to_cflags(syntax);
+    let syntax = current_re_syntax();
+    // glibc's re_compile_pattern always sets `newline_anchor`; callers (sed) may
+    // clear it before searching, which regex_compiled_for_search honours.
+    let cflags =
+        legacy_regex_syntax_to_cflags(syntax) | regex::REG_NEWLINE_ANCHOR | regex_locale_cflags();
 
     match regex::regex_compile_bytes(pat_slice, cflags) {
         Ok(compiled) => {
@@ -13017,6 +13391,9 @@ pub unsafe extern "C" fn re_compile_pattern(
             let handle = Box::new(RegexHandle {
                 magic: FRANKEN_REGEX_MAGIC,
                 compiled: raw_ptr,
+                pattern: pat_slice.to_vec(),
+                cflags,
+                toggled: std::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             });
 
             layout.buffer = Box::into_raw(handle).cast();
@@ -13026,14 +13403,14 @@ pub unsafe extern "C" fn re_compile_pattern(
             layout.fastmap = core::ptr::null_mut();
             layout.translate = core::ptr::null_mut();
             layout.re_nsub = re_nsub;
-            layout.flags = 0;
+            layout.flags = REGEX_FLAG_NEWLINE_ANCHOR;
             if cflags & regex::REG_NOSUB != 0 {
                 layout.flags |= REGEX_FLAG_NO_SUB;
             }
             regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
             core::ptr::null()
         }
-        Err(_) => c"Invalid regular expression".as_ptr(),
+        Err(code) => regex_error_cstr(code).as_ptr(),
     }
 }
 
@@ -13095,7 +13472,7 @@ pub unsafe extern "C" fn re_search_2(
     if buffer.is_null() {
         return -2;
     }
-    let Some(compiled) = (unsafe { regex_compiled_from_buffer(buffer) }) else {
+    let Some((compiled, eflags)) = (unsafe { regex_compiled_for_search(buffer) }) else {
         return -2;
     };
 
@@ -13127,9 +13504,9 @@ pub unsafe extern "C" fn re_search_2(
     // Returns (start, end) with `match_slots` filled when registers are wanted.
     let search_from = |from: usize, slots: &mut [regex::RegMatch]| -> Option<(usize, usize)> {
         if nosub {
-            let (so, eo) = regex::regex_match_bounds_bytes_from(compiled, &haystack, from, 0)?;
+            let (so, eo) = regex::regex_match_bounds_bytes_from(compiled, &haystack, from, eflags)?;
             Some((so as usize, eo as usize))
-        } else if regex::regex_exec_bytes_from(compiled, &haystack, from, slots, 0) == 0 {
+        } else if regex::regex_exec_bytes_from(compiled, &haystack, from, slots, eflags) == 0 {
             Some((slots[0].rm_so as usize, slots[0].rm_eo as usize))
         } else {
             None
@@ -13153,7 +13530,7 @@ pub unsafe extern "C" fn re_search_2(
                 continue;
             }
             if !nosub {
-                unsafe { legacy_regex_write_regs(regs, &match_slots, 0) };
+                unsafe { legacy_regex_write_regs(buffer, regs, &match_slots) };
             }
             return so as c_int;
         }
@@ -13169,7 +13546,7 @@ pub unsafe extern "C" fn re_search_2(
                 continue;
             }
             if !nosub {
-                unsafe { legacy_regex_write_regs(regs, &match_slots, 0) };
+                unsafe { legacy_regex_write_regs(buffer, regs, &match_slots) };
             }
             return pos as c_int;
         }
@@ -13218,7 +13595,7 @@ pub unsafe extern "C" fn re_match_2(
     if buffer.is_null() {
         return -2;
     }
-    let Some(compiled) = (unsafe { regex_compiled_from_buffer(buffer) }) else {
+    let Some((compiled, eflags)) = (unsafe { regex_compiled_for_search(buffer) }) else {
         return -2;
     };
 
@@ -13238,7 +13615,7 @@ pub unsafe extern "C" fn re_match_2(
     // one from there starts there. The return value is the match LENGTH.
     if nosub {
         let Some((rm_so, rm_eo)) =
-            regex::regex_match_bounds_bytes_from(compiled, &haystack, start_pos, 0)
+            regex::regex_match_bounds_bytes_from(compiled, &haystack, start_pos, eflags)
         else {
             return -1;
         };
@@ -13249,14 +13626,14 @@ pub unsafe extern "C" fn re_match_2(
     }
 
     let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
-    if regex::regex_exec_bytes_from(compiled, &haystack, start_pos, &mut match_slots, 0) != 0 {
+    if regex::regex_exec_bytes_from(compiled, &haystack, start_pos, &mut match_slots, eflags) != 0 {
         return -1;
     }
     let (rm_so, rm_eo) = (match_slots[0].rm_so, match_slots[0].rm_eo);
     if rm_so as usize != start_pos || rm_eo as usize > stop_bound {
         return -1;
     }
-    unsafe { legacy_regex_write_regs(regs, &match_slots, 0) };
+    unsafe { legacy_regex_write_regs(buffer, regs, &match_slots) };
     rm_eo - rm_so
 }
 
@@ -13272,20 +13649,22 @@ pub unsafe extern "C" fn re_set_registers(
     if regs.is_null() {
         return;
     }
+    // glibc: a non-empty array is REALLOCATE (re_search may grow it), an empty
+    // one resets to UNALLOCATED.
     let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
-    regs.num_regs = num_regs as usize;
-    regs.start = starts;
-    regs.end = ends;
-
+    let state = if num_regs != 0 {
+        regs.num_regs = num_regs as usize;
+        regs.start = starts;
+        regs.end = ends;
+        REGS_REALLOCATE
+    } else {
+        regs.num_regs = 0;
+        regs.start = core::ptr::null_mut();
+        regs.end = core::ptr::null_mut();
+        REGS_UNALLOCATED
+    };
     if let Some(layout) = unsafe { regex_buffer_layout(buffer) } {
-        regex_set_regs_allocated(
-            &mut layout.flags,
-            if starts.is_null() || ends.is_null() {
-                REGS_UNALLOCATED
-            } else {
-                REGS_FIXED
-            },
-        );
+        regex_set_regs_allocated(&mut layout.flags, state);
     }
 }
 
@@ -13415,9 +13794,11 @@ pub unsafe extern "C" fn __strncasecmp_l(
 pub unsafe extern "C" fn __strcoll_l(
     s1: *const c_char,
     s2: *const c_char,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> c_int {
-    unsafe { strcmp(s1, s2) }
+    // libstdc++'s std::collate calls this with its locale object: compare
+    // in that locale, not bytewise.
+    unsafe { crate::unistd_abi::strcoll_l(s1, s2, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -13425,9 +13806,9 @@ pub unsafe extern "C" fn __strxfrm_l(
     dst: *mut c_char,
     src: *const c_char,
     n: usize,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> usize {
-    unsafe { strxfrm(dst, src, n) }
+    unsafe { crate::unistd_abi::strxfrm_l(dst, src, n, l) }
 }
 
 // ── GCC constant-optimized string function variants ─────────────────────────

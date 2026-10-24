@@ -9,7 +9,7 @@ use std::ffi::c_int;
 
 use frankenlibc_core::dlfcn::RTLD_DEEPBIND;
 use frankenlibc_core::elf::{Elf64Rela, LoadedObject, ProgramType, RelocationType};
-use frankenlibc_core::elf::relocation::{RelocationContext, compute_relocation};
+use frankenlibc_core::elf::relocation::{RelocationContext, compute_relocation, compute_size_relocation};
 
 use super::{NativeDso, Resolver, lookup_order};
 
@@ -68,6 +68,9 @@ pub(super) fn scope<'a>(
 
 pub(super) struct Definition {
     pub(super) address: u64,
+    // None for runtime builtins whose symbol-table metadata is not available.
+    // A real zero-sized definition and an unresolved weak symbol are Some(0).
+    pub(super) size: Option<u64>,
     pub(super) provider: Option<usize>,
     pub(super) indirect: bool,
 }
@@ -77,6 +80,7 @@ fn own_definition(dso: &NativeDso, index: usize) -> Option<Definition> {
     if !symbol.is_defined() || symbol.is_tls() { return None; }
     Some(Definition {
         address: symbol.definition_address(dso.object.base)?,
+        size: Some(symbol.st_size),
         provider: Some(dso.id), indirect: symbol.is_ifunc(),
     })
 }
@@ -88,7 +92,7 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
     // when the process has an earlier definition with exactly the same name.
     if symbol.is_local() || symbol.st_other & 3 != 0 {
         if symbol.is_defined() { return own_definition(dso, index); }
-        return symbol.is_weak().then_some(Definition { address: 0, provider: None, indirect: false });
+        return symbol.is_weak().then_some(Definition { address: 0, size: Some(0), provider: None, indirect: false });
     }
     let name = dso.object.symbol_name(symbol)?;
     let version = dso.versions.name(index);
@@ -100,7 +104,7 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
     {
         let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()) };
         let address = frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version)?;
-        return Some(Definition { address, provider: None, indirect: false });
+        return Some(Definition { address, size: None, provider: None, indirect: false });
     }
     for provider in scope {
         if let Some(found) = provider.versions.lookup(&provider.object, name, version, dso.versions.relocation(index)) {
@@ -108,6 +112,7 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
             if found.is_tls() { return None; }
             return Some(Definition {
                 address: found.definition_address(provider.object.base)?,
+                size: Some(found.st_size),
                 provider: Some(provider.id), indirect: found.is_ifunc(),
             });
         }
@@ -116,9 +121,9 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
     // empty scope cannot accidentally select a different native provider.
     let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()) };
     if let Some(address) = frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version) {
-        return Some(Definition { address, provider: None, indirect: false });
+        return Some(Definition { address, size: None, provider: None, indirect: false });
     }
-    symbol.is_weak().then_some(Definition { address: 0, provider: None, indirect: false })
+    symbol.is_weak().then_some(Definition { address: 0, size: Some(0), provider: None, indirect: false })
 }
 
 struct Write {
@@ -139,7 +144,8 @@ fn same_entry(left: &Elf64Rela, right: &Elf64Rela) -> bool {
 
 /// Prebind ordinary symbol relocations using the runtime scope, instead of
 /// submitting default-visible definitions to the core's definition-first
-/// helper. Indirect selections stay in the tables for the explicit IFUNC pass.
+/// helper. Indirect address selections stay for the explicit IFUNC pass;
+/// size selections use their metadata immediately without executing a resolver.
 /// No mapping, resident lifetime edge or symbol definition is mutated here.
 pub(super) fn prepare(
     resident: &[NativeDso], pending: &mut [NativeDso], root: usize, flags: c_int,
@@ -149,13 +155,29 @@ pub(super) fn prepare(
         let scope = scope(resident, pending, root, dso, flags)?;
         let mut plan = Plan { writes: Vec::new(), providers: Vec::new() };
         for relocation in dso.object.rela_dyn.iter().chain(&dso.object.rela_plt) {
-            if relocation.symbol_index() == 0 || matches!(relocation.reloc_type(),
-                RelocationType::None | RelocationType::Relative | RelocationType::IRelative)
+            let size_relocation = relocation.reloc_type().is_size();
+            if (relocation.symbol_index() == 0 && !size_relocation)
+                || matches!(relocation.reloc_type(),
+                    RelocationType::None | RelocationType::Relative | RelocationType::IRelative)
             { continue; }
-            let definition = select(dso, relocation.symbol_index() as usize, &scope)?;
-            if definition.indirect { continue; }
-            let (value, width) = compute_relocation(relocation, definition.address,
-                &RelocationContext::new(dso.object.base)).ok()?;
+            let definition = if relocation.symbol_index() == 0 {
+                // STN_UNDEF has zero size and requires no provider lookup.
+                Definition { address: 0, size: Some(0), provider: None, indirect: false }
+            } else {
+                select(dso, relocation.symbol_index() as usize, &scope)?
+            };
+            let (value, width) = if size_relocation {
+                // Z belongs to the selected provider, including preempting
+                // GLOBAL definitions and DEEPBIND's local scope. In particular
+                // an undefined requester commonly has st_size == 0. An IFUNC
+                // size is metadata: do NOT invoke its resolver for this fixup.
+                // Missing builtin metadata is a rejection, never address-as-size.
+                compute_size_relocation(relocation, definition.size?).ok()?
+            } else {
+                if definition.indirect { continue; }
+                compute_relocation(relocation, definition.address,
+                    &RelocationContext::new(dso.object.base)).ok()?
+            };
             let offset = usize::try_from(relocation.r_offset).ok()?;
             let end = offset.checked_add(width)?;
             if end > dso.mapping.len || !dso.object.program_headers.iter().any(|header| {

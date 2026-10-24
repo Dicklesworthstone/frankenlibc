@@ -63,6 +63,18 @@ pub const PRINTF_TABLE: [PrintfRoute; 256] = {
         0b0001_1001,
         ArgCategory::UnsignedInt,
     );
+    table[b'b' as usize] = route(
+        PrintfHandler::UnsignedBinaryLower,
+        0b0111_1111,
+        0b0001_1001,
+        ArgCategory::UnsignedInt,
+    );
+    table[b'B' as usize] = route(
+        PrintfHandler::UnsignedBinaryUpper,
+        0b0111_1111,
+        0b0001_1001,
+        ArgCategory::UnsignedInt,
+    );
     table[b'f' as usize] = route(
         PrintfHandler::FloatFixed,
         0b1000_0100,

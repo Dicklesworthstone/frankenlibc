@@ -3,12 +3,18 @@
 //! Implements `<math.h>` functions: trigonometric, exponential/logarithmic,
 //! special functions, and floating-point utilities.
 
+mod coremath;
+mod erf_data;
+mod gamma_data;
 pub mod exp;
 pub mod float;
 pub mod float32;
+pub mod fromfp;
+mod log2_data;
 mod log_data;
 pub mod special;
 pub mod trig;
+mod trig_data;
 
 pub use exp::{exp, exp2, expm1, log, log1p, log2, log10, pow};
 pub use float::{

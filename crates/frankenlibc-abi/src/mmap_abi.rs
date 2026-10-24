@@ -50,43 +50,43 @@ pub unsafe extern "C" fn mmap(
         return mmap::MAP_FAILED as *mut c_void;
     }
 
-    // Sanitize in hardened mode.
-    let (actual_prot, actual_flags) = if mode.heals_enabled() {
-        let p = if !mmap::valid_prot(prot) {
-            let sanitized = mmap::PROT_READ;
+    // The kernel judges prot and flags first: it knows MAP_SHARED_VALIDATE,
+    // MAP_32BIT, MAP_HUGE_* sizes, MAP_DROPPABLE, PROT_SEM ... that fl's
+    // lists do not. Hardened mode repairs only what the kernel REJECTED
+    // (EINVAL); rewriting accepted values had turned MAP_SHARED_VALIDATE
+    // mappings private and dropped MAP_32BIT.
+    let mut result = unsafe { syscall::sys_mmap(addr as *mut u8, length, prot, flags, fd, offset) };
+    if mode.heals_enabled()
+        && result == Err(libc::EINVAL)
+        && (!mmap::valid_prot(prot) || !mmap::valid_map_flags(flags))
+    {
+        let repair = |requested: c_int, valid: bool, sanitized: c_int| {
+            if valid {
+                return requested;
+            }
             global_healing_policy().record(&HealingAction::ClampSize {
-                requested: prot as usize,
+                requested: requested as usize,
                 clamped: sanitized as usize,
             });
             sanitized
-        } else {
-            prot
         };
-        let f = if !mmap::valid_map_flags(flags) {
-            let sanitized = mmap::sanitize_map_flags(flags);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: flags as usize,
-                clamped: sanitized as usize,
-            });
-            sanitized
-        } else {
-            flags
+        let actual_prot = repair(prot, mmap::valid_prot(prot), mmap::PROT_READ);
+        let actual_flags = repair(
+            flags,
+            mmap::valid_map_flags(flags),
+            mmap::sanitize_map_flags(flags),
+        );
+        result = unsafe {
+            syscall::sys_mmap(
+                addr as *mut u8,
+                length,
+                actual_prot,
+                actual_flags,
+                fd,
+                offset,
+            )
         };
-        (p, f)
-    } else {
-        (prot, flags)
-    };
-
-    let result = unsafe {
-        syscall::sys_mmap(
-            addr as *mut u8,
-            length,
-            actual_prot,
-            actual_flags,
-            fd,
-            offset,
-        )
-    };
+    }
 
     match result {
         Ok(ptr) => {
@@ -164,18 +164,19 @@ pub unsafe extern "C" fn mprotect(addr: *mut c_void, length: usize, prot: c_int)
         return -1;
     }
 
-    let actual_prot = if mode.heals_enabled() && !mmap::valid_prot(prot) {
+    // Kernel first (PROT_GROWSDOWN/GROWSUP, PROT_SEM, PROT_BTI/MTE are valid
+    // there); hardened repairs only a prot the kernel rejected.
+    let mut result = unsafe { syscall::sys_mprotect(addr as *mut u8, length, prot) };
+    if mode.heals_enabled() && result == Err(libc::EINVAL) && !mmap::valid_prot(prot) {
         let sanitized = mmap::PROT_NONE;
         global_healing_policy().record(&HealingAction::ClampSize {
             requested: prot as usize,
             clamped: sanitized as usize,
         });
-        sanitized
-    } else {
-        prot
-    };
+        result = unsafe { syscall::sys_mprotect(addr as *mut u8, length, sanitized) };
+    }
 
-    let rc = match unsafe { syscall::sys_mprotect(addr as *mut u8, length, actual_prot) } {
+    let rc = match result {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -207,22 +208,24 @@ pub unsafe extern "C-unwind" fn msync(addr: *mut c_void, length: usize, flags: c
         return -1;
     }
 
-    let actual_flags = if mode.heals_enabled() && !mmap::valid_msync_flags(flags) {
+    // Kernel first (MS_INVALIDATE alone and 0 are valid there); hardened
+    // repairs only flags the kernel rejected.
+    let sync = |flags: c_int| unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_msync(addr as *mut u8, length, flags)
+        })
+    };
+    let mut result = sync(flags);
+    if mode.heals_enabled() && result == Err(libc::EINVAL) && !mmap::valid_msync_flags(flags) {
         let sanitized = mmap::sanitize_msync_flags(flags);
         global_healing_policy().record(&HealingAction::ClampSize {
             requested: flags as usize,
             clamped: sanitized as usize,
         });
-        sanitized
-    } else {
-        flags
-    };
+        result = sync(sanitized);
+    }
 
-    let rc = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_msync(addr as *mut u8, length, actual_flags)
-        })
-    } {
+    let rc = match result {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -254,18 +257,23 @@ pub unsafe extern "C" fn madvise(addr: *mut c_void, length: usize, advice: c_int
         return -1;
     }
 
-    let actual_advice = if mode.heals_enabled() && !mmap::valid_madvise(advice) {
+    // Kernel first. Rewriting advice fl does not list (MADV_FREE, DONTDUMP,
+    // WIPEONFORK, DONTFORK, COLD, PAGEOUT, COLLAPSE, GUARD_INSTALL ...) to
+    // MADV_NORMAL and reporting success made allocators keep freed memory,
+    // put secrets in core dumps, and told TLS libraries that WIPEONFORK
+    // protects their RNG state when it did not. Hardened repairs only advice
+    // the kernel rejected.
+    let mut result = unsafe { syscall::sys_madvise(addr as *mut u8, length, advice) };
+    if mode.heals_enabled() && result == Err(libc::EINVAL) && !mmap::valid_madvise(advice) {
         let sanitized = mmap::sanitize_madvise(advice);
         global_healing_policy().record(&HealingAction::ClampSize {
             requested: advice as usize,
             clamped: sanitized as usize,
         });
-        sanitized
-    } else {
-        advice
-    };
+        result = unsafe { syscall::sys_madvise(addr as *mut u8, length, sanitized) };
+    }
 
-    let rc = match unsafe { syscall::sys_madvise(addr as *mut u8, length, actual_advice) } {
+    let rc = match result {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

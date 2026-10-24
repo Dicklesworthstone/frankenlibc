@@ -86,11 +86,14 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
     }
     pos += 1;
 
-    // Modifiers: '+', 'b', 'x', 'e', 'm', 'c' in any order.
-    // glibc accepts 'e' (O_CLOEXEC), 'm' (mmap), 'c' (cancel-safe), 'x' (exclusive).
-    // Reject invalid modifiers like 'r', 'w', 'a' in non-primary position.
-    while pos < mode.len() {
+    // Modifiers, as glibc reads them: only the next six characters are
+    // examined, a ',' (the ",ccs=" charset suffix) ends them, '+', 'b', 'x',
+    // 'e', 'm', 'c' have meaning, and ANY other character is ignored --
+    // "rt" (sed opens scripts with it), "rw", "r b" all open fine there.
+    // Rejecting them made sed -f fail with EINVAL.
+    while pos < mode.len() && pos < 7 {
         match mode[pos] {
+            b',' => break,
             b'+' => {
                 flags.readable = true;
                 flags.writable = true;
@@ -98,10 +101,7 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
             b'b' => flags.binary = true,
             b'x' => flags.exclusive = true,
             b'e' => flags.cloexec = true,
-            b'm' | b'c' => {} // Accepted but no-op on Linux
-            // Reject 'r', 'w', 'a' in modifier position (e.g., "rw", "ar").
-            // Also reject any other unknown characters.
-            _ => return None,
+            _ => {} // 'm', 'c': no-ops here; anything else is ignored
         }
         pos += 1;
     }
@@ -379,6 +379,10 @@ pub struct StdioStream {
     read_pushback: VecDeque<u8>,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
+    /// Opaque token naming the C `FILE` this stream is published through
+    /// (0: none). The ABI layer uses it to find the handle whose glibc read
+    /// window mirrors [`read_window`](Self::read_window).
+    c_handle: usize,
 }
 
 impl StdioStream {
@@ -411,6 +415,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: None,
         }
     }
@@ -425,6 +430,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: None,
         }
     }
@@ -446,6 +452,7 @@ impl StdioStream {
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Fixed {
                 data,
                 pos,
@@ -475,6 +482,7 @@ impl StdioStream {
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Fixed {
                 data: Vec::new(),
                 pos,
@@ -527,6 +535,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
                 pos: 0,
@@ -545,6 +554,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
                 pos: 0,
@@ -623,7 +633,16 @@ impl StdioStream {
 
     /// `__fpurge`: discard all buffered data — unread input and unflushed
     /// output, plus any pushed-back bytes — without writing it out.
+    ///
+    /// The logical offset already counts buffered writes and excludes unread
+    /// read-ahead, so it moves back to the descriptor's offset, as glibc's
+    /// ftell reports after `__fpurge`: before the discarded writes (gnulib
+    /// test-fpurge expects 4 after `fflush` at 4 then 2 purged bytes), and past
+    /// the discarded read-ahead.
     pub fn purge(&mut self) {
+        let pending = self.buffer.pending_write_data().len() as i64;
+        let unread = self.readable_buffered() as i64;
+        self.offset = self.offset - pending + unread;
         self.buffer.reset();
         self.ungetc_byte = None;
         self.read_pushback.clear();
@@ -693,6 +712,25 @@ impl StdioStream {
     /// Must be called before any I/O. Returns false if too late.
     pub fn set_buffering(&mut self, mode: BufMode, size: usize) -> bool {
         self.buffer.set_mode(mode, size)
+    }
+
+    /// `setvbuf` on a stream already in use, which glibc accepts. With
+    /// `keep_buffer` (no caller buffer, Full or Line) the mode flips in place
+    /// and buffered bytes stay; otherwise the caller has synced the stream
+    /// (flushed staged output, given back unread input it could) and the
+    /// buffer is rebuilt. Returns false if output is still staged.
+    pub fn rebuffer(&mut self, mode: BufMode, size: usize, keep_buffer: bool) -> bool {
+        if keep_buffer && !matches!(mode, BufMode::None) {
+            self.buffer.switch_mode_in_place(mode, size);
+            return true;
+        }
+        if !self.buffer.pending_write_data().is_empty() {
+            return false;
+        }
+        let eof = self.flags.eof;
+        let _ = self.prepare_seek();
+        self.flags.eof = eof;
+        self.buffer.rebuild_after_sync(mode, size)
     }
 
     // -----------------------------------------------------------------------
@@ -806,6 +844,95 @@ impl StdioStream {
         } else {
             false
         }
+    }
+
+    /// The buffered, not yet consumed bytes a caller may read in place: what
+    /// glibc exposes as `[_IO_read_ptr, _IO_read_end)`, which the inline
+    /// `getc_unlocked` and gnulib's freadahead/freadptr/freadseek read and
+    /// advance directly. `None` unless the stream is a readable fd stream in a
+    /// clean read state (no pending write, no pushed-back bytes, which must be
+    /// returned first) with bytes buffered. The slice stays valid until the
+    /// stream is next modified.
+    pub fn read_window(&self) -> Option<&[u8]> {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return None;
+        }
+        let window = self.buffer.peek();
+        (!window.is_empty()).then_some(window)
+    }
+
+    /// Whether the C handle reports this stream as buffered (`_IO_UNBUFFERED`
+    /// clear): an fd-backed stream in Full or Line mode, as glibc reports it.
+    /// Code poking glibc's FILE fills such a stream's buffer in place ({fmt}
+    /// does once the bit is clear, after an `__overflow` that must leave a
+    /// [`write_window`](Self::write_window) behind), so memory-backed streams,
+    /// which never publish one, stay reported as unbuffered.
+    pub fn reports_buffered(&self) -> bool {
+        !self.is_mem_backed() && !matches!(self.buffer.mode(), BufMode::None)
+    }
+
+    /// Whether this stream can ever publish a [`write_window`](Self::write_window):
+    /// a writable stream [reported as buffered](Self::reports_buffered).
+    pub fn write_window_capable(&self) -> bool {
+        self.open_flags.writable && self.reports_buffered()
+    }
+
+    /// The write buffer a caller may fill in place, as `(base address, bytes
+    /// staged, capacity)`: what glibc exposes as `[_IO_write_base,
+    /// _IO_write_ptr, _IO_write_end)`, which the inline `putc_unlocked` fills
+    /// directly. `None` unless the stream is [`write_window_capable`] and in
+    /// write mode (its last operation wrote), so a read-mode stream keeps only
+    /// its read window. Bytes stored in place are accounted for by
+    /// [`commit_write_window`](Self::commit_write_window).
+    ///
+    /// [`write_window_capable`]: Self::write_window_capable
+    pub fn write_window(&self) -> Option<(usize, usize, usize)> {
+        if !self.write_window_capable() || !self.flags.last_write {
+            return None;
+        }
+        self.buffer.write_window()
+    }
+
+    /// Account for the caller having filled the write window up to `used`
+    /// bytes from its base (see [`write_window`](Self::write_window)).
+    pub fn commit_write_window(&mut self, used: usize) {
+        let added = self.buffer.commit_write(used);
+        if added == 0 {
+            return;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        self.offset = self.offset.saturating_add(added as i64);
+    }
+
+    /// The opaque C handle token set by [`set_c_handle`](Self::set_c_handle).
+    #[inline]
+    pub fn c_handle(&self) -> usize {
+        self.c_handle
+    }
+
+    /// Record the C `FILE` handle token this stream is published through.
+    pub fn set_c_handle(&mut self, handle: usize) {
+        self.c_handle = handle;
+    }
+
+    /// Account for the first `n` bytes of [`read_window`](Self::read_window)
+    /// having been consumed in place by the caller.
+    pub fn consume_window(&mut self, n: usize) {
+        let n = n.min(self.buffer.readable());
+        if n == 0 {
+            return;
+        }
+        self.buffer.consume(n);
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+        self.advance_offset(n);
     }
 
     /// Fast bulk buffered read (bulk sibling of `fast_getc`): fills `dst` entirely iff all
@@ -1235,7 +1362,20 @@ impl StdioStream {
 
     /// Push a byte back (ungetc). Returns false if already one pushed back.
     pub fn ungetc(&mut self, byte: u8) -> bool {
-        let pushed = if let Some(existing) = self.ungetc_byte {
+        // Like glibc, back the read position up over the byte just consumed
+        // (storing `byte` there; a seek discards the buffer, so the slot is
+        // never re-read as file data) instead of parking it aside: the
+        // pushed-back byte then stays inside the read window, which gnulib's
+        // freadahead counts (`ungetc` must leave its value unchanged).
+        let in_buffer = self.ungetc_byte.is_none()
+            && self.read_pushback.is_empty()
+            && !self.is_mem_backed()
+            && !self.flags.last_write
+            && self.buffer.readable() < self.buffer.capacity()
+            && self.buffer.unget(byte);
+        let pushed = if in_buffer {
+            true
+        } else if let Some(existing) = self.ungetc_byte {
             // Push the existing byte into the buffer, and replace ungetc_byte
             // with the new byte, maintaining LIFO order.
             if self.buffer.unget(existing) {
@@ -1493,10 +1633,32 @@ mod tests {
 
     #[test]
     fn test_parse_mode_invalid() {
+        // Only an empty mode or a bad first character is invalid.
         assert!(parse_mode(b"").is_none());
         assert!(parse_mode(b"z").is_none());
-        assert!(parse_mode(b"rw").is_none());
-        assert!(parse_mode(b"ar").is_none());
+        assert!(parse_mode(b"tr").is_none());
+    }
+
+    /// glibc ignores unknown modifier characters ("rt", "rw", "r b"), reads
+    /// at most six of them, and stops at the ",ccs=" suffix. Verified against
+    /// glibc 2.43 fopen: "rt", "rbt", "rq", "rw", "ar", "r b", "r,ccs=UTF-8"
+    /// all open; "rw" is read-only.
+    #[test]
+    fn test_parse_mode_ignores_unknown_modifiers_like_glibc() {
+        let rt = parse_mode(b"rt").unwrap();
+        assert!(rt.readable && !rt.writable);
+        let rw = parse_mode(b"rw").unwrap();
+        assert!(rw.readable && !rw.writable && !rw.truncate);
+        let ar = parse_mode(b"ar").unwrap();
+        assert!(ar.writable && ar.append && !ar.readable);
+        assert!(parse_mode(b"r b").unwrap().binary);
+        let ccs = parse_mode(b"r,ccs=UTF-8").unwrap();
+        assert!(ccs.readable && !ccs.writable);
+        // '+' after the comma is part of the charset name, not a modifier.
+        assert!(!parse_mode(b"r,ccs=+").unwrap().writable);
+        // Only six modifier characters are read: a '+' in the seventh is not.
+        assert!(!parse_mode(b"rqqqqqq+").unwrap().writable);
+        assert!(parse_mode(b"rqqqqq+").unwrap().writable);
     }
 
     #[test]

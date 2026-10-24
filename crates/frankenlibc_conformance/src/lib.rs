@@ -15671,7 +15671,7 @@ fn execute_setlocale_case(
     let impl_output = if !frankenlibc_core::locale::valid_category(category) {
         String::from("NULL")
     } else if let Some(name) = locale.as_deref() {
-        if frankenlibc_core::locale::is_c_locale(name.as_bytes()) || hardened {
+        if frankenlibc_core::locale::is_c_locale(name.as_bytes()) {
             String::from("C")
         } else {
             String::from("NULL")
@@ -15697,7 +15697,7 @@ fn execute_setlocale_case(
         && !frankenlibc_core::locale::is_c_locale(name.as_bytes())
     {
         note = Some(String::from(
-            "hardened mode falls back to C locale for unsupported locale names",
+            "hardened mode refuses unsupported locale names (NULL) like strict; it never reports a locale that is not active",
         ));
     }
 
@@ -21484,7 +21484,7 @@ fn bind_textdomain_codeset_fixture_actual() -> Result<String, String> {
     let requested =
         CString::new("ISO-8859-1").map_err(|_| "codeset contains interior NUL".to_string())?;
     // SAFETY: Both pointers are valid NUL-terminated strings for the duration
-    // of the call; the ABI returns a static UTF-8 string.
+    // of the call; the ABI returns its own stored copy of the codeset.
     let ptr = unsafe {
         frankenlibc_abi::unistd_abi::bind_textdomain_codeset(domain.as_ptr(), requested.as_ptr())
     };
@@ -35748,10 +35748,10 @@ mod tests {
     }
 
     #[test]
-    fn execute_setlocale_case_hardened_unsupported_locale_falls_back_to_c() {
+    fn execute_setlocale_case_hardened_unsupported_locale_is_refused() {
         assert_differential_contract(
             "locale",
-            "hardened-unsupported-locale-fallback",
+            "hardened-unsupported-locale-refused",
             "tests/conformance/fixtures/locale_ops.json#/cases/setlocale_unsupported_hardened",
             "setlocale",
             "hardened",
@@ -35759,10 +35759,10 @@ mod tests {
                 "category": 6,
                 "locale": "xx_INVALID.UTF-8"
             }),
-            "C",
+            "NULL",
             Some("SKIP"),
             true,
-            Some("falls back to C locale"),
+            Some("never reports a locale that is not active"),
         );
     }
 

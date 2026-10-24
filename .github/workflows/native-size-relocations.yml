@@ -1,0 +1,77 @@
+name: Native size and PC64 relocations
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-core/src/elf/**'
+      - 'crates/frankenlibc-core/tests/elf_extended_relocation_test.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn*.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_size_relocation_test.rs'
+      - '.github/workflows/native-size-relocations.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ['', 'standalone']
+    env:
+      FEATURES: ${{ matrix.features }}
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install repository toolchain
+        run: |
+          set -euo pipefail
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal
+          rustc --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-loader-inspection
+      - name: Execute relocation arithmetic
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/relocations
+          timeout 1200 cargo test --no-fail-fast -p frankenlibc-core --test elf_extended_relocation_test -- --nocapture 2>&1 | tee artifacts/relocations/core.log
+          grep -F 'test result: ok. 3 passed; 0 failed;' artifacts/relocations/core.log
+      - name: Compile the native loader contract
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/relocations
+          features=()
+          if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
+          timeout 1200 cargo build --keep-going -p frankenlibc-abi "${features[@]}" --test dlfcn_native_size_relocation_test 2>&1 | tee artifacts/relocations/build.log
+      - name: Execute host and native linked DSOs in both modes
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/relocations
+          features=()
+          if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
+          status=0
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --no-fail-fast -p frankenlibc-abi "${features[@]}" --test dlfcn_native_size_relocation_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/relocations/${mode}.log" || status=1
+            grep -F 'test result: ok. 1 passed; 0 failed;' "artifacts/relocations/${mode}.log" || status=1
+            grep -F 'relocation contracts: 5 host and 9 native scenarios passed' "artifacts/relocations/${mode}.log" || status=1
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: size-relocations-${{ matrix.features || 'interpose' }}-${{ github.run_attempt }}
+          path: artifacts/relocations/
+          if-no-files-found: warn

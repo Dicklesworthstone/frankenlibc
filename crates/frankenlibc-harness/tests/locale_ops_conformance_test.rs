@@ -258,9 +258,12 @@ fn locale_ops_covers_posix_2008_functions() -> Result<(), String> {
 fn locale_ops_error_codes_valid() -> Result<(), String> {
     let fixture = load_fixture("locale_ops")?;
 
-    // locale functions typically don't set errno, or use EINVAL
+    // locale functions typically don't set errno, or use EINVAL; a setlocale
+    // that cannot load the locale sets ENOENT (glibc 2.43:
+    // setlocale(LC_ALL, "xx_INVALID.UTF-8") -> NULL, errno 2).
     let valid_errno_values = [
         0,  // Success
+        2,  // ENOENT
         22, // EINVAL
     ];
 

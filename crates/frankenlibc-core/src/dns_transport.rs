@@ -180,6 +180,9 @@ fn tcp_exchange(
     }
 }
 
+/// Preformatted DNS messages use the same peer-bound transport as host lookups.
+pub mod raw;
+
 /// Exchange one standard single-question DNS query. Only matching replies can
 /// trigger fallback, and all fallback work consumes the original time budget.
 pub fn exchange(
@@ -200,10 +203,38 @@ fn exchange_until(
     deadline: Instant,
     use_vc: bool,
 ) -> Result<Vec<u8>, QueryError> {
+    // Host lookup only constructs QUERY packets. The raw API also accepts
+    // single-question NOTIFY/UPDATE packets, but never relaxes reply binding.
+    let header = DnsHeader::decode(query).ok_or(QueryError::InvalidQuery)?;
+    if header.flags & 0x7800 != 0 {
+        return Err(QueryError::InvalidQuery);
+    }
+    let reply = exchange_raw_until(server, query, deadline, use_vc, false)?;
+    // Preserve the existing address/PTR API's retry classification. Raw
+    // callers need the packet and final transport, including a TCP RCODE.
+    if reply.transport == raw::Transport::Udp {
+        let code = DnsHeader::decode(&reply.packet)
+            .ok_or(QueryError::InvalidResponse)?
+            .rcode();
+        if matches!(code, rcode::SERVFAIL | rcode::NOTIMP | rcode::REFUSED) {
+            DnsMessage::decode(&reply.packet).ok_or(QueryError::InvalidResponse)?;
+            return Err(QueryError::RetryableResponse(code));
+        }
+    }
+    Ok(reply.packet)
+}
+
+fn exchange_raw_until(
+    server: SocketAddr,
+    query: &[u8],
+    deadline: Instant,
+    use_vc: bool,
+    ignore_truncation: bool,
+) -> Result<raw::Reply, QueryError> {
     let header = DnsHeader::decode(query).ok_or(QueryError::InvalidQuery)?;
     if query.len() > MAX_MESSAGE
         || header.is_response()
-        || header.flags & 0x7800 != 0
+        || !matches!((header.flags >> 11) & 15, 0 | 4 | 5)
         || header.qdcount != 1
         || question(query).is_none()
     {
@@ -213,7 +244,7 @@ fn exchange_until(
     // *unbounded* wait on Linux, not an immediate timeout.
     remaining(deadline)?;
     if use_vc || query.len() > DNS_MAX_UDP_SIZE {
-        return tcp_exchange(server, query, deadline);
+        return tcp_exchange(server, query, deadline).map(raw::Reply::tcp);
     }
 
     let local = match server.ip() {
@@ -245,22 +276,18 @@ fn exchange_until(
         if !response_matches(query, reply) {
             continue;
         }
-        if DnsHeader::decode(reply).is_some_and(|header| header.is_truncated()) {
+        if !ignore_truncation
+            && DnsHeader::decode(reply).is_some_and(|header| header.is_truncated())
+        {
             // Do not decode the truncated answer section: it may end halfway
             // through an RR. The validated header + question are sufficient.
-            return tcp_exchange(server, query, deadline);
-        }
-        let code = DnsHeader::decode(reply)
-            .ok_or(QueryError::InvalidResponse)?
-            .rcode();
-        if matches!(code, rcode::SERVFAIL | rcode::NOTIMP | rcode::REFUSED) {
-            // A server rejection is not a timeout or a parse failure. Validate
-            // all declared sections before allowing it to affect retry policy.
-            DnsMessage::decode(reply).ok_or(QueryError::InvalidResponse)?;
-            return Err(QueryError::RetryableResponse(code));
+            return tcp_exchange(server, query, deadline).map(raw::Reply::tcp);
         }
         packet.truncate(received);
-        return Ok(packet);
+        return Ok(raw::Reply {
+            packet,
+            transport: raw::Transport::Udp,
+        });
     }
 }
 
@@ -538,7 +565,8 @@ where
     //   fallback answer; any other search-domain error (a timeout, a
     //   malformed reply) stops the search, though an as-is name still
     //   pending is tried;
-    // - a refused connection means no server: TRY_AGAIN at once;
+    // - only after every configured server refuses is there no server:
+    //   TRY_AGAIN then stops the search, without discarding a positive family;
     // - otherwise the last name tried decides.
     // Before this, a timeout on ANY name made the whole lookup TRY_AGAIN, so
     // a missing name whose search-suffixed form timed out was "try again"
@@ -561,12 +589,17 @@ where
         let mut done = [!want_v4, !want_v6];
         let mut failures = [None, None];
         let mut servfail = [false, false];
+        // A refused endpoint is unavailable for this candidate, not proof
+        // that every configured nameserver is unavailable. Skip it for the
+        // remaining family and retry rounds, but reset for the next name.
+        let mut refused_servers = vec![false; config.nameservers.len()];
         for _ in 0..config.attempts.max(1) {
             for offset in 0..config.nameservers.len() {
-                let server = SocketAddr::new(
-                    config.nameservers[(start + offset) % config.nameservers.len()],
-                    DNS_PORT,
-                );
+                let server_index = (start + offset) % config.nameservers.len();
+                if refused_servers[server_index] {
+                    continue;
+                }
+                let server = SocketAddr::new(config.nameservers[server_index], DNS_PORT);
                 for (index, record_type) in [qtype::A, qtype::AAAA].into_iter().enumerate() {
                     if done[index] {
                         continue;
@@ -605,7 +638,10 @@ where
                         Err(QueryError::Io(error))
                             if error.kind() == std::io::ErrorKind::ConnectionRefused =>
                         {
-                            return Err(ResolveError::Temporary);
+                            refused_servers[server_index] = true;
+                            failures[index] = Some(ResolveError::Temporary);
+                            servfail[index] = false;
+                            break;
                         }
                         Err(QueryError::Io(_)) => {
                             failures[index] = Some(ResolveError::Temporary);
@@ -632,7 +668,7 @@ where
                     break;
                 }
             }
-            if done.iter().all(|&value| value) {
+            if done.iter().all(|&value| value) || refused_servers.iter().all(|&value| value) {
                 break;
             }
         }
@@ -641,6 +677,9 @@ where
                 addresses: result,
                 canonical_name: canonical_name.unwrap_or(name),
             });
+        }
+        if refused_servers.iter().all(|&value| value) {
+            return Err(ResolveError::Temporary);
         }
         // A successful definitive reply supersedes errors from earlier
         // attempts of that family. Only unresolved failures affect the result.

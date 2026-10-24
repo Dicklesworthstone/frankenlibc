@@ -1,0 +1,91 @@
+name: Native stateful resolver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-stateful-resolver.yml'
+      - 'crates/frankenlibc-abi/src/resolv_state.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/tests/stateful_resolver_test.rs'
+      - 'crates/frankenlibc-abi/tests/stateful_resolver_edns_test.rs'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
+      - 'tests/conformance/stateful_resolver_abi.c'
+      - 'tests/conformance/edns_resolver_abi.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: 2
+  RUST_BACKTRACE: 1
+
+jobs:
+  native:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record the committed implementation being tested
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stateful-resolver
+          git rev-parse HEAD > artifacts/stateful-resolver/base-commit.txt
+          git hash-object crates/frankenlibc-abi/src/glibc_internal_abi.rs > artifacts/stateful-resolver/wrapper-blob.txt
+          printf 'Committed source without overlays\n' > artifacts/stateful-resolver/proof-scope.txt
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute real exported state entry bodies and retained DNS engine tests
+        run: |
+          set -euo pipefail
+          if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
+          cp Cargo.lock artifacts/stateful-resolver/Cargo.lock
+          cargo test --locked -p frankenlibc-abi --test stateful_resolver_test -- --nocapture 2>&1 | tee artifacts/stateful-resolver/native-state.log
+          grep -Eq 'test result: ok\. 13 passed;' artifacts/stateful-resolver/native-state.log
+          cargo test --locked -p frankenlibc-abi --test stateful_resolver_edns_test -- --nocapture 2>&1 | tee artifacts/stateful-resolver/native-edns.log
+          grep -Eq 'test result: ok\. 6 passed;' artifacts/stateful-resolver/native-edns.log
+          cargo test --locked -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/stateful-resolver/native-core.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/stateful-resolver/native-core.log
+      - name: Build the real exported library
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stateful-resolver/release-build.log
+      - name: Exercise owner-pinned exported functions against host and both candidate modes
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/stateful_resolver_abi.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/stateful-resolver"
+          timeout 40 "$RUNNER_TEMP/stateful-resolver" --host | tee artifacts/stateful-resolver/host.log
+          grep -Fq '20 host-glibc stateful resolver cases passed' artifacts/stateful-resolver/host.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 40 "$RUNNER_TEMP/stateful-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/stateful-resolver/candidate-$mode.log"
+            grep -Fq '20 candidate stateful resolver cases passed' "artifacts/stateful-resolver/candidate-$mode.log"
+          done
+      - name: Exercise EDNS payload, DNSSEC request and fallback contracts
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/edns_resolver_abi.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/edns-resolver"
+          timeout 60 "$RUNNER_TEMP/edns-resolver" --host | tee artifacts/stateful-resolver/edns-host.log
+          grep -Fq '28 host-glibc EDNS resolver cases passed' artifacts/stateful-resolver/edns-host.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 60 "$RUNNER_TEMP/edns-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/stateful-resolver/edns-candidate-$mode.log"
+            grep -Fq '28 candidate EDNS resolver cases passed' "artifacts/stateful-resolver/edns-candidate-$mode.log"
+          done
+      - name: Verify validation did not alter tracked source
+        run: git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-stateful-resolver-results
+          path: artifacts/stateful-resolver/**

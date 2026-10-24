@@ -1,127 +1,23 @@
 //! Trigonometric functions.
 
-// Fast extended-range argument reduction for sin/cos/tan.
-//
-// `libm`'s reduction is fast for |x| < 2^20·π/2 (≈1.6e6), but above that it
-// falls to a slow Payne-Hanek path — measured ~7-10x slower than glibc, which
-// stays flat (~10 ns) across all ranges. For the common "large but not
-// astronomical" range we reduce with an FMA-based 3-part π/2 Cody-Waite (no
-// Payne-Hanek table) and evaluate the already-fast small-arg `libm` kernel on
-// the reduced value. |x| above the 3-part range (≈1e15, where the quotient `n`
-// no longer leaves enough of the 159-bit π/2 split) stays on `libm` so the rare
-// astronomical case keeps its full accuracy.
-
-const TWO_OVER_PI: f64 = f64::from_bits(0x3fe45f306dc9c883); // 2/π
-const PIO2H: f64 = f64::from_bits(0x3ff921fb54442d18); // π/2, high 53 bits
-const PIO2M: f64 = f64::from_bits(0x3c91a62633145c07); // π/2 − PIO2H
-const PIO2L: f64 = f64::from_bits(0xb91f1976b7ed8fbc); // π/2 − PIO2H − PIO2M
-/// Below this, `libm`'s own reduction is already fast — leave it alone.
-const TRIG_FAST_HI: f64 = 1.647e6;
-/// Above this, the 3-part split runs out of precision — defer to `libm`.
-const TRIG_RED_MAX: f64 = 1.0e15;
-
-/// Reduce `x` to `(n mod 4, r)` with `r ∈ ~[-π/4, π/4]` and `x = n·π/2 + r`,
-/// using three FMA steps against a 159-bit split of π/2. Valid for the
-/// `[TRIG_FAST_HI, TRIG_RED_MAX]` magnitude band (caller-guarded).
-#[inline]
-fn reduce_pio2_fma(x: f64) -> (i64, f64) {
-    let kd = (x * TWO_OVER_PI).round_ties_even();
-    let mut r = kd.mul_add(-PIO2H, x);
-    r = kd.mul_add(-PIO2M, r);
-    r = kd.mul_add(-PIO2L, r);
-    (kd as i64, r)
-}
-
 #[inline]
 pub fn sin(x: f64) -> f64 {
-    let ax = x.abs();
-    // Route the reduce-needing band `[π/4, TRIG_RED_MAX]` through the fast FMA Cody-Waite
-    // reduction instead of `libm::sin`'s slower internal `rem_pio2` — same mechanism as the
-    // landed f64 `tan` lever (glibc 2.42 sped up its dbl-64 trig, exposing libm's medium-range
-    // reduction). `|x| < π/4` needs no reduction (stays on libm); the reduction is ≤2 ULP and
-    // only more accurate for smaller `x`, within the ≤4-ULP trig contract.
-    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
-        return libm::sin(x);
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    match n & 3 {
-        0 => libm::sin(r),
-        1 => libm::cos(r),
-        2 => -libm::sin(r),
-        _ => -libm::cos(r),
-    }
+    // CORE-MATH's correctly rounded sin. glibc's IBM sin is correctly rounded
+    // on all but ~0.1% of inputs, so this differs from glibc ~20x less often
+    // than libm::sin (3% in [-10, 10]; bd-otip6a).
+    crate::math::coremath::sin(x)
 }
 
 #[inline]
 pub fn cos(x: f64) -> f64 {
-    let ax = x.abs();
-    // See `sin`: route `[π/4, TRIG_RED_MAX]` through the fast FMA reduction (same mechanism as
-    // the landed `tan` lever); `|x| < π/4` stays on libm. ≤2 ULP, within the ≤4-ULP contract.
-    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
-        return libm::cos(x);
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    match n & 3 {
-        0 => libm::cos(r),
-        1 => -libm::sin(r),
-        2 => -libm::cos(r),
-        _ => libm::sin(r),
-    }
+    // CORE-MATH's correctly rounded cos; see `sin` (bd-otip6a).
+    crate::math::coremath::cos(x)
 }
 
-/// Fused sin+cos over the fast FMA-reduction band `[TRIG_FAST_HI, TRIG_RED_MAX]`.
-/// Returns `Some((sin(x), cos(x)))` computed from a SINGLE `reduce_pio2_fma`
-/// instead of `libm::sincos`'s slower Payne–Hanek `rem_pio2`. The result is
-/// BIT-IDENTICAL to `(self::sin(x), self::cos(x))` (same reduction, same quadrant
-/// map, same `libm::sin/cos` on the reduced arg), so it inherits their already-green
-/// ≤1–2 ULP-vs-glibc conformance; outside the band the caller falls back to
-/// `libm::sincos` (unchanged behavior).
-///
-/// NOTE (rejected 2026-07-11, cc-sincos-band): lowering this threshold to `π/4` (mirroring
-/// the sin/cos/tan levers) is a MEASURED no-op — `libm::sincos` already shares ONE reduction
-/// for both outputs and already BEATS glibc's `sincos` on the common band (fl_cand/libm_orig
-/// = 1.001, both 0.74x glibc). The FMA path adds a double reduction (`reduce_pio2_fma` +
-/// `libm::sin(r)`/`libm::cos(r)`'s own `rem_pio2` fast-exits) that washes the savings. Do not
-/// retry without transcribing the sin/cos KERNELS to avoid the double reduction.
-#[inline]
-pub(crate) fn sincos_band(x: f64) -> Option<(f64, f64)> {
-    let ax = x.abs();
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
-        return None;
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    let s = libm::sin(r);
-    let c = libm::cos(r);
-    Some(match n & 3 {
-        0 => (s, c),
-        1 => (c, -s),
-        2 => (-s, -c),
-        _ => (-c, s),
-    })
-}
-
-/// Below π/4 no reduction is needed (`libm::tan` is a direct small-arg kernel eval), so
-/// leave it on libm. From π/4 up to `TRIG_RED_MAX` we route through the fast FMA
-/// Cody-Waite reduction (`reduce_pio2_fma`, 3 FMAs) + the already-fast small-arg kernel,
-/// instead of `libm::tan`'s slower internal `rem_pio2`. glibc 2.42 sped up its dbl-64
-/// `tan`, exposing libm's medium-range reduction as the gap (f64 `tan` measured 1.68x
-/// slower than glibc 2.42). The reduction is proven ≤2 ULP on the large-arg band and is
-/// only MORE accurate for smaller `x` (smaller quotient), so it stays within the ≤4-ULP
-/// trig contract (`conformance_diff_trig_special`). Odd by construction: `reduce_pio2_fma`
-/// is odd (round-ties-even is odd), so `tan(-x) == -tan(x)` exactly. Above `TRIG_RED_MAX`
-/// the 3-part split runs out of precision — defer to libm for the rare astronomical case.
 #[inline]
 pub fn tan(x: f64) -> f64 {
-    let ax = x.abs();
-    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
-        return libm::tan(x);
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    if n & 1 == 0 {
-        libm::tan(r)
-    } else {
-        -1.0 / libm::tan(r)
-    }
+    // CORE-MATH's correctly rounded tan; see `sin` (bd-otip6a).
+    crate::math::coremath::tan(x)
 }
 
 #[inline]
@@ -136,7 +32,10 @@ pub fn acos(x: f64) -> f64 {
 
 #[inline]
 pub fn atan(x: f64) -> f64 {
-    libm::atan(x)
+    // CORE-MATH's correctly rounded atan. glibc's IBM atan is correctly rounded
+    // on all but ~0.02-0.1% of inputs, so this differs from glibc 10-70x less
+    // often than fdlibm's libm::atan did (1.4%; bd-otip6a).
+    crate::math::coremath::atan(x)
 }
 
 #[inline]
@@ -144,202 +43,134 @@ pub fn atan2(y: f64, x: f64) -> f64 {
     libm::atan2(y, x)
 }
 
+// sinh/cosh/tanh are fdlibm's e_sinh.c / e_cosh.c / s_tanh.c (Sun Microsystems,
+// freely redistributable with this notice: "Developed at SunSoft, a Sun
+// Microsystems, Inc. business. Permission to use, copy, modify, and distribute
+// this software is freely granted, provided that this notice is preserved."),
+// the formulas glibc uses. Compiled in C on top of glibc's exp and expm1 they
+// reproduce glibc 2.43 bit for bit (0 of 300k differences); fl's exp is
+// bit-identical to glibc's, so what remains is fl's expm1 (bd-otip6a).
+
+/// High and low 32-bit words of `x`.
+#[inline(always)]
+fn hi_lo(x: f64) -> (i32, u32) {
+    let u = x.to_bits();
+    ((u >> 32) as i32, u as u32)
+}
+
 #[inline]
 pub fn sinh(x: f64) -> f64 {
-    // |x| <= 3: odd Taylor polynomial (no exp — cheaper than the (t-1/t)/2 reroute on
-    //   the hot band, mirrors the `cosh` polynomial). |x| in (3, 700): the two
-    //   exponentials are well separated (t >> 1/t), so sign(x)·(t-1/t)/2 with t=exp(|x|)
-    //   rides the fast f64 `exp` with no cancellation. |x| >= 700 (overflow) -> libm.
+    let (jx, lx) = hi_lo(x);
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7ff0_0000 {
+        return x + x; // inf or NaN
+    }
+    let h = if jx < 0 { -0.5 } else { 0.5 };
     let ax = x.abs();
-    if ax <= 3.0 {
-        return sinh_poly_le_3(x);
+    if ix < 0x4036_0000 {
+        // |x| < 22
+        if ix < 0x3e30_0000 {
+            return x; // |x| < 2^-28: sinh(x) rounds to x
+        }
+        let t = crate::math::expm1(ax);
+        if ix < 0x3ff0_0000 {
+            return h * (2.0 * t - t * t / (t + 1.0));
+        }
+        return h * (t + t / (t + 1.0));
     }
-    if ax < 700.0 {
-        let t = crate::math::exp(ax);
-        let r = (t - 1.0 / t) * 0.5;
-        return if x.is_sign_negative() { -r } else { r };
+    if ix < 0x4086_2e42 {
+        // |x| in [22, log(DBL_MAX)]
+        return h * crate::math::exp(ax);
     }
-    // Above ln(DBL_MAX), exp(|x|) overflows even though sinh(|x|) is still
-    // finite, so `0.5 * exp(|x|)` cannot be evaluated directly — libm's result
-    // here sat 1 ULP under glibc (sinh(710) gave 1.1169973830808555e308 against
-    // glibc's ...557e308). glibc splits the exponential so no intermediate
-    // leaves range: t = exp(|x|/2), then (0.5·t)·t = 0.5·exp(|x|).
-    //
-    // The boundary is ln(DBL_MAX) because that is where direct evaluation
-    // actually overflows — not because it is where the gate samples. Inputs
-    // between 700 and ln(DBL_MAX) keep their existing path, which is already
-    // exact there.
-    const LN_DBL_MAX: f64 = 709.782_712_893_384_0;
-    if ax.is_finite() && ax > LN_DBL_MAX {
-        let t = crate::math::exp(0.5 * ax);
-        let r = (0.5 * t) * t;
-        return if x.is_sign_negative() { -r } else { r };
+    if ix < 0x4086_33ce || (ix == 0x4086_33ce && lx <= 0x8fb9_f87d) {
+        // |x| in [log(DBL_MAX), overflow threshold]: split the exponential.
+        let w = crate::math::exp(0.5 * ax);
+        let t = h * w;
+        return t * w;
     }
-    libm::sinh(x)
+    x * 1.0e307 // overflow
 }
 
-#[inline]
-fn sinh_poly_le_3(x: f64) -> f64 {
-    // Odd Taylor/Horner polynomial through x^27: sinh(x) = x·Σ (x²)^k/(2k+1)!. On
-    // |x| <= 3 the first omitted term x^29/29! < 8e-18 is well under the 4-ULP math
-    // contract for sinh (sinh(3)=10.02, 4 ULP ~ 9e-15). x carries the sign (odd), so ±0
-    // -> ±0 falls out. Mirrors the peer's `cosh_poly_le_3`.
-    let z = x * x;
-    let mut p: f64 = 9.183_689_863_795_546e-29;
-    p = p.mul_add(z, 6.446_950_284_384_474e-26);
-    p = p.mul_add(z, 3.868_170_170_630_683_5e-23);
-    p = p.mul_add(z, 1.957_294_106_339_126_3e-20);
-    p = p.mul_add(z, 8.220_635_246_624_33e-18);
-    p = p.mul_add(z, 2.811_457_254_345_520_6e-15);
-    p = p.mul_add(z, 7.647_163_731_819_816e-13);
-    p = p.mul_add(z, 1.605_904_383_682_161_3e-10);
-    p = p.mul_add(z, 2.505_210_838_544_172e-8);
-    p = p.mul_add(z, 2.755_731_922_398_589_3e-6);
-    p = p.mul_add(z, 1.984_126_984_126_984e-4);
-    p = p.mul_add(z, 8.333_333_333_333_333e-3);
-    p = p.mul_add(z, 0.166_666_666_666_666_66);
-    p = p.mul_add(z, 1.0);
-    x * p
-}
-
-/// `cosh(x) = (eˣ + e⁻ˣ)/2`, using a small/medium even polynomial before the
-/// large-input one-`exp` form.
-///
-/// Profiling (`glibc_baseline_math/cosh`) showed `libm::cosh` (~13.5 ns) is
-/// ~1.4x slower than glibc's `cosh` (~9.6 ns), while our `exp` (exp2-based
-/// fast path) is ~0.66x glibc's — so one `exp` + reciprocal reaches parity.
-/// A degree-26 even Taylor/Horner polynomial is faster still on the survey's
-/// hot `[0.1, 3.0]` band; the first omitted term at `|x| = 3` is below 8e-17.
-/// Unlike `sinh`, `cosh` has no catastrophic cancellation: both the polynomial
-/// and the one-`exp` form sum positive terms, and the result stays within the
-/// 4-ULP-vs-glibc math contract (verified by `cosh_fast_path_within_4_ulps`).
-///
-/// `|x| >= 700` defers to `libm::cosh`: there `exp(x)` would overflow to `inf`
-/// while `cosh(x)` is still finite in the band `(709.78, 710.47]` (cosh
-/// overflows later than exp), so the naive form would wrongly return `inf`.
-/// 700 sits safely below the `exp` overflow threshold (`exp(700) ≈ 1e304`).
 #[inline]
 pub fn cosh(x: f64) -> f64 {
+    let (jx, lx) = hi_lo(x);
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7ff0_0000 {
+        return x * x; // inf or NaN
+    }
     let ax = x.abs();
-    if ax <= 3.0 {
-        return cosh_poly_le_3(ax);
+    if ix < 0x3fd6_2e43 {
+        // |x| < ln(2)/2: 1 + expm1(|x|)^2 / (2 exp(|x|))
+        let t = crate::math::expm1(ax);
+        let w = 1.0 + t;
+        if ix < 0x3c80_0000 {
+            return w; // cosh(tiny) = 1
+        }
+        return 1.0 + (t * t) / (w + w);
     }
-    if ax < 700.0 {
+    if ix < 0x4036_0000 {
+        // |x| < 22
         let t = crate::math::exp(ax);
-        return (t + 1.0 / t) * 0.5;
+        return 0.5 * t + 0.5 / t;
     }
-    // Same overflow split as `sinh`: past ln(DBL_MAX) the single exp overflows
-    // while cosh itself is still finite, and libm landed 1 ULP under glibc
-    // (cosh(710) gave 1.1169973830808555e308 against ...557e308). cosh is even,
-    // so no sign fixup is needed.
-    const LN_DBL_MAX: f64 = 709.782_712_893_384_0;
-    if ax.is_finite() && ax > LN_DBL_MAX {
-        let t = crate::math::exp(0.5 * ax);
-        return (0.5 * t) * t;
+    if ix < 0x4086_2e42 {
+        return 0.5 * crate::math::exp(ax);
     }
-    libm::cosh(x)
-}
-
-#[inline]
-fn cosh_poly_le_3(x: f64) -> f64 {
-    // Even Taylor/Horner polynomial through x^26. On |x| <= 3 the first omitted
-    // term is x^28/28! < 8e-17, well under the 4-ULP math contract for cosh.
-    let z = x * x;
-    let mut p: f64 = 2.479_596_263_224_797_2e-27;
-    p = p.mul_add(z, 1.611_737_571_096_118_4e-24);
-    p = p.mul_add(z, 8.896_791_392_450_574e-22);
-    p = p.mul_add(z, 4.110_317_623_312_165e-19);
-    p = p.mul_add(z, 1.561_920_696_858_622_5e-16);
-    p = p.mul_add(z, 4.779_477_332_387_385e-14);
-    p = p.mul_add(z, 1.147_074_559_772_972_5e-11);
-    p = p.mul_add(z, 2.087_675_698_786_81e-9);
-    p = p.mul_add(z, 2.755_731_922_398_589e-7);
-    p = p.mul_add(z, 2.480_158_730_158_73e-5);
-    p = p.mul_add(z, 1.388_888_888_888_889e-3);
-    p = p.mul_add(z, 4.166_666_666_666_666_4e-2);
-    p = p.mul_add(z, 0.5);
-    p.mul_add(z, 1.0)
+    if ix < 0x4086_33ce || (ix == 0x4086_33ce && lx <= 0x8fb9_f87d) {
+        let w = crate::math::exp(0.5 * ax);
+        let t = 0.5 * w;
+        return t * w;
+    }
+    let huge = core::hint::black_box(1.0e300);
+    huge * huge // overflow
 }
 
 #[inline]
 pub fn tanh(x: f64) -> f64 {
-    // For |x| in [0.5, 20): tanh(x) = sign(x)·(u-1)/(u+1) with u = exp(2|x|). Since
-    // u >= e (no cancellation in u-1) it rides the now-fast f64 `exp` kernel. |x| >= 20
-    // saturates to ±1 in f64 (1 - tanh < half-ULP), which also avoids exp(2x) overflow.
-    // Small |x| (< 0.5, where u ~ 1 and u-1 cancels) keeps libm::tanh's exact handling.
-    let ax = x.abs();
-    if ax >= 0.5 {
-        let r = if ax >= 20.0 {
-            1.0
-        } else {
-            let u = crate::math::exp(2.0 * ax);
-            (u - 1.0) / (u + 1.0)
-        };
-        return if x.is_sign_negative() { -r } else { r };
+    let (jx, _) = hi_lo(x);
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7ff0_0000 {
+        // tanh(±inf) = ±1; NaN propagates.
+        return if jx >= 0 { 1.0 / x + 1.0 } else { 1.0 / x - 1.0 };
     }
-    libm::tanh(x)
+    let z = if ix < 0x4036_0000 {
+        // |x| < 22
+        if ix < 0x3c80_0000 {
+            return x * (1.0 + x); // |x| < 2^-55
+        }
+        if ix >= 0x3ff0_0000 {
+            let t = crate::math::expm1(2.0 * x.abs());
+            1.0 - 2.0 / (t + 2.0)
+        } else {
+            let t = crate::math::expm1(-2.0 * x.abs());
+            -t / (t + 2.0)
+        }
+    } else {
+        1.0 - core::hint::black_box(1.0e-300) // ±1 with FE_INEXACT
+    };
+    if jx >= 0 { z } else { -z }
 }
 
 #[inline]
 pub fn asinh(x: f64) -> f64 {
-    // Large-|x| asinh is dominated by sign(x)*log(2|x|). The previously rejected
-    // rewrite was sqrt-bound; this asymptotic path removes the sqrt on the hot
-    // large-input band and corrects log(2|x|) by the exact series in z=1/x^2:
-    // asinh(x)-log(2x) = z/4 - 3z^2/32 + 5z^3/96 - 35z^4/1024 + 63z^5/2560 + O(z^6).
-    let ax = x.abs();
-    if ax >= 16.0 {
-        let z = 1.0 / (ax * ax);
-        let mut p: f64 = 63.0 / 2560.0;
-        p = p.mul_add(z, -35.0 / 1024.0);
-        p = p.mul_add(z, 5.0 / 96.0);
-        p = p.mul_add(z, -3.0 / 32.0);
-        p = p.mul_add(z, 0.25);
-        let r = crate::math::log(ax) + core::f64::consts::LN_2 + z * p;
-        return if x.is_sign_negative() { -r } else { r };
-    }
-    if ax >= 1.0 {
-        // Midrange [1,16): x+√(x²+1) ≥ 1+√2 — NO cancellation — so the PLAIN log form
-        // (one sqrt + fl's fused f64 `log`) is accurate to ≤2 ULP (asinh is gated ≤2 ULP)
-        // and beats libm::asinh's heavier internal log+branch path. This is NOT the
-        // rejected log1p form (asinh = log1p(|x| + x²/(√(x²+1)+1)), 1.80x — extra divide +
-        // non-inlined log1p); the bare log avoids both.
-        let r = crate::math::log(ax + (ax * ax + 1.0).sqrt());
-        return if x.is_sign_negative() { -r } else { r };
-    }
-    // |x| < 1: x+√(x²+1) → 1 cancellation needs extra precision — libm::asinh is tighter.
-    libm::asinh(x)
+    // CORE-MATH's correctly rounded asinh, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::asinh differed on 6.6% of inputs (bd-otip6a).
+    crate::math::coremath::asinh(x)
 }
 
 #[inline]
 pub fn acosh(x: f64) -> f64 {
-    // Large-x acosh is dominated by log(2x). The previously rejected rewrite was
-    // sqrt-bound; this asymptotic path removes the sqrt on the hot large-input band and
-    // corrects log(2x) by the exact series in z=1/x^2:
-    // acosh(x)-log(2x) = -z/4 - 3z^2/32 - 5z^3/96 - 35z^4/1024 - 63z^5/2560 + O(z^6).
-    if x >= 16.0 {
-        let z = 1.0 / (x * x);
-        let mut p: f64 = -63.0 / 2560.0;
-        p = p.mul_add(z, -35.0 / 1024.0);
-        p = p.mul_add(z, -5.0 / 96.0);
-        p = p.mul_add(z, -3.0 / 32.0);
-        p = p.mul_add(z, -0.25);
-        return crate::math::log(x) + core::f64::consts::LN_2 + z * p;
-    }
-    // The near-1/midrange log1p form measured 1.43x (sqrt-bound); libm::acosh is tighter.
-    libm::acosh(x)
+    // CORE-MATH's correctly rounded acosh, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::acosh differed on 6.4% of inputs (bd-otip6a).
+    crate::math::coremath::acosh(x)
 }
 
 #[inline]
 pub fn atanh(x: f64) -> f64 {
-    // atanh(x) = sign(x)·0.5·log1p(2|x|/(1-|x|)), rides the fast `log1p`. |x| >= 1
-    // (poles ±1 -> ±inf, |x| > 1 domain -> NaN, NaN) defers to libm::atanh for exact
-    // FE flags. Small |x| stays accurate (log1p(2x) ~ 2x).
-    let ax = x.abs();
-    if !(ax < 1.0) {
-        return libm::atanh(x);
-    }
-    let r = 0.5 * crate::math::log1p(2.0 * ax / (1.0 - ax));
-    if x.is_sign_negative() { -r } else { r }
+    // CORE-MATH's correctly rounded atanh, which glibc 2.43 ships: bit-identical
+    // to glibc. The log1p(2|x|/(1-|x|))/2 shortcut differed on 21.6% of inputs
+    // (bd-otip6a).
+    crate::math::coremath::atanh(x)
 }
 
 #[cfg(test)]

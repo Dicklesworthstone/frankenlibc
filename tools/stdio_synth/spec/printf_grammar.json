@@ -54,7 +54,7 @@
     ],
     "default": null,
     "semantics_by_conversion": {
-      "d,i,o,u,x,X": "minimum digits (default 1)",
+      "d,i,o,u,x,X,b,B": "minimum digits (default 1)",
       "e,E,f,F": "digits after decimal point (default 6)",
       "g,G": "maximum significant digits (default 6)",
       "s": "maximum bytes to output",
@@ -97,6 +97,16 @@
         "name": "unsigned_hex_upper",
         "argument": "unsigned family",
         "output": "hex uppercase"
+      },
+      "b": {
+        "name": "unsigned_binary_lower",
+        "argument": "unsigned family",
+        "output": "binary, # prefix 0b (C23; glibc 2.35)"
+      },
+      "B": {
+        "name": "unsigned_binary_upper",
+        "argument": "unsigned family",
+        "output": "binary, # prefix 0B (C23; glibc 2.35)"
       },
       "f": {
         "name": "float_fixed_lower",
@@ -164,7 +174,7 @@
     "invalid_combinations": [
       {
         "flags": ["+", " "],
-        "conversions": ["o", "u", "x", "X", "c", "s", "p", "%"],
+        "conversions": ["o", "u", "x", "X", "b", "B", "c", "s", "p", "%"],
         "reason": "Sign flags not applicable to unsigned/char/string"
       },
       {
@@ -174,7 +184,7 @@
       },
       {
         "length": ["L"],
-        "conversions": ["d", "i", "o", "u", "x", "X", "c", "s", "p", "n", "%"],
+        "conversions": ["d", "i", "o", "u", "x", "X", "b", "B", "c", "s", "p", "n", "%"],
         "reason": "L only for floating point"
       },
       {

@@ -1410,12 +1410,19 @@ impl NativeStreamRegistry {
 
     /// Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
     fn install_std_streams(&mut self) {
+        // glibc's initial `_flags` for the std streams (0xfbad2088, 0xfbad2084,
+        // 0xfbad2086 before any I/O): only stderr reports itself unbuffered.
+        // Bare 0xfbad0002 told gnulib's freading/fbufmode and {fmt} that
+        // stdin and stdout were unbuffered and neither read- nor write-only.
+        const STD_STREAM_FLAGS: i32 =
+            GLIBC_IO_MAGIC | glibc_flag_bits::LINKED | glibc_flag_bits::IS_FILEBUF;
         let registry = self;
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
                 let mut file = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
                 file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_WRITES;
                 file
             },
         };
@@ -1424,6 +1431,7 @@ impl NativeStreamRegistry {
             file: {
                 let mut file = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
                 file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_READS;
                 file
             },
         };
@@ -1432,6 +1440,8 @@ impl NativeStreamRegistry {
             file: {
                 let mut file = NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None);
                 file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                file._io_file._flags =
+                    STD_STREAM_FLAGS | glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED;
                 file
             },
         };
@@ -1640,6 +1650,18 @@ static NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3] = [
     AtomicUsize::new(0),
     AtomicUsize::new(0),
 ];
+
+/// Address of the std handle for `fd` (0..=2) without taking the registry
+/// lock, or 0 if the slot addresses are not published yet. Safe to call while
+/// the native registry lock is held.
+pub(crate) fn native_stdio_slot_addr_lockfree(fd: usize) -> usize {
+    if fd >= NATIVE_STDIO_SLOT_ADDR.len()
+        || !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire)
+    {
+        return 0;
+    }
+    NATIVE_STDIO_SLOT_ADDR[fd].load(Ordering::Acquire)
+}
 
 /// Access the global stream registry.
 ///
@@ -1877,6 +1899,18 @@ pub(crate) fn register_stdio_handle(
 
 /// Byte offset of `_IO_FILE::_mode` (stream orientation) in a handle.
 pub(crate) const IO_FILE_MODE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _mode);
+
+/// Byte offsets of the glibc read-window pointers in a handle.
+pub(crate) const IO_READ_PTR_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr);
+pub(crate) const IO_READ_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end);
+pub(crate) const IO_READ_BASE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_base);
+/// Byte offsets of the glibc write-window and buffer pointers in a handle.
+pub(crate) const IO_WRITE_BASE_OFFSET: usize =
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_write_base);
+pub(crate) const IO_WRITE_PTR_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_write_ptr);
+pub(crate) const IO_WRITE_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_write_end);
+pub(crate) const IO_BUF_BASE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_base);
+pub(crate) const IO_BUF_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_end);
 
 /// Rewrite the caller-visible header of a registered handle after the stream
 /// behind it changed identity (`freopen`): new fd, open-mode bits, and a

@@ -235,7 +235,7 @@ const POLICY_LOAD_STATE_LOADED: u8 = 1;
 const POLICY_LOAD_STATE_VERIFY_FAILED: u8 = 2;
 
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
@@ -1224,9 +1224,17 @@ pub struct RuntimeMathKernel {
     cached_sobol_index: AtomicU64,
     cached_sobol_augmented_mask: AtomicU64,
     decisions: AtomicU64,
+    /// Observations offered to the probe cascade; it consumes every
+    /// `CASCADE_STRIDE`-th. Per kernel, so a replay of the same event sequence
+    /// samples the same events.
+    cascade_ticks: AtomicU32,
     /// Immutable routing/feedback switch; basic pointer checks live outside this kernel.
     routing_enabled: bool,
 }
+
+/// One observation in this many feeds the probe cascade (see
+/// `observe_validation_result_enabled`).
+const CASCADE_STRIDE: u32 = 8;
 
 impl RuntimeMathKernel {
     /// Read the consultation count without initializing, locking, or changing telemetry.
@@ -1473,6 +1481,7 @@ impl RuntimeMathKernel {
             cached_sobol_index: AtomicU64::new(0),
             cached_sobol_augmented_mask: AtomicU64::new(0),
             decisions: AtomicU64::new(0),
+            cascade_ticks: AtomicU32::new(0),
             routing_enabled,
         }
     }
@@ -2852,6 +2861,19 @@ impl RuntimeMathKernel {
             adverse,
             risk_bound_ppm,
         );
+
+        // Everything below -- the probe cascade, the quarantine controller and
+        // the check-order bandit -- is statistical estimation, and consumes a
+        // uniform 1-in-CASCADE_STRIDE subsample of observations (adverse or
+        // not, so rates stay unbiased). Running it on every validated call
+        // was a large share of hardened mode's cost (bd-rc0923-epic-eeuy4f.9);
+        // detection latency grows by the stride in events, which at millions
+        // of events per second is milliseconds. The core estimators above
+        // (risk bound, router, controller, Pareto) still see every call.
+        let tick = self.cascade_ticks.fetch_add(1, Ordering::Relaxed);
+        if !tick.wrapping_add(1).is_multiple_of(CASCADE_STRIDE) {
+            return;
+        }
 
         let mut spectral_anomaly = None;
         let mut rough_anomaly = None;

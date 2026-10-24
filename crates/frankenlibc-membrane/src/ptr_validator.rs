@@ -296,7 +296,8 @@ static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
 
 struct PinnedEpochGuard<'a> {
     _guard: crate::ebr::EbrGuard<'a>,
-    #[cfg(feature = "owned-tls-cache")]
+    /// A registration owned by this guard, when no thread-cached one exists
+    /// (owned-tls-cache builds, or a thread whose TLS is being torn down).
     _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
 }
 
@@ -371,7 +372,12 @@ impl ValidationPipeline {
         #[cfg(not(feature = "owned-tls-cache"))]
         {
             let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
-            EBR_HANDLE.with(|cell| {
+            // `try_with`: validation also runs during thread teardown -- host
+            // thread-key destructors (OpenSSL's per-thread cleanup) call
+            // memmove after this TLS is destroyed, and `with` panicked there,
+            // aborting the process in hardened mode. Then pin through an
+            // owned registration instead.
+            let cached = EBR_HANDLE.try_with(|cell| {
                 let mut cached = cell.borrow_mut();
                 let needs_refresh = !matches!(
                     cached.as_ref(),
@@ -398,17 +404,18 @@ impl ValidationPipeline {
                         .expect("EBR handle cache initialized")
                         .1
                         .pin(),
+                    _owned_handle: None,
                 }
-            })
-        }
-        #[cfg(feature = "owned-tls-cache")]
-        {
-            let handle = self.collector.register();
-            let guard = handle.pin();
-            PinnedEpochGuard {
-                _guard: guard,
-                _owned_handle: Some(handle),
+            });
+            if let Ok(guard) = cached {
+                return guard;
             }
+        }
+        let handle = self.collector.register();
+        let guard = handle.pin();
+        PinnedEpochGuard {
+            _guard: guard,
+            _owned_handle: Some(handle),
         }
     }
 
@@ -453,7 +460,11 @@ impl ValidationPipeline {
         ValidationTraceContext::enabled(decision_id, security_context)
     }
 
+    /// Inlined so the disabled case -- every call when the validation log is
+    /// off -- is one test at the call site instead of a 17-argument call that
+    /// returns immediately (~2% of a hardened allocation-heavy workload).
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     fn emit_validation_log(
         &self,
         trace: &ValidationTraceContext,
@@ -476,6 +487,47 @@ impl ValidationPipeline {
         if !trace.is_enabled() {
             return;
         }
+        self.emit_enabled_validation_log(
+            trace,
+            mode,
+            level,
+            event,
+            stage,
+            decision_path,
+            decision_action,
+            outcome,
+            latency_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            cache_hit,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn emit_enabled_validation_log(
+        &self,
+        trace: &ValidationTraceContext,
+        mode: crate::config::SafetyLevel,
+        level: &'static str,
+        event: &'static str,
+        stage: &'static str,
+        decision_path: &'static str,
+        decision_action: &'static str,
+        outcome: &'static str,
+        latency_ns: u64,
+        aligned: bool,
+        recent_page: bool,
+        bloom_negative: bool,
+        cache_hit: bool,
+        policy_id: u32,
+        risk_upper_bound_ppm: u32,
+        evidence_seqno: u64,
+    ) {
         debug_assert!(matches!(
             level,
             "trace" | "debug" | "info" | "warn" | "error"
@@ -780,7 +832,15 @@ impl ValidationPipeline {
             return None;
         }
 
-        if self.page_oracle.query(addr) {
+        // The page-oracle read lock is the one lock on this fast path: hold the
+        // validation context across it, so a signal handler that allocates on
+        // this thread meanwhile sees it and does not wait for a writer lock
+        // behind its own read (bd-na6ede).
+        let owned_page = {
+            let _validation_context = enter_validation_execution_context();
+            self.page_oracle.query(addr)
+        };
+        if owned_page {
             return None;
         }
 
@@ -1876,19 +1936,28 @@ impl ValidationPipeline {
     /// This handles the actual freeing in the arena and updates the page oracle
     /// for any blocks that were fully deallocated (drained from quarantine).
     pub fn free(&self, ptr: *mut u8) -> FreeResult {
-        let (result, drained) = self.arena.free(ptr);
+        self.free_with_size(ptr).0
+    }
+
+    /// [`Self::free`] that also returns the freed block's user size (0 when
+    /// nothing was freed), so the allocator's accounting need not look the
+    /// pointer up in the arena a second time.
+    pub fn free_with_size(&self, ptr: *mut u8) -> (FreeResult, usize) {
+        let (result, user_size, drained) = self.arena.free_batched(ptr);
         let retired_any = !drained.is_empty();
 
-        for entry in drained {
+        // One retirement for the whole batch (the arena hands drained entries
+        // out RETIRE_BATCH at a time): a boxed closure per entry was an
+        // allocation through the reentrant malloc path on every free.
+        if retired_any {
             let oracle = std::sync::Arc::clone(&self.page_oracle);
-
             self.collector.retire_quarantined(move || {
-                oracle.remove(entry.raw_base, entry.total_size);
-                // SAFETY: this drained entry was removed from the arena exactly
-                // once, and reclamation runs after the EBR grace period.
-                unsafe {
-                    AllocationArena::deallocate_drained(std::slice::from_ref(&entry));
+                for entry in &drained {
+                    oracle.remove(entry.raw_base, entry.total_size);
                 }
+                // SAFETY: these drained entries were removed from the arena
+                // exactly once, and reclamation runs after the EBR grace period.
+                unsafe { AllocationArena::deallocate_drained(&drained) };
             });
         }
         // Nothing else advances the epoch outside tests, so retired blocks
@@ -1901,7 +1970,7 @@ impl ValidationPipeline {
             let _ = self.collector.try_advance();
         }
 
-        result
+        (result, user_size)
     }
 
     /// Deterministically corrupt the trailing canary for a user allocation.

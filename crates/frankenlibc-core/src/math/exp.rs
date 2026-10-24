@@ -1,11 +1,84 @@
 //! Exponential and logarithmic functions.
 
+/// `exp`: ARM optimized-routines' algorithm -- the one glibc 2.43 ships --
+/// over the shared `__exp_data` table, so results are bit-identical to glibc's
+/// (bd-otip6a: the previous `exp2(x·log2 e)` route, within a 4-ULP contract,
+/// was not correctly rounded on ~34% of inputs, a visible difference in any
+/// program that prints a float). On FMA hardware glibc runs a build of this
+/// kernel compiled with contraction, so the multiply-adds are fused exactly
+/// where its compiler fuses them: every product with a single use (measured:
+/// 0 differences from glibc on 3.7M interior and 3M large-|x| inputs; 1873
+/// with no fusion). |x| >= 1024, inf and nan keep the generic path.
 #[inline]
 pub fn exp(x: f64) -> f64 {
-    if let Some(result) = exp_medium_exp2_fast_path(x) {
-        return result;
+    let abstop = ((x.to_bits() >> 52) & 0x7ff) as u32;
+    if abstop >= 0x409 {
+        // |x| >= 1024, inf, nan: overflow/underflow/special values.
+        return libm::exp(x);
     }
-    libm::exp(x)
+    if abstop < 0x3c9 {
+        // |x| < 2^-54: avoids a spurious underflow; 0 is a common input.
+        return 1.0 + x;
+    }
+    let invln2n = f64::from_bits(POW_EXP_INVLN2N);
+    let negln2hin = f64::from_bits(POW_EXP_NEGLN2HIN);
+    let negln2lon = f64::from_bits(POW_EXP_NEGLN2LON);
+    let shift = f64::from_bits(POW_EXP_SHIFT);
+    let c2 = f64::from_bits(POW_EXP_C[0]);
+    let c3 = f64::from_bits(POW_EXP_C[1]);
+    let c4 = f64::from_bits(POW_EXP_C[2]);
+    let c5 = f64::from_bits(POW_EXP_C[3]);
+
+    // exp(x) = 2^(k/N) * exp(r), x = k*ln2/N + r, |r| <= ln2/2N, N = 128.
+    let kd = invln2n.mul_add(x, shift);
+    let ki = kd.to_bits();
+    let kd = kd - shift;
+    let r = kd.mul_add(negln2lon, kd.mul_add(negln2hin, x));
+    let idx = (2 * (ki % 128)) as usize;
+    let top = ki << (52 - 7);
+    let tail = f64::from_bits(EXP2D_TAB[idx]);
+    let sbits = EXP2D_TAB[idx + 1].wrapping_add(top);
+    let r2 = r * r;
+    let tmp = (r2 * r2).mul_add(r.mul_add(c5, c4), r2.mul_add(r.mul_add(c3, c2), tail + r));
+    if abstop >= 0x408 {
+        // |x| >= 512: the scale's exponent may over/underflow.
+        return exp_specialcase(tmp, sbits, ki);
+    }
+    let scale = f64::from_bits(sbits);
+    scale.mul_add(tmp, scale)
+}
+
+/// `exp` for |x| in [512, 1024): rescale around the exponent overflow, and
+/// round once before scaling into the subnormal range. In the k < 0 branch
+/// `scale * tmp` feeds two sums, so glibc's compiler cannot fuse it there --
+/// neither may we (measured: fusing it gives 926 differences in 3M).
+#[inline]
+fn exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
+    if (ki & 0x8000_0000) == 0 {
+        // k > 0: the scale's exponent overflowed by at most 460.
+        sbits = sbits.wrapping_sub(1009u64 << 52);
+        let scale = f64::from_bits(sbits);
+        return f64::from_bits(0x7f00_0000_0000_0000) * scale.mul_add(tmp, scale); // 0x1p1009
+    }
+    // k < 0: possibly subnormal.
+    sbits = sbits.wrapping_add(1022u64 << 52);
+    let scale = f64::from_bits(sbits);
+    let scaled_tmp = scale * tmp;
+    let mut y = scale + scaled_tmp;
+    if y < 1.0 {
+        let lo = scale - y + scaled_tmp;
+        let hi = 1.0 + y;
+        let lo = 1.0 - hi + y + lo;
+        y = (hi + lo) - 1.0;
+        if y == 0.0 {
+            y = 0.0; // never -0
+        }
+        // Raise FE_UNDERFLOW explicitly, as glibc does: the scaled result
+        // need not raise it itself.
+        let min_norm = f64::from_bits(0x0010_0000_0000_0000); // 0x1p-1022
+        let _ = core::hint::black_box(core::hint::black_box(min_norm) * min_norm);
+    }
+    f64::from_bits(0x0010_0000_0000_0000) * y // 0x1p-1022
 }
 
 #[inline]
@@ -846,10 +919,13 @@ fn pow_log_inline(ix: u64) -> (f64, f64) {
     let logc = f64::from_bits(POW_LOG_TAB[3 * i + 1]);
     let logctail = f64::from_bits(POW_LOG_TAB[3 * i + 2]);
 
+    // glibc's FMA build contracts every multiply-add whose product has a
+    // single use (see `exp`); `ar`, `ar2` and `ar3` have several, so stay
+    // separate products.
     let r = z.mul_add(invc, -1.0); // __builtin_fma(z, invc, -1.0)
-    let t1 = kd * ln2hi + logc;
+    let t1 = kd.mul_add(ln2hi, logc);
     let t2 = t1 + r;
-    let lo1 = kd * ln2lo + logctail;
+    let lo1 = kd.mul_add(ln2lo, logctail);
     let lo2 = t1 - t2 + r;
 
     let ar = a0 * r; // A[0] = -0.5
@@ -858,7 +934,11 @@ fn pow_log_inline(ix: u64) -> (f64, f64) {
     let hi = t2 + ar2;
     let lo3 = ar.mul_add(r, -ar2); // __builtin_fma(ar, r, -ar2)
     let lo4 = t2 - hi + ar2;
-    let p = ar3 * (a1 + r * a2 + ar2 * (a3 + r * a4 + ar2 * (a5 + r * a6)));
+    let p = ar3
+        * ar2.mul_add(
+            ar2.mul_add(r.mul_add(a6, a5), r.mul_add(a4, a3)),
+            r.mul_add(a2, a1),
+        );
     let lo = lo1 + lo2 + lo3 + lo4 + p;
     let y = hi + lo;
     let tail = hi - y + lo;
@@ -873,16 +953,18 @@ fn pow_exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
         // k > 0, the exponent of scale might have overflowed by <= 460.
         sbits = sbits.wrapping_sub(1009u64 << 52);
         let scale = f64::from_bits(sbits);
-        let y = f64::from_bits(0x7f00_0000_0000_0000) * (scale + scale * tmp); // 0x1p1009
+        let y = f64::from_bits(0x7f00_0000_0000_0000) * scale.mul_add(tmp, scale); // 0x1p1009
         return y;
     }
-    // k < 0, subnormal range.
+    // k < 0, subnormal range. `scale * tmp` feeds two sums: unfused (see
+    // `exp_specialcase`).
     sbits = sbits.wrapping_add(1022u64 << 52);
     let scale = f64::from_bits(sbits);
-    let mut y = scale + scale * tmp;
+    let scaled_tmp = scale * tmp;
+    let mut y = scale + scaled_tmp;
     if y.abs() < 1.0 {
         let one = if y < 0.0 { -1.0 } else { 1.0 };
-        let lo = scale - y + scale * tmp;
+        let lo = scale - y + scaled_tmp;
         let hi = one + y;
         let lo = one - hi + y + lo;
         y = (hi + lo) - one;
@@ -928,23 +1010,23 @@ fn pow_exp_inline(x: f64, xtail: f64, sign_bias: u64) -> f64 {
         abstop = 0;
     }
 
-    let z = invln2n * x;
-    let kd = z + shift; // math_narrow_eval == identity (FLT_EVAL_METHOD==0)
+    // Fused exactly as `exp` (glibc's FMA build contracts single-use products).
+    let kd = invln2n.mul_add(x, shift);
     let ki = kd.to_bits();
     let kd = kd - shift;
-    let mut r = x + kd * negln2hin + kd * negln2lon;
+    let mut r = kd.mul_add(negln2lon, kd.mul_add(negln2hin, x));
     r += xtail;
     let idx = (2 * (ki % 128)) as usize;
     let top = ki.wrapping_add(sign_bias) << (52 - 7);
     let tail = f64::from_bits(EXP2D_TAB[idx]);
     let sbits = EXP2D_TAB[idx + 1].wrapping_add(top);
     let r2 = r * r;
-    let tmp = tail + r + r2 * (c2 + r * c3) + r2 * r2 * (c4 + r * c5);
+    let tmp = (r2 * r2).mul_add(c5.mul_add(r, c4), r2.mul_add(r.mul_add(c3, c2), tail + r));
     if abstop == 0 {
         return pow_exp_specialcase(tmp, sbits, ki);
     }
     let scale = f64::from_bits(sbits);
-    scale + scale * tmp
+    scale.mul_add(tmp, scale)
 }
 
 /// Fused `x^y`. Faithful port of glibc `__pow`; handles the full IEEE domain
@@ -1037,65 +1119,20 @@ pub fn pow_fused(x: f64, y: f64) -> f64 {
 
     let (hi, lo) = pow_log_inline(ix);
     let ehi = y * hi;
-    let elo = y * lo + y.mul_add(hi, -ehi); // y*lo + __builtin_fma(y, hi, -ehi)
+    let elo = y.mul_add(lo, y.mul_add(hi, -ehi)); // y*lo + __builtin_fma(y, hi, -ehi), contracted
     pow_exp_inline(ehi, elo, sign_bias)
 }
 
-// expm1 exists to avoid the catastrophic cancellation of `exp(x)-1` as x→0.
-// Away from zero there is no cancellation, so on the positive medium band the
-// direct `exp(x)-1` is both accurate (≤3 ULP vs glibc) and far cheaper than
-// libm's dedicated expm1 polynomial — and our `exp` fast path already beats
-// glibc. Mirrors the f32 `expm1f` lever. x<0.5 (incl. the near-0 cancellation
-// region) and large/non-finite x defer to libm for exact semantics.
-const EXPM1_POSITIVE_FAST_MIN: f64 = 0.5;
-const EXPM1_POSITIVE_FAST_MAX: f64 = 2.5;
-
 #[inline]
 pub fn expm1(x: f64) -> f64 {
-    // For |x| >= 0.5 the `exp(x) - 1` subtraction has no catastrophic cancellation
-    // (exp(x) is bounded away from 1), so it rides the now-fast f64 `exp` kernel over
-    // both signs and the full range: x > 709 -> exp overflows -> inf (expm1 -> inf);
-    // x << 0 -> exp underflows -> 0 -> -1 (expm1(-inf) = -1). Only small |x| (< 0.5,
-    // where exp(x) ~ 1 and the cancellation matters) keeps libm::expm1. Widens the old
-    // positive-only [0.5, 2.5] fast path; EXPM1_POSITIVE_FAST_MIN is the |x| threshold.
-    let ax = x.abs();
-    if ax >= EXPM1_POSITIVE_FAST_MIN {
-        // Negative saturation: expm1(x) = e^x - 1 rounds to exactly -1.0 for x <= -37
-        // (e^-37 ~ 8.5e-17 < half-ULP(1) = 1.11e-16), and glibc returns -1.0 there.
-        // Skip the exp(x) call for the whole x <= -37 tail (expm1(-inf) = -1 too).
-        // Bit-identical to the `exp(x) - 1.0` path, which already yields -1.0 here.
-        if x <= -37.0 {
-            return -1.0;
-        }
-        return exp(x) - 1.0;
-    }
-    // |x| < 0.5: direct Taylor expm1(x) = x·Σ x^k/(k+1)! through x^14 (first omitted
-    // x^15/15! < 2.3e-17, under the 4-ULP bound). No cancellation (unlike exp(x)-1) and
-    // cheaper than libm::expm1's reduction+polynomial. x carries the sign, so ±0 -> ±0.
-    let mut p: f64 = 1.147_074_559_772_972_5e-11; // 1/14!
-    p = p.mul_add(x, 1.605_904_383_682_161_3e-10); // 1/13!
-    p = p.mul_add(x, 2.087_675_698_786_81e-9); // 1/12!
-    p = p.mul_add(x, 2.505_210_838_544_172e-8); // 1/11!
-    p = p.mul_add(x, 2.755_731_922_398_589e-7); // 1/10!
-    p = p.mul_add(x, 2.755_731_922_398_589_3e-6); // 1/9!
-    p = p.mul_add(x, 2.480_158_730_158_73e-5); // 1/8!
-    p = p.mul_add(x, 1.984_126_984_126_984e-4); // 1/7!
-    p = p.mul_add(x, 1.388_888_888_888_889e-3); // 1/6!
-    p = p.mul_add(x, 8.333_333_333_333_333e-3); // 1/5!
-    p = p.mul_add(x, 4.166_666_666_666_666_4e-2); // 1/4!
-    p = p.mul_add(x, 0.166_666_666_666_666_66); // 1/3!
-    p = p.mul_add(x, 0.5); // 1/2!
-    p = p.mul_add(x, 1.0); // 1/1!
-    x * p
+    // fdlibm's expm1 (libm crate, the musl port), the algorithm glibc ships:
+    // differs from glibc 2.43 on 2776 of 3M inputs (0.09%), where the earlier
+    // exp(x)-1 / Taylor shortcuts differed on 6.8% (bd-otip6a).
+    libm::expm1(x)
 }
 
-/// Natural log via the fast log2 kernel: `ln(x) = log2(x) * ln(2)`.
-///
-/// `libm::log` (~1.19x slower than glibc) is replaced by the in-tree
-/// `log2_kernel` (which itself beats glibc — see bd-e4jb7k) scaled by `LN_2`.
-/// A dense sweep (full dynamic range + 1.6M near-1 points) bounds the result at
-/// ≤4 ULP vs glibc `log` (never exceeds), within the 4-ULP-vs-glibc math
-/// contract. Subnormal/zero/inf/nan defer to `libm::log` for exact semantics.
+/// Natural log: ARM optimized-routines' `log` (glibc's `__log`), bit-identical
+/// to glibc's results. Subnormal/zero/inf/nan defer to `libm::log`.
 #[inline]
 pub fn log(x: f64) -> f64 {
     // Dedicated f64 natural-log kernel — a verbatim port of ARM optimized-routines
@@ -1116,26 +1153,25 @@ pub fn log(x: f64) -> f64 {
         if ix == LOG_ONE {
             return 0.0;
         }
+        // Multiply-adds fused as glibc's FMA build fuses them: a product goes
+        // into every user when all users are adds in the same block (see
+        // `log2`). Measured: this rule matches glibc on 4M inputs; the earlier
+        // unfused evaluation differed on 10-91 per million near 1 (bd-otip6a).
         let r = x - 1.0;
         let r2 = r * r;
         let r3 = r * r2;
         let b = &LOG_B;
-        let mut y = r3
-            * (b[1]
-                + r * b[2]
-                + r2 * b[3]
-                + r3 * (b[4]
-                    + r * b[5]
-                    + r2 * b[6]
-                    + r3 * (b[7] + r * b[8] + r2 * b[9] + r3 * b[10])));
+        let inner2 = r3.mul_add(b[10], r2.mul_add(b[9], r.mul_add(b[8], b[7])));
+        let inner = r3.mul_add(inner2, r2.mul_add(b[6], r.mul_add(b[5], b[4])));
+        let poly = r3.mul_add(inner, r2.mul_add(b[3], r.mul_add(b[2], b[1])));
         let w = r * f64::from_bits(0x41a0000000000000); // 0x1p27
         let rhi = r + w - w;
         let rlo = r - rhi;
-        let w = rhi * rhi * b[0]; // b[0] == -0.5
-        let hi = r + w;
-        let mut lo = r - hi + w;
-        lo += b[0] * rlo * (rhi + r);
-        y += lo;
+        let rr = rhi * rhi;
+        let hi = rr.mul_add(b[0], r); // b[0] == -0.5
+        let mut lo = rr.mul_add(b[0], r - hi);
+        lo = (b[0] * rlo).mul_add(rhi + r, lo);
+        let mut y = r3.mul_add(poly, lo);
         y += hi;
         return y;
     }
@@ -1151,13 +1187,14 @@ pub fn log(x: f64) -> f64 {
         // r ~= z/c - 1, |r| < 1/256.
         let r = z.mul_add(invc, -1.0);
         let kd = k as f64;
-        // hi + lo = r + log(c) + k·Ln2.
-        let w = kd * LOG_LN2HI + logc;
+        // hi + lo = r + log(c) + k·Ln2, fused as glibc's FMA build fuses it.
+        let w = kd.mul_add(LOG_LN2HI, logc);
         let hi = w + r;
-        let lo = w - hi + r + kd * LOG_LN2LO;
+        let lo = kd.mul_add(LOG_LN2LO, w - hi + r);
         let r2 = r * r;
         let a = &LOG_A;
-        return lo + r2 * a[0] + r * r2 * (a[1] + r * a[2] + r2 * (a[3] + r * a[4])) + hi;
+        let p = r2.mul_add(r.mul_add(a[4], a[3]), r.mul_add(a[2], a[1]));
+        return (r * r2).mul_add(p, r2.mul_add(a[0], lo)) + hi;
     }
 
     // Cold: ±0, subnormal, ±inf, NaN, or negative. Keep the prior FE-flag raising
@@ -1173,451 +1210,124 @@ pub fn log(x: f64) -> f64 {
     libm::log(x)
 }
 
-/// `log2` via the cheaper natural-log kernel: `log2(x) = ln(x) * log2(e)`.
-///
-/// Profiling (`glibc_baseline_math`, bd-e4jb7k) showed `libm::log2` (~12.2 ns)
-/// is markedly slower than `libm::log` (~9.5 ns) — glibc's `log2` (~9.0 ns) is
-/// hand-tuned, leaving fl `log2` ~1.35x behind. Routing through `libm::log`
-/// scaled by `LOG2_E` reaches glibc parity. A 4M-point sweep (full dynamic
-/// range + the near-1 region where `log2 -> 0`) bounds the result within 2 ULP
-/// of `libm::log2` (itself correctly rounded), so within the established
-/// 4-ULP-vs-glibc math contract shared by the exp/pow fast paths.
-///
-/// Exact powers of two are gated out (mantissa bits all zero) so glibc's exact
-/// integer result (`log2(2^k) == k`) is preserved bit-for-bit; subnormals,
-/// non-positive, and non-finite inputs defer to `libm::log2` for its precise
-/// special-case handling.
-// ---------------------------------------------------------------------------
-// log2: ARM optimized-routines-style table + degree-8 poly (bd-e4jb7k).
-//
-// The shipped `ln(x)·LOG2_E` reroute was 1.26x slower than glibc and the whole
-// pow family inherits log2's cost. This replaces it with the
-// optimized-routines reduction: x = 2^k·z with z near 1 in one of 64 buckets
-// (the `OFF` bit-trick centers the reduction so `k + logc` never catastrophically
-// cancels — logc stays the same magnitude as the result near x=1). r = z/c-1 is
-// tiny; log2(x) = k + logc + r/ln2 + r²·poly(r), finalized in a hi/lo pair
-// (ARM's two-sum recovery) with the table's `logc` carried as double-double.
-// A separate atanh branch handles |x-1|<0.15 where the result→0 needs relative
-// accuracy. Tables generated offline in double-double (dd atanh), embedded as
-// exact bit patterns. Validated <=3 ULP vs glibc on [1e-300,1e300] (2 ULP on the
-// normal sweep), bit-exact on powers of two, and ~1.7x faster than libm::log2.
-const LOG2_OFF: u64 = 0x3fe6000000000000;
-const LOG2_INVLN2_HI: f64 = f64::from_bits(0x3FF7154765200000);
-const LOG2_INVLN2_LO: f64 = f64::from_bits(0x3DE705FC2EEFA200);
-// log2(1+r) - r/ln2 = r²·(C2 + r·C3 + …); C_k = (-1)^k/(k·ln2). Degree 8 keeps
-// the bucket-edge (|r|<1/128) truncation well under 1 ULP.
-const LOG2_C2: f64 = -0.7213475204444817;
-const LOG2_C3: f64 = 0.4808983469629878;
-const LOG2_C4: f64 = -0.360_673_760_222_404_2;
-const LOG2_C5: f64 = 0.2885390081777927;
-const LOG2_C6: f64 = -0.24046880792913617;
-const LOG2_C7: f64 = 0.20611528765933095;
-const LOG2_C8: f64 = -0.18033688011112045;
-// Near-1 atanh series: log2(1+f) = (2/ln2)·atanh(s), s = f/(2+f). A_k=(2/ln2)/k.
-const LOG2_A1: f64 = 2.885_390_081_777_926_8;
-const LOG2_A3: f64 = LOG2_A1 / 3.0;
-const LOG2_A5: f64 = LOG2_A1 / 5.0;
-const LOG2_A7: f64 = LOG2_A1 / 7.0;
-const LOG2_A9: f64 = LOG2_A1 / 9.0;
-const LOG2_A11: f64 = LOG2_A1 / 11.0;
-const LOG2_A13: f64 = LOG2_A1 / 13.0;
-const LOG2_A15: f64 = LOG2_A1 / 15.0;
-
-const LOG2_INVC: [f64; 64] = [
-    f64::from_bits(0x3ff724287f46debc),
-    f64::from_bits(0x3ff6e1f76b4337c7),
-    f64::from_bits(0x3ff6a13cd1537290),
-    f64::from_bits(0x3ff661ec6a5122f9),
-    f64::from_bits(0x3ff623fa77016240),
-    f64::from_bits(0x3ff5e75bb8d015e7),
-    f64::from_bits(0x3ff5ac056b015ac0),
-    f64::from_bits(0x3ff571ed3c506b3a),
-    f64::from_bits(0x3ff5390948f40feb),
-    f64::from_bits(0x3ff5015015015015),
-    f64::from_bits(0x3ff4cab88725af6e),
-    f64::from_bits(0x3ff49539e3b2d067),
-    f64::from_bits(0x3ff460cbc7f5cf9a),
-    f64::from_bits(0x3ff42d6625d51f87),
-    f64::from_bits(0x3ff3fb013fb013fb),
-    f64::from_bits(0x3ff3c995a47babe7),
-    f64::from_bits(0x3ff3991c2c187f63),
-    f64::from_bits(0x3ff3698df3de0748),
-    f64::from_bits(0x3ff33ae45b57bcb2),
-    f64::from_bits(0x3ff30d190130d190),
-    f64::from_bits(0x3ff2e025c04b8097),
-    f64::from_bits(0x3ff2b404ad012b40),
-    f64::from_bits(0x3ff288b01288b013),
-    f64::from_bits(0x3ff25e22708092f1),
-    f64::from_bits(0x3ff23456789abcdf),
-    f64::from_bits(0x3ff20b470c67c0d9),
-    f64::from_bits(0x3ff1e2ef3b3fb874),
-    f64::from_bits(0x3ff1bb4a4046ed29),
-    f64::from_bits(0x3ff19453808ca29c),
-    f64::from_bits(0x3ff16e0689427379),
-    f64::from_bits(0x3ff1485f0e0acd3b),
-    f64::from_bits(0x3ff12358e75d3033),
-    f64::from_bits(0x3ff0fef010fef011),
-    f64::from_bits(0x3ff0db20a88f4696),
-    f64::from_bits(0x3ff0b7e6ec259dc8),
-    f64::from_bits(0x3ff0953f39010954),
-    f64::from_bits(0x3ff073260a47f7c6),
-    f64::from_bits(0x3ff05197f7d73404),
-    f64::from_bits(0x3ff03091b51f5e1a),
-    f64::from_bits(0x3ff0101010101010),
-    f64::from_bits(0x3fefc07f01fc07f0),
-    f64::from_bits(0x3fef44659e4a4271),
-    f64::from_bits(0x3feecc07b301ecc0),
-    f64::from_bits(0x3fee573ac901e574),
-    f64::from_bits(0x3fede5d6e3f8868a),
-    f64::from_bits(0x3fed77b654b82c34),
-    f64::from_bits(0x3fed0cb58f6ec074),
-    f64::from_bits(0x3feca4b3055ee191),
-    f64::from_bits(0x3fec3f8f01c3f8f0),
-    f64::from_bits(0x3febdd2b899406f7),
-    f64::from_bits(0x3feb7d6c3dda338b),
-    f64::from_bits(0x3feb2036406c80d9),
-    f64::from_bits(0x3feac5701ac5701b),
-    f64::from_bits(0x3fea6d01a6d01a6d),
-    f64::from_bits(0x3fea16d3f97a4b02),
-    f64::from_bits(0x3fe9c2d14ee4a102),
-    f64::from_bits(0x3fe970e4f80cb872),
-    f64::from_bits(0x3fe920fb49d0e229),
-    f64::from_bits(0x3fe8d3018d3018d3),
-    f64::from_bits(0x3fe886e5f0abb04a),
-    f64::from_bits(0x3fe83c977ab2bedd),
-    f64::from_bits(0x3fe7f405fd017f40),
-    f64::from_bits(0x3fe7ad2208e0ecc3),
-    f64::from_bits(0x3fe767dce434a9b1),
-];
-const LOG2_LOGC_HI: [f64; 64] = [
-    f64::from_bits(0xbfe1096015dee4da),
-    f64::from_bits(0xbfe08494c66b8ef0),
-    f64::from_bits(0xbfe0014332be0033),
-    f64::from_bits(0xbfdefec61b011f85),
-    f64::from_bits(0xbfddfdd89d586e2b),
-    f64::from_bits(0xbfdcffae611ad12b),
-    f64::from_bits(0xbfdc043859e2fdb3),
-    f64::from_bits(0xbfdb0b67f4f46810),
-    f64::from_bits(0xbfda152f142981b4),
-    f64::from_bits(0xbfd921800924dd3b),
-    f64::from_bits(0xbfd8304d90c11fd3),
-    f64::from_bits(0xbfd7418acebbf18f),
-    f64::from_bits(0xbfd6552b49986277),
-    f64::from_bits(0xbfd56b22e6b578e5),
-    f64::from_bits(0xbfd48365e695d797),
-    f64::from_bits(0xbfd39de8e1559f6f),
-    f64::from_bits(0xbfd2baa0c34be1ec),
-    f64::from_bits(0xbfd1d982c9d52708),
-    f64::from_bits(0xbfd0fa848044b351),
-    f64::from_bits(0xbfd01d9bbcfa61d4),
-    f64::from_bits(0xbfce857d3d361368),
-    f64::from_bits(0xbfccd3c712d31109),
-    f64::from_bits(0xbfcb2602497d5346),
-    f64::from_bits(0xbfc97c1cb13c7ec1),
-    f64::from_bits(0xbfc7d60496cfbb4c),
-    f64::from_bits(0xbfc633a8bf437ce1),
-    f64::from_bits(0xbfc494f863b8df35),
-    f64::from_bits(0xbfc2f9e32d5bfdd1),
-    f64::from_bits(0xbfc162593186da70),
-    f64::from_bits(0xbfbf9c95dc1d1165),
-    f64::from_bits(0xbfbc7b528b70f1c5),
-    f64::from_bits(0xbfb960caf9abb7ca),
-    f64::from_bits(0xbfb64ce26c067157),
-    f64::from_bits(0xbfb33f7cde14cf5a),
-    f64::from_bits(0xbfb0387efbca869e),
-    f64::from_bits(0xbfaa6f9c377dd31b),
-    f64::from_bits(0xbfa47aa07357704f),
-    f64::from_bits(0xbf9d23afc49139f9),
-    f64::from_bits(0xbf916a21e20a0a45),
-    f64::from_bits(0xbf7720d9c06a835f),
-    f64::from_bits(0x3f86fe50b6ef0851),
-    f64::from_bits(0x3fa11cd1d5133413),
-    f64::from_bits(0x3fac4dfab90aab5f),
-    f64::from_bits(0x3fb3aa2fdd27f1c3),
-    f64::from_bits(0x3fb918a16e46335b),
-    f64::from_bits(0x3fbe72ec117fa5b2),
-    f64::from_bits(0x3fc1dcd197552b7b),
-    f64::from_bits(0x3fc476a9f983f74d),
-    f64::from_bits(0x3fc70742d4ef027f),
-    f64::from_bits(0x3fc98edd077e70df),
-    f64::from_bits(0x3fcc0db6cdd94dee),
-    f64::from_bits(0x3fce840be74e6a4d),
-    f64::from_bits(0x3fd0790adbb03009),
-    f64::from_bits(0x3fd1ac05b291f070),
-    f64::from_bits(0x3fd2db10fc4d9aaf),
-    f64::from_bits(0x3fd406463b1b0449),
-    f64::from_bits(0x3fd52dbdfc4c96b3),
-    f64::from_bits(0x3fd6518fe4677ba7),
-    f64::from_bits(0x3fd771d2ba7efb3c),
-    f64::from_bits(0x3fd88e9c72e0b226),
-    f64::from_bits(0x3fd9a802391e232f),
-    f64::from_bits(0x3fdabe18797f1f49),
-    f64::from_bits(0x3fdbd0f2e9e79031),
-    f64::from_bits(0x3fdce0a4923a587d),
-];
-const LOG2_LOGC_LO: [f64; 64] = [
-    f64::from_bits(0x3c740c9ca8b78394),
-    f64::from_bits(0x3c7f9d4ba07ff89b),
-    f64::from_bits(0x3c8760b41c376918),
-    f64::from_bits(0xbc768b1a9352c481),
-    f64::from_bits(0xbc41867b8aa0262e),
-    f64::from_bits(0xbc7868d9e925c9fe),
-    f64::from_bits(0xbc7eaa4104281a90),
-    f64::from_bits(0x3c476003a105bef0),
-    f64::from_bits(0x3c647d98866e9e78),
-    f64::from_bits(0xbc7fb5b520ebaa5c),
-    f64::from_bits(0xbc64d86a4f5e2d40),
-    f64::from_bits(0x3c728ab134d0e87f),
-    f64::from_bits(0xbc7aadcc6c817792),
-    f64::from_bits(0x3c78f07693e10458),
-    f64::from_bits(0x3c758acdbcdb776c),
-    f64::from_bits(0xbc7fb8450ffda380),
-    f64::from_bits(0x3c5053dbed11c17b),
-    f64::from_bits(0xbc6acd757d01cf01),
-    f64::from_bits(0xbc407d5bdeab2504),
-    f64::from_bits(0xbc775e40605724b0),
-    f64::from_bits(0x3c6098951a2df30c),
-    f64::from_bits(0xbc59113c0ecb329c),
-    f64::from_bits(0x3c6cd4cebd99ab4b),
-    f64::from_bits(0x3c6e9fba024c40e8),
-    f64::from_bits(0xbc69c666c97f1cf0),
-    f64::from_bits(0xbc35193984ffa800),
-    f64::from_bits(0x3c615b9acc89c914),
-    f64::from_bits(0x3c697cfb4b53432b),
-    f64::from_bits(0x3c5df78a8bd589bf),
-    f64::from_bits(0x3c36e10175ceea40),
-    f64::from_bits(0x3c17cd10d9586980),
-    f64::from_bits(0x3c3225d93825efe6),
-    f64::from_bits(0x3c52f22abb3b9c6d),
-    f64::from_bits(0x3c3e24ac2a89ce4e),
-    f64::from_bits(0x3c57df3b36fb1eea),
-    f64::from_bits(0x3c4864ff7b7e3ae7),
-    f64::from_bits(0xbc35a470e411ea28),
-    f64::from_bits(0x3c390cd248a88c29),
-    f64::from_bits(0xbc0791fe6ef4dbc4),
-    f64::from_bits(0x3c16443bb0f7e7b8),
-    f64::from_bits(0x3c2fe3865129d7a1),
-    f64::from_bits(0xbc227f8393a536aa),
-    f64::from_bits(0xbc161525eb605c88),
-    f64::from_bits(0xbc43fff7b4936f5c),
-    f64::from_bits(0xbc5465eb1a180b15),
-    f64::from_bits(0x3c3cac19011ae760),
-    f64::from_bits(0x3c67a587ae958ecf),
-    f64::from_bits(0x3c5891c9501428c8),
-    f64::from_bits(0x3c54d0df24d65211),
-    f64::from_bits(0x3c168ac933ada1b0),
-    f64::from_bits(0x3c602aebef478244),
-    f64::from_bits(0xbc5c3e318507424c),
-    f64::from_bits(0x3c7bb5bb31c99008),
-    f64::from_bits(0x3c7495809b54dff8),
-    f64::from_bits(0x3c7bb45ea2078358),
-    f64::from_bits(0x3c7d59045f914432),
-    f64::from_bits(0x3c7f5c90af342275),
-    f64::from_bits(0xbc5b4a417c7af53c),
-    f64::from_bits(0xbc5c0dce05c38862),
-    f64::from_bits(0xbc76f66f82618328),
-    f64::from_bits(0x3c6a0bbc7e9ab12b),
-    f64::from_bits(0xbc5f14bde9745d10),
-    f64::from_bits(0xbc7562eaad0fb340),
-    f64::from_bits(0xbc6bc56fc18cc310),
-];
-
-/// Correctly-rounded-to-4-ULP log2 for strictly-normal positive `x`. The public
-/// `log2` gates subnormals/zero/inf/nan to libm.
-#[inline]
-fn log2_kernel(x: f64) -> f64 {
-    let f = x - 1.0;
-    if f.abs() < 0.15 {
-        // Near 1 the table result -> 0 and needs relative (not absolute)
-        // accuracy; f = x-1 is exact here, so the atanh series is sub-ULP.
-        let s = f / (2.0 + f);
-        let s2 = s * s;
-        return s
-            * (LOG2_A1
-                + s2 * (LOG2_A3
-                    + s2 * (LOG2_A5
-                        + s2 * (LOG2_A7
-                            + s2 * (LOG2_A9
-                                + s2 * (LOG2_A11 + s2 * (LOG2_A13 + s2 * LOG2_A15)))))));
-    }
-    let ix = x.to_bits();
-    if ix & 0x000F_FFFF_FFFF_FFFF == 0 {
-        // Exact power of two -> exact integer exponent (bit-exact vs glibc).
-        return ((ix >> 52) as i64 - 1023) as f64;
-    }
-    let tmp = ix.wrapping_sub(LOG2_OFF);
-    let i = ((tmp >> 46) as usize) & 63;
-    let k = (tmp as i64) >> 52;
-    let iz = ix.wrapping_sub(tmp & (0xfffu64 << 52));
-    let z = f64::from_bits(iz);
-    let invc = LOG2_INVC[i];
-    let logc = LOG2_LOGC_HI[i];
-    let logc_lo = LOG2_LOGC_LO[i];
-    let r = z.mul_add(invc, -1.0);
-    let kd = k as f64;
-    let t1 = kd + logc;
-    let t2 = t1 + r * LOG2_INVLN2_HI;
-    let t3 = r * LOG2_INVLN2_LO + ((t1 - t2) + r * LOG2_INVLN2_HI) + logc_lo;
-    let hi = t2 + t3;
-    let lo = (t2 - hi) + t3;
-    let r2 = r * r;
-    let p = r2
-        * (LOG2_C2
-            + r * (LOG2_C3
-                + r * (LOG2_C4 + r * (LOG2_C5 + r * (LOG2_C6 + r * (LOG2_C7 + r * LOG2_C8))))));
-    hi + (lo + p)
-}
-
-const LOG2_PROFILE_GRID_SCALE: f64 = 32.0;
-const LOG2_PROFILE_GRID_MIN_INDEX: u64 = 16;
-const LOG2_PROFILE_GRID_MAX_INDEX: u64 = 80;
-const LOG2_PROFILE_GRID_START: f64 = 0.5;
-const LOG2_PROFILE_GRID_END: f64 = 2.5;
-
-// Generated from the current `log2_kernel` for x = 0.5 + k/32, k=0..=64.
-// The exact guard below makes this a profile-grid shortcut, not a replacement
-// for the general normal-positive kernel.
-const LOG2_PROFILE_GRID_BITS: [u64; 65] = [
-    0xbff0000000000000,
-    0xbfed338120a6dd9e,
-    0xbfea8ff971810a5e,
-    0xbfe810fa51bf65fe,
-    0xbfe5b2c3da19723b,
-    0xbfe37222bb70747b,
-    0xbfe14c560fe68af9,
-    0xbfde7df5fe538ab2,
-    0xbfda8ff971810a5d,
-    0xbfd6cb0f6865c8eb,
-    0xbfd32bfee370ee69,
-    0xbfcf5fd8a9063e35,
-    0xbfc8a8980abfbd32,
-    0xbfc22dadc2ab3496,
-    0xbfb7d60496cfbb4c,
-    0xbfa77394c9d958d5,
-    0x0000000000000000,
-    0x3fa6bad3758efd87,
-    0x3fb663f6fac91316,
-    0x3fc08c588cda79e4,
-    0x3fc5c01a39fbd687,
-    0x3fcacf5e2db4ec93,
-    0x3fcfbc16b902680c,
-    0x3fd24407ab0e073b,
-    0x3fd49a784bcd1b89,
-    0x3fd6e221cd9d0cde,
-    0x3fd91bba891f1708,
-    0x3fdb47ebf738829f,
-    0x3fdd6753e032ea0f,
-    0x3fdf7a8568cb06ce,
-    0x3fe0c10500d63aa7,
-    0x3fe1bf311e95d00d,
-    0x3fe2b803473f7ad1,
-    0x3fe3abb3faa02165,
-    0x3fe49a784bcd1b8a,
-    0x3fe5848226989d33,
-    0x3fe66a008e4788cb,
-    0x3fe74b1fd64e0755,
-    0x3fe82809d5be7073,
-    0x3fe900e6160002ce,
-    0x3fe9d5d9fd5010b3,
-    0x3feaa708f58014d3,
-    0x3feb74948f5532da,
-    0x3fec3e9ca2e1a054,
-    0x3fed053f6d260896,
-    0x3fedc899ab3ff56d,
-    0x3fee88c6b3626a71,
-    0x3fef45e08bcf0655,
-    0x3ff0000000000000,
-    0x3ff05b9e5a170b49,
-    0x3ff0b5d69bac77ec,
-    0x3ff10eb389fa29fa,
-    0x3ff1663f6fac9131,
-    0x3ff1bc84240adabc,
-    0x3ff2118b119b4f3c,
-    0x3ff2655d3c4f15c4,
-    0x3ff2b803473f7ad1,
-    0x3ff309857a05e076,
-    0x3ff359ebc5b69d93,
-    0x3ff3a93dc9864b2e,
-    0x3ff3f782d7204d01,
-    0x3ff444c1f6b4c2dd,
-    0x3ff49101eac381cf,
-    0x3ff4dc4933a9337b,
-    0x3ff5269e12f346e3,
-];
-
-#[inline]
-fn log2_profile_grid(x: f64) -> Option<f64> {
-    if !(LOG2_PROFILE_GRID_START..=LOG2_PROFILE_GRID_END).contains(&x) {
-        return None;
-    }
-    let scaled = x * LOG2_PROFILE_GRID_SCALE;
-    let index = scaled as u64;
-    if !(LOG2_PROFILE_GRID_MIN_INDEX..=LOG2_PROFILE_GRID_MAX_INDEX).contains(&index) {
-        return None;
-    }
-    if scaled == index as f64 {
-        return Some(f64::from_bits(
-            LOG2_PROFILE_GRID_BITS[(index - LOG2_PROFILE_GRID_MIN_INDEX) as usize],
-        ));
-    }
-    None
-}
-
+/// `log2`: ARM optimized-routines' algorithm and tables (`log2_data`) -- the
+/// kernel glibc ships -- so results are bit-identical to glibc's (bd-otip6a;
+/// the previous in-house table kernel, within a 4-ULP contract, differed on
+/// 23.6% of inputs, and a profile grid returned precomputed bits for a
+/// benchmark's inputs). glibc's FMA build fuses a product into its users when
+/// every user is an add in the same block, including the twice-used `p` near
+/// 1; reproduced exactly (measured: 0 differences / 3M vs 1334 with
+/// single-use-only fusion). Zero, negatives, inf and nan keep the libm path
+/// and its FE/errno behavior.
 #[inline]
 pub fn log2(x: f64) -> f64 {
-    if x.is_normal() && x > 0.0 {
-        if let Some(result) = log2_profile_grid(x) {
-            return result;
+    use crate::math::log2_data::{LOG2_A, LOG2_B, LOG2_INVLN2HI, LOG2_INVLN2LO, LOG2_TAB};
+    const OFF: u64 = 0x3fe6_0000_0000_0000;
+    let ix = x.to_bits();
+    let near_lo = (1.0 - f64::from_bits(0x3fa5_b510_0000_0000)).to_bits(); // 1 - 0x1.5b51p-5
+    let near_hi = (1.0 + f64::from_bits(0x3fa6_ab20_0000_0000)).to_bits(); // 1 + 0x1.6ab2p-5
+    if ix.wrapping_sub(near_lo) < near_hi - near_lo {
+        // Close to 1: log2(1+r) as r/ln2 in hi+lo plus a degree-11 polynomial.
+        if ix == 1.0f64.to_bits() {
+            return 0.0;
         }
-        return log2_kernel(x);
+        let r = x - 1.0;
+        let hi = r * LOG2_INVLN2HI;
+        let mut lo = r.mul_add(LOG2_INVLN2LO, r.mul_add(LOG2_INVLN2HI, -hi));
+        let r2 = r * r;
+        let r4 = r2 * r2;
+        // p = r2 * q feeds two adds in this block: fused into both.
+        let q = r.mul_add(LOG2_B[1], LOG2_B[0]);
+        let mut y = r2.mul_add(q, hi);
+        lo += r2.mul_add(q, hi - y);
+        let inner1 = r2.mul_add(r.mul_add(LOG2_B[5], LOG2_B[4]), r.mul_add(LOG2_B[3], LOG2_B[2]));
+        let inner2 = r2.mul_add(r.mul_add(LOG2_B[9], LOG2_B[8]), r.mul_add(LOG2_B[7], LOG2_B[6]));
+        lo = r4.mul_add(r4.mul_add(inner2, inner1), lo);
+        y += lo;
+        return y;
     }
-    libm::log2(x)
+    let top = (ix >> 48) as u32;
+    let mut ix = ix;
+    if top.wrapping_sub(0x0010) >= 0x7ff0 - 0x0010 {
+        // x < 0x1p-1022, inf or nan.
+        if ix << 1 == 0 || (top & 0x8000) != 0 || (top & 0x7ff0) == 0x7ff0 {
+            // ±0, negative, inf, nan: libm's values and FE/errno behavior.
+            return libm::log2(x);
+        }
+        // Subnormal: normalize and continue on the main path. The exponent
+        // field may wrap below zero, as in ARM's unsigned C; `tmp`/`k` below
+        // decode it arithmetically.
+        ix = (x * f64::from_bits(0x4330_0000_0000_0000))
+            .to_bits()
+            .wrapping_sub(52u64 << 52); // x * 0x1p52
+    }
+    // x = 2^k z, z in [OFF, 2*OFF); log2(x) = k + log2(c) + log2(z/c).
+    let tmp = ix.wrapping_sub(OFF);
+    let i = ((tmp >> (52 - 6)) % 64) as usize;
+    let k = (tmp as i64) >> 52; // arithmetic shift
+    let iz = ix.wrapping_sub(tmp & (0xfff_u64 << 52));
+    let (invc, logc) = LOG2_TAB[i];
+    let z = f64::from_bits(iz);
+    let kd = k as f64;
+    let r = z.mul_add(invc, -1.0);
+    let t1 = r * LOG2_INVLN2HI;
+    let t2 = r.mul_add(LOG2_INVLN2LO, r.mul_add(LOG2_INVLN2HI, -t1));
+    let t3 = kd + logc;
+    let hi = t3 + t1;
+    let lo = t3 - hi + t1 + t2;
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let p = r4.mul_add(
+        r.mul_add(LOG2_A[5], LOG2_A[4]),
+        r2.mul_add(r.mul_add(LOG2_A[3], LOG2_A[2]), r.mul_add(LOG2_A[1], LOG2_A[0])),
+    );
+    r2.mul_add(p, lo) + hi
 }
 
-/// `log10` via the cheaper natural-log kernel: `log10(x) = ln(x) * log10(e)`.
-///
-/// Profiling (`glibc_baseline_math/log10`, bd-2g7oyh) showed `libm::log10`
-/// (~13 ns) is slower than `libm::log` (~9.5 ns); glibc's `log10` is hand-tuned,
-/// leaving fl `log10` ~1.07x behind. Routing through `libm::log` scaled by
-/// `LOG10_E` is ~1.34x faster on the kernel and beats glibc. A 4M-point sweep
-/// bounds it within 2 ULP of glibc (`f64::log10`) across the full dynamic range
-/// and near 1 — within the 4-ULP-vs-glibc contract shared by the exp/pow/log2
-/// fast paths (mirrors the f64 `log2` reroute).
-///
-/// At exactly-representable powers of ten the fast form is ~1 ULP off glibc's
-/// exact integer — within the 4-ULP contract (an exactness gate was measured to
-/// cost more than the reroute saves, since `round`/casts are libm calls or extra
-/// branches on baseline x86-64). Subnormal / non-positive / non-finite inputs
-/// defer to `libm::log10` for its precise special-case handling.
+/// `log10`: fdlibm's `e_log10` recombination around the natural log -- what
+/// glibc's log10 does, with `log` being the same ARM kernel `log` above -- so
+/// results are bit-identical to glibc's (bd-otip6a: `ln(x) * log10(e)` differed
+/// on 16% of inputs, e.g. powers of ten). x = 2^k * m with m in [1, 2) (or
+/// [0.5, 1) for k < 0, keeping the split symmetric), then
+/// log10(x) = k*log10(2)_lo + log(m)/ln(10) + k*log10(2)_hi. Verified against
+/// glibc with a C harness before porting: 0 differences / 3M finite inputs
+/// incl. subnormals. Plain (unfused) arithmetic: glibc builds this function
+/// without FMA. Zero, negatives, inf and nan keep libm's values and flags.
 #[inline]
 pub fn log10(x: f64) -> f64 {
-    if x.is_normal() && x > 0.0 {
-        // log10(x) = ln(x)·log10(e). Use the dedicated bit-exact f64 `log` kernel (ARM
-        // __log) instead of the generic `libm::log` — same `*LOG10_E` structure, but the
-        // ln is now ~glibc-grade (was the ~2x-slow generic). Within the 4-ULP-vs-glibc
-        // contract. Subnormal/non-positive/non-finite defer to libm::log10.
-        return log(x) * core::f64::consts::LOG10_E;
+    const TWO54: f64 = 1.801_439_850_948_198_4e16;
+    // fdlibm's ivln10 literal rounds to exactly this double.
+    const IVLN10: f64 = core::f64::consts::LOG10_E;
+    const LOG10_2HI: f64 = 3.010_299_956_636_117_713_06e-1;
+    const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
+    if !(x > 0.0 && x.is_finite()) {
+        return libm::log10(x);
     }
-    libm::log10(x)
+    let mut x = x;
+    let mut hx = (x.to_bits() >> 32) as i32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Subnormal: scale into the normal range.
+        k -= 54;
+        x *= TWO54;
+        hx = (x.to_bits() >> 32) as i32;
+    }
+    k += (hx >> 20) - 1023;
+    let i = ((k as u32 & 0x8000_0000) >> 31) as i32;
+    hx = (hx & 0x000f_ffff) | ((0x3ff - i) << 20);
+    let y = f64::from(k + i);
+    let m = f64::from_bits(((hx as u32 as u64) << 32) | (x.to_bits() & 0xffff_ffff));
+    let z = y * LOG10_2LO + IVLN10 * log(m);
+    z + y * LOG10_2HI
 }
 
 #[inline]
 pub fn log1p(x: f64) -> f64 {
-    if x == 0.0 {
-        return x; // preserve the sign of zero (log1p(-0) = -0)
-    }
-    // Fast compensated path: log1p(x) = log(s) + e/s, where s = 1+x (rounded) and
-    // e = x - (s-1) recovers the rounding error of `1+x`. The e/s term corrects the
-    // small-x cancellation that a bare `log(1+x)` loses, so this rides the dedicated
-    // fast f64 `log` kernel (ARM __log) at full accuracy across finite x > -1.
-    if x > -1.0 && x.is_finite() {
-        let s = 1.0 + x;
-        let e = x - (s - 1.0);
-        return log(s) + e / s;
-    }
-    // x == -1 (pole) / x < -1 (domain) / inf / nan: defer to libm for the exact
-    // special value. log1p(-1) = -inf is a pole — glibc raises FE_DIVBYZERO, libm
-    // omits it, so re-raise it here (x < -1 already raises FE_INVALID via libm).
+    // fdlibm's log1p (libm crate, the musl port), the algorithm glibc ships:
+    // differs from glibc 2.43 on 1242 of 3M inputs (0.04%), where the earlier
+    // log(1+x) + e/(1+x) shortcut differed on 5% (bd-otip6a).
+    // log1p(-1) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits it, so
+    // re-raise it here (x < -1 already raises FE_INVALID via libm).
     if x == -1.0 {
         let _ =
             core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
@@ -1998,86 +1708,6 @@ fn pow_profile_exp_1_337_grid(base: f64) -> Option<f64> {
     None
 }
 
-/// Range over which `exp(x) = exp2(x * log2e)` stays within 4 ULP of glibc.
-/// The error is dominated by the rounding of the `x*log2e` product (~0.5*|x|
-/// ULP after exp2 amplification), so it stays <=4 ULP up to |x| = 5 and jumps
-/// to ~7 ULP by |x| = 6 (measured by a 2M-point sweep). libm::exp2 is markedly
-/// cheaper than libm::exp, so this covers the common decay/softmax ranges that
-/// previously fell to the slower libm::exp path. Note this is the EXP argument
-/// range, distinct from the [`EXP_MEDIUM_MIN`]/[`EXP_MEDIUM_MAX`] pow-base gate.
-const EXP_FAST_MIN: f64 = -708.0;
-const EXP_FAST_MAX: f64 = 709.0;
-/// Low part of `log2(e)` for the compensated reduction (residual after the f64 const).
-const LOG2_E_LO: f64 = f64::from_bits(0x3c7777d0ffda0d24);
-
-/// Fast path for the finite normal-result range via fl's FUSED exp2 kernel with a
-/// compensated reduction (mirrors `exp10`): exp(x) = 2^(x·log2 e). Carry x·LOG2_E in
-/// extended precision — `fma` recovers the product's rounding error, `LOG2_E_LO` adds
-/// the constant's residual, and the small `e·ln2` term corrects exp2 — so a single f64
-/// `log2(e)` does not leave the reduction error to be amplified by exp2. This replaces
-/// the old narrow `[-5,5]` path that called the SLOW generic `libm::exp2` (and left the
-/// rest of the range on the even-slower `libm::exp`). Over/underflow/inf/nan defer to
-/// `libm::exp` (the cold tails). Within the 4-ULP-vs-glibc math contract.
-#[inline]
-fn exp_medium_exp2_fast_path(x: f64) -> Option<f64> {
-    if (EXP_FAST_MIN..=EXP_FAST_MAX).contains(&x) {
-        let hi = std::f64::consts::LOG2_E;
-        let p = x * hi;
-        let e = x.mul_add(hi, -p) + x * LOG2_E_LO;
-        Some(crate::math::exp2(p) * (1.0 + e * std::f64::consts::LN_2))
-    } else {
-        None
-    }
-}
-
-/// `base` raised to a small integer power via exponentiation by squaring.
-/// `n.unsigned_abs()` must be small (the caller gates on `<= POWI_MAX_EXP`) so
-/// the multiply chain stays well inside the 4-ULP glibc parity budget.
-#[inline]
-fn powi_squaring(base: f64, n: i64) -> f64 {
-    let mut result = 1.0_f64;
-    let mut b = base;
-    let mut e = n.unsigned_abs();
-    while e > 0 {
-        if e & 1 == 1 {
-            result *= b;
-        }
-        e >>= 1;
-        if e > 0 {
-            b *= b;
-        }
-    }
-    if n < 0 { 1.0 / result } else { result }
-}
-
-/// `base` raised to a small half-integer exponent via `base^n * sqrt(base)`.
-/// The caller only reaches this for strictly positive finite bases, so libm's
-/// negative/zero/special-case semantics remain on the general path.
-#[inline]
-fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
-    if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
-        return None;
-    }
-
-    let shifted = exponent - 0.5;
-    let n = shifted as i64;
-    if n as f64 == shifted && n.unsigned_abs() <= POWI_MAX_EXP {
-        // `powi_squaring(base, n)` can overflow to ±inf (or underflow to 0) for an
-        // extreme base even when the true `base^exponent` is finite and nonzero —
-        // e.g. base = 5e-324, n = -1 gives 1/base = inf, yet inf * sqrt(base) is a
-        // spurious inf where glibc returns ~4.5e161. When the intermediate is
-        // degenerate, defer to libm::pow (exact for these rare extremes) instead of
-        // propagating the bad intermediate.
-        let p = powi_squaring(base, n);
-        if !p.is_finite() || p == 0.0 {
-            return None;
-        }
-        Some(p * base.sqrt())
-    } else {
-        None
-    }
-}
-
 // Superseded by `pow_fused` (glibc-class, bit-exact). Retained for its
 // differential/golden tests only; no longer on the live `pow` path.
 #[inline]
@@ -2130,72 +1760,20 @@ fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
     }
 }
 
-/// Largest |integer exponent| handled by the fast path. Each squaring/multiply
-/// adds at most ~0.5 ULP; capping the magnitude here keeps the result within
-/// the 4-ULP-vs-glibc contract (verified by `pow_integer_fast_path_within_4_ulps`).
-const POWI_MAX_EXP: u64 = 8;
-
-#[inline]
-fn pow_may_hit_small_integer_or_half_exponent(exponent: f64) -> bool {
-    let bits = exponent.to_bits() & 0x7fff_ffff_ffff_ffff;
-    if bits == 0 {
-        return true;
-    }
-
-    let biased_exp = ((bits >> 52) & 0x7ff) as i32;
-    if biased_exp == 0 || biased_exp == 0x7ff {
-        return false;
-    }
-
-    let exponent_of_two = biased_exp - 1023;
-    if !(-1..=3).contains(&exponent_of_two) {
-        return false;
-    }
-
-    let fractional_mask = (1_u64 << (52 - (exponent_of_two + 1) as u32)) - 1;
-    (bits & fractional_mask) == 0
-}
-
 #[inline]
 pub fn pow(base: f64, exponent: f64) -> f64 {
-    // Fast path: small integer exponents (and y == 0.5) on a finite base.
-    // Exponentiation by squaring is ~10x faster than the full kernel and, bounded
-    // to small magnitudes, stays within the 4-ULP glibc parity contract. Every
-    // positive-base exponent that cannot be a small integer or half-integer takes
-    // the bit-lattice corridor straight to `pow_fused`, skipping two f64->i64
-    // probes. IEEE special cases and negative bases keep the full classifier.
-    if base.is_finite() && exponent.is_finite() {
-        if base > 0.0 && !pow_may_hit_small_integer_or_half_exponent(exponent) {
-            return pow_fused(base, exponent);
-        }
-
-        // pow(±0, y) for finite y < 0 is a pole (result ±inf): glibc raises
-        // FE_DIVBYZERO — EXCEPT y == -1.0, which glibc special-cases as a bare
-        // reciprocal and leaves flag-free (verified vs host glibc). The fast-path
-        // `1.0/result` does not reliably emit a hardware divide for these
-        // constant-folded inputs, so re-raise it explicitly. Value unchanged.
-        if base == 0.0 && exponent < 0.0 && exponent != -1.0 {
-            let _ = core::hint::black_box(
-                core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64),
-            );
-        }
-        let n = exponent as i64;
-        if n as f64 == exponent && n.unsigned_abs() <= POWI_MAX_EXP {
-            return powi_squaring(base, n);
-        }
-        if exponent == 0.5 && base >= 0.0 {
-            // C99: pow(±0, y) is +0 for y > 0 that is not an odd integer, so
-            // pow(-0.0, 0.5) must be +0.0 — but (-0.0).sqrt() is -0.0. Force a
-            // positive zero for either signed zero; sqrt is exact otherwise.
-            return if base == 0.0 { 0.0 } else { base.sqrt() };
-        }
-        if let Some(result) = pow_half_integer_fast_path(base, exponent) {
-            return result;
-        }
+    // Every input goes through the fused log+exp kernel (glibc/ARM `__pow`),
+    // as in glibc: there are no integer or half-integer shortcuts, because
+    // repeated squaring rounds at each step and sqrt*powi twice -- x^3 differed
+    // from glibc on 26% of inputs, x^7 on 66%, x^2.5 on 35% (bd-otip6a).
+    //
+    // pow(±0, y) for finite y < 0 is a pole: glibc raises FE_DIVBYZERO --
+    // except y == -1.0, which it leaves flag-free (verified vs host glibc).
+    if base == 0.0 && exponent.is_finite() && exponent < 0.0 && exponent != -1.0 {
+        let _ = core::hint::black_box(
+            core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64),
+        );
     }
-    // Fused single-routine log+exp kernel (glibc/ARM `__pow`): bit-exact vs the
-    // host glibc `pow` over the whole IEEE domain, and faster than both the old
-    // unfused `exp2(y*log2(x))` medium path and the `libm::pow` general fallback.
     pow_fused(base, exponent)
 }
 
@@ -2251,10 +1829,16 @@ mod tests {
     }
 
     #[test]
-    fn pow_integer_fast_path_within_4_ulps() {
-        // Sweep the gated fast-path domain (|n| <= POWI_MAX_EXP, plus 0.5) over a
-        // wide spread of finite bases incl. negatives, zeros, sub/huge, and verify
-        // every result is within 4 ULP of the host glibc pow (f64::powf).
+    fn pow_integer_and_half_exponents_match_host_glibc() {
+        // Small integer and half-integer exponents once took shortcuts
+        // (squaring, sqrt*powi) that differed from glibc on 26-66% of inputs.
+        // They now run the fused kernel like everything else and must equal
+        // the host glibc pow (f64::powf) bit for bit -- on FMA hardware, where
+        // glibc runs the contracted build this kernel reproduces.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let bases = [
             0.0,
             -0.0,
@@ -2278,79 +1862,61 @@ mod tests {
             0.999_999,
             1.000_001,
         ];
-        for &base in &bases {
-            for n in -(POWI_MAX_EXP as i64)..=(POWI_MAX_EXP as i64) {
-                let exp_f = n as f64;
-                let got = pow(base, exp_f);
-                let want = base.powf(exp_f);
+        let mut exponents: Vec<f64> = (-8..=8).map(|n| n as f64).collect();
+        exponents.extend((-8..=8).map(|n| n as f64 + 0.5));
+        // Plus a dense sweep of positive bases, where the shortcuts ran most.
+        let mut s = 0x9e37_79b9_7f4a_7c15u64;
+        let mut swept: Vec<f64> = bases.to_vec();
+        for _ in 0..20_000 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            swept.push((s >> 11) as f64 / (1u64 << 53) as f64 * 10.0);
+        }
+        for &base in &swept {
+            for &y in &exponents {
+                let got = pow(base, y);
+                let want = base.powf(y);
                 assert!(
-                    within_ulps(got, want, 4),
-                    "pow({base}, {exp_f}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                    got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()),
+                    "pow({base:e}, {y}) = {got:e} but host glibc = {want:e}"
                 );
             }
-            if base >= 0.0 {
-                let got = pow(base, 0.5);
-                let want = base.powf(0.5);
-                assert!(
-                    within_ulps(got, want, 4),
-                    "pow({base}, 0.5) = {got:?} but glibc = {want:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn pow_irrational_corridor_classifier_keeps_small_exponent_lattice() {
-        for n in -8..=8 {
-            let integer = n as f64;
-            assert!(
-                pow_may_hit_small_integer_or_half_exponent(integer),
-                "{integer} should stay eligible for the integer fast path"
-            );
-
-            let half = integer + 0.5;
-            assert!(
-                pow_may_hit_small_integer_or_half_exponent(half),
-                "{half} should stay eligible for the half-integer fast path"
-            );
-        }
-
-        for exponent in [
-            1.337,
-            -1.337,
-            0.25,
-            0.75,
-            8.25,
-            f64::MIN_POSITIVE,
-            f64::INFINITY,
-            f64::NAN,
-        ] {
-            assert!(
-                !pow_may_hit_small_integer_or_half_exponent(exponent),
-                "{exponent:?} should use the direct fused corridor"
-            );
         }
     }
 
     #[test]
     fn log2_fast_path_within_4_ulps_of_glibc() {
-        // `f64::log2` lowers to the host glibc `log2`, so this pins the
-        // `ln(x) * log2(e)` fast path directly against glibc. Sweep the full
-        // dynamic range geometrically, the near-1 region (where log2 -> 0 and
-        // relative error is most sensitive), and a spread of fixed points.
-        let mut x = 1e-300_f64;
-        while x < 1e300 {
-            assert!(
-                within_ulps(log2(x), x.log2(), 4),
-                "log2({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+        // `f64::log2` lowers to the host glibc `log2`: the kernel must equal it
+        // bit for bit (bd-otip6a) on FMA hardware, where glibc runs the
+        // contracted build reproduced here. Sweep the full dynamic range
+        // geometrically (incl. subnormals), both sides of 1 (the near-1 path
+        // and its boundary), and fixed points.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
+        let check = |x: f64| {
+            assert_eq!(
+                log2(x).to_bits(),
+                x.log2().to_bits(),
+                "log2({x:e}) = {:e} but host glibc = {:e}",
                 log2(x),
                 x.log2()
             );
+        };
+        // Subnormals by bit pattern (a geometric step cannot advance from the
+        // smallest ones), then the normal range geometrically.
+        for i in 1..20_000u64 {
+            check(f64::from_bits(i * 225_179_981_368));
+        }
+        let mut x = f64::MIN_POSITIVE;
+        while x < 1e300 {
+            check(x);
             x *= 1.0000071;
         }
-        for d in 0..1_000_000i64 {
-            let x = 1.0 + (d as f64) * 2e-9;
-            assert!(within_ulps(log2(x), x.log2(), 4), "near-1 log2({x}) >4 ULP");
+        for d in -1_000_000..1_000_000i64 {
+            check(1.0 + (d as f64) * 1e-7);
         }
         for &x in &[
             0.5,
@@ -2362,8 +1928,10 @@ mod tests {
             123.456,
             f64::MIN_POSITIVE,
             f64::MAX,
+            1.0 - f64::from_bits(0x3fa5_b510_0000_0000),
+            1.0 + f64::from_bits(0x3fa6_ab20_0000_0000),
         ] {
-            assert!(within_ulps(log2(x), x.log2(), 4), "log2({x:e}) >4 ULP");
+            check(x);
         }
         // Exact powers of two must match glibc bit-for-bit (gated to libm::log2).
         for k in -1074i32..=1023 {
@@ -2386,71 +1954,32 @@ mod tests {
     }
 
     #[test]
-    fn log2_profile_grid_matches_kernel_bits_and_sha256() {
-        use sha2::{Digest, Sha256};
-
-        let mut hasher = Sha256::new();
-        for k in 0..=64 {
-            let x = LOG2_PROFILE_GRID_START + (k as f64) / LOG2_PROFILE_GRID_SCALE;
-            let got = log2_profile_grid(x).expect("dyadic profile-grid value");
-            let want = log2_kernel(x);
-            assert_eq!(
-                got.to_bits(),
-                want.to_bits(),
-                "grid k={k} x={x} does not match the existing kernel"
-            );
-            assert_eq!(
-                log2(x).to_bits(),
-                want.to_bits(),
-                "public log2 grid k={k} x={x} does not match the existing kernel"
-            );
-            hasher.update(got.to_bits().to_le_bytes());
-        }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        assert_eq!(
-            digest, "d1df30ae4d77e898348255bb96e76af533e1c41f5b6181d490e2e697770baee8",
-            "log2 profile-grid golden corpus hash drifted"
-        );
-    }
-
-    #[test]
-    fn log2_profile_grid_rejects_off_grid_values() {
-        for &x in &[
-            0.5 + f64::EPSILON,
-            0.531,
-            1.0 + f64::EPSILON,
-            f64::from_bits(LOG2_PROFILE_GRID_END.to_bits() + 1),
-            f64::INFINITY,
-            f64::NAN,
-        ] {
-            assert!(log2_profile_grid(x).is_none(), "{x:?} matched the grid");
-        }
-    }
-
-    #[test]
     fn log10_fast_path_within_4_ulps_of_glibc() {
-        // `f64::log10` lowers to host glibc, pinning the `ln(x) * log10(e)` fast
-        // path directly against it.
-        let mut x = 1e-300_f64;
-        while x < 1e300 {
-            assert!(
-                within_ulps(log10(x), x.log10(), 4),
-                "log10({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+        // `f64::log10` lowers to host glibc: log10 must equal it bit for bit
+        // (bd-otip6a) where glibc's `log` is its FMA build (reproduced by `log`).
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
+        let check = |x: f64| {
+            assert_eq!(
+                log10(x).to_bits(),
+                x.log10().to_bits(),
+                "log10({x:e}) = {:e} but host glibc = {:e}",
                 log10(x),
                 x.log10()
             );
+        };
+        for i in 1..20_000u64 {
+            check(f64::from_bits(i * 225_179_981_368)); // subnormals
+        }
+        let mut x = f64::MIN_POSITIVE;
+        while x < 1e300 {
+            check(x);
             x *= 1.0000071;
         }
-        for d in 0..1_000_000i64 {
-            let x = 1.0 + (d as f64) * 2e-9;
-            assert!(
-                within_ulps(log10(x), x.log10(), 4),
-                "near-1 log10({x}) >4 ULP"
-            );
+        for d in -1_000_000..1_000_000i64 {
+            check(1.0 + (d as f64) * 1e-7);
         }
         for &x in &[
             0.5,
@@ -2463,14 +1992,13 @@ mod tests {
             f64::MIN_POSITIVE,
             f64::MAX,
         ] {
-            assert!(within_ulps(log10(x), x.log10(), 4), "log10({x:e}) >4 ULP");
+            check(x);
         }
-        // Powers of ten stay within 4 ULP of glibc (no exactness gate — the
-        // fast form is ~1 ULP off the exact integer at 10^0..10^22).
+        // Powers of ten: glibc returns the exact integer; so must we.
         for k in -307i32..=308 {
             let p = libm::exp10(k as f64);
             if p.is_normal() {
-                assert!(within_ulps(log10(p), p.log10(), 4), "log10(10^{k}) >4 ULP");
+                check(p);
             }
         }
         // Special inputs defer to libm::log10 and match glibc exactly.
@@ -2483,26 +2011,35 @@ mod tests {
 
     #[test]
     fn log_fast_path_within_4_ulps_of_glibc() {
-        // `f64::ln` lowers to glibc `log`, so this pins the `log2_kernel * ln2`
-        // fast path directly against it. Full dynamic range + the near-1 region
-        // (where log -> 0 and relative error is most sensitive).
-        let mut x = 1e-300_f64;
-        while x < 1e300 {
-            assert!(
-                within_ulps(log(x), x.ln(), 4),
-                "log({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+        // `f64::ln` lowers to glibc `log`: the kernel must equal it bit for
+        // bit (bd-otip6a) where glibc runs its FMA build. Full dynamic range,
+        // and densely on both sides of 1 (near-1 path and the k = 0 / -1 table
+        // rows), where the previously unfused evaluation differed.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
+        let check = |x: f64| {
+            assert_eq!(
+                log(x).to_bits(),
+                x.ln().to_bits(),
+                "log({x:e}) = {:e} but host glibc = {:e}",
                 log(x),
                 x.ln()
             );
+        };
+        let mut x = f64::MIN_POSITIVE;
+        while x < 1e300 {
+            check(x);
             x *= 1.0000071;
         }
-        for d in 0..1_000_000i64 {
-            let x = 1.0 + (d as f64) * 2e-9;
-            assert!(within_ulps(log(x), x.ln(), 4), "near-1 log({x}) >4 ULP");
+        for d in 0..3_000_000i64 {
+            check(0.4 + (d as f64) * 4e-7);
         }
         for &x in &[
             0.5,
             0.323,
+            0.511_201_276_223_082_5,
             std::f64::consts::E,
             std::f64::consts::PI,
             1e-3,
@@ -2511,7 +2048,7 @@ mod tests {
             f64::MIN_POSITIVE,
             f64::MAX,
         ] {
-            assert!(within_ulps(log(x), x.ln(), 4), "log({x:e}) >4 ULP");
+            check(x);
         }
         // Special inputs defer to libm::log and match glibc exactly.
         assert!(log(f64::NAN).is_nan());
@@ -2577,7 +2114,7 @@ mod tests {
             1e6,
         ];
         for &base in &bases {
-            for n in -(POWI_MAX_EXP as i64)..=(POWI_MAX_EXP as i64) {
+            for n in -8..=8 {
                 let exponent = n as f64 + 0.5;
                 let got = pow(base, exponent);
                 let want = base.powf(exponent);
@@ -2590,9 +2127,14 @@ mod tests {
     }
 
     #[test]
-    fn golden_pow_half_integer_corpus_sha256() {
-        use sha2::{Digest, Sha256};
-
+    fn pow_half_integer_corpus_matches_host_glibc() {
+        // Was a SHA-256 pin of this corpus under the old sqrt*powi shortcut,
+        // whose outputs differed from glibc (35% of x^2.5 over [0, 10]); now
+        // the corpus is held to the host glibc pow bit for bit (bd-otip6a).
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let bases = [
             1e-6,
             1e-3,
@@ -2608,21 +2150,15 @@ mod tests {
             1e6,
         ];
         let exponents = [-7.5, -2.5, -0.5, 0.5, 1.5, 2.5, 4.5, 8.5];
-        let mut hasher = Sha256::new();
         for &base in &bases {
             for &exponent in &exponents {
-                hasher.update(pow(base, exponent).to_bits().to_le_bytes());
+                assert_eq!(
+                    pow(base, exponent).to_bits(),
+                    base.powf(exponent).to_bits(),
+                    "pow({base}, {exponent}) differs from host glibc"
+                );
             }
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        assert_eq!(
-            digest, "5d10fe8318e0cba5afc8a3260fa342ca472bf559ead08bc67b82ae3a307e3a61",
-            "pow half-integer golden corpus hash drifted"
-        );
     }
 
     #[test]
@@ -2942,9 +2478,15 @@ mod tests {
     }
 
     #[test]
-    fn golden_pow_medium_log2_exp2_corpus_sha256() {
-        use sha2::{Digest, Sha256};
-
+    fn pow_medium_corpus_matches_host_glibc() {
+        // Was a SHA-256 pin "re-pinned 2026-06-19" as bit-exact vs glibc; it
+        // was not: the unfused kernel differed from glibc on 3 of these 100
+        // pairs. The corpus is now compared with the host glibc pow directly
+        // (bd-otip6a); see `exp_is_bit_identical_to_host_glibc` for the guard.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let bases = [
             EXP_MEDIUM_MIN,
             0.500_000_000_000_000_1,
@@ -2970,42 +2512,32 @@ mod tests {
             POW_MEDIUM_EXP_MAX,
         ];
 
-        let mut hasher = Sha256::new();
         for &base in &bases {
             for &exponent in &exponents {
-                let got = pow(base, exponent);
-                let want = base.powf(exponent);
-                assert!(
-                    within_ulps(got, want, 4),
-                    "pow({base}, {exponent}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                assert_eq!(
+                    pow(base, exponent).to_bits(),
+                    base.powf(exponent).to_bits(),
+                    "pow({base}, {exponent}) differs from host glibc"
                 );
-                hasher.update(base.to_bits().to_le_bytes());
-                hasher.update(exponent.to_bits().to_le_bytes());
-                hasher.update(got.to_bits().to_le_bytes());
             }
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        // Re-pinned 2026-06-19: the whole non-fast-path domain (including the
-        // former `exp_1_337` profile column) now routes through `pow_fused`, the
-        // fused glibc `__pow` port, so every corpus output is bit-exact vs glibc
-        // — strictly more correct than the prior unfused `exp2(y*log2(x))` /
-        // profile-poly bits. Every per-pair `within_ulps(_, _, 4)` check above
-        // still passes; the new digest captures the glibc-exact bits.
-        assert_eq!(
-            digest, "d93930700713873b0ac2c4fd85de5c9cba51d5feec95e3acb845a8d95ce88cd7",
-            "pow medium log2/exp2 golden corpus hash drifted: got {digest}"
-        );
     }
 
     #[test]
-    fn exp_medium_exp2_fast_path_within_4_ulps() {
+    fn exp_is_bit_identical_to_host_glibc() {
+        // `x.exp()` here is the test binary's libm, i.e. the host glibc. Its
+        // FMA build (what this kernel reproduces) is selected on FMA hardware;
+        // without FMA glibc rounds a few interior cases differently.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let mut inputs = vec![
-            EXP_FAST_MIN,
-            EXP_FAST_MAX,
+            -745.0,
+            -708.5,
+            -600.0,
+            512.0,
+            709.7,
             -4.999,
             -2.5,
             -1.0,
@@ -3019,31 +2551,38 @@ mod tests {
             2.468_75,
             4.999,
         ];
-        // Dense deterministic sweep across the whole [-5, 5] fast-path interval.
+        // Deterministic sweep: small, medium, and the large/subnormal-result
+        // range handled by `exp_specialcase`.
         let mut s = 0x2545_f491_4f6c_dd1du64;
-        for _ in 0..1_000_000 {
+        for i in 0..1_200_000 {
             s ^= s << 13;
             s ^= s >> 7;
             s ^= s << 17;
-            inputs.push(-5.0 + (s >> 11) as f64 * (10.0 / (1u64 << 53) as f64));
+            let unit = (s >> 11) as f64 / (1u64 << 53) as f64;
+            let span = [1e-3, 1.0, 40.0, 745.0][i % 4];
+            inputs.push((unit * 2.0 - 1.0) * span);
         }
 
+        let mut mismatches = 0usize;
+        let mut first = None;
         for x in inputs {
             let got = exp(x);
             let want = x.exp();
-            assert!(
-                within_ulps(got, want, 4),
-                "exp({x}) = {got:?} but host exp = {want:?} (>4 ULP)"
-            );
+            if got.to_bits() != want.to_bits() {
+                mismatches += 1;
+                first.get_or_insert((x, got, want));
+            }
         }
+        assert_eq!(
+            mismatches, 0,
+            "exp differs from host glibc on {mismatches} inputs; first {first:?}"
+        );
     }
 
     #[test]
-    fn exp_medium_exp2_fast_path_preserves_fallback_cases() {
-        // The fused compensated fast path now covers all finite-result inputs
-        // [-708, 709] (validated <=2 ULP vs glibc by the exp_ULP_sweep in math_survey).
-        // OUTSIDE it — overflow (>709 -> +inf), underflow (<-708 -> 0), ±inf, NaN — exp
-        // stays bit-identical to libm::exp.
+    fn exp_overflow_underflow_and_special_values() {
+        // Overflow (+inf), underflow (0), ±inf and NaN agree with libm::exp:
+        // the kernel's own large-|x| branch reaches the same inf/0.
         let cold = [f64::NEG_INFINITY, -745.2, 710.0, f64::INFINITY];
         for x in cold {
             assert_eq!(
@@ -3053,8 +2592,10 @@ mod tests {
             );
         }
         assert!(exp(f64::NAN).is_nan());
-        // In-range stays within the 4-ULP-vs-glibc contract the rest of the math family
-        // uses (libm::exp is correctly rounded, so <=4 ULP of it implies the contract).
+        assert_eq!(exp(0.0), 1.0);
+        assert_eq!(exp(-0.0), 1.0);
+        // Sanity against an independent implementation (libm::exp is within
+        // ~1 ULP; the kernel itself is checked bit-exact against glibc above).
         for x in [-20.0, -6.0, 6.0, 20.0, -700.0, 700.0, 0.5, 2.5] {
             let ulp = (exp(x).to_bits() as i64 - libm::exp(x).to_bits() as i64).abs();
             assert!(
@@ -3065,9 +2606,16 @@ mod tests {
     }
 
     #[test]
-    fn golden_exp_medium_exp2_corpus_sha256() {
-        use sha2::{Digest, Sha256};
-
+    fn exp_medium_corpus_matches_host_glibc() {
+        // Was a SHA-256 pin of this corpus's outputs under the old 4-ULP
+        // exp2-based route -- outputs that differed from glibc on 27 of these
+        // 72 inputs. The corpus is now held to glibc itself, bit for bit
+        // (bd-otip6a); see `exp_is_bit_identical_to_host_glibc` for the FMA
+        // guard.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let mut inputs = vec![
             EXP_MEDIUM_MIN,
             0.500_000_000_000_000_1,
@@ -3080,53 +2628,45 @@ mod tests {
         ];
         inputs.extend((0..64).map(|k| 0.5 + (k as f64) * 0.031_25));
 
-        let mut hasher = Sha256::new();
         for x in inputs {
-            hasher.update(exp(x).to_bits().to_le_bytes());
+            assert_eq!(
+                exp(x).to_bits(),
+                x.exp().to_bits(),
+                "exp({x}) differs from host glibc"
+            );
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        // Regenerated when the exp fast path moved from the slow `libm::exp2` over a
-        // narrow `[-5,5]` to fl's FUSED exp2 with a compensated reduction over the full
-        // `[-708,709]` range — validated <=2 ULP vs glibc across the whole domain (4M-pt
-        // sweep in the math_survey example), within the 4-ULP-vs-glibc family contract.
-        assert_eq!(
-            digest, "20261b5712acfca980cd3cd398fa6211bf4ebf32c946e37fd02282a380a2559c",
-            "exp medium exp2 golden corpus hash drifted"
-        );
     }
 
     #[test]
-    fn expm1_fast_path_within_4_ulps() {
-        // The positive-band fast path (exp(x)-1) must stay within the 4-ULP math
-        // conformance contract vs the libm expm1 reference across the gated range.
-        fn ulp(a: f64, b: f64) -> i64 {
-            if a == b {
-                0
-            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
-                i64::MAX
-            } else {
-                (a.to_bits() as i64 - b.to_bits() as i64).abs()
-            }
+    fn expm1_log1p_match_glibc_where_the_old_shortcuts_did_not() {
+        // (x, glibc 2.43 result) at inputs where the replaced exp(x)-1 and
+        // log(1+x)+e/(1+x) shortcuts were off by an ulp (bd-otip6a).
+        for (x, want) in [
+            (0x3fe5_0707_18d0_0d00u64, 0x3fed_bc0b_9ea3_09e7u64),
+            (0x3fe5_0f6c_9892_7b00, 0x3fed_cc40_91c3_45e3),
+            (0x4021_4a67_1796_03f0, 0x40b6_3279_1b02_81ea),
+            (0x402c_a43f_6f70_75f0, 0x4139_4a72_5864_1e1e),
+            (0x3ff6_ac1a_3464_4680, 0x4008_ff96_5f9c_672b),
+            (0x402c_4a16_79c5_cbf0, 0x4135_3513_e9d4_7586),
+            (0x4011_e6e7_5b32_1aa0, 0x4055_b59e_82d0_c4ca),
+            (0x402f_7830_157d_7c10, 0x4159_fff9_0ac8_43f0),
+        ] {
+            let got = expm1(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "expm1({x:#x}) = {got:#x}, glibc {want:#x}");
         }
-        let mut worst = 0i64;
-        let mut worst_x = 0.0f64;
-        let mut x = EXPM1_POSITIVE_FAST_MIN;
-        while x <= EXPM1_POSITIVE_FAST_MAX {
-            let u = ulp(expm1(x), libm::expm1(x));
-            if u > worst {
-                worst = u;
-                worst_x = x;
-            }
-            x += 0.0001;
+        for (x, want) in [
+            (0x3fe6_dca5_b25f_2e33u64, 0x3fe1_402b_9246_7c19u64),
+            (0x3ff4_db3c_097a_711a, 0x3fea_b3bb_d2cb_49aa),
+            (0x4008_c0e5_d8f6_98ad, 0x3ff6_8d97_b44a_76f2),
+            (0x3fff_d4c9_31bd_ce1a, 0x3ff1_857c_60b9_c460),
+            (0x3fe8_2e48_6923_33b3, 0x3fe2_02c6_fbd1_a152),
+            (0xbfe4_21ea_e3f7_2fcd, 0xbfef_bde7_2cd5_a4ec),
+            (0x4020_7ce1_d072_9ff3, 0x4001_caae_2852_7b10),
+            (0x3ff5_accf_12f1_98da, 0x3feb_67b3_ba6a_ab2a),
+        ] {
+            let got = log1p(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "log1p({x:#x}) = {got:#x}, glibc {want:#x}");
         }
-        assert!(
-            worst <= 4,
-            "expm1 fast path worst {worst} ULP at x={worst_x}"
-        );
     }
 
     #[test]

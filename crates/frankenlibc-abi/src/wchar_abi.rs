@@ -4172,15 +4172,12 @@ pub unsafe extern "C" fn mbrtowc(
 ) -> usize {
     const MB_INCOMPLETE: usize = usize::MAX - 1;
 
-    // s == NULL resets the conversion state (equivalent to mbrtowc(NULL,"",1,ps)).
+    // s == NULL resets the conversion state: it is mbrtowc(NULL, "", 1, ps), so
+    // `pwc` is NOT written (glibc leaves it; gnulib test-mbrtowc checks).
     if s.is_null() {
         if !ps.is_null() {
             // SAFETY: ps is a valid mbstate_t per the C contract.
             unsafe { mbstate_partial_clear(ps) };
-        }
-        if !pwc.is_null() {
-            // SAFETY: pwc is caller-provided out pointer.
-            unsafe { *pwc = 0 };
         }
         return 0;
     }
@@ -6238,6 +6235,10 @@ pub unsafe extern "C" fn swprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
 
     if unsafe { wide_format_has_only_wide_origin(format) }
         && let Some(result) = finish_swprintf_wide_origin(&rendered, s, n)
@@ -6266,6 +6267,10 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // C: wprintf returns the number of WIDE CHARACTERS transmitted, not the byte
     // length of the (UTF-8) rendering — they differ for any multibyte output.
     // The COUNT is the wide-character count, so an unconvertible byte is an
@@ -6301,6 +6306,10 @@ pub unsafe extern "C" fn fwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // fwprintf returns the number of WIDE CHARACTERS written, not bytes.
     // Convert BEFORE writing: an unconvertible byte must not be emitted and
     // then reported as an error, which would leave partial output behind.
@@ -6337,6 +6346,10 @@ pub unsafe extern "C" fn vswprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
 
     // On truncation glibc writes the truncated prefix + NUL (not just an empty
     // buffer) and returns -1; mirror swprintf.
@@ -6360,6 +6373,10 @@ pub unsafe extern "C" fn vwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // vwprintf returns the number of WIDE CHARACTERS written, not bytes.
     // The COUNT is the wide-character count, so an unconvertible byte is an
     // EILSEQ even on the stdout path, where the bytes themselves are written
@@ -6394,6 +6411,10 @@ pub unsafe extern "C" fn vfwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
     // Convert BEFORE writing, as in `fwprintf`.
     let Some(wide_count) = narrow_to_wide_count(&rendered) else {
@@ -7192,8 +7213,48 @@ pub unsafe extern "C" fn wcsftime(
     wide_i
 }
 
+/// The active named collation and two wide strings as UTF-8, when an
+/// LC_COLLATE with rules is active under a UTF-8 LC_CTYPE (the tables index
+/// the locale's multibyte form). `None` falls back to code-point order.
+unsafe fn named_wide_collation(
+    s1: *const libc::wchar_t,
+    s2: *const libc::wchar_t,
+) -> Option<(
+    frankenlibc_core::locale::collate::CollateTables<'static>,
+    Vec<u8>,
+    Vec<u8>,
+)> {
+    if s1.is_null()
+        || s2.is_null()
+        || !matches!(
+            crate::locale_abi::active_charset(),
+            crate::locale_abi::Charset::Utf8
+        )
+    {
+        return None;
+    }
+    let tables = crate::locale_abi::named_collate()?;
+    let utf8 = |s: *const libc::wchar_t| -> Option<Vec<u8>> {
+        // SAFETY: wcscoll/wcsxfrm's contract: NUL-terminated wide strings.
+        let len = unsafe { wcslen(s as *const u32) };
+        let wide = unsafe { std::slice::from_raw_parts(s.cast::<u32>(), len) };
+        let mut out = Vec::with_capacity(len);
+        for &c in wide {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(char::from_u32(c)?.encode_utf8(&mut buf).as_bytes());
+        }
+        Some(out)
+    };
+    Some((tables, utf8(s1)?, utf8(s2)?))
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int {
+    // A named UTF-8 LC_COLLATE: the narrow strings' collation (the same
+    // weights glibc applies to both forms).
+    if let Some((tables, a, b)) = unsafe { named_wide_collation(s1, s2) } {
+        return tables.compare(&a, &b);
+    }
     // C/POSIX locale: collation order IS code-point order, so wcscoll == wcscmp.
     // Delegate to the wcscmp ABI (fused single-pass 128-byte-SIMD scan with early
     // exit) instead of the old 2× wcslen length scans + a separate
@@ -7211,6 +7272,23 @@ pub unsafe extern "C" fn wcsxfrm(
 ) -> usize {
     if src.is_null() {
         return 0;
+    }
+
+    // A named UTF-8 LC_COLLATE: strxfrm's sort key of the narrow string, one
+    // key byte per wide char. Key bytes are nonzero and wchar_t compares
+    // them in the same order, so wcscmp on these keys orders like wcscoll.
+    // (glibc's wide keys hold other values; their order is the same.)
+    if let Some((tables, key_src, _)) = unsafe { named_wide_collation(src, src) } {
+        let key = tables.sort_key(&key_src);
+        if !dest.is_null() && key.len() < n {
+            for (i, &byte) in key.iter().enumerate() {
+                // SAFETY: the caller provides `n` > key.len() wide chars at dest.
+                unsafe { *dest.add(i) = libc::wchar_t::from(byte) };
+            }
+            // SAFETY: as above; index key.len() < n.
+            unsafe { *dest.add(key.len()) = 0 };
+        }
+        return key.len();
     }
 
     // SAFETY: source string is scanned until NUL.
@@ -7806,9 +7884,9 @@ pub unsafe extern "C" fn towlower_l(wc: u32, _locale: *mut std::ffi::c_void) -> 
 pub unsafe extern "C" fn wcscoll_l(
     s1: *const libc::wchar_t,
     s2: *const libc::wchar_t,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_int {
-    unsafe { wcscoll(s1, s2) }
+    crate::locale_abi::with_locale(locale, || unsafe { wcscoll(s1, s2) })
 }
 
 /// `wcsxfrm_l` — locale-aware wide string transformation.
@@ -7817,9 +7895,9 @@ pub unsafe extern "C" fn wcsxfrm_l(
     dest: *mut libc::wchar_t,
     src: *const libc::wchar_t,
     n: usize,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { wcsxfrm(dest, src, n) }
+    crate::locale_abi::with_locale(locale, || unsafe { wcsxfrm(dest, src, n) })
 }
 
 /// `wcsftime_l` — locale-aware wide string strftime.
@@ -7829,9 +7907,9 @@ pub unsafe extern "C" fn wcsftime_l(
     maxsize: usize,
     format: *const libc::wchar_t,
     tm: *const c_void,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { wcsftime(s, maxsize, format, tm) }
+    crate::locale_abi::with_locale(locale, || unsafe { wcsftime(s, maxsize, format, tm) })
 }
 
 /// `wcstol_l` — locale-aware wide string to long.
@@ -8696,6 +8774,12 @@ pub unsafe extern "C" fn mbrtoc16(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
+    // s == NULL is mbrtoc16(NULL, "", 1, ps): nothing is stored (as mbrtowc).
+    let pc16 = if s.is_null() {
+        std::ptr::null_mut()
+    } else {
+        pc16
+    };
     let pending = unsafe { c16_pending_get(ps) };
 
     if pending != 0 {
@@ -8906,9 +8990,10 @@ pub unsafe extern "C" fn __wcsncasecmp_l(
 pub unsafe extern "C" fn __wcscoll_l(
     s1: *const libc::wchar_t,
     s2: *const libc::wchar_t,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> c_int {
-    unsafe { wcscmp(s1 as *const u32, s2 as *const u32) }
+    // libstdc++'s std::collate<wchar_t>: collate in that locale.
+    unsafe { wcscoll_l(s1, s2, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8916,9 +9001,9 @@ pub unsafe extern "C" fn __wcsxfrm_l(
     dst: *mut libc::wchar_t,
     src: *const libc::wchar_t,
     n: usize,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> usize {
-    unsafe { wcsxfrm(dst, src, n) }
+    unsafe { wcsxfrm_l(dst, src, n, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9116,7 +9201,8 @@ pub unsafe extern "C" fn __wcsftime_l(
     // per call AND widened the multibyte output byte-by-byte (`b as wchar_t`), which is also
     // WRONG for any non-ASCII output (wcsftime decodes it with mbtowc). So this is both a
     // large speedup (it had the pre-fix wcsftime's ~5-32x-glibc overhead) and a correctness fix.
-    unsafe { wcsftime(s, max, format, tm) }
+    // Formats in the locale `_l`, as `wcsftime_l` does.
+    unsafe { wcsftime_l(s, max, format, tm, _l) }
 }
 
 // ===========================================================================

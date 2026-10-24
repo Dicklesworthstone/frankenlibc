@@ -2,8 +2,8 @@
   "version": "v1",
   "family": "unistd/process-filesystem",
   "captured_at": "2026-05-13T04:00:00Z",
-  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-05 argp parse/help, gettext codeset, brk, signal, char8, canonicalization, capability, chdir, and chmod symbols. Outputs classify no-op parser helpers, static UTF-8 codeset routing, query/error classes, and null-path/null-capability failure classes without recording argv addresses, textdomain registry internals, heap break addresses, signal handler addresses, filesystem paths, cwd, capability bits, process ids, thread ids, timestamps, or file modes from ambient state.",
-  "spec_reference": "GNU argp empty parser and no-op help helpers, gettext bind_textdomain_codeset UTF-8 routing contract, Linux brk/capget/capset null-query/error classes, BSD bsd_signal invalid signal contract, C23 c8rtomb single-byte UTF-8 contract, GNU canonicalize_file_name null-path contract, and POSIX chdir/chmod null-path error contracts",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-05 argp parse/help, gettext codeset, brk, signal, char8, canonicalization, capability, chdir, and chmod symbols. Outputs classify no-op parser helpers, the per-domain gettext codeset registry, query/error classes, and null-path/null-capability failure classes without recording argv addresses, textdomain registry internals, heap break addresses, signal handler addresses, filesystem paths, cwd, capability bits, process ids, thread ids, timestamps, or file modes from ambient state.",
+  "spec_reference": "GNU argp empty parser and no-op help helpers, gettext bind_textdomain_codeset per-domain codeset registry, Linux brk/capget/capset null-query/error classes, BSD bsd_signal invalid signal contract, C23 c8rtomb single-byte UTF-8 contract, GNU canonicalize_file_name null-path contract, and POSIX chdir/chmod null-path error contracts",
   "campaign": {
     "bead": "tracker-blocked-empty-queue-discovery",
     "campaign_id": "fcq-unistd-process-filesystem",
@@ -119,32 +119,32 @@
       "mode": "hardened"
     },
     {
-      "name": "bind_textdomain_codeset_static_utf8_strict",
+      "name": "bind_textdomain_codeset_returns_bound_codeset_strict",
       "function": "bind_textdomain_codeset",
-      "spec_section": "GNU gettext bind_textdomain_codeset static UTF-8 routing",
+      "spec_section": "GNU gettext bind_textdomain_codeset per-domain codeset registry",
       "inputs": {
         "symbol": "bind_textdomain_codeset",
-        "scenario": "set_non_utf8_request_observes_static_utf8_without_registry_capture",
-        "expected": "BIND_TEXTDOMAIN_CODESET_UTF_8",
-        "oracle_source": "FrankenLibC gettext UTF-8-only codeset contract",
+        "scenario": "set_non_utf8_request_returns_the_bound_codeset",
+        "expected": "BIND_TEXTDOMAIN_CODESET_ISO_8859_1",
+        "oracle_source": "host glibc 2.43: bind_textdomain_codeset(domain, \"ISO-8859-1\") returns \"ISO-8859-1\"",
         "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
       },
-      "expected_output": "symbol=bind_textdomain_codeset;mode=strict;expected=BIND_TEXTDOMAIN_CODESET_UTF_8;actual=BIND_TEXTDOMAIN_CODESET_UTF_8;failure_signature=none",
+      "expected_output": "symbol=bind_textdomain_codeset;mode=strict;expected=BIND_TEXTDOMAIN_CODESET_ISO_8859_1;actual=BIND_TEXTDOMAIN_CODESET_ISO_8859_1;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
     {
-      "name": "bind_textdomain_codeset_static_utf8_hardened",
+      "name": "bind_textdomain_codeset_returns_bound_codeset_hardened",
       "function": "bind_textdomain_codeset",
-      "spec_section": "GNU gettext bind_textdomain_codeset static UTF-8 routing",
+      "spec_section": "GNU gettext bind_textdomain_codeset per-domain codeset registry",
       "inputs": {
         "symbol": "bind_textdomain_codeset",
-        "scenario": "set_non_utf8_request_observes_static_utf8_without_registry_capture",
-        "expected": "BIND_TEXTDOMAIN_CODESET_UTF_8",
-        "oracle_source": "FrankenLibC gettext UTF-8-only codeset contract",
+        "scenario": "set_non_utf8_request_returns_the_bound_codeset",
+        "expected": "BIND_TEXTDOMAIN_CODESET_ISO_8859_1",
+        "oracle_source": "host glibc 2.43: bind_textdomain_codeset(domain, \"ISO-8859-1\") returns \"ISO-8859-1\"",
         "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata"
       },
-      "expected_output": "symbol=bind_textdomain_codeset;mode=hardened;expected=BIND_TEXTDOMAIN_CODESET_UTF_8;actual=BIND_TEXTDOMAIN_CODESET_UTF_8;failure_signature=none",
+      "expected_output": "symbol=bind_textdomain_codeset;mode=hardened;expected=BIND_TEXTDOMAIN_CODESET_ISO_8859_1;actual=BIND_TEXTDOMAIN_CODESET_ISO_8859_1;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },

@@ -197,6 +197,59 @@ fn diff_aligned_alloc_success_cases() {
 }
 
 #[test]
+fn diff_aligned_alloc_non_multiple_sizes() {
+    // C17 (DR 460) dropped the size-multiple-of-alignment rule; glibc accepts
+    // these and fl used to fail them with EINVAL. Oversize requests must fail
+    // with ENOMEM in both.
+    let mut divs = Vec::new();
+    for (align, size) in [
+        (64usize, 100usize),
+        (64, 1),
+        (4096, 10),
+        (2, 7),
+        (16, usize::MAX / 2 + 1),
+    ] {
+        // fl and glibc keep separate errno slots.
+        let fl_errno_slot = unsafe { frankenlibc_abi::errno_abi::__errno_location() };
+        let lc_errno_slot = unsafe { libc::__errno_location() };
+        unsafe { *fl_errno_slot = 0 };
+        let fl_p = unsafe { fl::aligned_alloc(align, size) };
+        let fl_errno = unsafe { *fl_errno_slot };
+        unsafe { *lc_errno_slot = 0 };
+        let lc_p = unsafe { aligned_alloc(align, size) };
+        let lc_errno = unsafe { *lc_errno_slot };
+        let case = format!("(align={align}, size={size})");
+        if fl_p.is_null() != lc_p.is_null() || (lc_p.is_null() && fl_errno != lc_errno) {
+            divs.push(Divergence {
+                case: case.clone(),
+                field: "null_return/errno",
+                frankenlibc: format!("null={} errno={fl_errno}", fl_p.is_null()),
+                glibc: format!("null={} errno={lc_errno}", lc_p.is_null()),
+            });
+        }
+        if !fl_p.is_null() && !(fl_p as usize).is_multiple_of(align) {
+            divs.push(Divergence {
+                case,
+                field: "alignment",
+                frankenlibc: format!("ptr {:#x} not aligned to {align}", fl_p as usize),
+                glibc: "(N/A)".to_string(),
+            });
+        }
+        if !fl_p.is_null() {
+            unsafe { fl::free(fl_p) };
+        }
+        if !lc_p.is_null() {
+            unsafe { libc::free(lc_p) };
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "aligned_alloc divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn diff_memalign_success_cases() {
     let mut divs = Vec::new();
     for (align, size) in MEMALIGN_VALID_CASES {

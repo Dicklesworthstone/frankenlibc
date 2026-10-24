@@ -4,7 +4,7 @@
 //! category data. `setlocale` changes the global locale; `uselocale` selects a
 //! thread's independent category snapshot without mutating global state.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -798,18 +798,13 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
 
     let mut resolved = Vec::with_capacity(requests.len());
     for (cat, req) in &requests {
+        // Unavailable in both modes: NULL, as glibc. Hardened used to return
+        // the current locale's name as if the switch had worked -- a silent
+        // lie that made programs (CPython's locale tests, strptime, re)
+        // believe de_DE/fr_FR/ja_JP were active. The current locale is left
+        // untouched either way, so nothing is re-encoded.
         match resolve_category(*cat, req) {
             Some(r) => resolved.push((*cat, r)),
-            None if mode.heals_enabled() => {
-                // Hardened: report the current locale instead of failing;
-                // an unknown NAME must not re-encode the caller's data.
-                runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-                return if category == locale_core::LC_ALL {
-                    lc_all_report()
-                } else {
-                    category_name(category).as_ptr() as *const c_char
-                };
-            }
             None => {
                 unsafe { set_abi_errno(libc::ENOENT) };
                 runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
@@ -820,6 +815,7 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     for (cat, r) in resolved {
         apply_category(cat, r);
     }
+    bump_catalog_counter();
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
     if category == locale_core::LC_ALL {
         lc_all_report()
@@ -1076,7 +1072,183 @@ static LC_TIME_C_TABLE: PtrTable<50> = PtrTable([
     c"".as_ptr(),
 ]);
 
-// Compile-time offset assertions for the table above.
+/// Widen a NUL-terminated ASCII byte string into a `wchar_t` (u32) string.
+const fn widen<const N: usize>(s: &[u8; N]) -> [u32; N] {
+    let mut out = [0u32; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = s[i] as u32;
+        i += 1;
+    }
+    out
+}
+
+/// A static `wchar_t` string, as the `*const c_char` nl_langinfo returns.
+macro_rules! wstr {
+    ($s:literal) => {{
+        static W: [u32; $s.len()] = widen($s);
+        W.as_ptr().cast::<c_char>()
+    }};
+}
+
+/// Offset of `_NL_TIME_CODESET`, which follows the active charset.
+const LC_TIME_CODESET_OFFSET: usize = 110;
+
+/// LC_TIME items 50..=158 of glibc's C locale, after ERA_T_FMT: the era
+/// count, the `wchar_t` forms of every name and format, the week data, the
+/// `%+` date format, and the C23/POSIX ALTMON_n / _NL_ABALTMON_n names with
+/// their wide forms. fl returned `""` for all of them, so ALTMON_1 was empty
+/// (gnulib test-nl_langinfo) and a `_NL_W*` item read as a wide string ran off
+/// a one-byte narrow literal. Word items are the value itself as the pointer,
+/// as glibc returns them. Offset 110 (`_NL_TIME_CODESET`) is a placeholder:
+/// callers return the charset's codeset.
+static LC_TIME_EXT_C_TABLE: PtrTable<109> = PtrTable([
+    // 50 _NL_TIME_ERA_NUM_ENTRIES (word 0), 51 _NL_TIME_ERA_ENTRIES
+    core::ptr::null(),
+    c"".as_ptr(),
+    // 52..=58 _NL_WABDAY_1..7
+    wstr!(b"Sun\0"),
+    wstr!(b"Mon\0"),
+    wstr!(b"Tue\0"),
+    wstr!(b"Wed\0"),
+    wstr!(b"Thu\0"),
+    wstr!(b"Fri\0"),
+    wstr!(b"Sat\0"),
+    // 59..=65 _NL_WDAY_1..7
+    wstr!(b"Sunday\0"),
+    wstr!(b"Monday\0"),
+    wstr!(b"Tuesday\0"),
+    wstr!(b"Wednesday\0"),
+    wstr!(b"Thursday\0"),
+    wstr!(b"Friday\0"),
+    wstr!(b"Saturday\0"),
+    // 66..=77 _NL_WABMON_1..12
+    wstr!(b"Jan\0"),
+    wstr!(b"Feb\0"),
+    wstr!(b"Mar\0"),
+    wstr!(b"Apr\0"),
+    wstr!(b"May\0"),
+    wstr!(b"Jun\0"),
+    wstr!(b"Jul\0"),
+    wstr!(b"Aug\0"),
+    wstr!(b"Sep\0"),
+    wstr!(b"Oct\0"),
+    wstr!(b"Nov\0"),
+    wstr!(b"Dec\0"),
+    // 78..=89 _NL_WMON_1..12
+    wstr!(b"January\0"),
+    wstr!(b"February\0"),
+    wstr!(b"March\0"),
+    wstr!(b"April\0"),
+    wstr!(b"May\0"),
+    wstr!(b"June\0"),
+    wstr!(b"July\0"),
+    wstr!(b"August\0"),
+    wstr!(b"September\0"),
+    wstr!(b"October\0"),
+    wstr!(b"November\0"),
+    wstr!(b"December\0"),
+    // 90..=95 _NL_WAM_STR, _NL_WPM_STR, _NL_WD_T_FMT, _NL_WD_FMT, _NL_WT_FMT,
+    // _NL_WT_FMT_AMPM
+    wstr!(b"AM\0"),
+    wstr!(b"PM\0"),
+    wstr!(b"%a %b %e %H:%M:%S %Y\0"),
+    wstr!(b"%m/%d/%y\0"),
+    wstr!(b"%H:%M:%S\0"),
+    wstr!(b"%I:%M:%S %p\0"),
+    // 96..=100 _NL_WERA_YEAR, _NL_WERA_D_FMT, _NL_WALT_DIGITS,
+    // _NL_WERA_D_T_FMT, _NL_WERA_T_FMT
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    // 101 _NL_TIME_WEEK_NDAYS, 102 _NL_TIME_WEEK_1STDAY (word),
+    // 103 _NL_TIME_WEEK_1STWEEK, 104 _NL_TIME_FIRST_WEEKDAY,
+    // 105 _NL_TIME_FIRST_WORKDAY, 106 _NL_TIME_CAL_DIRECTION
+    c"\x07".as_ptr(),
+    core::ptr::without_provenance(19971130),
+    c"\x04".as_ptr(),
+    c"\x01".as_ptr(),
+    c"\x02".as_ptr(),
+    c"\x01".as_ptr(),
+    // 107 _NL_TIME_TIMEZONE, 108 _DATE_FMT, 109 _NL_W_DATE_FMT,
+    // 110 _NL_TIME_CODESET (placeholder, see above)
+    c"".as_ptr(),
+    c"%a %b %e %H:%M:%S %Z %Y".as_ptr(),
+    wstr!(b"%a %b %e %H:%M:%S %Z %Y\0"),
+    c"".as_ptr(),
+    // 111..=122 ALTMON_1..12
+    c"January".as_ptr(),
+    c"February".as_ptr(),
+    c"March".as_ptr(),
+    c"April".as_ptr(),
+    c"May".as_ptr(),
+    c"June".as_ptr(),
+    c"July".as_ptr(),
+    c"August".as_ptr(),
+    c"September".as_ptr(),
+    c"October".as_ptr(),
+    c"November".as_ptr(),
+    c"December".as_ptr(),
+    // 123..=134 _NL_WALTMON_1..12
+    wstr!(b"January\0"),
+    wstr!(b"February\0"),
+    wstr!(b"March\0"),
+    wstr!(b"April\0"),
+    wstr!(b"May\0"),
+    wstr!(b"June\0"),
+    wstr!(b"July\0"),
+    wstr!(b"August\0"),
+    wstr!(b"September\0"),
+    wstr!(b"October\0"),
+    wstr!(b"November\0"),
+    wstr!(b"December\0"),
+    // 135..=146 _NL_ABALTMON_1..12
+    c"Jan".as_ptr(),
+    c"Feb".as_ptr(),
+    c"Mar".as_ptr(),
+    c"Apr".as_ptr(),
+    c"May".as_ptr(),
+    c"Jun".as_ptr(),
+    c"Jul".as_ptr(),
+    c"Aug".as_ptr(),
+    c"Sep".as_ptr(),
+    c"Oct".as_ptr(),
+    c"Nov".as_ptr(),
+    c"Dec".as_ptr(),
+    // 147..=158 _NL_WABALTMON_1..12
+    wstr!(b"Jan\0"),
+    wstr!(b"Feb\0"),
+    wstr!(b"Mar\0"),
+    wstr!(b"Apr\0"),
+    wstr!(b"May\0"),
+    wstr!(b"Jun\0"),
+    wstr!(b"Jul\0"),
+    wstr!(b"Aug\0"),
+    wstr!(b"Sep\0"),
+    wstr!(b"Oct\0"),
+    wstr!(b"Nov\0"),
+    wstr!(b"Dec\0"),
+]);
+
+/// LC_TIME item at `offset` (from ABDAY_1) past the 50-entry base table, if
+/// it is one of the C locale's 50..=158 items. `codeset` serves offset 110.
+#[inline]
+fn lc_time_ext_c(offset: usize, codeset: impl FnOnce() -> *const c_char) -> Option<*const c_char> {
+    if !(50..159).contains(&offset) {
+        return None;
+    }
+    if offset == LC_TIME_CODESET_OFFSET {
+        return Some(codeset());
+    }
+    Some(LC_TIME_EXT_C_TABLE.0[offset - 50])
+}
+
+// Compile-time offset assertions for the tables above.
+const _: () = assert!(libc::ABDAY_1 + 111 == 0x2006f); // ALTMON_1
+const _: () = assert!(libc::ABDAY_1 + 135 == 0x20087); // _NL_ABALTMON_1
+const _: () = assert!(libc::ABDAY_1 + 108 == 0x2006c); // _DATE_FMT
 const _: () = assert!(libc::DAY_1 - libc::ABDAY_1 == 7);
 const _: () = assert!(libc::DAY_7 - libc::ABDAY_1 == 13);
 const _: () = assert!(libc::ABMON_1 - libc::ABDAY_1 == 14);
@@ -1131,10 +1303,95 @@ fn codeset_ptr(charset: Charset) -> *const c_char {
     }
 }
 
+/// The C locale's LC_PAPER..LC_IDENTIFICATION items (categories 7..=12), as
+/// glibc defines them. `Codeset` marks each category's CODESET item, which
+/// follows the active charset; `Int` items are returned as the pointer value
+/// itself, as glibc does (paper height/width, country number).
+enum CItem {
+    Str(&'static CStr),
+    Int(usize),
+    Codeset,
+}
+
+const LC_PAPER_C: &[CItem] = &[CItem::Int(297), CItem::Int(210), CItem::Codeset];
+const LC_NAME_C: &[CItem] = &[
+    CItem::Str(c"%p%t%g%t%m%t%f"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+const LC_ADDRESS_C: &[CItem] = &[
+    CItem::Str(c"%a%N%f%N%d%N%b%N%s %h %e %r%N%C-%z %T%N%c%N"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+const LC_TELEPHONE_C: &[CItem] = &[
+    CItem::Str(c"+%c %a %l"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+// _NL_MEASUREMENT_MEASUREMENT is the byte 1 (metric), not a C string of text.
+const LC_MEASUREMENT_C: &[CItem] = &[CItem::Str(c"\x01"), CItem::Codeset];
+const LC_IDENTIFICATION_C: &[CItem] = &[
+    CItem::Str(c"ISO/IEC 14652 i18n FDCC-set"),
+    CItem::Str(c"ISO/IEC JTC1/SC22/WG20 - internationalization"),
+    CItem::Str(c"C/o Keld Simonsen, Skt. Jorgens Alle 8, DK-1615 Kobenhavn V"),
+    CItem::Str(c"Keld Simonsen"),
+    CItem::Str(c"keld@dkuug.dk"),
+    CItem::Str(c"+45 3122-6543"),
+    CItem::Str(c"+45 3325-6543"),
+    CItem::Str(c""),
+    CItem::Str(c"ISO"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c"1.0"),
+    CItem::Str(c"1997-12-20"),
+    CItem::Str(c"i18n:1999"),
+    CItem::Codeset,
+];
+
 #[inline(always)]
-fn langinfo_non_time_non_codeset(item: libc::nl_item) -> *const c_char {
+fn langinfo_non_time_non_codeset(
+    item: libc::nl_item,
+    codeset: impl FnOnce() -> *const c_char,
+) -> *const c_char {
     let category = (item as u32) >> 16;
     let index = ((item as u32) & 0xffff) as usize;
+    let extended = match category {
+        7 => Some(LC_PAPER_C),
+        8 => Some(LC_NAME_C),
+        9 => Some(LC_ADDRESS_C),
+        10 => Some(LC_TELEPHONE_C),
+        11 => Some(LC_MEASUREMENT_C),
+        12 => Some(LC_IDENTIFICATION_C),
+        _ => None,
+    };
+    if let Some(table) = extended {
+        // These categories were all "" here; perl's Langinfo.t and
+        // XS-APItest locale.t check _NL_IDENTIFICATION_TERRITORY == "ISO".
+        return match table.get(index) {
+            Some(CItem::Str(s)) => s.as_ptr(),
+            Some(CItem::Int(v)) => *v as *const c_char,
+            Some(CItem::Codeset) => codeset(),
+            None => c"".as_ptr(),
+        };
+    }
     match category {
         1 => {
             if index < 2 {
@@ -1167,10 +1424,13 @@ fn langinfo_c_fast(item: libc::nl_item, charset: Charset) -> *const c_char {
         // SAFETY: offset is bounds-checked < 50.
         return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
     }
+    if let Some(p) = lc_time_ext_c(offset, || codeset_ptr(charset)) {
+        return p;
+    }
     if item == libc::CODESET {
         return codeset_ptr(charset);
     }
-    langinfo_non_time_non_codeset(item)
+    langinfo_non_time_non_codeset(item, || codeset_ptr(charset))
 }
 
 #[inline]
@@ -1215,9 +1475,9 @@ fn resolved_langinfo(item: libc::nl_item, category: Resolved) -> *const c_char {
         Resolved::Builtin(charset) => langinfo_c_fast(item, charset),
         Resolved::Named(n) => {
             let index = (item as u32 & 0xffff) as usize;
-            n.blob.offset(index).map_or(c"".as_ptr(), |off| {
-                n.blob.bytes()[off..].as_ptr().cast()
-            })
+            n.blob
+                .offset(index)
+                .map_or(c"".as_ptr(), |off| n.blob.bytes()[off..].as_ptr().cast())
         }
     }
 }
@@ -1262,46 +1522,403 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
             // SAFETY: offset is bounds-checked < 50.
             return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
         }
+        if let Some(p) = lc_time_ext_c(offset, active_codeset_ptr) {
+            return p;
+        }
         if item == libc::CODESET {
             return active_codeset_ptr();
         }
-        return langinfo_non_time_non_codeset(item);
+        return langinfo_non_time_non_codeset(item, active_codeset_ptr);
     }
     nl_langinfo_with_policy(item)
 }
 
 // ---------------------------------------------------------------------------
-// gettext family — native C-locale implementation
+// gettext family — GNU .mo message catalogs
 // ---------------------------------------------------------------------------
 //
-// FrankenLibC supports only the C/POSIX locale. In the C locale, the gettext
-// family acts as identity functions — no message catalog is loaded, so msgid
-// is returned unmodified. This is the correct POSIX behavior when no
-// translations are installed.
+// Catalogs live at <dir>/<locale variant>/<category>/<domain>.mo, where <dir>
+// is the domain's bindtextdomain directory (default /usr/share/locale) and the
+// locale names come from LANGUAGE (a colon list) or, without it, from the
+// category's current locale. A C-family category locale disables translation
+// and LANGUAGE alike. Every existing variant file is consulted in order, per
+// msgid, as glibc does. Catalogs are mapped once and never unmapped, so the
+// returned pointers stay valid; misses are cached too, like glibc's loaded-
+// domain list. A translation whose catalog charset differs from the target
+// codeset (bind_textdomain_codeset, else the LC_CTYPE codeset) is converted
+// with iconv //TRANSLIT once and cached; invalid input leaves it untranslated.
+// Not implemented: locale.alias and system-dependent (<PRIu64>) strings.
 
-/// GNU `gettext` — returns msgid unchanged (C locale: no translation).
+use frankenlibc_core::locale::gettext as mo;
+
+struct LoadedCatalog {
+    catalog: mo::MoCatalog<'static>,
+    plural: mo::PluralRule,
+    charset: Option<&'static [u8]>,
+}
+
+impl LoadedCatalog {
+    /// Whether this catalog's text can be returned as-is to a caller
+    /// expecting `target`-encoded strings.
+    fn needs_no_conversion(&self, target: &[u8]) -> bool {
+        match self.charset {
+            None => true,
+            Some(cs) => {
+                mo::same_codeset(cs, target)
+                    || [&b"ASCII"[..], b"US-ASCII", b"ANSI_X3.4-1968", b"CHARSET"]
+                        .iter()
+                        .any(|ascii| mo::same_codeset(cs, ascii))
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct CatalogCache {
+    /// File path -> its catalog, or None when absent or not a catalog.
+    files: std::collections::HashMap<Vec<u8>, Option<&'static LoadedCatalog>>,
+    /// (dir, languages, category, domain) -> every catalog to consult, in order.
+    searches: std::collections::HashMap<Vec<u8>, &'static [&'static LoadedCatalog]>,
+    /// (catalog, entry offset, target codeset) -> the converted entry with its
+    /// NUL, or None when the entry is not valid in the catalog's charset.
+    converted: std::collections::HashMap<(usize, usize, Vec<u8>), Option<&'static [u8]>>,
+    /// glibc's known-translation cache: (msgid, domain, category, category
+    /// locale name) -> (catalog counter when found, entry, its plural rule).
+    /// LANGUAGE is not part of the key, so -- exactly as in glibc -- changing
+    /// it at run time has no effect on a cached msgid until the counter moves.
+    translations: std::collections::HashMap<
+        (Vec<u8>, Vec<u8>, c_int, Vec<u8>),
+        (c_int, &'static [u8], &'static mo::PluralRule),
+    >,
+}
+
+/// glibc's `_nl_msg_cat_cntr`, which invalidates cached translations.
+/// Measured on glibc 2.43: every successful setlocale and every textdomain
+/// set advances it, bindtextdomain and bind_textdomain_codeset only when
+/// they change the binding, and loading a catalog does not. Programs bump it
+/// themselves to apply a changed LANGUAGE.
+#[cfg(not(test))]
+fn catalog_counter() -> &'static std::sync::atomic::AtomicI32 {
+    // SAFETY: the exported c_int is 4-byte aligned, lives for the whole
+    // process, and every Rust access goes through this atomic view.
+    unsafe {
+        std::sync::atomic::AtomicI32::from_ptr(std::ptr::addr_of_mut!(
+            crate::glibc_internal_abi::_nl_msg_cat_cntr
+        ))
+    }
+}
+
+/// Unit tests do not build `glibc_internal_abi`, which owns the export.
+#[cfg(test)]
+fn catalog_counter() -> &'static std::sync::atomic::AtomicI32 {
+    static COUNTER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    &COUNTER
+}
+
+fn bump_catalog_counter() {
+    catalog_counter().fetch_add(1, Ordering::Relaxed);
+}
+
+/// Translation entry `offset..offset + len` of `loaded`, re-encoded from the
+/// catalog's charset into `target` (all plural forms; NULs pass through).
+fn converted_entry(
+    loaded: &'static LoadedCatalog,
+    offset: usize,
+    len: usize,
+    target: &[u8],
+) -> Option<&'static [u8]> {
+    let key = (
+        loaded as *const LoadedCatalog as usize,
+        offset,
+        target.to_vec(),
+    );
+    let mut cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = cache.converted.get(&key) {
+        return *hit;
+    }
+    let convert = || -> Option<&'static [u8]> {
+        use frankenlibc_core::iconv as conv;
+        let mut tocode = target.to_vec();
+        tocode.extend_from_slice(b"//TRANSLIT");
+        let mut cd = conv::iconv_open(&tocode, loaded.charset?)?;
+        // //TRANSLIT replacements come from the current locale, as in iconv().
+        cd.set_translit_utf8_locale(matches!(active_charset(), Charset::Utf8));
+        let mut input = &loaded.catalog.bytes()[offset..offset + len];
+        let mut out = vec![0u8; len * 4 + 16];
+        let mut written = 0;
+        loop {
+            match conv::iconv(&mut cd, Some(input), &mut out[written..]) {
+                Ok(done) => {
+                    written += done.out_written;
+                    break;
+                }
+                Err(e) if e.code == conv::ICONV_E2BIG => {
+                    written += e.out_written;
+                    input = &input[e.in_consumed..];
+                    out.resize(out.len() * 2, 0);
+                }
+                Err(_) => return None,
+            }
+        }
+        // Return a stateful encoding to its initial shift state.
+        written += conv::iconv(&mut cd, None, &mut out[written..])
+            .ok()?
+            .out_written;
+        out.truncate(written);
+        out.push(0);
+        Some(Box::leak(out.into_boxed_slice()))
+    };
+    let converted = convert();
+    cache.converted.insert(key, converted);
+    converted
+}
+
+fn catalog_cache() -> &'static Mutex<CatalogCache> {
+    static CACHE: OnceLock<Mutex<CatalogCache>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
+}
+
+fn load_catalog(cache: &mut CatalogCache, path: Vec<u8>) -> Option<&'static LoadedCatalog> {
+    if let Some(hit) = cache.files.get(&path) {
+        return *hit;
+    }
+    let loaded = map_file(&path)
+        .and_then(mo::MoCatalog::parse)
+        .map(|catalog| {
+            let header = catalog.header();
+            &*Box::leak(Box::new(LoadedCatalog {
+                catalog,
+                plural: mo::PluralRule::from_header(header),
+                charset: mo::header_charset(header),
+            }))
+        });
+    cache.files.insert(path, loaded);
+    loaded
+}
+
+/// The directory name of a category inside a message-catalog tree.
+fn catalog_category_dir(category: c_int) -> Option<&'static [u8]> {
+    Some(match category {
+        5 => b"LC_MESSAGES",
+        _ => category_file(category)?,
+    })
+}
+
+/// The catalogs consulted for `domain`, in search order.
+fn catalogs_for(
+    dir: &[u8],
+    languages: &[u8],
+    category_dir: &[u8],
+    domain: &[u8],
+) -> &'static [&'static LoadedCatalog] {
+    let mut key =
+        Vec::with_capacity(dir.len() + languages.len() + category_dir.len() + domain.len() + 3);
+    for part in [dir, languages, category_dir, domain] {
+        key.extend_from_slice(part);
+        key.push(0);
+    }
+    let mut cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = cache.searches.get(&key) {
+        return hit;
+    }
+    let mut found = Vec::new();
+    for language in languages.split(|&b| b == b':').filter(|l| !l.is_empty()) {
+        if mo::is_c_locale(language) {
+            break;
+        }
+        for variant in mo::locale_variants(language) {
+            let mut path = dir.to_vec();
+            for part in [&variant[..], category_dir] {
+                path.push(b'/');
+                path.extend_from_slice(part);
+            }
+            path.push(b'/');
+            path.extend_from_slice(domain);
+            path.extend_from_slice(b".mo");
+            if let Some(catalog) = load_catalog(&mut cache, path) {
+                found.push(catalog);
+            }
+        }
+    }
+    let list: &'static [&'static LoadedCatalog] = Box::leak(found.into_boxed_slice());
+    cache.searches.insert(key, list);
+    list
+}
+
+/// Bytes of a caller's C string, bounded like `read_bounded_cstr` but borrowed.
+unsafe fn bounded_cstr<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    let (len, terminated) =
+        unsafe { scan_c_string(ptr, known_locale_string_remaining(ptr as usize)) };
+    // SAFETY: scan_c_string read `len` bytes before the terminator.
+    terminated.then(|| unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) })
+}
+
+/// The shared body of the gettext family (glibc's `__dcigettext`). The
+/// plural variants pass `plural`; `msgid2` and `n` are ignored otherwise.
+pub(crate) unsafe fn dcigettext(
+    domainname: *const c_char,
+    msgid1: *const c_char,
+    msgid2: *const c_char,
+    plural: bool,
+    n: c_ulong,
+    category: c_int,
+) -> *mut c_char {
+    let untranslated = if plural && n != 1 { msgid2 } else { msgid1 } as *mut c_char;
+    if msgid1.is_null() || untranslated.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Some(category_dir) = catalog_category_dir(category) else {
+        return untranslated;
+    };
+    let locale = thread_category(category).map_or_else(|| category_name(category), resolved_name);
+    let locale = locale.strip_suffix(b"\0").unwrap_or(locale);
+    if mo::is_c_locale(locale) {
+        return untranslated;
+    }
+
+    // Lookups may map files; callers rely on errno surviving gettext.
+    // SAFETY: __errno_location returns this thread's errno slot.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let found = unsafe { lookup_translation(domainname, msgid1, category, category_dir, locale) };
+    unsafe { set_abi_errno(saved_errno) };
+    let Some((entry, rule)) = found else {
+        return untranslated;
+    };
+    let mut start = 0;
+    if plural {
+        match mo::plural_form(&entry[..entry.len() - 1], rule.index(n as u64)) {
+            Some(form) => start = form,
+            // Fewer forms than the rule selects: glibc returns msgid1.
+            None => return msgid1.cast_mut(),
+        }
+    }
+    entry[start..].as_ptr().cast::<c_char>().cast_mut()
+}
+
+/// The translation entry of `msgid1` (every plural form, with its NUL, in
+/// the caller's codeset) and the plural rule of the catalog it came from.
+unsafe fn lookup_translation(
+    domainname: *const c_char,
+    msgid1: *const c_char,
+    category: c_int,
+    category_dir: &[u8],
+    locale: &[u8],
+) -> Option<(&'static [u8], &'static mo::PluralRule)> {
+    let msgid = unsafe { bounded_cstr(msgid1) }?;
+    let domain_ptr = if domainname.is_null() {
+        TEXT_DOMAIN_CURRENT.load(Ordering::Acquire).cast_const()
+    } else {
+        domainname
+    };
+    let domain = unsafe { bounded_cstr(domain_ptr) }?;
+    if domain.is_empty() || domain.contains(&b'/') {
+        return None;
+    }
+    let key = (msgid.to_vec(), domain.to_vec(), category, locale.to_vec());
+    {
+        let cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(&(stamp, entry, rule)) = cache.translations.get(&key)
+            && stamp == catalog_counter().load(Ordering::Relaxed)
+        {
+            return Some((entry, rule));
+        }
+    }
+    let found = search_catalogs(msgid, domain, category_dir, locale)?;
+    let stamp = catalog_counter().load(Ordering::Relaxed);
+    let mut cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+    cache.translations.insert(key, (stamp, found.0, found.1));
+    Some(found)
+}
+
+/// Search every catalog LANGUAGE (or the category's locale) selects.
+fn search_catalogs(
+    msgid: &[u8],
+    domain: &[u8],
+    category_dir: &[u8],
+    locale: &[u8],
+) -> Option<(&'static [u8], &'static mo::PluralRule)> {
+    let (dir, codeset) = {
+        let bindings = locale_dir_bindings()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: bound strings are NUL-terminated and kept alive in `pool`.
+        let owned = |ptr: &*mut c_char| unsafe { CStr::from_ptr(*ptr) }.to_bytes().to_vec();
+        let dir = bindings.current_by_domain.get(domain).map_or_else(
+            || DEFAULT_LOCALE_DIR[..DEFAULT_LOCALE_DIR.len() - 1].to_vec(),
+            owned,
+        );
+        (dir, bindings.codeset_by_domain.get(domain).map(owned))
+    };
+    let target = codeset.unwrap_or_else(|| {
+        // SAFETY: the active codeset pointer is a static NUL-terminated string.
+        unsafe { CStr::from_ptr(active_codeset_ptr()) }
+            .to_bytes()
+            .to_vec()
+    });
+    let language_env = std::env::var_os("LANGUAGE").filter(|v| !v.is_empty());
+    let languages = language_env.as_ref().map_or(locale, |v| v.as_bytes());
+
+    for loaded in catalogs_for(&dir, languages, category_dir, domain) {
+        let Some((offset, len)) = loaded.catalog.find(msgid) else {
+            continue;
+        };
+        // The entry and its terminating NUL, in the caller's codeset.
+        let entry: &'static [u8] = if loaded.needs_no_conversion(&target) {
+            &loaded.catalog.bytes()[offset..=offset + len]
+        } else {
+            converted_entry(loaded, offset, len, &target)?
+        };
+        return Some((entry, &loaded.plural));
+    }
+    None
+}
+
+/// GNU `gettext`: translate `msgid` in the current text domain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gettext(msgid: *const c_char) -> *mut c_char {
-    msgid as *mut c_char
+    unsafe {
+        dcigettext(
+            std::ptr::null(),
+            msgid,
+            std::ptr::null(),
+            false,
+            1,
+            libc::LC_MESSAGES,
+        )
+    }
 }
 
-/// GNU `dgettext` — returns msgid unchanged (C locale: domain ignored).
+/// GNU `dgettext`: translate `msgid` in `domainname`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn dgettext(_domainname: *const c_char, msgid: *const c_char) -> *mut c_char {
-    msgid as *mut c_char
+pub unsafe extern "C" fn dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char {
+    unsafe {
+        dcigettext(
+            domainname,
+            msgid,
+            std::ptr::null(),
+            false,
+            1,
+            libc::LC_MESSAGES,
+        )
+    }
 }
 
-/// GNU `ngettext` — returns singular or plural form (C locale: no translation).
+/// GNU `ngettext`: the plural form of `msgid` that `n` selects.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ngettext(
     msgid: *const c_char,
     msgid_plural: *const c_char,
     n: libc::c_ulong,
 ) -> *mut c_char {
-    if n == 1 {
-        msgid as *mut c_char
-    } else {
-        msgid_plural as *mut c_char
+    unsafe {
+        dcigettext(
+            std::ptr::null(),
+            msgid,
+            msgid_plural,
+            true,
+            n,
+            libc::LC_MESSAGES,
+        )
     }
 }
 
@@ -1325,6 +1942,8 @@ struct TextDomainState {
 
 struct LocaleDirState {
     current_by_domain: ArtifactHashMap<Vec<u8>, *mut c_char>,
+    /// `bind_textdomain_codeset` selections (strings owned by `pool`).
+    codeset_by_domain: ArtifactHashMap<Vec<u8>, *mut c_char>,
     pool: Vec<CString>,
 }
 
@@ -1342,6 +1961,7 @@ fn locale_dir_bindings() -> &'static Mutex<LocaleDirState> {
     STORAGE.get_or_init(|| {
         Mutex::new(LocaleDirState {
             current_by_domain: artifact_hash_map(),
+            codeset_by_domain: artifact_hash_map(),
             pool: Vec::new(),
         })
     })
@@ -1363,6 +1983,7 @@ pub fn locale_reset_gettext_state_for_tests() {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     bindings.current_by_domain.clear();
+    bindings.codeset_by_domain.clear();
     bindings.pool.clear();
 }
 
@@ -1387,6 +2008,7 @@ pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
     if name.is_empty() {
         let default = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
         TEXT_DOMAIN_CURRENT.store(default, Ordering::Release);
+        bump_catalog_counter();
         return default;
     }
     let Ok(owned) = CString::new(name) else {
@@ -1395,6 +2017,7 @@ pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
     let ptr = owned.as_ptr() as *mut c_char;
     state.pool.push(owned);
     TEXT_DOMAIN_CURRENT.store(ptr, Ordering::Release);
+    bump_catalog_counter();
     ptr
 }
 
@@ -1428,14 +2051,60 @@ pub unsafe extern "C" fn bindtextdomain(
         let Some(dir) = (unsafe { read_bounded_cstr(dirname) }) else {
             return std::ptr::null_mut();
         };
+        if let Some(&bound) = bindings.current_by_domain.get(&domain)
+            // SAFETY: bound directories are NUL-terminated and kept in `pool`.
+            && unsafe { CStr::from_ptr(bound) }.to_bytes() == dir.as_slice()
+        {
+            return bound;
+        }
         let Ok(owned) = CString::new(dir) else {
             return std::ptr::null_mut();
         };
         let ptr = owned.as_ptr() as *mut c_char;
         bindings.pool.push(owned);
         bindings.current_by_domain.insert(domain, ptr);
+        bump_catalog_counter();
         ptr
     }
+}
+
+/// GNU `bind_textdomain_codeset`: select (or, with a NULL `codeset`, query)
+/// the encoding `domainname`'s translations are returned in. NULL when no
+/// codeset has been bound, or for a NULL/empty domain.
+pub(crate) unsafe fn bind_textdomain_codeset_impl(
+    domainname: *const c_char,
+    codeset: *const c_char,
+) -> *mut c_char {
+    let Some(domain) = (unsafe { read_bounded_cstr(domainname) }) else {
+        return std::ptr::null_mut();
+    };
+    if domain.is_empty() {
+        return std::ptr::null_mut();
+    }
+    let mut bindings = locale_dir_bindings()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if codeset.is_null() {
+        return bindings
+            .codeset_by_domain
+            .get(&domain)
+            .copied()
+            .unwrap_or(std::ptr::null_mut());
+    }
+    let Some(Ok(owned)) = (unsafe { read_bounded_cstr(codeset) }).map(CString::new) else {
+        return std::ptr::null_mut();
+    };
+    if let Some(&bound) = bindings.codeset_by_domain.get(&domain)
+        // SAFETY: bound codesets are NUL-terminated and kept in `pool`.
+        && unsafe { CStr::from_ptr(bound) } == owned.as_c_str()
+    {
+        return bound;
+    }
+    let ptr = owned.as_ptr().cast_mut();
+    bindings.pool.push(owned);
+    bindings.codeset_by_domain.insert(domain, ptr);
+    bump_catalog_counter();
+    ptr
 }
 
 // ---------------------------------------------------------------------------
@@ -1576,7 +2245,9 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
     }
     let objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
     objects.iter().find_map(|object| {
-        let address = (&**object as *const LocaleObject).cast_mut().cast::<c_void>();
+        let address = (&**object as *const LocaleObject)
+            .cast_mut()
+            .cast::<c_void>();
         (address == handle).then_some(object.categories)
     })
 }
@@ -1618,7 +2289,10 @@ fn retire_locale(handle: LocaleT) {
         objects
             .iter()
             .position(|object| {
-                (&**object as *const LocaleObject).cast_mut().cast::<c_void>() == handle
+                (&**object as *const LocaleObject)
+                    .cast_mut()
+                    .cast::<c_void>()
+                    == handle
             })
             .map(|index| objects.swap_remove(index))
     };
@@ -1685,7 +2359,11 @@ pub unsafe extern "C" fn newlocale(
     };
     if mask == 0 {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
-        return if base.is_null() { c_locale_handle() } else { base };
+        return if base.is_null() {
+            c_locale_handle()
+        } else {
+            base
+        };
     }
 
     // Resolve all selected categories before publishing or consuming base.
@@ -1724,18 +2402,42 @@ pub unsafe extern "C" fn newlocale(
     result
 }
 
+/// Run `f` with `locale` as this thread's locale: the `*_l` functions
+/// (strcoll_l, strftime_l, ...) read their locale argument where the plain
+/// ones read the thread's (uselocale) or the global locale. They used to
+/// ignore the argument, so `strftime_l(.., newlocale("en_US.UTF-8"))` gave C
+/// output. An invalid handle runs `f` under the current locale (uselocale
+/// has set EINVAL).
+pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
+    if locale.is_null() {
+        return f();
+    }
+    // SAFETY: uselocale validates the handle and only touches thread state.
+    let previous = unsafe { uselocale(locale) };
+    if previous.is_null() {
+        return f();
+    }
+    let result = f();
+    // SAFETY: `previous` is the handle uselocale reported for this thread.
+    unsafe { uselocale(previous) };
+    result
+}
+
 /// POSIX `uselocale`: null queries, LC_GLOBAL_LOCALE restores live global
 /// lookup, and an object selects an immutable view for this thread only.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
     let previous = THREAD_LOCALE.with(|selected| {
-        selected.get().map_or(GLOBAL_LOCALE_HANDLE, |view| view.handle)
+        selected
+            .get()
+            .map_or(GLOBAL_LOCALE_HANDLE, |view| view.handle)
     });
     if newloc.is_null() {
         return previous;
     }
     if newloc == GLOBAL_LOCALE_HANDLE {
         THREAD_LOCALE.with(|selected| selected.set(None));
+        frankenlibc_core::stdio::printf::clear_thread_numeric();
         return previous;
     }
     let Some(categories) = categories_for_handle(newloc) else {
@@ -1748,8 +2450,24 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
             categories,
         }));
     });
+    // printf's radix and `'` grouping follow the thread's LC_NUMERIC.
+    if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
+        let field = |item: libc::nl_item| {
+            // SAFETY: resolved_langinfo returns a NUL-terminated static string.
+            unsafe { std::ffi::CStr::from_ptr(resolved_langinfo(item, categories[slot])) }
+                .to_bytes()
+        };
+        frankenlibc_core::stdio::printf::set_thread_numeric(
+            field(libc::RADIXCHAR),
+            field(libc::THOUSEP),
+            field(NL_GROUPING),
+        );
+    }
     previous
 }
+
+/// glibc's `__GROUPING` langinfo item (LC_NUMERIC index 2).
+const NL_GROUPING: libc::nl_item = (locale_core::LC_NUMERIC << 16) | 2;
 
 /// POSIX `freelocale`: release an owned object. Built-in immutable handles
 /// need no reclamation; category data itself remains cached independently.
@@ -2192,9 +2910,17 @@ mod tests {
             assert!(!handle.is_null());
             for &(_, category) in &locale_core::COMPOSITE_ORDER {
                 let item = (category << 16) | 0xffff;
-                let expected = if mask & (1 << category) != 0 { b"C.UTF-8\0".as_slice() } else { b"C\0".as_slice() };
+                let expected = if mask & (1 << category) != 0 {
+                    b"C.UTF-8\0".as_slice()
+                } else {
+                    b"C\0".as_slice()
+                };
                 let actual = unsafe { CStr::from_ptr(nl_langinfo_l(item, handle)) };
-                assert_eq!(actual.to_bytes_with_nul(), expected, "mask={mask}, category={category}");
+                assert_eq!(
+                    actual.to_bytes_with_nul(),
+                    expected,
+                    "mask={mask}, category={category}"
+                );
                 // The C++-visible prefix must agree with the accessor too.
                 let prefix = unsafe { &*handle.cast::<GlibcLocaleStruct>() };
                 let direct = unsafe { CStr::from_ptr(prefix.names[category as usize]) };
@@ -2206,7 +2932,13 @@ mod tests {
 
     #[test]
     fn locale_objects_duplicate_and_compose_without_aliasing_base() {
-        let base = unsafe { newlocale(libc::LC_CTYPE_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut()) };
+        let base = unsafe {
+            newlocale(
+                libc::LC_CTYPE_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
         assert!(!base.is_null());
         let duplicate = unsafe { duplocale(base) };
         assert!(!duplicate.is_null());
@@ -2216,18 +2948,34 @@ mod tests {
         assert!(!updated.is_null());
         let codeset = unsafe { CStr::from_ptr(nl_langinfo_l(libc::CODESET, updated)) };
         assert_eq!(codeset.to_bytes(), b"UTF-8");
-        let time_name = unsafe { CStr::from_ptr(nl_langinfo_l((libc::LC_TIME << 16) | 0xffff, updated)) };
+        let time_name =
+            unsafe { CStr::from_ptr(nl_langinfo_l((libc::LC_TIME << 16) | 0xffff, updated)) };
         assert_eq!(time_name.to_bytes(), b"C.UTF-8");
         unsafe { freelocale(updated) };
     }
 
     #[test]
     fn locale_objects_failed_update_preserves_base() {
-        let base = unsafe { newlocale(libc::LC_CTYPE_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut()) };
+        let base = unsafe {
+            newlocale(
+                libc::LC_CTYPE_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
         assert!(!base.is_null());
-        let failed = unsafe { newlocale(libc::LC_TIME_MASK, c"frankenlibc.definitely_missing.UTF-8".as_ptr(), base) };
+        let failed = unsafe {
+            newlocale(
+                libc::LC_TIME_MASK,
+                c"frankenlibc.definitely_missing.UTF-8".as_ptr(),
+                base,
+            )
+        };
         assert!(failed.is_null());
-        assert_eq!(unsafe { *crate::errno_abi::__errno_location() }, libc::ENOENT);
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::ENOENT
+        );
         assert!(categories_for_handle(base).is_some());
         let codeset = unsafe { CStr::from_ptr(nl_langinfo_l(libc::CODESET, base)) };
         assert_eq!(codeset.to_bytes(), b"UTF-8");
@@ -2236,9 +2984,21 @@ mod tests {
 
     #[test]
     fn locale_objects_zero_mask_does_not_resolve_the_name() {
-        let handle = unsafe { newlocale(0, c"frankenlibc.definitely_missing.UTF-8".as_ptr(), std::ptr::null_mut()) };
+        let handle = unsafe {
+            newlocale(
+                0,
+                c"frankenlibc.definitely_missing.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
         assert_eq!(handle, c_locale_handle());
-        let base = unsafe { newlocale(libc::LC_CTYPE_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut()) };
+        let base = unsafe {
+            newlocale(
+                libc::LC_CTYPE_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
         assert!(!base.is_null());
         let unchanged = unsafe { newlocale(0, c"missing".as_ptr(), base) };
         assert_eq!(unchanged, base);
@@ -2268,7 +3028,10 @@ mod tests {
         let duplicate = unsafe { duplocale(GLOBAL_LOCALE_HANDLE) };
         assert!(!duplicate.is_null());
         let categories = categories_for_handle(duplicate).unwrap();
-        assert_eq!(resolved_charset(categories[locale_core::LC_CTYPE as usize]), expected);
+        assert_eq!(
+            resolved_charset(categories[locale_core::LC_CTYPE as usize]),
+            expected
+        );
         assert_eq!(active_charset(), Charset::Utf8);
         unsafe {
             uselocale(previous);
@@ -2280,8 +3043,14 @@ mod tests {
     fn locale_objects_threads_start_global_and_do_not_share_selection() {
         let previous = unsafe { uselocale(locale_handle_for(Charset::Utf8)) };
         let worker = std::thread::spawn(|| {
-            assert_eq!(unsafe { uselocale(std::ptr::null_mut()) }, GLOBAL_LOCALE_HANDLE);
-            assert_eq!(unsafe { uselocale(c_locale_handle()) }, GLOBAL_LOCALE_HANDLE);
+            assert_eq!(
+                unsafe { uselocale(std::ptr::null_mut()) },
+                GLOBAL_LOCALE_HANDLE
+            );
+            assert_eq!(
+                unsafe { uselocale(c_locale_handle()) },
+                GLOBAL_LOCALE_HANDLE
+            );
             assert_eq!(active_charset(), Charset::Ascii);
             unsafe { uselocale(GLOBAL_LOCALE_HANDLE) };
         });

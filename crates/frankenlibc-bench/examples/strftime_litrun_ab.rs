@@ -193,6 +193,19 @@ const CASES: &[Case] = &[
         label: "locale_datetime",
         format: b"%c\0",
     },
+    // Controls for the strict exact-format dispatcher's DECLINE paths, which
+    // every non-exact format pays before the general formatter runs. Both are
+    // literal-led, so each pays the pure-literal pre-scan up to its first `%`
+    // (and `on %a, %b` is the shape a one-name fused leaf would have tried).
+    // Neither is a recognized shape, so any movement here is overhead.
+    Case {
+        label: "bracket_numeric_general",
+        format: b"[%Y-%m-%d %H:%M:%S]\0",
+    },
+    Case {
+        label: "two_names_general",
+        format: b"on %a, %b\0",
+    },
 ];
 
 fn self_identity() -> String {
@@ -684,6 +697,113 @@ fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm, repetitions: usize
     );
 }
 
+/// Busy fraction per logical CPU over one `/proc/stat` window.
+fn cpu_busy_fractions(window: std::time::Duration) -> Vec<(usize, f64)> {
+    fn snapshot() -> Vec<(usize, u64, u64)> {
+        let stat = std::fs::read_to_string("/proc/stat").expect("read /proc/stat");
+        stat.lines()
+            .filter_map(|line| {
+                let rest = line.strip_prefix("cpu")?;
+                let mut fields = rest.split_whitespace();
+                let cpu = fields.next()?.parse::<usize>().ok()?;
+                let values = fields
+                    .filter_map(|v| v.parse::<u64>().ok())
+                    .collect::<Vec<_>>();
+                (values.len() >= 4).then(|| (cpu, values.iter().sum(), values[3]))
+            })
+            .collect()
+    }
+    let before = snapshot();
+    std::thread::sleep(window);
+    let after = snapshot();
+    before
+        .iter()
+        .filter_map(|&(cpu, total0, idle0)| {
+            let &(_, total1, idle1) = after.iter().find(|&&(c, _, _)| c == cpu)?;
+            let total = total1.saturating_sub(total0);
+            let idle = idle1.saturating_sub(idle0);
+            Some((
+                cpu,
+                if total > 0 {
+                    (total - idle) as f64 / total as f64
+                } else {
+                    1.0
+                },
+            ))
+        })
+        .collect()
+}
+
+/// `--pin-quietest N`: narrow this process to the N quietest allowed logical
+/// CPUs on distinct physical cores before the quiet guard captures its cpuset.
+///
+/// Same contract as `incumbent_coverage_ab --pin-quietest`: the guard keys on
+/// the process's own allowed cpuset, so this scopes which CPUs must be quiet
+/// without weakening the 20% ceiling, the five-consecutive-clear rule or the
+/// affinity tripwire. The benchmark is single-threaded. The guard's contract
+/// line reports `allowed_cpus`, so the scope stays auditable.
+fn pin_to_quietest(width: usize) {
+    let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+    let status =
+        unsafe { libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) };
+    assert_eq!(status, 0, "sched_getaffinity failed");
+    let allowed = (0..libc::CPU_SETSIZE as usize)
+        .filter(|&cpu| unsafe { libc::CPU_ISSET(cpu, &set) })
+        .collect::<Vec<_>>();
+    if width == 0 || width >= allowed.len() {
+        println!("PIN_QUIETEST requested_width={width} action=none");
+        return;
+    }
+    let busy = cpu_busy_fractions(std::time::Duration::from_secs(2));
+    let mut ranked = allowed
+        .iter()
+        .map(|&cpu| {
+            let fraction = busy
+                .iter()
+                .find(|&&(c, _)| c == cpu)
+                .map_or(1.0, |&(_, f)| f);
+            (cpu, fraction)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let core_of = |cpu: usize| {
+        let read = |leaf: &str| {
+            std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/topology/{leaf}"))
+                .ok()
+                .and_then(|s| s.trim().parse::<usize>().ok())
+        };
+        read("physical_package_id").zip(read("core_id"))
+    };
+    let mut cores = std::collections::HashSet::new();
+    let mut chosen = Vec::with_capacity(width);
+    for &(cpu, fraction) in &ranked {
+        if chosen.len() == width {
+            break;
+        }
+        if core_of(cpu).is_none_or(|core| cores.insert(core)) {
+            chosen.push((cpu, fraction));
+        }
+    }
+    let mut pinned: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+    unsafe { libc::CPU_ZERO(&mut pinned) };
+    for &(cpu, _) in &chosen {
+        unsafe { libc::CPU_SET(cpu, &mut pinned) };
+    }
+    let status =
+        unsafe { libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &pinned) };
+    assert_eq!(status, 0, "sched_setaffinity failed");
+    println!(
+        "PIN_QUIETEST requested_width={width} action=narrowed selected={} \
+         allowed_before={} sample_window_ms=2000",
+        chosen
+            .iter()
+            .map(|(cpu, fraction)| format!("{cpu}:{fraction:.3}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        allowed.len(),
+    );
+}
+
 fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
     // ISA + host provenance. `cfg!` is a COMPILE-TIME fact about this binary, so it reports
@@ -713,6 +833,17 @@ fn main() {
             .map(|s| s.split_whitespace().take(3).collect::<Vec<_>>().join(","))
             .unwrap_or_else(|_| "unknown".into()),
     );
+    let pin_width = std::env::args()
+        .skip_while(|arg| arg != "--pin-quietest")
+        .nth(1)
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .expect("--pin-quietest takes a positive CPU count")
+        });
+    if let Some(width) = pin_width {
+        pin_to_quietest(width);
+    }
     let host_guard = host_wide_guard();
     require_host_wide_quiet(&host_guard, "startup");
     let handle = unsafe {
@@ -736,8 +867,15 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            // One label, or a comma-separated list. A full 32-case run outlives
+            // a remote job budget once the quiet guard's waits are added, so a
+            // run is split into family batches that share one built ELF.
             "--case" => {
                 selected_case = Some(args.next().expect("--case requires a label"));
+            }
+            // Applied before the quiet guard was created; see `pin_to_quietest`.
+            "--pin-quietest" => {
+                args.next();
             }
             "--reps" => {
                 let values = args
@@ -762,7 +900,7 @@ fn main() {
         .filter(|case| {
             selected_case
                 .as_deref()
-                .is_none_or(|label| case.label == label)
+                .is_none_or(|labels| labels.split(',').any(|label| case.label == label))
         })
         .collect::<Vec<_>>();
     assert!(

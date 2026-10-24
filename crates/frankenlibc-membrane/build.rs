@@ -719,7 +719,11 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/arena.rs",
         domain: "tsm",
-        expected_sites: 2,
+        // 2 generation-counter sites + 7 arena-wide quarantine totals (2 loads
+        // in the drain bound, 2 fetch_add on free, 2 fetch_sub on drain, 1 test
+        // load). The totals are Relaxed: they only bound how much the shards
+        // (each updated under its own lock) hold, and publish no other memory.
+        expected_sites: 9,
         stop_at_cfg_test: false,
         optional: false,
     },

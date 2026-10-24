@@ -40,7 +40,7 @@ unsafe fn tracked_sockaddr_output_fits(addr: *mut libc::sockaddr, addrlen: *mut 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int) -> c_int {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, domain as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -48,20 +48,10 @@ pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int
         return -1;
     }
 
-    // In strict mode, reject unknown address families early.
-    // In hardened mode, let the kernel decide (it may support AF values we don't enumerate).
-    if !socket_core::valid_address_family(domain) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
-    if !socket_core::valid_socket_type(sock_type) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
+    // The kernel judges the family and type, as with glibc: it answers
+    // EAFNOSUPPORT / EINVAL itself. A userspace allow-list (UNIX, INET,
+    // INET6, NETLINK) refused AF_PACKET, AF_ALG, AF_CAN, AF_BLUETOOTH,
+    // AF_VSOCK, AF_XDP ... in strict mode.
     let (rc, adverse) = match raw_syscall::sys_socket(domain, sock_type, protocol) {
         Ok(fd) => (fd, false),
         Err(e) => {
@@ -129,8 +119,10 @@ pub unsafe extern "C" fn listen(sockfd: c_int, backlog: c_int) -> c_int {
         return -1;
     }
 
-    let effective_backlog = socket_core::valid_backlog(backlog);
-    let (rc, adverse) = match raw_syscall::sys_listen(sockfd, effective_backlog) {
+    // The kernel caps the backlog itself, as unsigned, at the runtime
+    // net.core.somaxconn: listen(fd, -1) means "the maximum". Clamping to
+    // [0, 4096] here turned -1 into a zero backlog and capped larger ones.
+    let (rc, adverse) = match raw_syscall::sys_listen(sockfd, backlog) {
         Ok(()) => (0, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -481,7 +473,7 @@ pub unsafe extern "C" fn shutdown(sockfd: c_int, how: c_int) -> c_int {
         return -1;
     }
 
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -489,19 +481,16 @@ pub unsafe extern "C" fn shutdown(sockfd: c_int, how: c_int) -> c_int {
         return -1;
     }
 
-    let effective_how = if !socket_core::valid_shutdown_how(how) {
-        if mode.heals_enabled() {
-            socket_core::SHUT_RDWR // default to full shutdown in hardened mode
-        } else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-            return -1;
-        }
-    } else {
-        how
-    };
+    // EINVAL in both modes. Hardened used to "heal" an unknown `how` into
+    // SHUT_RDWR, tearing down both directions of a live connection the caller
+    // never asked to close; an out-of-range enum carries no memory-safety risk.
+    if !socket_core::valid_shutdown_how(how) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
 
-    let (rc, adverse) = match raw_syscall::sys_shutdown(sockfd, effective_how) {
+    let (rc, adverse) = match raw_syscall::sys_shutdown(sockfd, how) {
         Ok(()) => (0, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -538,7 +527,10 @@ pub unsafe extern "C" fn setsockopt(
         return -1;
     }
 
-    if (optval.is_null() && optlen > 0) || !tracked_region_fits(optval, optlen as usize) {
+    // A NULL optval with a nonzero optlen is valid for some options -- the
+    // kernel reads only optlen (AF_ALG's ALG_SET_AEAD_AUTHSIZE) -- and
+    // faults by itself where it does dereference; glibc passes both through.
+    if !optval.is_null() && !tracked_region_fits(optval, optlen as usize) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -688,7 +680,8 @@ pub unsafe extern "C" fn socketpair(
     protocol: c_int,
     sv: *mut c_int,
 ) -> c_int {
-    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, sv as usize, 0, true, true, 0);
+    let (_mode, decision) =
+        runtime_policy::decide(ApiFamily::Socket, sv as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -707,18 +700,7 @@ pub unsafe extern "C" fn socketpair(
         return -1;
     }
 
-    if !socket_core::valid_address_family(domain) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
-    if !socket_core::valid_socket_type(sock_type) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
+    // Family and type are the kernel's to judge (see socket).
     let (rc, adverse) =
         match unsafe { raw_syscall::sys_socketpair(domain, sock_type, protocol, sv) } {
             Ok(()) => (0, false),

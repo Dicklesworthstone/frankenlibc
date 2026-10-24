@@ -91,7 +91,18 @@ pub mod errno_abi;
 mod expl_table;
 pub mod locale_abi;
 mod locale_catalog;
+#[path = "math_abi.rs"]
+mod legacy_math_abi;
+#[path = "math_exports.rs"]
 pub mod math_abi;
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(test),
+    not(feature = "standalone")
+))]
+mod fromfp_abi;
 pub mod startup_helpers;
 pub mod stdbit_abi;
 mod trig_tables;
@@ -243,6 +254,8 @@ pub mod pthread_abi;
 pub mod pwd_abi;
 #[cfg(not(test))]
 pub mod resolv_abi;
+#[cfg(not(test))]
+pub mod resolv_state;
 #[cfg(not(test))]
 pub mod resource_abi;
 #[cfg(not(test))]

@@ -318,7 +318,7 @@ fn strlen_measures_correctly() {
 }
 
 #[test]
-fn strlen_bounds_tracked_unterminated_input() {
+fn strlen_strict_does_not_cap_at_tracked_bounds() {
     signal_runtime_ready_for_tests();
     unsafe {
         let raw = malloc_unterminated(b"hello");
@@ -327,7 +327,11 @@ fn strlen_bounds_tracked_unterminated_input() {
             Some(5)
         );
 
-        assert_eq!(strlen(raw), 5);
+        // Strict is glibc's semantics: the scan runs to the first NUL even
+        // past the allocation (capping at 5 is hardened's TruncateWithNull
+        // repair). Bytes after the block are heap contents, so only "never
+        // stops short" is deterministic.
+        assert!(strlen(raw) >= 5);
 
         frankenlibc_abi::malloc_abi::free(raw.cast());
     }
@@ -2213,7 +2217,12 @@ fn re_search_from_offset_keeps_preceding_context() {
                     std::ptr::null_mut(),
                 )
             };
-            assert_eq!(len, -1, "re_match({:?}, {start})", String::from_utf8_lossy(pattern));
+            assert_eq!(
+                len,
+                -1,
+                "re_match({:?}, {start})",
+                String::from_utf8_lossy(pattern)
+            );
         }
         unsafe {
             regfree((&mut buffer as *mut PublicRegexBuffer).cast());

@@ -467,13 +467,15 @@ pub fn certify_simd_string_operation(
         return hit;
     }
 
+    // 64 reference observations, then 64 candidate ones. The certificate reads
+    // the final state and energies, not the per-step drift counters, so the
+    // repeats go through `observe_repeated`: same multivector, one embedding
+    // and one classification per phase instead of 64 (each embedding is an
+    // exp and a sqrt; this ran on every hardened strlen/memcpy cache miss and
+    // was ~21% of a hardened OpenSSL startup).
     let mut controller = CliffordController::new();
-    for _ in 0..CALIBRATION_THRESHOLD {
-        controller.observe(reference_obs);
-    }
-    for _ in 0..CALIBRATION_THRESHOLD {
-        controller.observe_and_update(candidate_obs);
-    }
+    controller.observe_repeated(reference_obs, CALIBRATION_THRESHOLD);
+    controller.observe_repeated(candidate_obs, CALIBRATION_THRESHOLD);
 
     let summary = controller.summary();
     let compatible = candidate.compatible_with_reference(reference, overlap);
@@ -604,6 +606,59 @@ pub struct CliffordController {
     state: CliffordState,
 }
 
+/// Coordinates of an observation: (src alignment, dst alignment, overlap
+/// fraction, length regime), the last two sanitized into [0, 1].
+fn observation_vector(obs: AlignmentObservation) -> [f64; DIM] {
+    [
+        obs.src_alignment.as_f64(),
+        obs.dst_alignment.as_f64(),
+        sanitize_unit_interval(obs.overlap_fraction),
+        sanitize_unit_interval(obs.length_regime),
+    ]
+}
+
+/// Embed the change from `prev` to `current` into Cl(4,0).
+fn embed(prev: [f64; DIM], current: [f64; DIM]) -> Multivector {
+    let overlap_fraction = current[2];
+
+    // Compute difference vector (alignment change).
+    let diff: [f64; DIM] = std::array::from_fn(|i| current[i] - prev[i]);
+
+    // Grade-0: scalar (magnitude of alignment stability).
+    let mag = diff.iter().map(|d| d * d).sum::<f64>().sqrt();
+    let stability = (-mag).exp(); // Near 1 when stable.
+
+    // Grade-1: vector components (directional change).
+    // Grade-2: bivector components (rotational change = wedge products).
+    let mut mv = Multivector::zero();
+
+    // Scalar: stability indicator.
+    mv.coeffs[0] = stability;
+
+    // Vectors: raw differences.
+    for (i, &d) in diff.iter().enumerate() {
+        mv.coeffs[1 + i] = d;
+    }
+
+    // Bivectors: wedge products e_i ∧ e_j.
+    let mut bv_idx = 5;
+    for i in 0..DIM {
+        for j in (i + 1)..DIM {
+            mv.coeffs[bv_idx] = diff[i] * current[j] - diff[j] * current[i];
+            bv_idx += 1;
+        }
+    }
+
+    // Pseudoscalar: determinant-like overlap/chirality indicator.
+    // Positive when overlap is decreasing (healthy), negative when increasing.
+    mv.coeffs[15] = if overlap_fraction > 0.0 {
+        -overlap_fraction * mag
+    } else {
+        0.0
+    };
+    mv
+}
+
 impl CliffordController {
     /// Create a new Clifford controller.
     #[must_use]
@@ -622,61 +677,44 @@ impl CliffordController {
     pub fn observe(&mut self, obs: AlignmentObservation) {
         self.total_observations += 1;
 
-        let overlap_fraction = sanitize_unit_interval(obs.overlap_fraction);
-        let length_regime = sanitize_unit_interval(obs.length_regime);
-        let current = [
-            obs.src_alignment.as_f64(),
-            obs.dst_alignment.as_f64(),
-            overlap_fraction,
-            length_regime,
-        ];
-
+        let current = observation_vector(obs);
         if let Some(prev) = self.prev_obs {
-            // Compute difference vector (alignment change).
-            let diff: [f64; DIM] = std::array::from_fn(|i| current[i] - prev[i]);
-
-            // Embed difference into Clifford algebra.
-            // Grade-0: scalar (magnitude of alignment stability).
-            let mag = diff.iter().map(|d| d * d).sum::<f64>().sqrt();
-            let stability = (-mag).exp(); // Near 1 when stable.
-
-            // Grade-1: vector components (directional change).
-            // Grade-2: bivector components (rotational change = wedge products).
-            let mut mv = Multivector::zero();
-
-            // Scalar: stability indicator.
-            mv.coeffs[0] = stability;
-
-            // Vectors: raw differences.
-            for (i, &d) in diff.iter().enumerate() {
-                mv.coeffs[1 + i] = d;
-            }
-
-            // Bivectors: wedge products e_i ∧ e_j.
-            let mut bv_idx = 5;
-            for i in 0..DIM {
-                for j in (i + 1)..DIM {
-                    mv.coeffs[bv_idx] = diff[i] * current[j] - diff[j] * current[i];
-                    bv_idx += 1;
-                }
-            }
-
-            // Pseudoscalar: determinant-like overlap/chirality indicator.
-            // Positive when overlap is decreasing (healthy), negative when increasing.
-            mv.coeffs[15] = if overlap_fraction > 0.0 {
-                -overlap_fraction * mag
-            } else {
-                0.0
-            };
-
-            // EWMA update.
-            for (e, m) in self.ewma_mv.coeffs.iter_mut().zip(mv.coeffs.iter()) {
-                *e = e.mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * m);
-            }
+            self.ewma_update(&embed(prev, current));
         }
 
         self.prev_obs = Some(current);
         self.state = self.classify();
+    }
+
+    /// `observe(obs)` `n` times, with identical results.
+    ///
+    /// After the first, each repeat's difference vector is exactly zero (the
+    /// same finite coordinates subtracted), so it embeds to one constant
+    /// multivector: computing it once and applying only the EWMA update -- the
+    /// same `mul_add` per coefficient -- leaves the multivector bit-identical,
+    /// and the state is a function of the multivector and the count, so it is
+    /// classified once at the end.
+    pub fn observe_repeated(&mut self, obs: AlignmentObservation, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.observe(obs);
+        if n == 1 {
+            return;
+        }
+        let current = observation_vector(obs);
+        let steady = embed(current, current);
+        for _ in 1..n {
+            self.ewma_update(&steady);
+        }
+        self.total_observations += n - 1;
+        self.state = self.classify();
+    }
+
+    fn ewma_update(&mut self, mv: &Multivector) {
+        for (e, m) in self.ewma_mv.coeffs.iter_mut().zip(mv.coeffs.iter()) {
+            *e = e.mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * m);
+        }
     }
 
     /// Current state.
@@ -773,6 +811,58 @@ mod tests {
             overlap_fraction: 0.0,
             length_regime: 0.5,
         }
+    }
+
+    /// `observe_repeated` is a shortcut for repeated `observe`: the multivector
+    /// must match bit for bit and the state exactly, across alignments,
+    /// overlaps (including the -0.0 pseudoscalar), lengths and counts.
+    #[test]
+    fn observe_repeated_matches_repeated_observe_bitwise() {
+        let regimes = [
+            AlignmentRegime::Unaligned,
+            AlignmentRegime::Align8,
+            AlignmentRegime::Align16,
+            AlignmentRegime::Align32Plus,
+        ];
+        let mut cases = 0;
+        for (a, &first_src) in regimes.iter().enumerate() {
+            for &second_dst in &regimes[a..] {
+                for overlap in [0.0, 0.25, 1.0] {
+                    for len in [0.0, 1.0 / 7.0, 0.5, 0.999, 1.0, 3.0] {
+                        let first = AlignmentObservation {
+                            src_alignment: first_src,
+                            dst_alignment: AlignmentRegime::Align16,
+                            overlap_fraction: 0.0,
+                            length_regime: 1.0 / 3.0,
+                        };
+                        let second = AlignmentObservation {
+                            src_alignment: AlignmentRegime::Align8,
+                            dst_alignment: second_dst,
+                            overlap_fraction: overlap,
+                            length_regime: len,
+                        };
+                        for n in [1u64, 2, 63, 64] {
+                            let mut slow = CliffordController::new();
+                            let mut fast = CliffordController::new();
+                            for _ in 0..n {
+                                slow.observe(first);
+                            }
+                            for _ in 0..n {
+                                slow.observe(second);
+                            }
+                            fast.observe_repeated(first, n);
+                            fast.observe_repeated(second, n);
+                            let bits = |c: &CliffordController| c.ewma_mv.coeffs.map(f64::to_bits);
+                            assert_eq!(bits(&slow), bits(&fast), "{first:?} {second:?} n={n}");
+                            assert_eq!(slow.state(), fast.state());
+                            assert_eq!(slow.total_observations, fast.total_observations);
+                            cases += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 10 * 3 * 6 * 4);
     }
 
     #[test]

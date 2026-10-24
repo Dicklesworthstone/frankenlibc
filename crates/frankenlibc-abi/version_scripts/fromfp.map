@@ -1,0 +1,6 @@
+/* Explicit .symver directives own these assignments. Do not add global: *
+ * or local: *: other interposer symbols must retain their existing bindings. */
+GLIBC_2.25 {};
+GLIBC_2.26 {};
+GLIBC_2.27 {};
+GLIBC_2.43 {};

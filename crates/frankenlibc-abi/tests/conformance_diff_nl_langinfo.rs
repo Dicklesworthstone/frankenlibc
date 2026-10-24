@@ -96,6 +96,97 @@ fn diff_nl_langinfo_c_locale_items() {
     );
 }
 
+/// Every item of LC_PAPER, LC_NAME, LC_ADDRESS, LC_TELEPHONE, LC_MEASUREMENT
+/// and LC_IDENTIFICATION (categories 7..=12) in the C locale. fl returned ""
+/// for all of them (perl's Langinfo.t and XS-APItest locale.t check
+/// _NL_IDENTIFICATION_TERRITORY == "ISO"). Integer items (paper height and
+/// width, country number) come back as the pointer value, compared as such;
+/// strings byte for byte (_NL_MEASUREMENT_MEASUREMENT is the byte 1).
+#[test]
+fn diff_nl_langinfo_c_locale_extended_categories() {
+    // (category, number of items including the trailing CODESET)
+    let categories: &[(u32, u32)] = &[(7, 3), (8, 7), (9, 13), (10, 5), (11, 2), (12, 16)];
+    let mut divs = Vec::new();
+    let mut compared = 0;
+    for &(category, count) in categories {
+        for index in 0..count {
+            let item = ((category << 16) | index) as libc::nl_item;
+            let fl_ptr = unsafe { fl::nl_langinfo(item) };
+            let lc_ptr = unsafe { nl_langinfo(item) };
+            let render = |p: *const c_char| -> String {
+                if (p as usize) < 65536 {
+                    format!("int {}", p as usize)
+                } else {
+                    format!("{:?}", unsafe { CStr::from_ptr(p) })
+                }
+            };
+            let (f, g) = (render(fl_ptr), render(lc_ptr));
+            if f != g {
+                divs.push(Divergence {
+                    case: format!("{category}.{index}"),
+                    frankenlibc: f,
+                    glibc: g,
+                });
+            }
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, 46);
+    assert!(
+        divs.is_empty(),
+        "nl_langinfo extended-category divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+/// LC_TIME items 50..=158 in the C locale: era count, the `wchar_t` forms of
+/// every name and format, the week data, `_DATE_FMT`, `_NL_TIME_CODESET`, and
+/// ALTMON_n / _NL_ABALTMON_n with their wide forms. fl returned "" for all of
+/// them (gnulib test-nl_langinfo asserts strlen(ALTMON_1) > 0), so a wide
+/// item read past a one-byte narrow literal.
+#[test]
+fn diff_nl_langinfo_c_locale_lc_time_extended() {
+    let is_word = |i: u32| i == 50 || i == 102;
+    let is_wide = |i: u32| {
+        (52..=100).contains(&i) || i == 109 || (123..=134).contains(&i) || (147..=158).contains(&i)
+    };
+    let render = |i: u32, p: *const c_char| -> String {
+        if is_word(i) {
+            format!("word {}", p as usize)
+        } else if is_wide(i) {
+            let w = p.cast::<u32>();
+            let mut s = String::new();
+            let mut k = 0;
+            // SAFETY: a wide item is a NUL-terminated wchar_t string.
+            while unsafe { *w.add(k) } != 0 && k < 64 {
+                s.push(char::from_u32(unsafe { *w.add(k) }).unwrap_or('?'));
+                k += 1;
+            }
+            format!("wide {s:?}")
+        } else {
+            format!("{:?}", unsafe { CStr::from_ptr(p) })
+        }
+    };
+    let mut divs = Vec::new();
+    for index in 50u32..=158 {
+        let item = ((2u32 << 16) | index) as libc::nl_item;
+        let f = render(index, unsafe { fl::nl_langinfo(item) });
+        let g = render(index, unsafe { nl_langinfo(item) });
+        if f != g {
+            divs.push(Divergence {
+                case: format!("LC_TIME.{index}"),
+                frankenlibc: f,
+                glibc: g,
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "nl_langinfo LC_TIME extended divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 #[test]
 fn nl_langinfo_diff_coverage_report() {
     eprintln!(
