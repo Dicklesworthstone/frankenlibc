@@ -22,12 +22,8 @@
 //   - cleanup handlers run in LIFO order; pthread_cleanup_pop(1) runs one;
 //     handlers popped with pop(0) do not run when the thread returns;
 //   - the main thread can cancel itself (single-threaded) or be cancelled by
-//     another thread. fl names the main thread by its tid, which glibc's
-//     pthread_cancel would dereference. These run in a re-executed copy with
-//     FRANKENLIBC_STARTUP_DELEGATE=1 (ignored by glibc): fl's default owned
-//     startup does not yet give the main thread glibc's cancellation jump
-//     buffer, so any unwind out of main (pthread_exit included) crashes there
-//     -- a separate defect, recorded on bd-rc0923-epic-eeuy4f.24.
+//     another thread. These re-executed cases retain the selected startup
+//     path, including default owned initialization with host-thread lifecycle.
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
@@ -958,7 +954,6 @@ static void main_thread_cancelled(const char *argv0, const char *which) {
   fflush(stdout);
   pid_t pid = fork();
   if (pid == 0) {
-    setenv("FRANKENLIBC_STARTUP_DELEGATE", "1", 1);
     execl("/proc/self/exe", argv0, "main-thread", which, (char *)NULL);
     _exit(127);
   }

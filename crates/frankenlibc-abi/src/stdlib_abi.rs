@@ -5003,7 +5003,7 @@ pub(crate) fn set_exit_finalizers(
     EXIT_RTLD_FINI.store(rtld_fini.map_or(0, |f| f as usize), Ordering::Release);
 }
 
-fn run_exit_finalizers() {
+pub(crate) fn run_exit_finalizers() {
     use std::sync::atomic::Ordering;
     for slot in [&EXIT_FINI, &EXIT_RTLD_FINI] {
         let addr = slot.swap(0, Ordering::AcqRel);
