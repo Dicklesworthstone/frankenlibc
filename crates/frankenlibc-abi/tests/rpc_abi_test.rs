@@ -836,3 +836,329 @@ fn bindresvport6_null_sockaddr_works() {
     assert!((512..=1023).contains(&port));
     unsafe { libc::close(sd) };
 }
+
+// Public key_prot.x layouts, independent of the implementation's private types.
+mod key_protocol {
+    use super::*;
+    use std::ptr;
+
+    type Codec = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
+
+    #[repr(C)]
+    struct NetObj {
+        len: u32,
+        bytes: *mut c_char,
+    }
+    #[repr(C)]
+    struct Arg2 {
+        name: *mut c_char,
+        public_key: NetObj,
+        key: [u8; 8],
+    }
+    #[repr(C)]
+    struct Cred {
+        uid: u32,
+        gid: u32,
+        count: u32,
+        groups: *mut u32,
+    }
+    #[repr(C)]
+    struct CredResult {
+        status: c_int,
+        cred: Cred,
+    }
+    #[repr(C)]
+    struct NetworkKeys {
+        secret: [u8; 48],
+        public: [u8; 48],
+        name: *mut c_char,
+    }
+    #[repr(C)]
+    struct NetworkResult {
+        status: c_int,
+        keys: NetworkKeys,
+    }
+
+    fn codecs(native: Codec, name: &CStr) -> Vec<Codec> {
+        let mut result = vec![native];
+        #[cfg(target_env = "gnu")]
+        {
+            static GNU: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let provider = *GNU.get_or_init(|| {
+                // SAFETY: the process already uses GNU libc; retain its handle
+                // for the lifetime of these independently resolved codecs.
+                let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW) };
+                assert!(
+                    !handle.is_null(),
+                    "GNU XDR oracle is required on GNU targets"
+                );
+                handle as usize
+            });
+            let mut symbol = ptr::null_mut();
+            for version in [c"GLIBC_2.2.5", c"GLIBC_2.17"] {
+                // SAFETY: public XDR codecs have the signature declared above.
+                symbol = unsafe {
+                    libc::dlvsym(provider as *mut c_void, name.as_ptr(), version.as_ptr())
+                };
+                if !symbol.is_null() {
+                    break;
+                }
+            }
+            assert!(!symbol.is_null(), "missing GNU oracle: {name:?}");
+            assert_ne!(
+                symbol as usize, native as usize,
+                "oracle resolved to candidate"
+            );
+            // SAFETY: the versioned symbol's public XDR signature is Codec.
+            result.push(unsafe { std::mem::transmute::<*mut c_void, Codec>(symbol) });
+        }
+        result
+    }
+
+    fn run<T>(codec: Codec, value: &mut T, bytes: &mut [u8], op: c_int) -> c_int {
+        // SAFETY: XDR is initialized before use; the supplied object and wire
+        // buffer stay live, and each caller uses the codec's public C layout.
+        unsafe {
+            let mut stream: Xdr = std::mem::zeroed();
+            xdrmem_create(
+                ptr::addr_of_mut!(stream).cast(),
+                bytes.as_mut_ptr().cast(),
+                bytes.len() as u32,
+                op,
+            );
+            codec(
+                ptr::addr_of_mut!(stream).cast(),
+                ptr::from_mut(value).cast(),
+            )
+        }
+    }
+
+    fn encode<T>(codec: Codec, value: &mut T, expected: &[u8]) {
+        let mut wire = vec![0xa5; expected.len() + 16];
+        assert_eq!(run(codec, value, &mut wire, 0), 1);
+        assert_eq!(&wire[..expected.len()], expected);
+        assert!(wire[expected.len()..].iter().all(|b| *b == 0xa5));
+        // SAFETY: the size probe uses the same valid object and codec.
+        assert_eq!(
+            unsafe {
+                xdr_sizeof(
+                    codec as *const () as *mut c_void,
+                    ptr::from_mut(value).cast(),
+                )
+            },
+            expected.len() as u64
+        );
+    }
+
+    fn release<T>(codec: Codec, value: &mut T) {
+        // SAFETY: every owned field was allocated by this exact codec; failed
+        // decodes retain zero-initialized pointers for fields not yet visited.
+        unsafe {
+            xdr_free(
+                codec as *const () as *mut c_void,
+                ptr::from_mut(value).cast(),
+            )
+        };
+    }
+
+    #[test]
+    fn fixed_keys_use_exactly_48_bytes() {
+        for codec in codecs(xdr_keybuf, c"xdr_keybuf") {
+            let mut key = *b"0123456789abcdef0123456789abcdef0123456789abcdef";
+            let expected = key;
+            encode(codec, &mut key, &expected);
+            let mut output = [0xa5; 64];
+            assert_eq!(run(codec, &mut output, &mut key, 1), 1);
+            assert_eq!(&output[..48], &expected);
+            assert_eq!(&output[48..], &[0xa5; 16]);
+            assert_eq!(run(codec, &mut output, &mut key[..47], 1), 0);
+        }
+    }
+
+    #[test]
+    fn public_keys_are_counted_binary_objects() {
+        for codec in codecs(xdr_cryptkeyarg2, c"xdr_cryptkeyarg2") {
+            let mut public = [0, 7, 0, 0xff, 0x80];
+            let mut arg = Arg2 {
+                name: c"peer".as_ptr().cast_mut(),
+                public_key: NetObj {
+                    len: 5,
+                    bytes: public.as_mut_ptr().cast(),
+                },
+                key: *b"12345678",
+            };
+            let mut wire = [
+                0, 0, 0, 4, b'p', b'e', b'e', b'r', 0, 0, 0, 5, 0, 7, 0, 0xff, 0x80, 0, 0, 0, b'1',
+                b'2', b'3', b'4', b'5', b'6', b'7', b'8',
+            ];
+            encode(codec, &mut arg, &wire);
+            // SAFETY: null pointers are the required initial state for XDR decode.
+            let mut decoded: Arg2 = unsafe { std::mem::zeroed() };
+            assert_eq!(run(codec, &mut decoded, &mut wire, 1), 1);
+            assert_eq!(unsafe { CStr::from_ptr(decoded.name) }, c"peer");
+            assert_eq!(decoded.public_key.len, 5);
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(decoded.public_key.bytes.cast::<u8>(), 5) },
+                public
+            );
+            assert_eq!(decoded.key, *b"12345678");
+            release(codec, &mut decoded);
+            assert!(decoded.name.is_null() && decoded.public_key.bytes.is_null());
+            arg.public_key.len = 1025;
+            assert_eq!(run(codec, &mut arg, &mut wire, 0), 0);
+        }
+    }
+
+    #[test]
+    fn credentials_have_one_full_width_group_count() {
+        for codec in codecs(xdr_unixcred, c"xdr_unixcred") {
+            let mut groups = [7, u32::MAX, 0x8000_0001];
+            let mut cred = Cred {
+                uid: 42,
+                gid: 9,
+                count: 3,
+                groups: groups.as_mut_ptr(),
+            };
+            let mut wire: Vec<u8> = [42u32, 9, 3, 7, u32::MAX, 0x8000_0001]
+                .into_iter()
+                .flat_map(u32::to_be_bytes)
+                .collect();
+            encode(codec, &mut cred, &wire);
+            let mut decoded = Cred {
+                uid: 0,
+                gid: 0,
+                count: 0,
+                groups: ptr::null_mut(),
+            };
+            assert_eq!(run(codec, &mut decoded, &mut wire, 1), 1);
+            assert_eq!((decoded.uid, decoded.gid, decoded.count), (42, 9, 3));
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(decoded.groups, 3) },
+                groups
+            );
+            release(codec, &mut decoded);
+            assert!(decoded.groups.is_null());
+            // A short count would silently turn this invalid count into zero.
+            cred.count = 0x1_0000;
+            assert_eq!(run(codec, &mut cred, &mut wire, 0), 0);
+        }
+    }
+
+    #[test]
+    fn failed_results_never_visit_inactive_union_storage() {
+        for (native, name) in [
+            (xdr_cryptkeyres as Codec, c"xdr_cryptkeyres"),
+            (xdr_getcredres, c"xdr_getcredres"),
+            (xdr_key_netstres, c"xdr_key_netstres"),
+        ] {
+            for codec in codecs(native, name) {
+                for status in [1i32, 2, 3, 99, -1] {
+                    let mut value = [0xa5a5_a5a5_a5a5_a5a5u64; 16];
+                    // SAFETY: value is aligned and large enough for every union.
+                    unsafe { ptr::write(value.as_mut_ptr().cast::<i32>(), status) };
+                    encode(codec, &mut value, &status.to_be_bytes());
+                    let before = value;
+                    let mut wire = status.to_be_bytes();
+                    assert_eq!(run(codec, &mut value, &mut wire, 1), 1);
+                    release(codec, &mut value);
+                    assert_eq!(value, before, "inactive payload changed for {name:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn successful_credential_results_contain_unix_credentials() {
+        for codec in codecs(xdr_getcredres, c"xdr_getcredres") {
+            let mut groups = [3, 17];
+            let mut result = CredResult {
+                status: 0,
+                cred: Cred {
+                    uid: 1001,
+                    gid: 1002,
+                    count: 2,
+                    groups: groups.as_mut_ptr(),
+                },
+            };
+            let mut wire: Vec<u8> = [0u32, 1001, 1002, 2, 3, 17]
+                .into_iter()
+                .flat_map(u32::to_be_bytes)
+                .collect();
+            encode(codec, &mut result, &wire);
+            let mut decoded: CredResult = unsafe { std::mem::zeroed() };
+            assert_eq!(run(codec, &mut decoded, &mut wire, 1), 1);
+            assert_eq!(
+                (
+                    decoded.status,
+                    decoded.cred.uid,
+                    decoded.cred.gid,
+                    decoded.cred.count
+                ),
+                (0, 1001, 1002, 2)
+            );
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(decoded.cred.groups, 2) },
+                groups
+            );
+            release(codec, &mut decoded);
+            assert!(decoded.cred.groups.is_null());
+        }
+    }
+
+    #[test]
+    fn network_key_arguments_and_results_include_the_netname() {
+        for (native, name, result) in [
+            (xdr_key_netstarg as Codec, c"xdr_key_netstarg", false),
+            (xdr_key_netstres, c"xdr_key_netstres", true),
+        ] {
+            for codec in codecs(native, name) {
+                let mut value = NetworkResult {
+                    status: 0,
+                    keys: NetworkKeys {
+                        secret: [b'a'; 48],
+                        public: [b'b'; 48],
+                        name: c"u@d".as_ptr().cast_mut(),
+                    },
+                };
+                let mut wire = if result { vec![0u8; 4] } else { vec![] };
+                wire.extend_from_slice(&value.keys.secret);
+                wire.extend_from_slice(&value.keys.public);
+                wire.extend_from_slice(&[0, 0, 0, 3, b'u', b'@', b'd', 0]);
+                if result {
+                    encode(codec, &mut value, &wire);
+                } else {
+                    encode(codec, &mut value.keys, &wire);
+                }
+                let mut decoded: NetworkResult = unsafe { std::mem::zeroed() };
+                if result {
+                    assert_eq!(run(codec, &mut decoded, &mut wire, 1), 1);
+                } else {
+                    assert_eq!(run(codec, &mut decoded.keys, &mut wire, 1), 1);
+                }
+                assert_eq!(decoded.keys.secret, [b'a'; 48]);
+                assert_eq!(decoded.keys.public, [b'b'; 48]);
+                assert_eq!(unsafe { CStr::from_ptr(decoded.keys.name) }, c"u@d");
+                if result {
+                    release(codec, &mut decoded);
+                } else {
+                    release(codec, &mut decoded.keys);
+                }
+                assert!(decoded.keys.name.is_null());
+                for length in 0..wire.len() {
+                    let mut partial: NetworkResult = unsafe { std::mem::zeroed() };
+                    let rc = if result {
+                        run(codec, &mut partial, &mut wire[..length], 1)
+                    } else {
+                        run(codec, &mut partial.keys, &mut wire[..length], 1)
+                    };
+                    assert_eq!(rc, 0, "truncated {name:?} at {length}");
+                    if result {
+                        release(codec, &mut partial);
+                    } else {
+                        release(codec, &mut partial.keys);
+                    }
+                }
+            }
+        }
+    }
+}

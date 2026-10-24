@@ -1628,13 +1628,60 @@ struct RmtCallRes {
     xdr_results: *mut c_void,
 }
 
-// UnixCred: { uid(4), gid(4), gidlen(2), [6pad], gids(*) } = 24 bytes
+// key_prot.x's unixcred contains an XDR array, whose count is unsigned int.
+// This is distinct from authdes_getucred's short * output parameter.
 #[repr(C)]
 struct UnixCred {
     uid: u32,
     gid: u32,
-    gidlen: i16,
+    gidlen: c_uint,
     gids: *mut u32,
+}
+
+const HEXKEYBYTES: c_uint = 48;
+
+#[repr(C)]
+struct NetObj {
+    len: c_uint,
+    bytes: *mut c_char,
+}
+
+#[repr(C)]
+struct CryptKeyArg {
+    remotename: *mut c_char,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct CryptKeyArg2 {
+    remotename: *mut c_char,
+    remotekey: NetObj,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct CryptKeyRes {
+    status: c_int,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct GetCredRes {
+    status: c_int,
+    cred: UnixCred,
+}
+
+#[repr(C)]
+struct KeyNetStArg {
+    priv_key: [u8; HEXKEYBYTES as usize],
+    pub_key: [u8; HEXKEYBYTES as usize],
+    netname: *mut c_char,
+}
+
+#[repr(C)]
+struct KeyNetStRes {
+    status: c_int,
+    knet: KeyNetStArg,
 }
 
 // --- RPC type XDR functions ---
@@ -1992,18 +2039,13 @@ pub unsafe extern "C" fn xdr_unixcred(xdrs: *mut c_void, ucp: *mut c_void) -> c_
     if unsafe { xdr_u_int(xdrs, (&mut (*u).gid as *mut u32).cast()) } != XDR_TRUE {
         return XDR_FALSE;
     }
-    let mut glen = unsafe { (*u).gidlen } as c_uint;
-    if unsafe { xdr_u_int(xdrs, &mut glen) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe {
-        (*u).gidlen = glen as i16;
-    }
+    // SAFETY: the caller supplies a live unixcred. xdr_array serializes its
+    // count exactly once and owns any allocation made during DECODE.
     unsafe {
         xdr_array(
             xdrs,
             (&mut (*u).gids as *mut *mut u32).cast(),
-            &mut glen,
+            &mut (*u).gidlen,
             16,
             4,
             xdr_u_int as *mut c_void,
@@ -2054,13 +2096,14 @@ pub unsafe extern "C" fn xdr_authdes_verf(xdrs: *mut c_void, verf: *mut c_void) 
 }
 
 // --- Key server XDR types (Secure RPC / keyserv protocol) ---
-// These are only used with the key server daemon which we don't support.
-// Each type serializes fields used in the keyserv RPC protocol.
+// Layouts and discriminants follow the public key_prot.x protocol. A failed
+// result has no union payload, including during XDR_FREE.
 
-/// Serialize a key buffer (HEXKEYBYTES = 144 bytes of opaque data).
+/// Serialize a classic Secure RPC key (48 hexadecimal bytes, no terminator).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_keybuf(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    unsafe { xdr_opaque(xdrs, p as *mut c_char, 144) }
+    // SAFETY: keybuf is a fixed-size opaque array supplied by the caller.
+    unsafe { xdr_opaque(xdrs, p.cast(), HEXKEYBYTES) }
 }
 
 /// Serialize key status enum.
@@ -2078,71 +2121,101 @@ pub unsafe extern "C" fn xdr_netnamestr(xdrs: *mut c_void, p: *mut c_void) -> c_
 /// Serialize cryptkeyarg: remotename(string) + deskey(des_block=8).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_cryptkeyarg(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    // { char *remotename; des_block deskey; }
-    if unsafe { xdr_netnamestr(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let arg = p.cast::<CryptKeyArg>();
+    // SAFETY: arg has the public cryptkeyarg layout, and its fields remain
+    // live for the selected XDR operation.
+    unsafe {
+        if xdr_netnamestr(xdrs, (&mut (*arg).remotename as *mut *mut c_char).cast()) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        xdr_des_block(xdrs, (*arg).deskey.as_mut_ptr().cast())
     }
-    unsafe { xdr_des_block(xdrs, b.add(8).cast()) }
 }
 
-/// Serialize cryptkeyarg2: remotename(string) + netname(netnamestr) + deskey(des_block).
+/// Serialize cryptkeyarg2: remote name, counted binary public key, DES block.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_cryptkeyarg2(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_netnamestr(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let arg = p.cast::<CryptKeyArg2>();
+    // SAFETY: arg has the public cryptkeyarg2 layout. The netobj codec
+    // preserves embedded NUL bytes and enforces the protocol's 1024-byte cap.
+    unsafe {
+        if xdr_netnamestr(xdrs, (&mut (*arg).remotename as *mut *mut c_char).cast()) != XDR_TRUE
+            || xdr_netobj(xdrs, (&mut (*arg).remotekey as *mut NetObj).cast()) != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        xdr_des_block(xdrs, (*arg).deskey.as_mut_ptr().cast())
     }
-    if unsafe { xdr_netnamestr(xdrs, b.add(8).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe { xdr_des_block(xdrs, b.add(16).cast()) }
 }
 
-/// Serialize cryptkeyres: status(keystatus) + deskey(des_block).
+/// Serialize cryptkeyres, including a DES block only for KEY_SUCCESS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_cryptkeyres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keystatus(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let result = p.cast::<CryptKeyRes>();
+    // SAFETY: only the selected union arm is visited; failure replies need
+    // neither initialized nor accessible success-payload storage.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_des_block(xdrs, (*result).deskey.as_mut_ptr().cast())
+        } else {
+            XDR_TRUE
+        }
     }
-    unsafe { xdr_des_block(xdrs, b.add(4).cast()) }
 }
 
-/// Serialize getcredres: status(keystatus) + client_name(netnamestr).
+/// Serialize getcredres, including UNIX credentials only for KEY_SUCCESS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_getcredres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keystatus(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let result = p.cast::<GetCredRes>();
+    // SAFETY: result has the public union layout, including the alignment
+    // padding before unixcred on LP64. The inactive arm is never touched.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_unixcred(xdrs, (&mut (*result).cred as *mut UnixCred).cast())
+        } else {
+            XDR_TRUE
+        }
     }
-    unsafe { xdr_netnamestr(xdrs, b.add(8).cast()) }
 }
 
 /// Serialize key_netstarg: priv_key(keybuf) + pub_key(keybuf) + netname(string).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_key_netstarg(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keybuf(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let arg = p.cast::<KeyNetStArg>();
+    // SAFETY: the two fixed key buffers and following netname pointer match
+    // key_netstarg from the public protocol, without guessed byte offsets.
+    unsafe {
+        if xdr_keybuf(xdrs, (*arg).priv_key.as_mut_ptr().cast()) != XDR_TRUE
+            || xdr_keybuf(xdrs, (*arg).pub_key.as_mut_ptr().cast()) != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        xdr_netnamestr(xdrs, (&mut (*arg).netname as *mut *mut c_char).cast())
     }
-    if unsafe { xdr_keybuf(xdrs, b.add(144).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe { xdr_netnamestr(xdrs, b.add(288).cast()) }
 }
 
-/// Serialize key_netstres: status(keystatus) + priv_key(keybuf) + pub_key(keybuf).
+/// Serialize key_netstres, including both keys and netname on KEY_SUCCESS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keystatus(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let result = p.cast::<KeyNetStRes>();
+    // SAFETY: visit the complete successful union arm, including its owned
+    // string during XDR_FREE; failed arms contain only the status word.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_key_netstarg(xdrs, (&mut (*result).knet as *mut KeyNetStArg).cast())
+        } else {
+            XDR_TRUE
+        }
     }
-    if unsafe { xdr_keybuf(xdrs, b.add(8).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe { xdr_keybuf(xdrs, b.add(152).cast()) }
 }
 
 // ===========================================================================
@@ -3904,17 +3977,4 @@ pub unsafe extern "C" fn bindresvport6(sd: c_int, sin6: *mut c_void) -> c_int {
 // The pmap_getport above already handles this with u16 return type.
 // ===========================================================================
 
-// ===========================================================================
-// RPC global variable note
-// ===========================================================================
-//
-// The following are global variables in glibc, NOT functions:
-//   svc_fdset, svc_max_pollfd, svc_pollfd, _null_auth, rpc_createerr,
-//   rexecoptions, svcauthdes_stats
-//
-// For LD_PRELOAD interposition these are automatically resolved from
-// glibc's data segment. We do NOT re-export them here because:
-// 1. Rust cannot reliably export mutable global C data with correct ABI
-// 2. Programs link against glibc's copy directly
-// 3. The __rpc_thread_* accessors above provide function-based access
-//    to the thread-local variants where needed.
+// =================================
