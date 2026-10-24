@@ -140,10 +140,14 @@ int main(int argc, char **argv, char **envp) {
     if (!strcmp(scenario, "fork-exit")) {
         pid_t child = fork();
         if (child < 0) return 118;
-        if (child == 0) pthread_exit((void *)23);
+        if (child == 0) {
+            if (pthread_getspecific(key) != (void *)1) _exit(118);
+            pthread_exit((void *)23);
+        }
         int child_status;
         if (waitpid(child, &child_status, 0) != child ||
-            !WIFEXITED(child_status) || WEXITSTATUS(child_status)) return 118;
+            !WIFEXITED(child_status) || WEXITSTATUS(child_status) ||
+            pthread_getspecific(key) != (void *)1) return 118;
         event('F');
     } else if (self_cancel) {
         if (!strcmp(scenario, "disabled-cancel") &&

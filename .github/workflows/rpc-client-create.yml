@@ -55,8 +55,8 @@ jobs:
           mkdir -p "$root/source"
           git rev-parse HEAD > "$root/revision.txt"
           rustc --version --verbose > "$root/rustc.txt"
-          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs crates/frankenlibc-abi/tests/rpc_abi_test.rs crates/frankenlibc-core/src/rpc/mod.rs tests/integration/fixture_rpc_client_create.c scripts/check_rpc_client_create.py scripts/check_rpc_keyserv.py
-          for file in crates/frankenlibc-abi/src/rpc_abi.rs crates/frankenlibc-abi/src/rpc_client_create.rs crates/frankenlibc-abi/src/rpc_udp.rs crates/frankenlibc-abi/src/rpc_call.rs crates/frankenlibc-abi/src/rpc_keyserv.rs crates/frankenlibc-abi/tests/rpc_abi_test.rs crates/frankenlibc-core/src/rpc/mod.rs tests/integration/fixture_rpc_client_create.c scripts/check_rpc_client_create.py scripts/check_rpc_keyserv.py; do
+          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs crates/frankenlibc-abi/tests/rpc_abi_test.rs crates/frankenlibc-abi/tests/rpc_keyserv_hooks_test.rs crates/frankenlibc-core/src/rpc/mod.rs tests/integration/fixture_rpc_client_create.c scripts/check_rpc_client_create.py scripts/check_rpc_keyserv.py
+          for file in crates/frankenlibc-abi/src/rpc_abi.rs crates/frankenlibc-abi/src/rpc_client_create.rs crates/frankenlibc-abi/src/rpc_udp.rs crates/frankenlibc-abi/src/rpc_call.rs crates/frankenlibc-abi/src/rpc_keyserv.rs crates/frankenlibc-abi/tests/rpc_abi_test.rs crates/frankenlibc-abi/tests/rpc_keyserv_hooks_test.rs crates/frankenlibc-core/src/rpc/mod.rs tests/integration/fixture_rpc_client_create.c scripts/check_rpc_client_create.py scripts/check_rpc_keyserv.py; do
             cp "$file" "$root/source/"
             git hash-object "$file" >> "$root/source-blobs.txt"
           done
@@ -92,7 +92,7 @@ jobs:
             cargo test --locked -p frankenlibc-abi --test "$target" "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/$target.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/$target.log"
           done
-          cargo test --locked -p frankenlibc-abi --lib "${args[@]}" rpc_abi::rpc_udp::keyserv::tests -- --test-threads=1 2>&1 | tee "$root/keyserv-hooks.log"
+          cargo test --locked -p frankenlibc-abi --test rpc_keyserv_hooks_test "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/keyserv-hooks.log"
           grep -Eq 'test result: ok\. 5 passed; 0 failed;' "$root/keyserv-hooks.log"
           sudo python3 "$PWD/scripts/check_gai_async.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/dns"
           python3 scripts/check_aio_completion.py "$PWD/$root/libfrankenlibc_abi.so" --output "$root/aio"
@@ -103,6 +103,7 @@ jobs:
           import pathlib, subprocess
           subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--',
               'crates/frankenlibc-abi/src/rpc*.rs', 'crates/frankenlibc-abi/tests/rpc_abi_test.rs',
+              'crates/frankenlibc-abi/tests/rpc_keyserv_hooks_test.rs',
               'crates/frankenlibc-core/src/rpc/mod.rs',
               'tests/integration/fixture_rpc_client_create.c', 'scripts/check_rpc_client_create.py',
               'scripts/check_rpc_keyserv.py'], check=True)
@@ -113,6 +114,7 @@ jobs:
               'crates/frankenlibc-abi/src/rpc_udp.rs', 'crates/frankenlibc-abi/src/rpc_call.rs',
               'crates/frankenlibc-abi/src/rpc_keyserv.rs',
               'crates/frankenlibc-abi/tests/rpc_abi_test.rs',
+              'crates/frankenlibc-abi/tests/rpc_keyserv_hooks_test.rs',
               'crates/frankenlibc-core/src/rpc/mod.rs',
               'tests/integration/fixture_rpc_client_create.c', 'scripts/check_rpc_client_create.py',
               'scripts/check_rpc_keyserv.py']

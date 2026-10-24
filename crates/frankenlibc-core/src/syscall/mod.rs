@@ -4082,11 +4082,15 @@ pub unsafe fn sys_utimensat(
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_clone_fork(flags: usize) -> Result<i32, i32> {
+    const CLONE_VM: usize = 0x100;
+    let parent_tid = sys_gettid();
     // Simple clone for fork: flags=SIGCHLD, stack=0, no other args
     let ret = unsafe { raw::syscall2(SYS_CLONE, flags, 0) };
-    if ret == 0 {
-        // Child: the thread-local tid cache still holds the parent's tid.
-        crate::pthread::tls::note_fork_child();
+    if ret == 0 && flags & CLONE_VM == 0 {
+        // SAFETY: only the forking thread survives in this copied address
+        // space (CLONE_VM is absent). Preserve its values under the new TID
+        // before any key access; never rebuild a parent's shared tables.
+        unsafe { crate::pthread::tls::note_fork_child(parent_tid) };
     }
     syscall_result(ret).map(|v| v as i32)
 }
