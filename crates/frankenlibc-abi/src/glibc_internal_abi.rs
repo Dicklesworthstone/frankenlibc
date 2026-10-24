@@ -4136,13 +4136,21 @@ pub unsafe extern "C" fn __getauxval(typ: c_ulong) -> c_ulong {
 }
 // __getdelim: native — forward to our getdelim
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __getdelim(
+pub unsafe extern "C-unwind" fn __getdelim(
     lineptr: *mut *mut c_char,
     n: *mut SizeT,
     delim: c_int,
     stream: *mut c_void,
 ) -> SSizeT {
-    unsafe { super::stdio_abi::getdelim(lineptr, n, delim, stream) }
+    unsafe {
+        super::stdio_abi::getdelim_for_caller(
+            lineptr,
+            n,
+            delim,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 // __getmntent_r: native — forward to our getmntent_r
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5365,7 +5373,7 @@ pub unsafe extern "C" fn __x86_get_cpuid_feature_leaf(_leaf: c_uint, _info: *mut
 pub unsafe extern "C" fn __fentry__() {}
 // __uflow/__underflow/__w*flow: glibc stdio vtable helpers
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __uflow(fp: *mut c_void) -> c_int {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
@@ -5373,17 +5381,26 @@ pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
     // The inlined getc_unlocked calls this when its read window is empty:
     // after the refill, publish the new window so the following bytes are
     // read inline (bd-ygc3li).
-    let ch = unsafe { crate::io_internal_abi::_IO_default_uflow(fp) };
+    let ch = unsafe {
+        crate::stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize)
+    };
     crate::stdio_abi::republish_read_window(fp);
     ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __underflow(fp: *mut c_void) -> c_int {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    let ch = unsafe { crate::io_internal_abi::_IO_file_underflow(fp) };
+    let ch = unsafe {
+        crate::stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize)
+    };
+    if ch != libc::EOF {
+        // Underflow peeks rather than consuming the byte. The cancellation
+        // window, if needed, has already closed before the stream is changed.
+        let _ = unsafe { crate::stdio_abi::ungetc(ch, fp) };
+    }
     crate::stdio_abi::republish_read_window(fp);
     ch
 }

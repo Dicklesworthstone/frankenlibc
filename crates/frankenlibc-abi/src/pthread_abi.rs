@@ -6109,6 +6109,49 @@ pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 
     ret
 }
 
+/// A cancellation point whose public entry captured its caller before entering
+/// shared, out-of-line I/O machinery. `caller == 0` explicitly requests internal
+/// non-cancelling I/O; a nonzero address still goes through the normal host-thread
+/// and own-image checks. This must surround only the raw syscall, never stream
+/// mutation, allocation, or a callback.
+///
+/// # Safety
+/// The caller supplies valid syscall arguments and keeps its surrounding state
+/// unwind-safe. `caller` must be the actual public entry's return address, or zero
+/// for internal work; inventing an external address would bypass its admission.
+pub(crate) unsafe fn cancellation_point_syscall_for_caller(
+    caller: usize,
+    nr: libc::c_long,
+    args: [usize; 6],
+) -> isize {
+    let syscall = || {
+        // SAFETY: forwarded from this function's caller without alteration.
+        unsafe {
+            raw_syscall::syscall6(
+                nr as usize,
+                args[0],
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args[5],
+            ) as isize
+        }
+    };
+    let ret = if caller == 0 {
+        syscall()
+    } else {
+        // SAFETY: the closure captures only the syscall number and arguments;
+        // cancellation_window opens asynchronous cancellation for that syscall.
+        unsafe { cancellation_window(caller, syscall) }
+    };
+    if (-4095..0).contains(&ret) {
+        unsafe { set_abi_errno(-ret as c_int) };
+        return -1;
+    }
+    ret
+}
+
 /// [`cancellation_point_syscall`] returning the raw kernel result (a negated
 /// errno on failure). Always inlined, for the reason given there.
 #[inline(always)]
@@ -8878,7 +8921,7 @@ pub unsafe extern "C" fn __pthread_setspecific(
 /// Whether the calling thread's cancellation state lives in glibc's TCB.
 /// Native threads share the creating thread's TCB, so they must never be
 /// linked into glibc's per-thread cleanup chain.
-fn host_cancellation_thread() -> bool {
+pub(crate) fn host_cancellation_thread() -> bool {
     current_threading_backend() == THREAD_BACKEND_HOST
 }
 
