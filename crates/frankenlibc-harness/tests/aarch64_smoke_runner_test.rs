@@ -106,7 +106,11 @@ fn smoke_runner_contract_has_required_fields() -> TestResult {
         .get("preflight_checks")
         .and_then(Value::as_array)
         .ok_or("preflight_checks must be an array")?;
-    for required in ["aarch64_shared_elf", "required_exports", "compiler_available"] {
+    for required in [
+        "aarch64_shared_elf",
+        "required_exports",
+        "compiler_available",
+    ] {
         assert!(
             checks.iter().any(|check| check.as_str() == Some(required)),
             "missing actual-artifact preflight: {required}"

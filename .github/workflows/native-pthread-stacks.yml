@@ -1,0 +1,75 @@
+name: Native pthread stacks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
+      - 'crates/frankenlibc-core/src/pthread/**'
+      - 'crates/frankenlibc-core/src/syscall/**'
+      - '.github/workflows/native-pthread-stacks.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stacks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Execute native clone and public stack attribute contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/pthread-stacks')
+          root.mkdir(parents=True, exist_ok=True)
+          cases = [('core', ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
+                    'pthread::thread::tests::'], 'strict', 18)]
+          for mode in ['strict', 'hardened']:
+              cases.append((mode, ['cargo', 'test', '-p', 'frankenlibc-abi',
+                  '--test', 'pthread_stack_abi_test'], mode, 8))
+          failures = []
+          for label, command, mode, count in cases:
+              run = subprocess.run(command + ['--', '--nocapture', '--test-threads=1'],
+                  env=dict(os.environ, FRANKENLIBC_MODE=mode), stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT, timeout=900)
+              output = run.stdout.decode(errors='replace')
+              (root / f'{label}.log').write_text(output)
+              print(output[-14000:])
+              if run.returncode or f'test result: ok. {count} passed; 0 failed;' not in output:
+                  failures.append(label)
+          assert not failures, failures
+          PY
+      - name: Record the tested revision and compiler
+        if: always()
+        run: |
+          mkdir -p artifacts/pthread-stacks
+          git rev-parse HEAD > artifacts/pthread-stacks/revision.txt
+          rustc --version --verbose > artifacts/pthread-stacks/rustc.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-pthread-stacks
+          path: artifacts/pthread-stacks/
+          if-no-files-found: error
+          retention-days: 14

@@ -919,7 +919,8 @@ pub unsafe extern "C" fn xdr_u_long(xdrs: *mut c_void, lp: *mut c_ulong) -> c_in
                 return XDR_FALSE;
             }
             unsafe {
-                *lp = v as c_long as c_ulong;
+                // XDR unsigned longs are 32-bit wire values even on LP64.
+                *lp = v as u32 as c_ulong;
             }
             XDR_TRUE
         }
@@ -1900,7 +1901,11 @@ pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_i
         // peek and the tail-of-list `*cursor = null` write target
         // initialized memory.
         unsafe {
-            (**cursor).pml_next = std::ptr::null_mut();
+            if op == XDR_DECODE {
+                (**cursor).pml_next = std::ptr::null_mut();
+            }
+            // ENCODE must retain the caller's next link and serialize the
+            // complete list, including lists returned by pmap_getmaps.
             cursor = &mut (**cursor).pml_next as *mut *mut PmapList;
         }
     }
@@ -2922,13 +2927,14 @@ pub static __key_gendes_LOCAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null
 // Portmapper client (5 symbols)
 // ===========================================================================
 
-/// Get portmapper registrations from a host. Returns NULL — no portmapper support.
+/// Retrieve a native, caller-freeable portmapper v2 registration list over TCP.
 ///
 /// # Safety
-/// ABI boundary function.
+/// address points to a live writable sockaddr_in throughout the operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_getmaps(_address: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
+pub unsafe extern "C" fn pmap_getmaps(address: *mut c_void) -> *mut c_void {
+    // SAFETY: the native importer checks the public address and owns all results.
+    unsafe { rpc_udp::getmaps(address) }
 }
 
 /// Get a program's port from the remote portmapper v2 service.
@@ -2945,24 +2951,27 @@ pub unsafe extern "C" fn pmap_getport(
     unsafe { rpc_udp::getport(address, prog, vers, proto) }
 }
 
-/// Perform a remote procedure call via portmapper. Returns RPC_UNKNOWNPROTO (17).
+/// Execute portmapper v2 CALLIT with native UDP transport and XDR callbacks.
 ///
 /// # Safety
-/// ABI boundary function.
+/// addr/portp are live writable public objects. Codecs and their payloads remain
+/// live for the call; application unwinding releases the owned transport.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_rmtcall(
-    _addr: *mut c_void,
-    _prog: c_ulong,
-    _vers: c_ulong,
-    _proc_: c_ulong,
-    _xdrargs: *mut c_void,
-    _argsp: *mut c_void,
-    _xdrres: *mut c_void,
-    _resp: *mut c_void,
-    _tout: Timeval,
-    _portp: *mut c_ulong,
+pub unsafe extern "C-unwind" fn pmap_rmtcall(
+    addr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    xdrargs: *mut c_void,
+    argsp: *mut c_void,
+    xdrres: *mut c_void,
+    resp: *mut c_void,
+    tout: Timeval,
+    portp: *mut c_ulong,
 ) -> c_int {
-    17 // RPC_UNKNOWNPROTO
+    // SAFETY: the native operation validates fixed structures and retains all
+    // private ownership guards across the application's live XDR callbacks.
+    unsafe { rpc_udp::remote_call(addr, prog, vers, proc_, xdrargs, argsp, xdrres, resp, tout, portp) }
 }
 
 /// Register a program with the local portmapper v2 service.
@@ -2984,81 +2993,244 @@ pub unsafe extern "C" fn pmap_unset(prog: c_ulong, vers: c_ulong) -> c_int {
 }
 
 // ===========================================================================
-// DES crypt helpers (6 symbols) — Native stubs
-//
-// DES is cryptographically broken (56-bit key). These functions are from
-// <rpc/des_crypt.h> and are deprecated. We return DESERR_NOHWDEVICE (4)
-// for cbc_crypt/ecb_crypt to indicate no DES hardware is available,
-// and 0 (failure) for xencrypt/xdecrypt/passwd2des. des_setparity is
-// a no-op since we don't use DES.
+// DES crypt helpers (6 symbols) — native legacy RPC compatibility
 // ===========================================================================
 
-/// DESERR_NOHWDEVICE — no DES hardware available (standard return code).
-const DESERR_NOHWDEVICE: c_int = 4;
+const DESERR_NOHWDEVICE: c_int = 1;
+const DESERR_BADPARAM: c_int = 3;
 
-/// CBC-mode DES encryption/decryption. Returns DESERR_NOHWDEVICE.
+/// Copy public bytes through the existing tracked-bound, fault-checked copier.
+/// No Rust slice or reference is formed over caller-owned storage.
+unsafe fn rpc_des_copy(source: *const u8, destination: *mut u8, bytes: usize) -> bool {
+    // SAFETY: callers keep initialized private buffers live for the copy. The
+    // shared copier checks both external address ranges and kernel permissions.
+    match unsafe { crate::io_abi::iov_snapshot::copy_user_bytes(source, destination, bytes) } {
+        Ok(()) => true,
+        Err(error) => {
+            // SAFETY: errno is the calling thread's writable error slot.
+            unsafe { set_abi_errno(error) };
+            false
+        }
+    }
+}
+
+unsafe fn rpc_des_password(password: *const c_char) -> Option<[u8; 8]> {
+    let mut prefix = [0u8; 8];
+    for (index, byte) in prefix.iter_mut().enumerate() {
+        // SAFETY: byte is private initialized storage; the source remains an
+        // untrusted address. GNU consumes at most eight bytes, stopping at NUL.
+        if !unsafe { rpc_des_copy(password.cast::<u8>().wrapping_add(index), byte, 1) } {
+            return None;
+        }
+        if *byte == 0 {
+            break;
+        }
+    }
+    Some(prefix)
+}
+
+unsafe fn rpc_des_apply(
+    key: *const c_char,
+    buffer: *mut c_char,
+    length: c_uint,
+    mode: c_uint,
+    vector: Option<*mut c_char>,
+) -> c_int {
+    use frankenlibc_core::crypt::des::{RPC_DES_MAX_DATA, rpc_des_crypt};
+    let length = length as usize;
+    if length > RPC_DES_MAX_DATA || !length.is_multiple_of(8) {
+        return DESERR_BADPARAM;
+    }
+    let mut key_bytes = [0u8; 8];
+    let mut iv = [0u8; 8];
+    let mut data = Vec::new();
+    if data.try_reserve_exact(length).is_err() {
+        // SAFETY: errno is the calling thread's writable error slot.
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return DESERR_BADPARAM;
+    }
+    data.resize(length, 0u8);
+    // SAFETY: all destinations are initialized private storage of exact size.
+    if !unsafe { rpc_des_copy(key.cast(), key_bytes.as_mut_ptr(), key_bytes.len()) }
+        || !unsafe { rpc_des_copy(buffer.cast(), data.as_mut_ptr(), length) }
+    {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: import the complete IV before writing either public output.
+        if !unsafe { rpc_des_copy(vector.cast(), iv.as_mut_ptr(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    // Check writable extents while republishing their unchanged contents. A
+    // failed admission cannot publish ciphertext or a new chaining vector.
+    // Concurrent changes to permissions/storage remain the caller's concern.
+    if !unsafe { rpc_des_copy(data.as_ptr(), buffer.cast(), length) } {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: iv contains exactly the imported public bytes.
+        if !unsafe { rpc_des_copy(iv.as_ptr(), vector.cast(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    if rpc_des_crypt(
+        &key_bytes,
+        &mut data,
+        mode & 1 != 0,
+        vector.map(|_| &mut iv),
+    )
+    .is_err()
+    {
+        return DESERR_BADPARAM;
+    }
+    // SAFETY: the same checked copier publishes only initialized owned bytes.
+    if !unsafe { rpc_des_copy(data.as_ptr(), buffer.cast(), length) } {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: the complete resulting IV is initialized and still private.
+        if !unsafe { rpc_des_copy(iv.as_ptr(), vector.cast(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    if mode & 2 == 0 { DESERR_NOHWDEVICE } else { 0 }
+}
+
+/// CBC DES with GNU-compatible software fallback and chaining-vector updates.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// key and ivec name eight live bytes; buf names len writable bytes. Public
+/// storage remains live for the call; tracked extents and faults are checked.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cbc_crypt(
-    _key: *mut c_char,
-    _buf: *mut c_char,
-    _len: c_uint,
-    _mode: c_uint,
-    _ivec: *mut c_char,
+    key: *mut c_char,
+    buf: *mut c_char,
+    len: c_uint,
+    mode: c_uint,
+    ivec: *mut c_char,
 ) -> c_int {
-    DESERR_NOHWDEVICE
+    // SAFETY: the importer owns all intermediate key, data and IV bytes.
+    unsafe { rpc_des_apply(key, buf, len, mode, Some(ivec)) }
 }
 
-/// ECB-mode DES encryption/decryption. Returns DESERR_NOHWDEVICE.
+/// ECB DES with GNU-compatible software fallback.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// key names eight live bytes; buf names len live writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ecb_crypt(
-    _key: *mut c_char,
-    _buf: *mut c_char,
-    _len: c_uint,
-    _mode: c_uint,
+    key: *mut c_char,
+    buf: *mut c_char,
+    len: c_uint,
+    mode: c_uint,
 ) -> c_int {
-    DESERR_NOHWDEVICE
+    // SAFETY: the importer owns all intermediate key and data bytes.
+    unsafe { rpc_des_apply(key, buf, len, mode, None) }
 }
 
-/// Set DES key parity bits. No-op since DES is not supported.
+/// Apply the legacy seven-bit DES odd-parity table to eight key bytes.
 ///
 /// # Safety
-/// ABI boundary function.
+/// key names eight live writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn des_setparity(_key: *mut c_char) {
-    // No-op: DES parity is irrelevant without DES support.
+pub unsafe extern "C" fn des_setparity(key: *mut c_char) {
+    let mut bytes = [0u8; 8];
+    // SAFETY: the checked importer fills exactly this private key array.
+    if !unsafe { rpc_des_copy(key.cast(), bytes.as_mut_ptr(), bytes.len()) } {
+        return;
+    }
+    frankenlibc_core::crypt::des::rpc_des_setparity(&mut bytes);
+    // SAFETY: publish only initialized key bytes through the same checked path.
+    unsafe { rpc_des_copy(bytes.as_ptr(), key.cast(), bytes.len()) };
 }
 
-/// Hex-encrypt a secret key with a password. Returns 0 (failure).
-///
-/// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xencrypt(_secret: *mut c_char, _passwd: *mut c_char) -> c_int {
-    0 // failure — no DES support
+unsafe fn rpc_des_hex(secret: *mut c_char, password: *const c_char, decrypt: bool) -> c_int {
+    use frankenlibc_core::crypt::des::{RPC_DES_MAX_DATA, RpcDesError, rpc_des_hex_crypt};
+    // SAFETY: only the bounded eight-byte password prefix is imported.
+    let Some(password) = (unsafe { rpc_des_password(password) }) else {
+        return 0;
+    };
+    let mut bytes = Vec::new();
+    // One odd trailing nibble is accepted and discarded by GNU. Include its
+    // terminating NUL in private storage so even empty output needs no new
+    // allocation after transformation.
+    for index in 0..=2 * RPC_DES_MAX_DATA + 1 {
+        let mut byte = 0u8;
+        // SAFETY: one-byte fault-checked reads never pass a valid terminator
+        // or an allocation boundary merely to fill a speculative chunk.
+        if !unsafe { rpc_des_copy(secret.cast::<u8>().wrapping_add(index), &mut byte, 1) } {
+            return 0;
+        }
+        if bytes.try_reserve(1).is_err() {
+            // SAFETY: errno is the calling thread's writable error slot.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return 0;
+        }
+        bytes.push(byte);
+        if byte != 0 {
+            continue;
+        }
+        let binary_length = index / 2;
+        if !binary_length.is_multiple_of(8) {
+            return 0;
+        }
+        let output_length = binary_length * 2 + 1;
+        // SAFETY: test the exact output extent by copying its original bytes.
+        if !unsafe { rpc_des_copy(bytes.as_ptr(), secret.cast(), output_length) } {
+            return 0;
+        }
+        let length = match rpc_des_hex_crypt(&mut bytes[..index], &password, decrypt) {
+            Ok(length) => length,
+            Err(RpcDesError::Allocation) => {
+                // SAFETY: errno is the calling thread's writable error slot.
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return 0;
+            }
+            Err(RpcDesError::BadLength) => return 0,
+        };
+        bytes[length] = 0;
+        // SAFETY: the complete output and terminator fit the checked extent.
+        return c_int::from(unsafe { rpc_des_copy(bytes.as_ptr(), secret.cast(), length + 1) });
+    }
+    0
 }
 
-/// Hex-decrypt a secret key with a password. Returns 0 (failure).
+/// Hex-encrypt a legacy RPC secret with password-derived CBC DES.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// secret is a live writable NUL-terminated string; passwd remains readable
+/// through its first NUL or eight bytes. Tracked bounds and faults are checked.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xdecrypt(_secret: *mut c_char, _passwd: *mut c_char) -> c_int {
-    0 // failure — no DES support
+pub unsafe extern "C" fn xencrypt(secret: *mut c_char, passwd: *mut c_char) -> c_int {
+    // SAFETY: the shared implementation imports and bounds both public inputs.
+    unsafe { rpc_des_hex(secret, passwd, false) }
 }
 
-/// Convert a password to a DES key. Returns 0 (failure).
+/// Hex-decrypt a legacy RPC secret with password-derived CBC DES.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// secret and passwd have the same live-buffer requirements as xencrypt.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn passwd2des(_passwd: *mut c_char, _key: *mut c_char) -> c_int {
-    0 // failure — no DES support
+pub unsafe extern "C" fn xdecrypt(secret: *mut c_char, passwd: *mut c_char) -> c_int {
+    // SAFETY: the shared implementation imports and bounds both public inputs.
+    unsafe { rpc_des_hex(secret, passwd, true) }
+}
+
+/// Convert at most eight password bytes to the legacy RPC key. The C ABI is void.
+///
+/// # Safety
+/// passwd remains readable through its first NUL or eight bytes. key names
+/// eight live writable bytes; all accesses use the checked copier.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn passwd2des(passwd: *mut c_char, key: *mut c_char) {
+    // SAFETY: the bounded importer does not form a reference to caller memory.
+    let Some(password) = (unsafe { rpc_des_password(passwd) }) else {
+        return;
+    };
+    let bytes = frankenlibc_core::crypt::des::rpc_passwd2des(&password);
+    // SAFETY: publish only the complete initialized key.
+    unsafe { rpc_des_copy(bytes.as_ptr(), key.cast(), bytes.len()) };
 }
 
 // ===========================================================================
@@ -3254,18 +3426,121 @@ pub unsafe extern "C" fn getpublickey(netname: *const c_char, publickey: *mut c_
     1
 }
 
-/// Get the secret key for a netname from the publickey database.
-/// Returns 0 (failure): encrypted secret-key decryption is not implemented.
+/// Import a bounded Secure RPC input without dereferencing caller storage.
+unsafe fn rpc_secret_string(source: *const c_char, maximum: usize) -> Option<Vec<u8>> {
+    let mut value = Vec::new();
+    for index in 0..=maximum {
+        let Some(address) = (source as usize).checked_add(index) else {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EFAULT) };
+            return None;
+        };
+        let mut byte = 0u8;
+        // SAFETY: the byte destination is private; the copier checks each
+        // source address and never reads beyond a discovered terminator.
+        if !unsafe { rpc_des_copy(address as *const u8, &mut byte, 1) } {
+            return None;
+        }
+        if byte == 0 {
+            return Some(value);
+        }
+        if index == maximum {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return None;
+        }
+        if value.try_reserve(1).is_err() {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return None;
+        }
+        value.push(byte);
+    }
+    None
+}
+
+/// Get a classic secret key through the publickey NSS database. Native files
+/// decrypt and verify the stored checksum; configured GNU modules receive the
+/// complete password through their public four-argument entry point.
+///
+/// A found key with a wrong password returns 1 and publishes an empty string.
+/// A missing key or failed source returns 0 without publishing partial output.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname/passwd are readable C strings. secretkey is writable for 49 bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsecretkey(
-    _netname: *const c_char,
-    _secretkey: *mut c_char,
-    _passwd: *const c_char,
+    netname: *const c_char,
+    secretkey: *mut c_char,
+    passwd: *const c_char,
 ) -> c_int {
-    0 // Not found
+    use frankenlibc_core::crypt::des::RpcDesError;
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    use frankenlibc_core::rpc::secret::{SecretKey, decrypt_secret, lookup_encrypted_secret};
+
+    if secretkey.is_null()
+        || known_remaining(secretkey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return 0;
+    }
+    // SAFETY: inputs are only addresses for the fault-checked importer. The
+    // native name limit is 255; the password bound matches NSS scratch limits.
+    let Some(name) = (unsafe { rpc_secret_string(netname, 255) }) else {
+        return 0;
+    };
+    if name.is_empty() {
+        return 0;
+    }
+    let Some(password) = (unsafe { rpc_secret_string(passwd, 1 << 24) }) else {
+        return 0;
+    };
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() != b"files" {
+                return crate::nss_module::getsecretkey(service.name(), &name, &password);
+            }
+            match rpc_identity_file(c"/etc/publickey", |image| {
+                lookup_encrypted_secret(image, &name)
+            }) {
+                Answer::Found(encrypted) => match decrypt_secret(&encrypted, &password) {
+                    Ok(secret) => Answer::Found(secret),
+                    Err(RpcDesError::Allocation) => {
+                        // SAFETY: errno belongs to the calling thread.
+                        unsafe { set_abi_errno(libc::ENOMEM) };
+                        Answer::TryAgain(libc::ENOMEM)
+                    }
+                    Err(RpcDesError::BadLength) => Answer::NotFound,
+                },
+                Answer::NotFound => Answer::NotFound,
+                Answer::Unavailable(error) => Answer::Unavailable(error),
+                Answer::TryAgain(error) => Answer::TryAgain(error),
+                Answer::BufferTooSmall => Answer::BufferTooSmall,
+            }
+        },
+        None,
+    );
+    let Answer::Found(secret) = answer else {
+        return 0;
+    };
+    let mut output = [0u8; PUBLICKEY_HEX_BYTES + 1];
+    let length = match secret {
+        SecretKey::Key(key) => {
+            output[..PUBLICKEY_HEX_BYTES].copy_from_slice(&key);
+            output.len()
+        }
+        // Only this byte changes on a wrong password, preserving the public
+        // distinction between a missing key and a found but unusable key.
+        SecretKey::WrongPassword => 1,
+    };
+    // SAFETY: only initialized private bytes are published; the shared copier
+    // checks tracked allocation bounds and actual writable kernel mappings.
+    c_int::from(unsafe { rpc_des_copy(output.as_ptr(), secretkey.cast(), length) })
 }
 
 /// Get the port number for an RPC program on a remote host.

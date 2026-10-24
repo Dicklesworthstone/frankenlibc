@@ -18,6 +18,9 @@ use std::ffi::CStr;
 /// Bounded native ONC RPC message envelopes.
 pub mod wire;
 
+/// Classic Secure RPC secret-key records and password verification.
+pub mod secret;
+
 /// Linux's public `NGROUPS` limit for the Secure RPC group output array.
 pub const NETID_MAX_GROUPS: usize = 65_536;
 

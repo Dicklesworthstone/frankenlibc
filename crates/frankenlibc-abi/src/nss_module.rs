@@ -922,6 +922,67 @@ pub(crate) fn getpublickey(
     }
 }
 
+/// Call GNU's four-argument `nss_getsecretkey` ABI. An empty successful
+/// result means that the password failed; it must retain NSS SUCCESS status.
+pub(crate) fn getsecretkey(
+    service: &[u8],
+    netname: &[u8],
+    password: &[u8],
+) -> Answer<frankenlibc_core::rpc::secret::SecretKey> {
+    use frankenlibc_core::rpc::{PUBLICKEY_HEX_BYTES, secret::SecretKey};
+    type Function =
+        unsafe extern "C" fn(*const c_char, *mut c_char, *mut c_char, *mut c_int) -> c_int;
+    let Some(address) = module_function(service, "getsecretkey") else {
+        return Answer::Unavailable(missing_source());
+    };
+    let mut name = Vec::new();
+    let mut passwd = Vec::new();
+    if name.try_reserve_exact(netname.len() + 1).is_err()
+        || passwd.try_reserve_exact(password.len() + 1).is_err()
+    {
+        return Answer::TryAgain(libc::ENOMEM);
+    }
+    name.extend_from_slice(netname);
+    name.push(0);
+    passwd.extend_from_slice(password);
+    passwd.push(0);
+    let mut output = [0xffu8; PUBLICKEY_HEX_BYTES + 1];
+    // SAFETY: GNU <nss.h> declares name, output, mutable password, errno in
+    // this order. Both strings and the complete fixed-size output are private.
+    let function: Function = unsafe { core::mem::transmute(address) };
+    // SAFETY: the calling thread owns this writable errno slot.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    // SAFETY: all arguments stay live through the call. The full password is
+    // passed to modules; only the native files DES backend truncates to eight.
+    let status = unsafe {
+        function(
+            name.as_ptr().cast(),
+            output.as_mut_ptr().cast(),
+            passwd.as_mut_ptr().cast(),
+            error,
+        )
+    };
+    // SAFETY: error remains this thread's valid errno pointer.
+    let error = unsafe { *error };
+    match Status::from_raw(status) {
+        Status::Success if output[0] == 0 => Answer::Found(SecretKey::WrongPassword),
+        Status::Success
+            if output[PUBLICKEY_HEX_BYTES] == 0
+                && output[..PUBLICKEY_HEX_BYTES]
+                    .iter()
+                    .all(u8::is_ascii_hexdigit) =>
+        {
+            let mut secret = [0; PUBLICKEY_HEX_BYTES];
+            secret.copy_from_slice(&output[..PUBLICKEY_HEX_BYTES]);
+            Answer::Found(SecretKey::Key(secret))
+        }
+        Status::Success => Answer::Unavailable(libc::EINVAL),
+        Status::NotFound => Answer::NotFound,
+        Status::Unavailable => Answer::Unavailable(error),
+        Status::TryAgain => Answer::TryAgain(error),
+    }
+}
+
 type ByNameFn<T> =
     unsafe extern "C" fn(*const c_char, *mut T, *mut c_char, usize, *mut c_int) -> c_int;
 type ByIdFn<T> = unsafe extern "C" fn(u32, *mut T, *mut c_char, usize, *mut c_int) -> c_int;

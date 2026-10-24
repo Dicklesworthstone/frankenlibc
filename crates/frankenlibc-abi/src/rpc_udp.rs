@@ -22,6 +22,10 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 #[path = "rpc_tcp.rs"]
 mod tcp;
 
+#[path = "rpc_portmap.rs"]
+mod portmap;
+pub(super) use portmap::{getmaps, remote_call};
+
 // Reuse the same tracked-bound, fault-checked copier as the socket importers.
 // Keep one implementation; do not introduce another process_vm/pipe fallback.
 use crate::io_abi::iov_snapshot as user_copy;
