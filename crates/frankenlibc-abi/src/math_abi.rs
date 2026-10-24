@@ -268,7 +268,7 @@ fn finite_sqrtf128(x: f128) -> f128 {
 
     for i in 0..115 {
         let next_2_bits = if i < 57 {
-            let b = (m_top >> 126) as u128;
+            let b = m_top >> 126;
             m_top <<= 2;
             b
         } else {
@@ -449,34 +449,6 @@ fn fromfp_unsigned_f128(x: f128, rnd: c_int, width: u32) -> u64 {
     r as u64
 }
 
-/// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
-/// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
-/// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
-/// underflow (magnitude increased from 0), so it sets no errno.
-#[inline]
-fn nextafter_range_error_f64(x: f64, r: f64) -> bool {
-    if x.is_nan() || r.is_nan() {
-        return false;
-    }
-    if x.is_finite() && r.is_infinite() {
-        return true; // overflow
-    }
-    let sub_or_zero = r == 0.0 || r.abs() < f64::MIN_POSITIVE;
-    sub_or_zero && r.abs() < x.abs() // underflow (magnitude decreased)
-}
-
-#[inline]
-fn nextafter_range_error_f32(x: f32, r: f32) -> bool {
-    if x.is_nan() || r.is_nan() {
-        return false;
-    }
-    if x.is_finite() && r.is_infinite() {
-        return true;
-    }
-    let sub_or_zero = r == 0.0 || r.abs() < f32::MIN_POSITIVE;
-    sub_or_zero && r.abs() < x.abs()
-}
-
 #[inline]
 fn scaling_range_error_f64(x: f64, out: f64) -> bool {
     x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
@@ -487,24 +459,43 @@ fn scaling_range_error_f32(x: f32, out: f32) -> bool {
     x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
 }
 
+/// Whether `x` is a finite integer, read off its exponent and fraction bits.
+///
+/// Not `x.is_finite() && x.fract() == 0.0`: the baseline x86-64 build has no
+/// `roundsd` (SSE4.1), so `fract` lowers to a call of this library's exported
+/// `trunc` -- a whole ABI entry point -- and LLVM hoists that call above
+/// `x < 0.0` in `pow`, onto every call with finite arguments
+/// (bd-rc0923-epic-eeuy4f.13).
 #[inline]
 fn is_integral_f64(x: f64) -> bool {
-    x.is_finite() && x.fract() == 0.0
+    let bits = x.to_bits() & !(1u64 << 63);
+    match (bits >> 52) as u32 {
+        // inf, NaN
+        0x7ff => false,
+        // |x| >= 2^52: no fraction bits left.
+        e if e >= 0x3ff + 52 => true,
+        // |x| < 1: only a zero is integral.
+        e if e < 0x3ff => bits == 0,
+        // 1..=52 fraction bits.
+        e => bits & ((1u64 << (0x3ff + 52 - e)) - 1) == 0,
+    }
 }
 
+/// [`is_integral_f64`] for `f32`, for the same reason (`truncf`).
 #[inline]
-fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
-    // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
-    // membrane is provably always-Allow for MathFenv and can never heal a math
-    // result, so `decide()`+`observe()` cannot change the output. Skip them for
-    // the common finite case; finite->non-finite "adverse" results fall through
-    // to the full path so observation (and any future deny/heal) stays reachable.
-    if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x);
-        if !(x.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+fn is_integral_f32(x: f32) -> bool {
+    let bits = x.to_bits() & !(1u32 << 31);
+    match bits >> 23 {
+        0xff => false,
+        e if e >= 0x7f + 23 => true,
+        e if e < 0x7f => bits == 0,
+        e => bits & ((1u32 << (0x7f + 23 - e)) - 1) == 0,
     }
+}
+
+#[cold]
+#[inline(never)]
+fn unary_entry_slow(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -538,14 +529,66 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     out
 }
 
+#[inline(always)]
+fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    // A NaN argument is the result, quieted -- FE_INVALID for a signaling NaN
+    // only, sign and payload kept -- in every function routed here (glibc
+    // 2.43, scratch nansweep.c). The kernels did not agree: exp/log/floor
+    // returned an sNaN unquieted and silent, exp2/exp10 raised FE_INVALID for
+    // a quiet NaN, tan/y0/y1 returned the canonical NaN.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
+    // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
+    // membrane is provably always-Allow for MathFenv and can never heal a math
+    // result, so `decide()`+`observe()` cannot change the output.
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
+    unary_entry_slow(x, base_cost_ns, f)
+}
+
+/// Entrypoint wrapper for total unary `<math.h>` functions (`sin`, `cos`, `tan`,
+/// `atan`, etc.) where a finite `f64` input never produces a non-finite result,
+/// so `adverse = x.is_finite() && !raw.is_finite()` is identically false.
+/// Taking `impl Fn(f64) -> f64` inlines `avx2_fma_dispatch!` directly into the
+/// exported ABI symbol and tail-calls `avx2_fma_twin` without allocating a stack
+/// frame or spilling `x` across the call.
+#[inline(always)]
+fn unary_infallible_entry(x: f64, base_cost_ns: u64, f: impl Fn(f64) -> f64) -> f64 {
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        x.to_bits() as usize,
+        std::mem::size_of::<f64>(),
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::MathFenv, decision.profile, base_cost_ns, true);
+        return deny_fallback(mode);
+    }
+    let raw = f(x);
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(base_cost_ns, std::mem::size_of::<f64>()),
+        false,
+    );
+    raw
+}
+
 #[inline]
 fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x, y);
-        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+        return f(x, y);
     }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
@@ -584,17 +627,17 @@ fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f6
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sin(x: f64) -> f64 {
-    unary_entry(x, 5, frankenlibc_core::math::sin)
+    unary_infallible_entry(x, 5, frankenlibc_core::math::sin)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cos(x: f64) -> f64 {
-    unary_entry(x, 5, frankenlibc_core::math::cos)
+    unary_infallible_entry(x, 5, frankenlibc_core::math::cos)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tan(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::tan)
+    unary_infallible_entry(x, 6, frankenlibc_core::math::tan)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -602,6 +645,11 @@ pub unsafe extern "C" fn asin(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::asin);
     if x.is_finite() && x.abs() > 1.0 {
         set_domain_errno();
+    }
+    // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
+    // the x86 default NaN. FE_INVALID was raised by the kernel either way.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
     }
     out
 }
@@ -612,12 +660,17 @@ pub unsafe extern "C" fn acos(x: f64) -> f64 {
     if x.is_finite() && x.abs() > 1.0 {
         set_domain_errno();
     }
+    // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
+    // the x86 default NaN. FE_INVALID was raised by the kernel either way.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
+    }
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan(x: f64) -> f64 {
-    unary_entry(x, 5, frankenlibc_core::math::atan)
+    unary_infallible_entry(x, 5, frankenlibc_core::math::atan)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -757,6 +810,10 @@ pub unsafe extern "C" fn log10(x: f64) -> f64 {
             set_range_errno();
         }
     }
+    // glibc's log10 domain-error NaN (x < 0, -inf) is positive.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
+    }
     out
 }
 
@@ -832,7 +889,9 @@ pub unsafe extern "C" fn copysign(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fabs(x: f64) -> f64 {
-    unary_entry(x, 4, frankenlibc_core::math::fabs)
+    // A sign-bit clear, as in glibc: a NaN keeps its payload and stays
+    // signaling, and no exception is raised.
+    f64::from_bits(x.to_bits() & !(1 << 63))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -903,14 +962,18 @@ pub unsafe extern "C" fn tgamma(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
     // Compute via reentrant version to get sign, then update global signgam.
-    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
+    let (val, sign) = frankenlibc_core::math::lgamma_r(x);
     unsafe {
         signgam = sign;
         __signgam = sign;
     }
     // Run through unary_entry for membrane accounting. lgamma computes
     // the same value as lgamma_r; the sign is a side-channel.
-    let out = unary_entry(x, 10, frankenlibc_core::math::lgamma);
+    let out = if !x.is_nan() && runtime_policy::math_membrane_fastpath() {
+        val
+    } else {
+        unary_entry(x, 10, frankenlibc_core::math::lgamma)
+    };
     if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
         set_range_errno();
     }
@@ -1047,13 +1110,88 @@ pub unsafe extern "C" fn modf(x: f64, iptr: *mut f64) -> f64 {
 // Min / max / dim / fma
 // ---------------------------------------------------------------------------
 
+/// How a min/max function treats NaN arguments (glibc 2.43, measured with
+/// scratch fmaxnan.c). In every family an operation on a signaling NaN is
+/// `x + y`: the sNaN quieted, FE_INVALID raised.
+#[derive(Clone, Copy)]
+enum MinMaxNan {
+    /// fmax/fmin/fmaxmag/fminmag: a quiet NaN yields the other operand
+    /// silently; a signaling NaN poisons the result.
+    Number,
+    /// fmaximum_num/fminimum_num: any NaN yields the other operand (FE_INVALID
+    /// for a signaling one); two NaNs give `x + y`.
+    NumberAlways,
+    /// fmaximum/fminimum: any NaN propagates.
+    Propagate,
+}
+
+#[inline]
+fn is_snan_f64(x: f64) -> bool {
+    x.is_nan() && x.to_bits() & (1 << 51) == 0
+}
+
+#[inline]
+fn is_snan_f32(x: f32) -> bool {
+    x.is_nan() && x.to_bits() & (1 << 22) == 0
+}
+
+/// The result when `x` or `y` is a NaN, else `None`. Short-circuiting here
+/// also keeps the comparisons below from raising a spurious FE_INVALID for a
+/// quiet NaN (fmax(NaN, 1) did).
+#[inline]
+fn min_max_nan_f64(x: f64, y: f64, rule: MinMaxNan) -> Option<f64> {
+    if !x.is_nan() && !y.is_nan() {
+        return None;
+    }
+    let poison = || std::hint::black_box(x) + std::hint::black_box(y);
+    let (xs, ys) = (is_snan_f64(x), is_snan_f64(y));
+    Some(match rule {
+        MinMaxNan::Propagate => poison(),
+        MinMaxNan::Number if xs || ys => poison(),
+        MinMaxNan::Number | MinMaxNan::NumberAlways if !(x.is_nan() && y.is_nan()) => {
+            if xs || ys {
+                let _ = poison();
+            }
+            if x.is_nan() { y } else { x }
+        }
+        _ => poison(),
+    })
+}
+
+/// [`min_max_nan_f64`] for `f32`.
+#[inline]
+fn min_max_nan_f32(x: f32, y: f32, rule: MinMaxNan) -> Option<f32> {
+    if !x.is_nan() && !y.is_nan() {
+        return None;
+    }
+    let poison = || std::hint::black_box(x) + std::hint::black_box(y);
+    let (xs, ys) = (is_snan_f32(x), is_snan_f32(y));
+    Some(match rule {
+        MinMaxNan::Propagate => poison(),
+        MinMaxNan::Number if xs || ys => poison(),
+        MinMaxNan::Number | MinMaxNan::NumberAlways if !(x.is_nan() && y.is_nan()) => {
+            if xs || ys {
+                let _ = poison();
+            }
+            if x.is_nan() { y } else { x }
+        }
+        _ => poison(),
+    })
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmin(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     frankenlibc_core::math::fmin(x, y)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     // glibc's fmax lowers to the hardware MAXSD instruction, which on a signed-
     // zero tie (both operands ±0) returns the SECOND operand. libm's fmax
     // returns the first, so fmax(-0,+0) gave -0 where glibc gives +0. Mirror
@@ -1128,6 +1266,19 @@ pub unsafe extern "C" fn fma(x: f64, y: f64, z: f64) -> f64 {
     // Strict mode fast path: skip runtime policy overhead entirely.
     if runtime_policy::strict_passthrough_active() {
         return hardware_fma(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fma(x, y, z));
+    }
+
+    // `fma` predates the deployed math-membrane fast path used by the unary
+    // and binary wrappers, so hardened calls were still paying for a decision,
+    // explainability snapshot, and observation even though deployed MathFenv
+    // decisions are always Allow and can never repair the result. Preserve the
+    // full path for the only case it can observe: finite inputs overflowing to
+    // a non-finite result.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = hardware_fma(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fma(x, y, z));
+        if !(x.is_finite() && y.is_finite() && z.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
     }
 
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
@@ -1218,6 +1369,10 @@ pub unsafe extern "C" fn logb(x: f64) -> f64 {
     // FE_DIVBYZERO alone and leaves errno untouched — C99 logb has no SVID
     // errno wrapper. The flag itself is raised in core, so dropping the errno
     // here does not weaken the pole signal.
+    if x.is_nan() {
+        // Quieted, FE_INVALID only for a signaling NaN (glibc).
+        return std::hint::black_box(x) + 0.0;
+    }
     frankenlibc_core::math::logb(x)
 }
 
@@ -1311,14 +1466,14 @@ pub unsafe extern "C" fn jn(n: c_int, x: f64) -> f64 {
 pub unsafe extern "C" fn y0(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y0);
     // y0(x) for x <= 0 is domain error
-    bessel_y_errno(x.into());
+    bessel_y_errno(x);
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y1);
-    bessel_y_errno(x.into());
+    bessel_y_errno(x);
     out
 }
 
@@ -1334,7 +1489,7 @@ pub unsafe extern "C" fn yn(n: c_int, x: f64) -> f64 {
         0,
     );
     let raw = frankenlibc_core::math::yn(n, x);
-    bessel_y_errno(x.into());
+    bessel_y_errno(x);
     runtime_policy::observe(
         ApiFamily::MathFenv,
         decision.profile,
@@ -1401,6 +1556,9 @@ pub unsafe extern "C" fn significand(x: f64) -> f64 {
     if x == 0.0 || !x.is_finite() {
         pi_fn_raise_invalid_f64();
     }
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     out
 }
 
@@ -1426,12 +1584,13 @@ pub unsafe extern "C" fn pow10(x: f64) -> f64 {
 
 #[inline(always)]
 fn unary_entry_f32<F: Fn(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
+    // NaN in, quieted NaN out; see `unary_entry`.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x);
-        if !(x.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+        return f(x);
     }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
@@ -1476,10 +1635,7 @@ fn unary_entry_f32<F: Fn(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
 fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x, y);
-        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+        return f(x, y);
     }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
@@ -1621,9 +1777,11 @@ pub unsafe extern "C" fn log10f(x: f32) -> f32 {
 pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
     let out = binary_entry_f32(x, y, 7, frankenlibc_core::math::powf);
     if x.is_finite() && y.is_finite() {
-        if x < 0.0 && y.fract() != 0.0 {
+        if x < 0.0 && !is_integral_f32(y) {
             set_domain_errno();
-        } else if out.is_infinite() || (x == 0.0 && y < 0.0) || (out == 0.0 && y > 0.0 && x != 0.0)
+        } else if out.is_infinite()
+            || (x == 0.0 && y < 0.0)
+            || frankenlibc_core::math::powf_underflow_erange(x, y)
         {
             set_range_errno();
         }
@@ -1649,7 +1807,8 @@ pub unsafe extern "C" fn sqrtf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fabsf(x: f32) -> f32 {
-    unary_entry_f32(x, 2, frankenlibc_core::math::fabsf)
+    // A sign-bit clear; see `fabs`.
+    f32::from_bits(x.to_bits() & !(1 << 31))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1732,6 +1891,10 @@ pub unsafe extern "C" fn atanhf(x: f32) -> f32 {
             set_range_errno();
         }
     }
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
@@ -1790,25 +1953,38 @@ pub unsafe extern "C" fn erfcf(x: f32) -> f32 {
 pub unsafe extern "C" fn tgammaf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 10, frankenlibc_core::math::tgammaf);
     if x.is_finite() {
-        if x < 0.0 && x == x.floor() {
+        if x < 0.0 && is_integral_f32(x) {
             set_domain_errno(); // negative integer: domain error
         } else if x == 0.0 || out.is_infinite() || out == 0.0 {
             set_range_errno(); // zero or overflow/underflow: range error
         }
+    }
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
     }
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
+    // A NaN is returned quieted with signgam 1, FE_INVALID only for a
+    // signaling one (glibc); lgammaf_r's arithmetic raised it for quiet NaNs.
+    if x.is_nan() {
+        unsafe {
+            signgam = 1;
+            __signgam = 1;
+        }
+        return std::hint::black_box(x) + 0.0;
+    }
     // Compute via reentrant version to get sign, then update global signgam.
-    let (_, sign) = frankenlibc_core::math::lgammaf_r(x);
+    let (val, sign) = frankenlibc_core::math::lgammaf_r(x);
     unsafe {
         signgam = sign;
         __signgam = sign;
     }
-    let out = unary_entry_f32(x, 10, frankenlibc_core::math::lgammaf);
-    if x.is_finite() && ((x <= 0.0 && x == x.floor()) || out.is_infinite()) {
+    let out = unary_entry_f32(x, 10, |_| val);
+    if x.is_finite() && ((x <= 0.0 && is_integral_f32(x)) || out.is_infinite()) {
         set_range_errno();
     }
     out
@@ -1823,7 +1999,7 @@ pub unsafe extern "C" fn lgammaf_r(x: f32, signgamp: *mut c_int) -> f32 {
         unsafe { *signgamp = sign };
     }
     if x.is_finite() {
-        if x <= 0.0 && x == x.floor() {
+        if x <= 0.0 && is_integral_f32(x) {
             set_domain_errno();
         } else if val.is_infinite() {
             set_range_errno();
@@ -1860,6 +2036,9 @@ pub unsafe extern "C" fn fdimf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     // glibc fmaxf lowers to MAXSS: a signed-zero tie returns the SECOND operand
     // (see fmax). libm's fmaxf returns the first.
     if x == 0.0 && y == 0.0 {
@@ -1870,6 +2049,9 @@ pub unsafe extern "C" fn fmaxf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     binary_entry_f32(x, y, 2, frankenlibc_core::math::fminf)
 }
 
@@ -1878,6 +2060,15 @@ pub unsafe extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32 {
     // Strict mode fast path, as `fma`: fmaf sets no errno.
     if runtime_policy::strict_passthrough_active() {
         return hardware_fmaf(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fmaf(x, y, z));
+    }
+    // Deployed MathFenv is always-Allow; keep adverse finite-to-non-finite
+    // results on the full observation path, matching the f64 entry point and
+    // the existing unary/binary wrappers.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = hardware_fmaf(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fmaf(x, y, z));
+        if !(x.is_finite() && y.is_finite() && z.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
     }
     // fma is ternary — use the binary path with manual third arg folding.
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
@@ -2407,24 +2598,22 @@ mod x87_math_entry {
     }
 
     use super::{
-        acosf128, acoshf128, acospif128, asinf128, asinhf128, asinpif128, atan2f128,
-        atan2pif128, atanf128, atanhf128, atanpif128, cbrtf128, ceilf128, compoundnf128,
-        copysignf128, cosf128, coshf128, cospif128, erfcf128, erff128, exp10f128,
-        exp10m1f128, exp2f128, exp2m1f128, expf128, expm1f128, f32addf128, f32divf128,
-        f32fmaf128, f32mulf128, f32sqrtf128, f32subf128, f32xaddf128, f32xdivf128,
-        f32xfmaf128, f32xmulf128, f32xsqrtf128, f32xsubf128, f64addf128, f64divf128,
-        f64fmaf128, f64mulf128, f64sqrtf128, f64subf128, fabsf128, fdimf128, floorf128,
-        fmaf128, fmaxf128, fmaximum_mag_numf128, fmaximum_magf128, fmaximum_numf128,
-        fmaximumf128, fmaxmagf128, fminf128, fminimum_mag_numf128, fminimum_magf128,
-        fminimum_numf128, fminimumf128, fminmagf128, fmodf128, frexpf128, fromfpf128,
-        fromfpxf128, hypotf128, ilogbf128, j0f128, j1f128, jnf128, ldexpf128, lgammaf128,
-        lgammaf128_r, llogbf128, llrintf128, llroundf128, log10f128, log10p1f128,
-        log1pf128, log2f128, log2p1f128, logbf128, logf128, logp1f128, lrintf128,
-        lroundf128, modff128, nanf128, nearbyintf128, pownf128, powf128, powrf128,
-        remainderf128, remquof128, rintf128, rootnf128, roundevenf128, roundf128,
-        rsqrtf128, scalblnf128, scalbnf128, sincosf128, sinf128, sinhf128, sinpif128,
-        sqrtf128, tanf128, tanhf128, tanpif128, tgammaf128, truncf128, ufromfpf128,
-        ufromfpxf128, y0f128, y1f128, ynf128,
+        acosf128, acoshf128, acospif128, asinf128, asinhf128, asinpif128, atan2f128, atan2pif128,
+        atanf128, atanhf128, atanpif128, cbrtf128, ceilf128, compoundnf128, copysignf128, cosf128,
+        coshf128, cospif128, erfcf128, erff128, exp2f128, exp2m1f128, exp10f128, exp10m1f128,
+        expf128, expm1f128, f32addf128, f32divf128, f32fmaf128, f32mulf128, f32sqrtf128,
+        f32subf128, f32xaddf128, f32xdivf128, f32xfmaf128, f32xmulf128, f32xsqrtf128, f32xsubf128,
+        f64addf128, f64divf128, f64fmaf128, f64mulf128, f64sqrtf128, f64subf128, fabsf128,
+        fdimf128, floorf128, fmaf128, fmaxf128, fmaximum_mag_numf128, fmaximum_magf128,
+        fmaximum_numf128, fmaximumf128, fmaxmagf128, fminf128, fminimum_mag_numf128,
+        fminimum_magf128, fminimum_numf128, fminimumf128, fminmagf128, fmodf128, frexpf128,
+        fromfpf128, fromfpxf128, hypotf128, ilogbf128, j0f128, j1f128, jnf128, ldexpf128,
+        lgammaf128, lgammaf128_r, llogbf128, llrintf128, llroundf128, log1pf128, log2f128,
+        log2p1f128, log10f128, log10p1f128, logbf128, logf128, logp1f128, lrintf128, lroundf128,
+        modff128, nanf128, nearbyintf128, powf128, pownf128, powrf128, remainderf128, remquof128,
+        rintf128, rootnf128, roundevenf128, roundf128, rsqrtf128, scalblnf128, scalbnf128,
+        sincosf128, sinf128, sinhf128, sinpif128, sqrtf128, tanf128, tanhf128, tanpif128,
+        tgammaf128, truncf128, ufromfpf128, ufromfpxf128, y0f128, y1f128, ynf128,
     };
 
     unary! {
@@ -2708,7 +2897,8 @@ mod x87_math_entry {
     unsafe fn st_nan(out: *mut u8, payload: u64, signaling: bool) {
         let quiet = if signaling { 0 } else { 1u64 << 62 };
         let mut b = [0u8; 10];
-        b[..8].copy_from_slice(&((1u64 << 63) | quiet | (payload & X87_PAYLOAD_MASK)).to_le_bytes());
+        b[..8]
+            .copy_from_slice(&((1u64 << 63) | quiet | (payload & X87_PAYLOAD_MASK)).to_le_bytes());
         b[8..].copy_from_slice(&0x7fffu16.to_le_bytes());
         // SAFETY: `out` holds 10 writable bytes.
         unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), out, 10) };
@@ -2730,7 +2920,14 @@ mod x87_math_entry {
             let sig = u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
             let exp = u16::from_le_bytes([b[8], b[9]]) & 0x7fff;
             let is_nan = exp == 0x7fff && sig & ((1u64 << 63) - 1) != 0;
-            st(out, if is_nan { (sig & X87_PAYLOAD_MASK) as f128 } else { -1.0 })
+            st(
+                out,
+                if is_nan {
+                    (sig & X87_PAYLOAD_MASK) as f128
+                } else {
+                    -1.0
+                },
+            )
         }
     }
     macro_rules! ptr_in {
@@ -2846,16 +3043,20 @@ mod x87_math_entry {
     // imaginary, each a 16-byte slot); a complex result returns real in ST(0)
     // and imaginary in ST(1).
     use super::{
-        cabsf128, cacosf128, cacoshf128, cargf128, casinf128, casinhf128, catanf128,
-        catanhf128, ccosf128, ccoshf128, cexpf128, clog10f128, clogf128, conjf128,
+        CFloat128Complex, cabsf128, cacosf128, cacoshf128, cargf128, casinf128, casinhf128,
+        catanf128, catanhf128, ccosf128, ccoshf128, cexpf128, clog10f128, clogf128, conjf128,
         cpowf128, cprojf128, csinf128, csinhf128, csqrtf128, ctanf128, ctanhf128,
-        CFloat128Complex,
     };
 
     #[inline]
     unsafe fn ldc(slot: *const u8) -> CFloat128Complex {
         // SAFETY: a 32-byte complex argument slot.
-        unsafe { CFloat128Complex { re: ld(slot), im: ld(slot.add(16)) } }
+        unsafe {
+            CFloat128Complex {
+                re: ld(slot),
+                im: ld(slot.add(16)),
+            }
+        }
     }
 
     #[inline]
@@ -2980,7 +3181,12 @@ mod x87_math_entry {
     /// `int strfroml(char *s, size_t n, const char *fmt, long double v)`: the
     /// three register arguments stay; the value's slot address joins them.
     /// Formats the exact x87 value (the old export read a double from XMM0).
-    unsafe extern "C" fn h_strfrom(s: *mut c_char, n: usize, fmt: *const c_char, v: *const u8) -> c_int {
+    unsafe extern "C" fn h_strfrom(
+        s: *mut c_char,
+        n: usize,
+        fmt: *const c_char,
+        v: *const u8,
+    ) -> c_int {
         let mut bytes = [0u8; 10];
         // SAFETY: `v` is the argument slot; `fmt` and `s` are the caller's.
         unsafe { std::ptr::copy_nonoverlapping(v, bytes.as_mut_ptr(), 10) };
@@ -3107,7 +3313,13 @@ mod x87_math_entry {
             if rintf128(y) != y {
                 return (y - y) / (y - y);
             }
-            let n = if y > 65536.0 { 65536 } else if y < -65536.0 { -65536 } else { y as i32 };
+            let n = if y > 65536.0 {
+                65536
+            } else if y < -65536.0 {
+                -65536
+            } else {
+                y as i32
+            };
             scalbnf128(x, n)
         }
     }
@@ -3157,7 +3369,9 @@ pub unsafe extern "C" fn nanf(tagp: *const std::ffi::c_char) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 7, frankenlibc_core::math::exp10f);
-    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+    // glibc reports ERANGE once the exact 10^x falls below the least
+    // subnormal 2^-149 (x < log10(2^-149)), even when it rounds up to 2^-149.
+    if x.is_finite() && (out.is_infinite() || out == 0.0 || x < f32::from_bits(0xc233_69f4)) {
         set_range_errno();
     }
     out
@@ -3198,6 +3412,10 @@ pub unsafe extern "C" fn jnf(n: c_int, x: f32) -> f32 {
 pub unsafe extern "C" fn y0f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y0f);
     bessel_y_errno(x.into());
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
@@ -3205,6 +3423,10 @@ pub unsafe extern "C" fn y0f(x: f32) -> f32 {
 pub unsafe extern "C" fn y1f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y1f);
     bessel_y_errno(x.into());
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
@@ -3263,7 +3485,7 @@ pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
     }
     let out = unary_entry_f32(x, 8, frankenlibc_core::math::gammaf);
     // lgamma poles at non-positive integers
-    if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {
+    if x.is_finite() && x <= 0.0 && is_integral_f32(x) {
         set_range_errno();
     }
     out
@@ -3546,9 +3768,11 @@ fn c_log(re: f64, im: f64) -> (f64, f64) {
         // dominant terms {ax^2, ay^2, -1} are accumulated with error-free
         // Knuth 2Sum so only log1p's own rounding remains.
         let rr = ax * ax;
-        let rr_err = ax.mul_add(ax, -rr);
+        let rr_err =
+            hardware_fma(ax, ax, -rr).unwrap_or_else(|| frankenlibc_core::math::fma(ax, ax, -rr));
         let ii = ay * ay;
-        let ii_err = ay.mul_add(ay, -ii);
+        let ii_err =
+            hardware_fma(ay, ay, -ii).unwrap_or_else(|| frankenlibc_core::math::fma(ay, ay, -ii));
         // 2Sum(rr, -1), then 2Sum(., ii); fold residuals into the low word.
         let (p, e1) = two_sum(rr, -1.0);
         let (d_hi, e2) = two_sum(p, ii);
@@ -3997,7 +4221,10 @@ pub unsafe extern "C" fn crealf(z: CFloatComplex) -> f32 {
     z.re
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn creall(z: CLongDoubleComplex) -> f64 {
     z.re
 }
@@ -4012,7 +4239,10 @@ pub unsafe extern "C" fn cimagf(z: CFloatComplex) -> f32 {
     z.im
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cimagl(z: CLongDoubleComplex) -> f64 {
     z.im
 }
@@ -4033,7 +4263,10 @@ pub unsafe extern "C" fn conjf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn conjl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     CLongDoubleComplex {
         re: z.re,
@@ -4051,7 +4284,10 @@ pub unsafe extern "C" fn cargf(z: CFloatComplex) -> f32 {
     frankenlibc_core::math::atan2f(z.im, z.re)
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cargl(z: CLongDoubleComplex) -> f64 {
     frankenlibc_core::math::atan2(z.im, z.re)
 }
@@ -4066,7 +4302,10 @@ pub unsafe extern "C" fn cabsf(z: CFloatComplex) -> f32 {
     frankenlibc_core::math::hypotf(z.re, z.im)
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cabsl(z: CLongDoubleComplex) -> f64 {
     frankenlibc_core::math::hypot(z.re, z.im)
 }
@@ -4097,7 +4336,10 @@ pub unsafe extern "C" fn cprojf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cprojl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     if z.re.is_infinite() || z.im.is_infinite() {
         CLongDoubleComplex {
@@ -4126,7 +4368,10 @@ pub unsafe extern "C" fn cexpf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cexpl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let (re, im) = c_exp(z.re, z.im);
     CLongDoubleComplex { re, im }
@@ -4147,7 +4392,10 @@ pub unsafe extern "C" fn clogf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn clogl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let (re, im) = c_log(z.re, z.im);
     CLongDoubleComplex { re, im }
@@ -4168,7 +4416,10 @@ pub unsafe extern "C" fn csqrtf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn csqrtl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let (re, im) = c_sqrt(z.re, z.im);
     CLongDoubleComplex { re, im }
@@ -4196,7 +4447,10 @@ pub unsafe extern "C" fn cpowf(base: CFloatComplex, exp: CFloatComplex) -> CFloa
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cpowl(
     base: CLongDoubleComplex,
     exp: CLongDoubleComplex,
@@ -4232,7 +4486,10 @@ pub unsafe extern "C" fn csinf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn csinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { csin(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4260,7 +4517,10 @@ pub unsafe extern "C" fn ccosf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ccosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ccos(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4289,7 +4549,10 @@ pub unsafe extern "C" fn ctanf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ctanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ctan(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4317,7 +4580,10 @@ pub unsafe extern "C" fn csinhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn csinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { csinh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4343,7 +4609,10 @@ pub unsafe extern "C" fn ccoshf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ccoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ccosh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4369,7 +4638,10 @@ pub unsafe extern "C" fn ctanhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ctanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ctanh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4399,7 +4671,10 @@ pub unsafe extern "C" fn casinf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn casinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { casin(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4425,7 +4700,10 @@ pub unsafe extern "C" fn cacosf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cacosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { cacos(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4453,7 +4731,10 @@ pub unsafe extern "C" fn catanf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn catanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { catan(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4481,7 +4762,10 @@ pub unsafe extern "C" fn casinhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn casinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { casinh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4521,7 +4805,10 @@ pub unsafe extern "C" fn cacoshf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cacoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { cacosh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4547,7 +4834,10 @@ pub unsafe extern "C" fn catanhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn catanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { catanh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4754,13 +5044,22 @@ fn fminimum_mag_num_implf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximum(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fmaximum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximumf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fmaximum_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximuml(x: f64, y: f64) -> f64 {
     fmaximum_impl(x, y)
 }
@@ -4776,7 +5075,10 @@ pub unsafe extern "C" fn fmaximumf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaximumf64(x: f64, y: f64) -> f64 {
     fmaximum_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximumf64x(x: f64, y: f64) -> f64 {
     fmaximum_impl(x, y)
 }
@@ -4790,13 +5092,22 @@ pub unsafe extern "C" fn fmaximumf128(x: f128, y: f128) -> f128 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximum_num(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fmaximum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximum_numf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fmaximum_num_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximum_numl(x: f64, y: f64) -> f64 {
     fmaximum_num_impl(x, y)
 }
@@ -4812,7 +5123,10 @@ pub unsafe extern "C" fn fmaximum_numf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaximum_numf64(x: f64, y: f64) -> f64 {
     fmaximum_num_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximum_numf64x(x: f64, y: f64) -> f64 {
     fmaximum_num_impl(x, y)
 }
@@ -4838,7 +5152,10 @@ pub unsafe extern "C" fn fmaximum_mag(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaximum_magf(x: f32, y: f32) -> f32 {
     fmaximum_mag_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximum_magl(x: f64, y: f64) -> f64 {
     fmaximum_mag_impl(x, y)
 }
@@ -4854,7 +5171,10 @@ pub unsafe extern "C" fn fmaximum_magf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaximum_magf64(x: f64, y: f64) -> f64 {
     fmaximum_mag_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximum_magf64x(x: f64, y: f64) -> f64 {
     fmaximum_mag_impl(x, y)
 }
@@ -4884,7 +5204,10 @@ pub unsafe extern "C" fn fmaximum_mag_num(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaximum_mag_numf(x: f32, y: f32) -> f32 {
     fmaximum_mag_num_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximum_mag_numl(x: f64, y: f64) -> f64 {
     fmaximum_mag_num_impl(x, y)
 }
@@ -4900,7 +5223,10 @@ pub unsafe extern "C" fn fmaximum_mag_numf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaximum_mag_numf64(x: f64, y: f64) -> f64 {
     fmaximum_mag_num_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaximum_mag_numf64x(x: f64, y: f64) -> f64 {
     fmaximum_mag_num_impl(x, y)
 }
@@ -4927,13 +5253,22 @@ pub unsafe extern "C" fn fmaximum_mag_numf128(x: f128, y: f128) -> f128 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimum(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fminimum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimumf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fminimum_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimuml(x: f64, y: f64) -> f64 {
     fminimum_impl(x, y)
 }
@@ -4949,7 +5284,10 @@ pub unsafe extern "C" fn fminimumf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminimumf64(x: f64, y: f64) -> f64 {
     fminimum_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimumf64x(x: f64, y: f64) -> f64 {
     fminimum_impl(x, y)
 }
@@ -4963,13 +5301,22 @@ pub unsafe extern "C" fn fminimumf128(x: f128, y: f128) -> f128 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimum_num(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fminimum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimum_numf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fminimum_num_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimum_numl(x: f64, y: f64) -> f64 {
     fminimum_num_impl(x, y)
 }
@@ -4985,7 +5332,10 @@ pub unsafe extern "C" fn fminimum_numf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminimum_numf64(x: f64, y: f64) -> f64 {
     fminimum_num_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimum_numf64x(x: f64, y: f64) -> f64 {
     fminimum_num_impl(x, y)
 }
@@ -5011,7 +5361,10 @@ pub unsafe extern "C" fn fminimum_mag(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminimum_magf(x: f32, y: f32) -> f32 {
     fminimum_mag_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimum_magl(x: f64, y: f64) -> f64 {
     fminimum_mag_impl(x, y)
 }
@@ -5027,7 +5380,10 @@ pub unsafe extern "C" fn fminimum_magf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminimum_magf64(x: f64, y: f64) -> f64 {
     fminimum_mag_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimum_magf64x(x: f64, y: f64) -> f64 {
     fminimum_mag_impl(x, y)
 }
@@ -5057,7 +5413,10 @@ pub unsafe extern "C" fn fminimum_mag_num(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminimum_mag_numf(x: f32, y: f32) -> f32 {
     fminimum_mag_num_implf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimum_mag_numl(x: f64, y: f64) -> f64 {
     fminimum_mag_num_impl(x, y)
 }
@@ -5073,7 +5432,10 @@ pub unsafe extern "C" fn fminimum_mag_numf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminimum_mag_numf64(x: f64, y: f64) -> f64 {
     fminimum_mag_num_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminimum_mag_numf64x(x: f64, y: f64) -> f64 {
     fminimum_mag_num_impl(x, y)
 }
@@ -5104,6 +5466,11 @@ pub unsafe extern "C" fn fminimum_mag_numf128(x: f128, y: f128) -> f128 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acospi(x: f64) -> f64 {
     let r = unsafe { acos(x) };
+    // Unlike acos's, glibc's acospi domain-error NaN (|x| > 1, +-inf) is the
+    // x86 default NaN, sign set.
+    if r.is_nan() && !x.is_nan() {
+        return f64::from_bits(0xfff8_0000_0000_0000);
+    }
     r / std::f64::consts::PI
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5114,7 +5481,10 @@ pub unsafe extern "C" fn acospif(x: f32) -> f32 {
     // acospi is byte-exact (verified 0 ULP over a 20k-point sweep).
     unsafe { acospi(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn acospil(x: f64) -> f64 {
     unsafe { acospi(x) }
 }
@@ -5130,7 +5500,10 @@ pub unsafe extern "C" fn acospif32x(x: f64) -> f64 {
 pub unsafe extern "C" fn acospif64(x: f64) -> f64 {
     unsafe { acospi(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn acospif64x(x: f64) -> f64 {
     unsafe { acospi(x) }
 }
@@ -5148,6 +5521,11 @@ pub unsafe extern "C" fn acospif128(x: f128) -> f128 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinpi(x: f64) -> f64 {
     let r = unsafe { asin(x) };
+    // Unlike asin's, glibc's asinpi domain-error NaN (|x| > 1, +-inf) is the
+    // x86 default NaN, sign set.
+    if r.is_nan() && !x.is_nan() {
+        return f64::from_bits(0xfff8_0000_0000_0000);
+    }
     r / std::f64::consts::PI
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5156,7 +5534,10 @@ pub unsafe extern "C" fn asinpif(x: f32) -> f32 {
     // f32 form asinf(x)/pi_f32 loses up to 2 ULP.
     unsafe { asinpi(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn asinpil(x: f64) -> f64 {
     unsafe { asinpi(x) }
 }
@@ -5172,7 +5553,10 @@ pub unsafe extern "C" fn asinpif32x(x: f64) -> f64 {
 pub unsafe extern "C" fn asinpif64(x: f64) -> f64 {
     unsafe { asinpi(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn asinpif64x(x: f64) -> f64 {
     unsafe { asinpi(x) }
 }
@@ -5180,10 +5564,10 @@ pub unsafe extern "C" fn asinpif64x(x: f64) -> f64 {
 pub unsafe extern "C" fn asinpif128(x: f128) -> f128 {
     // glibc s_asinpi_template: EDOM if |x|>1, else asin(x)/pi, clamp to ±0.5.
     const PI: f128 = 3.141592653589793238462643383279502884f128;
-    if !(x.abs() <= 1.0) {
-        if x.is_nan() {
-            return (x - x) / (x - x); // propagate input NaN
-        }
+    if x.is_nan() {
+        return (x - x) / (x - x); // propagate input NaN
+    }
+    if x.abs() > 1.0 {
         set_domain_errno();
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     }
@@ -5208,7 +5592,10 @@ pub unsafe extern "C" fn atanpif(x: f32) -> f32 {
     // f32 form atanf(x)/pi_f32 loses up to 2 ULP.
     unsafe { atanpi(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atanpil(x: f64) -> f64 {
     unsafe { atanpi(x) }
 }
@@ -5224,7 +5611,10 @@ pub unsafe extern "C" fn atanpif32x(x: f64) -> f64 {
 pub unsafe extern "C" fn atanpif64(x: f64) -> f64 {
     unsafe { atanpi(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atanpif64x(x: f64) -> f64 {
     unsafe { atanpi(x) }
 }
@@ -5253,7 +5643,10 @@ pub unsafe extern "C" fn atan2pif(x: f32, y: f32) -> f32 {
     // f32 form atan2f(x,y)/pi_f32 loses up to 2 ULP.
     unsafe { atan2pi(x as f64, y as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atan2pil(x: f64, y: f64) -> f64 {
     unsafe { atan2pi(x, y) }
 }
@@ -5269,7 +5662,10 @@ pub unsafe extern "C" fn atan2pif32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn atan2pif64(x: f64, y: f64) -> f64 {
     unsafe { atan2pi(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atan2pif64x(x: f64, y: f64) -> f64 {
     unsafe { atan2pi(x, y) }
 }
@@ -5306,17 +5702,19 @@ fn pi_fn_raise_invalid_f32() {
 // precision. |x|>=2^53 is always an even integer: sinpi=±0, cospi=1, tanpi=±0.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospi(x: f64) -> f64 {
+    // glibc 2.43 returns every NaN with the sign bit SET (quieted; FE_INVALID
+    // for a signaling one) and +-inf the default NaN, FE_INVALID.
     if x.is_nan() {
-        return x;
+        return f64::from_bits(std::hint::black_box(x).to_bits() | (1 << 63)) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
-        return f64::NAN;
+        return f64::from_bits(0xfff8_0000_0000_0000);
     }
     if x.abs() >= 9007199254740992.0 {
         return 1.0; // even integer → cos(pi*even)=+1
     }
-    let n = x.round();
+    let n = frankenlibc_membrane::util::round_f64(x);
     let r = x - n;
     let n_odd = (n as i64) & 1 != 0;
     if r == 0.0 {
@@ -5334,10 +5732,17 @@ pub unsafe extern "C" fn cospif(x: f32) -> f32 {
     // arg-reduction in f32 loses enormous ULP near cospi's zeros (x = k+0.5),
     // where cosf amplifies the f32 `r*pi` rounding error (up to ~28000 ULP).
     // Routing through the f64 cospi is byte-exact vs glibc (0 ULP over a
-    // 400k-point sweep), and the f64 path handles NaN/inf/large-x identically.
+    // 400k-point sweep), and the f64 path handles inf/large-x identically. A
+    // NaN is only quieted: glibc's cospif does not set its sign as cospi does.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     unsafe { cospi(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cospil(x: f64) -> f64 {
     unsafe { cospi(x) }
 }
@@ -5353,7 +5758,10 @@ pub unsafe extern "C" fn cospif32x(x: f64) -> f64 {
 pub unsafe extern "C" fn cospif64(x: f64) -> f64 {
     unsafe { cospi(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cospif64x(x: f64) -> f64 {
     unsafe { cospi(x) }
 }
@@ -5381,18 +5789,19 @@ pub unsafe extern "C" fn cospif128(x: f128) -> f128 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
+    // glibc: a NaN quieted; +-inf the x86 default NaN (sign set), FE_INVALID.
     if x.is_nan() {
-        return x;
+        return std::hint::black_box(x) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
-        return f64::NAN;
+        return f64::from_bits(0xfff8_0000_0000_0000);
     }
     if x.abs() >= 9007199254740992.0 {
         // even integer → sin(pi*even)=±0 with sign of x
         return if x.is_sign_negative() { -0.0 } else { 0.0 };
     }
-    let n = x.round();
+    let n = frankenlibc_membrane::util::round_f64(x);
     let r = x - n;
     let n_odd = (n as i64) & 1 != 0;
     if r == 0.0 {
@@ -5412,7 +5821,10 @@ pub unsafe extern "C" fn sinpif(x: f32) -> f32 {
     // NaN/inf (FE_INVALID)/large-x and signed-zero identically.
     unsafe { sinpi(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sinpil(x: f64) -> f64 {
     unsafe { sinpi(x) }
 }
@@ -5428,7 +5840,10 @@ pub unsafe extern "C" fn sinpif32x(x: f64) -> f64 {
 pub unsafe extern "C" fn sinpif64(x: f64) -> f64 {
     unsafe { sinpi(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sinpif64x(x: f64) -> f64 {
     unsafe { sinpi(x) }
 }
@@ -5458,12 +5873,13 @@ pub unsafe extern "C" fn sinpif128(x: f128) -> f128 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
+    // glibc: a NaN quieted; +-inf the x86 default NaN (sign set), FE_INVALID.
     if x.is_nan() {
-        return x;
+        return std::hint::black_box(x) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
-        return f64::NAN;
+        return f64::from_bits(0xfff8_0000_0000_0000);
     }
     // tanpi = sinpi/cospi: the (-1)^n factors cancel, the half-integer pole
     // becomes ±1/±0 (auto-raising FE_DIVBYZERO → ±inf), and the integer zero
@@ -5479,7 +5895,10 @@ pub unsafe extern "C" fn tanpif(x: f32) -> f32 {
     // FE_DIVBYZERO at the poles and FE_INVALID on inf.
     unsafe { tanpi(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tanpil(x: f64) -> f64 {
     unsafe { tanpi(x) }
 }
@@ -5495,7 +5914,10 @@ pub unsafe extern "C" fn tanpif32x(x: f64) -> f64 {
 pub unsafe extern "C" fn tanpif64(x: f64) -> f64 {
     unsafe { tanpi(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tanpif64x(x: f64) -> f64 {
     unsafe { tanpi(x) }
 }
@@ -5545,8 +5967,12 @@ fn roundeven_impl(x: f64) -> f64 {
     let bits = x.to_bits();
     let sign = bits & 0x8000_0000_0000_0000;
     let e = ((bits >> 52) & 0x7ff) as i32;
-    // |x| >= 2^52 (and inf/NaN): already integral, return unchanged.
+    // |x| >= 2^52 and inf: already integral, returned unchanged; a NaN is
+    // quieted (FE_INVALID for a signaling one), as glibc.
     if e >= 1023 + 52 {
+        if x.is_nan() {
+            return std::hint::black_box(x) + 0.0;
+        }
         return x;
     }
     // |x| < 1: result is ±0 (|x| <= 0.5, ties-to-even rounds 0.5 to 0) or ±1.
@@ -5575,8 +6001,12 @@ fn roundevenf_impl(x: f32) -> f32 {
     let bits = x.to_bits();
     let sign = bits & 0x8000_0000;
     let e = ((bits >> 23) & 0xff) as i32;
-    // |x| >= 2^23 (and inf/NaN): already integral.
+    // |x| >= 2^23 and inf: already integral; a NaN is quieted (FE_INVALID
+    // for a signaling one), as glibc.
     if e >= 127 + 23 {
+        if x.is_nan() {
+            return std::hint::black_box(x) + 0.0;
+        }
         return x;
     }
     // |x| < 1: ±0 or ±1.
@@ -5606,7 +6036,10 @@ pub unsafe extern "C" fn roundeven(x: f64) -> f64 {
 pub unsafe extern "C" fn roundevenf(x: f32) -> f32 {
     roundevenf_impl(x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn roundevenl(x: f64) -> f64 {
     unsafe { roundeven(x) }
 }
@@ -5622,7 +6055,10 @@ pub unsafe extern "C" fn roundevenf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn roundevenf64(x: f64) -> f64 {
     unsafe { roundeven(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn roundevenf64x(x: f64) -> f64 {
     unsafe { roundeven(x) }
 }
@@ -5750,7 +6186,10 @@ pub unsafe extern "C" fn nextdown(x: f64) -> f64 {
 pub unsafe extern "C" fn nextdownf(x: f32) -> f32 {
     nextdownf_impl(x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nextdownl(x: f64) -> f64 {
     unsafe { nextdown(x) }
 }
@@ -5766,7 +6205,10 @@ pub unsafe extern "C" fn nextdownf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn nextdownf64(x: f64) -> f64 {
     unsafe { nextdown(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nextdownf64x(x: f64) -> f64 {
     unsafe { nextdown(x) }
 }
@@ -5782,7 +6224,10 @@ pub unsafe extern "C" fn nextup(x: f64) -> f64 {
 pub unsafe extern "C" fn nextupf(x: f32) -> f32 {
     nextupf_impl(x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nextupl(x: f64) -> f64 {
     unsafe { nextup(x) }
 }
@@ -5798,7 +6243,10 @@ pub unsafe extern "C" fn nextupf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn nextupf64(x: f64) -> f64 {
     unsafe { nextup(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nextupf64x(x: f64) -> f64 {
     unsafe { nextup(x) }
 }
@@ -5818,7 +6266,10 @@ pub unsafe extern "C" fn rsqrtf(x: f32) -> f32 {
     let s = unsafe { sqrtf(x) };
     1.0f32 / s
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn rsqrtl(x: f64) -> f64 {
     unsafe { rsqrt(x) }
 }
@@ -5834,7 +6285,10 @@ pub unsafe extern "C" fn rsqrtf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn rsqrtf64(x: f64) -> f64 {
     unsafe { rsqrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn rsqrtf64x(x: f64) -> f64 {
     unsafe { rsqrt(x) }
 }
@@ -5883,7 +6337,10 @@ fn map_ilogb_to_llogb(r: c_int) -> c_long {
         other => other as c_long,
     }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn llogbl(x: f64) -> c_long {
     unsafe { llogb(x) }
 }
@@ -5899,7 +6356,10 @@ pub unsafe extern "C" fn llogbf32x(x: f64) -> c_long {
 pub unsafe extern "C" fn llogbf64(x: f64) -> c_long {
     unsafe { llogb(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn llogbf64x(x: f64) -> c_long {
     unsafe { llogb(x) }
 }
@@ -5928,7 +6388,10 @@ pub unsafe extern "C" fn logp1(x: f64) -> f64 {
 pub unsafe extern "C" fn logp1f(x: f32) -> f32 {
     unsafe { log1pf(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn logp1l(x: f64) -> f64 {
     unsafe { logp1(x) }
 }
@@ -5944,7 +6407,10 @@ pub unsafe extern "C" fn logp1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn logp1f64(x: f64) -> f64 {
     unsafe { logp1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn logp1f64x(x: f64) -> f64 {
     unsafe { logp1(x) }
 }
@@ -5971,7 +6437,10 @@ pub unsafe extern "C" fn log2p1f(x: f32) -> f32 {
     // Restored: 517d0a233 reverted this to the f32 form (bd-6x4jt0).
     unsafe { log2p1(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log2p1l(x: f64) -> f64 {
     unsafe { log2p1(x) }
 }
@@ -5987,7 +6456,10 @@ pub unsafe extern "C" fn log2p1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn log2p1f64(x: f64) -> f64 {
     unsafe { log2p1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log2p1f64x(x: f64) -> f64 {
     unsafe { log2p1(x) }
 }
@@ -6019,7 +6491,10 @@ pub unsafe extern "C" fn log10p1f(x: f32) -> f32 {
     // Restored: 517d0a233 reverted this to the f32 form (bd-6x4jt0).
     unsafe { log10p1(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log10p1l(x: f64) -> f64 {
     unsafe { log10p1(x) }
 }
@@ -6035,7 +6510,10 @@ pub unsafe extern "C" fn log10p1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn log10p1f64(x: f64) -> f64 {
     unsafe { log10p1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log10p1f64x(x: f64) -> f64 {
     unsafe { log10p1(x) }
 }
@@ -6087,7 +6565,10 @@ pub unsafe extern "C" fn exp2m1f(x: f32) -> f32 {
     // and clamping semantics.
     unsafe { exp2m1(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp2m1l(x: f64) -> f64 {
     unsafe { exp2m1(x) }
 }
@@ -6103,7 +6584,10 @@ pub unsafe extern "C" fn exp2m1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn exp2m1f64(x: f64) -> f64 {
     unsafe { exp2m1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp2m1f64x(x: f64) -> f64 {
     unsafe { exp2m1(x) }
 }
@@ -6138,7 +6622,10 @@ pub unsafe extern "C" fn exp10m1f(x: f32) -> f32 {
     // split path is ~3 ULP off.
     unsafe { exp10m1(x as f64) as f32 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp10m1l(x: f64) -> f64 {
     unsafe { exp10m1(x) }
 }
@@ -6154,7 +6641,10 @@ pub unsafe extern "C" fn exp10m1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn exp10m1f64(x: f64) -> f64 {
     unsafe { exp10m1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp10m1f64x(x: f64) -> f64 {
     unsafe { exp10m1(x) }
 }
@@ -6199,7 +6689,10 @@ pub unsafe extern "C" fn compoundnf(x: f32, n: i64) -> f32 {
     }
     frankenlibc_core::math::powf(1.0f32 + x, n as f32)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn compoundnl(x: f64, n: i64) -> f64 {
     unsafe { compoundn(x, n) }
 }
@@ -6215,7 +6708,10 @@ pub unsafe extern "C" fn compoundnf32x(x: f64, n: i64) -> f64 {
 pub unsafe extern "C" fn compoundnf64(x: f64, n: i64) -> f64 {
     unsafe { compoundn(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn compoundnf64x(x: f64, n: i64) -> f64 {
     unsafe { compoundn(x, n) }
 }
@@ -6233,7 +6729,10 @@ pub unsafe extern "C" fn pown(x: f64, n: i64) -> f64 {
 pub unsafe extern "C" fn pownf(x: f32, n: i64) -> f32 {
     frankenlibc_core::math::powf(x, n as f32)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn pownl(x: f64, n: i64) -> f64 {
     unsafe { pown(x, n) }
 }
@@ -6249,7 +6748,10 @@ pub unsafe extern "C" fn pownf32x(x: f64, n: i64) -> f64 {
 pub unsafe extern "C" fn pownf64(x: f64, n: i64) -> f64 {
     unsafe { pown(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn pownf64x(x: f64, n: i64) -> f64 {
     unsafe { pown(x, n) }
 }
@@ -6301,7 +6803,10 @@ pub unsafe extern "C" fn powrf(x: f32, y: f32) -> f32 {
     }
     frankenlibc_core::math::powf(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn powrl(x: f64, y: f64) -> f64 {
     unsafe { powr(x, y) }
 }
@@ -6317,7 +6822,10 @@ pub unsafe extern "C" fn powrf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn powrf64(x: f64, y: f64) -> f64 {
     unsafe { powr(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn powrf64x(x: f64, y: f64) -> f64 {
     unsafe { powr(x, y) }
 }
@@ -6398,7 +6906,10 @@ pub unsafe extern "C" fn rootnf(x: f32, n: i64) -> f32 {
         r
     }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn rootnl(x: f64, n: i64) -> f64 {
     unsafe { rootn(x, n) }
 }
@@ -6414,7 +6925,10 @@ pub unsafe extern "C" fn rootnf32x(x: f64, n: i64) -> f64 {
 pub unsafe extern "C" fn rootnf64(x: f64, n: i64) -> f64 {
     unsafe { rootn(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn rootnf64x(x: f64, n: i64) -> f64 {
     unsafe { rootn(x, n) }
 }
@@ -6525,13 +7039,22 @@ fn fminmagf_impl(x: f32, y: f32) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxmag(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fmaxmag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxmagf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fmaxmagf_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaxmagl(x: f64, y: f64) -> f64 {
     unsafe { fmaxmag(x, y) }
 }
@@ -6547,7 +7070,10 @@ pub unsafe extern "C" fn fmaxmagf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaxmagf64(x: f64, y: f64) -> f64 {
     unsafe { fmaxmag(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaxmagf64x(x: f64, y: f64) -> f64 {
     unsafe { fmaxmag(x, y) }
 }
@@ -6573,13 +7099,22 @@ pub unsafe extern "C" fn fmaxmagf128(x: f128, y: f128) -> f128 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminmag(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fminmag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminmagf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fminmagf_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminmagl(x: f64, y: f64) -> f64 {
     unsafe { fminmag(x, y) }
 }
@@ -6595,7 +7130,10 @@ pub unsafe extern "C" fn fminmagf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminmagf64(x: f64, y: f64) -> f64 {
     unsafe { fminmag(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminmagf64x(x: f64, y: f64) -> f64 {
     unsafe { fminmag(x, y) }
 }
@@ -6691,7 +7229,10 @@ pub unsafe extern "C" fn totalorder(x: *const f64, y: *const f64) -> c_int {
 pub unsafe extern "C" fn totalorderf(x: *const f32, y: *const f32) -> c_int {
     totalorderf_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn totalorderl(x: *const f64, y: *const f64) -> c_int {
     totalorder_impl(x, y)
 }
@@ -6707,7 +7248,10 @@ pub unsafe extern "C" fn totalorderf32x(x: *const f64, y: *const f64) -> c_int {
 pub unsafe extern "C" fn totalorderf64(x: *const f64, y: *const f64) -> c_int {
     totalorder_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn totalorderf64x(x: *const f64, y: *const f64) -> c_int {
     totalorder_impl(x, y)
 }
@@ -6723,7 +7267,10 @@ pub unsafe extern "C" fn totalordermag(x: *const f64, y: *const f64) -> c_int {
 pub unsafe extern "C" fn totalordermagf(x: *const f32, y: *const f32) -> c_int {
     totalordermagf_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn totalordermagl(x: *const f64, y: *const f64) -> c_int {
     totalordermag_impl(x, y)
 }
@@ -6739,7 +7286,10 @@ pub unsafe extern "C" fn totalordermagf32x(x: *const f64, y: *const f64) -> c_in
 pub unsafe extern "C" fn totalordermagf64(x: *const f64, y: *const f64) -> c_int {
     totalordermag_impl(x, y)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn totalordermagf64x(x: *const f64, y: *const f64) -> c_int {
     totalordermag_impl(x, y)
 }
@@ -6809,7 +7359,10 @@ pub unsafe extern "C" fn canonicalize(cx: *mut f64, x: *const f64) -> c_int {
 pub unsafe extern "C" fn canonicalizef(cx: *mut f32, x: *const f32) -> c_int {
     canonicalizef_impl(cx, x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn canonicalizel(cx: *mut f64, x: *const f64) -> c_int {
     canonicalize_impl(cx, x)
 }
@@ -6825,7 +7378,10 @@ pub unsafe extern "C" fn canonicalizef32x(cx: *mut f64, x: *const f64) -> c_int 
 pub unsafe extern "C" fn canonicalizef64(cx: *mut f64, x: *const f64) -> c_int {
     canonicalize_impl(cx, x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn canonicalizef64x(cx: *mut f64, x: *const f64) -> c_int {
     canonicalize_impl(cx, x)
 }
@@ -6964,7 +7520,10 @@ pub unsafe extern "C" fn getpayload(x: *const f64) -> f64 {
 pub unsafe extern "C" fn getpayloadf(x: *const f32) -> f32 {
     getpayloadf_impl(x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn getpayloadl(x: *const f64) -> f64 {
     getpayload_impl(x)
 }
@@ -6980,7 +7539,10 @@ pub unsafe extern "C" fn getpayloadf32x(x: *const f64) -> f64 {
 pub unsafe extern "C" fn getpayloadf64(x: *const f64) -> f64 {
     getpayload_impl(x)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn getpayloadf64x(x: *const f64) -> f64 {
     getpayload_impl(x)
 }
@@ -7004,7 +7566,10 @@ pub unsafe extern "C" fn setpayload(res: *mut f64, pl: f64) -> c_int {
 pub unsafe extern "C" fn setpayloadf(res: *mut f32, pl: f32) -> c_int {
     setpayloadf_impl(res, pl)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn setpayloadl(res: *mut f64, pl: f64) -> c_int {
     setpayload_impl(res, pl)
 }
@@ -7020,7 +7585,10 @@ pub unsafe extern "C" fn setpayloadf32x(res: *mut f64, pl: f64) -> c_int {
 pub unsafe extern "C" fn setpayloadf64(res: *mut f64, pl: f64) -> c_int {
     setpayload_impl(res, pl)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn setpayloadf64x(res: *mut f64, pl: f64) -> c_int {
     setpayload_impl(res, pl)
 }
@@ -7045,7 +7613,10 @@ pub unsafe extern "C" fn setpayloadsig(res: *mut f64, pl: f64) -> c_int {
 pub unsafe extern "C" fn setpayloadsigf(res: *mut f32, pl: f32) -> c_int {
     setpayloadsigf_impl(res, pl)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn setpayloadsigl(res: *mut f64, pl: f64) -> c_int {
     setpayloadsig_impl(res, pl)
 }
@@ -7061,7 +7632,10 @@ pub unsafe extern "C" fn setpayloadsigf32x(res: *mut f64, pl: f64) -> c_int {
 pub unsafe extern "C" fn setpayloadsigf64(res: *mut f64, pl: f64) -> c_int {
     setpayloadsig_impl(res, pl)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn setpayloadsigf64x(res: *mut f64, pl: f64) -> c_int {
     setpayloadsig_impl(res, pl)
 }
@@ -7111,38 +7685,16 @@ fn pow2_exact(n: u32) -> f64 {
 
 /// Round in the requested FP_INT direction WITHOUT raising FP exceptions.
 /// `fromfp` must raise only FE_INVALID (the *x variants add FE_INEXACT
-/// explicitly), so the rounding itself must be flag-free. ceil/floor/trunc
-/// lower to suppress-precision roundsd; round-half-away/even are built from
-/// trunc + exact integer arithmetic (x - trunc(x) is exact; adding ±1 to an
-/// integer-valued f64 is exact). `f64::round` is NOT used: it raises INEXACT.
+/// explicitly), so the rounding itself must be flag-free and must not call
+/// the exported `ceil`/`floor`/`trunc` symbols on baseline x86-64.
 #[inline]
 fn fromfp_round(x: f64, rnd: c_int) -> f64 {
     match rnd {
-        FP_INT_UPWARD => x.ceil(),
-        FP_INT_DOWNWARD => x.floor(),
-        FP_INT_TOWARDZERO => x.trunc(),
-        FP_INT_TONEARESTFROMZERO => {
-            let t = x.trunc();
-            if (x - t).abs() >= 0.5 {
-                t + x.signum()
-            } else {
-                t
-            }
-        }
-        _ => {
-            // FP_INT_TONEAREST: round half to even.
-            let t = x.trunc();
-            let af = (x - t).abs();
-            if af < 0.5 {
-                t
-            } else if af > 0.5 {
-                t + x.signum()
-            } else if (t as i64) % 2 == 0 {
-                t // tie: t already even
-            } else {
-                t + x.signum()
-            }
-        }
+        FP_INT_UPWARD => frankenlibc_membrane::util::ceil_f64(x),
+        FP_INT_DOWNWARD => frankenlibc_membrane::util::floor_f64(x),
+        FP_INT_TOWARDZERO => frankenlibc_membrane::util::trunc_f64(x),
+        FP_INT_TONEARESTFROMZERO => frankenlibc_membrane::util::round_f64(x),
+        _ => roundeven_impl(x),
     }
 }
 
@@ -7298,6 +7850,7 @@ fn remainder_family_domain_error_f32(x: f32, y: f32) -> bool {
 ///     out of zero into the smallest subnormal is NOT an underflow.
 ///     `nextafter(0, 1)` must leave errno at 0.
 ///   - `stepped == from`: x == y returns y early, likewise with no errno.
+///
 /// A naive "result is subnormal -> ERANGE" rule violates the first of these.
 #[inline]
 fn nextafter_range_errno(from: f64, stepped: f64, tiny: f64) {
@@ -7471,7 +8024,10 @@ pub unsafe extern "C" fn fromfp(x: f64, rnd: c_int, width: u32) -> i64 {
 pub unsafe extern "C" fn fromfpf(x: f32, rnd: c_int, width: u32) -> i64 {
     fromfpf_impl(x, rnd, width)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fromfpl(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
@@ -7487,7 +8043,10 @@ pub unsafe extern "C" fn fromfpf32x(x: f64, rnd: c_int, width: u32) -> i64 {
 pub unsafe extern "C" fn fromfpf64(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fromfpf64x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
@@ -7503,7 +8062,10 @@ pub unsafe extern "C" fn ufromfp(x: f64, rnd: c_int, width: u32) -> u64 {
 pub unsafe extern "C" fn ufromfpf(x: f32, rnd: c_int, width: u32) -> u64 {
     ufromfpf_impl(x, rnd, width)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ufromfpl(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
@@ -7519,7 +8081,10 @@ pub unsafe extern "C" fn ufromfpf32x(x: f64, rnd: c_int, width: u32) -> u64 {
 pub unsafe extern "C" fn ufromfpf64(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ufromfpf64x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
@@ -7535,7 +8100,10 @@ pub unsafe extern "C" fn fromfpx(x: f64, rnd: c_int, width: u32) -> i64 {
 pub unsafe extern "C" fn fromfpxf(x: f32, rnd: c_int, width: u32) -> i64 {
     fromfpxf_impl(x, rnd, width)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fromfpxl(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
@@ -7551,7 +8119,10 @@ pub unsafe extern "C" fn fromfpxf32x(x: f64, rnd: c_int, width: u32) -> i64 {
 pub unsafe extern "C" fn fromfpxf64(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fromfpxf64x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
@@ -7568,7 +8139,10 @@ pub unsafe extern "C" fn ufromfpx(x: f64, rnd: c_int, width: u32) -> u64 {
 pub unsafe extern "C" fn ufromfpxf(x: f32, rnd: c_int, width: u32) -> u64 {
     ufromfpxf_impl(x, rnd, width)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ufromfpxl(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
@@ -7584,7 +8158,10 @@ pub unsafe extern "C" fn ufromfpxf32x(x: f64, rnd: c_int, width: u32) -> u64 {
 pub unsafe extern "C" fn ufromfpxf64(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ufromfpxf64x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
@@ -7613,7 +8190,10 @@ pub unsafe extern "C" fn clog10f(z: CFloatComplex) -> CFloatComplex {
         im: r.im / ln10,
     }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn clog10l(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { clog10(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -7642,7 +8222,10 @@ pub unsafe extern "C" fn clog10f32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn clog10f64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog10(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn clog10f64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog10(z) }
 }
@@ -7657,7 +8240,10 @@ pub unsafe extern "C" fn clog10f128(z: CFloat128Complex) -> CFloat128Complex {
 }
 
 // --- lgamma*_r width variants ---
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lgammal_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
@@ -7673,7 +8259,10 @@ pub unsafe extern "C" fn lgammaf32x_r(x: f64, signgamp: *mut c_int) -> f64 {
 pub unsafe extern "C" fn lgammaf64_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lgammaf64x_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
@@ -7721,7 +8310,10 @@ fn host_lgammaf128_r() -> Option<HostLgammaf128R> {
             return None;
         }
         // SAFETY: libm's `lgammaf128_r` has this exact binary128 C ABI.
-        Some(core::mem::transmute(symbol))
+        Some(core::mem::transmute::<
+            *mut c_void,
+            unsafe extern "C" fn(f128, *mut c_int) -> f128,
+        >(symbol))
     })
 }
 
@@ -7758,211 +8350,367 @@ pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
 // Long-double variants (forward to double)
 // =========================================================================
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn acoshl(x: f64) -> f64 {
     unsafe { acosh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn acosl(x: f64) -> f64 {
     unsafe { acos(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn asinhl(x: f64) -> f64 {
     unsafe { asinh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn asinl(x: f64) -> f64 {
     unsafe { asin(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atanhl(x: f64) -> f64 {
     unsafe { atanh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atanl(x: f64) -> f64 {
     unsafe { atan(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cbrtl(x: f64) -> f64 {
     unsafe { cbrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ceill(x: f64) -> f64 {
     unsafe { ceil(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn coshl(x: f64) -> f64 {
     unsafe { cosh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cosl(x: f64) -> f64 {
     unsafe { cos(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn erfcl(x: f64) -> f64 {
     unsafe { erfc(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn erfl(x: f64) -> f64 {
     unsafe { erf(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp10l(x: f64) -> f64 {
     unsafe { exp10(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp2l(x: f64) -> f64 {
     unsafe { exp2(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn expl(x: f64) -> f64 {
     unsafe { exp(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn expm1l(x: f64) -> f64 {
     unsafe { expm1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fabsl(x: f64) -> f64 {
     unsafe { fabs(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn floorl(x: f64) -> f64 {
     unsafe { floor(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lgammal(x: f64) -> f64 {
     unsafe { lgamma(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log10l(x: f64) -> f64 {
     unsafe { log10(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log1pl(x: f64) -> f64 {
     unsafe { log1p(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log2l(x: f64) -> f64 {
     unsafe { log2(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn logbl(x: f64) -> f64 {
     unsafe { logb(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn logl(x: f64) -> f64 {
     unsafe { log(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nearbyintl(x: f64) -> f64 {
     unsafe { nearbyint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn rintl(x: f64) -> f64 {
     unsafe { rint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn roundl(x: f64) -> f64 {
     unsafe { round(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sinhl(x: f64) -> f64 {
     unsafe { sinh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sinl(x: f64) -> f64 {
     unsafe { sin(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sqrtl(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tanhl(x: f64) -> f64 {
     unsafe { tanh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tanl(x: f64) -> f64 {
     unsafe { tan(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tgammal(x: f64) -> f64 {
     unsafe { tgamma(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn truncl(x: f64) -> f64 {
     unsafe { trunc(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atan2l(x: f64, y: f64) -> f64 {
     unsafe { atan2(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fdiml(x: f64, y: f64) -> f64 {
     unsafe { fdim(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaxl(x: f64, y: f64) -> f64 {
     unsafe { fmax(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminl(x: f64, y: f64) -> f64 {
     unsafe { fmin(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmodl(x: f64, y: f64) -> f64 {
     unsafe { fmod(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn hypotl(x: f64, y: f64) -> f64 {
     unsafe { hypot(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nextafterl(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn powl(x: f64, y: f64) -> f64 {
     unsafe { pow(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn remainderl(x: f64, y: f64) -> f64 {
     unsafe { remainder(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmal(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ilogbl(x: f64) -> c_int {
     unsafe { ilogb(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lrintl(x: f64) -> c_long {
     unsafe { lrint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lroundl(x: f64) -> c_long {
     unsafe { lround(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn llrintl(x: f64) -> i64 {
     unsafe { llrint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn llroundl(x: f64) -> i64 {
     unsafe { llround(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn scalblnl(x: f64, n: c_long) -> f64 {
     unsafe { scalbln(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn remquol(x: f64, y: f64, quo: *mut c_int) -> f64 {
     unsafe { remquo(x, y, quo) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nanl(tagp: *const std::ffi::c_char) -> f64 {
     unsafe { nan(tagp) }
 }
@@ -7973,47 +8721,80 @@ pub unsafe extern "C" fn nanl(tagp: *const std::ffi::c_char) -> f64 {
 pub unsafe extern "C" fn nexttowardl(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn jnl(n: c_int, x: f64) -> f64 {
     unsafe { jn(n, x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn j0l(x: f64) -> f64 {
     unsafe { j0(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn j1l(x: f64) -> f64 {
     unsafe { j1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ynl(n: c_int, x: f64) -> f64 {
     unsafe { yn(n, x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn y0l(x: f64) -> f64 {
     unsafe { y0(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn y1l(x: f64) -> f64 {
     unsafe { y1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn pow10l(x: f64) -> f64 {
     unsafe { pow10(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn gammal(x: f64) -> f64 {
     unsafe { gamma(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn dreml(x: f64, y: f64) -> f64 {
     unsafe { drem(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn significandl(x: f64) -> f64 {
     unsafe { significand(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sincosl(x: f64, s: *mut f64, c: *mut f64) {
     unsafe { sincos(x, s, c) }
 }
@@ -8050,7 +8831,7 @@ fn ieee754_scalb_f64(x: f64, n: f64) -> f64 {
         return x / -n;
     }
     if n != f64::from(n as i32) {
-        if n.trunc() != n {
+        if !is_integral_f64(n) {
             // Domain error. 0.0/0.0 both produces the NaN and raises FE_INVALID
             // in one operation; black_box keeps the compiler from folding it and
             // discarding the exception.
@@ -8081,7 +8862,7 @@ fn ieee754_scalb_f32(x: f32, n: f32) -> f32 {
         return x / -n;
     }
     if n != (n as i32) as f32 {
-        if n.trunc() != n {
+        if !is_integral_f32(n) {
             return core::hint::black_box(
                 core::hint::black_box(0.0_f32) / core::hint::black_box(0.0_f32),
             );
@@ -8115,6 +8896,7 @@ pub(crate) fn svid_scalb_f64(x: f64, n: f64) -> f64 {
 }
 
 /// f32 counterpart of [`svid_scalb_f64`].
+#[allow(dead_code)]
 pub(crate) fn svid_scalb_f32(x: f32, n: f32) -> f32 {
     let z = ieee754_scalb_f32(x, n);
     if !z.is_finite() || z == 0.0 {
@@ -8133,7 +8915,10 @@ pub(crate) fn svid_scalb_f32(x: f32, n: f32) -> f32 {
     z
 }
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn scalbl(x: f64, y: f64) -> f64 {
     svid_scalb_f64(x, y)
 }
@@ -8327,7 +9112,10 @@ pub unsafe extern "C" fn fadd(x: f64, y: f64) -> f32 {
     let resid = (x - (s - bb)) + (y - bb);
     narrow_round_odd(s, resid)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn faddl(x: f64, y: f64) -> f32 {
     unsafe { fadd(x, y) }
 }
@@ -8354,7 +9142,10 @@ pub unsafe extern "C" fn fdiv(x: f64, y: f64) -> f32 {
     };
     narrow_round_odd(q, resid)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fdivl(x: f64, y: f64) -> f32 {
     unsafe { fdiv(x, y) }
 }
@@ -8364,7 +9155,10 @@ pub unsafe extern "C" fn fmul(x: f64, y: f64) -> f32 {
     let resid = frankenlibc_core::math::fma(x, y, -p); // exact x*y - p
     narrow_round_odd(p, resid)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmull(x: f64, y: f64) -> f32 {
     unsafe { fmul(x, y) }
 }
@@ -8377,7 +9171,10 @@ pub unsafe extern "C" fn fsqrt(x: f64) -> f32 {
     let r = frankenlibc_core::math::fma(-s, s, x); // x - s^2; sign(E - s) = sign(r) since s>0
     narrow_round_odd(s, r)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fsqrtl(x: f64) -> f32 {
     unsafe { fsqrt(x) }
 }
@@ -8389,7 +9186,10 @@ pub unsafe extern "C" fn fsub(x: f64, y: f64) -> f32 {
     let resid = (x - (s - bb)) + (ny - bb);
     narrow_round_odd(s, resid)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fsubl(x: f64, y: f64) -> f32 {
     unsafe { fsub(x, y) }
 }
@@ -8421,31 +9221,52 @@ pub unsafe extern "C" fn ffma(x: f64, y: f64, z: f64) -> f32 {
     let resid = if e1 != 0.0 { e1 } else { e2 };
     narrow_round_odd(r, resid)
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ffmal(x: f64, y: f64, z: f64) -> f32 {
     unsafe { ffma(x, y, z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn daddl(x: f64, y: f64) -> f64 {
     x + y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ddivl(x: f64, y: f64) -> f64 {
     x / y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn dmull(x: f64, y: f64) -> f64 {
     x * y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn dsqrtl(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn dsubl(x: f64, y: f64) -> f64 {
     x - y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn dfmal(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
@@ -8464,7 +9285,10 @@ pub unsafe extern "C" fn f32addf64(x: f64, y: f64) -> f32 {
     // not the double-rounding `(x+y) as f32`.
     unsafe { fadd(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32addf64x(x: f64, y: f64) -> f32 {
     // _Float64x is f64 in fl, so this is the same op as f32addf64/fadd; route
     // through fadd for correct single rounding (not double-rounding).
@@ -8478,7 +9302,10 @@ pub unsafe extern "C" fn f32addf128(x: f128, y: f128) -> f32 {
 pub unsafe extern "C" fn f32xaddf64(x: f64, y: f64) -> f64 {
     x + y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32xaddf64x(x: f64, y: f64) -> f64 {
     x + y
 }
@@ -8487,7 +9314,10 @@ pub unsafe extern "C" fn f32xaddf128(x: f128, y: f128) -> f64 {
     // _Float32x is `double` (f64) on x86_64.
     nadd_ro_f128(x, y) as f64
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f64addf64x(x: f64, y: f64) -> f64 {
     x + y
 }
@@ -8508,7 +9338,10 @@ pub unsafe extern "C" fn f32divf64(x: f64, y: f64) -> f32 {
     // Route through `fdiv` for correct single rounding (round-to-odd).
     unsafe { fdiv(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32divf64x(x: f64, y: f64) -> f32 {
     unsafe { fdiv(x, y) }
 }
@@ -8520,7 +9353,10 @@ pub unsafe extern "C" fn f32divf128(x: f128, y: f128) -> f32 {
 pub unsafe extern "C" fn f32xdivf64(x: f64, y: f64) -> f64 {
     x / y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32xdivf64x(x: f64, y: f64) -> f64 {
     x / y
 }
@@ -8528,7 +9364,10 @@ pub unsafe extern "C" fn f32xdivf64x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn f32xdivf128(x: f128, y: f128) -> f64 {
     ndiv_ro_f128(x, y) as f64
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f64divf64x(x: f64, y: f64) -> f64 {
     x / y
 }
@@ -8549,7 +9388,10 @@ pub unsafe extern "C" fn f32mulf64(x: f64, y: f64) -> f32 {
     // Route through `fmul` for correct single rounding (round-to-odd).
     unsafe { fmul(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32mulf64x(x: f64, y: f64) -> f32 {
     unsafe { fmul(x, y) }
 }
@@ -8561,7 +9403,10 @@ pub unsafe extern "C" fn f32mulf128(x: f128, y: f128) -> f32 {
 pub unsafe extern "C" fn f32xmulf64(x: f64, y: f64) -> f64 {
     x * y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32xmulf64x(x: f64, y: f64) -> f64 {
     x * y
 }
@@ -8569,7 +9414,10 @@ pub unsafe extern "C" fn f32xmulf64x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn f32xmulf128(x: f128, y: f128) -> f64 {
     nmul_ro_f128(x, y) as f64
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f64mulf64x(x: f64, y: f64) -> f64 {
     x * y
 }
@@ -8590,7 +9438,10 @@ pub unsafe extern "C" fn f32sqrtf64(x: f64) -> f32 {
     // Route through `fsqrt` for correct single rounding (round-to-odd).
     unsafe { fsqrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32sqrtf64x(x: f64) -> f32 {
     unsafe { fsqrt(x) }
 }
@@ -8602,7 +9453,10 @@ pub unsafe extern "C" fn f32sqrtf128(x: f128) -> f32 {
 pub unsafe extern "C" fn f32xsqrtf64(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32xsqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
@@ -8610,7 +9464,10 @@ pub unsafe extern "C" fn f32xsqrtf64x(x: f64) -> f64 {
 pub unsafe extern "C" fn f32xsqrtf128(x: f128) -> f64 {
     nsqrt_ro_f128(x) as f64
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f64sqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
@@ -8631,7 +9488,10 @@ pub unsafe extern "C" fn f32subf64(x: f64, y: f64) -> f32 {
     // Route through `fsub` for correct single rounding (round-to-odd).
     unsafe { fsub(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32subf64x(x: f64, y: f64) -> f32 {
     unsafe { fsub(x, y) }
 }
@@ -8643,7 +9503,10 @@ pub unsafe extern "C" fn f32subf128(x: f128, y: f128) -> f32 {
 pub unsafe extern "C" fn f32xsubf64(x: f64, y: f64) -> f64 {
     x - y
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32xsubf64x(x: f64, y: f64) -> f64 {
     x - y
 }
@@ -8651,7 +9514,10 @@ pub unsafe extern "C" fn f32xsubf64x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn f32xsubf128(x: f128, y: f128) -> f64 {
     nsub_ro_f128(x, y) as f64
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f64subf64x(x: f64, y: f64) -> f64 {
     x - y
 }
@@ -8672,7 +9538,10 @@ pub unsafe extern "C" fn f32fmaf64(x: f64, y: f64, z: f64) -> f32 {
     // Route through `ffma` for correct single rounding (round-to-odd).
     unsafe { ffma(x, y, z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32fmaf64x(x: f64, y: f64, z: f64) -> f32 {
     unsafe { ffma(x, y, z) }
 }
@@ -8684,7 +9553,10 @@ pub unsafe extern "C" fn f32fmaf128(x: f128, y: f128, z: f128) -> f32 {
 pub unsafe extern "C" fn f32xfmaf64(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f32xfmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
@@ -8692,7 +9564,10 @@ pub unsafe extern "C" fn f32xfmaf64x(x: f64, y: f64, z: f64) -> f64 {
 pub unsafe extern "C" fn f32xfmaf128(x: f128, y: f128, z: f128) -> f64 {
     nfma_ro_f128(x, y, z) as f64
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn f64fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
@@ -8709,11 +9584,17 @@ pub unsafe extern "C" fn f64xfmaf128(x: f64, y: f64, z: f64) -> f64 {
 // Internal glibc math helpers
 // =========================================================================
 
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __fpclassifyl(x: f64) -> c_int {
     unsafe { __fpclassify(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __iscanonicall(_x: f64) -> c_int {
     1
 }
@@ -8725,7 +9606,10 @@ pub unsafe extern "C" fn __iseqsig(x: f64, y: f64) -> c_int {
 pub unsafe extern "C" fn __iseqsigf(x: f32, y: f32) -> c_int {
     if x == y { 1 } else { 0 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __iseqsigl(x: f64, y: f64) -> c_int {
     if x == y { 1 } else { 0 }
 }
@@ -8761,7 +9645,10 @@ pub unsafe extern "C" fn __issignaling(x: f64) -> c_int {
 pub unsafe extern "C" fn __issignalingf(x: f32) -> c_int {
     if is_signaling_nan_f32(x) { 1 } else { 0 }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __issignalingl(x: f64) -> c_int {
     if is_signaling_nan_f64(x) { 1 } else { 0 }
 }
@@ -8786,9 +9673,14 @@ pub unsafe extern "C" fn matherr(_exc: *mut std::ffi::c_void) -> c_int {
     0
 }
 
+/// SVID error-handling mode, `_POSIX_` (2) as in glibc. It was 0 (`_SVID_`),
+/// which made glibc's own libm wrappers -- reachable when libm.so.6 is loaded
+/// next to fl -- print "asin: DOMAIN error" to stderr on every domain error.
+/// It must be writable (`static mut`, `.data`): legacy programs assign
+/// `_LIB_VERSION = _IEEE_;`, which faulted on the former `.rodata` constant.
 #[allow(non_upper_case_globals)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static _LIB_VERSION: c_int = 0;
+pub static mut _LIB_VERSION: c_int = 2;
 
 // =========================================================================
 // TS 18661 / C23 type-generic math width aliases
@@ -8810,7 +9702,10 @@ pub unsafe extern "C" fn acosf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn acosf64(x: f64) -> f64 {
     unsafe { acos(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn acosf64x(x: f64) -> f64 {
     unsafe { acos(x) }
 }
@@ -8830,7 +9725,10 @@ pub unsafe extern "C" fn acoshf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn acoshf64(x: f64) -> f64 {
     unsafe { acosh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn acoshf64x(x: f64) -> f64 {
     unsafe { acosh(x) }
 }
@@ -8854,7 +9752,10 @@ pub unsafe extern "C" fn asinf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn asinf64(x: f64) -> f64 {
     unsafe { asin(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn asinf64x(x: f64) -> f64 {
     unsafe { asin(x) }
 }
@@ -8874,7 +9775,10 @@ pub unsafe extern "C" fn asinhf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn asinhf64(x: f64) -> f64 {
     unsafe { asinh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn asinhf64x(x: f64) -> f64 {
     unsafe { asinh(x) }
 }
@@ -8894,7 +9798,10 @@ pub unsafe extern "C" fn atanf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn atanf64(x: f64) -> f64 {
     unsafe { atan(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atanf64x(x: f64) -> f64 {
     unsafe { atan(x) }
 }
@@ -8914,7 +9821,10 @@ pub unsafe extern "C" fn atanhf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn atanhf64(x: f64) -> f64 {
     unsafe { atanh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atanhf64x(x: f64) -> f64 {
     unsafe { atanh(x) }
 }
@@ -8941,7 +9851,10 @@ pub unsafe extern "C" fn cbrtf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn cbrtf64(x: f64) -> f64 {
     unsafe { cbrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cbrtf64x(x: f64) -> f64 {
     unsafe { cbrt(x) }
 }
@@ -8961,7 +9874,10 @@ pub unsafe extern "C" fn ceilf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn ceilf64(x: f64) -> f64 {
     unsafe { ceil(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ceilf64x(x: f64) -> f64 {
     unsafe { ceil(x) }
 }
@@ -8981,7 +9897,10 @@ pub unsafe extern "C" fn cosf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn cosf64(x: f64) -> f64 {
     unsafe { cos(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cosf64x(x: f64) -> f64 {
     unsafe { cos(x) }
 }
@@ -9001,7 +9920,10 @@ pub unsafe extern "C" fn coshf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn coshf64(x: f64) -> f64 {
     unsafe { cosh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn coshf64x(x: f64) -> f64 {
     unsafe { cosh(x) }
 }
@@ -9025,7 +9947,10 @@ pub unsafe extern "C" fn erff32x(x: f64) -> f64 {
 pub unsafe extern "C" fn erff64(x: f64) -> f64 {
     unsafe { erf(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn erff64x(x: f64) -> f64 {
     unsafe { erf(x) }
 }
@@ -9045,7 +9970,10 @@ pub unsafe extern "C" fn erfcf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn erfcf64(x: f64) -> f64 {
     unsafe { erfc(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn erfcf64x(x: f64) -> f64 {
     unsafe { erfc(x) }
 }
@@ -9065,7 +9993,10 @@ pub unsafe extern "C" fn expf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn expf64(x: f64) -> f64 {
     unsafe { exp(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn expf64x(x: f64) -> f64 {
     unsafe { exp(x) }
 }
@@ -9091,7 +10022,10 @@ pub unsafe extern "C" fn exp10f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn exp10f64(x: f64) -> f64 {
     unsafe { exp10(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp10f64x(x: f64) -> f64 {
     unsafe { exp10(x) }
 }
@@ -9115,7 +10049,10 @@ pub unsafe extern "C" fn exp2f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn exp2f64(x: f64) -> f64 {
     unsafe { exp2(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn exp2f64x(x: f64) -> f64 {
     unsafe { exp2(x) }
 }
@@ -9140,7 +10077,10 @@ pub unsafe extern "C" fn expm1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn expm1f64(x: f64) -> f64 {
     unsafe { expm1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn expm1f64x(x: f64) -> f64 {
     unsafe { expm1(x) }
 }
@@ -9164,7 +10104,10 @@ pub unsafe extern "C" fn fabsf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn fabsf64(x: f64) -> f64 {
     unsafe { fabs(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fabsf64x(x: f64) -> f64 {
     unsafe { fabs(x) }
 }
@@ -9184,7 +10127,10 @@ pub unsafe extern "C" fn floorf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn floorf64(x: f64) -> f64 {
     unsafe { floor(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn floorf64x(x: f64) -> f64 {
     unsafe { floor(x) }
 }
@@ -9204,7 +10150,10 @@ pub unsafe extern "C" fn lgammaf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn lgammaf64(x: f64) -> f64 {
     unsafe { lgamma(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lgammaf64x(x: f64) -> f64 {
     unsafe { lgamma(x) }
 }
@@ -9230,7 +10179,10 @@ pub unsafe extern "C" fn logf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn logf64(x: f64) -> f64 {
     unsafe { log(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn logf64x(x: f64) -> f64 {
     unsafe { log(x) }
 }
@@ -9257,7 +10209,10 @@ pub unsafe extern "C" fn log10f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn log10f64(x: f64) -> f64 {
     unsafe { log10(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log10f64x(x: f64) -> f64 {
     unsafe { log10(x) }
 }
@@ -9283,7 +10238,10 @@ pub unsafe extern "C" fn log1pf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn log1pf64(x: f64) -> f64 {
     unsafe { log1p(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log1pf64x(x: f64) -> f64 {
     unsafe { log1p(x) }
 }
@@ -9310,7 +10268,10 @@ pub unsafe extern "C" fn log2f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn log2f64(x: f64) -> f64 {
     unsafe { log2(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn log2f64x(x: f64) -> f64 {
     unsafe { log2(x) }
 }
@@ -9336,7 +10297,10 @@ pub unsafe extern "C" fn logbf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn logbf64(x: f64) -> f64 {
     unsafe { logb(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn logbf64x(x: f64) -> f64 {
     unsafe { logb(x) }
 }
@@ -9365,7 +10329,10 @@ pub unsafe extern "C" fn nearbyintf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn nearbyintf64(x: f64) -> f64 {
     unsafe { nearbyint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nearbyintf64x(x: f64) -> f64 {
     unsafe { nearbyint(x) }
 }
@@ -9385,7 +10352,10 @@ pub unsafe extern "C" fn rintf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn rintf64(x: f64) -> f64 {
     unsafe { rint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn rintf64x(x: f64) -> f64 {
     unsafe { rint(x) }
 }
@@ -9408,7 +10378,10 @@ pub unsafe extern "C" fn roundf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn roundf64(x: f64) -> f64 {
     unsafe { round(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn roundf64x(x: f64) -> f64 {
     unsafe { round(x) }
 }
@@ -9428,7 +10401,10 @@ pub unsafe extern "C" fn sinf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn sinf64(x: f64) -> f64 {
     unsafe { sin(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sinf64x(x: f64) -> f64 {
     unsafe { sin(x) }
 }
@@ -9448,7 +10424,10 @@ pub unsafe extern "C" fn sinhf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn sinhf64(x: f64) -> f64 {
     unsafe { sinh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sinhf64x(x: f64) -> f64 {
     unsafe { sinh(x) }
 }
@@ -9472,7 +10451,10 @@ pub unsafe extern "C" fn sqrtf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn sqrtf64(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
@@ -9512,7 +10494,10 @@ pub unsafe extern "C" fn tanf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn tanf64(x: f64) -> f64 {
     unsafe { tan(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tanf64x(x: f64) -> f64 {
     unsafe { tan(x) }
 }
@@ -9532,7 +10517,10 @@ pub unsafe extern "C" fn tanhf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn tanhf64(x: f64) -> f64 {
     unsafe { tanh(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tanhf64x(x: f64) -> f64 {
     unsafe { tanh(x) }
 }
@@ -9552,7 +10540,10 @@ pub unsafe extern "C" fn tgammaf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn tgammaf64(x: f64) -> f64 {
     unsafe { tgamma(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn tgammaf64x(x: f64) -> f64 {
     unsafe { tgamma(x) }
 }
@@ -9572,7 +10563,10 @@ pub unsafe extern "C" fn truncf32x(x: f64) -> f64 {
 pub unsafe extern "C" fn truncf64(x: f64) -> f64 {
     unsafe { trunc(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn truncf64x(x: f64) -> f64 {
     unsafe { trunc(x) }
 }
@@ -9594,7 +10588,10 @@ pub unsafe extern "C" fn atan2f32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn atan2f64(x: f64, y: f64) -> f64 {
     unsafe { atan2(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn atan2f64x(x: f64, y: f64) -> f64 {
     unsafe { atan2(x, y) }
 }
@@ -9614,7 +10611,10 @@ pub unsafe extern "C" fn copysignf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn copysignf64(x: f64, y: f64) -> f64 {
     unsafe { copysign(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn copysignf64x(x: f64, y: f64) -> f64 {
     unsafe { copysign(x, y) }
 }
@@ -9635,7 +10635,10 @@ pub unsafe extern "C" fn fdimf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fdimf64(x: f64, y: f64) -> f64 {
     unsafe { fdim(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fdimf64x(x: f64, y: f64) -> f64 {
     unsafe { fdim(x, y) }
 }
@@ -9666,7 +10669,10 @@ pub unsafe extern "C" fn fmaxf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmaxf64(x: f64, y: f64) -> f64 {
     unsafe { fmax(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaxf64x(x: f64, y: f64) -> f64 {
     unsafe { fmax(x, y) }
 }
@@ -9696,7 +10702,10 @@ pub unsafe extern "C" fn fminf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fminf64(x: f64, y: f64) -> f64 {
     unsafe { fmin(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fminf64x(x: f64, y: f64) -> f64 {
     unsafe { fmin(x, y) }
 }
@@ -9735,7 +10744,10 @@ pub unsafe extern "C" fn fmodf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn fmodf64(x: f64, y: f64) -> f64 {
     unsafe { fmod(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmodf64x(x: f64, y: f64) -> f64 {
     unsafe { fmod(x, y) }
 }
@@ -9773,7 +10785,10 @@ pub unsafe extern "C" fn hypotf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn hypotf64(x: f64, y: f64) -> f64 {
     unsafe { hypot(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn hypotf64x(x: f64, y: f64) -> f64 {
     unsafe { hypot(x, y) }
 }
@@ -9798,7 +10813,10 @@ pub unsafe extern "C" fn nextafterf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn nextafterf64(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nextafterf64x(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
@@ -9831,7 +10849,10 @@ pub unsafe extern "C" fn powf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn powf64(x: f64, y: f64) -> f64 {
     unsafe { pow(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn powf64x(x: f64, y: f64) -> f64 {
     unsafe { pow(x, y) }
 }
@@ -9864,7 +10885,10 @@ pub unsafe extern "C" fn remainderf32x(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn remainderf64(x: f64, y: f64) -> f64 {
     unsafe { remainder(x, y) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn remainderf64x(x: f64, y: f64) -> f64 {
     unsafe { remainder(x, y) }
 }
@@ -9916,7 +10940,10 @@ pub unsafe extern "C" fn fmaf32x(x: f64, y: f64, z: f64) -> f64 {
 pub unsafe extern "C" fn fmaf64(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
@@ -9940,7 +10967,10 @@ fn host_fmaf128() -> Option<HostFmaf128> {
         if symbol.is_null() {
             return None;
         }
-        Some(core::mem::transmute(symbol))
+        Some(core::mem::transmute::<
+            *mut c_void,
+            unsafe extern "C" fn(f128, f128, f128) -> f128,
+        >(symbol))
     })
 }
 
@@ -9966,7 +10996,10 @@ pub unsafe extern "C" fn ilogbf32x(x: f64) -> c_int {
 pub unsafe extern "C" fn ilogbf64(x: f64) -> c_int {
     unsafe { ilogb(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ilogbf64x(x: f64) -> c_int {
     unsafe { ilogb(x) }
 }
@@ -9999,7 +11032,10 @@ pub unsafe extern "C" fn lrintf32x(x: f64) -> c_long {
 pub unsafe extern "C" fn lrintf64(x: f64) -> c_long {
     unsafe { lrint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lrintf64x(x: f64) -> c_long {
     unsafe { lrint(x) }
 }
@@ -10019,7 +11055,10 @@ pub unsafe extern "C" fn lroundf32x(x: f64) -> c_long {
 pub unsafe extern "C" fn lroundf64(x: f64) -> c_long {
     unsafe { lround(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn lroundf64x(x: f64) -> c_long {
     unsafe { lround(x) }
 }
@@ -10041,7 +11080,10 @@ pub unsafe extern "C" fn llrintf32x(x: f64) -> i64 {
 pub unsafe extern "C" fn llrintf64(x: f64) -> i64 {
     unsafe { llrint(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn llrintf64x(x: f64) -> i64 {
     unsafe { llrint(x) }
 }
@@ -10061,7 +11103,10 @@ pub unsafe extern "C" fn llroundf32x(x: f64) -> i64 {
 pub unsafe extern "C" fn llroundf64(x: f64) -> i64 {
     unsafe { llround(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn llroundf64x(x: f64) -> i64 {
     unsafe { llround(x) }
 }
@@ -10083,7 +11128,10 @@ pub unsafe extern "C" fn frexpf32x(x: f64, exp: *mut c_int) -> f64 {
 pub unsafe extern "C" fn frexpf64(x: f64, exp: *mut c_int) -> f64 {
     unsafe { frexp(x, exp) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn frexpf64x(x: f64, exp: *mut c_int) -> f64 {
     unsafe { frexp(x, exp) }
 }
@@ -10121,7 +11169,10 @@ pub unsafe extern "C" fn ldexpf32x(x: f64, n: c_int) -> f64 {
 pub unsafe extern "C" fn ldexpf64(x: f64, n: c_int) -> f64 {
     unsafe { ldexp(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ldexpf64x(x: f64, n: c_int) -> f64 {
     unsafe { ldexp(x, n) }
 }
@@ -10141,7 +11192,10 @@ pub unsafe extern "C" fn scalbnf32x(x: f64, n: c_int) -> f64 {
 pub unsafe extern "C" fn scalbnf64(x: f64, n: c_int) -> f64 {
     unsafe { scalbn(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn scalbnf64x(x: f64, n: c_int) -> f64 {
     unsafe { scalbn(x, n) }
 }
@@ -10677,7 +11731,7 @@ fn asin_f128(x: f128) -> f128 {
         p = p * tt + RS2;
         p = p * tt + RS1;
         p = p * tt + RS0;
-        p = p * tt;
+        p *= tt;
         let mut q = tt + SS9;
         q = q * tt + SS8;
         q = q * tt + SS7;
@@ -10706,7 +11760,7 @@ fn asin_f128(x: f128) -> f128 {
     p = p * t + PS2;
     p = p * t + PS1;
     p = p * t + PS0;
-    p = p * t;
+    p *= t;
     let mut q = t + QS8;
     q = q * t + QS7;
     q = q * t + QS6;
@@ -10723,11 +11777,10 @@ fn asin_f128(x: f128) -> f128 {
     }
 
     let s = finite_sqrtf128(t);
-    let tres;
-    if ix >= 0x3ffe_f333 {
+    let tres = if ix >= 0x3ffe_f333 {
         // |x| > 0.975
         let w = p / q;
-        tres = PIO2_HI - (2.0 * (s + s * w) - PIO2_LO);
+        PIO2_HI - (2.0 * (s + s * w) - PIO2_LO)
     } else {
         // hi/lo split of s: clear the low 64 mantissa bits.
         let w = f128::from_bits(s.to_bits() & (!0u128 << 64));
@@ -10735,8 +11788,8 @@ fn asin_f128(x: f128) -> f128 {
         let r = p / q;
         let pp = 2.0 * s * r - (PIO2_LO - 2.0 * c);
         let qq = PIO4_HI - 2.0 * w;
-        tres = PIO4_HI - (pp - qq);
-    }
+        PIO4_HI - (pp - qq)
+    };
     if neg { -tres } else { tres }
 }
 
@@ -10855,7 +11908,7 @@ fn acos_f128(x: f128) -> f128 {
             p = p * z + PS2;
             p = p * z + PS1;
             p = p * z + PS0;
-            p = p * z;
+            p *= z;
             let mut q = z + QS8;
             q = q * z + QS7;
             q = q * z + QS6;
@@ -10880,7 +11933,7 @@ fn acos_f128(x: f128) -> f128 {
         p = p * t + P2;
         p = p * t + P1;
         p = p * t + P0;
-        p = p * t;
+        p *= t;
         let mut q = t + Q9;
         q = q * t + Q8;
         q = q * t + Q7;
@@ -10908,7 +11961,7 @@ fn acos_f128(x: f128) -> f128 {
         p = p * t + RS2;
         p = p * t + RS1;
         p = p * t + RS0;
-        p = p * t;
+        p *= t;
         let mut q = t + SS9;
         q = q * t + SS8;
         q = q * t + SS7;
@@ -10934,9 +11987,9 @@ fn acos_f128(x: f128) -> f128 {
     let f1 = f128::from_bits(s.to_bits() & (!0u128 << 64));
     let f2 = s - f1;
     let mut w = z - f1 * f1;
-    w = w - 2.0 * f1 * f2;
-    w = w - f2 * f2;
-    w = w / (2.0 * s);
+    w -= 2.0 * f1 * f2;
+    w -= f2 * f2;
+    w /= 2.0 * s;
     let mut p = PS9 * z + PS8;
     p = p * z + PS7;
     p = p * z + PS6;
@@ -10946,7 +11999,7 @@ fn acos_f128(x: f128) -> f128 {
     p = p * z + PS2;
     p = p * z + PS1;
     p = p * z + PS0;
-    p = p * z;
+    p *= z;
     let mut q = z + QS8;
     q = q * z + QS7;
     q = q * z + QS6;
@@ -11561,20 +12614,16 @@ fn log1pl_f128(xm1: f128) -> f128 {
         x = f128::from_bits((bits & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
     }
 
-    if e > 2 || e < -2 {
-        let y;
-        let zz;
-        if x < SQRTH {
+    if !(-2..=2).contains(&e) {
+        let (y, zz) = if x < SQRTH {
             e -= 1;
             let z = x - 0.5;
-            y = 0.5 * z + 0.5;
-            zz = z;
+            (0.5 * z + 0.5, z)
         } else {
             let mut z = x - 0.5;
             z -= 0.5;
-            y = 0.5 * x + 0.5;
-            zz = z;
-        }
+            (0.5 * x + 0.5, z)
+        };
         let xr = zz / y;
         let z = xr * xr;
         let mut r = R5 * z + R4;
@@ -11752,8 +12801,7 @@ fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
         xm = f128::from_bits((xb & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
     }
 
-    let y;
-    if e > 2 || e < -2 {
+    let y = if !(-2..=2).contains(&e) {
         let yy;
         if xm < SQRTH {
             e -= 1;
@@ -11767,7 +12815,7 @@ fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
             xm = z / yy;
         }
         let z = xm * xm;
-        y = xm * (z * neval_f128(z, &LOGB_R) / deval_f128(z, &LOGB_S));
+        xm * (z * neval_f128(z, &LOGB_R) / deval_f128(z, &LOGB_S))
     } else {
         if xm < SQRTH {
             e -= 1;
@@ -11777,8 +12825,8 @@ fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
         }
         let z = xm * xm;
         let yy = xm * (z * neval_f128(xm, &LOGB_P) / deval_f128(xm, &LOGB_Q));
-        y = yy - 0.5 * z;
-    }
+        yy - 0.5 * z
+    };
     Ok((y, xm, e))
 }
 
@@ -11863,16 +12911,18 @@ fn acoshl_f128(x: f128) -> f128 {
     if hx < 0x3fff_0000_0000_0000 {
         // x < 1 (incl negatives); NaN inputs propagate, else negative qNaN.
         if x.is_nan() {
-            return (x - x) / (x - x);
+            (x - x) / (x - x)
+        } else {
+            f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
         }
-        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     } else if hx >= 0x4035_0000_0000_0000 {
         if hx >= 0x7fff_0000_0000_0000 {
-            return x + x; // inf/NaN
+            x + x // inf/NaN
+        } else {
+            logl_f128(x) + LN2 // acosh(huge) = log(2x)
         }
-        return logl_f128(x) + LN2; // acosh(huge) = log(2x)
     } else if hx == 0x3fff_0000_0000_0000 && lx == 0 {
-        return 0.0; // acosh(1) = 0
+        0.0 // acosh(1) = 0
     } else if hx > 0x4000_0000_0000_0000 {
         let t = x * x;
         logl_f128(2.0 * x - 1.0 / (x + finite_sqrtf128(t - 1.0)))
@@ -12013,11 +13063,9 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     if hx < 0 {
         if iy >= 0x4070_0000 {
             yisint = 2;
-        } else if iy >= 0x3fff_0000 {
-            if finite_floorf128(y) == y {
-                let z = 0.5 * y;
-                yisint = if finite_floorf128(z) == z { 2 } else { 1 };
-            }
+        } else if iy >= 0x3fff_0000 && finite_floorf128(y) == y {
+            let z = 0.5 * y;
+            yisint = if finite_floorf128(z) == z { 2 } else { 1 };
         }
     }
 
@@ -12133,15 +13181,15 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     let mut u = ax - BP[k];
     let v = ONE / (ax + BP[k]);
     let s = u * v;
-    let mut s_h = pow_hi59_f128(s);
+    let s_h = pow_hi59_f128(s);
     // t_h = ax + bp[k] high
     let mut t_h = pow_hi59_f128(ax + BP[k]);
     let mut t_l = ax - (t_h - BP[k]);
-    let mut s_l = v * ((u - s_h * t_h) - s_h * t_l);
+    let s_l = v * ((u - s_h * t_h) - s_h * t_l);
     // log(ax)
     let mut s2 = s * s;
     u = LN[0] + s2 * (LN[1] + s2 * (LN[2] + s2 * (LN[3] + s2 * LN[4])));
-    let mut vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
+    let vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
     let mut r = s2 * s2 * u / vv;
     r += s_l * (s_h + s);
     s2 = s_h * s_h;
@@ -12149,7 +13197,7 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     t_l = r - ((t_h - 3.0) - s2);
     // u+v = s*(1+...)
     u = s_h * t_h;
-    let mut v2 = s_l * t_h + t_l * s;
+    let v2 = s_l * t_h + t_l * s;
     // 2/(3log2)*(s+...)
     let mut p_h = pow_hi59_f128(u + v2);
     let mut p_l = v2 - (p_h - u);
@@ -12388,7 +13436,11 @@ fn compoundn_f128(x: f128, y: i64) -> f128 {
 /// `__kernel_rem_pio2` (dbl-64 k_rem_pio2.c). Computes x·(2/pi) mod 1 in f64
 /// multi-precision (24-bit limbs) using the caller's `ipio2` table; returns the
 /// low 3 bits of the integer part and writes the fractional remainder into `y`.
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    clippy::excessive_precision,
+    clippy::explicit_counter_loop
+)]
 fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32) -> i32 {
     use crate::trig_tables::TWO_OVER_PI as IPIO2;
     use frankenlibc_core::math::scalbn as fscalbn;
@@ -12454,7 +13506,7 @@ fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32) -> i32
         }
         // compute n
         z = fscalbn(z, q0);
-        z -= 8.0 * (z * 0.125).floor();
+        z -= 8.0 * frankenlibc_membrane::util::floor_f64(z * 0.125);
         n = z as i32;
         z -= n as f64;
         ih = 0;
@@ -13558,7 +14610,10 @@ pub unsafe extern "C" fn scalblnf32x(x: f64, n: c_long) -> f64 {
 pub unsafe extern "C" fn scalblnf64(x: f64, n: c_long) -> f64 {
     unsafe { scalbln(x, n) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn scalblnf64x(x: f64, n: c_long) -> f64 {
     unsafe { scalbln(x, n) }
 }
@@ -13580,7 +14635,10 @@ pub unsafe extern "C" fn modff32x(x: f64, iptr: *mut f64) -> f64 {
 pub unsafe extern "C" fn modff64(x: f64, iptr: *mut f64) -> f64 {
     unsafe { modf(x, iptr) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn modff64x(x: f64, iptr: *mut f64) -> f64 {
     unsafe { modf(x, iptr) }
 }
@@ -13613,7 +14671,10 @@ pub unsafe extern "C" fn remquof32x(x: f64, y: f64, quo: *mut c_int) -> f64 {
 pub unsafe extern "C" fn remquof64(x: f64, y: f64, quo: *mut c_int) -> f64 {
     unsafe { remquo(x, y, quo) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn remquof64x(x: f64, y: f64, quo: *mut c_int) -> f64 {
     unsafe { remquo(x, y, quo) }
 }
@@ -13660,7 +14721,10 @@ pub unsafe extern "C" fn sincosf32x(x: f64, s: *mut f64, c: *mut f64) {
 pub unsafe extern "C" fn sincosf64(x: f64, s: *mut f64, c: *mut f64) {
     unsafe { sincos(x, s, c) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn sincosf64x(x: f64, s: *mut f64, c: *mut f64) {
     unsafe { sincos(x, s, c) }
 }
@@ -13713,7 +14777,10 @@ pub unsafe extern "C" fn nanf32x(tagp: *const std::ffi::c_char) -> f64 {
 pub unsafe extern "C" fn nanf64(tagp: *const std::ffi::c_char) -> f64 {
     unsafe { nan(tagp) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nanf64x(tagp: *const std::ffi::c_char) -> f64 {
     unsafe { nan(tagp) }
 }
@@ -13774,7 +14841,10 @@ pub unsafe extern "C" fn jnf32x(n: c_int, x: f64) -> f64 {
 pub unsafe extern "C" fn jnf64(n: c_int, x: f64) -> f64 {
     unsafe { jn(n, x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn jnf64x(n: c_int, x: f64) -> f64 {
     unsafe { jn(n, x) }
 }
@@ -13794,7 +14864,10 @@ pub unsafe extern "C" fn ynf32x(n: c_int, x: f64) -> f64 {
 pub unsafe extern "C" fn ynf64(n: c_int, x: f64) -> f64 {
     unsafe { yn(n, x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ynf64x(n: c_int, x: f64) -> f64 {
     unsafe { yn(n, x) }
 }
@@ -13816,7 +14889,10 @@ pub unsafe extern "C" fn j0f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn j0f64(x: f64) -> f64 {
     unsafe { j0(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn j0f64x(x: f64) -> f64 {
     unsafe { j0(x) }
 }
@@ -13836,7 +14912,10 @@ pub unsafe extern "C" fn j1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn j1f64(x: f64) -> f64 {
     unsafe { j1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn j1f64x(x: f64) -> f64 {
     unsafe { j1(x) }
 }
@@ -13856,7 +14935,10 @@ pub unsafe extern "C" fn y0f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn y0f64(x: f64) -> f64 {
     unsafe { y0(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn y0f64x(x: f64) -> f64 {
     unsafe { y0(x) }
 }
@@ -13876,7 +14958,10 @@ pub unsafe extern "C" fn y1f32x(x: f64) -> f64 {
 pub unsafe extern "C" fn y1f64(x: f64) -> f64 {
     unsafe { y1(x) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn y1f64x(x: f64) -> f64 {
     unsafe { y1(x) }
 }
@@ -13898,7 +14983,10 @@ pub unsafe extern "C" fn cabsf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn cabsf64(z: CDoubleComplex) -> f64 {
     unsafe { cabs(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cabsf64x(z: CDoubleComplex) -> f64 {
     unsafe { cabs(z) }
 }
@@ -13919,7 +15007,10 @@ pub unsafe extern "C" fn cargf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn cargf64(z: CDoubleComplex) -> f64 {
     unsafe { carg(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cargf64x(z: CDoubleComplex) -> f64 {
     unsafe { carg(z) }
 }
@@ -13940,7 +15031,10 @@ pub unsafe extern "C" fn cimagf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn cimagf64(z: CDoubleComplex) -> f64 {
     unsafe { cimag(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cimagf64x(z: CDoubleComplex) -> f64 {
     unsafe { cimag(z) }
 }
@@ -13960,7 +15054,10 @@ pub unsafe extern "C" fn crealf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn crealf64(z: CDoubleComplex) -> f64 {
     unsafe { creal(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn crealf64x(z: CDoubleComplex) -> f64 {
     unsafe { creal(z) }
 }
@@ -13982,7 +15079,10 @@ pub unsafe extern "C" fn cacosf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cacosf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacos(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cacosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacos(z) }
 }
@@ -14002,7 +15102,10 @@ pub unsafe extern "C" fn cacoshf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cacoshf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacosh(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cacoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacosh(z) }
 }
@@ -14022,7 +15125,10 @@ pub unsafe extern "C" fn casinf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn casinf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casin(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn casinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casin(z) }
 }
@@ -14042,7 +15148,10 @@ pub unsafe extern "C" fn casinhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn casinhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casinh(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn casinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casinh(z) }
 }
@@ -14062,7 +15171,10 @@ pub unsafe extern "C" fn catanf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn catanf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catan(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn catanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catan(z) }
 }
@@ -14082,7 +15194,10 @@ pub unsafe extern "C" fn catanhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn catanhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catanh(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn catanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catanh(z) }
 }
@@ -14102,7 +15217,10 @@ pub unsafe extern "C" fn ccosf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ccosf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccos(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ccosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccos(z) }
 }
@@ -14122,7 +15240,10 @@ pub unsafe extern "C" fn ccoshf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ccoshf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccosh(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ccoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccosh(z) }
 }
@@ -14142,7 +15263,10 @@ pub unsafe extern "C" fn cexpf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cexpf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cexp(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cexpf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cexp(z) }
 }
@@ -14162,7 +15286,10 @@ pub unsafe extern "C" fn clogf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn clogf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn clogf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog(z) }
 }
@@ -14234,25 +15361,24 @@ fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
             absx = scalbn_f128(absx, 113);
             absy = scalbn_f128(absy, 113);
         }
-        let real;
-        if absx == 1.0 && scale == 0 {
-            real = log1pl_f128(absy * absy) / 2.0;
+        let real = if absx == 1.0 && scale == 0 {
+            log1pl_f128(absy * absy) / 2.0
         } else if absx > 1.0 && absx < 2.0 && absy < 1.0 && scale == 0 {
             let mut d2m1 = (absx - 1.0) * (absx + 1.0);
             if absy >= EPS {
                 d2m1 += absy * absy;
             }
-            real = log1pl_f128(d2m1) / 2.0;
+            log1pl_f128(d2m1) / 2.0
         } else if absx < 1.0 && absx >= 0.5 && absy < EPS_HALF && scale == 0 {
             let d2m1 = (absx - 1.0) * (absx + 1.0);
-            real = log1pl_f128(d2m1) / 2.0;
+            log1pl_f128(d2m1) / 2.0
         } else if absx < 1.0 && absx >= 0.5 && scale == 0 && absx * absx + absy * absy >= 0.5 {
             let d2m1 = x2y2m1_f128(absx, absy);
-            real = log1pl_f128(d2m1) / 2.0;
+            log1pl_f128(d2m1) / 2.0
         } else {
             let d = hypot_f128(absx, absy);
-            real = logl_f128(d) - (scale as f128) * LN2;
-        }
+            logl_f128(d) - (scale as f128) * LN2
+        };
         return CFloat128Complex {
             re: real,
             im: atan2_f128(ix, rx),
@@ -14388,7 +15514,10 @@ pub unsafe extern "C" fn conjf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn conjf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { conj(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn conjf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { conj(z) }
 }
@@ -14412,7 +15541,10 @@ pub unsafe extern "C" fn cprojf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cprojf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cproj(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cprojf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cproj(z) }
 }
@@ -14442,7 +15574,10 @@ pub unsafe extern "C" fn csinf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn csinf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csin(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn csinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csin(z) }
 }
@@ -14462,7 +15597,10 @@ pub unsafe extern "C" fn csinhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn csinhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csinh(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn csinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csinh(z) }
 }
@@ -14482,7 +15620,10 @@ pub unsafe extern "C" fn csqrtf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn csqrtf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csqrt(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn csqrtf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csqrt(z) }
 }
@@ -14499,7 +15640,6 @@ pub unsafe extern "C" fn csqrtf128(z: CFloat128Complex) -> CFloat128Complex {
 fn catanh_f128(z: CFloat128Complex) -> CFloat128Complex {
     const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
     const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
-    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
     const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS = 2^116
     const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS*EPS = 2^-224
     const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2 = 2^-113
@@ -14867,7 +16007,6 @@ fn cacos_f128(x: CFloat128Complex) -> CFloat128Complex {
 fn catan_f128(z: CFloat128Complex) -> CFloat128Complex {
     const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
     const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
-    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
     const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS
     const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS²
     const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2
@@ -14960,7 +16099,10 @@ pub unsafe extern "C" fn ctanf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ctanf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctan(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ctanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctan(z) }
 }
@@ -14980,7 +16122,10 @@ pub unsafe extern "C" fn ctanhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ctanhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctanh(z) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ctanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctanh(z) }
 }
@@ -15002,7 +16147,10 @@ pub unsafe extern "C" fn cpowf32x(a: CDoubleComplex, b: CDoubleComplex) -> CDoub
 pub unsafe extern "C" fn cpowf64(a: CDoubleComplex, b: CDoubleComplex) -> CDoubleComplex {
     unsafe { cpow(a, b) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn cpowf64x(a: CDoubleComplex, b: CDoubleComplex) -> CDoubleComplex {
     unsafe { cpow(a, b) }
 }
@@ -15134,6 +16282,7 @@ macro_rules! finite_unary_f32 {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! finite_unary_f128 {
     ($name:ident, $target:path) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15152,6 +16301,7 @@ macro_rules! finite_binary_f64 {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! finite_binary_f128 {
     ($name:ident, $target:path) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16721,6 +17871,92 @@ mod tests {
             assert_eq!(fmaximumf(3.0f32, 5.0f32), 5.0f32);
             assert_eq!(fmaximumf32(3.0f32, 5.0f32), 5.0f32);
             assert!(fmaximumf(f32::NAN, 1.0f32).is_nan());
+        }
+    }
+
+    #[test]
+    fn is_integral_bit_tests_match_fract() {
+        // The bit tests replace `x.is_finite() && x.fract() == 0.0` (a `trunc`
+        // libcall in the baseline x86-64 build); they must agree on every class
+        // of input: specials, both zeros, subnormals, every exponent around the
+        // 1 and 2^52 (2^23) edges, near-integers, and random bit patterns.
+        let mut f64s = vec![
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -0.5,
+            1.5,
+            -2.5,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            -f64::NAN,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::MAX,
+            -f64::MAX,
+            f64::EPSILON,
+        ];
+        let mut f32s = vec![
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -2.5,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            f32::MAX,
+            -f32::MAX,
+        ];
+        for e in -4..60 {
+            let p = 2f64.powi(e);
+            f64s.extend([p, -p, p + 1.0, p - 1.0, p + 0.5, p - 0.5]);
+            f64s.extend([
+                f64::from_bits(p.to_bits() + 1),
+                f64::from_bits(p.to_bits() - 1),
+            ]);
+        }
+        for e in -4..30 {
+            let p = 2f32.powi(e);
+            f32s.extend([p, -p, p + 1.0, p - 1.0, p + 0.5, p - 0.5]);
+            f32s.extend([
+                f32::from_bits(p.to_bits() + 1),
+                f32::from_bits(p.to_bits() - 1),
+            ]);
+        }
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            f64s.push(f64::from_bits(state));
+            f32s.push(f32::from_bits(state as u32));
+            // Integers and half-integers of every magnitude up to 2^63.
+            let k = (state >> (state & 63)) as i64;
+            f64s.extend([k as f64, k as f64 + 0.5]);
+            f32s.extend([k as f32, (k >> 40) as f32 + 0.5]);
+        }
+        for x in f64s {
+            assert_eq!(
+                is_integral_f64(x),
+                x.is_finite() && x.fract() == 0.0,
+                "is_integral_f64({x:e} / {:#x})",
+                x.to_bits()
+            );
+        }
+        for x in f32s {
+            assert_eq!(
+                is_integral_f32(x),
+                x.is_finite() && x.fract() == 0.0,
+                "is_integral_f32({x:e} / {:#x})",
+                x.to_bits()
+            );
         }
     }
 

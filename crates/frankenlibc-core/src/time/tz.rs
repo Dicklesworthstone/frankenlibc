@@ -528,6 +528,8 @@ pub fn parse_tzif(b: &[u8]) -> Option<Zone> {
     })
 }
 
+pub type ZoneGlobalsAt<'a> = (&'a str, &'a str, Option<(bool, i64)>);
+
 impl Zone {
     /// UTC with abbreviation `UTC`.
     #[must_use]
@@ -631,7 +633,7 @@ impl Zone {
     /// without a transition table (POSIX `TZ` strings), whose globals never
     /// change after `tzset`.
     #[must_use]
-    pub fn globals_at(&self, t: i64) -> Option<(&str, &str, Option<(bool, i64)>)> {
+    pub fn globals_at(&self, t: i64) -> Option<ZoneGlobalsAt<'_>> {
         if self.transitions.is_empty() {
             return None;
         }

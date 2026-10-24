@@ -44,6 +44,7 @@ type F32 = unsafe extern "C" fn(f32) -> f32;
 type F64 = unsafe extern "C" fn(f64) -> f64;
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn floatn_f32_aliases_match_base() {
     let pairs: &[(F32, F32, &str)] = &[
         (m::sinf32, m::sinf, "sin"),
@@ -109,6 +110,7 @@ fn floatn_f32_aliases_match_base() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn floatn_f64_aliases_match_base() {
     let pairs: &[(F64, F64, &str)] = &[
         (m::sinf64, m::sin, "sin"),

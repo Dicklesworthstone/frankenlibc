@@ -102,7 +102,7 @@ fn survey_unary(
             black_box(bench_one());
         }
         for _ in 0..200 {
-            samples.push(timeit(&bench_one) / inputs.len() as f64);
+            samples.push(timeit(bench_one) / inputs.len() as f64);
         }
         let v = p50(&mut samples);
         let _ = label;
@@ -133,64 +133,26 @@ fn bench(c: &mut Criterion) {
 
     let mut g = c.benchmark_group("math_survey");
     g.sample_size(10);
-    survey_unary(
-        &mut g,
-        "asin",
-        &unit,
-        |x| math::asin(x),
-        |x| unsafe { h_asin(x) },
-    );
-    survey_unary(
-        &mut g,
-        "acos",
-        &unit,
-        |x| math::acos(x),
-        |x| unsafe { h_acos(x) },
-    );
-    survey_unary(
-        &mut g,
-        "atan",
-        &any,
-        |x| math::atan(x),
-        |x| unsafe { h_atan(x) },
-    );
-    survey_unary(
-        &mut g,
-        "asinh",
-        &any,
-        |x| math::asinh(x),
-        |x| unsafe { h_asinh(x) },
-    );
-    survey_unary(
-        &mut g,
-        "acosh",
-        &pos1,
-        |x| math::acosh(x),
-        |x| unsafe { h_acosh(x) },
-    );
-    survey_unary(
-        &mut g,
-        "atanh",
-        &unit,
-        |x| math::atanh(x),
-        |x| unsafe { h_atanh(x) },
-    );
-    survey_unary(
-        &mut g,
-        "expm1",
-        &small,
-        |x| math::expm1(x),
-        |x| unsafe { h_expm1(x) },
-    );
-    survey_unary(
-        &mut g,
-        "log1p",
-        &gtm1,
-        |x| math::log1p(x),
-        |x| unsafe { h_log1p(x) },
-    );
-    survey_unary(&mut g, "j0", &posb, |x| math::j0(x), |x| unsafe { h_j0(x) });
-    survey_unary(&mut g, "y0", &posb, |x| math::y0(x), |x| unsafe { h_y0(x) });
+    survey_unary(&mut g, "asin", &unit, math::asin, |x| unsafe { h_asin(x) });
+    survey_unary(&mut g, "acos", &unit, math::acos, |x| unsafe { h_acos(x) });
+    survey_unary(&mut g, "atan", &any, math::atan, |x| unsafe { h_atan(x) });
+    survey_unary(&mut g, "asinh", &any, math::asinh, |x| unsafe {
+        h_asinh(x)
+    });
+    survey_unary(&mut g, "acosh", &pos1, math::acosh, |x| unsafe {
+        h_acosh(x)
+    });
+    survey_unary(&mut g, "atanh", &unit, math::atanh, |x| unsafe {
+        h_atanh(x)
+    });
+    survey_unary(&mut g, "expm1", &small, math::expm1, |x| unsafe {
+        h_expm1(x)
+    });
+    survey_unary(&mut g, "log1p", &gtm1, math::log1p, |x| unsafe {
+        h_log1p(x)
+    });
+    survey_unary(&mut g, "j0", &posb, math::j0, |x| unsafe { h_j0(x) });
+    survey_unary(&mut g, "y0", &posb, math::y0, |x| unsafe { h_y0(x) });
     survey_unary(
         &mut g,
         "atan2",
@@ -205,68 +167,20 @@ fn bench(c: &mut Criterion) {
         |x| math::hypot(x, 1.7),
         |x| unsafe { h_hypot(x, 1.7) },
     );
-    survey_unary(
-        &mut g,
-        "sin",
-        &any,
-        |x| math::sin(x),
-        |x| unsafe { h_sin(x) },
-    );
-    survey_unary(
-        &mut g,
-        "cos",
-        &any,
-        |x| math::cos(x),
-        |x| unsafe { h_cos(x) },
-    );
-    survey_unary(
-        &mut g,
-        "tan",
-        &any,
-        |x| math::tan(x),
-        |x| unsafe { h_tan(x) },
-    );
+    survey_unary(&mut g, "sin", &any, math::sin, |x| unsafe { h_sin(x) });
+    survey_unary(&mut g, "cos", &any, math::cos, |x| unsafe { h_cos(x) });
+    survey_unary(&mut g, "tan", &any, math::tan, |x| unsafe { h_tan(x) });
     // ORIG arm (same-run, same worker): the pre-lever `libm::tan` the deployed `math::tan`
     // replaced on the [π/4, TRIG_RED_MAX] band. Compare `tan` (CAND) vs `tan_orig` (ORIG)
     // within ONE run — both are Rust so the ratio is worker-frequency-stable, unlike the
     // fl-vs-glibc ratio which swings across workers.
-    survey_unary(
-        &mut g,
-        "tan_orig",
-        &any,
-        |x| libm::tan(x),
-        |x| unsafe { h_tan(x) },
-    );
+    survey_unary(&mut g, "tan_orig", &any, libm::tan, |x| unsafe { h_tan(x) });
     // ORIG arms for the sin/cos FMA-reduction lever (pre-lever `libm::sin`/`libm::cos`).
-    survey_unary(
-        &mut g,
-        "sin_orig",
-        &any,
-        |x| libm::sin(x),
-        |x| unsafe { h_sin(x) },
-    );
-    survey_unary(
-        &mut g,
-        "cos_orig",
-        &any,
-        |x| libm::cos(x),
-        |x| unsafe { h_cos(x) },
-    );
+    survey_unary(&mut g, "sin_orig", &any, libm::sin, |x| unsafe { h_sin(x) });
+    survey_unary(&mut g, "cos_orig", &any, libm::cos, |x| unsafe { h_cos(x) });
     // f64 exp/log/pow — the most common transcendentals, not previously surveyed vs glibc 2.42.
-    survey_unary(
-        &mut g,
-        "exp",
-        &any,
-        |x| math::exp(x),
-        |x| unsafe { h_exp(x) },
-    );
-    survey_unary(
-        &mut g,
-        "log",
-        &pos1,
-        |x| math::log(x),
-        |x| unsafe { h_log(x) },
-    );
+    survey_unary(&mut g, "exp", &any, math::exp, |x| unsafe { h_exp(x) });
+    survey_unary(&mut g, "log", &pos1, math::log, |x| unsafe { h_log(x) });
     survey_unary(
         &mut g,
         "pow",
@@ -274,56 +188,22 @@ fn bench(c: &mut Criterion) {
         |x| math::pow(x, 1.7),
         |x| unsafe { h_pow(x, 1.7) },
     );
-    survey_unary(
-        &mut g,
-        "cbrt",
-        &any,
-        |x| math::cbrt(x),
-        |x| unsafe { h_cbrt(x) },
-    );
-    survey_unary(
-        &mut g,
-        "sinh",
-        &small,
-        |x| math::sinh(x),
-        |x| unsafe { h_sinh(x) },
-    );
-    survey_unary(
-        &mut g,
-        "cosh",
-        &small,
-        |x| math::cosh(x),
-        |x| unsafe { h_cosh(x) },
-    );
-    survey_unary(
-        &mut g,
-        "tanh",
-        &any,
-        |x| math::tanh(x),
-        |x| unsafe { h_tanh(x) },
-    );
-    survey_unary(
-        &mut g,
-        "erf",
-        &any,
-        |x| math::erf(x),
-        |x| unsafe { h_erf(x) },
-    );
+    survey_unary(&mut g, "cbrt", &any, math::cbrt, |x| unsafe { h_cbrt(x) });
+    survey_unary(&mut g, "sinh", &small, math::sinh, |x| unsafe {
+        h_sinh(x)
+    });
+    survey_unary(&mut g, "cosh", &small, math::cosh, |x| unsafe {
+        h_cosh(x)
+    });
+    survey_unary(&mut g, "tanh", &any, math::tanh, |x| unsafe { h_tanh(x) });
+    survey_unary(&mut g, "erf", &any, math::erf, |x| unsafe { h_erf(x) });
     let negwide: Vec<f64> = (0..64).map(|k| -20.0 + k as f64 * 0.3125).collect();
-    survey_unary(
-        &mut g,
-        "erfc",
-        &negwide,
-        |x| math::erfc(x),
-        |x| unsafe { h_erfc(x) },
-    );
-    survey_unary(
-        &mut g,
-        "tgamma",
-        &pos1,
-        |x| math::tgamma(x),
-        |x| unsafe { h_tgamma(x) },
-    );
+    survey_unary(&mut g, "erfc", &negwide, math::erfc, |x| unsafe {
+        h_erfc(x)
+    });
+    survey_unary(&mut g, "tgamma", &pos1, math::tgamma, |x| unsafe {
+        h_tgamma(x)
+    });
     g.finish();
 }
 

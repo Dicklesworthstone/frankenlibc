@@ -1298,3 +1298,52 @@ fn __sqrtf_finite_alias() {
     let got = unsafe { __sqrtf_finite(9.0) };
     assert!(approx_eq_f32(got, 3.0, 1e-5));
 }
+
+#[test]
+fn no_baseline_cfg_libm_split_or_self_interposed_math_plt() {
+    fn find_cfg_avx2_fma_splits(src: &str) -> Vec<&str> {
+        src.lines()
+            .filter(|line| {
+                line.contains("target_feature = \"avx2\"")
+                    && line.contains("target_feature = \"fma\"")
+            })
+            .collect()
+    }
+
+    fn find_math_plt_calls(disasm: &str) -> Vec<&str> {
+        const MATH_PLT_TARGETS: &[&str] = &[
+            "<fma@plt>",
+            "<fmaf@plt>",
+            "<round@plt>",
+            "<roundf@plt>",
+            "<floor@plt>",
+            "<floorf@plt>",
+            "<ceil@plt>",
+            "<ceilf@plt>",
+            "<trunc@plt>",
+            "<truncf@plt>",
+            "<rint@plt>",
+            "<rintf@plt>",
+            "<nearbyint@plt>",
+            "<nearbyintf@plt>",
+        ];
+        disasm
+            .lines()
+            .filter(|line| MATH_PLT_TARGETS.iter().any(|sym| line.contains(sym)))
+            .collect()
+    }
+
+    // Planted negative checks: detector must flag reintroduced cfg splits and PLT calls.
+    let planted_src =
+        "#[cfg(all(target_feature = \"avx2\", target_feature = \"fma\"))]\nfn sin() {}";
+    assert_eq!(find_cfg_avx2_fma_splits(planted_src).len(), 1);
+    let planted_disasm = "  1234: e8 00 00 00 00  call   5678 <fma@plt>\n  1239: c3  ret";
+    assert_eq!(find_math_plt_calls(planted_disasm).len(), 1);
+
+    let math_abi_src = include_str!("../src/math_abi.rs");
+    let splits = find_cfg_avx2_fma_splits(math_abi_src);
+    assert!(
+        splits.is_empty(),
+        "math_abi.rs must route unconditionally through frankenlibc_core::math without compile-time avx2+fma splits: {splits:?}"
+    );
+}

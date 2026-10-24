@@ -66,6 +66,7 @@ rustc-ice-*.txt
 Safe
 
 # Ephemeral files (agent-generated, build artifacts, test detritus)
+artifacts/
 ci-artifacts/
 proptest-regressions/
 test_meminfo
@@ -234,3 +235,12 @@ rust_out
 # === multi-repo ephemeral cleanup 2026-08-03 ===
 # Agent recovery "misplaced duplicate" backups left beside real sources.
 *.misplaced-dup-backup-*
+
+# Compiled CVE arena trigger binaries and transient runner scratch outputs
+tests/cve_arena/**/trigger
+tests/cve_arena/results/*.result.json
+tests/cve_arena/results/REPORT.md
+tests/cve_arena/results/summary.json
+tests/conformance/*.bak
+.beads/.br-wal-index-*/
+

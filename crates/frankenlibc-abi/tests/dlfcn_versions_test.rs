@@ -1,4 +1,8 @@
-#![cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "standalone")))]
+#![cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(feature = "standalone")
+))]
 
 use frankenlibc_abi::dlfcn_abi::{
     dlclose, dlerror, dlopen, dlsym, dlvsym, native_dso_handle_for_tests,
@@ -20,38 +24,65 @@ mod versions;
 use versions::{Lookup, Table};
 
 fn success(output: &Output) {
-    assert!(output.status.success(), "status={}\nstdout={}\nstderr={}",
-        output.status, String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "status={}\nstdout={}\nstderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn fixtures() -> &'static Path {
     static DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
     DIRECTORY.get_or_init(|| {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .expect("fixture clock").as_nanos();
-        let output = std::env::temp_dir().join(format!("frankenlibc-versions-{}-{nonce}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("fixture clock")
+            .as_nanos();
+        let output = std::env::temp_dir().join(format!(
+            "frankenlibc-versions-{}-{nonce}",
+            std::process::id()
+        ));
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/elf_versions/build.sh");
-        success(&Command::new("timeout").args(["90", "bash"]).arg(script).arg(&output)
-            .env_remove("LD_PRELOAD").env_remove("LD_LIBRARY_PATH")
-            .output().expect("compile version fixtures under watchdog"));
+        success(
+            &Command::new("timeout")
+                .args(["90", "bash"])
+                .arg(script)
+                .arg(&output)
+                .env_remove("LD_PRELOAD")
+                .env_remove("LD_LIBRARY_PATH")
+                .output()
+                .expect("compile version fixtures under watchdog"),
+        );
         // Retain compiler-produced DSOs on failure for direct replay.
         output
     })
 }
 
 fn cases() -> Vec<PathBuf> {
-    ["gnu", "sysv", "both"].into_iter().flat_map(|hash| {
-        ["full", "sectionless"].into_iter().map(move |form| fixtures().join(hash).join(form))
-    }).collect()
+    ["gnu", "sysv", "both"]
+        .into_iter()
+        .flat_map(|hash| {
+            ["full", "sectionless"]
+                .into_iter()
+                .map(move |form| fixtures().join(hash).join(form))
+        })
+        .collect()
 }
 
 fn oracle(probe: &str, directory: &Path, case: Option<&str>, expected: &str) {
     let mut command = Command::new("timeout");
-    command.arg("15").arg(fixtures().join(probe)).arg(directory)
-        .env_remove("LD_PRELOAD").env_remove("LD_LIBRARY_PATH");
-    if let Some(case) = case { command.arg(case); }
+    command
+        .arg("15")
+        .arg(fixtures().join(probe))
+        .arg(directory)
+        .env_remove("LD_PRELOAD")
+        .env_remove("LD_LIBRARY_PATH");
+    if let Some(case) = case {
+        command.arg(case);
+    }
     let output = command.output().expect("independent host-loader probe");
     success(&output);
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
@@ -75,7 +106,10 @@ impl Open {
         let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | flags) };
         assert!(!handle.is_null(), "{}: {:?}", path.display(), error());
         let result = Self(handle);
-        assert!(native_dso_handle_for_tests(handle), "host fallback is not native version support");
+        assert!(
+            native_dso_handle_for_tests(handle),
+            "host fallback is not native version support"
+        );
         result
     }
 
@@ -104,7 +138,10 @@ fn symbol(handle: *mut c_void, name: &CStr, version: Option<&CStr>) -> *mut c_vo
         }
     };
     let error = error();
-    assert!(error.is_none() && !address.is_null(), "{name:?}/{version:?}: {error:?}");
+    assert!(
+        error.is_none() && !address.is_null(),
+        "{name:?}/{version:?}: {error:?}"
+    );
     address
 }
 
@@ -138,7 +175,12 @@ fn value(handle: *mut c_void, name: &CStr, version: Option<&CStr>) -> i32 {
 fn native_default_versions_exact_versions_and_legacy_relocations_match_host() {
     let _serial = NATIVE_TEST_LOCK.lock().expect("native test lock");
     for directory in cases() {
-        oracle("host_probe", &directory, None, "versioned lookup, relocations, IFUNC and TLS: PASS\n");
+        oracle(
+            "host_probe",
+            &directory,
+            None,
+            "versioned lookup, relocations, IFUNC and TLS: PASS\n",
+        );
         let provider = Open::new(&directory.join("libversions.so"), libc::RTLD_GLOBAL);
         for (name, public, previous) in [(c"api", 22, 11), (c"dispatch", 66, 55)] {
             assert_eq!(call(provider.0, name, None), public);
@@ -163,8 +205,13 @@ fn native_default_versions_exact_versions_and_legacy_relocations_match_host() {
             let previous = symbol(handle, c"tls_value", Some(c"VERS_1")).cast::<i32>();
             assert_ne!(current, previous);
             // SAFETY: this worker exclusively owns these two TLS instances.
-            unsafe { *current = 901; *previous = 902; }
-        }).join().expect("native versioned TLS worker");
+            unsafe {
+                *current = 901;
+                *previous = 902;
+            }
+        })
+        .join()
+        .expect("native versioned TLS worker");
         assert_eq!(value(provider.0, c"tls_value", None), 404);
         assert_eq!(value(provider.0, c"tls_value", Some(c"VERS_1")), 303);
         let consumer = Open::new(&directory.join("consumer.so"), libc::RTLD_LOCAL);
@@ -179,7 +226,10 @@ fn native_default_versions_exact_versions_and_legacy_relocations_match_host() {
         consumer.close();
         let id = provider.0;
         provider.close();
-        assert!(!native_dso_handle_for_tests(id), "version metadata must not pin a closed group");
+        assert!(
+            !native_dso_handle_for_tests(id),
+            "version metadata must not pin a closed group"
+        );
     }
 }
 
@@ -189,7 +239,12 @@ fn native_dependency_contracts_are_checked_even_without_versioned_relocations() 
     for directory in cases() {
         for case in ["strong", "weak", "unversioned"] {
             let directory = directory.join(format!("contract_{case}"));
-            oracle("contract_probe", &directory, Some(case), "dependency version contract: PASS\n");
+            oracle(
+                "contract_probe",
+                &directory,
+                Some(case),
+                "dependency version contract: PASS\n",
+            );
             let provider = Open::new(&directory.join("libversions.so"), libc::RTLD_GLOBAL);
             let path = directory.join("contract.so");
             if case == "strong" {
@@ -197,10 +252,16 @@ fn native_dependency_contracts_are_checked_even_without_versioned_relocations() 
                 // SAFETY: valid path to the deliberately incompatible fixture.
                 let _ = error();
                 let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-                assert!(handle.is_null(), "missing strong VERNEED must fail before publication");
+                assert!(
+                    handle.is_null(),
+                    "missing strong VERNEED must fail before publication"
+                );
                 assert!(error().is_some());
                 let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
-                assert!(handle.is_null(), "failed version contract must not publish a partial handle");
+                assert!(
+                    handle.is_null(),
+                    "failed version contract must not publish a partial handle"
+                );
                 let _ = error();
             } else {
                 let consumer = Open::new(&path, libc::RTLD_LOCAL);
@@ -208,7 +269,10 @@ fn native_dependency_contracts_are_checked_even_without_versioned_relocations() 
                 assert_eq!(call(consumer.0, c"previous_values", None), 470);
                 consumer.close();
             }
-            assert!(native_dso_handle_for_tests(provider.0), "failure must preserve the resident provider");
+            assert!(
+                native_dso_handle_for_tests(provider.0),
+                "failure must preserve the resident provider"
+            );
             assert!(!symbol(provider.0, c"api", None).is_null());
             provider.close();
         }
@@ -217,24 +281,42 @@ fn native_dependency_contracts_are_checked_even_without_versioned_relocations() 
 
 fn parsed(path: &Path) -> (Vec<u8>, LoadedObject, Table) {
     let bytes = std::fs::read(path).unwrap();
-    let object = ElfLoader::new(0).parse(&bytes).expect("core parses compiler fixture");
+    let object = ElfLoader::new(0)
+        .parse(&bytes)
+        .expect("core parses compiler fixture");
     let table = Table::parse(&bytes, &object).expect("native parses runtime version metadata");
     (bytes, object, table)
 }
 
 fn tag(bytes: &[u8], object: &LoadedObject, wanted: i64) -> (usize, u64) {
-    let dynamic = object.program_headers.iter().find(|header| header.p_type == ProgramType::Dynamic).unwrap();
-    for offset in (dynamic.p_offset as usize..(dynamic.p_offset + dynamic.p_filesz) as usize).step_by(16) {
+    let dynamic = object
+        .program_headers
+        .iter()
+        .find(|header| header.p_type == ProgramType::Dynamic)
+        .unwrap();
+    for offset in
+        (dynamic.p_offset as usize..(dynamic.p_offset + dynamic.p_filesz) as usize).step_by(16)
+    {
         if i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) == wanted {
-            return (offset + 8, u64::from_le_bytes(bytes[offset + 8..offset + 16].try_into().unwrap()));
+            return (
+                offset + 8,
+                u64::from_le_bytes(bytes[offset + 8..offset + 16].try_into().unwrap()),
+            );
         }
     }
     panic!("missing fixture dynamic tag {wanted:#x}")
 }
 
 fn offset(object: &LoadedObject, address: u64) -> usize {
-    let header = object.program_headers.iter().find(|header| header.is_load()
-        && header.p_vaddr <= address && address < header.p_vaddr + header.p_filesz).unwrap();
+    let header = object
+        .program_headers
+        .iter()
+        .find(|header| {
+            header.is_load()
+                && header.p_vaddr <= address
+                && address < header.p_vaddr + header.p_filesz
+        })
+        .unwrap();
     (header.p_offset + address - header.p_vaddr) as usize
 }
 
@@ -242,24 +324,71 @@ fn offset(object: &LoadedObject, address: u64) -> usize {
 fn runtime_version_selection_preserves_default_hidden_and_relocation_contracts() {
     for directory in cases() {
         let (bytes, object, table) = parsed(&directory.join("libversions.so"));
-        let old = table.lookup(&object, "api", Some("VERS_1"), Lookup::Public).unwrap();
-        let new = table.lookup(&object, "api", Some("VERS_2"), Lookup::Public).unwrap();
+        let old = table
+            .lookup(&object, "api", Some("VERS_1"), Lookup::Public)
+            .unwrap();
+        let new = table
+            .lookup(&object, "api", Some("VERS_2"), Lookup::Public)
+            .unwrap();
         assert_ne!(old.st_value, new.st_value);
-        assert!(std::ptr::eq(table.lookup(&object, "api", None, Lookup::Public).unwrap(), new));
-        assert!(std::ptr::eq(table.lookup(&object, "api", None, Lookup::Relocation { hidden: false }).unwrap(), old));
+        assert!(std::ptr::eq(
+            table.lookup(&object, "api", None, Lookup::Public).unwrap(),
+            new
+        ));
+        assert!(std::ptr::eq(
+            table
+                .lookup(&object, "api", None, Lookup::Relocation { hidden: false })
+                .unwrap(),
+            old
+        ));
         for name in ["retired", "recent"] {
             assert!(table.lookup(&object, name, None, Lookup::Public).is_none());
         }
-        assert!(table.lookup(&object, "unversioned", Some("VERS_1"), Lookup::Public).is_none());
-        assert!(table.lookup(&object, "unversioned", Some("VERS_1"), Lookup::Relocation { hidden: false }).is_some());
-        assert!(table.lookup(&object, "unversioned", Some("VERS_1"), Lookup::Relocation { hidden: true }).is_none());
-        let slot = object.dynsym.iter().position(|symbol| std::ptr::eq(symbol, old)).unwrap();
+        assert!(
+            table
+                .lookup(&object, "unversioned", Some("VERS_1"), Lookup::Public)
+                .is_none()
+        );
+        assert!(
+            table
+                .lookup(
+                    &object,
+                    "unversioned",
+                    Some("VERS_1"),
+                    Lookup::Relocation { hidden: false }
+                )
+                .is_some()
+        );
+        assert!(
+            table
+                .lookup(
+                    &object,
+                    "unversioned",
+                    Some("VERS_1"),
+                    Lookup::Relocation { hidden: true }
+                )
+                .is_none()
+        );
+        let slot = object
+            .dynsym
+            .iter()
+            .position(|symbol| std::ptr::eq(symbol, old))
+            .unwrap();
         let versym = offset(&object, tag(&bytes, &object, 0x6fff_fff0).1);
         let mut ambiguous = bytes.clone();
         ambiguous[versym + slot * 2..versym + slot * 2 + 2].copy_from_slice(&2u16.to_le_bytes());
         let ambiguous = Table::parse(&ambiguous, &object).unwrap();
-        assert!(ambiguous.lookup(&object, "api", None, Lookup::Public).is_none(), "two public versions are ambiguous");
-        assert!(ambiguous.lookup(&object, "api", Some("VERS_2"), Lookup::Public).is_some());
+        assert!(
+            ambiguous
+                .lookup(&object, "api", None, Lookup::Public)
+                .is_none(),
+            "two public versions are ambiguous"
+        );
+        assert!(
+            ambiguous
+                .lookup(&object, "api", Some("VERS_2"), Lookup::Public)
+                .is_some()
+        );
     }
 }
 
@@ -275,8 +404,10 @@ fn dependency_metadata_distinguishes_strong_weak_and_unversioned_providers() {
             assert_eq!(provider.satisfies(&required.requirements[0]), expected);
             for relocation in consumer.rela_dyn.iter().chain(&consumer.rela_plt) {
                 if relocation.symbol_index() != 0 {
-                    assert!(required.name(relocation.symbol_index() as usize).is_none(),
-                        "fixture must isolate declarations from symbol-version matching");
+                    assert!(
+                        required.name(relocation.symbol_index() as usize).is_none(),
+                        "fixture must isolate declarations from symbol-version matching"
+                    );
                 }
             }
         }
@@ -288,9 +419,12 @@ fn malformed_version_records_fail_closed_without_section_header_assumptions() {
     for directory in cases() {
         for filename in ["libversions.so", "consumer.so"] {
             let (bytes, object, _) = parsed(&directory.join(filename));
-            let (count_tag, table_tag, next_field, hash_field, aux_field) = if filename == "libversions.so" {
-                (0x6fff_fffd, 0x6fff_fffc, 16, 8, 12)
-            } else { (0x6fff_ffff, 0x6fff_fffe, 12, 0, 8) };
+            let (count_tag, table_tag, next_field, hash_field, aux_field) =
+                if filename == "libversions.so" {
+                    (0x6fff_fffd, 0x6fff_fffc, 16, 8, 12)
+                } else {
+                    (0x6fff_ffff, 0x6fff_fffe, 12, 0, 8)
+                };
             let (count_offset, _) = tag(&bytes, &object, count_tag);
             let (_, address) = tag(&bytes, &object, table_tag);
             let base = offset(&object, address);
@@ -308,7 +442,8 @@ fn malformed_version_records_fail_closed_without_section_header_assumptions() {
             corrupt[base + next_field..base + next_field + 4].copy_from_slice(&4u32.to_le_bytes());
             mutations.push(corrupt);
             let mut corrupt = bytes.clone();
-            corrupt[base + aux_field..base + aux_field + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            corrupt[base + aux_field..base + aux_field + 4]
+                .copy_from_slice(&u32::MAX.to_le_bytes());
             mutations.push(corrupt);
             if filename == "libversions.so" {
                 let mut corrupt = bytes.clone();
@@ -316,7 +451,11 @@ fn malformed_version_records_fail_closed_without_section_header_assumptions() {
                 mutations.push(corrupt);
             }
             for (index, corrupt) in mutations.iter().enumerate() {
-                assert!(Table::parse(corrupt, &object).is_none(), "{} {filename} mutation {index}", directory.display());
+                assert!(
+                    Table::parse(corrupt, &object).is_none(),
+                    "{} {filename} mutation {index}",
+                    directory.display()
+                );
             }
         }
     }

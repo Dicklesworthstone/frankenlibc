@@ -27,7 +27,7 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type SnprintfFn = unsafe extern "C-unwind" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
 
 union SnprintfSym {
     raw: *mut c_void,
@@ -70,11 +70,12 @@ fn snprintf_for_arm(arm: &str) -> SnprintfFn {
             assert!(!raw.is_null(), "dlsym snprintf");
             assert_ne!(
                 raw as usize,
-                frankenlibc_abi::stdio_abi::snprintf as usize,
+                frankenlibc_abi::stdio_abi::snprintf as *const () as usize,
                 "the glibc arm resolved to fl's own snprintf — this would compare \
                  fl against itself"
             );
-            // SAFETY: the resolved symbol has C's documented snprintf signature.
+            // SAFETY: the resolved symbol has snprintf's C calling convention;
+            // GNU registration callbacks can unwind through this frontend.
             unsafe { SnprintfSym { raw }.function }
         }
         other => panic!("unknown arm {other:?}; expected 'fl' or 'glibc'"),
@@ -104,7 +105,14 @@ fn main() {
         // SAFETY: `dst` has 256 bytes; every format names exactly its arguments.
         unsafe {
             sum ^= f(dst, 256, c"%s %s".as_ptr(), a.as_ptr(), b.as_ptr()) as u64;
-            sum ^= f(dst, 256, c"%s %s %s".as_ptr(), a.as_ptr(), b.as_ptr(), c.as_ptr()) as u64;
+            sum ^= f(
+                dst,
+                256,
+                c"%s %s %s".as_ptr(),
+                a.as_ptr(),
+                b.as_ptr(),
+                c.as_ptr(),
+            ) as u64;
             sum ^= f(
                 dst,
                 256,

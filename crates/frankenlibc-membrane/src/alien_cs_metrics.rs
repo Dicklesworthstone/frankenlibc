@@ -865,10 +865,7 @@ mod tests {
             assert!(handle.join().is_ok(), "emitter thread panicked");
         }
 
-        assert_eq!(
-            ring.total_emitted(),
-            (THREADS * EMITS_PER_THREAD) as u64
-        );
+        assert_eq!(ring.total_emitted(), (THREADS * EMITS_PER_THREAD) as u64);
         assert_eq!(ring.len(), 64);
     }
 

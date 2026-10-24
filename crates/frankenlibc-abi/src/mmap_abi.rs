@@ -10,7 +10,7 @@ use frankenlibc_core::errno;
 use frankenlibc_core::mmap;
 use frankenlibc_core::syscall;
 use frankenlibc_core::syscall as raw_syscall;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -64,10 +64,15 @@ pub unsafe extern "C" fn mmap(
             if valid {
                 return requested;
             }
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: requested as usize,
-                clamped: sanitized as usize,
-            });
+            global_healing_policy().record(
+                "mmap",
+                "mmap",
+                &HealingAction::ClampSize {
+                    requested: requested as usize,
+                    clamped: sanitized as usize,
+                },
+                RepairLogContext::new(0, Some(addr as usize)),
+            );
             sanitized
         };
         let actual_prot = repair(prot, mmap::valid_prot(prot), mmap::PROT_READ);
@@ -169,10 +174,15 @@ pub unsafe extern "C" fn mprotect(addr: *mut c_void, length: usize, prot: c_int)
     let mut result = unsafe { syscall::sys_mprotect(addr as *mut u8, length, prot) };
     if mode.heals_enabled() && result == Err(libc::EINVAL) && !mmap::valid_prot(prot) {
         let sanitized = mmap::PROT_NONE;
-        global_healing_policy().record(&HealingAction::ClampSize {
-            requested: prot as usize,
-            clamped: sanitized as usize,
-        });
+        global_healing_policy().record(
+            "mmap",
+            "mprotect",
+            &HealingAction::ClampSize {
+                requested: prot as usize,
+                clamped: sanitized as usize,
+            },
+            RepairLogContext::new(0, Some(addr as usize)),
+        );
         result = unsafe { syscall::sys_mprotect(addr as *mut u8, length, sanitized) };
     }
 
@@ -194,6 +204,15 @@ pub unsafe extern "C" fn mprotect(addr: *mut c_void, length: usize, prot: c_int)
 /// POSIX `msync` — synchronize a file with a memory map.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
+    unsafe { msync_cp(addr, length, flags) }
+}
+
+/// Body of [`msync`] and its alias. Always inlined (rustc ignores inline hints
+/// on exported functions): the cancellation point it reaches must see the
+/// caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`).
+#[inline(always)]
+pub(crate) unsafe fn msync_cp(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         addr as usize,
@@ -218,10 +237,15 @@ pub unsafe extern "C-unwind" fn msync(addr: *mut c_void, length: usize, flags: c
     let mut result = sync(flags);
     if mode.heals_enabled() && result == Err(libc::EINVAL) && !mmap::valid_msync_flags(flags) {
         let sanitized = mmap::sanitize_msync_flags(flags);
-        global_healing_policy().record(&HealingAction::ClampSize {
-            requested: flags as usize,
-            clamped: sanitized as usize,
-        });
+        global_healing_policy().record(
+            "mmap",
+            "msync",
+            &HealingAction::ClampSize {
+                requested: flags as usize,
+                clamped: sanitized as usize,
+            },
+            RepairLogContext::new(0, Some(addr as usize)),
+        );
         result = sync(sanitized);
     }
 
@@ -266,10 +290,15 @@ pub unsafe extern "C" fn madvise(addr: *mut c_void, length: usize, advice: c_int
     let mut result = unsafe { syscall::sys_madvise(addr as *mut u8, length, advice) };
     if mode.heals_enabled() && result == Err(libc::EINVAL) && !mmap::valid_madvise(advice) {
         let sanitized = mmap::sanitize_madvise(advice);
-        global_healing_policy().record(&HealingAction::ClampSize {
-            requested: advice as usize,
-            clamped: sanitized as usize,
-        });
+        global_healing_policy().record(
+            "mmap",
+            "madvise",
+            &HealingAction::ClampSize {
+                requested: advice as usize,
+                clamped: sanitized as usize,
+            },
+            RepairLogContext::new(0, Some(addr as usize)),
+        );
         result = unsafe { syscall::sys_madvise(addr as *mut u8, length, sanitized) };
     }
 
@@ -416,8 +445,8 @@ pub unsafe extern "C" fn mremap(
 ///
 /// Same as [`msync`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
-    unsafe { msync(addr, length, flags) }
+pub unsafe extern "C-unwind" fn __msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
+    unsafe { msync_cp(addr, length, flags) }
 }
 
 /// glibc reserved-namespace alias for [`mremap`].

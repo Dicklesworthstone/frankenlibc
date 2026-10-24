@@ -50,7 +50,7 @@ fn host_catopen() -> CatopenFn {
     assert!(!raw.is_null(), "dlsym catopen");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::locale_abi::catopen as usize,
+        frankenlibc_abi::locale_abi::catopen as *const () as usize,
         "the resolved oracle IS fl's catopen — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented catopen signature.

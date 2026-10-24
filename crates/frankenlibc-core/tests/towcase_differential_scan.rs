@@ -54,6 +54,12 @@ fn towcase_differential_scan_vs_glibc() {
     }
     eprintln!("towupper divergences={up_div} first={up_first}");
     eprintln!("towlower divergences={lo_div} first={lo_first}");
-    assert_eq!(up_div, 0, "towupper diverges from glibc C.UTF-8; first {up_first}");
-    assert_eq!(lo_div, 0, "towlower diverges from glibc C.UTF-8; first {lo_first}");
+    assert_eq!(
+        up_div, 0,
+        "towupper diverges from glibc C.UTF-8; first {up_first}"
+    );
+    assert_eq!(
+        lo_div, 0,
+        "towlower diverges from glibc C.UTF-8; first {lo_first}"
+    );
 }

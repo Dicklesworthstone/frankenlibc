@@ -561,6 +561,777 @@ pub fn expand_braced_param(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Whole-input expansion with per-character provenance (wordexp's engine)
+// ---------------------------------------------------------------------------
+//
+// glibc's wordexp decides field splitting and pathname expansion from where
+// each character CAME FROM, not from the final text. Measured on glibc 2.39:
+//   - literal blanks in the input separate words; IFS only splits text that
+//     an UNQUOTED expansion produced ($VAR, ${...}, $(cmd), `cmd`, $((...)));
+//   - a `${...}` result is split as a whole even if its WORD was quoted
+//     (`${U:-"a b"}` -> a, b);
+//   - only glob characters typed literally and unquoted in the input glob:
+//     `*.msg` and `$(echo a)*.msg` glob, `$(echo "*.msg")`, `$G` and
+//     `${U:-*.msg}` stay literal;
+//   - an unquoted expansion that produces nothing leaves no field (`$(echo)`,
+//     `$(echo)$(echo)`), while any quoted part keeps one (`"$(echo)"` -> "");
+//   - positional parameters are the PROGRAM's argv ($0, $1, ${10}, $#, $*,
+//     "$@"), `$$` is the pid, `$?`/`$!`/`$-` stay literal, `${#}` is a
+//     syntax error;
+//   - tilde expands at the start of a word and after any unquoted `=`, up to
+//     an unquoted `/` or `:`.
+
+/// One character of an expanded word plus the provenance that field splitting
+/// and pathname expansion depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WordChar {
+    pub byte: u8,
+    /// Produced by an unquoted expansion: IFS characters here split fields.
+    pub splittable: bool,
+    /// Typed literally and unquoted in the input: `*`, `?`, `[` here glob.
+    pub glob_active: bool,
+}
+
+/// Why whole-input expansion failed (each maps to a WRDE_* code).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordexpFailure {
+    /// An unquoted `| & ; < > ( ) { }` or newline.
+    BadChar,
+    /// An undefined parameter under `WRDE_UNDEF`.
+    BadVal,
+    /// Command substitution was requested but is not allowed (`WRDE_NOCMD`).
+    CmdSub,
+    /// Malformed input: unterminated quote/expansion, bad arithmetic, ...
+    Syntax,
+    /// The command runner could not run the command.
+    NoSpace,
+}
+
+/// Runs one command-substitution body (`/bin/sh -c BODY`), returning stdout.
+pub type CommandRunner<'a> = &'a mut dyn FnMut(&[u8]) -> Result<Vec<u8>, WordexpFailure>;
+
+/// Everything the expander needs from its environment.
+pub struct WordexpContext<'a> {
+    pub lookup_env: &'a dyn Fn(&str) -> Option<String>,
+    /// Home directory for `~` (empty name: the current user) or `~name`.
+    pub home_dir: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
+    /// Run a command substitution body with `/bin/sh -c`, returning stdout.
+    pub run_command: CommandRunner<'a>,
+    /// The program's argv: `$0`, `$1`, ...
+    pub positional: &'a [Vec<u8>],
+    pub pid: u32,
+    pub undef_is_error: bool,
+    /// Sink for `${NAME:?message}` diagnostics (glibc writes them to stderr).
+    pub diagnostic: &'a mut dyn FnMut(&str),
+}
+
+/// One element of a raw word: a character, a forced field break (between
+/// the parameters of `"$@"`), or a mark that quoted text began here (so an
+/// otherwise empty field survives).
+#[derive(Clone, Copy)]
+enum Item {
+    Char(WordChar),
+    Break,
+    QuoteMark,
+}
+
+/// A raw word under construction.
+#[derive(Default)]
+struct RawWord {
+    items: Vec<Item>,
+}
+
+impl RawWord {
+    fn push(&mut self, byte: u8, splittable: bool, glob_active: bool) {
+        self.items.push(Item::Char(WordChar {
+            byte,
+            splittable,
+            glob_active,
+        }));
+    }
+    fn push_expansion(&mut self, bytes: &[u8], splittable: bool) {
+        for &byte in bytes {
+            self.push(byte, splittable, false);
+        }
+    }
+    fn mark_quoted(&mut self) {
+        self.items.push(Item::QuoteMark);
+    }
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+/// Expand a whole wordexp input into fields, before pathname expansion.
+pub fn expand_input_fields(
+    input: &[u8],
+    ifs: &[u8],
+    ctx: &mut WordexpContext<'_>,
+) -> Result<Vec<Vec<WordChar>>, WordexpFailure> {
+    let mut words: Vec<RawWord> = Vec::new();
+    let mut word = RawWord::default();
+    let mut i = 0;
+    while i < input.len() {
+        let b = input[i];
+        match b {
+            b' ' | b'\t' => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+                i += 1;
+            }
+            b'\n' | b'|' | b'&' | b';' | b'<' | b'>' | b'(' | b')' | b'{' | b'}' => {
+                return Err(WordexpFailure::BadChar);
+            }
+            b'~' if word.items.is_empty() || ends_with_unquoted_eq(&word) => {
+                i = expand_tilde_at(input, i, &mut word, ctx)?;
+            }
+            _ => {
+                i = expand_one(input, i, &mut word, false, ifs, ctx)?;
+            }
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    let mut fields = Vec::new();
+    for word in words {
+        split_fields(word, ifs, &mut fields);
+    }
+    Ok(fields)
+}
+
+fn ends_with_unquoted_eq(word: &RawWord) -> bool {
+    matches!(
+        word.items.last(),
+        Some(Item::Char(WordChar {
+            byte: b'=',
+            glob_active: true,
+            ..
+        }))
+    )
+}
+
+/// Handle the construct starting at `input[i]` (anything but a word-separating
+/// blank), appending to `word`. `quoted` means inside double quotes. Returns
+/// the index after the construct.
+fn expand_one(
+    input: &[u8],
+    i: usize,
+    word: &mut RawWord,
+    quoted: bool,
+    ifs: &[u8],
+    ctx: &mut WordexpContext<'_>,
+) -> Result<usize, WordexpFailure> {
+    let b = input[i];
+    match b {
+        b'\\' if !quoted => {
+            let Some(&next) = input.get(i + 1) else {
+                return Err(WordexpFailure::Syntax);
+            };
+            word.mark_quoted();
+            word.push(next, false, false);
+            Ok(i + 2)
+        }
+        b'\\' => {
+            // Inside double quotes a backslash escapes only $ ` " \ and newline.
+            match input.get(i + 1) {
+                Some(&next @ (b'$' | b'`' | b'"' | b'\\' | b'\n')) => {
+                    word.push(next, false, false);
+                    Ok(i + 2)
+                }
+                Some(_) => {
+                    word.push(b'\\', false, false);
+                    Ok(i + 1)
+                }
+                None => Err(WordexpFailure::Syntax),
+            }
+        }
+        b'\'' if !quoted => {
+            let Some(len) = input[i + 1..].iter().position(|&c| c == b'\'') else {
+                return Err(WordexpFailure::Syntax);
+            };
+            word.mark_quoted();
+            for &c in &input[i + 1..i + 1 + len] {
+                word.push(c, false, false);
+            }
+            Ok(i + len + 2)
+        }
+        b'"' if !quoted => {
+            word.mark_quoted();
+            let mut j = i + 1;
+            loop {
+                match input.get(j) {
+                    None => return Err(WordexpFailure::Syntax),
+                    Some(b'"') => return Ok(j + 1),
+                    Some(_) => j = expand_one(input, j, word, true, ifs, ctx)?,
+                }
+            }
+        }
+        b'`' => {
+            let (body, next) = backquote_body(input, i, quoted)?;
+            let output = (ctx.run_command)(&body)?;
+            word.push_expansion(trim_trailing_newlines(&output), !quoted);
+            Ok(next)
+        }
+        b'$' => expand_dollar(input, i, word, quoted, ifs, ctx),
+        _ => {
+            word.push(b, false, !quoted);
+            Ok(i + 1)
+        }
+    }
+}
+
+fn trim_trailing_newlines(output: &[u8]) -> &[u8] {
+    let end = output
+        .iter()
+        .rposition(|&c| c != b'\n')
+        .map_or(0, |p| p + 1);
+    &output[..end]
+}
+
+/// The body of a backquoted command starting at `input[open]` (with `\$`,
+/// `` \` ``, `\\` -- and `\"` inside double quotes -- unescaped) and the index
+/// after the closing backquote.
+fn backquote_body(
+    input: &[u8],
+    open: usize,
+    quoted: bool,
+) -> Result<(Vec<u8>, usize), WordexpFailure> {
+    let mut body = Vec::new();
+    let mut j = open + 1;
+    while let Some(&c) = input.get(j) {
+        match c {
+            b'`' => return Ok((body, j + 1)),
+            b'\\' => match input.get(j + 1) {
+                Some(&next @ (b'$' | b'`' | b'\\')) => {
+                    body.push(next);
+                    j += 2;
+                }
+                Some(&b'"') if quoted => {
+                    body.push(b'"');
+                    j += 2;
+                }
+                Some(&next) => {
+                    body.push(b'\\');
+                    body.push(next);
+                    j += 2;
+                }
+                None => return Err(WordexpFailure::Syntax),
+            },
+            _ => {
+                body.push(c);
+                j += 1;
+            }
+        }
+    }
+    Err(WordexpFailure::Syntax)
+}
+
+/// Index of the `)` closing a `$(` whose body starts at `start`, skipping
+/// quotes, escapes, backquotes and nested parentheses.
+fn command_body_end(input: &[u8], start: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut j = start;
+    while let Some(&c) = input.get(j) {
+        match c {
+            b'\\' => j += 2,
+            b'\'' => {
+                let len = input[j + 1..].iter().position(|&q| q == b'\'')?;
+                j += len + 2;
+            }
+            b'"' => {
+                j += 1;
+                loop {
+                    match input.get(j)? {
+                        b'\\' => j += 2,
+                        b'"' => break,
+                        _ => j += 1,
+                    }
+                }
+                j += 1;
+            }
+            b'`' => {
+                j += 1;
+                loop {
+                    match input.get(j)? {
+                        b'\\' => j += 2,
+                        b'`' => break,
+                        _ => j += 1,
+                    }
+                }
+                j += 1;
+            }
+            b'(' => {
+                depth += 1;
+                j += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(j);
+                }
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Index of the `}` closing a `${` whose body starts at `start`, honouring
+/// quotes, escapes and nested `${`/`$(`.
+fn brace_body_end(input: &[u8], start: usize) -> Option<usize> {
+    let mut j = start;
+    while let Some(&c) = input.get(j) {
+        match c {
+            b'\\' => j += 2,
+            b'\'' => {
+                let len = input[j + 1..].iter().position(|&q| q == b'\'')?;
+                j += len + 2;
+            }
+            b'"' => {
+                j += 1;
+                loop {
+                    match input.get(j)? {
+                        b'\\' => j += 2,
+                        b'"' => break,
+                        _ => j += 1,
+                    }
+                }
+                j += 1;
+            }
+            b'$' if input.get(j + 1) == Some(&b'{') => j = brace_body_end(input, j + 2)? + 1,
+            b'$' if input.get(j + 1) == Some(&b'(') => j = command_body_end(input, j + 2)? + 1,
+            b'}' => return Some(j),
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+fn is_name_start(c: u8) -> bool {
+    c.is_ascii_alphabetic() || c == b'_'
+}
+
+fn is_name_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+fn expand_dollar(
+    input: &[u8],
+    i: usize,
+    word: &mut RawWord,
+    quoted: bool,
+    ifs: &[u8],
+    ctx: &mut WordexpContext<'_>,
+) -> Result<usize, WordexpFailure> {
+    let split = !quoted;
+    match input.get(i + 1).copied() {
+        Some(b'(') if input.get(i + 2) == Some(&b'(') => {
+            let Some((expr, next)) = scan_arith_end(input, i + 3) else {
+                return Err(WordexpFailure::Syntax);
+            };
+            // The body is expanded textually first; glibc's arithmetic itself
+            // has no variables (see `eval_arith`).
+            let body = expand_to_string(expr, ifs, ctx)?;
+            let value = eval_arith(&body).map_err(|_| WordexpFailure::Syntax)?;
+            word.push_expansion(value.to_string().as_bytes(), split);
+            Ok(next)
+        }
+        Some(b'(') => {
+            let Some(end) = command_body_end(input, i + 2) else {
+                return Err(WordexpFailure::Syntax);
+            };
+            let output = (ctx.run_command)(&input[i + 2..end])?;
+            word.push_expansion(trim_trailing_newlines(&output), split);
+            Ok(end + 1)
+        }
+        Some(b'{') => {
+            let Some(end) = brace_body_end(input, i + 2) else {
+                return Err(WordexpFailure::Syntax);
+            };
+            let value = expand_braced(&input[i + 2..end], ifs, ctx)?;
+            if let Some(value) = value {
+                word.push_expansion(&value, split);
+            }
+            Ok(end + 1)
+        }
+        Some(b'$') => {
+            word.push_expansion(ctx.pid.to_string().as_bytes(), split);
+            Ok(i + 2)
+        }
+        Some(d @ b'0'..=b'9') => {
+            let index = usize::from(d - b'0');
+            push_positional(word, index, split, ctx)?;
+            Ok(i + 2)
+        }
+        Some(b'#') => {
+            let count = ctx.positional.len().saturating_sub(1);
+            word.push_expansion(count.to_string().as_bytes(), split);
+            Ok(i + 2)
+        }
+        Some(b'*') => {
+            // glibc quirk, measured: a quoted `$*` with no positional
+            // parameters fails with WRDE_NOSPACE when the word holds no
+            // characters yet (`"$*"`, `a "$*"`, `"${1}$*"`), but not after any
+            // (`x"$*"y`, `"a$*"`, `"$#$*"`).
+            if quoted
+                && ctx.positional.len() <= 1
+                && !word.items.iter().any(|item| matches!(item, Item::Char(_)))
+            {
+                return Err(WordexpFailure::NoSpace);
+            }
+            let joined = join_params(ctx.positional, ifs, quoted);
+            word.push_expansion(&joined, split);
+            Ok(i + 2)
+        }
+        Some(b'@') => {
+            // Each parameter is its own field: an explicit break when quoted;
+            // unquoted, a splittable separator, so empty parameters vanish as
+            // field splitting removes empty unquoted fields.
+            let params = ctx.positional.get(1..).unwrap_or_default();
+            for (n, param) in params.iter().enumerate() {
+                if n > 0 {
+                    match ifs.first() {
+                        Some(&sep) if !quoted => word.push(sep, true, false),
+                        _ => word.items.push(Item::Break),
+                    }
+                } else if quoted {
+                    word.mark_quoted();
+                }
+                word.push_expansion(param, split);
+            }
+            Ok(i + 2)
+        }
+        Some(c) if is_name_start(c) => {
+            let len = input[i + 1..]
+                .iter()
+                .take_while(|&&c| is_name_char(c))
+                .count();
+            let name = core::str::from_utf8(&input[i + 1..i + 1 + len]).unwrap_or("");
+            match (ctx.lookup_env)(name) {
+                Some(value) => word.push_expansion(value.as_bytes(), split),
+                None if ctx.undef_is_error => return Err(WordexpFailure::BadVal),
+                None => {}
+            }
+            Ok(i + 1 + len)
+        }
+        // `$` alone, `$?`, `$!`, `$-`, ...: a literal dollar sign.
+        _ => {
+            word.push(b'$', false, !quoted);
+            Ok(i + 1)
+        }
+    }
+}
+
+fn push_positional(
+    word: &mut RawWord,
+    index: usize,
+    split: bool,
+    ctx: &WordexpContext<'_>,
+) -> Result<(), WordexpFailure> {
+    match ctx.positional.get(index) {
+        Some(value) => word.push_expansion(value, split),
+        None if ctx.undef_is_error => return Err(WordexpFailure::BadVal),
+        None => {}
+    }
+    Ok(())
+}
+
+/// `$*`: the positional parameters joined by IFS's first character (a space
+/// when IFS is unset/default, nothing when IFS is empty and quoted).
+fn join_params(positional: &[Vec<u8>], ifs: &[u8], quoted: bool) -> Vec<u8> {
+    let separator: &[u8] = match ifs.first() {
+        Some(c) => std::slice::from_ref(c),
+        None if quoted => b"",
+        None => b" ",
+    };
+    positional.get(1..).unwrap_or_default().join(separator)
+}
+
+/// Expand `text` (a parameter word, an arithmetic body) to plain bytes:
+/// quotes removed, expansions performed, no splitting.
+fn expand_to_string(
+    text: &[u8],
+    ifs: &[u8],
+    ctx: &mut WordexpContext<'_>,
+) -> Result<Vec<u8>, WordexpFailure> {
+    let mut word = RawWord::default();
+    let mut i = 0;
+    while i < text.len() {
+        i = expand_one(text, i, &mut word, false, ifs, ctx)?;
+    }
+    Ok(word
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Char(c) => Some(c.byte),
+            Item::Break => Some(b' '),
+            Item::QuoteMark => None,
+        })
+        .collect())
+}
+
+/// Evaluate a `${...}` body. `None` means "expands to nothing".
+fn expand_braced(
+    body: &[u8],
+    ifs: &[u8],
+    ctx: &mut WordexpContext<'_>,
+) -> Result<Option<Vec<u8>>, WordexpFailure> {
+    // `${#NAME}` / `${#N}`: length. `${#}` alone is a syntax error in glibc.
+    if let Some(rest) = body.strip_prefix(b"#") {
+        if rest.is_empty() {
+            return Err(WordexpFailure::Syntax);
+        }
+        if rest.iter().all(|&c| c.is_ascii_digit()) {
+            let index: usize = core::str::from_utf8(rest)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(usize::MAX);
+            let len = ctx.positional.get(index).map_or(0, |v| char_count(v));
+            return Ok(Some(len.to_string().into_bytes()));
+        }
+        if rest.iter().all(|&c| is_name_char(c)) && is_name_start(rest[0]) {
+            let name = core::str::from_utf8(rest).unwrap_or("");
+            let len = (ctx.lookup_env)(name).map_or(0, |v| v.chars().count());
+            return Ok(Some(len.to_string().into_bytes()));
+        }
+        return Err(WordexpFailure::Syntax);
+    }
+    let (value, name_len) = if body.first().is_some_and(|c| c.is_ascii_digit()) {
+        let len = body.iter().take_while(|c| c.is_ascii_digit()).count();
+        let index: usize = core::str::from_utf8(&body[..len])
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(usize::MAX);
+        (ctx.positional.get(index).cloned(), len)
+    } else if body.first().is_some_and(|&c| is_name_start(c)) {
+        let len = body.iter().take_while(|&&c| is_name_char(c)).count();
+        let name = core::str::from_utf8(&body[..len]).unwrap_or("");
+        ((ctx.lookup_env)(name).map(String::into_bytes), len)
+    } else {
+        return Err(WordexpFailure::Syntax);
+    };
+    let name = String::from_utf8_lossy(&body[..name_len]).into_owned();
+    let op = &body[name_len..];
+    if op.is_empty() {
+        return match value {
+            Some(v) => Ok(Some(v)),
+            None if ctx.undef_is_error => Err(WordexpFailure::BadVal),
+            None => Ok(None),
+        };
+    }
+    // `${NAME%pat}` `${NAME%%pat}` `${NAME#pat}` `${NAME##pat}`.
+    if matches!(op[0], b'%' | b'#') {
+        let kind = op[0];
+        let largest = op.get(1) == Some(&kind);
+        let pattern = expand_to_string(&op[if largest { 2 } else { 1 }..], ifs, ctx)?;
+        let value = String::from_utf8_lossy(&value.unwrap_or_default()).into_owned();
+        let pattern = String::from_utf8_lossy(&pattern).into_owned();
+        return Ok(Some(
+            remove_affix(&value, &pattern, kind == b'%', largest).into_bytes(),
+        ));
+    }
+    let (colon, rest) = match op.strip_prefix(b":") {
+        Some(rest) => (true, rest),
+        None => (false, op),
+    };
+    let Some((&operator, word)) = rest.split_first() else {
+        return Err(WordexpFailure::Syntax);
+    };
+    let missing = value.is_none() || (colon && value.as_deref() == Some(b""));
+    match operator {
+        // `=` would also assign, which a wordexp subshell cannot make visible.
+        b'-' | b'=' => {
+            if missing {
+                Ok(Some(expand_to_string(word, ifs, ctx)?))
+            } else {
+                Ok(value)
+            }
+        }
+        b'+' => {
+            if missing {
+                Ok(None)
+            } else {
+                Ok(Some(expand_to_string(word, ifs, ctx)?))
+            }
+        }
+        b'?' => {
+            if missing {
+                let message = if word.is_empty() {
+                    "parameter null or not set".to_owned()
+                } else {
+                    String::from_utf8_lossy(&expand_to_string(word, ifs, ctx)?).into_owned()
+                };
+                (ctx.diagnostic)(&format!("{name}: {message}"));
+                Ok(None)
+            } else {
+                Ok(value)
+            }
+        }
+        _ => Err(WordexpFailure::Syntax),
+    }
+}
+
+fn char_count(bytes: &[u8]) -> usize {
+    String::from_utf8_lossy(bytes).chars().count()
+}
+
+/// Tilde expansion at `input[i]` (start of word, or after an unquoted `=`):
+/// the prefix runs to an unquoted `/` or `:`; a quoted prefix or unknown user
+/// is left literal.
+fn expand_tilde_at(
+    input: &[u8],
+    i: usize,
+    word: &mut RawWord,
+    ctx: &mut WordexpContext<'_>,
+) -> Result<usize, WordexpFailure> {
+    let len = input[i + 1..]
+        .iter()
+        .take_while(|&&c| !matches!(c, b'/' | b':' | b' ' | b'\t'))
+        .count();
+    let prefix = &input[i + 1..i + 1 + len];
+    let end = i + 1 + len;
+    // glibc copies a prefix holding quotes or `$` verbatim -- no quote
+    // removal, no expansion (`~"x"` stays `~"x"`, `~$HOME` stays `~$HOME`).
+    if prefix
+        .iter()
+        .any(|c| matches!(c, b'"' | b'\'' | b'$' | b'`'))
+    {
+        word.push(b'~', false, true);
+        for &c in prefix {
+            word.push(c, false, true);
+        }
+        return Ok(end);
+    }
+    // A backslash in the prefix disables the lookup but is itself removed
+    // (`~roo\t` gives `~root`, not root's home).
+    if prefix.contains(&b'\\') {
+        word.push(b'~', false, true);
+        let mut j = 0;
+        while j < prefix.len() {
+            if prefix[j] == b'\\' {
+                if let Some(&escaped) = prefix.get(j + 1) {
+                    word.push(escaped, false, false);
+                }
+                j += 2;
+            } else {
+                word.push(prefix[j], false, true);
+                j += 1;
+            }
+        }
+        return Ok(end);
+    }
+    let home = if prefix.is_empty() {
+        (ctx.lookup_env)("HOME")
+            .map(String::into_bytes)
+            .or_else(|| (ctx.home_dir)(b""))
+    } else {
+        (ctx.home_dir)(prefix)
+    };
+    match home {
+        Some(home) => word.push_expansion(&home, false),
+        None => {
+            // Unknown user: the prefix stays as written.
+            word.push(b'~', false, true);
+            for &c in prefix {
+                word.push(c, false, true);
+            }
+        }
+    }
+    Ok(end)
+}
+
+/// POSIX field splitting of one raw word on its splittable IFS characters
+/// (plus explicit `"$@"` breaks): IFS whitespace runs delimit, each non-
+/// whitespace IFS character delimits exactly one field (so two in a row make
+/// an empty field), leading/trailing delimiters add nothing. A field holding
+/// quoted text survives even when empty; one made only of empty unquoted
+/// expansions does not.
+fn split_fields(word: RawWord, ifs: &[u8], out: &mut Vec<Vec<WordChar>>) {
+    #[derive(PartialEq)]
+    enum Prev {
+        Start,
+        Text,
+        WsDelim,
+        NonWsDelim,
+    }
+    let mut current: Vec<WordChar> = Vec::new();
+    // The current field exists even if empty (quoted text or a "$@" break).
+    let mut live = false;
+    let mut prev = Prev::Start;
+    for item in word.items {
+        match item {
+            Item::QuoteMark => {
+                live = true;
+                prev = Prev::Text;
+            }
+            Item::Break => {
+                out.push(std::mem::take(&mut current));
+                live = true;
+                prev = Prev::Text;
+            }
+            Item::Char(ch) if ch.splittable && ifs.contains(&ch.byte) => {
+                let ws = matches!(ch.byte, b' ' | b'\t' | b'\n');
+                let field_open = !current.is_empty() || live;
+                match (ws, &prev) {
+                    (true, Prev::Text) if field_open => {
+                        out.push(std::mem::take(&mut current));
+                        live = false;
+                        prev = Prev::WsDelim;
+                    }
+                    (true, _) => {}
+                    (false, Prev::Text) if field_open => {
+                        out.push(std::mem::take(&mut current));
+                        live = false;
+                        prev = Prev::NonWsDelim;
+                    }
+                    (false, Prev::WsDelim) => prev = Prev::NonWsDelim,
+                    (false, _) => {
+                        // Leading, or a second in a row: an empty field.
+                        out.push(Vec::new());
+                        prev = Prev::NonWsDelim;
+                    }
+                }
+            }
+            Item::Char(ch) => {
+                current.push(ch);
+                prev = Prev::Text;
+            }
+        }
+    }
+    if !current.is_empty() || live {
+        out.push(current);
+    }
+}
+
+/// The pathname pattern for a field, or `None` when it has no glob-active
+/// metacharacter (then it is used literally). Inactive metacharacters and
+/// backslashes are escaped so they match only themselves.
+pub fn field_glob_pattern(field: &[WordChar]) -> Option<Vec<u8>> {
+    if !field
+        .iter()
+        .any(|c| c.glob_active && matches!(c.byte, b'*' | b'?' | b'['))
+    {
+        return None;
+    }
+    let mut pattern = Vec::with_capacity(field.len() * 2);
+    for c in field {
+        if !c.glob_active && matches!(c.byte, b'*' | b'?' | b'[' | b']' | b'\\') {
+            pattern.push(b'\\');
+        }
+        pattern.push(c.byte);
+    }
+    Some(pattern)
+}
+
+/// The field's text (quote removal already happened during expansion).
+pub fn field_text(field: &[WordChar]) -> Vec<u8> {
+    field.iter().map(|c| c.byte).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,5 +1514,290 @@ mod tests {
         assert_eq!(expand_vars("$HELLO", false, lookup).unwrap(), "OLLEH");
         // Avoid unused-mut warning.
         let _ = &mut last_seen;
+    }
+    // ---- whole-input expander (expand_input_fields) ----------------------
+    //
+    // Expected values are glibc 2.39 wordexp results for the same input,
+    // environment (HOME=/root, SP="a b", G="*.msg", X=y) and argv.
+
+    struct Fixture {
+        env: Vec<(&'static str, &'static str)>,
+        commands: Vec<(&'static str, &'static str)>,
+        argv: Vec<Vec<u8>>,
+        nocmd: bool,
+        undef: bool,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                env: vec![("HOME", "/root"), ("SP", "a b"), ("G", "*.msg"), ("X", "y")],
+                commands: vec![
+                    ("echo hi there", "hi there\n"),
+                    ("echo", "\n"),
+                    ("echo x", "x\n"),
+                    ("echo a", "a\n"),
+                    ("echo \"*.msg\"", "*.msg\n"),
+                    ("echo 41", "41\n"),
+                    ("echo a b", "a b\n"),
+                    ("echo dflt v", "dflt v\n"),
+                    ("printf 'a\\n\\n'", "a\n\n"),
+                    ("echo \"p:q r\"", "p:q r\n"),
+                ],
+                argv: vec![
+                    b"prog".to_vec(),
+                    b"one".to_vec(),
+                    b"".to_vec(),
+                    b"t h".to_vec(),
+                ],
+                nocmd: false,
+                undef: false,
+            }
+        }
+
+        fn run(&self, input: &str, ifs: &str) -> Result<Vec<String>, WordexpFailure> {
+            let env = self.env.clone();
+            let lookup = move |name: &str| {
+                env.iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| (*v).to_string())
+            };
+            let home = |user: &[u8]| match user {
+                b"" | b"root" => Some(b"/root".to_vec()),
+                _ => None,
+            };
+            let commands = self.commands.clone();
+            let nocmd = self.nocmd;
+            let mut run = move |body: &[u8]| {
+                if nocmd {
+                    return Err(WordexpFailure::CmdSub);
+                }
+                let body = core::str::from_utf8(body).unwrap();
+                commands
+                    .iter()
+                    .find(|(cmd, _)| *cmd == body)
+                    .map(|(_, out)| out.as_bytes().to_vec())
+                    .ok_or(WordexpFailure::NoSpace)
+            };
+            let mut diag = |_: &str| {};
+            let mut ctx = WordexpContext {
+                lookup_env: &lookup,
+                home_dir: &home,
+                run_command: &mut run,
+                positional: &self.argv,
+                pid: 4242,
+                undef_is_error: self.undef,
+                diagnostic: &mut diag,
+            };
+            let fields = expand_input_fields(input.as_bytes(), ifs.as_bytes(), &mut ctx)?;
+            Ok(fields
+                .iter()
+                .map(|f| String::from_utf8(field_text(f)).unwrap())
+                .collect())
+        }
+    }
+
+    fn words(list: &[&str]) -> Result<Vec<String>, WordexpFailure> {
+        Ok(list.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn command_substitution_fields_match_glibc() {
+        let f = Fixture::new();
+        let d = " \t\n";
+        assert_eq!(f.run("$(echo hi there)", d), words(&["hi", "there"]));
+        assert_eq!(f.run("\"$(echo hi there)\"", d), words(&["hi there"]));
+        assert_eq!(f.run("x$(echo a b)y", d), words(&["xa", "by"]));
+        assert_eq!(f.run("$(($(echo 41)+1))", d), words(&["42"]));
+        assert_eq!(f.run("`echo a b`", d), words(&["a", "b"]));
+        assert_eq!(f.run("$(printf 'a\\n\\n')", d), words(&["a"]));
+        assert_eq!(f.run("$(echo)", d), words(&[]));
+        assert_eq!(f.run("$(echo)$(echo)", d), words(&[]));
+        assert_eq!(f.run("\"$(echo)\"", d), words(&[""]));
+        assert_eq!(f.run("p$(echo)q", d), words(&["pq"]));
+        assert_eq!(f.run("a $(echo) b", d), words(&["a", "b"]));
+        assert_eq!(f.run("${U:-$(echo dflt v)}", d), words(&["dflt", "v"]));
+        assert_eq!(f.run("$(echo \"p:q r\")", ":"), words(&["p", "q r"]));
+    }
+
+    #[test]
+    fn nocmd_and_unterminated_substitution() {
+        let mut f = Fixture::new();
+        f.nocmd = true;
+        let d = " \t\n";
+        assert_eq!(f.run("$(echo x)", d), Err(WordexpFailure::CmdSub));
+        assert_eq!(f.run("\"`echo x`\"", d), Err(WordexpFailure::CmdSub));
+        assert_eq!(f.run("$(($(echo 41)+1))", d), Err(WordexpFailure::CmdSub));
+        // The unterminated body is a syntax error before NOCMD is consulted.
+        assert_eq!(f.run("$(true", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("$((1+2))", d), words(&["3"]));
+        assert_eq!(f.run("'$(echo x)'", d), words(&["$(echo x)"]));
+    }
+
+    #[test]
+    fn parameter_expansion_splitting_matches_glibc() {
+        let f = Fixture::new();
+        let d = " \t\n";
+        assert_eq!(f.run("${U:-a b}", d), words(&["a", "b"]));
+        // glibc splits a ${} result as a whole, even a quoted WORD.
+        assert_eq!(f.run("${U:-\"a b\"}", d), words(&["a", "b"]));
+        assert_eq!(f.run("${U:-'a b'}", d), words(&["a", "b"]));
+        assert_eq!(f.run("\"${U:-a b}\"", d), words(&["a b"]));
+        assert_eq!(f.run("$SP$SP", d), words(&["a", "ba", "b"]));
+        assert_eq!(f.run("\"$SP\"x$SP", d), words(&["a bxa", "b"]));
+        assert_eq!(f.run("x${U}y", d), words(&["xy"]));
+        assert_eq!(f.run("${#SP}", d), words(&["3"]));
+        assert_eq!(f.run("${SP%b}", d), words(&["a"]));
+        assert_eq!(f.run("${SP#a }", d), words(&["b"]));
+        assert_eq!(f.run("${U:+z}", d), words(&[]));
+        assert_eq!(f.run("${X:+z $SP}", d), words(&["z", "a", "b"]));
+        assert_eq!(f.run("$SP", ":"), words(&["a b"]));
+        assert_eq!(f.run("a b:c", ":"), words(&["a", "b:c"]));
+        assert_eq!(f.run("$SP", ""), words(&["a b"]));
+        assert_eq!(f.run("${#}", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("${U:1}", d), Err(WordexpFailure::Syntax));
+    }
+
+    #[test]
+    fn ifs_non_whitespace_delimiters() {
+        let mut f = Fixture::new();
+        f.env.push(("C", "a::b:"));
+        f.env.push(("L", ":a"));
+        assert_eq!(f.run("$C", ":"), words(&["a", "", "b"]));
+        assert_eq!(f.run("$L", ":"), words(&["", "a"]));
+        f.env.push(("M", "a : b"));
+        assert_eq!(f.run("$M", " :"), words(&["a", "b"]));
+    }
+
+    #[test]
+    fn special_and_positional_parameters_match_glibc() {
+        let mut f = Fixture::new();
+        let d = " \t\n";
+        assert_eq!(f.run("$0", d), words(&["prog"]));
+        assert_eq!(f.run("$1", d), words(&["one"]));
+        assert_eq!(f.run("$10", d), words(&["one0"]));
+        assert_eq!(f.run("${3}", d), words(&["t", "h"]));
+        assert_eq!(f.run("\"${3}\"", d), words(&["t h"]));
+        assert_eq!(f.run("${#3}", d), words(&["3"]));
+        assert_eq!(f.run("$#", d), words(&["3"]));
+        assert_eq!(f.run("$*", d), words(&["one", "t", "h"]));
+        assert_eq!(f.run("\"$*\"", d), words(&["one  t h"]));
+        assert_eq!(f.run("\"$@\"", d), words(&["one", "", "t h"]));
+        assert_eq!(f.run("p\"$@\"q", d), words(&["pone", "", "t hq"]));
+        assert_eq!(f.run("$$x", d), words(&["4242x"]));
+        assert_eq!(f.run("$? $! $- $", d), words(&["$?", "$!", "$-", "$"]));
+        f.undef = true;
+        assert_eq!(f.run("$NOPE", d), Err(WordexpFailure::BadVal));
+        assert_eq!(f.run("${NOPE}", d), Err(WordexpFailure::BadVal));
+    }
+
+    #[test]
+    fn tilde_positions_match_glibc() {
+        let f = Fixture::new();
+        let d = " \t\n";
+        assert_eq!(f.run("~", d), words(&["/root"]));
+        assert_eq!(f.run("\"~\"", d), words(&["~"]));
+        assert_eq!(f.run("~root", d), words(&["/root"]));
+        assert_eq!(f.run("~nosuch", d), words(&["~nosuch"]));
+        assert_eq!(f.run("a=~", d), words(&["a=/root"]));
+        assert_eq!(f.run("a=b=~", d), words(&["a=b=/root"]));
+        assert_eq!(f.run("a:~", d), words(&["a:~"]));
+        assert_eq!(f.run("x~", d), words(&["x~"]));
+        assert_eq!(f.run("~/x~", d), words(&["/root/x~"]));
+        assert_eq!(f.run("~:", d), words(&["/root:"]));
+        assert_eq!(f.run("\\~", d), words(&["~"]));
+        assert_eq!(f.run("a=~root/b", d), words(&["a=/root/b"]));
+        // A prefix with quotes or `$` is copied verbatim; a backslash only
+        // blocks the lookup.
+        assert_eq!(f.run("~\"x\"", d), words(&["~\"x\""]));
+        assert_eq!(f.run("~$HOME", d), words(&["~$HOME"]));
+        assert_eq!(f.run("~root\"x\"/y", d), words(&["~root\"x\"/y"]));
+        assert_eq!(f.run("~roo\\t", d), words(&["~root"]));
+        assert_eq!(f.run("~a/b\"c\"", d), words(&["~a/bc"]));
+        assert_eq!(f.run("~/\"a b\"", d), words(&["/root/a b"]));
+    }
+
+    #[test]
+    fn quoted_star_without_parameters_is_nospace_like_glibc() {
+        let mut f = Fixture::new();
+        f.argv.truncate(1);
+        let d = " \t\n";
+        for input in ["\"$*\"", "a \"$*\"", "\"${1}$*\"", "\"\"\"$*\"", "\"$*$*\""] {
+            assert_eq!(f.run(input, d), Err(WordexpFailure::NoSpace), "{input:?}");
+        }
+        assert_eq!(f.run("x\"$*\"y", d), words(&["xy"]));
+        assert_eq!(f.run("\"a$*\"", d), words(&["a"]));
+        assert_eq!(f.run("\"$#$*\"", d), words(&["0"]));
+        assert_eq!(f.run("$*", d), words(&[]));
+        assert_eq!(f.run("\"$@\"", d), words(&[""]));
+    }
+
+    #[test]
+    fn glob_activity_follows_input_provenance() {
+        let f = Fixture::new();
+        let d = " \t\n";
+        let pattern = |input: &str| {
+            let env = f.env.clone();
+            let lookup = move |name: &str| {
+                env.iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| (*v).to_string())
+            };
+            let home = |_: &[u8]| None;
+            let commands = f.commands.clone();
+            let mut run = move |body: &[u8]| {
+                let body = core::str::from_utf8(body).unwrap();
+                Ok(commands
+                    .iter()
+                    .find(|(cmd, _)| *cmd == body)
+                    .map(|(_, out)| out.as_bytes().to_vec())
+                    .unwrap_or_default())
+            };
+            let mut diag = |_: &str| {};
+            let mut ctx = WordexpContext {
+                lookup_env: &lookup,
+                home_dir: &home,
+                run_command: &mut run,
+                positional: &[],
+                pid: 1,
+                undef_is_error: false,
+                diagnostic: &mut diag,
+            };
+            expand_input_fields(input.as_bytes(), d.as_bytes(), &mut ctx)
+                .unwrap()
+                .iter()
+                .map(|field| field_glob_pattern(field).map(|p| String::from_utf8(p).unwrap()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pattern("*.msg"), vec![Some("*.msg".to_string())]);
+        assert_eq!(pattern("*.\"msg\""), vec![Some("*.msg".to_string())]);
+        assert_eq!(pattern("\"*.msg\""), vec![None]);
+        assert_eq!(pattern("'*.msg'"), vec![None]);
+        assert_eq!(pattern("\\*.msg"), vec![None]);
+        assert_eq!(pattern("$G"), vec![None]);
+        assert_eq!(pattern("${U:-*.msg}"), vec![None]);
+        assert_eq!(pattern("$(echo \"*.msg\")"), vec![None]);
+        assert_eq!(pattern("$(echo a)*.msg"), vec![Some("a*.msg".to_string())]);
+        // A literal glob next to quoted metacharacters escapes the quoted ones.
+        assert_eq!(pattern("x\"*\"*"), vec![Some("x\\**".to_string())]);
+        assert_eq!(pattern("[ab].msg"), vec![Some("[ab].msg".to_string())]);
+    }
+
+    #[test]
+    fn bad_characters_and_syntax_errors() {
+        let f = Fixture::new();
+        let d = " \t\n";
+        for input in ["a|b", "a;b", "a&b", "a<b", "a>b", "(a)", "{a}", "a\nb"] {
+            assert_eq!(f.run(input, d), Err(WordexpFailure::BadChar), "{input:?}");
+        }
+        assert_eq!(f.run("\"a|b\"", d), words(&["a|b"]));
+        assert_eq!(f.run("'unterminated", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("\"unterminated", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("trailing\\", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("${unterminated", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("`unterminated", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("$((1+))", d), Err(WordexpFailure::Syntax));
+        assert_eq!(f.run("\"\"", d), words(&[""]));
+        assert_eq!(f.run("''x''", d), words(&["x"]));
     }
 }

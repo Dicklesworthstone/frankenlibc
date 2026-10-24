@@ -4326,16 +4326,36 @@ pub fn sys_pause() -> Result<(), i32> {
 // -------------------------------------------------------------------------
 
 /// `poll(fds, nfds, timeout)` — wait for events on file descriptors.
+/// AArch64 has no `poll` syscall; use `ppoll` with a private millisecond timeout.
 ///
 /// # Safety
 ///
 /// `fds` must be a valid pointer to `nfds` pollfd structures.
-#[cfg(target_arch = "x86_64")]
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_poll(fds: *mut u8, nfds: usize, timeout: i32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_POLL, fds as usize, nfds, timeout as usize) };
-    syscall_result(ret).map(|v| v as i32)
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the caller supplies writable storage for all nfds entries.
+        let ret = unsafe { raw::syscall3(SYS_POLL, fds as usize, nfds, timeout as usize) };
+        syscall_result(ret).map(|v| v as i32)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mut duration = Timespec {
+            tv_sec: i64::from(timeout / 1000),
+            tv_nsec: i64::from(timeout % 1000) * 1_000_000,
+        };
+        let timeout_ptr = if timeout < 0 {
+            core::ptr::null()
+        } else {
+            (&mut duration as *mut Timespec).cast::<u8>().cast_const()
+        };
+        // SAFETY: the caller owns the pollfd array. The kernel may update our
+        // private, writable timespec; no signal mask is installed. A null
+        // timeout preserves poll's infinite wait for every negative timeout.
+        unsafe { sys_ppoll(fds, nfds, timeout_ptr, core::ptr::null(), 8) }
+    }
 }
 
 /// `ppoll(fds, nfds, timeout, sigmask, sigsetsize)` — wait for events with signal mask.
@@ -8044,6 +8064,55 @@ mod tests {
 
         assert!(sys_close(fds[0]).is_ok());
         assert!(sys_close(fds[1]).is_ok());
+    }
+
+    #[test]
+    fn poll_pipe_readiness_and_negative_timeouts() {
+        #[repr(C)]
+        struct PollFd {
+            fd: i32,
+            events: i16,
+            revents: i16,
+        }
+
+        let mut fds = [0i32; 2];
+        // SAFETY: fds provides writable storage for both returned descriptors.
+        assert_eq!(unsafe { sys_pipe2(fds.as_mut_ptr(), 0) }, Ok(()));
+        let mut entry = PollFd {
+            fd: fds[0],
+            events: 1, // POLLIN
+            revents: -1,
+        };
+        let pointer = core::ptr::addr_of_mut!(entry).cast();
+        // SAFETY: pointer names one live writable pollfd; the pipe is empty.
+        assert_eq!(unsafe { sys_poll(pointer, 1, 0) }, Ok(0));
+        assert_eq!(entry.revents, 0);
+        // SAFETY: the byte and the owned pipe write descriptor are live.
+        assert_eq!(unsafe { sys_write(fds[1], b"P".as_ptr(), 1) }, Ok(1));
+        for timeout in [-1, -2, i32::MIN] {
+            // SAFETY: the same writable entry is live, and unread pipe data
+            // makes every infinite-wait spelling return immediately.
+            assert_eq!(unsafe { sys_poll(pointer, 1, timeout) }, Ok(1));
+            assert_eq!(entry.revents, 1);
+        }
+        entry.fd = i32::MAX;
+        // SAFETY: the entry remains live; an invalid fd is reported in revents.
+        assert_eq!(unsafe { sys_poll(pointer, 1, 0) }, Ok(1));
+        assert_eq!(entry.revents, 0x20); // POLLNVAL
+        assert_eq!(sys_close(fds[0]), Ok(()));
+        assert_eq!(sys_close(fds[1]), Ok(()));
+    }
+
+    #[test]
+    fn poll_finite_timeout_and_bad_pointer() {
+        let start = std::time::Instant::now();
+        // SAFETY: zero entries require no array. This checks a real finite
+        // wait, rather than only a zero timeout that cannot detect unit errors.
+        assert_eq!(unsafe { sys_poll(core::ptr::null_mut(), 0, 20) }, Ok(0));
+        assert!(start.elapsed() >= std::time::Duration::from_millis(10));
+        // SAFETY: the raw veneer passes the invalid pointer to the kernel,
+        // which must report EFAULT rather than dereferencing it in Rust.
+        assert_eq!(unsafe { sys_poll(core::ptr::null_mut(), 1, 0) }, Err(14));
     }
 
     #[test]

@@ -77,6 +77,7 @@ pub struct FormatFlags {
     pub alt_form: bool,     // '#'
     pub zero_pad: bool,     // '0'
     pub group: bool,        // '\'' (POSIX thousands grouping)
+    pub i18n: bool,         // 'I' (GNU alternative-digit flag)
 }
 
 /// Width specification.
@@ -518,6 +519,44 @@ impl FormatSpec {
         self.conversion == b'm'
     }
 
+    /// An unregistered conversion consumes its `*` operands, but no value.
+    pub fn is_unknown_conversion(&self) -> bool {
+        self.conversion != b'm' && self.route().is_none()
+    }
+
+    /// GNU prints an unknown directive in normalized form, with resolved
+    /// width/precision and without its length or positional markers. It does
+    /// not pad a value, and must not advance the value-argument cursor.
+    pub fn render_unknown_conversion(&self, buf: &mut Vec<u8>) {
+        buf.push(b'%');
+        for (enabled, byte) in [
+            (self.flags.alt_form, b'#'),
+            (self.flags.group, b'\''),
+            (self.flags.force_sign, b'+'),
+            (self.flags.space_sign, b' '),
+            (self.flags.left_justify, b'-'),
+            (self.flags.zero_pad, b'0'),
+            (self.flags.i18n, b'I'),
+        ] {
+            if enabled {
+                buf.push(byte);
+            }
+        }
+        let mut digits = [0u8; 64];
+        if let Width::Fixed(width) = self.width
+            && width != 0
+        {
+            let n = render_decimal(width as u64, &mut digits);
+            buf.push_bytes(&digits[64 - n..]);
+        }
+        if let Precision::Fixed(precision) = self.precision {
+            buf.push(b'.');
+            let n = render_decimal(precision as u64, &mut digits);
+            buf.push_bytes(&digits[64 - n..]);
+        }
+        buf.push(self.conversion);
+    }
+
     pub fn stores_count(&self) -> bool {
         self.route().is_some_and(PrintfRoute::is_store_count)
     }
@@ -621,6 +660,21 @@ impl FormatSpec {
     /// With the `'` flag under a grouping locale, %Lf/%LF/%Lg/%LG render
     /// without width, group the integer part, then pad (see `format_float`).
     pub fn render_long_double_arg(&self, bytes: &[u8; 10], buf: &mut Vec<u8>) -> bool {
+        self.render_extended_arg(buf, |spec| crate::float128::format_x87(bytes, spec))
+    }
+
+    /// Render an IEEE binary128 argument with the same locale and field rules
+    /// as the x87 long-double path. The caller supplies the bits without an
+    /// intermediate, lossy conversion to `f64`.
+    pub fn render_binary128_arg(&self, bits: u128, buf: &mut Vec<u8>) -> bool {
+        self.render_extended_arg(buf, |spec| crate::float128::format_binary128(bits, spec))
+    }
+
+    fn render_extended_arg(
+        &self,
+        buf: &mut Vec<u8>,
+        render: impl Fn(&crate::float128::FmtSpec) -> Vec<u8>,
+    ) -> bool {
         if !self.value_arg_is_x87() {
             return false;
         }
@@ -640,7 +694,7 @@ impl FormatSpec {
                 alt: self.flags.alt_form,
                 zero: false,
             };
-            let mut rendered = crate::float128::format_x87(bytes, &bare);
+            let mut rendered = render(&bare);
             // The radix first: it may be the very byte the separator is.
             let mut uncounted = 0;
             if let Some(dp) = DecimalPoint::active() {
@@ -675,7 +729,7 @@ impl FormatSpec {
             zero: self.flags.zero_pad,
         };
         let start = buf.len();
-        buf.extend_from_slice(&crate::float128::format_x87(bytes, &spec));
+        buf.extend_from_slice(&render(&spec));
         if let Some(dp) = DecimalPoint::active() {
             dp.localize(buf, start);
         }
@@ -909,6 +963,7 @@ pub struct FormatSegments<'a> {
     /// unsupported N (`%w7d`). An unknown conversion byte (`%y`) is still
     /// printed literally, as glibc does.
     invalid_directive: bool,
+    raw: &'a [u8],
 }
 
 impl<'a> FormatSegments<'a> {
@@ -921,7 +976,12 @@ impl<'a> FormatSegments<'a> {
             sequential_args: 0,
             has_long_double: false,
             invalid_directive: false,
+            raw: &[],
         }
+    }
+
+    pub fn raw(&self) -> &'a [u8] {
+        self.raw
     }
 
     pub fn as_slice(&self) -> &[FormatSegment<'a>] {
@@ -1009,30 +1069,26 @@ impl<'a> Deref for FormatSegments<'a> {
     }
 }
 
-pub enum FormatSegmentsIntoIter<'a> {
-    Inline {
-        segs: [FormatSegment<'a>; INLINE_SEGMENTS],
-        len: usize,
-        idx: usize,
-    },
-    Heap(std::vec::IntoIter<FormatSegment<'a>>),
+pub struct FormatSegmentsIntoIter<'a> {
+    inline: [FormatSegment<'a>; INLINE_SEGMENTS],
+    inline_len: usize,
+    idx: usize,
+    heap: Option<std::vec::IntoIter<FormatSegment<'a>>>,
 }
 
 impl<'a> Iterator for FormatSegmentsIntoIter<'a> {
     type Item = FormatSegment<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Inline { segs, len, idx } => {
-                if *idx < *len {
-                    let seg = segs[*idx];
-                    *idx += 1;
-                    Some(seg)
-                } else {
-                    None
-                }
-            }
-            Self::Heap(iter) => iter.next(),
+        if let Some(iter) = &mut self.heap {
+            return iter.next();
+        }
+        if self.idx < self.inline_len {
+            let seg = self.inline[self.idx];
+            self.idx += 1;
+            Some(seg)
+        } else {
+            None
         }
     }
 }
@@ -1042,13 +1098,11 @@ impl<'a> IntoIterator for FormatSegments<'a> {
     type IntoIter = FormatSegmentsIntoIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        match self.heap {
-            Some(heap) => FormatSegmentsIntoIter::Heap(heap.into_iter()),
-            None => FormatSegmentsIntoIter::Inline {
-                segs: self.inline,
-                len: self.inline_len,
-                idx: 0,
-            },
+        FormatSegmentsIntoIter {
+            inline: self.inline,
+            inline_len: self.inline_len,
+            idx: 0,
+            heap: self.heap.map(IntoIterator::into_iter),
         }
     }
 }
@@ -1234,6 +1288,7 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
             // separator and grouping (`set_numeric_grouping`); under the C
             // locale both are empty and it is a no-op, as in glibc.
             b'\'' => flags.group = true,
+            b'I' => flags.i18n = true,
             _ => break,
         }
         pos += 1;
@@ -1326,7 +1381,7 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
                 pos += 1;
                 LengthMod::J
             }
-            b'L' => {
+            b'L' | b'q' => {
                 pos += 1;
                 LengthMod::BigL
             }
@@ -1393,12 +1448,17 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
     let route = if conversion == b'm' {
         None
     } else {
-        let route = printf_route(conversion)?;
-        if !route.accepts_length(length) {
-            return None;
+        let route = printf_route(conversion);
+        if let Some(route) = route {
+            if !route.accepts_length(length) {
+                return None;
+            }
+            route.sanitize_flags(&mut flags);
         }
-        route.sanitize_flags(&mut flags);
-        Some(route)
+        // Preserve unknown directives too: their width and precision operands
+        // still consume arguments. Turning `%*Q` into a literal makes the next
+        // `%s` dereference the width as a pointer (bd-rc0923-epic-eeuy4f.33.3).
+        route
     };
 
     Some((
@@ -1465,6 +1525,7 @@ fn find_percent(hay: &[u8]) -> Option<usize> {
 
 pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
     let mut segments = FormatSegments::new();
+    segments.raw = fmt;
     let mut pos = 0;
     let len = fmt.len();
 
@@ -1497,8 +1558,9 @@ pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
             pos += consumed;
             segments.push(FormatSegment::Spec(spec));
         } else {
-            // Unknown conversion: emit the '%' as literal and continue, as
-            // glibc does (an EINVAL directive was recorded above).
+            // A known conversion with an unsupported length retains the
+            // existing literal fallback; malformed directives were flagged
+            // above. Unknown conversions are parsed specs, not this fallback.
             segments.push(FormatSegment::Literal(&fmt[pos - 1..pos]));
         }
     }
@@ -2005,8 +2067,8 @@ impl core::fmt::Write for VecWriter<'_> {
 }
 
 /// Supports `%f`/`%F`, `%e`/`%E`, and `%g`/`%G` conversions.
-/// Uses Rust's `format!` machinery internally for digit generation,
-/// then applies POSIX width/flag rules.
+/// Uses Rust's digit generation for nearest mode and the exact shared float
+/// engine for directed modes, then applies POSIX width/flag rules.
 pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let start = buf.len();
     format_float_with_dot(value, spec, buf);
@@ -2105,6 +2167,58 @@ fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, 
     }
 }
 
+/// Finite nearest-mode fixed digits, without padding or a temporary String.
+/// Callers retain precision-zero, grouping and directed-rounding semantics.
+#[inline]
+fn format_fixed_nearest(value: f64, precision: usize, buf: &mut Vec<u8>, flags: FormatFlags) {
+    use core::fmt::Write as _;
+    let abs = value.abs();
+    if value.is_sign_negative() {
+        buf.push(b'-');
+    } else if flags.force_sign {
+        buf.push(b'+');
+    } else if flags.space_sign {
+        buf.push(b' ');
+    }
+    // Exact integral values need only integer digits and fractional zeros.
+    if is_integral_f64(abs) && abs < 18446744073709551616.0 {
+        let _ = write!(VecWriter(buf), "{}", abs as u64);
+        buf.push(b'.');
+        buf.extend(core::iter::repeat_n(b'0', precision));
+        return;
+    }
+    // A dyadic terminating within `precision` bits also has exact scaled
+    // digits. The bounds keep the integer product inside u128.
+    if precision <= 19 {
+        let scale = f64::from_bits((1023u64 + precision as u64) << 52);
+        let scaled = abs * scale;
+        if is_integral_f64(scaled)
+            && scaled < 18446744073709551616.0
+            && let Some(digits) = (scaled as u128).checked_mul(5u128.pow(precision as u32))
+        {
+            let mut tmp = [0u8; 40];
+            let ds = decimal_digits_u128(digits, &mut tmp);
+            if ds.len() > precision {
+                let point = ds.len() - precision;
+                buf.push_bytes(&ds[..point]);
+                buf.push(b'.');
+                buf.push_bytes(&ds[point..]);
+            } else {
+                buf.push(b'0');
+                buf.push(b'.');
+                buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
+                buf.push_bytes(ds);
+            }
+            return;
+        }
+    }
+    if let Some(scaled) = rounded_scaled_fixed(value, precision) {
+        push_fixed_scaled_u128(buf, scaled, precision);
+        return;
+    }
+    let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
+}
+
 /// [`format_float`] with the C locale's "." radix.
 fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let precision = match spec.precision {
@@ -2167,91 +2281,61 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
     let negative = value.is_sign_negative();
     let abs = value.abs();
+    let nearest =
+        crate::float128::RoundingMode::current() == crate::float128::RoundingMode::Nearest;
 
     // Grouped floats are rendered by the general path below.
     let grouping = float_grouping(spec);
 
-    // Fast path: bare fixed-point %f with precision>=1 and no field width.
-    // For precision>=1, format_f is exactly `format!("{:.prec$}", abs)` (alt_form
-    // is a no-op once a fractional point is present); with no width there is no
-    // padding. So emit the sign byte and write the digits straight into `buf`,
-    // skipping the temporary String and the padding pipeline. Byte-identical to
-    // the general path (sign + body, no pad); precision==0 keeps the general path
-    // because format_f pre-rounds there.
-    if precision >= 1
+    // Fixed-point %f with precision>=1 can render into the output buffer,
+    // including when a field width is present. Apply padding afterwards so a
+    // padded conversion does not allocate a temporary digit String.
+    // Alt-form is a no-op once the fractional point is present; precision zero
+    // retains the general path's distinct pre-rounding rule.
+    if nearest
+        && precision >= 1
         && grouping.is_none()
-        && resolve_width(spec) == 0
         && matches!(
             spec.raw_render_kind(),
             Some(RawValueRenderKind::Float(FloatFormatKind::Fixed))
         )
     {
-        use core::fmt::Write as _;
-        if negative {
-            buf.push(b'-');
-        } else if spec.flags.force_sign {
-            buf.push(b'+');
-        } else if spec.flags.space_sign {
-            buf.push(b' ');
-        }
-        // Exact-integer fast path: a finite integral `abs` < 2^64 has an exact
-        // fixed-point form (integer digits + `precision` zeros), so skip the flt2dec
-        // machinery entirely. `abs` is already finite (inf/nan returned above) and
-        // non-negative; `fract() == 0.0` proves integral, `< 2^64` proves the `as u64`
-        // cast is exact. Byte-identical to `{:.prec$}` for integral values (~4.8x
-        // faster, intf_iso). Non-integral / >= 2^64 values fall through unchanged.
-        if abs.fract() == 0.0 && abs < 18446744073709551616.0 {
-            let _ = write!(VecWriter(buf), "{}", abs as u64);
-            buf.push(b'.');
-            buf.extend(core::iter::repeat_n(b'0', precision));
-            return;
-        }
-        // Exact-dyadic fast path: if `abs` has at most `precision` fractional bits
-        // (`abs * 2^precision` is integral and < 2^64), its exact decimal terminates at
-        // `precision` places (halves/quarters/eighths — common in %f). Then
-        // `abs * 10^precision = (abs*2^precision) * 5^precision` is an integer whose digits
-        // are the output with a decimal point `precision` places from the right — no
-        // flt2dec, no rounding. Byte-identical to `{:.prec$}` (~3.55x faster, dyadf_iso).
-        // Guarded to precision <= 19 so `5^precision` * (< 2^64) fits u128.
-        if precision <= 19 {
-            // 2^precision built directly from the exponent field (exact, no powi call).
-            let scale = f64::from_bits((1023u64 + precision as u64) << 52);
-            let scaled = abs * scale;
-            if scaled.fract() == 0.0
-                && scaled < 18446744073709551616.0
-                && let Some(digits) = (scaled as u128).checked_mul(5u128.pow(precision as u32))
-            {
-                let mut tmp = [0u8; 40];
-                let mut nrem = digits;
-                let mut i = tmp.len();
-                loop {
-                    i -= 1;
-                    tmp[i] = b'0' + (nrem % 10) as u8;
-                    nrem /= 10;
-                    if nrem == 0 {
-                        break;
+        let start = buf.len();
+        format_fixed_nearest(value, precision, buf, spec.flags);
+        let content_end = buf.len();
+        let pad_total = resolve_width(spec).saturating_sub(content_end - start);
+        if pad_total != 0 {
+            let byte = if spec.flags.zero_pad && !spec.flags.left_justify {
+                b'0'
+            } else {
+                b' '
+            };
+            pad(buf, byte, pad_total);
+            // A failed fallible reserve leaves the unpadded result in place
+            // and records ENOMEM for the caller, just as the general path does.
+            let added = buf.len() - content_end;
+            if !spec.flags.left_justify && added != 0 {
+                let sign_len =
+                    usize::from(negative || spec.flags.force_sign || spec.flags.space_sign);
+                let insertion = start + if spec.flags.zero_pad { sign_len } else { 0 };
+                let digits = content_end - insertion;
+                // Move only the digits, never the potentially enormous pad.
+                // Small indexed moves stay out of the interposed memmove,
+                // using the same eight-byte cutoff as PushBytes above.
+                if digits <= 8 {
+                    for i in (0..digits).rev() {
+                        buf[insertion + added + i] = buf[insertion + i];
                     }
-                }
-                let ds = &tmp[i..];
-                if ds.len() > precision {
-                    let point = ds.len() - precision;
-                    buf.push_bytes(&ds[..point]);
-                    buf.push(b'.');
-                    buf.push_bytes(&ds[point..]);
                 } else {
-                    buf.push(b'0');
-                    buf.push(b'.');
-                    buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
-                    buf.push_bytes(ds);
+                    buf.copy_within(insertion..content_end, insertion + added);
                 }
-                return;
+                // The appended region already contains `byte`; only the old
+                // digit positions inside the new padding need replacement.
+                for i in 0..digits.min(added) {
+                    buf[insertion + i] = byte;
+                }
             }
         }
-        if let Some(scaled) = rounded_scaled_fixed(value, precision) {
-            push_fixed_scaled_u128(buf, scaled, precision);
-            return;
-        }
-        let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
         return;
     }
 
@@ -2261,7 +2345,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // byte-identical to `render_pct_g`, so routing every value through
     // `render_pct_g_into` gives the same bytes without the heap allocation). At width 0
     // there is no padding, so this is byte-identical to the general path below.
-    if resolve_width(spec) == 0
+    if nearest
+        && resolve_width(spec) == 0
         && grouping.is_none()
         && !spec.flags.alt_form
         && matches!(
@@ -2290,7 +2375,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // byte it emits is the `'e'`), so `render_pct_e_into` gives byte-identical output
     // without the heap allocation. At width 0 there is no padding = byte-identical to the
     // general path below.
-    if resolve_width(spec) == 0
+    if nearest
+        && resolve_width(spec) == 0
         && !spec.flags.alt_form
         && matches!(
             spec.raw_render_kind(),
@@ -2318,7 +2404,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // (alt_form forces the point), so unlike `%e`/`%g` this needs no alt-form exclusion
     // or uppercase fold. At width 0 there is no padding — byte-identical to the general
     // path below.
-    if resolve_width(spec) == 0
+    if nearest
+        && resolve_width(spec) == 0
         && matches!(
             spec.raw_render_kind(),
             Some(RawValueRenderKind::Float(FloatFormatKind::Hex))
@@ -2342,29 +2429,52 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     }
 
     // Generate digit string.
-    let body = match spec.raw_render_kind() {
-        Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
-            format_f(abs, precision, spec.flags.alt_form)
+    let body = if !nearest {
+        let exact = crate::float128::FmtSpec {
+            conv: spec.conversion,
+            precision: if spec.conversion.eq_ignore_ascii_case(&b'a') {
+                hex_float_precision(spec)
+            } else {
+                Some(precision)
+            },
+            width: 0,
+            left: false,
+            plus: false,
+            space: false,
+            alt: spec.flags.alt_form,
+            zero: false,
+        };
+        let mut body = String::from_utf8(crate::float128::format_binary64(value, &exact))
+            .expect("exact float output is ASCII");
+        if negative {
+            body.remove(0);
         }
-        Some(RawValueRenderKind::Float(FloatFormatKind::Exp)) => format_e(
-            abs,
-            precision,
-            spec.conversion.is_ascii_uppercase(),
-            spec.flags.alt_form,
-        ),
-        Some(RawValueRenderKind::Float(FloatFormatKind::General)) => format_g(
-            abs,
-            precision,
-            spec.conversion.is_ascii_uppercase(),
-            spec.flags.alt_form,
-        ),
-        Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
-            abs,
-            hex_float_precision(spec),
-            spec.conversion.is_ascii_uppercase(),
-            spec.flags.alt_form,
-        ),
-        _ => format_f(abs, precision, spec.flags.alt_form),
+        body
+    } else {
+        match spec.raw_render_kind() {
+            Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
+                format_f(abs, precision, spec.flags.alt_form)
+            }
+            Some(RawValueRenderKind::Float(FloatFormatKind::Exp)) => format_e(
+                abs,
+                precision,
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            Some(RawValueRenderKind::Float(FloatFormatKind::General)) => format_g(
+                abs,
+                precision,
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
+                abs,
+                hex_float_precision(spec),
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            _ => format_f(abs, precision, spec.flags.alt_form),
+        }
     };
 
     let sign = if negative {
@@ -2772,20 +2882,57 @@ fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
     buf.extend(std::iter::repeat_n(byte, count));
 }
 
+#[inline]
+pub(crate) fn is_integral_f64(x: f64) -> bool {
+    let bits = x.to_bits() & !(1u64 << 63);
+    match (bits >> 52) as u32 {
+        0x7ff => false,
+        e if e >= 0x3ff + 52 => true,
+        e if e < 0x3ff => bits == 0,
+        e => bits & ((1u64 << (0x3ff + 52 - e)) - 1) == 0,
+    }
+}
+
+#[inline]
+fn round_ties_even_f64(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let sign = bits & (1u64 << 63);
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    if e >= 1023 + 52 {
+        return x;
+    }
+    if e < 1023 {
+        let mag = f64::from_bits(bits & !(1u64 << 63));
+        let r = if mag > 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 1075 - e;
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let round_up = frac > half || (frac == half && (int_part & (1u64 << frac_bits)) != 0);
+    f64::from_bits(if round_up {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    })
+}
+
 /// `%f` / `%F` formatting: fixed-point decimal.
 fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
     if precision == 0 {
         // Use Rust's Display to format the integer part rather than casting to u64,
         // which would saturate for values > u64::MAX (~1.8e19).
-        // round_ties_even implements IEEE 754 round-half-to-even (banker's rounding)
-        // per POSIX conformance requirements.
-        let rounded = value.round_ties_even();
+        // round_ties_even_f64 implements IEEE 754 round-half-to-even (banker's rounding)
+        // per POSIX conformance requirements without calling the exported `roundeven` symbol.
+        let rounded = round_ties_even_f64(value);
         if alt_form {
             alloc::format!("{rounded:.0}.")
         } else {
             alloc::format!("{rounded:.0}")
         }
-    } else if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+    } else if is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
         // Exact-integer fast path (see the bare-%f path in render_raw_float): a finite
         // integral value < 2^64 formats as its integer digits + `precision` zeros with
         // no flt2dec. Byte-identical to `{:.prec$}`; `fract()==0.0` excludes inf/nan and
@@ -2829,7 +2976,7 @@ fn try_format_f_dyadic(value: f64, precision: usize) -> Option<String> {
     // 2^precision built directly from the exponent field (exact, no powi).
     let scale = f64::from_bits((1023u64 + precision as u64) << 52);
     let scaled = value.abs() * scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return None;
     }
     let digits = (scaled as u128).checked_mul(5u128.pow(precision as u32))?;
@@ -3131,7 +3278,7 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         // bench/test would silently bind it to glibc instead of the shipped path).
         // Same anti-pattern as bd-2g7oyh.370 (log2f) / bd-2g7oyh.371 (erf). This
         // branch is a near-unreachable fallback, but the convention holds.
-        let exp = libm::log10(value).floor() as i32;
+        let exp = libm::floor(libm::log10(value)) as i32;
         let use_f_style = exp >= -4 && exp < p as i32;
         if use_f_style {
             let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
@@ -3179,6 +3326,25 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
 }
 
 pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
+    let mut out = [0u8; 48];
+    let len = try_format_g_fixed_scaled_into(value, precision, &mut out)?;
+    let mut rendered = String::with_capacity(len);
+    // A slice-to-String copy lowers to the interposed memcpy in the deployed
+    // library. Push the bounded ASCII digits as the original formatter did.
+    for &byte in &out[..len] {
+        rendered.push(byte as char);
+    }
+    Some(rendered)
+}
+
+/// Buffer-writing core shared by the allocating formatter and deployed `%g`.
+/// Accepted values have at most nine integer digits and nine fractional
+/// digits, so the sign, decimal point and digits fit in the caller's 48-byte scratch.
+pub(crate) fn try_format_g_fixed_scaled_into(
+    value: f64,
+    precision: usize,
+    out: &mut [u8; 48],
+) -> Option<usize> {
     let p = if precision == 0 { 1 } else { precision };
     if p > 9 || value == 0.0 {
         return None;
@@ -3203,13 +3369,43 @@ pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<
 
     let mut tmp = [0u8; 40];
     let ds = decimal_digits_u128(scaled, &mut tmp);
-    let mut s = String::with_capacity(ds.len() + frac_digits + 3 + usize::from(negative));
+    let mut len = 0;
     if negative {
-        s.push('-');
+        out[len] = b'-';
+        len += 1;
     }
-    push_fixed_scaled_digits_string(&mut s, ds, frac_digits);
-    strip_trailing_zeros(&mut s);
-    Some(s)
+    if ds.len() > frac_digits {
+        let point = ds.len() - frac_digits;
+        for &digit in &ds[..point] {
+            out[len] = digit;
+            len += 1;
+        }
+        out[len] = b'.';
+        len += 1;
+        for &digit in &ds[point..] {
+            out[len] = digit;
+            len += 1;
+        }
+    } else {
+        out[len] = b'0';
+        out[len + 1] = b'.';
+        len += 2;
+        for _ in 0..frac_digits - ds.len() {
+            out[len] = b'0';
+            len += 1;
+        }
+        for &digit in ds {
+            out[len] = digit;
+            len += 1;
+        }
+    }
+    while out[len - 1] == b'0' {
+        len -= 1;
+    }
+    if out[len - 1] == b'.' {
+        len -= 1;
+    }
+    Some(len)
 }
 
 /// Fast path for `%e`/`%E` (no `#`): compute the `precision + 1` significant
@@ -3624,6 +3820,7 @@ mod tests {
             &b"a%"[..],
             b"a%5",
             b"a%l",
+            b"a%q",
             b"a%-",
             b"a%.",
             b"a%w7d",
@@ -3651,6 +3848,68 @@ mod tests {
                 String::from_utf8_lossy(fmt)
             );
         }
+    }
+
+    #[test]
+    fn unknown_conversions_preserve_star_operands_without_a_value() {
+        let segments = parse_format_string(b"%*.*lQ:%d:%s:%.1f%n");
+        assert_eq!(count_printf_args_of(&segments), 6);
+        let FormatSegment::Spec(spec) = segments[0] else {
+            panic!("unknown conversion must remain a parsed directive");
+        };
+        assert!(spec.is_unknown_conversion());
+        assert_eq!(spec.width, Width::FromArg);
+        assert_eq!(spec.precision, Precision::FromArg);
+        assert_eq!(spec.length, LengthMod::L);
+        assert_eq!(spec.value_arg_kind(), None);
+        let positional = parse_format_string(b"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n");
+        assert_eq!(count_printf_args_of(&positional), 6);
+        assert_eq!(
+            positional_printf_arg_plan(&positional).unwrap(),
+            vec![
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Fp,
+                ValueArgKind::Gp,
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_conversions_render_normalized_flags_and_operands() {
+        for (fmt, expected) in [
+            (&b"# +0-'12.003Q"[..], &b"%#'+-12.3Q"[..]),
+            (b"hhQ", b"%Q"),
+            (b"LQ", b"%Q"),
+            (b"qQ", b"%Q"),
+            (b"9.2Q", b"%9.2Q"),
+            (b"0Q", b"%0Q"),
+            (b".0Q", b"%.0Q"),
+            (b"#I0Q", b"%#0IQ"),
+        ] {
+            let (spec, consumed) = parse_format_spec(fmt).unwrap();
+            assert_eq!(consumed, fmt.len());
+            assert!(spec.is_unknown_conversion());
+            let mut buf = Vec::new();
+            spec.render_unknown_conversion(&mut buf);
+            assert_eq!(buf, expected);
+        }
+        for fmt in [b"d".as_slice(), b"s", b"m", b"%", b"Lf"] {
+            assert!(!parse_format_spec(fmt).unwrap().0.is_unknown_conversion());
+        }
+        let (integer, _) = parse_format_spec(b"qd").unwrap();
+        assert_eq!(integer.length, LengthMod::Ll);
+        assert_eq!(integer.value_arg_kind(), Some(ValueArgKind::Gp));
+        let (float, _) = parse_format_spec(b"qf").unwrap();
+        assert_eq!(float.length, LengthMod::BigL);
+        assert_eq!(float.value_arg_kind(), Some(ValueArgKind::X87));
+        let (mut zero_width, _) = parse_format_spec(b"Q").unwrap();
+        zero_width.width = Width::Fixed(0);
+        let mut buf = Vec::new();
+        zero_width.render_unknown_conversion(&mut buf);
+        assert_eq!(buf, b"%Q");
     }
 
     /// The accumulated `sequential_args` must equal the walk it replaced.

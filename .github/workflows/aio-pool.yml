@@ -1,0 +1,77 @@
+name: POSIX AIO worker pool
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/aio_*.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/tests/aio_scheduler_test.rs'
+      - 'tests/integration/fixture_aio*'
+      - 'scripts/check_aio*'
+      - '.github/workflows/aio-pool.yml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aio-pool-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Record exact committed source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/aio-pool
+          git rev-parse HEAD > artifacts/aio-pool/revision.txt
+          rustc --version --verbose > artifacts/aio-pool/rustc.txt
+          for file in aio_queue.rs aio_scheduler.rs aio_completion.rs unistd_abi.rs; do
+            cp "crates/frankenlibc-abi/src/$file" "artifacts/aio-pool/$file"
+            git hash-object "crates/frankenlibc-abi/src/$file" >> artifacts/aio-pool/source-blobs.txt
+          done
+      - name: Execute release pool, queue, and completion contracts in both builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in default owned-tls-cache; do
+            args=()
+            if [[ "$feature" != default ]]; then args=(--features "$feature"); fi
+            root="artifacts/aio-pool/$feature"
+            mkdir -p "$root"
+            cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
+            cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
+            python3 scripts/check_aio_pool.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/pool"
+            python3 scripts/check_aio_queue.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/queue" --repeat 2
+            python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/completion"
+            cargo test -p frankenlibc-abi --test aio_scheduler_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/unit.log"
+            grep -Eq 'test result: ok\. 6 passed; 0 failed;' "$root/unit.log"
+            cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/regression.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/regression.log"
+          done
+      - name: Verify execution used unchanged committed sources
+        run: git diff --exit-code -- crates/frankenlibc-abi/src/aio_queue.rs crates/frankenlibc-abi/src/aio_scheduler.rs crates/frankenlibc-abi/src/aio_completion.rs crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/tests/aio_scheduler_test.rs tests/integration/fixture_aio* scripts/check_aio*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aio-pool-results
+          path: artifacts/aio-pool/
+          if-no-files-found: error
+          retention-days: 7

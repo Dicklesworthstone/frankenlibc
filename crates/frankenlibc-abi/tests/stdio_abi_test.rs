@@ -1,4 +1,3 @@
-#![feature(c_variadic)]
 #![cfg(target_os = "linux")]
 
 //! Integration tests for `<stdio.h>` ABI entrypoints.
@@ -320,13 +319,12 @@ fn run_alone_in_child(test: &str) -> bool {
     if std::env::var_os("FRANKENLIBC_REGISTRY_PROBE_CHILD").is_some() {
         return false;
     }
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path"),
-    )
-    .args(["--exact", test, "--nocapture", "--test-threads", "1"])
-    .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
-    .output()
-    .expect("re-run the test alone");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path"))
+            .args(["--exact", test, "--nocapture", "--test-threads", "1"])
+            .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
+            .output()
+            .expect("re-run the test alone");
     let child_out = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && child_out.contains("1 passed"),
@@ -1167,6 +1165,71 @@ fn snprintf_truncates_and_reports_full_length() {
     // SAFETY: snprintf guarantees NUL-termination when size > 0.
     let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
     assert_eq!(out.to_bytes(), b"abcd");
+}
+
+#[test]
+fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
+    let mut buf = [0x5a_i8; 64];
+    let mut count = -77_i32;
+    // SAFETY: every variadic operand matches the directive; buffers/count are
+    // live writable objects, and the string argument is NUL-terminated.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%0*.*lQ:%d:%s:%.1f%n".as_ptr(),
+            -7_i32,
+            -3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    // SAFETY: the successful nontruncated call terminated this live buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-07Q:701:tail:1.5"
+    );
+    assert!(buf[19..].iter().all(|&v| v == 0x5a));
+    // SAFETY: the positional types and capacities match the live objects.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            5,
+            c"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n".as_ptr(),
+            7_i32,
+            3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    // SAFETY: positive capacity guarantees a terminator inside this buffer.
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"%7.3");
+    assert_eq!(buf[5] as u8, b':');
+    // SAFETY: GNU I-flag unknown conversions consume one promoted int width
+    // and no value; the following int and output buffers match the format.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%I*Q:%d".as_ptr(),
+            i32::MIN,
+            701_i32,
+        )
+    };
+    assert_eq!(written, 28);
+    // SAFETY: the successful nontruncated snprintf terminated this buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-I18446744071562067968Q:701"
+    );
 }
 
 #[test]
@@ -6825,7 +6888,7 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
             libc::SEEK_END => state.data.len() as i64,
             _ => return -1,
         };
-        let target = base + off as i64;
+        let target = base + off;
         if target < 0 {
             return -1;
         }
@@ -6981,4 +7044,295 @@ fn printf_pooled_output_buffer_does_not_leak_stale_bytes() {
         "the pooled path should still be intact after asprintf"
     );
     assert_eq!(&after[..3], b"ab\0");
+}
+
+#[test]
+fn printf_pooled_output_survives_thread_local_destruction() {
+    use std::cell::Cell;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    struct LateRender(Arc<AtomicBool>);
+
+    fn render() {
+        let mut out = [0xa5u8; 32];
+        // Positional arguments force the general renderer and its output pool.
+        // SAFETY: the arguments match the format and out includes room for NUL.
+        let count = unsafe {
+            snprintf(
+                out.as_mut_ptr().cast(),
+                out.len(),
+                c"%2$s:%1$d".as_ptr(),
+                42 as c_int,
+                c"late".as_ptr(),
+            )
+        };
+        assert_eq!(count, 7);
+        assert_eq!(&out[..8], b"late:42\0");
+        assert!(out[8..].iter().all(|byte| *byte == 0xa5));
+    }
+
+    impl Drop for LateRender {
+        fn drop(&mut self) {
+            // The printf pool was initialized after this slot and is destroyed
+            // first. Both taking and returning a scratch buffer must still work.
+            render();
+            render();
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    thread_local! {
+        static LATE_RENDER: Cell<Option<LateRender>> = const { Cell::new(None) };
+    }
+
+    let completed = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&completed);
+    thread::spawn(move || {
+        LATE_RENDER.with(|slot| slot.set(Some(LateRender(observed))));
+        render();
+    })
+    .join()
+    .expect("rendering thread must finish without a teardown panic");
+    assert!(completed.load(Ordering::SeqCst));
+}
+
+#[test]
+fn stream_orientation_enforcement_matches_c99_and_glibc() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::glibc_internal_abi::fwide;
+    use frankenlibc_abi::wchar_abi::{
+        fgetwc, fgetws, fputwc, fputws, fwprintf, fwscanf, open_wmemstream, ungetwc,
+    };
+
+    const WEOF_U32: u32 = u32::MAX;
+
+    unsafe {
+        // 1. Narrow I/O orients an unoriented stream to byte (-1) and rejects wide I/O with EBADF + ferror.
+        let f = tmpfile();
+        assert!(!f.is_null());
+        assert_eq!(fwide(f, 0), 0, "fresh tmpfile must be unoriented");
+        assert_eq!(fputc(b'a' as c_int, f), b'a' as c_int);
+        assert!(fwide(f, 0) < 0, "fputc must orient stream to byte (< 0)");
+        assert!(
+            fwide(f, 1) < 0,
+            "fwide(f, 1) must not flip byte-oriented stream"
+        );
+
+        *__errno_location() = 0;
+        assert_eq!(fputwc(b'x' as u32, f), WEOF_U32);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let ws_hello = [b'h' as libc::wchar_t, 0];
+        *__errno_location() = 0;
+        assert_eq!(fputws(ws_hello.as_ptr(), f), libc::EOF);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let wfmt_d = [b'%' as libc::wchar_t, b'd' as libc::wchar_t, 0];
+        *__errno_location() = 0;
+        assert_eq!(fwprintf(f, wfmt_d.as_ptr(), 42 as c_int), -1);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        rewind(f);
+        *__errno_location() = 0;
+        assert_eq!(fgetwc(f), WEOF_U32);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let mut wbuf = [0 as libc::wchar_t; 8];
+        *__errno_location() = 0;
+        assert!(fgetws(wbuf.as_mut_ptr(), 8, f).is_null());
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let mut parsed: c_int = 0;
+        *__errno_location() = 0;
+        assert_eq!(
+            fwscanf(f, wfmt_d.as_ptr(), &mut parsed as *mut c_int),
+            libc::EOF
+        );
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        // ungetwc on byte-oriented stream fails with WEOF without setting ferror.
+        assert_eq!(ungetwc(b'z' as u32, f), WEOF_U32);
+        assert_eq!(ferror(f), 0);
+        assert_eq!(fclose(f), 0);
+
+        // 2. Wide I/O orients an unoriented stream to wide (> 0) and rejects narrow I/O with EBADF + ferror.
+        // Also verify fflush/fseek on an unoriented stream do not poison byte caches before wide I/O.
+        let wf = tmpfile();
+        assert!(!wf.is_null());
+        assert_eq!(fflush(wf), 0);
+        assert_eq!(fseek(wf, 0, libc::SEEK_SET), 0);
+        assert_eq!(fwide(wf, 0), 0, "fflush/fseek must leave stream unoriented");
+        assert_eq!(fputwc(b'7' as u32, wf), b'7' as u32);
+        assert!(wf_mode_is_wide(fwide(wf, 0)));
+        assert!(
+            wf_mode_is_wide(fwide(wf, -1)),
+            "fwide(wf, -1) must not flip wide-oriented stream"
+        );
+
+        *__errno_location() = 0;
+        assert_eq!(fputc(b'a' as c_int, wf), libc::EOF);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fputs(c"hi".as_ptr(), wf), libc::EOF);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fwrite(b"hi".as_ptr().cast(), 1, 2, wf), 0);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fprintf(wf, c"%d".as_ptr(), 7 as c_int), -1);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        rewind(wf);
+        *__errno_location() = 0;
+        assert_eq!(fgetc(wf), libc::EOF);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        let mut nbuf = [0 as c_char; 8];
+        *__errno_location() = 0;
+        assert!(fgets(nbuf.as_mut_ptr(), 8, wf).is_null());
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fread(nbuf.as_mut_ptr().cast(), 1, 4, wf), 0);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(
+            fscanf(wf, c"%d".as_ptr(), &mut parsed as *mut c_int),
+            libc::EOF
+        );
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        let mut lineptr: *mut c_char = std::ptr::null_mut();
+        let mut linecap: usize = 0;
+        *__errno_location() = 0;
+        assert_eq!(getline(&mut lineptr, &mut linecap, wf), -1);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+        if !lineptr.is_null() {
+            frankenlibc_abi::malloc_abi::free(lineptr.cast());
+        }
+
+        // ungetc on wide-oriented stream fails with EOF without setting ferror.
+        assert_eq!(ungetc(b'z' as c_int, wf), libc::EOF);
+        assert_eq!(ferror(wf), 0);
+
+        // Wide read on the wide-oriented stream still succeeds!
+        assert_eq!(fgetwc(wf), b'7' as u32);
+        assert_eq!(fclose(wf), 0);
+
+        // 3. ungetc and ungetwc orient an unoriented stream.
+        let uf1 = tmpfile();
+        assert_eq!(ungetc(b'q' as c_int, uf1), b'q' as c_int);
+        assert!(fwide(uf1, 0) < 0, "ungetc must orient stream to byte (< 0)");
+        assert_eq!(fclose(uf1), 0);
+
+        let uf2 = tmpfile();
+        assert_eq!(ungetwc(b'q' as u32, uf2), b'q' as u32);
+        assert!(
+            fwide(uf2, 0) > 0,
+            "ungetwc must orient stream to wide (> 0)"
+        );
+        assert_eq!(fclose(uf2), 0);
+
+        // 4. open_memstream starts byte-oriented; open_wmemstream starts wide-oriented;
+        //    fopencookie starts byte-oriented.
+        let mut mptr: *mut c_char = std::ptr::null_mut();
+        let mut msize: usize = 0;
+        let mf = open_memstream(&mut mptr, &mut msize);
+        assert!(!mf.is_null());
+        assert!(
+            fwide(mf, 0) < 0,
+            "open_memstream must start byte-oriented (< 0)"
+        );
+        *__errno_location() = 0;
+        assert_eq!(fputwc(b'x' as u32, mf), WEOF_U32);
+        assert_ne!(ferror(mf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        assert_eq!(fclose(mf), 0);
+        if !mptr.is_null() {
+            frankenlibc_abi::malloc_abi::free(mptr.cast());
+        }
+
+        let mut wmptr: *mut u32 = std::ptr::null_mut();
+        let mut wmsize: usize = 0;
+        let wmf = open_wmemstream(&mut wmptr, &mut wmsize);
+        assert!(!wmf.is_null());
+        assert!(
+            fwide(wmf, 0) > 0,
+            "open_wmemstream must start wide-oriented (> 0)"
+        );
+        *__errno_location() = 0;
+        assert_eq!(fputc(b'x' as c_int, wmf), libc::EOF);
+        assert_ne!(ferror(wmf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wmf);
+        assert_eq!(fputwc(b'W' as u32, wmf), b'W' as u32);
+        assert_eq!(fclose(wmf), 0);
+        if !wmptr.is_null() {
+            frankenlibc_abi::malloc_abi::free(wmptr.cast());
+        }
+
+        let cf = fopencookie(
+            std::ptr::null_mut(),
+            c"w".as_ptr(),
+            CookieIoFuncs {
+                read: None,
+                write: None,
+                seek: None,
+                close: None,
+            },
+        );
+        assert!(!cf.is_null());
+        assert!(
+            fwide(cf, 0) < 0,
+            "fopencookie must start byte-oriented (< 0)"
+        );
+        assert_eq!(fclose(cf), 0);
+
+        // 5. freopen resets stream orientation to unoriented (0).
+        let rf = tmpfile();
+        assert_eq!(fwide(rf, 1), 1);
+        let rf2 = freopen(c"/dev/null".as_ptr(), c"r+".as_ptr(), rf);
+        assert!(!rf2.is_null());
+        assert_eq!(fwide(rf2, 0), 0, "freopen must reset orientation to 0");
+        assert_eq!(fclose(rf2), 0);
+    }
+
+    fn wf_mode_is_wide(m: c_int) -> bool {
+        m > 0
+    }
 }

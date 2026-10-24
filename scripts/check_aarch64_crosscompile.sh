@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # check_aarch64_crosscompile.sh — cross-compile gate for the aarch64 branches
 # of frankenlibc-core/src/syscall/raw.rs and the cfg(target_arch = "aarch64")
-# code paths elsewhere. Validates that the declared aarch64 support
-# actually builds, so typos in register constraints or cfg gates are
-# caught before a real aarch64 consumer trips over them. (bd-j19j6)
+# code paths elsewhere. This is a Rust frontend check, not a linked-library
+# or runtime qualification. Run run_aarch64_smoke.sh with the actual release
+# artifact to qualify AArch64 interposition. (bd-j19j6, bd-rc0923-epic-eeuy4f.41)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +19,8 @@ usage() {
 Usage: check_aarch64_crosscompile.sh [--rch|--local]
 
 Runs the aarch64 cross-compile cargo check gate and emits report/log artifacts.
+It does not link or run a release artifact; run_aarch64_smoke.sh does that
+artifact's runtime qualification after a separate release build.
 
 Modes:
   --rch    Run cargo checks through remote rch execution (default).

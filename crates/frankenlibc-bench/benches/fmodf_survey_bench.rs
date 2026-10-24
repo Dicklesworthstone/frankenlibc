@@ -76,28 +76,28 @@ fn bench(c: &mut Criterion) {
         &mut g,
         "fmodf_typical",
         &typical,
-        |x, y| math::fmodf(x, y),
+        math::fmodf,
         |x, y| unsafe { h_fmodf(x, y) },
     );
     survey(
         &mut g,
         "fmodf_stress",
         &stress,
-        |x, y| math::fmodf(x, y),
+        math::fmodf,
         |x, y| unsafe { h_fmodf(x, y) },
     );
     survey(
         &mut g,
         "remainderf_typical",
         &typical,
-        |x, y| math::remainderf(x, y),
+        math::remainderf,
         |x, y| unsafe { h_remainderf(x, y) },
     );
     survey(
         &mut g,
         "remainderf_stress",
         &stress,
-        |x, y| math::remainderf(x, y),
+        math::remainderf,
         |x, y| unsafe { h_remainderf(x, y) },
     );
     g.finish();

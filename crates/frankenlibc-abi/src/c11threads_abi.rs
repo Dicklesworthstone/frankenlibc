@@ -137,18 +137,35 @@ pub unsafe extern "C" fn thrd_create(
     // SAFETY: TrampolineCtx is a plain struct with no drop glue concerns.
     unsafe impl Send for TrampolineCtx {}
 
-    extern "C" fn trampoline(ctx_ptr: *mut c_void) -> *mut c_void {
+    unsafe extern "C-unwind" fn trampoline(ctx_ptr: *mut c_void) -> *mut c_void {
         let ctx = unsafe { Box::from_raw(ctx_ptr as *mut TrampolineCtx) };
-        let rc = unsafe { (ctx.func)(ctx.arg) };
+        let func = ctx.func;
+        let arg = ctx.arg;
+        // Release the start context before entering user code. thrd_exit and
+        // cancellation need not return here; the native backend can terminate
+        // the thread without unwinding Rust frames at all.
+        drop(ctx);
+        // SAFETY: C and C-unwind use the same machine calling convention. A
+        // foreign C start routine can call thrd_exit/pthread_exit or reach a
+        // cancellation point, so its invocation must permit forced unwind.
+        // Keep the public C callback type compatible with existing Rust callers.
+        let func: unsafe extern "C-unwind" fn(*mut c_void) -> c_int =
+            unsafe { std::mem::transmute(func) };
+        let rc = unsafe { func(arg) };
         rc as usize as *mut c_void
     }
 
     let ctx = Box::new(TrampolineCtx { func, arg });
     let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
-    let rc = unsafe {
-        crate::pthread_abi::pthread_create(thr, std::ptr::null(), Some(trampoline), ctx_ptr)
+    // SAFETY: pthread_create's callback slot is expressed as plain C, but
+    // passes the same function pointer to the thread backend. Do not change
+    // the trampoline itself to C: its frame must permit forced unwind.
+    let start: unsafe extern "C" fn(*mut c_void) -> *mut c_void = unsafe {
+        std::mem::transmute(trampoline as unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void)
     };
+    let rc =
+        unsafe { crate::pthread_abi::pthread_create(thr, std::ptr::null(), Some(start), ctx_ptr) };
     if rc != 0 {
         // Clean up on failure — reclaim the Box.
         drop(unsafe { Box::from_raw(ctx_ptr as *mut TrampolineCtx) });
@@ -159,9 +176,10 @@ pub unsafe extern "C" fn thrd_create(
 // thrd_join — Implemented
 // ---------------------------------------------------------------------------
 
-/// C11 `thrd_join` — wait for thread termination.
+/// C11 `thrd_join` — wait for thread termination. Like pthread_join, this
+/// is a cancellation point; forced unwind must pass through the wrapper.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int {
     if !tracked_optional_object_fits(res) {
         return THRD_ERROR;
     }
@@ -186,9 +204,10 @@ pub unsafe extern "C" fn thrd_detach(thr: ThrdT) -> c_int {
 // thrd_exit — Implemented
 // ---------------------------------------------------------------------------
 
-/// C11 `thrd_exit` — terminate the calling thread.
+/// C11 `thrd_exit` — terminate the calling thread, allowing the pthread
+/// backend to unwind through this frame and execute user cleanup handlers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn thrd_exit(res: c_int) -> ! {
+pub unsafe extern "C-unwind" fn thrd_exit(res: c_int) -> ! {
     unsafe { crate::pthread_abi::pthread_exit(res as usize as *mut c_void) }
 }
 
@@ -217,14 +236,23 @@ pub extern "C" fn thrd_equal(lhs: ThrdT, rhs: ThrdT) -> c_int {
 ///
 /// Returns 0 on success, -1 if interrupted by a signal, or a negative value on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn thrd_sleep(
+pub unsafe extern "C-unwind" fn thrd_sleep(
     duration: *const libc::timespec,
     remaining: *mut libc::timespec,
 ) -> c_int {
     if !tracked_required_object_fits(duration) || !tracked_optional_object_fits(remaining) {
         return -2;
     }
-    match unsafe { raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8) } {
+    // Keep the window in this exported frame: delegating to the exported
+    // nanosleep would look like internal libc I/O to the caller-origin guard
+    // and suppress cancellation. Only the raw syscall is asynchronously
+    // cancellable; validation and result conversion hold no open window.
+    let result = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8)
+        })
+    };
+    match result {
         Ok(()) => 0,
         Err(e) => {
             if e == libc::EINTR {
@@ -389,21 +417,23 @@ pub unsafe extern "C" fn cnd_broadcast(cond: *mut CndT) -> c_int {
 // cnd_wait — Implemented
 // ---------------------------------------------------------------------------
 
-/// C11 `cnd_wait` — wait on a condition variable.
+/// C11 `cnd_wait` — wait on a condition variable. A cancellation point, as
+/// in glibc (it is `pthread_cond_wait`), so the unwind passes through it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
+pub unsafe extern "C-unwind" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
     if !tracked_required_object_fits(cond) || !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait(cond, mtx) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait_cp(cond, mtx) })
 }
 
 // cnd_timedwait — Implemented
 // ---------------------------------------------------------------------------
 
-/// C11 `cnd_timedwait` — wait on a condition variable with timeout.
+/// C11 `cnd_timedwait` — wait on a condition variable with timeout. A
+/// cancellation point, as `cnd_wait` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cnd_timedwait(
+pub unsafe extern "C-unwind" fn cnd_timedwait(
     cond: *mut CndT,
     mtx: *mut MtxT,
     ts: *const libc::timespec,
@@ -414,7 +444,7 @@ pub unsafe extern "C" fn cnd_timedwait(
     {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait(cond, mtx, ts) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait_cp(cond, mtx, ts) })
 }
 
 // cnd_destroy — Implemented

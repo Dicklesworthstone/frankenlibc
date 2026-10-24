@@ -48,7 +48,7 @@ unsafe fn simd_rev(s: *const u32, c: u32, n: usize) -> isize {
 
 fn main() {
     for &n in &[16usize, 64, 256, 1024, 4096] {
-        let mut base: Vec<u32> = (0..n as u32).map(|x| b'a' as u32 + (x % 25)).collect();
+        let base: Vec<u32> = (0..n as u32).map(|x| b'a' as u32 + (x % 25)).collect();
         let sp = base.as_ptr();
         // workloads: c absent, c at front(0), c at end(n-1), c mid(n/2)
         for (tag, setpos, c) in [

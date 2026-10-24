@@ -281,7 +281,7 @@ fn posix_compatibility_no_heal_for_valid_string() {
 
 #[test]
 fn safety_healing_policy_counters_monotonic() {
-    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy, RepairLogContext};
     use std::sync::atomic::Ordering;
 
     let policy = HealingPolicy::new();
@@ -304,7 +304,12 @@ fn safety_healing_policy_counters_monotonic() {
     ];
 
     for action in &actions {
-        policy.record(action);
+        policy.record(
+            "test",
+            "hardened_mode_safety",
+            action,
+            RepairLogContext::new(0, None),
+        );
     }
 
     // All counters should have been incremented exactly once
@@ -324,14 +329,19 @@ fn safety_healing_policy_counters_monotonic() {
 
 #[test]
 fn safety_recording_none_does_not_increment() {
-    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy, RepairLogContext};
     use std::sync::atomic::Ordering;
 
     let policy = HealingPolicy::new();
 
     // Recording HealingAction::None should NOT increment counters
     for _ in 0..100 {
-        policy.record(&HealingAction::None);
+        policy.record(
+            "test",
+            "hardened_mode_safety",
+            &HealingAction::None,
+            RepairLogContext::new(0, None),
+        );
     }
 
     assert_eq!(
@@ -343,7 +353,7 @@ fn safety_recording_none_does_not_increment() {
 
 #[test]
 fn safety_concurrent_recording_preserves_count_integrity() {
-    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy, RepairLogContext};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -359,7 +369,12 @@ fn safety_concurrent_recording_preserves_count_integrity() {
         handles.push(thread::spawn(move || {
             barrier.wait();
             for _ in 0..250 {
-                policy.record(&HealingAction::ReturnSafeDefault);
+                policy.record(
+                    "test",
+                    "hardened_mode_safety",
+                    &HealingAction::ReturnSafeDefault,
+                    RepairLogContext::new(0, None),
+                );
             }
         }));
     }
@@ -502,6 +517,12 @@ fn hardened_bounded_string_ops_heal_only_real_overreads() {
         .collect();
     assert_eq!(fields[1], "true", "strncpy must NUL-pad to n: {stdout}");
     assert_eq!(fields[2], "true", "compare results: {stdout}");
-    assert_eq!(fields[3], "0", "terminated sources recorded heals: {stdout}");
-    assert_eq!(fields[4], "3", "unterminated sources must each heal: {stdout}");
+    assert_eq!(
+        fields[3], "0",
+        "terminated sources recorded heals: {stdout}"
+    );
+    assert_eq!(
+        fields[4], "3",
+        "unterminated sources must each heal: {stdout}"
+    );
 }

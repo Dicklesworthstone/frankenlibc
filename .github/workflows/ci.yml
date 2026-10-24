@@ -45,6 +45,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The guard needs real mirror refs and an attached main checkout. Keep
+      # the selected PR merge/push commit: checking out origin/main here would
+      # silently run the gates against different code.
+      - name: Prepare main-only CI checkout
+        run: |
+          tested_commit="$(git rev-parse HEAD)"
+          test "$tested_commit" = "$GITHUB_SHA"
+          git fetch --no-tags origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/master:refs/remotes/origin/master
+          case "$(git branch --show-current)" in
+            main) ;;
+            "")
+              # Fail if main already exists; never reset an existing branch.
+              git branch main "$tested_commit"
+              git symbolic-ref HEAD refs/heads/main
+              ;;
+            *) echo "Unexpected attached CI branch" >&2; exit 1 ;;
+          esac
+          test "$(git rev-parse HEAD)" = "$tested_commit"
+
+      - name: Test CI checkout preparation
+        run: python3 scripts/test_ci_checkout.py
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@stable
@@ -129,6 +155,20 @@ jobs:
       - name: Build ABI release artifact
         run: |
           cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/ci/release-abi.log
+
+      # The release artifact targets baseline x86-64 (bd-rc0923-epic-eeuy4f.13):
+      # non-baseline instructions only in dispatch-guarded functions, and the C
+      # fixture suite plus real programs run on emulated CPUs without AVX
+      # (Nehalem) and without SSE4 (qemu64). The x86-64-v3 benchmarking build
+      # must refuse such a CPU with a message, not SIGILL.
+      - name: Check baseline x86-64 ISA (objdump allow-list + qemu-user)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static || sudo apt-get install -y -qq qemu-user
+          cargo build -p frankenlibc-abi --profile release-x86-64-v3 2>&1 | tail -n 3
+          QEMU="$(command -v qemu-x86_64-static || command -v qemu-x86_64)" \
+          V3_LIB=target/release-x86-64-v3/libfrankenlibc_abi.so \
+            bash scripts/check_baseline_isa.sh 2>&1 | tee artifacts/ci/release-baseline-isa.log
 
       # Structural export checks (scripts/audit_abi_exports.py, core gates) prove
       # a symbol is in .dynsym. This proves a loader RESOLVES it and that the

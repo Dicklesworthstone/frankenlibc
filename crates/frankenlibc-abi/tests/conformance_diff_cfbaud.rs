@@ -48,31 +48,46 @@ fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut c_void {
 fn h_setbaud_fn() -> SetBaudFn {
     // SAFETY: resolved symbol has glibc's documented cfsetbaud signature.
     unsafe {
-        std::mem::transmute::<_, SetBaudFn>(host_symbol(c"cfsetbaud", fl::cfsetbaud as usize))
+        std::mem::transmute::<*mut c_void, SetBaudFn>(host_symbol(
+            c"cfsetbaud",
+            fl::cfsetbaud as *const () as usize,
+        ))
     }
 }
 fn h_setibaud_fn() -> SetBaudFn {
     // SAFETY: as above, for cfsetibaud.
     unsafe {
-        std::mem::transmute::<_, SetBaudFn>(host_symbol(c"cfsetibaud", fl::cfsetibaud as usize))
+        std::mem::transmute::<*mut c_void, SetBaudFn>(host_symbol(
+            c"cfsetibaud",
+            fl::cfsetibaud as *const () as usize,
+        ))
     }
 }
 fn h_setobaud_fn() -> SetBaudFn {
     // SAFETY: as above, for cfsetobaud.
     unsafe {
-        std::mem::transmute::<_, SetBaudFn>(host_symbol(c"cfsetobaud", fl::cfsetobaud as usize))
+        std::mem::transmute::<*mut c_void, SetBaudFn>(host_symbol(
+            c"cfsetobaud",
+            fl::cfsetobaud as *const () as usize,
+        ))
     }
 }
 fn h_getibaud_fn() -> GetBaudFn {
     // SAFETY: as above, for cfgetibaud.
     unsafe {
-        std::mem::transmute::<_, GetBaudFn>(host_symbol(c"cfgetibaud", fl::cfgetibaud as usize))
+        std::mem::transmute::<*mut c_void, GetBaudFn>(host_symbol(
+            c"cfgetibaud",
+            fl::cfgetibaud as *const () as usize,
+        ))
     }
 }
 fn h_getobaud_fn() -> GetBaudFn {
     // SAFETY: as above, for cfgetobaud.
     unsafe {
-        std::mem::transmute::<_, GetBaudFn>(host_symbol(c"cfgetobaud", fl::cfgetobaud as usize))
+        std::mem::transmute::<*mut c_void, GetBaudFn>(host_symbol(
+            c"cfgetobaud",
+            fl::cfgetobaud as *const () as usize,
+        ))
     }
 }
 use frankenlibc_abi::glibc_internal_abi as fl;

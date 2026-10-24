@@ -87,7 +87,7 @@
       "libc::speed_t",
       "libc::iovec"
     ],
-    "source_scan_exceptions": []
+    "source_scan_exceptions": [{"module": "errno_abi", "function": "interpose_errno_accessor_is_the_host_tls_slot", "symbols": ["__errno_location"]}, {"module": "locale_abi", "function": "catopen", "symbols": ["getauxval"]}, {"module": "unistd_abi", "function": "auxv_entry", "symbols": ["getauxval"]}]
   },
   "interpose_allowlist": {
     "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode when the source scan detects direct escape hatches.",

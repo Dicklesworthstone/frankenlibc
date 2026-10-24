@@ -57,7 +57,11 @@ fn wide_find_matches_scalar_reference_and_golden() {
         // wmemchr: needle absent (full scan), and present at every position.
         let absent: Vec<u32> = (0..len).map(|_| b'a' as u32).collect();
         let got = wmemchr(&absent, needle, len);
-        assert_eq!(got, ref_wmemchr(&absent, needle, len), "wmemchr absent len={len}");
+        assert_eq!(
+            got,
+            ref_wmemchr(&absent, needle, len),
+            "wmemchr absent len={len}"
+        );
         mix(got.map(|x| x as u64 + 1).unwrap_or(0), &mut hash);
 
         for _ in 0..6 {
@@ -67,9 +71,17 @@ fn wide_find_matches_scalar_reference_and_golden() {
                 buf[pos] = needle;
             }
             // wmemchr over a random sub-count too.
-            let n = if len == 0 { 0 } else { (r.next() as usize) % (len + 1) };
+            let n = if len == 0 {
+                0
+            } else {
+                (r.next() as usize) % (len + 1)
+            };
             let gm = wmemchr(&buf, needle, n);
-            assert_eq!(gm, ref_wmemchr(&buf, needle, n), "wmemchr len={len} pos={pos} n={n}");
+            assert_eq!(
+                gm,
+                ref_wmemchr(&buf, needle, n),
+                "wmemchr len={len} pos={pos} n={n}"
+            );
             mix(gm.map(|x| x as u64 + 1).unwrap_or(0), &mut hash);
 
             // wcschr: place a NUL too, at a random spot, to exercise needle-or-nul.
@@ -79,7 +91,11 @@ fn wide_find_matches_scalar_reference_and_golden() {
                 wbuf[nul] = 0;
             }
             let gc = wcschr(&wbuf, needle);
-            assert_eq!(gc, ref_wcschr(&wbuf, needle), "wcschr len={len} pos={pos} nul={nul}");
+            assert_eq!(
+                gc,
+                ref_wcschr(&wbuf, needle),
+                "wcschr len={len} pos={pos} nul={nul}"
+            );
             mix(gc.map(|x| x as u64 + 1).unwrap_or(0), &mut hash);
         }
     }

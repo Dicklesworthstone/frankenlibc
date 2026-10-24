@@ -589,6 +589,7 @@ unsafe fn hostent_addr_octets(hostent: &libc::hostent) -> Vec<[u8; 4]> {
 /// catch any of these: it merges two rows that share a canonical name, so it exercises
 /// neither the append order, nor the case-sensitive canonical test, nor address parsing.
 #[test]
+#[allow(clippy::type_complexity)]
 fn gethostbyname_hosts_merge_matches_glibc_discriminating_vectors() {
     // (hosts content, query, expected h_name, expected aliases, expected addresses)
     let vectors: &[(&[u8], &str, &[u8], &[&[u8]], &[[u8; 4]])] = &[
@@ -6088,18 +6089,23 @@ fn nsswitch_hosts_policy_governs_forward_and_reverse_lookups() {
             }
         };
 
-        for (policy, found) in [
-            ("hosts: files\n", true),
-            // An unimplemented module is an unavailable source: continue.
-            ("hosts: myhostname files\n", true),
-            // Only a module fl does not implement: files is never consulted.
-            ("hosts: myhostname\n", false),
+        for (policy, found, unavailable_per_lookup) in [
+            ("hosts: files\n", true, 0u64),
+            // A missing module is an unavailable source: continue.
+            ("hosts: frankenlibc_test_missing_nss files\n", true, 1u64),
+            // Only a missing module: files is never consulted.
+            ("hosts: frankenlibc_test_missing_nss\n", false, 1u64),
             // Explicitly empty: no sources at all.
-            ("hosts:\n", false),
+            ("hosts:\n", false, 0u64),
             // UNAVAIL=return stops before files.
-            ("hosts: myhostname [UNAVAIL=return] files\n", false),
+            (
+                "hosts: frankenlibc_test_missing_nss [UNAVAIL=return] files\n",
+                false,
+                1u64,
+            ),
         ] {
             std::fs::write(&nsswitch, policy).expect("write nsswitch fixture");
+            let before = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
             assert_eq!(forward() == 0, found, "getaddrinfo under {policy:?}");
             if !found {
                 assert_eq!(forward(), libc::EAI_NONAME, "getaddrinfo under {policy:?}");
@@ -6107,7 +6113,584 @@ fn nsswitch_hosts_policy_governs_forward_and_reverse_lookups() {
             assert_eq!(legacy_forward(), found, "gethostbyname under {policy:?}");
             assert_eq!(reverse(), found, "gethostbyaddr under {policy:?}");
             assert_eq!(nameinfo() == 0, found, "getnameinfo under {policy:?}");
+            let after = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
+            let lookups = if found { 4 } else { 5 };
+            assert_eq!(
+                after - before,
+                unavailable_per_lookup * lookups,
+                "nss_unavailable_sources delta under {policy:?}"
+            );
         }
         let _ = std::fs::remove_file(&nsswitch);
     });
+}
+
+fn encode_dns_name(name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for label in name.trim_end_matches('.').split('.') {
+        if label.is_empty() {
+            continue;
+        }
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    out
+}
+
+fn parse_dns_question(packet: &[u8]) -> Option<(String, u16, usize)> {
+    if packet.len() < 12 {
+        return None;
+    }
+    let mut pos = 12usize;
+    let mut labels = Vec::new();
+    loop {
+        let len = *packet.get(pos)? as usize;
+        pos += 1;
+        if len == 0 {
+            break;
+        }
+        let end = pos.checked_add(len)?;
+        let label = std::str::from_utf8(packet.get(pos..end)?)
+            .ok()?
+            .to_ascii_lowercase();
+        labels.push(label);
+        pos = end;
+    }
+    if pos + 4 > packet.len() {
+        return None;
+    }
+    let qtype = u16::from_be_bytes([packet[pos], packet[pos + 1]]);
+    Some((labels.join("."), qtype, pos + 4))
+}
+
+fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
+    let (qname, qtype, qend) = parse_dns_question(query)?;
+    let question = &query[12..qend];
+    let mut out = Vec::with_capacity(256);
+    out.extend_from_slice(&query[0..2]); // txid
+
+    if qname == "tc-cname.hermetic.test" && !is_tcp {
+        // Truncated UDP reply (QR=1, RD=1, TC=1, RA=1) forces TCP retry.
+        out.extend_from_slice(&0x8380u16.to_be_bytes());
+        out.extend_from_slice(&1u16.to_be_bytes()); // qdcount
+        out.extend_from_slice(&0u16.to_be_bytes()); // ancount
+        out.extend_from_slice(&0u16.to_be_bytes()); // nscount
+        out.extend_from_slice(&0u16.to_be_bytes()); // arcount
+        out.extend_from_slice(question);
+        return Some(out);
+    }
+
+    let push_rr = |buf: &mut Vec<u8>, owner: &[u8], rr_type: u16, rdata: &[u8]| {
+        buf.extend_from_slice(owner);
+        buf.extend_from_slice(&rr_type.to_be_bytes());
+        buf.extend_from_slice(&1u16.to_be_bytes()); // CLASS_IN
+        buf.extend_from_slice(&60u32.to_be_bytes()); // TTL
+        buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+        buf.extend_from_slice(rdata);
+    };
+
+    let mut answers = Vec::new();
+    let mut ancount = 0u16;
+    let mut flags = 0x8180u16; // NOERROR
+
+    match qname.as_str() {
+        "dual.hermetic.test" => {
+            if qtype == 1 {
+                push_rr(&mut answers, &[0xc0, 0x0c], 1, &[198, 51, 100, 42]);
+                ancount = 1;
+            } else if qtype == 28 {
+                let v6 = std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0042).octets();
+                push_rr(&mut answers, &[0xc0, 0x0c], 28, &v6);
+                ancount = 1;
+            }
+        }
+        "tc-cname.hermetic.test" | "target.hermetic.test" => {
+            let target_wire = encode_dns_name("target.hermetic.test");
+            if qname == "tc-cname.hermetic.test" {
+                push_rr(&mut answers, &[0xc0, 0x0c], 5, &target_wire); // CNAME
+                ancount += 1;
+            }
+            if qtype == 1 {
+                push_rr(&mut answers, &target_wire, 1, &[198, 51, 100, 77]);
+                ancount += 1;
+            } else if qtype == 28 {
+                let v6 = std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0077).octets();
+                push_rr(&mut answers, &target_wire, 28, &v6);
+                ancount += 1;
+            }
+        }
+        "42.100.51.198.in-addr.arpa" => {
+            if qtype == 12 {
+                let ptr_wire = encode_dns_name("dual.hermetic.test");
+                push_rr(&mut answers, &[0xc0, 0x0c], 12, &ptr_wire);
+                ancount = 1;
+            }
+        }
+        _ => {
+            flags = 0x8183; // NXDOMAIN
+        }
+    }
+
+    out.extend_from_slice(&flags.to_be_bytes());
+    out.extend_from_slice(&1u16.to_be_bytes()); // qdcount
+    out.extend_from_slice(&ancount.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes()); // nscount
+    out.extend_from_slice(&0u16.to_be_bytes()); // arcount
+    out.extend_from_slice(question);
+    out.extend_from_slice(&answers);
+    Some(out)
+}
+
+/// Live ABI differential test against host glibc (`dlsym_oracle::host_fn`)
+/// backed by a hermetic local UDP+TCP DNS server on `127.0.0.1:<port>`
+/// (bd-rc0923-epic-eeuy4f.19).
+#[test]
+fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    type NssConfigureLookupFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
+    type ResInitFn = unsafe extern "C" fn() -> c_int;
+    type ResStateFn = unsafe extern "C" fn() -> *mut u8;
+    type Gethostbyname2RFn = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut *mut libc::hostent,
+        *mut c_int,
+    ) -> c_int;
+    type GethostbyaddrFn =
+        unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
+    type GetnameinfoFn = unsafe extern "C" fn(
+        *const libc::sockaddr,
+        libc::socklen_t,
+        *mut c_char,
+        libc::socklen_t,
+        *mut c_char,
+        libc::socklen_t,
+        c_int,
+    ) -> c_int;
+
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind hermetic UDP DNS");
+    let port = udp.local_addr().unwrap().port();
+    let tcp = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind hermetic TCP DNS");
+    udp.set_read_timeout(Some(Duration::from_millis(5)))
+        .expect("set UDP read timeout");
+    tcp.set_nonblocking(true).expect("set TCP nonblocking");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let server_thread = std::thread::spawn(move || {
+        let mut buf = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            while let Ok((len, peer)) = udp.recv_from(&mut buf) {
+                if let Some(reply) = build_hermetic_dns_reply(&buf[..len], false) {
+                    let _ = udp.send_to(&reply, peer);
+                }
+            }
+            while let Ok((mut stream, _)) = tcp.accept() {
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+                let mut len_bytes = [0u8; 2];
+                while stream.read_exact(&mut len_bytes).is_ok() {
+                    let qlen = u16::from_be_bytes(len_bytes) as usize;
+                    let mut qbuf = vec![0u8; qlen];
+                    if stream.read_exact(&mut qbuf).is_ok() {
+                        if let Some(reply) = build_hermetic_dns_reply(&qbuf, true) {
+                            let rlen = (reply.len() as u16).to_be_bytes();
+                            if stream.write_all(&rlen).is_err() || stream.write_all(&reply).is_err()
+                            {
+                                break;
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Save host /etc/nsswitch.conf `hosts:` policy so we can restore it on drop.
+    let orig_hosts_policy = std::fs::read_to_string("/etc/nsswitch.conf")
+        .ok()
+        .and_then(|s| {
+            s.lines().find_map(|line| {
+                let trimmed = line.split('#').next()?.trim();
+                trimmed
+                    .strip_prefix("hosts:")
+                    .map(|rest| rest.trim().to_string())
+            })
+        })
+        .unwrap_or_else(|| "files dns".to_string());
+    let orig_hosts_cstr = CString::new(orig_hosts_policy).unwrap();
+
+    with_resolver_backends(Some(b"127.0.0.1 localhost\n"), None, |_| {
+        let resolv_path = temp_resolver_path("hermetic-resolv");
+        let nsswitch_path = temp_resolver_path("hermetic-nsswitch");
+        std::fs::write(
+            &resolv_path,
+            b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+        )
+        .expect("write hermetic resolv.conf");
+        std::fs::write(&nsswitch_path, b"hosts: files dns\n").expect("write hermetic nsswitch");
+
+        // Configure host glibc's thread-local __res_state() to point to 127.0.0.1:<port>
+        // and force host glibc's NSS `hosts` database to `files dns`.
+        let nss_cfg_sym = CString::new("__nss_configure_lookup").unwrap();
+        let res_init_sym = CString::new("__res_init").unwrap();
+        let res_state_sym = CString::new("__res_state").unwrap();
+        let nss_cfg_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, nss_cfg_sym.as_ptr()) };
+        let res_init_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, res_init_sym.as_ptr()) };
+        let res_state_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, res_state_sym.as_ptr()) };
+        assert!(!res_init_ptr.is_null() && !res_state_ptr.is_null());
+
+        unsafe {
+            if !nss_cfg_ptr.is_null() {
+                let nss_cfg: NssConfigureLookupFn = mem::transmute(nss_cfg_ptr);
+                nss_cfg(c"hosts".as_ptr(), c"files dns".as_ptr());
+            }
+            let res_init: ResInitFn = mem::transmute(res_init_ptr);
+            let res_state: ResStateFn = mem::transmute(res_state_ptr);
+            assert_eq!(res_init(), 0);
+            let state = res_state();
+            assert!(!state.is_null());
+            // glibc struct __res_state layout on x86_64:
+            // offset 0: int retrans; offset 4: int retry; offset 16: int nscount;
+            // offset 20: struct sockaddr_in nsaddr_list[MAXNS].
+            ptr::write_unaligned(state.add(0).cast::<c_int>(), 1);
+            ptr::write_unaligned(state.add(4).cast::<c_int>(), 1);
+            ptr::write_unaligned(state.add(16).cast::<c_int>(), 1);
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: port.to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+                },
+                sin_zero: [0; 8],
+            };
+            ptr::write_unaligned(state.add(20).cast::<libc::sockaddr_in>(), sin);
+
+            std::env::set_var("FRANKENLIBC_RESOLV_CONF", &resolv_path);
+            std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path);
+            std::env::set_var("FRANKENLIBC_DNS_PORT", port.to_string());
+        }
+
+        struct HermeticCleanup {
+            resolv_path: std::path::PathBuf,
+            nsswitch_path: std::path::PathBuf,
+            nss_cfg_ptr: *mut c_void,
+            res_init_ptr: *mut c_void,
+            orig_hosts_cstr: CString,
+            stop: Arc<AtomicBool>,
+        }
+        impl Drop for HermeticCleanup {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::Relaxed);
+                unsafe {
+                    std::env::remove_var("FRANKENLIBC_RESOLV_CONF");
+                    std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                    std::env::remove_var("FRANKENLIBC_DNS_PORT");
+                    if !self.nss_cfg_ptr.is_null() {
+                        let nss_cfg: NssConfigureLookupFn = mem::transmute(self.nss_cfg_ptr);
+                        nss_cfg(c"hosts".as_ptr(), self.orig_hosts_cstr.as_ptr());
+                    }
+                    let res_init: ResInitFn = mem::transmute(self.res_init_ptr);
+                    let _ = res_init();
+                }
+                let _ = std::fs::remove_file(&self.resolv_path);
+                let _ = std::fs::remove_file(&self.nsswitch_path);
+            }
+        }
+        let _cleanup = HermeticCleanup {
+            resolv_path: resolv_path.clone(),
+            nsswitch_path: nsswitch_path.clone(),
+            nss_cfg_ptr,
+            res_init_ptr,
+            orig_hosts_cstr,
+            stop: Arc::clone(&stop),
+        };
+
+        let extract_gai = |gai: GetaddrinfoFn,
+                           free: FreeaddrinfoFn,
+                           node: &CStr,
+                           family: c_int,
+                           flags: c_int|
+         -> (c_int, Option<String>, Vec<String>) {
+            unsafe {
+                let mut hints: libc::addrinfo = mem::zeroed();
+                hints.ai_family = family;
+                hints.ai_socktype = libc::SOCK_STREAM;
+                hints.ai_flags = flags;
+                let mut res: *mut libc::addrinfo = ptr::null_mut();
+                let rc = gai(node.as_ptr(), ptr::null(), &hints, &mut res);
+                let mut canon = None;
+                let mut addrs = Vec::new();
+                let mut cur = res;
+                while !cur.is_null() {
+                    let ai = &*cur;
+                    if canon.is_none() && !ai.ai_canonname.is_null() {
+                        canon = Some(
+                            CStr::from_ptr(ai.ai_canonname)
+                                .to_string_lossy()
+                                .into_owned(),
+                        );
+                    }
+                    if ai.ai_family == libc::AF_INET && !ai.ai_addr.is_null() {
+                        let sin = &*(ai.ai_addr as *const libc::sockaddr_in);
+                        let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                        addrs.push(ip.to_string());
+                    } else if ai.ai_family == libc::AF_INET6 && !ai.ai_addr.is_null() {
+                        let sin6 = &*(ai.ai_addr as *const libc::sockaddr_in6);
+                        let ip = std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                        addrs.push(ip.to_string());
+                    }
+                    cur = ai.ai_next;
+                }
+                if !res.is_null() {
+                    free(res);
+                }
+                (rc, canon, addrs)
+            }
+        };
+
+        let host_gai: GetaddrinfoFn =
+            unsafe { dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ()) };
+        let host_free: FreeaddrinfoFn = unsafe {
+            dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ())
+        };
+
+        // 1. UDP A + AAAA + AF_UNSPEC + AI_CANONNAME on dual.hermetic.test.
+        let dual = c"dual.hermetic.test";
+        for family in [libc::AF_INET, libc::AF_INET6, libc::AF_UNSPEC] {
+            let fl = extract_gai(
+                resolv_abi::getaddrinfo,
+                resolv_abi::freeaddrinfo,
+                dual,
+                family,
+                libc::AI_CANONNAME,
+            );
+            let gl = extract_gai(host_gai, host_free, dual, family, libc::AI_CANONNAME);
+            assert_eq!(fl, gl, "getaddrinfo(dual.hermetic.test, family={family})");
+            assert_eq!(fl.0, 0);
+        }
+
+        // 2. UDP TC=1 truncation -> TCP fallback + CNAME chain on tc-cname.hermetic.test.
+        let tc_cname = c"tc-cname.hermetic.test";
+        for family in [libc::AF_INET, libc::AF_INET6, libc::AF_UNSPEC] {
+            let fl = extract_gai(
+                resolv_abi::getaddrinfo,
+                resolv_abi::freeaddrinfo,
+                tc_cname,
+                family,
+                libc::AI_CANONNAME,
+            );
+            let gl = extract_gai(host_gai, host_free, tc_cname, family, libc::AI_CANONNAME);
+            assert_eq!(
+                fl, gl,
+                "getaddrinfo(tc-cname.hermetic.test, family={family})"
+            );
+            assert_eq!(fl.0, 0);
+            assert_eq!(fl.1.as_deref(), Some("target.hermetic.test"));
+        }
+
+        // 3. Legacy gethostbyname_r and gethostbyname2_r(AF_INET6) over TCP fallback + CNAME.
+        let snapshot_hostent = |h: *const libc::hostent| -> (String, Vec<String>, Vec<Vec<u8>>) {
+            unsafe {
+                let he = &*h;
+                let cname = CStr::from_ptr(he.h_name).to_string_lossy().into_owned();
+                let mut aliases = Vec::new();
+                let mut ap = he.h_aliases;
+                while !ap.is_null() && !(*ap).is_null() {
+                    aliases.push(CStr::from_ptr(*ap).to_string_lossy().into_owned());
+                    ap = ap.add(1);
+                }
+                let mut addrs = Vec::new();
+                let mut p = he.h_addr_list;
+                while !p.is_null() && !(*p).is_null() {
+                    let slice = std::slice::from_raw_parts((*p).cast::<u8>(), he.h_length as usize);
+                    addrs.push(slice.to_vec());
+                    p = p.add(1);
+                }
+                (cname, aliases, addrs)
+            }
+        };
+
+        unsafe {
+            let host_ghbn_r: GethostbynameRFn =
+                dlsym_oracle::host_fn(c"gethostbyname_r", inet_abi::gethostbyname_r as *const ());
+            let mut fl_he: libc::hostent = mem::zeroed();
+            let mut gl_he: libc::hostent = mem::zeroed();
+            let mut fl_buf = [0 as c_char; 512];
+            let mut gl_buf = [0 as c_char; 512];
+            let mut fl_res: *mut libc::hostent = ptr::null_mut();
+            let mut gl_res: *mut libc::hostent = ptr::null_mut();
+            let mut fl_herr = -1;
+            let mut gl_herr = -1;
+            let fl_rc = inet_abi::gethostbyname_r(
+                tc_cname.as_ptr(),
+                (&mut fl_he as *mut libc::hostent).cast(),
+                fl_buf.as_mut_ptr(),
+                fl_buf.len(),
+                (&mut fl_res as *mut *mut libc::hostent).cast(),
+                &mut fl_herr,
+            );
+            let gl_rc = host_ghbn_r(
+                tc_cname.as_ptr(),
+                &mut gl_he,
+                gl_buf.as_mut_ptr(),
+                gl_buf.len(),
+                &mut gl_res,
+                &mut gl_herr,
+            );
+            assert_eq!((fl_rc, fl_herr), (gl_rc, gl_herr));
+            assert!(!fl_res.is_null() && !gl_res.is_null());
+            assert_eq!(snapshot_hostent(fl_res), snapshot_hostent(gl_res));
+
+            let host_ghbn2_r: Gethostbyname2RFn = dlsym_oracle::host_fn(
+                c"gethostbyname2_r",
+                frankenlibc_abi::unistd_abi::gethostbyname2_r as *const (),
+            );
+            fl_res = ptr::null_mut();
+            gl_res = ptr::null_mut();
+            let fl_rc6 = frankenlibc_abi::unistd_abi::gethostbyname2_r(
+                tc_cname.as_ptr(),
+                libc::AF_INET6,
+                (&mut fl_he as *mut libc::hostent).cast(),
+                fl_buf.as_mut_ptr(),
+                fl_buf.len(),
+                (&mut fl_res as *mut *mut libc::hostent).cast(),
+                &mut fl_herr,
+            );
+            let gl_rc6 = host_ghbn2_r(
+                tc_cname.as_ptr(),
+                libc::AF_INET6,
+                &mut gl_he,
+                gl_buf.as_mut_ptr(),
+                gl_buf.len(),
+                &mut gl_res,
+                &mut gl_herr,
+            );
+            assert_eq!((fl_rc6, fl_herr), (gl_rc6, gl_herr));
+            assert!(!fl_res.is_null() && !gl_res.is_null());
+            assert_eq!(snapshot_hostent(fl_res), snapshot_hostent(gl_res));
+        }
+
+        // 4. Reverse lookup (PTR) via getnameinfo(NI_NAMEREQD) and gethostbyaddr.
+        unsafe {
+            let host_gni: GetnameinfoFn =
+                dlsym_oracle::host_fn(c"getnameinfo", resolv_abi::getnameinfo as *const ());
+            let host_ghba: GethostbyaddrFn =
+                dlsym_oracle::host_fn(c"gethostbyaddr", resolv_abi::gethostbyaddr as *const ());
+            let addr_octets = [198u8, 51, 100, 42];
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(addr_octets),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut fl_host = [0 as c_char; 256];
+            let mut gl_host = [0 as c_char; 256];
+            let fl_rc = resolv_abi::getnameinfo(
+                (&sin as *const libc::sockaddr_in).cast(),
+                mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                fl_host.as_mut_ptr(),
+                fl_host.len() as libc::socklen_t,
+                ptr::null_mut(),
+                0,
+                libc::NI_NAMEREQD,
+            );
+            let gl_rc = host_gni(
+                (&sin as *const libc::sockaddr_in).cast(),
+                mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                gl_host.as_mut_ptr(),
+                gl_host.len() as libc::socklen_t,
+                ptr::null_mut(),
+                0,
+                libc::NI_NAMEREQD,
+            );
+            assert_eq!(fl_rc, gl_rc);
+            assert_eq!(fl_rc, 0);
+            assert_eq!(
+                CStr::from_ptr(fl_host.as_ptr()),
+                CStr::from_ptr(gl_host.as_ptr())
+            );
+            assert_eq!(CStr::from_ptr(fl_host.as_ptr()), c"dual.hermetic.test");
+
+            let fl_he: *mut libc::hostent =
+                resolv_abi::gethostbyaddr(addr_octets.as_ptr().cast(), 4, libc::AF_INET).cast();
+            let gl_he = host_ghba(addr_octets.as_ptr().cast(), 4, libc::AF_INET);
+            assert!(!fl_he.is_null() && !gl_he.is_null());
+            assert_eq!(snapshot_hostent(fl_he), snapshot_hostent(gl_he));
+        }
+
+        // 5. NXDOMAIN differential across getaddrinfo, gethostbyname, and gethostbyname_r.
+        let nx = c"nx.hermetic.test";
+        let fl_nx = extract_gai(
+            resolv_abi::getaddrinfo,
+            resolv_abi::freeaddrinfo,
+            nx,
+            libc::AF_UNSPEC,
+            0,
+        );
+        let gl_nx = extract_gai(host_gai, host_free, nx, libc::AF_UNSPEC, 0);
+        assert_eq!(fl_nx, gl_nx);
+        assert_eq!(fl_nx.0, libc::EAI_NONAME);
+        assert_eq!(
+            host_gethostbyname_r(nx),
+            (0, true, HOST_NOT_FOUND_ERRNO),
+            "host gethostbyname_r NXDOMAIN"
+        );
+        assert_eq!(
+            host_gethostbyname(nx),
+            (true, HOST_NOT_FOUND_ERRNO),
+            "host gethostbyname NXDOMAIN"
+        );
+
+        // 6. nsswitch `hosts:` policy transitions into live DNS vs halting on UNAVAIL.
+        std::fs::write(&nsswitch_path, b"hosts: frankenlibc_test_missing_nss dns\n").unwrap();
+        let before_unavail = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
+        let fl_after_skip = extract_gai(
+            resolv_abi::getaddrinfo,
+            resolv_abi::freeaddrinfo,
+            dual,
+            libc::AF_INET,
+            0,
+        );
+        assert_eq!(fl_after_skip.0, 0);
+        assert_eq!(fl_after_skip.2, vec!["198.51.100.42".to_string()]);
+        assert_eq!(
+            resolv_abi::dns_metrics_snapshot().nss_unavailable_sources,
+            before_unavail + 1
+        );
+
+        std::fs::write(
+            &nsswitch_path,
+            b"hosts: frankenlibc_test_missing_nss [UNAVAIL=return] dns\n",
+        )
+        .unwrap();
+        let fl_halted = extract_gai(
+            resolv_abi::getaddrinfo,
+            resolv_abi::freeaddrinfo,
+            dual,
+            libc::AF_INET,
+            0,
+        );
+        assert_eq!(fl_halted.0, libc::EAI_NONAME);
+        assert_eq!(
+            resolv_abi::dns_metrics_snapshot().nss_unavailable_sources,
+            before_unavail + 2
+        );
+    });
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = server_thread.join();
 }

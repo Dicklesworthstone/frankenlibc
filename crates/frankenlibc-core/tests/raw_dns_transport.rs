@@ -84,12 +84,12 @@ fn udp_rejects_forged_peer_id_opcode_name_type_class_and_label_identity() {
         *rogue_reply.last_mut().unwrap() = 99;
         udp().send_to(&rogue_reply, peer).unwrap();
         for (position, mask) in [
-            (0, 1),                 // transaction ID
-            (2, 8),                 // opcode
-            (13, 1),                // question name
-            (sent.len() - 3, 1),    // QTYPE
-            (sent.len() - 1, 1),    // QCLASS
-            (5, 1),                 // question count
+            (0, 1),              // transaction ID
+            (2, 8),              // opcode
+            (13, 1),             // question name
+            (sent.len() - 3, 1), // QTYPE
+            (sent.len() - 1, 1), // QCLASS
+            (5, 1),              // question count
         ] {
             let mut forged = rogue_reply.clone();
             forged[position] ^= mask;
@@ -172,7 +172,9 @@ fn forced_tcp_ignores_wrong_question_frames_before_accepting_the_right_one() {
         wrong[sent.len() - 3] ^= 1;
         *wrong.last_mut().unwrap() = 99;
         for frame in [&wrong, &good] {
-            stream.write_all(&(frame.len() as u16).to_be_bytes()).unwrap();
+            stream
+                .write_all(&(frame.len() as u16).to_be_bytes())
+                .unwrap();
             stream.write_all(frame).unwrap();
         }
         good
@@ -229,7 +231,10 @@ fn raw_send_fails_over_on_dns_refusal_and_keeps_the_negative_wire_answer() {
     let primary = udp();
     let secondary = udp();
     let config = raw::Config {
-        nameservers: vec![primary.local_addr().unwrap(), secondary.local_addr().unwrap()],
+        nameservers: vec![
+            primary.local_addr().unwrap(),
+            secondary.local_addr().unwrap(),
+        ],
         timeout: TIMEOUT,
         attempts: 1,
         rotate: false,

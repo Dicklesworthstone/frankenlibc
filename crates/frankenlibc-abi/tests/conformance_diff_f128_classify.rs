@@ -54,6 +54,7 @@ unsafe extern "C" {
     fn __issignalingf128(x: f128) -> c_int;
 }
 
+#[allow(clippy::approx_constant)]
 fn values() -> Vec<f128> {
     let mut v = vec![
         f128::from_bits(0),            // +0

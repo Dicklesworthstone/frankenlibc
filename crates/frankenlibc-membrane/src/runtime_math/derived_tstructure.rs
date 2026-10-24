@@ -174,7 +174,8 @@ impl TStructureController {
         if !predecessors_complete {
             tracker.violations += 1;
             // Record the violation in the EWMA.
-            tracker.violation_rate = tracker.violation_rate.mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA);
+            tracker.violation_rate =
+                super::internal_fma::mul_add(tracker.violation_rate, 1.0 - EWMA_ALPHA, EWMA_ALPHA);
 
             // Track worst incomplete predecessor.
             let degree = tracker.degree;

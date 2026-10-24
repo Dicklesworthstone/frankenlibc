@@ -878,11 +878,32 @@ fn test_mallinfo2_balanced_after_concurrent_alloc_free() {
     );
 }
 
+fn prepare_malloc_stats_htm_test() {
+    malloc_stats_init_for_tests();
+    // The single-threaded slot-local counters bypass the global HTM combiner.
+    // Establish its real two-thread precondition without relying on other tests.
+    let allocate_and_free = || {
+        // SAFETY: malloc accepts a nonzero size and returns an owned allocation.
+        let ptr = unsafe { malloc(1) };
+        assert!(!ptr.is_null(), "HTM setup allocation should succeed");
+        // SAFETY: ptr is the live allocation returned above, freed exactly once.
+        unsafe { free(ptr) };
+    };
+    allocate_and_free();
+    std::thread::spawn(allocate_and_free)
+        .join()
+        .expect("HTM setup thread should finish");
+    assert!(
+        malloc_reentry_multithreaded_latched_for_tests(),
+        "two allocating threads must select the global statistics path"
+    );
+    malloc_htm_reset_for_tests();
+}
+
 #[test]
 fn test_malloc_stats_htm_fast_path_commits_when_forced() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    malloc_stats_init_for_tests();
-    malloc_htm_reset_for_tests();
+    prepare_malloc_stats_htm_test();
 
     let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
     let before = malloc_htm_snapshot_for_tests();
@@ -907,8 +928,7 @@ fn test_malloc_stats_htm_fast_path_commits_when_forced() {
 #[test]
 fn test_malloc_stats_htm_abort_falls_back_without_breaking_alloc_free() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    malloc_stats_init_for_tests();
-    malloc_htm_reset_for_tests();
+    prepare_malloc_stats_htm_test();
 
     let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceAbort);
     let previous_code = htm_swap_abort_code_for_tests(0xABCD);
@@ -2152,4 +2172,52 @@ fn swing2_large_alloc_path_attribution() {
         30,
         "path split must be exhaustive for 30 large mallocs"
     );
+}
+
+#[test]
+fn segment_mapping_range_rounding_and_last_bit_are_exact() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::range_rounding_and_last_bit_are_exact();
+}
+
+#[test]
+fn segment_mapping_invalid_ranges_do_not_call_the_kernel() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::invalid_ranges_do_not_call_the_kernel();
+}
+
+#[test]
+fn segment_mapping_repeated_refills_skip_already_writable_granules() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::repeated_refills_skip_already_writable_granules();
+}
+
+#[test]
+fn segment_mapping_failed_upgrade_is_not_published_and_can_be_retried() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::failed_upgrade_is_not_published_and_can_be_retried();
+}
+
+#[test]
+fn segment_mapping_permission_is_published_only_after_upgrade_finishes() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::permission_is_published_only_after_upgrade_finishes();
+}
+
+#[test]
+fn segment_mapping_concurrent_refills_preserve_all_successful_upgrades() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::concurrent_refills_preserve_all_successful_upgrades();
+}
+
+#[test]
+fn segment_mapping_actual_segment_reservation_stays_inaccessible_until_refill() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::actual_segment_reservation_stays_inaccessible_until_refill();
+}
+
+#[test]
+fn segment_mapping_growing_an_entire_segment_preserves_earlier_payload() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::growing_an_entire_segment_preserves_earlier_payload();
+}
+
+#[test]
+fn segment_mapping_concurrent_real_chunk_claims_are_disjoint_and_writable() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::concurrent_real_chunk_claims_are_disjoint_and_writable();
 }

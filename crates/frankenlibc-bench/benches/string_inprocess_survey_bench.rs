@@ -70,7 +70,7 @@ const STRCASESTR_SQUARE: [u8; 8] = *b"ABBAABBA";
 const STRCASESTR_ROUNDS: usize = 61;
 const STRCASESTR_ITERS: usize = 20_000;
 const STRCASESTR_BOOTSTRAP_RESAMPLES: usize = 4_000;
-const STRCASESTR_BOOTSTRAP_SEED: u64 = 0x5c_a5_e5_71_2026_0814;
+const STRCASESTR_BOOTSTRAP_SEED: u64 = 0x5ca5_e571_2026_0814;
 
 #[derive(Debug)]
 struct StrcasestrSquare {
@@ -1699,7 +1699,7 @@ fn bench(c: &mut Criterion) {
         v
     };
     let core_cn = core_str::strchrnul(&cn, b'q');
-    let gl_cn = unsafe { strchrnul(cn.as_ptr().cast::<c_char>(), b'q' as c_int) };
+    let _gl_cn = unsafe { strchrnul(cn.as_ptr().cast::<c_char>(), b'q' as c_int) };
     assert_eq!(core_cn, 100, "strchrnul core wrong");
     let mut gcn = c.benchmark_group("survey_strchrnul");
     gcn.bench_function("frankenlibc_core", |b| {

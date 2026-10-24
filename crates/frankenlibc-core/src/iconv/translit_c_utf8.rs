@@ -22,7 +22,7 @@ const BYTES: usize = translit_bytes(&C_UTF8_TRANSLIT);
 pub(super) static C_UTF8_TRANSLIT_PACKED: PackedTranslit<LEN, BYTES> =
     pack_translit(&C_UTF8_TRANSLIT);
 
-const C_UTF8_TRANSLIT: [(u32, &[u8]); 2306] = [
+static C_UTF8_TRANSLIT: [(u32, &[u8]); 2306] = [
     (0x00A1, b"!"),
     (0x00A2, b"c"),
     (0x00A3, b"GBP"),

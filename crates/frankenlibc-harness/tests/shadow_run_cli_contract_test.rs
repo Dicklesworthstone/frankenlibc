@@ -77,18 +77,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(path));
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn libc_preload_path() -> Option<PathBuf> {
@@ -335,9 +338,7 @@ fn manifest_policy_pins_cli_invariants() -> TestResult {
 
 #[test]
 fn cli_writes_report_log_markdown_and_artifact_index() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let Some(lib_path) = libc_preload_path() else {
         return Ok(());
     };
@@ -415,9 +416,7 @@ fn cli_writes_report_log_markdown_and_artifact_index() -> TestResult {
 
 #[test]
 fn cli_rejects_unknown_mode_without_writing_outputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let Some(lib_path) = libc_preload_path() else {
         return Ok(());
     };
@@ -445,9 +444,7 @@ fn cli_rejects_unknown_mode_without_writing_outputs() -> TestResult {
 
 #[test]
 fn fail_on_mismatch_exits_nonzero_after_writing_artifacts() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let Some(lib_path) = libc_preload_path() else {
         return Ok(());
     };

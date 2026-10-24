@@ -93,11 +93,9 @@ fn memfrob_matches_glibc_and_is_involutive() {
 fn swab_zero_and_one_byte() {
     // n <= 1: no full pairs, destination untouched (both impls).
     let src = [0xAAu8, 0xBB];
-    let mut gd = [FILL; 2];
-    let mut fd = [FILL; 2];
     for n in [0isize, 1] {
-        gd = [FILL; 2];
-        fd = [FILL; 2];
+        let mut gd = [FILL; 2];
+        let mut fd = [FILL; 2];
         unsafe {
             g::swab(src.as_ptr().cast(), gd.as_mut_ptr().cast(), n);
             fl_swab(src.as_ptr().cast(), fd.as_mut_ptr().cast(), n);

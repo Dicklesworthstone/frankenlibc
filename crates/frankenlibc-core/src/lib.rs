@@ -69,8 +69,8 @@ compile_error!(
 );
 
 pub mod addrinfo;
-pub mod argp;
 pub mod aliases;
+pub mod argp;
 pub mod crypt;
 pub mod ctype;
 pub mod dirent;
@@ -95,6 +95,7 @@ pub mod math;
 pub mod mmap;
 pub mod mntent;
 pub mod netgroup;
+pub mod nss;
 pub mod poll;
 pub mod proc_maps;
 pub mod process;

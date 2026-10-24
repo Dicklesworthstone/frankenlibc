@@ -32,6 +32,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::Mutex;
 
 unsafe extern "C" {
+    #[allow(dead_code)]
     fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut c_char;
     fn dlopen(filename: *const c_char, flag: std::ffi::c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;

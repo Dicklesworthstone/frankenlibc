@@ -12,21 +12,6 @@ const MAX_LEGACY_CVT_DIGITS: usize = 512;
 /// have their own glibc-divergence story, bd-2g7oyh.101.)
 const GCVT_MAX_SIG_DIGITS: usize = 17;
 
-/// Render the digit string glibc emits for a non-finite `ecvt`/`fcvt` input.
-///
-/// glibc embeds the sign character directly in the returned buffer for NaN
-/// and infinity (e.g. `"-inf"`, `"-nan"`) and leaves the out-param `*sign`
-/// set to 0 — unlike finite values, where the sign is reported via `*sign`
-/// and stripped from the digits. Mirroring that, the returned tuple here
-/// always carries `is_negative = false` for non-finite inputs so the ABI
-/// layer reports `sign = 0`. The sign bit is read directly (not via
-/// `is_sign_negative() && !is_nan()`) so `-nan` keeps its leading `-`.
-fn nonfinite_cvt(value: f64) -> (Vec<u8>, i32, bool) {
-    let sign = if value.is_sign_negative() { "-" } else { "" };
-    let body = if value.is_nan() { "nan" } else { "inf" };
-    (format!("{sign}{body}").into_bytes(), 0, false)
-}
-
 /// The base-10 exponent of a positive finite `abs_val` (= floor(log10(abs_val))),
 /// read from the shortest scientific formatting so it reflects the TRUE magnitude
 /// without rounding a near-decade value up: `123.0` -> 2, `9.99` -> 0,
@@ -277,7 +262,7 @@ pub fn fcvt_into(value: f64, ndigit: i32, out: &mut [u8]) -> (usize, i32, bool) 
             }
             return (1.min(out.len()), 1, negative);
         }
-        let floor_v = abs_val.floor();
+        let floor_v = libm::floor(abs_val);
         // `floor_v` is integral, so `{:.0}` yields its exact decimal digits with
         // no rounding (for both small and >2^53 values).
         let int_str = format!("{floor_v:.0}");
@@ -430,9 +415,8 @@ pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
 /// exact digits, exponent = digit_count - 1, `frac` fractional slots zero-padded). Only
 /// applies when no rounding is needed (`digit_count - 1 <= frac`, i.e. the integer has at
 /// most `frac + 1` significant digits); otherwise returns `false` to fall back to flt2dec.
-fn try_build_integer_sci(value: f64, frac: usize, out: &mut String) -> bool {
-    use core::fmt::Write as _;
-    if !(value.fract() == 0.0 && value.abs() < 18446744073709551616.0) {
+fn try_build_integer_sci(value: f64, frac: usize, out: &mut impl core::fmt::Write) -> bool {
+    if !(crate::stdio::printf::is_integral_f64(value) && value.abs() < 18446744073709551616.0) {
         return false;
     }
     let mag = value.abs() as u64;
@@ -453,24 +437,24 @@ fn try_build_integer_sci(value: f64, frac: usize, out: &mut String) -> bool {
         return false; // would round to frac+1 significant digits
     }
     let exp = dc as i32 - 1;
-    if value.is_sign_negative() {
-        out.push('-');
-    }
-    out.push(digits[0] as char);
-    if frac > 0 {
-        out.push('.');
-        for &c in &digits[1..] {
-            out.push(c as char);
+    let result = (|| {
+        if value.is_sign_negative() {
+            out.write_char('-')?;
         }
-        for _ in 0..frac - (dc - 1) {
-            out.push('0');
+        out.write_char(digits[0] as char)?;
+        if frac > 0 {
+            out.write_char('.')?;
+            for &c in &digits[1..] {
+                out.write_char(c as char)?;
+            }
+            for _ in 0..frac - (dc - 1) {
+                out.write_char('0')?;
+            }
         }
-    }
-    // Rust's `{:e}` exponent: bare decimal, no sign for non-negative (integers give exp >= 0),
-    // no leading zeros — exactly `write!("{exp}")`.
-    out.push('e');
-    let _ = write!(out, "{exp}");
-    true
+        // Rust's `{:e}` exponent: no plus sign or leading zero padding.
+        write!(out, "e{exp}")
+    })();
+    result.is_ok()
 }
 
 fn dyadic_decimal_scale(value: f64) -> Option<usize> {
@@ -492,7 +476,11 @@ fn dyadic_decimal_scale(value: f64) -> Option<usize> {
 fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
     use core::fmt::Write as _;
 
-    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+    if frac > 19
+        || !value.is_finite()
+        || value == 0.0
+        || crate::stdio::printf::is_integral_f64(value)
+    {
         return None;
     }
 
@@ -503,7 +491,7 @@ fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
 
     let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
     let scaled = value.abs() * binary_scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !crate::stdio::printf::is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return None;
     }
     let decimal = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32))?;
@@ -551,24 +539,30 @@ fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
     Some(out)
 }
 
-fn try_build_dyadic_rust_sci(value: f64, frac: usize) -> Option<String> {
-    use core::fmt::Write as _;
-
-    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
-        return None;
+fn try_build_dyadic_rust_sci(value: f64, frac: usize, out: &mut impl core::fmt::Write) -> bool {
+    if frac > 19
+        || !value.is_finite()
+        || value == 0.0
+        || crate::stdio::printf::is_integral_f64(value)
+    {
+        return false;
     }
 
-    let decimal_scale = dyadic_decimal_scale(value)?;
+    let Some(decimal_scale) = dyadic_decimal_scale(value) else {
+        return false;
+    };
     if decimal_scale > 19 {
-        return None;
+        return false;
     }
 
     let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
     let scaled = value.abs() * binary_scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
-        return None;
+    if !crate::stdio::printf::is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
+        return false;
     }
-    let decimal = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32))?;
+    let Some(decimal) = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32)) else {
+        return false;
+    };
 
     let mut tmp = [0u8; 40];
     let mut n = decimal;
@@ -584,29 +578,29 @@ fn try_build_dyadic_rust_sci(value: f64, frac: usize) -> Option<String> {
     let digits = &tmp[i..];
     let target_digits = frac + 1;
     if digits.len() > target_digits {
-        return None;
+        return false;
     }
 
     let zero_pad = target_digits - digits.len();
     let exp = frac as i32 - (decimal_scale + zero_pad) as i32;
-    let mut out = String::with_capacity(usize::from(value.is_sign_negative()) + frac + 8);
-    if value.is_sign_negative() {
-        out.push('-');
-    }
-    out.push(digits[0] as char);
-    if frac > 0 {
-        out.push('.');
-        for &c in &digits[1..] {
-            out.push(c as char);
+    let result = (|| {
+        if value.is_sign_negative() {
+            out.write_char('-')?;
         }
-        for _ in 0..zero_pad {
-            out.push('0');
+        out.write_char(digits[0] as char)?;
+        if frac > 0 {
+            out.write_char('.')?;
+            for &c in &digits[1..] {
+                out.write_char(c as char)?;
+            }
+            for _ in 0..zero_pad {
+                out.write_char('0')?;
+            }
         }
-    }
-    // Rust's `{:e}` exponent has no plus sign and no leading zero padding.
-    out.push('e');
-    let _ = write!(out, "{exp}");
-    Some(out)
+        // Rust's `{:e}` exponent has no plus sign and no leading zero padding.
+        write!(out, "e{exp}")
+    })();
+    result.is_ok()
 }
 
 /// Copy `s` into `out` (truncating to `out.len()`), returning the count written.
@@ -643,10 +637,22 @@ fn format_fixed_from_sci_into(sci: &str, exp: i32, out: &mut [u8]) -> usize {
     let n = dn as i32;
     let mut len = 0usize;
     macro_rules! put {
-        ($b:expr) => {{ if len < out.len() { out[len] = $b; len += 1; } }};
+        ($b:expr) => {{
+            if len < out.len() {
+                out[len] = $b;
+                len += 1;
+            }
+        }};
     }
     macro_rules! put_slice {
-        ($s:expr) => {{ for &b in $s { if len < out.len() { out[len] = b; len += 1; } } }};
+        ($s:expr) => {{
+            for &b in $s {
+                if len < out.len() {
+                    out[len] = b;
+                    len += 1;
+                }
+            }
+        }};
     }
     if neg {
         put!(b'-');
@@ -683,10 +689,22 @@ fn format_fixed_from_sci_into(sci: &str, exp: i32, out: &mut [u8]) -> usize {
 fn rust_e_to_glibc_e_into(s: &str, out: &mut [u8]) -> usize {
     let mut len = 0usize;
     macro_rules! put {
-        ($b:expr) => {{ if len < out.len() { out[len] = $b; len += 1; } }};
+        ($b:expr) => {{
+            if len < out.len() {
+                out[len] = $b;
+                len += 1;
+            }
+        }};
     }
     macro_rules! put_slice {
-        ($s:expr) => {{ for &b in $s { if len < out.len() { out[len] = b; len += 1; } } }};
+        ($s:expr) => {{
+            for &b in $s {
+                if len < out.len() {
+                    out[len] = b;
+                    len += 1;
+                }
+            }
+        }};
     }
     let Some(e_pos) = s.find('e') else {
         put_slice!(strip_trailing_zeros(s).as_bytes());
@@ -720,16 +738,31 @@ fn rust_e_to_glibc_e_into(s: &str, out: &mut [u8]) -> usize {
 /// (e.g. `render_pct_g_into`) must clamp or fall back to the `render_gcvt` String version.
 fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     if value.is_nan() {
-        return copy_into(out, if value.is_sign_negative() { b"-nan" } else { b"nan" });
+        return copy_into(
+            out,
+            if value.is_sign_negative() {
+                b"-nan"
+            } else {
+                b"nan"
+            },
+        );
     }
     if value.is_infinite() {
         return copy_into(out, if value < 0.0 { b"-inf" } else { b"inf" });
     }
     if value == 0.0 {
-        return copy_into(out, if value.is_sign_negative() { b"-0" } else { b"0" });
+        return copy_into(
+            out,
+            if value.is_sign_negative() {
+                b"-0"
+            } else {
+                b"0"
+            },
+        );
     }
-    if let Some(simple) = try_gcvt_exact_small_fixed(value, ndigit) {
-        return copy_into(out, simple.as_bytes());
+    let mut tmp = [0u8; 48];
+    if let Some(len) = try_gcvt_exact_small_fixed(value, ndigit, &mut tmp) {
+        return copy_into(out, &tmp[..len]);
     }
     // Fixed-scaled fast path: non-exact values in the integer-scaling range (e.g.
     // 12345.678901) get their `%g` digits directly, skipping the `{:e}` flt2dec
@@ -738,20 +771,21 @@ fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     // path `format_g` already takes; routing `render_gcvt_into` through it makes the
     // DEPLOYED printf %g match the raw formatter. Byte-identical (guarded by
     // printf_float_differential_fuzz, which drives format_float -> this fn).
-    if let Some(fast) = crate::stdio::printf::try_format_g_fixed_scaled(value, ndigit) {
-        return copy_into(out, fast.as_bytes());
+    if let Some(len) = crate::stdio::printf::try_format_g_fixed_scaled_into(value, ndigit, &mut tmp)
+    {
+        return copy_into(out, &tmp[..len]);
     }
 
     use core::fmt::Write as _;
     let frac = ndigit.saturating_sub(1);
     let mut sci_stack = StackStr::new();
     let mut sci_heap = String::new();
-    let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
-        sci_heap.as_str()
-    } else if let Some(dyadic) = try_build_dyadic_rust_sci(value, frac) {
-        sci_heap = dyadic;
-        sci_heap.as_str()
-    } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
+    // This entrypoint is bounded to 17 significant digits. Both exact builders
+    // fit in StackStr, so they cannot leave a partial write on overflow here.
+    let sci: &str = if try_build_integer_sci(value, frac, &mut sci_stack)
+        || try_build_dyadic_rust_sci(value, frac, &mut sci_stack)
+        || write!(sci_stack, "{value:.frac$e}").is_ok()
+    {
         sci_stack.as_str()
     } else {
         let _ = write!(sci_heap, "{value:.frac$e}");
@@ -759,11 +793,15 @@ fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     };
     let exp = decimal_exp_from_scientific(sci);
 
-    if exp < -4 || exp >= ndigit as i32 {
-        rust_e_to_glibc_e_into(sci, out)
+    // Strip fractional zeros from the complete rendering before truncating to
+    // the caller's capacity. Trimming a partial "3." or "0.0" would discard
+    // bytes that belong to the prefix of the actual result.
+    let len = if exp < -4 || exp >= ndigit as i32 {
+        rust_e_to_glibc_e_into(sci, &mut tmp)
     } else {
-        format_fixed_from_sci_into(sci, exp, out)
-    }
+        format_fixed_from_sci_into(sci, exp, &mut tmp)
+    };
+    copy_into(out, &tmp[..len])
 }
 
 fn render_gcvt(value: f64, ndigit: usize) -> String {
@@ -792,8 +830,14 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
             String::from("0")
         };
     }
-    if let Some(simple) = try_gcvt_exact_small_fixed(value, ndigit) {
-        return simple;
+    let mut tmp = [0u8; 48];
+    if let Some(len) = try_gcvt_exact_small_fixed(value, ndigit, &mut tmp) {
+        let mut rendered = String::with_capacity(len);
+        // Avoid an interposed memcpy for this small, already-ASCII body.
+        for &byte in &tmp[..len] {
+            rendered.push(byte as char);
+        }
+        return rendered;
     }
 
     // Pick format based on the decimal exponent the value rounds to.
@@ -812,12 +856,13 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     // (exponent extraction, fixed-vs-scientific choice, trailing-zero strip) is unchanged.
     // Covers %g integers that `try_gcvt_exact_small_fixed` leaves (scientific-style and
     // >= 2^53). Guarded so no rounding occurs.
+    // The dyadic builder accepts at most 19 fractional digits, so this scratch
+    // also fits beyond gcvt's 17-significant-digit boundary.
     let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
         sci_heap.as_str()
-    } else if let Some(dyadic) = try_build_dyadic_rust_sci(value, frac) {
-        sci_heap = dyadic;
-        sci_heap.as_str()
-    } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
+    } else if try_build_dyadic_rust_sci(value, frac, &mut sci_stack)
+        || write!(sci_stack, "{value:.frac$e}").is_ok()
+    {
         sci_stack.as_str()
     } else {
         let _ = write!(sci_heap, "{value:.frac$e}");
@@ -832,14 +877,14 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     }
 }
 
-fn try_gcvt_exact_small_fixed(value: f64, ndigit: usize) -> Option<String> {
+fn try_gcvt_exact_small_fixed(value: f64, ndigit: usize, out: &mut [u8; 48]) -> Option<usize> {
     let abs = value.abs();
     if !abs.is_finite() || abs >= ((1u64 << 53) as f64) {
         return None;
     }
 
     let twice = abs * 2.0;
-    if twice.fract() != 0.0 {
+    if !crate::stdio::printf::is_integral_f64(twice) {
         return None;
     }
     let twice = twice as u64;
@@ -856,15 +901,33 @@ fn try_gcvt_exact_small_fixed(value: f64, ndigit: usize) -> Option<String> {
         return None;
     }
 
-    let mut out = String::with_capacity(usize::from(value.is_sign_negative()) + int_digits + 2);
+    let mut len = 0;
     if value.is_sign_negative() {
-        out.push('-');
+        out[len] = b'-';
+        len += 1;
     }
-    out.push_str(&int.to_string());
+    // `int` is below 2^53, so its digits plus sign and optional half fit in out.
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    let mut n = int;
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    for &digit in &digits[start..] {
+        out[len] = digit;
+        len += 1;
+    }
     if has_half {
-        out.push_str(".5");
+        out[len] = b'.';
+        out[len + 1] = b'5';
+        len += 2;
     }
-    Some(out)
+    Some(len)
 }
 
 #[inline]
@@ -1032,7 +1095,7 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
     // std flt2dec + the reshape. Byte-identical for these inputs (the digits are exact
     // and no rounding occurs when `digit_count - 1 <= ndigit`). `fract() == 0.0` also
     // excludes inf/nan, which fall through to the std path unchanged.
-    if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+    if crate::stdio::printf::is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
         let mag = value.abs() as u64;
         let mut tmp = [0u8; 20];
         let mut n = mag;
@@ -1111,7 +1174,7 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
 pub fn render_pct_e_into(value: f64, ndigit: usize, buf: &mut Vec<u8>) {
     use core::fmt::Write as _;
     // Exact-integer fast path (no rounding); mirrors render_pct_e.
-    if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+    if crate::stdio::printf::is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
         let mag = value.abs() as u64;
         let mut tmp = [0u8; 20];
         let mut n = mag;
@@ -1194,7 +1257,11 @@ fn push_c_exp_tail(buf: &mut Vec<u8>, exp: i32) {
 /// Buffer-writing twin of [`try_build_dyadic_sci`] — appends to `buf` and returns `true`
 /// iff it handled `value`. Byte-identical to the String version's `Some(..)` case.
 fn try_build_dyadic_sci_into(value: f64, frac: usize, buf: &mut Vec<u8>) -> bool {
-    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+    if frac > 19
+        || !value.is_finite()
+        || value == 0.0
+        || crate::stdio::printf::is_integral_f64(value)
+    {
         return false;
     }
     let Some(decimal_scale) = dyadic_decimal_scale(value) else {
@@ -1205,7 +1272,7 @@ fn try_build_dyadic_sci_into(value: f64, frac: usize, buf: &mut Vec<u8>) -> bool
     }
     let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
     let scaled = value.abs() * binary_scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !crate::stdio::printf::is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return false;
     }
     let Some(decimal) = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32)) else {
@@ -1494,6 +1561,17 @@ mod tests {
                 std::str::from_utf8(&buf[..len]).unwrap_or("<invalid utf8>"),
                 std::str::from_utf8(expected).unwrap_or("<invalid utf8>"),
             );
+            for cap in 0..=expected.len() + 2 {
+                let mut bounded = [0xa5; 64];
+                let written = gcvt(value, ndigit, &mut bounded[..cap]);
+                let want = expected.len().min(cap.saturating_sub(1));
+                assert_eq!(written, want, "gcvt({value}, {ndigit}) cap={cap}");
+                assert_eq!(&bounded[..written], &expected[..want]);
+                if cap > 0 {
+                    assert_eq!(bounded[written], 0);
+                }
+                assert!(bounded[cap..].iter().all(|&b| b == 0xa5));
+            }
         }
     }
 
@@ -1527,6 +1605,37 @@ mod tests {
         ];
         for (value, ndigit, expected) in cases {
             assert_eq!(render_pct_g(value, ndigit), expected, "{value} .{ndigit}g");
+        }
+    }
+
+    #[test]
+    fn render_pct_g_into_preserves_prefix_and_precision_boundaries() {
+        // Fixed/scientific threshold, exact integer and dyadic paths, scaled
+        // rounding carry, and the 17-digit scratch -> growing-output boundary.
+        let cases = [
+            (12345.5, 6, "12345.5"),
+            (-12345.0, 6, "-12345"),
+            (1e10, 17, "10000000000"),
+            (0.125, 6, "0.125"),
+            (-0.03125, 6, "-0.03125"),
+            (0.125, 17, "0.125"),
+            (0.125, 18, "0.125"),
+            (0.125, 320, "0.125"),
+            (0.1, 6, "0.1"),
+            (0.1, 17, "0.10000000000000001"),
+            (0.1, 18, "0.100000000000000006"),
+            (999999.5, 6, "1e+06"),
+            (99999.5, 6, "99999.5"),
+            (9.9999e-5, 1, "0.0001"),
+            (-0.0, 6, "-0"),
+            (f64::INFINITY, 6, "inf"),
+            (f64::NEG_INFINITY, 6, "-inf"),
+        ];
+        for (value, precision, expected) in cases {
+            let mut out = b"prefix:".to_vec();
+            render_pct_g_into(value, precision, &mut out);
+            assert_eq!(&out[..7], b"prefix:");
+            assert_eq!(&out[7..], expected.as_bytes(), "{value} .{precision}g");
         }
     }
 

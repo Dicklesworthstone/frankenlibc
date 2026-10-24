@@ -11269,8 +11269,6 @@ pub(crate) static EUCJX_P2: [(u16, u32); 2436] = [
     (0xfef6, 0x2a6b2),
 ];
 
-pub(crate) static EUCJX_P2_MULTI: [(u16, &[u32]); 0] = [];
-
 // ENC: (cp, len, b0, b1, b2) — len bytes of the EUC form.
 pub(crate) static EUCJX_ENC: [(u32, u8, u8, u8, u8); 11399] = [
     (0, 1, 0, 0, 0),

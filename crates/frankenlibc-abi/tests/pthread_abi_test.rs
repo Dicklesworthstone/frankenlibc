@@ -721,40 +721,30 @@ fn condvar_broadcast_no_waiters() {
     }
 }
 
-// Regression for bd-dc9mc. Negative tv_sec in an absolute deadline must be
-// rejected at the API boundary — before the fix, the subsequent
-// `deadline.tv_sec - now.tv_sec` subtraction in futex_wait_timed would
-// panic ("attempt to subtract with overflow") in debug and wrap to a
-// ~9.2e18-second "infinite" timeout in release.
+// Regression for bd-dc9mc: an expired absolute deadline must not overflow
+// into an effectively infinite wait. Negative seconds are past timestamps,
+// not invalid input (also checked against live glibc in the native C suite).
 #[test]
-fn cond_timedwait_rejects_negative_tv_sec() {
+fn cond_timedwait_negative_seconds_expire_without_overflow() {
+    // SAFETY: initialized caller-owned condition/mutex storage; the mutex is
+    // held at entry and each timeout must return with it reacquired.
     unsafe {
         let mut cond: libc::pthread_cond_t = std::mem::zeroed();
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
         assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
         assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
         assert_eq!(pthread_mutex_lock(&mut mutex), 0);
-
-        let ts = libc::timespec {
-            tv_sec: -1,
-            tv_nsec: 0,
-        };
-        let rc = pthread_cond_timedwait(&mut cond, &mut mutex, &ts);
-        assert_eq!(rc, libc::EINVAL, "negative tv_sec must return EINVAL");
-
-        // Most extreme: tv_sec = i64::MIN — in buggy code this was the
-        // path that actually panicked in debug / wrapped in release.
-        let ts_min = libc::timespec {
-            tv_sec: i64::MIN,
-            tv_nsec: 0,
-        };
-        let rc2 = pthread_cond_timedwait(&mut cond, &mut mutex, &ts_min);
-        assert_eq!(
-            rc2,
-            libc::EINVAL,
-            "tv_sec=i64::MIN must return EINVAL without panicking"
-        );
-
+        for seconds in [-1, i64::MIN] {
+            let deadline = libc::timespec {
+                tv_sec: seconds,
+                tv_nsec: 0,
+            };
+            assert_eq!(
+                pthread_cond_timedwait(&mut cond, &mut mutex, &deadline),
+                libc::ETIMEDOUT
+            );
+            assert_eq!(pthread_mutex_trylock(&mut mutex), libc::EBUSY);
+        }
         assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
         assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
         assert_eq!(pthread_cond_destroy(&mut cond), 0);
@@ -2880,7 +2870,59 @@ fn mutex_prioceiling_prio_protect_mutex_matches_host_libc() {
         }
         assert_eq!(get(&mutex), (0, 20));
 
+        // Locking a PTHREAD_PRIO_PROTECT mutex from a SCHED_OTHER thread cannot
+        // raise the thread's priority to the ceiling and returns EINVAL in
+        // glibc across lock, trylock, timedlock and clocklock.
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        assert_eq!(libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts), 0);
+        ts.tv_sec += 1;
+        let host_lock_rc = std::thread::spawn(move || {
+            let mut h_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+            assert_eq!(libc::pthread_mutexattr_init(&mut h_attr), 0);
+            assert_eq!(
+                libc::pthread_mutexattr_setprotocol(&mut h_attr, libc::PTHREAD_PRIO_PROTECT),
+                0
+            );
+            let mut h_m: libc::pthread_mutex_t = std::mem::zeroed();
+            assert_eq!(libc::pthread_mutex_init(&mut h_m, &h_attr), 0);
+            let rc = libc::pthread_mutex_lock(&mut h_m);
+            libc::pthread_mutex_destroy(&mut h_m);
+            libc::pthread_mutexattr_destroy(&mut h_attr);
+            rc
+        })
+        .join()
+        .expect("host thread");
+        assert_eq!(host_lock_rc, libc::EINVAL);
+        assert_eq!(pthread_mutex_lock(&mut mutex), host_lock_rc);
+        assert_eq!(pthread_mutex_trylock(&mut mutex), host_lock_rc);
+        assert_eq!(pthread_mutex_timedlock(&mut mutex, &ts), host_lock_rc);
+        assert_eq!(
+            pthread_mutex_clocklock(&mut mutex, libc::CLOCK_REALTIME, &ts),
+            host_lock_rc
+        );
+
+        // PTHREAD_PRIO_PROTECT + PTHREAD_MUTEX_ROBUST is rejected with ENOTSUP
+        // by pthread_mutex_init in glibc.
+        assert_eq!(
+            pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_ROBUST),
+            0
+        );
+        assert_eq!(
+            libc::pthread_mutexattr_setrobust(&mut host_attr, libc::PTHREAD_MUTEX_ROBUST),
+            0
+        );
+        let mut rob_pp: libc::pthread_mutex_t = std::mem::zeroed();
+        let mut host_rob_pp: libc::pthread_mutex_t = std::mem::zeroed();
+        let fl_init_rc = pthread_mutex_init(&mut rob_pp, &attr);
+        let host_init_rc = libc::pthread_mutex_init(&mut host_rob_pp, &host_attr);
+        assert_eq!(fl_init_rc, libc::ENOTSUP);
+        assert_eq!(fl_init_rc, host_init_rc);
+
         assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        libc::pthread_mutex_destroy(&mut host_mutex);
         pthread_mutexattr_destroy(&mut attr);
         libc::pthread_mutexattr_destroy(&mut host_attr);
     }
@@ -4684,6 +4726,44 @@ fn host_backed_thread_with_cancel_disabled_survives_external_cancel() {
     }
 }
 
+/// A cancellation point opens its asynchronous-cancel window only for a
+/// caller outside fl's image: fl's own code (and the Rust std it links) must
+/// never start a forced unwind through frames that cannot be unwound
+/// (bd-rc0923-epic-eeuy4f.24). Here fl is linked into this test executable, so
+/// the executable is "this object" and host libc is outside it.
+#[test]
+fn only_callers_outside_this_object_get_a_cancellation_window() {
+    let hook = __test_address_is_inside_this_object as fn(usize) -> bool as usize;
+    assert!(__test_address_is_inside_this_object(hook));
+    let this_test = only_callers_outside_this_object_get_a_cancellation_window as fn() as usize;
+    assert!(__test_address_is_inside_this_object(this_test));
+    // SAFETY: NUL-terminated name; RTLD_DEFAULT searches the global scope.
+    let host_getpid = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"getpid".as_ptr()) };
+    assert!(!host_getpid.is_null());
+    assert!(!__test_address_is_inside_this_object(host_getpid as usize));
+    // A backend that cannot report a return address yields null.
+    assert!(!__test_address_is_inside_this_object(0));
+}
+
+/// glibc's pthread_cancel dereferences its argument as its own thread
+/// descriptor, so a thread fl names by its tid (no fl registry knows a thread
+/// created by host glibc directly, like this libtest worker; or the main
+/// thread) must reach glibc as glibc's handle (bd-rc0923-epic-eeuy4f.24).
+#[test]
+fn a_self_cancel_reaches_glibc_with_glibcs_own_handle() {
+    let fl_name = unsafe { pthread_self() };
+    // SAFETY: host pthread_self (fl's symbols are not exported in a test build).
+    let host_handle = unsafe { libc::pthread_self() };
+    assert_ne!(fl_name, host_handle, "fl names this thread by its tid");
+    let (target, is_self) = __test_host_cancel_target(fl_name);
+    assert!(is_self);
+    assert_eq!(target, host_handle);
+    // Another thread's handle passes through unchanged.
+    let (other, other_is_self) = __test_host_cancel_target(host_handle ^ 0x1000);
+    assert!(!other_is_self);
+    assert_eq!(other, host_handle ^ 0x1000);
+}
+
 // ===========================================================================
 // pthread_setaffinity_np
 // ===========================================================================
@@ -5296,7 +5376,7 @@ fn futex_mutex_contention_increments_wait_and_wake_counters() {
     // The wait-branch counter moving is the observable that it reached the futex.
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if pthread_mutex_branch_counters_for_tests().1 >= before.1 + 1 {
+        if pthread_mutex_branch_counters_for_tests().1 > before.1 {
             break;
         }
         assert!(
@@ -5314,15 +5394,15 @@ fn futex_mutex_contention_increments_wait_and_wake_counters() {
 
     let after = pthread_mutex_branch_counters_for_tests();
     assert!(
-        after.0 >= before.0 + 1,
+        after.0 > before.0,
         "spin branch counter did not increase: before={before:?} after={after:?}"
     );
     assert!(
-        after.1 >= before.1 + 1,
+        after.1 > before.1,
         "wait branch counter did not increase: before={before:?} after={after:?}"
     );
     assert!(
-        after.2 >= before.2 + 1,
+        after.2 > before.2,
         "wake branch counter did not increase: before={before:?} after={after:?}"
     );
 

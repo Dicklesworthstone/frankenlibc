@@ -1,0 +1,193 @@
+name: Native caller-relative lookup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/io_abi.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/errno_abi.rs'
+      - 'crates/frankenlibc-abi/src/stdio_abi.rs'
+      - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
+      - 'crates/frankenlibc-membrane/src/util.rs'
+      - 'crates/frankenlibc-abi/tests/membrane_rounding_link_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_next_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_open_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_info_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-caller-lookup.yml'
+  pull_request:
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/io_abi.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/errno_abi.rs'
+      - 'crates/frankenlibc-abi/src/stdio_abi.rs'
+      - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
+      - 'crates/frankenlibc-membrane/src/util.rs'
+      - 'crates/frankenlibc-abi/tests/membrane_rounding_link_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_next_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_open_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_info_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-caller-lookup.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-caller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
+    env:
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute native and host caller-scope regressions
+        run: |
+          mkdir -p artifacts/native-caller
+          status=0
+          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test dlfcn_native_barrier_test; do
+            log="artifacts/native-caller/${target}-${FRANKENLIBC_MODE}.log"
+            # Preserve every failure, but execute later targets as well: a
+            # memory-admission failure must not hide stream test outcomes.
+            if cargo test --no-fail-fast -p frankenlibc-abi --test "$target" -- --nocapture \
+              2>&1 | tee "$log"; then
+              # Each target needs its own nonempty unfiltered parent result.
+              # Passing one suite cannot conceal an empty sibling target.
+              grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' "$log" || status=1
+            else
+              status=1
+            fi
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-caller-${{ matrix.mode }}
+          path: artifacts/native-caller/
+
+  validated-rwclock-source:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'feat(loader): enable native-plugin barriers and spinlocks')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7504997547488018ecbf25d0387361a4490c79cc
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Recover the exact reviewed rwlock runtime patch
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, pathlib, subprocess, urllib.request
+          endpoint = 'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs/9b1d9809235fccc031e1d2e8e81432ba0a448557'
+          with urllib.request.urlopen(endpoint, timeout=30) as response:
+              blob = json.load(response)
+          patch = gzip.decompress(base64.b64decode(blob['content']))
+          assert hashlib.sha256(patch).hexdigest() == 'b960587055aab2ad4ec4621bf0fe93ff4c2224bf72cebb40931ffa85cb0e9d41'
+          path = pathlib.Path('/tmp/frankenlibc-rwclock.patch')
+          path.write_bytes(patch)
+          # The NODELETE fixture correction is already on this base. Apply
+          # only the remaining runtime and regression changes, preserving
+          # the later priority-ceiling and robust-owner work in pthread_abi.
+          exclude = '--exclude=crates/frankenlibc-abi/tests/dlfcn_native_search_test.rs'
+          subprocess.run(['git', 'apply', '--check', exclude, str(path)], check=True)
+          subprocess.run(['git', 'apply', exclude, str(path)], check=True)
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          PY
+      - name: Execute clock, synchronization, and native-loader contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/rwclock
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test --no-fail-fast -p frankenlibc-abi \
+              --test pthread_abi_test --test pthread_cond_core_test --test pthread_explicit_clock_test \
+              --test pthread_rwlock_core_test --test pthread_rwlock_trylock_test \
+              --test conformance_diff_rwlockattr_kind --test pthread_rwlock_clock_test \
+              --test dlfcn_native_rwlock_clock_test --test dlfcn_native_cond_clock_test \
+              --test dlfcn_native_socket_test --test dlfcn_native_search_test \
+              --test dlfcn_native_thread_control_test -- --test-threads=1 \
+              2>&1 | tee "artifacts/rwclock/${mode}.log"
+          done
+      - name: Upload only the validated source blobs, without moving refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, urllib.request
+          paths = [
+              'crates/frankenlibc-abi/src/pthread_abi.rs',
+              'crates/frankenlibc-abi/src/dlfcn_thread_control.rs',
+              'crates/frankenlibc-abi/tests/pthread_rwlock_clock_test.rs',
+              'crates/frankenlibc-abi/tests/dlfcn_native_rwlock_clock_test.rs',
+          ]
+          actual = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
+          actual += subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', 'crates/'], text=True).splitlines()
+          assert set(actual) == set(paths), actual
+          results = []
+          for path in paths:
+              data = pathlib.Path(path).read_bytes()
+              expected = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              body = json.dumps({'content': base64.b64encode(data).decode(), 'encoding': 'base64'}).encode()
+              request = urllib.request.Request(
+                  'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs',
+                  data=body, method='POST', headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  })
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  result = json.load(response)
+              assert result['sha'] == expected, path
+              entry = {'path': path, 'sha': result['sha'], 'bytes': len(data)}
+              results.append(entry)
+              print('VALIDATED_RWCLOCK_BLOB ' + json.dumps(entry), flush=True)
+          pathlib.Path('artifacts/rwclock/source-blobs.json').write_text(json.dumps(results, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validated-rwlock-clock-source
+          path: artifacts/rwclock/

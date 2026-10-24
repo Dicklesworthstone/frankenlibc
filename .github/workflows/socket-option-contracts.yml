@@ -1,0 +1,147 @@
+name: Socket option contracts
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/sockaddr_snapshot.rs'
+      - 'crates/frankenlibc-abi/src/socket_abi.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/socket_option_units_test.rs'
+      - 'crates/frankenlibc-abi/tests/socket_peer_descriptor_test.rs'
+      - 'crates/frankenlibc-abi/tests/socket_required_outputs_test.rs'
+      - '.github/workflows/socket-option-contracts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  option-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: socket-required-outputs
+          cache-on-failure: true
+      - name: Execute real filter ABI and production importer contracts
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, subprocess
+          root = pathlib.Path('artifacts/socket-options'); root.mkdir(parents=True, exist_ok=True)
+          result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'socket_option_units_test',
+              '--', '--nocapture', '--test-threads=1'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1500)
+          text = result.stdout.decode(errors='replace'); (root / 'filter.log').write_text(text)
+          for line in text.splitlines():
+              if 'test result:' in line or 'FILTER ABI:' in line: print(line)
+          if result.returncode: print('\n'.join(text.splitlines()[-100:]))
+          assert result.returncode == 0, 'compiled filter contract failed'
+          assert 'FILTER ABI: 28 isolated cases passed' in text
+          assert re.search(r'test result: ok\. [1-9][0-9]* passed; 0 failed;', text)
+          PY
+      - name: Reject a compiled byte-count mutation and restore real code
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/socket-options'); root.mkdir(parents=True, exist_ok=True)
+          source = pathlib.Path('crates/frankenlibc-abi/src/sockaddr_snapshot.rs'); original = source.read_bytes()
+          old = b'size_of::<libc::sock_filter>()'; assert original.count(old) == 1
+          try:
+              source.write_bytes(original.replace(old, b'1 /* deliberate byte-count mutant */'))
+              env = dict(os.environ, FRANKENLIBC_FILTER_SELECT='short')
+              run = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'socket_option_units_test',
+                  'filter_options_are_process_isolated', '--', '--exact', '--nocapture', '--test-threads=1'],
+                  env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+              text = run.stdout.decode(errors='replace'); (root / 'filter-mutant.log').write_text(text)
+              assert run.returncode != 0 and '0 passed; 1 failed;' in text, text[-10000:]
+              assert 'filter instruction span was not rejected' in text, text[-10000:]
+              print('COMPILED MUTANT CAUGHT: instruction-count-as-bytes reached actual ABI')
+          finally:
+              source.write_bytes(original)
+          run = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'socket_option_units_test',
+              '--', '--nocapture', '--test-threads=1'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+          text = run.stdout.decode(errors='replace'); (root / 'filter-restored.log').write_text(text)
+          assert run.returncode == 0 and 'FILTER ABI: 28 isolated cases passed' in text, text[-10000:]
+          print('RESTORED: 28 actual-ABI filter cases passed')
+          PY
+          git diff --exit-code
+      - name: Execute descriptor ownership contracts and compiled leak regressions
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/socket-options'); root.mkdir(parents=True, exist_ok=True)
+          source = pathlib.Path('crates/frankenlibc-abi/src/sockaddr_snapshot.rs'); original = source.read_bytes()
+          command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'socket_peer_descriptor_test',
+              'peer_descriptors_are_process_isolated', '--', '--exact', '--nocapture', '--test-threads=1']
+          def execute(label, selection=None):
+              env = dict(os.environ)
+              if selection: env['FRANKENLIBC_PEER_DESCRIPTOR_SELECT'] = selection
+              run = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+              text = run.stdout.decode(errors='replace'); (root / f'peer-{label}.log').write_text(text)
+              return run.returncode, text
+          code, text = execute('baseline')
+          assert code == 0 and 'PEER DESCRIPTOR ABI: 32 isolated cases passed' in text, text[-10000:]
+          print('PEER DESCRIPTOR ABI: 32 isolated cases passed')
+          try:
+              for label, old, new, case, evidence in [
+                  ('overlap', b'if value_start < length_end && length_start < value_end {',
+                   b'if false && value_start < length_end && length_start < value_end {',
+                   'overlap', 'overlapping descriptor outputs were accepted'),
+                  ('leaked-zero', b'if let Some(fd) = self.0.take() {',
+                   b'if let Some(fd) = self.0.take().filter(|_| false) {',
+                   'zero-fd-readonly-length', 'failed publication leaked descriptor zero'),
+              ]:
+                  assert original.count(old) == 1
+                  source.write_bytes(original.replace(old, new))
+                  code, text = execute(label, case)
+                  assert code != 0 and '0 passed; 1 failed;' in text and evidence in text, text[-10000:]
+                  print(f'COMPILED MUTANT CAUGHT: peer descriptor {label}')
+          finally:
+              source.write_bytes(original)
+          code, text = execute('restored')
+          assert code == 0 and 'PEER DESCRIPTOR ABI: 32 isolated cases passed' in text, text[-10000:]
+          print('RESTORED: 32 peer-descriptor ABI cases passed')
+          PY
+          git diff --exit-code
+      - name: Execute existing socket and required-output contracts without suppressing failures
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re, subprocess
+          root = pathlib.Path('artifacts/socket-options'); root.mkdir(parents=True, exist_ok=True)
+          failures = []
+          for mode in ['strict', 'hardened']:
+              for target in ['socket_required_outputs_test', 'sockaddr_snapshot_test', 'socket_abi_test']:
+                  run = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', target,
+                      '--', '--nocapture', '--test-threads=1'], env=dict(os.environ, FRANKENLIBC_MODE=mode),
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+                  text = run.stdout.decode(errors='replace'); (root / f'{target}-{mode}.log').write_text(text)
+                  print(f'{mode}/{target}: exit={run.returncode}')
+                  lines = text.splitlines()
+                  for line in lines:
+                      if 'test result:' in line or 'process-isolated socket-output cases' in line: print(line)
+                  if run.returncode:
+                      failures.append(f'{mode}/{target}')
+                      for i, line in enumerate(lines):
+                          if 'panicked at' in line: print('\n'.join(lines[max(0,i-2):i+14]))
+                      print('\n'.join(lines[-30:]))
+                  else:
+                      assert re.search(r'test result: ok\. [1-9][0-9]* passed; 0 failed;', text)
+          assert not failures, failures
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: socket-option-contract-results
+          path: artifacts/socket-options/**
+          if-no-files-found: error

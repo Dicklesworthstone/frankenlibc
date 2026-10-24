@@ -86,18 +86,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp_dir(stem: &str) -> TestResult<PathBuf> {
@@ -223,10 +226,7 @@ fn harness_source_registers_fault_inject_subcommand() -> TestResult {
 
 #[test]
 fn cli_writes_report_log_and_artifact_index_for_single_scenario() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = unique_tmp_dir("ok")?;
     let out = run_fault_inject_cli(&bin, &dir)?;
     require(
@@ -289,9 +289,7 @@ fn cli_writes_report_log_and_artifact_index_for_single_scenario() -> TestResult 
 
 #[test]
 fn cli_log_and_artifact_index_expose_joinable_fault_evidence() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = unique_tmp_dir("join")?;
     let out = run_fault_inject_cli(&bin, &dir)?;
     require(
@@ -357,9 +355,7 @@ fn cli_log_and_artifact_index_expose_joinable_fault_evidence() -> TestResult {
 
 #[test]
 fn cli_unknown_scenario_fails_closed() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let root = workspace_root()?;
     let dir = unique_tmp_dir("bad_scenario")?;
     let out = Command::new(&bin)

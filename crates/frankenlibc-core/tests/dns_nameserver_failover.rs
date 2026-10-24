@@ -133,12 +133,18 @@ fn all_refused_servers_stop_search_without_retry_amplification() {
     config.search = vec!["first.test".into(), "never.test".into()];
     config.attempts = 5;
     let mut calls = Vec::new();
-    let result = resolve_with(b"host", true, true, &config, |owner, kind, server, _, _, _| {
-        assert_eq!(owner, b"host.first.test");
-        assert_eq!(kind, qtype::A);
-        calls.push(server.ip());
-        Err(refused())
-    });
+    let result = resolve_with(
+        b"host",
+        true,
+        true,
+        &config,
+        |owner, kind, server, _, _, _| {
+            assert_eq!(owner, b"host.first.test");
+            assert_eq!(kind, qtype::A);
+            calls.push(server.ip());
+            Err(refused())
+        },
+    );
     assert_eq!(result.unwrap_err(), ResolveError::Temporary);
     assert_eq!(calls, config.nameservers);
 }
@@ -210,22 +216,28 @@ fn refusal_state_does_not_leak_to_the_next_search_candidate() {
     let mut config = config();
     config.search = vec!["missing.test".into(), "found.test".into()];
     let mut calls = Vec::new();
-    let result = resolve_with(b"host", true, false, &config, |owner, kind, server, _, _, _| {
-        calls.push((owner.to_vec(), server.ip()));
-        if owner == b"host.missing.test" {
-            if server.ip() == config.nameservers[0] {
-                Err(refused())
+    let result = resolve_with(
+        b"host",
+        true,
+        false,
+        &config,
+        |owner, kind, server, _, _, _| {
+            calls.push((owner.to_vec(), server.ip()));
+            if owner == b"host.missing.test" {
+                if server.ip() == config.nameservers[0] {
+                    Err(refused())
+                } else {
+                    Ok(QueryReply {
+                        records: vec![],
+                        rcode: rcode::NXDOMAIN,
+                    })
+                }
             } else {
-                Ok(QueryReply {
-                    records: vec![],
-                    rcode: rcode::NXDOMAIN,
-                })
+                assert_eq!(owner, b"host.found.test");
+                Ok(positive(owner, kind))
             }
-        } else {
-            assert_eq!(owner, b"host.found.test");
-            Ok(positive(owner, kind))
-        }
-    })
+        },
+    )
     .unwrap();
     assert_eq!(result.ipv4, [Ipv4Addr::new(192, 0, 2, 7)]);
     assert_eq!(

@@ -20,7 +20,7 @@
 //! second at `rsp+24`, with the value in the low 10 bytes. The result comes back
 //! in `st(0)`.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 const RTLD_NOW: c_int = 2;
 
@@ -63,12 +63,7 @@ core::arch::global_asm!(
 );
 
 unsafe extern "C" {
-    fn fl_call_long_double_binary(
-        target: *const c_void,
-        x: *const u8,
-        y: *const u8,
-        out: *mut u8,
-    );
+    fn fl_call_long_double_binary(target: *const c_void, x: *const u8, y: *const u8, out: *mut u8);
 }
 
 // The OTHER two signatures in the family place their arguments differently, so
@@ -177,7 +172,14 @@ fn call(target: *const c_void, x: &[u8; 16], y: &[u8; 16]) -> [u8; 10] {
 fn build_cdylib(target_dir: &str) {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let status = std::process::Command::new(&cargo)
-        .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        .args([
+            "build",
+            "--quiet",
+            "--profile",
+            "release",
+            "-p",
+            "frankenlibc-abi",
+        ])
         .env("CARGO_TARGET_DIR", target_dir)
         .status()
         .expect("build the FrankenLibC cdylib");
@@ -218,8 +220,14 @@ fn main() {
     println!("ORACLE_CONTROL up={up:02x?}");
     println!("ORACLE_CONTROL down={down:02x?}");
     assert_eq!(same, one_bits, "shim is broken: nexttowardl(1,1) != 1");
-    assert_ne!(up, one_bits, "shim is broken: nexttowardl(1,2) did not move");
-    assert_ne!(down, one_bits, "shim is broken: nexttowardl(1,0) did not move");
+    assert_ne!(
+        up, one_bits,
+        "shim is broken: nexttowardl(1,2) did not move"
+    );
+    assert_ne!(
+        down, one_bits,
+        "shim is broken: nexttowardl(1,0) did not move"
+    );
     // Stepping up from 1.0 sets the low significand bit; stepping down does not.
     assert_eq!(up[0], 0x01, "shim is broken: unexpected step-up pattern");
     println!("ORACLE_CONTROL_OK");
@@ -235,16 +243,32 @@ fn main() {
     let d_down = call_double(glibc_nexttoward, 1.0, &zero());
     println!("ORACLE_CONTROL nexttoward same={d_same} up={d_up:.17} down={d_down:.17}");
     assert_eq!(d_same, 1.0, "shim broken: nexttoward(1,1) != 1");
-    assert_eq!(d_up, f64::from_bits(1.0f64.to_bits() + 1), "shim broken: nexttoward(1,2)");
-    assert_eq!(d_down, f64::from_bits(1.0f64.to_bits() - 1), "shim broken: nexttoward(1,0)");
+    assert_eq!(
+        d_up,
+        f64::from_bits(1.0f64.to_bits() + 1),
+        "shim broken: nexttoward(1,2)"
+    );
+    assert_eq!(
+        d_down,
+        f64::from_bits(1.0f64.to_bits() - 1),
+        "shim broken: nexttoward(1,0)"
+    );
 
     let f_same = call_float(glibc_nexttowardf, 1.0, &one());
     let f_up = call_float(glibc_nexttowardf, 1.0, &two());
     let f_down = call_float(glibc_nexttowardf, 1.0, &zero());
     println!("ORACLE_CONTROL nexttowardf same={f_same} up={f_up:.9} down={f_down:.9}");
     assert_eq!(f_same, 1.0, "shim broken: nexttowardf(1,1) != 1");
-    assert_eq!(f_up, f32::from_bits(1.0f32.to_bits() + 1), "shim broken: nexttowardf(1,2)");
-    assert_eq!(f_down, f32::from_bits(1.0f32.to_bits() - 1), "shim broken: nexttowardf(1,0)");
+    assert_eq!(
+        f_up,
+        f32::from_bits(1.0f32.to_bits() + 1),
+        "shim broken: nexttowardf(1,2)"
+    );
+    assert_eq!(
+        f_down,
+        f32::from_bits(1.0f32.to_bits() - 1),
+        "shim broken: nexttowardf(1,0)"
+    );
     println!("ORACLE_CONTROL_SIBLINGS_OK");
 
     // Now the differential, if FrankenLibC exports the symbol at all. It does
@@ -285,7 +309,10 @@ fn main() {
             println!("ORACLE case={name} status=DIVERGE glibc={want:02x?} fl={got:02x?}");
         }
     }
-    println!("ORACLE_SUMMARY cases={} divergences={divergences}", cases.len());
+    println!(
+        "ORACLE_SUMMARY cases={} divergences={divergences}",
+        cases.len()
+    );
     assert_eq!(divergences, 0, "nexttowardl diverges from glibc");
     println!("ORACLE_OK");
 }

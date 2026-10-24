@@ -19,7 +19,6 @@ mod dlsym_oracle;
 /// these symbols into this test binary, so a link-time reference can bind to fl
 /// and leave BOTH arms as fl -- green while comparing nothing, which would leave
 /// the defect documented above ungated and free to regress (bd-v0388t).
-
 type FnmatchFn = unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_int;
 
 fn host_fnmatch() -> FnmatchFn {

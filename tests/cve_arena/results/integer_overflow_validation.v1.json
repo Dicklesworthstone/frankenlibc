@@ -1,15 +1,23 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.4",
-  "generated_at": "2026-06-05T17:28:17Z",
+  "generated_at": "2026-10-19T05:37:59Z",
   "summary": {
     "total_intovf_tests": 2,
     "manifests_valid": 2,
     "with_trigger_files": 2,
     "c_triggers_compile": 1,
+    "c_triggers_hardened_healed": 1,
     "c_triggers_total": 1,
-    "unique_healing_actions": ["ClampSize", "ReallocAsMalloc", "TruncateWithNull"],
-    "overflow_patterns_covered": ["integer_overflow", "size_miscalculation"],
+    "unique_healing_actions": [
+      "ClampSize",
+      "ReallocAsMalloc",
+      "TruncateWithNull"
+    ],
+    "overflow_patterns_covered": [
+      "integer_overflow",
+      "size_miscalculation"
+    ],
     "coverage_matrix_present": true,
     "total_issues": 0
   },
@@ -18,13 +26,69 @@
       "cve_id": "CVE-2023-6246",
       "test_name": "syslog_heap_overflow_suite",
       "category": "glibc",
-      "cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
+      "cwe_ids": [
+        "CWE-787",
+        "CWE-131",
+        "CWE-190"
+      ],
       "cvss_score": 8.4,
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "c_compiles": true,
-      "healing_actions": ["ClampSize", "TruncateWithNull"],
-      "tsm_features": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"],
-      "overflow_patterns": ["integer_overflow", "size_miscalculation"],
+      "c_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "double free or corruption (out)",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 2
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 2
+        },
+        "hardened_healed": true
+      },
+      "healing_actions": [
+        "ClampSize",
+        "TruncateWithNull"
+      ],
+      "tsm_features": [
+        "canary",
+        "bounds_checking",
+        "clamp_size",
+        "truncate_with_null"
+      ],
+      "overflow_patterns": [
+        "integer_overflow",
+        "size_miscalculation"
+      ],
       "manifest_valid": true,
       "issues": []
     },
@@ -32,11 +96,20 @@
       "cve_id": "CVE-2024-46461",
       "test_name": "vlc_mms_integer_overflow_heap_overflow",
       "category": "targets",
-      "cwe_ids": ["CWE-190", "CWE-122"],
+      "cwe_ids": [
+        "CWE-190",
+        "CWE-122"
+      ],
       "cvss_score": 7.5,
-      "trigger_files": ["trigger.sh"],
+      "trigger_files": [
+        "trigger.sh"
+      ],
       "c_compiles": null,
-      "healing_actions": ["ClampSize", "ReallocAsMalloc"],
+      "c_execution": null,
+      "healing_actions": [
+        "ClampSize",
+        "ReallocAsMalloc"
+      ],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -44,7 +117,9 @@
         "clamp_size_healing",
         "integer_overflow_resilience"
       ],
-      "overflow_patterns": ["integer_overflow"],
+      "overflow_patterns": [
+        "integer_overflow"
+      ],
       "manifest_valid": true,
       "issues": []
     }

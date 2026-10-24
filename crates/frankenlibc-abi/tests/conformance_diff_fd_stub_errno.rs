@@ -419,6 +419,7 @@ fn fd_taking_stubs_reject_a_bad_descriptor_the_way_glibc_does() {
     let mut compared = 0usize;
     let mut skipped: Vec<&str> = Vec::new();
 
+    #[allow(clippy::type_complexity)]
     let cases: &[(&CStr, *const (), fn(usize, *mut c_int) -> Outcome)] = &[
         (
             c"fchflags",

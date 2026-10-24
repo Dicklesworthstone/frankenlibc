@@ -783,6 +783,7 @@ impl NativeFile {
 
     /// An empty registry slot: what `invalidate` leaves (no flags, no
     /// vtable), without a lock until one is needed.
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY_SLOT: Self = {
         let mut io_file = _IO_FILE_Layout::new(-1);
         io_file._flags = 0;
@@ -854,6 +855,7 @@ impl NativeFile {
     /// construction): skips the lock, whose two `gettid` syscalls per slot
     /// were 512 of the ~700 syscalls of every process's startup
     /// (bd-rc0923-epic-eeuy4f.25).
+    #[allow(dead_code)]
     fn invalidate_unshared(&mut self) {
         if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
             Self::reset_locked_state(lock.get_mut().get_mut());
@@ -1368,6 +1370,7 @@ struct StreamSlot {
 }
 
 impl StreamSlot {
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Self = Self {
         state: SLOT_FREE,
         file: NativeFile::EMPTY_SLOT,
@@ -1397,6 +1400,7 @@ impl NativeStreamRegistry {
     /// initialized in place. Building the 63 KB registry at startup (on the
     /// stack, then moved into a LazyLock) faulted in its pages twice in
     /// every process (bd-rc0923-epic-eeuy4f.25).
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Self = Self {
         slots: [const { StreamSlot::EMPTY }; STREAM_REGISTRY_CAPACITY],
     };
@@ -1465,7 +1469,7 @@ impl NativeStreamRegistry {
 
         // SAFETY: _IO_list_all is only accessed within the registry mutex.
         unsafe {
-            _IO_list_all = stderr_ptr.cast::<c_void>();
+            publish_native_file_list(stderr_ptr.cast::<c_void>());
         }
     }
 
@@ -1474,17 +1478,17 @@ impl NativeStreamRegistry {
     /// The new file is prepended to the `_IO_list_all` linked list.
     pub fn register(&mut self, file: NativeFile) -> Option<usize> {
         // Start from slot 3 (0/1/2 are reserved for stdin/stdout/stderr).
-        for i in 3..STREAM_REGISTRY_CAPACITY {
-            if self.slots[i].state == SLOT_FREE {
-                self.slots[i].state = SLOT_OCCUPIED;
-                self.slots[i].file = file;
+        for (i, slot) in self.slots.iter_mut().enumerate().skip(3) {
+            if slot.state == SLOT_FREE {
+                slot.state = SLOT_OCCUPIED;
+                slot.file = file;
                 // Link into _chain list: new file becomes the head.
                 // SAFETY: _IO_list_all is protected by the registry mutex.
-                let new_file_ptr: *mut NativeFile = &mut self.slots[i].file;
+                let new_file_ptr: *mut NativeFile = &mut slot.file;
                 unsafe {
-                    let old_head = _IO_list_all.cast::<NativeFile>();
-                    self.slots[i].file.set_chain(old_head);
-                    _IO_list_all = new_file_ptr.cast::<c_void>();
+                    let old_head = native_file_list().cast::<NativeFile>();
+                    slot.file.set_chain(old_head);
+                    publish_native_file_list(new_file_ptr.cast::<c_void>());
                 }
                 return Some(i);
             }
@@ -1504,14 +1508,14 @@ impl NativeStreamRegistry {
         // SAFETY: _IO_list_all is protected by the registry mutex.
         unsafe {
             let mut prev: *mut NativeFile = ptr::null_mut();
-            let mut curr = _IO_list_all.cast::<NativeFile>();
+            let mut curr = native_file_list().cast::<NativeFile>();
             while !curr.is_null() {
                 if curr == file_ptr {
                     // Found it. Unlink.
                     let next = (*curr).chain();
                     if prev.is_null() {
                         // Unlinking the head.
-                        _IO_list_all = next.cast::<c_void>();
+                        publish_native_file_list(next.cast::<c_void>());
                     } else {
                         (*prev).set_chain(next);
                     }
@@ -1554,9 +1558,9 @@ impl NativeStreamRegistry {
     /// This implements `fflush(NULL)` semantics: flush every open output stream.
     pub fn flush_all(&mut self) -> usize {
         let mut errors = 0;
-        for i in 0..STREAM_REGISTRY_CAPACITY {
-            if self.slots[i].state == SLOT_OCCUPIED && self.slots[i].file.is_writable() {
-                let file_ptr: *mut NativeFile = &mut self.slots[i].file;
+        for slot in &mut self.slots {
+            if slot.state == SLOT_OCCUPIED && slot.file.is_writable() {
+                let file_ptr: *mut NativeFile = &mut slot.file;
                 // SAFETY: file_ptr is a valid pointer to our registry-owned NativeFile.
                 let rc = unsafe { vtable_fd_flush(file_ptr) };
                 if rc != 0 {
@@ -1651,6 +1655,24 @@ static NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3] = [
     AtomicUsize::new(0),
 ];
 
+/// Base address of `&NATIVE_STREAM_REGISTRY.slots[0].file`, published once when
+/// the static registry is initialized. Used by `is_native_slot_ptr_lockfree`
+/// so single-threaded fast paths can verify that a `FILE*` points to one of our
+/// `NativeFile` slots with a single range-and-stride check instead of locking
+/// `NATIVE_STREAM_REGISTRY` or probing `NATIVE_FILE_BLOOM`.
+static NATIVE_SLOTS_FILE_BASE: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
+const NATIVE_SLOT_STRIDE: usize = std::mem::size_of::<StreamSlot>();
+const NATIVE_FILE_MAX_OFFSET: usize = (STREAM_REGISTRY_CAPACITY - 1) * NATIVE_SLOT_STRIDE;
+
+/// Lock-free check: returns `true` iff `stream` is the exact address of one of
+/// the `STREAM_REGISTRY_CAPACITY` `NativeFile` slots in `NATIVE_STREAM_REGISTRY`.
+#[inline]
+pub(crate) fn is_native_slot_ptr_lockfree(stream: *const c_void) -> bool {
+    let base = NATIVE_SLOTS_FILE_BASE.load(Ordering::Relaxed);
+    let offset = (stream as usize).wrapping_sub(base);
+    offset <= NATIVE_FILE_MAX_OFFSET && offset.is_multiple_of(NATIVE_SLOT_STRIDE)
+}
+
 /// Address of the std handle for `fd` (0..=2) without taking the registry
 /// lock, or 0 if the slot addresses are not published yet. Safe to call while
 /// the native registry lock is held.
@@ -1687,16 +1709,17 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
         NATIVE_FILE_BLOOM.insert(stdin_ptr as usize);
         NATIVE_FILE_BLOOM.insert(stdout_ptr as usize);
         NATIVE_FILE_BLOOM.insert(stderr_ptr as usize);
+        NATIVE_SLOTS_FILE_BASE.store(stdin_ptr as usize, Ordering::Relaxed);
 
         // Publish the reserved slot addresses for the lock-free `native_stdio_fd_for_ptr`
         // path. `get_mut` (not `&mut slots[i].file`) so an unoccupied slot publishes 0 and
         // the lock-free compare stays semantically identical to the locked scan.
-        for index in 0..NATIVE_STDIO_SLOT_ADDR.len() {
+        for (index, slot_addr) in NATIVE_STDIO_SLOT_ADDR.iter().enumerate() {
             let addr = match guard.get_mut(index) {
                 Some(file) => file as *mut NativeFile as usize,
                 None => 0,
             };
-            NATIVE_STDIO_SLOT_ADDR[index].store(addr, Ordering::Relaxed);
+            slot_addr.store(addr, Ordering::Relaxed);
         }
 
         // Release: publishes the slot-address stores above to every `Acquire` reader of
@@ -1765,10 +1788,10 @@ pub fn bench_native_stdio_fd_for_ptr_locked(stream: *const c_void) -> Option<c_i
         (1, libc::STDOUT_FILENO),
         (2, libc::STDERR_FILENO),
     ] {
-        if let Some(file) = registry.get_mut(index) {
-            if file as *mut NativeFile as *const c_void == stream {
-                return Some(fd);
-            }
+        if let Some(file) = registry.get_mut(index)
+            && file as *mut NativeFile as *const c_void == stream
+        {
+            return Some(fd);
         }
     }
     None
@@ -2208,19 +2231,9 @@ pub fn verify_native_file(ptr: *mut c_void) -> Option<usize> {
         return None;
     }
 
-    // Check stdin/stdout/stderr first (slots 0/1/2)
-    let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
-    let stdout_ptr = native_stdio_stream_ptr(libc::STDOUT_FILENO);
-    let stderr_ptr = native_stdio_stream_ptr(libc::STDERR_FILENO);
-
-    if ptr == stdin_ptr {
-        return Some(0);
-    }
-    if ptr == stdout_ptr {
-        return Some(1);
-    }
-    if ptr == stderr_ptr {
-        return Some(2);
+    // Check stdin/stdout/stderr first (slots 0/1/2) via lock-free slot address table
+    if let Some(fd) = native_stdio_fd_for_ptr(ptr) {
+        return Some(fd as usize);
     }
 
     // Check if it's an adopted foreign file
@@ -2538,6 +2551,51 @@ pub static NATIVE_IO_JUMP_T: _IO_jump_t = _IO_jump_t {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _IO_list_all: *mut c_void = std::ptr::null_mut();
 
+// Bind native registry links to this DSO's physical storage even when a host
+// executable or libc preempts the public data symbol. The alias must share
+// this Rust module/codegen unit with the storage definition above.
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_io_list_all_storage",
+    ".hidden __frankenlibc_io_list_all_storage",
+    ".set __frankenlibc_io_list_all_storage, _IO_list_all",
+);
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "__frankenlibc_io_list_all_storage"]
+    static mut OWNED_IO_LIST_ALL: *mut c_void;
+}
+
+#[inline]
+unsafe fn native_file_list() -> *mut c_void {
+    #[cfg(debug_assertions)]
+    {
+        unsafe { _IO_list_all }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        unsafe { OWNED_IO_LIST_ALL }
+    }
+}
+
+#[inline]
+unsafe fn publish_native_file_list(head: *mut c_void) {
+    #[cfg(debug_assertions)]
+    unsafe {
+        _IO_list_all = head;
+    }
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        OWNED_IO_LIST_ALL = head;
+        if stdio_abi::stdio_symbols_are_interposed() {
+            // Every new or removed head must reach an executable's COPY cell,
+            // not only the initial standard-stream chain in the constructor.
+            _IO_list_all = head;
+        }
+    }
+}
+
 /// `_IO_file_jumps` — default FILE vtable for regular files.
 /// Native-owned: initialized with our native trampolines for full vtable dispatch.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2606,8 +2664,9 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// stream tracking for binaries that do have COPY relocations.
 ///
 /// The patch is applied ONLY when fl's stdio ABI actually interposed the
-/// host's — the C-visible `stdout` resolves to fl's exported global instead of
-/// glibc's own cell. When fl is linked statically into a consumer (rlib: every
+/// host's — function lookup resolves to fl's native stdio. A COPY-relocated
+/// host stdout cell alone does not establish ownership. When fl is linked
+/// statically into a consumer (rlib: every
 /// conformance test binary), glibc's `_IO_list_all` is the LIVE chain of the
 /// REAL streams, and NULLing it orphaned every host stream from `fflush(NULL)`
 /// and from glibc's exit flush for the rest of the process. Measured
@@ -2617,26 +2676,7 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// mode fl's registry is separate machinery and the host chain must stay
 /// untouched.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
-    // The C-visible `stdout` cell: RTLD_DEFAULT resolves through the global
-    // scope, where an interposing fl precedes libc. The host dlsym is reached
-    // through the raw ELF scanner rather than libc::dlsym — the replacement
-    // guard (bd-130) treats any libc::f(...) call-through text as forbidden,
-    // and in a replacement build there is no host dlsym to call anyway
-    // (resolve_host_symbol_raw then returns None and the whole patch is
-    // skipped, which is the correct standalone behavior).
-    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
-    let Some(host_dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
-        // No resolvable host dlsym: not an interpose deployment; nothing to patch.
-        return;
-    };
-    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(host_dlsym_addr) };
-    let visible = unsafe { host_dlsym(std::ptr::null_mut(), c"stdout".as_ptr().cast()) };
-    let Some(glibc_cell) = crate::host_resolve::resolve_host_symbol_raw("stdout") else {
-        // No resolvable host stdout: not an interpose deployment; nothing to patch.
-        return;
-    };
-    let interposed = !visible.is_null() && visible != glibc_cell as *mut c_void;
-    if !interposed {
+    if !stdio_abi::stdio_symbols_are_interposed() {
         return;
     }
     if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
@@ -2650,7 +2690,7 @@ pub(crate) unsafe fn bootstrap_host_libio_exports() {
 /// Accessor: return our native `_IO_list_all` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_list_all_get() -> *mut c_void {
-    unsafe { _IO_list_all }
+    unsafe { native_file_list() }
 }
 
 /// Accessor: return pointer to our native `_IO_file_jumps` vtable.
@@ -3265,19 +3305,27 @@ pub unsafe extern "C" fn _IO_flush_all_linebuffered() {
 
 /// `_IO_fprintf` — internal fprintf (variadic, forwards to _IO_vfprintf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fprintf(fp: *mut c_void, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fprintf(
+    fp: *mut c_void,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     unsafe { stdio_abi::vfprintf(fp, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
 /// `_IO_printf` — internal printf (variadic, forwards to _IO_vfprintf on stdout).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
     unsafe { stdio_abi::vprintf(fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
 /// `_IO_sprintf` — internal sprintf (variadic, forwards to _IO_vsprintf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_sprintf(buf: *mut c_char, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_sprintf(
+    buf: *mut c_char,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     unsafe { stdio_abi::vsprintf(buf, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
@@ -3872,7 +3920,7 @@ pub unsafe extern "C" fn _IO_switch_to_wget_mode(fp: *mut c_void) -> c_int {
 
 /// `_IO_vfprintf` — internal vfprintf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vfprintf(
+pub unsafe extern "C-unwind" fn _IO_vfprintf(
     fp: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
@@ -3901,7 +3949,7 @@ pub unsafe extern "C" fn _IO_vfscanf(
 
 /// `_IO_vsprintf` — internal vsprintf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vsprintf(
+pub unsafe extern "C-unwind" fn _IO_vsprintf(
     buf: *mut c_char,
     fmt: *const c_char,
     ap: *mut c_void,

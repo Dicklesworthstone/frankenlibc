@@ -1,12 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.1",
-  "generated_at": "2026-06-05T17:28:17Z",
+  "generated_at": "2026-10-19T05:38:03Z",
   "summary": {
     "total_heap_overflow_tests": 7,
     "manifests_valid": 7,
     "with_trigger_files": 7,
     "c_triggers_compile": 4,
+    "c_triggers_hardened_healed": 4,
     "c_triggers_total": 4,
     "unique_healing_actions": [
       "ClampSize",
@@ -15,8 +16,19 @@
       "ReturnSafeDefault",
       "TruncateWithNull"
     ],
-    "heap_cwes_covered": ["CWE-121", "CWE-122", "CWE-131", "CWE-787"],
-    "heap_cwes_target": ["CWE-120", "CWE-121", "CWE-122", "CWE-131", "CWE-787"],
+    "heap_cwes_covered": [
+      "CWE-121",
+      "CWE-122",
+      "CWE-131",
+      "CWE-787"
+    ],
+    "heap_cwes_target": [
+      "CWE-120",
+      "CWE-121",
+      "CWE-122",
+      "CWE-131",
+      "CWE-787"
+    ],
     "coverage_matrix_present": true,
     "total_issues": 0
   },
@@ -25,12 +37,65 @@
       "cve_id": "CVE-2023-6246",
       "test_name": "syslog_heap_overflow_suite",
       "category": "glibc",
-      "cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
+      "cwe_ids": [
+        "CWE-787",
+        "CWE-131",
+        "CWE-190"
+      ],
       "cvss_score": 8.4,
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "c_compiles": true,
-      "healing_actions": ["ClampSize", "TruncateWithNull"],
-      "tsm_features": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"],
+      "c_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "double free or corruption (out)",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 2
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 2
+        },
+        "hardened_healed": true
+      },
+      "healing_actions": [
+        "ClampSize",
+        "TruncateWithNull"
+      ],
+      "tsm_features": [
+        "canary",
+        "bounds_checking",
+        "clamp_size",
+        "truncate_with_null"
+      ],
       "manifest_valid": true,
       "issues": []
     },
@@ -38,12 +103,61 @@
       "cve_id": "CVE-2024-2961",
       "test_name": "iconv_iso2022cn_ext_buffer_overflow",
       "category": "glibc",
-      "cwe_ids": ["CWE-787"],
+      "cwe_ids": [
+        "CWE-787"
+      ],
       "cvss_score": 8.8,
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "c_compiles": true,
-      "healing_actions": ["ClampSize"],
-      "tsm_features": ["canary", "bounds_checking", "clamp_size"],
+      "c_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 4
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 4
+        },
+        "hardened_healed": true
+      },
+      "healing_actions": [
+        "ClampSize"
+      ],
+      "tsm_features": [
+        "canary",
+        "bounds_checking",
+        "clamp_size"
+      ],
       "manifest_valid": true,
       "issues": []
     },
@@ -51,11 +165,60 @@
       "cve_id": "CVE-2024-33599",
       "test_name": "nscd_netgroup_cache_memory_corruption_suite",
       "category": "glibc",
-      "cwe_ids": ["CWE-121", "CWE-476", "CWE-787", "CWE-908"],
+      "cwe_ids": [
+        "CWE-121",
+        "CWE-476",
+        "CWE-787",
+        "CWE-908"
+      ],
       "cvss_score": 7.6,
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "c_compiles": true,
-      "healing_actions": ["ClampSize", "ReturnSafeDefault"],
+      "c_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "double free or corruption (out)",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 3
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 3
+        },
+        "hardened_healed": true
+      },
+      "healing_actions": [
+        "ClampSize",
+        "ReturnSafeDefault"
+      ],
       "tsm_features": [
         "canary",
         "bounds_checking",
@@ -70,11 +233,57 @@
       "cve_id": "CVE-2024-38812 (synthetic)",
       "test_name": "dcerpc_heap_overflow_cve_2024_38812",
       "category": "synthetic",
-      "cwe_ids": ["CWE-122"],
+      "cwe_ids": [
+        "CWE-122"
+      ],
       "cvss_score": 9.8,
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "c_compiles": true,
-      "healing_actions": ["ClampSize", "FreedWithCanaryCorruption"],
+      "c_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "malloc(): corrupted top size",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 1
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 1
+        },
+        "hardened_healed": true
+      },
+      "healing_actions": [
+        "ClampSize",
+        "FreedWithCanaryCorruption"
+      ],
       "tsm_features": [
         "ClampSize",
         "TrailingCanary",
@@ -88,11 +297,21 @@
       "cve_id": "CVE-2024-56406",
       "test_name": "perl_tr_transliteration_heap_overflow",
       "category": "targets",
-      "cwe_ids": ["CWE-122", "CWE-787"],
+      "cwe_ids": [
+        "CWE-122",
+        "CWE-787"
+      ],
       "cvss_score": 8.6,
-      "trigger_files": ["trigger.sh", "trigger.pl"],
+      "trigger_files": [
+        "trigger.sh",
+        "trigger.pl"
+      ],
       "c_compiles": null,
-      "healing_actions": ["ClampSize", "TruncateWithNull"],
+      "c_execution": null,
+      "healing_actions": [
+        "ClampSize",
+        "TruncateWithNull"
+      ],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -107,11 +326,20 @@
       "cve_id": "CVE-2021-3156",
       "test_name": "sudo_baron_samedit_heap_overflow",
       "category": "targets",
-      "cwe_ids": ["CWE-122", "CWE-787"],
+      "cwe_ids": [
+        "CWE-122",
+        "CWE-787"
+      ],
       "cvss_score": 7.8,
-      "trigger_files": ["trigger.sh"],
+      "trigger_files": [
+        "trigger.sh"
+      ],
       "c_compiles": null,
-      "healing_actions": ["ClampSize", "TruncateWithNull"],
+      "c_execution": null,
+      "healing_actions": [
+        "ClampSize",
+        "TruncateWithNull"
+      ],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -126,11 +354,21 @@
       "cve_id": "CVE-2024-46461",
       "test_name": "vlc_mms_integer_overflow_heap_overflow",
       "category": "targets",
-      "cwe_ids": ["CWE-190", "CWE-122"],
+      "cwe_ids": [
+        "CWE-190",
+        "CWE-122"
+      ],
       "cvss_score": 7.5,
-      "trigger_files": ["trigger.sh", "craft_mms.py"],
+      "trigger_files": [
+        "trigger.sh",
+        "craft_mms.py"
+      ],
       "c_compiles": null,
-      "healing_actions": ["ClampSize", "ReallocAsMalloc"],
+      "c_execution": null,
+      "healing_actions": [
+        "ClampSize",
+        "ReallocAsMalloc"
+      ],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",

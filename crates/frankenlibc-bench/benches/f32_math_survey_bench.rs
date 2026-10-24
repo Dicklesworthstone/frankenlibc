@@ -1,7 +1,7 @@
 //! Reliable same-process survey: deployed fl f32 transcendental passthroughs vs host
 //! glibc (cc/BoldFalcon). Sibling of math_passthrough_survey_bench (f64). Applies the
 //! refined reuse-lever filter — flag only functions where the deployed fl path is
-//! >1.30x slower than glibc (candidate for an f64-widen / fast-primitive lever like
+//! `>1.30x` slower than glibc (candidate for an f64-widen / fast-primitive lever like
 //! tgammaf). No `abi-bench` → bare `extern "C"` resolves to host glibc.
 //!
 //! Run: `cargo bench -p frankenlibc-bench --bench f32_math_survey_bench`
@@ -107,104 +107,44 @@ fn bench(c: &mut Criterion) {
 
     let mut g = c.benchmark_group("f32_survey");
     g.sample_size(10);
-    survey(
-        &mut g,
-        "tanf",
-        &any,
-        |x| math::tanf(x),
-        |x| unsafe { h_tanf(x) },
-    );
-    survey(
-        &mut g,
-        "asinf",
-        &unit,
-        |x| math::asinf(x),
-        |x| unsafe { h_asinf(x) },
-    );
-    survey(
-        &mut g,
-        "acosf",
-        &unit,
-        |x| math::acosf(x),
-        |x| unsafe { h_acosf(x) },
-    );
-    survey(
-        &mut g,
-        "atanf",
-        &any,
-        |x| math::atanf(x),
-        |x| unsafe { h_atanf(x) },
-    );
-    survey(
-        &mut g,
-        "asinhf",
-        &any,
-        |x| math::asinhf(x),
-        |x| unsafe { h_asinhf(x) },
-    );
-    survey(
-        &mut g,
-        "acoshf",
-        &pos1,
-        |x| math::acoshf(x),
-        |x| unsafe { h_acoshf(x) },
-    );
-    survey(
-        &mut g,
-        "atanhf",
-        &unit,
-        |x| math::atanhf(x),
-        |x| unsafe { h_atanhf(x) },
-    );
-    survey(
-        &mut g,
-        "expm1f",
-        &small,
-        |x| math::expm1f(x),
-        |x| unsafe { h_expm1f(x) },
-    );
-    survey(
-        &mut g,
-        "log1pf",
-        &gtm1,
-        |x| math::log1pf(x),
-        |x| unsafe { h_log1pf(x) },
-    );
-    survey(
-        &mut g,
-        "cbrtf",
-        &any,
-        |x| math::cbrtf(x),
-        |x| unsafe { h_cbrtf(x) },
-    );
-    survey(
-        &mut g,
-        "coshf",
-        &mid,
-        |x| math::coshf(x),
-        |x| unsafe { h_coshf(x) },
-    );
-    survey(
-        &mut g,
-        "sinhf",
-        &mid,
-        |x| math::sinhf(x),
-        |x| unsafe { h_sinhf(x) },
-    );
-    survey(
-        &mut g,
-        "tanhf",
-        &mid,
-        |x| math::tanhf(x),
-        |x| unsafe { h_tanhf(x) },
-    );
-    survey(
-        &mut g,
-        "j0f",
-        &posb,
-        |x| math::j0f(x),
-        |x| unsafe { h_j0f(x) },
-    );
+    survey(&mut g, "tanf", &any, math::tanf, |x| unsafe { h_tanf(x) });
+    survey(&mut g, "asinf", &unit, math::asinf, |x| unsafe {
+        h_asinf(x)
+    });
+    survey(&mut g, "acosf", &unit, math::acosf, |x| unsafe {
+        h_acosf(x)
+    });
+    survey(&mut g, "atanf", &any, math::atanf, |x| unsafe {
+        h_atanf(x)
+    });
+    survey(&mut g, "asinhf", &any, math::asinhf, |x| unsafe {
+        h_asinhf(x)
+    });
+    survey(&mut g, "acoshf", &pos1, math::acoshf, |x| unsafe {
+        h_acoshf(x)
+    });
+    survey(&mut g, "atanhf", &unit, math::atanhf, |x| unsafe {
+        h_atanhf(x)
+    });
+    survey(&mut g, "expm1f", &small, math::expm1f, |x| unsafe {
+        h_expm1f(x)
+    });
+    survey(&mut g, "log1pf", &gtm1, math::log1pf, |x| unsafe {
+        h_log1pf(x)
+    });
+    survey(&mut g, "cbrtf", &any, math::cbrtf, |x| unsafe {
+        h_cbrtf(x)
+    });
+    survey(&mut g, "coshf", &mid, math::coshf, |x| unsafe {
+        h_coshf(x)
+    });
+    survey(&mut g, "sinhf", &mid, math::sinhf, |x| unsafe {
+        h_sinhf(x)
+    });
+    survey(&mut g, "tanhf", &mid, math::tanhf, |x| unsafe {
+        h_tanhf(x)
+    });
+    survey(&mut g, "j0f", &posb, math::j0f, |x| unsafe { h_j0f(x) });
     survey(
         &mut g,
         "atan2f",

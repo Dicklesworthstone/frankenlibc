@@ -28,8 +28,13 @@ type Cmp = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 // `dlsym` on an explicit `libc.so.6` handle is correct in either profile, and
 // the `assert_ne!` below turns the remaining doubt into a failing test rather
 // than a silent one.
-type LfindFn =
-    unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut usize, usize, Cmp) -> *mut c_void;
+type LfindFn = unsafe extern "C-unwind" fn(
+    *const c_void,
+    *const c_void,
+    *mut usize,
+    usize,
+    Cmp,
+) -> *mut c_void;
 type LsearchFn =
     unsafe extern "C-unwind" fn(*const c_void, *mut c_void, *mut usize, usize, Cmp) -> *mut c_void;
 
@@ -54,7 +59,8 @@ fn host_lfind() -> LfindFn {
     let raw = unsafe { libc::dlsym(libc_handle(), c"lfind".as_ptr()) };
     assert!(!raw.is_null(), "dlsym lfind");
     assert_ne!(
-        raw as usize, fl_lfind as usize,
+        raw as usize,
+        fl_lfind as *const () as usize,
         "the resolved oracle IS fl's lfind — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented lfind signature.
@@ -66,7 +72,8 @@ fn host_lsearch() -> LsearchFn {
     let raw = unsafe { libc::dlsym(libc_handle(), c"lsearch".as_ptr()) };
     assert!(!raw.is_null(), "dlsym lsearch");
     assert_ne!(
-        raw as usize, fl_lsearch as usize,
+        raw as usize,
+        fl_lsearch as *const () as usize,
         "the resolved oracle IS fl's lsearch — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented lsearch signature.

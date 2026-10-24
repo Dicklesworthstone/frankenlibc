@@ -30,7 +30,13 @@ fi
 echo "=== Support Matrix Maintenance Gate (bd-3g4p) ==="
 mkdir -p "$LOG_DIR"
 
-# 1. Build the promotion triage manifest that scopes fixture-ratchet
+# 1. Re-derive the source census before consuming any of its downgrade
+# evidence. Hash checks alone prove source freshness, not that the checked-in
+# rows were actually emitted by the canonical detector.
+echo "--- Validating host-delegation census derivation ---"
+python3 "$SCRIPT_DIR/generate_host_delegation_census.py" --check
+
+# 2. Build the promotion triage manifest that scopes fixture-ratchet
 # violations without mutating support_matrix.json classifications.
 echo "--- Generating promotion triage manifest ---"
 FRANKENLIBC_PROMOTION_TRIAGE_OUT_DIR="$LOG_DIR" \
@@ -39,7 +45,7 @@ FRANKENLIBC_PROMOTION_TRIAGE_REPORT="$PROMOTION_TRIAGE_REPORT" \
 bash "$SCRIPT_DIR/check_support_matrix_promotion_triage.sh" >/dev/null
 echo "Promotion triage report: $PROMOTION_TRIAGE_REPORT"
 
-# 2. Run the maintenance validator
+# 3. Run the maintenance validator
 echo "--- Generating maintenance report ---"
 python3 "$SCRIPT_DIR/generate_support_matrix_maintenance.py" \
     -o "$GENERATED_REPORT" \
@@ -55,10 +61,10 @@ if [ ! -f "$CANONICAL_REPORT" ]; then
     exit 1
 fi
 
-# 3. Validate report structure, compare stable sections against the canonical
+# 4. Validate report structure, compare stable sections against the canonical
 # artifact, emit logging, and check thresholds.
 python3 - "$GENERATED_REPORT" "$CANONICAL_REPORT" "$STRICT" "$TRACE_ID" "$LOG_FILE" "$TRACE_SYMBOL_EVENTS" <<'PY'
-import json, sys
+import json, re, sys
 from datetime import datetime, timezone
 
 report_path = sys.argv[1]
@@ -75,6 +81,10 @@ events = []
 stable_keys = [
     "schema_version",
     "bead",
+    "source_commit",
+    "source_generated_at_utc",
+    "newest_abi_commit",
+    "newest_abi_commit_time",
     "summary",
     "coverage_dashboard",
     "status_distribution",
@@ -106,6 +116,13 @@ with open(report_path) as f:
 with open(canonical_path) as f:
     canonical = json.load(f)
 
+source_commit = report.get("source_commit")
+if not isinstance(source_commit, str) or re.fullmatch(
+    r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_commit
+) is None:
+    print("FAIL: generated maintenance report source_commit is not a full Git object ID")
+    errors += 1
+
 generated_stable = {key: report.get(key) for key in stable_keys}
 canonical_stable = {key: canonical.get(key) for key in stable_keys}
 stable_diff_keys = [
@@ -125,6 +142,7 @@ emit(
             "trend",
             "reclassified_symbols",
             "policy_checks",
+            "downgrade_derivation",
         ],
         "mismatched_keys": stable_diff_keys,
     },
@@ -290,9 +308,12 @@ if stub_policy:
     prev_stub = stub_policy.get("previous_stub_count")
     curr_stub = stub_policy.get("current_stub_count")
     delta = stub_policy.get("delta")
+    annotated_new = stub_policy.get("annotated_new_stub_symbols", [])
+    unannotated_new = stub_policy.get("unannotated_new_stub_symbols", [])
     print(
         f"\nPolicy no_new_stub_symbols: {status} "
-        f"(previous={prev_stub}, current={curr_stub}, delta={delta:+d})"
+        f"(previous={prev_stub}, current={curr_stub}, delta={delta:+d}, "
+        f"annotated_new={len(annotated_new)}, unannotated_new={len(unannotated_new)})"
     )
     emit(
         "info" if status == "pass" else "error",
@@ -304,11 +325,15 @@ if stub_policy:
             "previous_stub_count": prev_stub,
             "current_stub_count": curr_stub,
             "delta": delta,
+            "annotated_new_stub_symbols": annotated_new,
+            "unannotated_new_stub_symbols": unannotated_new,
         },
     )
     if status != "pass":
         errors += 1
         print("FAIL: no_new_stub_symbols policy violation")
+        for symbol in unannotated_new[:10]:
+            print(f"  - {symbol}: new Stub row lacks abi_stub_contract! provenance")
 
 reclass_policy = policy_checks.get("reclassification_requires_conformance", {})
 if reclass_policy:
@@ -353,6 +378,75 @@ if reclass_policy:
                     "previous_status": prev_status,
                     "current_status": current_status,
                     "missing_evidence": row.get("missing_evidence", []),
+                },
+            )
+
+# Downgrade-only source/census evidence is intentionally outside the stable
+# canonical comparison: it carries live source hashes and provenance.  It is,
+# however, a mandatory gate.  Missing, stale, malformed, or ambiguous evidence
+# must fail closed instead of silently turning absence into a native status.
+downgrade_policy = policy_checks.get("downgrade_only_evidence")
+downgrade_derivation = report.get("downgrade_derivation")
+if not isinstance(downgrade_policy, dict) or not isinstance(downgrade_derivation, dict):
+    errors += 1
+    print("\nFAIL: downgrade-only evidence policy/report section missing")
+    emit(
+        "error",
+        "policy_downgrade_only_evidence",
+        "all",
+        "fail",
+        1,
+        {"reason": "missing policy or derivation section"},
+    )
+else:
+    status = downgrade_policy.get("status")
+    mismatch_count = downgrade_policy.get("downgrade_mismatch_count", 0)
+    error_count = downgrade_policy.get("evidence_error_count", 0)
+    suppressed_count = downgrade_policy.get("promotion_suppressed_count", 0)
+    print(
+        f"Policy downgrade_only_evidence: {status} "
+        f"(mismatches={mismatch_count}, evidence_errors={error_count}, "
+        f"promotions_suppressed={suppressed_count})"
+    )
+    emit(
+        "info" if status == "pass" else "error",
+        "policy_downgrade_only_evidence",
+        "all",
+        status,
+        0 if status == "pass" else 1,
+        {
+            "stub_annotation_count": downgrade_policy.get("stub_annotation_count", 0),
+            "host_evidence_count": downgrade_policy.get("host_evidence_count", 0),
+            "downgrade_mismatch_count": mismatch_count,
+            "promotion_suppressed_count": suppressed_count,
+            "evidence_error_count": error_count,
+        },
+    )
+    if status != "pass":
+        errors += 1
+        print("FAIL: downgrade_only_evidence policy violation")
+        for message in downgrade_derivation.get("errors", [])[:10]:
+            print(f"  - evidence: {message}")
+        for row in downgrade_derivation.get("mismatches", [])[:10]:
+            symbol = row.get("symbol", "<unknown>")
+            current = row.get("current_status", "<unknown>")
+            recommended = row.get("recommended_status", "<unknown>")
+            evidence_state = row.get("evidence_state", "<unknown>")
+            print(
+                f"  - {symbol}: {current} -> {recommended} "
+                f"({evidence_state})"
+            )
+            emit(
+                "error",
+                "downgrade_mismatch",
+                symbol,
+                "fail",
+                1,
+                {
+                    "current_status": current,
+                    "recommended_status": recommended,
+                    "evidence_state": evidence_state,
+                    "provenance": row.get("provenance", {}),
                 },
             )
 

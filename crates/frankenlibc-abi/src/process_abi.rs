@@ -11,7 +11,7 @@ use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::process;
 use frankenlibc_core::syscall as raw_syscall;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -269,6 +269,23 @@ pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_
     }
 }
 
+/// Blocks every blockable signal while a fork-like operation crosses from
+/// clone into child-side runtime-log reopening.
+///
+/// The guard restores the calling thread's exact prior mask when dropped in
+/// either process. Keeping this wrapper in the process module gives `fork`,
+/// `daemon`, and `forkpty` one implementation without exposing the spawn
+/// protocol module to unrelated ABI code.
+pub(crate) struct ForkSignalMaskGuard {
+    _inner: spawn_protocol::SignalMaskGuard,
+}
+
+impl ForkSignalMaskGuard {
+    pub(crate) fn block_all() -> Result<Self, c_int> {
+        spawn_protocol::SignalMaskGuard::block_all().map(|inner| Self { _inner: inner })
+    }
+}
+
 /// POSIX `fork` — create a child process.
 ///
 /// Calls registered `pthread_atfork` handlers and prepares the membrane
@@ -315,6 +332,24 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
+    // No application handler may run in the child between clone and runtime-
+    // log reopen: it would otherwise append through the parent's inherited
+    // open-file description. The raw signal-mask guard allocates nothing and
+    // restores the caller's exact mask independently in parent and child.
+    let signal_guard = match ForkSignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            drop(malloc_guard);
+            drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+            return -1;
+        }
+    };
+
     let pid = clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
@@ -326,8 +361,11 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         Err(e) => {
             // Drop guards in failure path before returning so the parent
             // can resume normal env operations.
-            drop(_environ_guard);
             drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            drop(signal_guard);
+            crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
             return -1;
@@ -344,8 +382,8 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         // by the forking thread before the clone.
         unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
     }
-    drop(_environ_guard);
     drop(_pipeline_guard);
+    drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
@@ -354,9 +392,19 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
 
     if pid == 0 {
+        // SAFETY: all fork guards are released, this is the sole surviving
+        // thread, and every blockable signal remains masked until the inherited
+        // sink is replaced below.
+        unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
+        // The forking thread is the child's main thread: pthread_cancel of
+        // it must reach glibc with glibc's handle for it. Repair this state
+        // before a queued handler can run after the mask is restored.
+        crate::pthread_abi::remember_main_thread_host_handle();
+        drop(signal_guard);
         // Child: run child handlers to reinitialize state.
         crate::pthread_abi::run_atfork_child(&atfork);
     } else {
+        drop(signal_guard);
         // Parent: run parent handlers to release locks.
         crate::pthread_abi::run_atfork_parent(&atfork);
     }
@@ -377,10 +425,15 @@ pub unsafe extern "C" fn _exit(status: c_int) -> ! {
     let clamped = if mode.heals_enabled() {
         let c = process::clamp_exit_status(status);
         if c != status {
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: status as usize,
-                clamped: c as usize,
-            });
+            global_healing_policy().record(
+                "process",
+                "_exit",
+                &HealingAction::ClampSize {
+                    requested: status as usize,
+                    clamped: c as usize,
+                },
+                RepairLogContext::new(0, None),
+            );
         }
         c
     } else {
@@ -485,6 +538,19 @@ pub unsafe extern "C-unwind" fn waitpid(
     wstatus: *mut c_int,
     options: c_int,
 ) -> libc::pid_t {
+    unsafe { waitpid_cp(pid, wstatus, options) }
+}
+
+/// Body of [`waitpid`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn waitpid_cp(
+    pid: libc::pid_t,
+    wstatus: *mut c_int,
+    options: c_int,
+) -> libc::pid_t {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Process, wstatus as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -495,21 +561,37 @@ pub unsafe extern "C-unwind" fn waitpid(
 
     // Kernel first: __WALL, __WCLONE and __WNOTHREAD are valid wait4
     // options (debuggers wait with __WALL); hardened repairs only options
-    // the kernel rejected.
-    let wait = |opts: c_int| unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
-        })
+    // the kernel rejected. The wait stays in this function's body (no
+    // closure): the cancellation point is decided by waitpid's caller.
+    let mut opts = options;
+    let mut repaired = false;
+    let rc = loop {
+        let rc = unsafe {
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
+            })
+        };
+        if !repaired
+            && mode.heals_enabled()
+            && rc == Err(libc::EINVAL)
+            && !process::valid_wait_options(options)
+        {
+            let sanitized = process::sanitize_wait_options(options);
+            global_healing_policy().record(
+                "process",
+                "waitpid",
+                &HealingAction::ClampSize {
+                    requested: options as usize,
+                    clamped: sanitized as usize,
+                },
+                RepairLogContext::new(0, None),
+            );
+            opts = sanitized;
+            repaired = true;
+            continue;
+        }
+        break rc;
     };
-    let mut rc = wait(options);
-    if mode.heals_enabled() && rc == Err(libc::EINVAL) && !process::valid_wait_options(options) {
-        let sanitized = process::sanitize_wait_options(options);
-        global_healing_policy().record(&HealingAction::ClampSize {
-            requested: options as usize,
-            clamped: sanitized as usize,
-        });
-        rc = wait(sanitized);
-    }
 
     match rc {
         Ok(child_pid) => {
@@ -531,7 +613,7 @@ pub unsafe extern "C-unwind" fn waitpid(
 /// POSIX `wait` — equivalent to `waitpid(-1, wstatus, 0)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wait(wstatus: *mut c_int) -> libc::pid_t {
-    unsafe { waitpid(-1, wstatus, 0) }
+    unsafe { waitpid_cp(-1, wstatus, 0) }
 }
 
 // ---------------------------------------------------------------------------
@@ -542,12 +624,12 @@ pub unsafe extern "C-unwind" fn wait(wstatus: *mut c_int) -> libc::pid_t {
 ///
 /// Equivalent to `wait4(-1, wstatus, options, rusage)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wait3(
+pub unsafe extern "C-unwind" fn wait3(
     wstatus: *mut c_int,
     options: c_int,
     rusage: *mut libc::rusage,
 ) -> libc::pid_t {
-    unsafe { wait4(-1, wstatus, options, rusage) }
+    unsafe { wait4_cp(-1, wstatus, options, rusage) }
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +639,17 @@ pub unsafe extern "C" fn wait3(
 /// BSD `wait4` — wait for a specific child with resource usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wait4(
+    pid: libc::pid_t,
+    wstatus: *mut c_int,
+    options: c_int,
+    rusage: *mut libc::rusage,
+) -> libc::pid_t {
+    unsafe { wait4_cp(pid, wstatus, options, rusage) }
+}
+
+/// Body of [`wait4`] and its aliases (see [`waitpid_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn wait4_cp(
     pid: libc::pid_t,
     wstatus: *mut c_int,
     options: c_int,
@@ -601,6 +694,17 @@ pub unsafe extern "C-unwind" fn waitid(
     infop: *mut libc::siginfo_t,
     options: c_int,
 ) -> c_int {
+    unsafe { waitid_cp(idtype, id, infop, options) }
+}
+
+/// Body of [`waitid`] and its aliases (see [`waitpid_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn waitid_cp(
+    idtype: c_int,
+    id: libc::id_t,
+    infop: *mut libc::siginfo_t,
+    options: c_int,
+) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Process, infop as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -640,12 +744,12 @@ pub unsafe extern "C-unwind" fn waitid(
 ///
 /// Same as [`wait3`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wait3(
+pub unsafe extern "C-unwind" fn __wait3(
     wstatus: *mut c_int,
     options: c_int,
     rusage: *mut libc::rusage,
 ) -> libc::pid_t {
-    unsafe { wait3(wstatus, options, rusage) }
+    unsafe { wait4_cp(-1, wstatus, options, rusage) }
 }
 
 /// glibc reserved-namespace alias for [`wait4`].
@@ -654,13 +758,13 @@ pub unsafe extern "C" fn __wait3(
 ///
 /// Same as [`wait4`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wait4(
+pub unsafe extern "C-unwind" fn __wait4(
     pid: libc::pid_t,
     wstatus: *mut c_int,
     options: c_int,
     rusage: *mut libc::rusage,
 ) -> libc::pid_t {
-    unsafe { wait4(pid, wstatus, options, rusage) }
+    unsafe { wait4_cp(pid, wstatus, options, rusage) }
 }
 
 /// glibc reserved-namespace alias for [`waitid`].
@@ -669,13 +773,13 @@ pub unsafe extern "C" fn __wait4(
 ///
 /// Same as [`waitid`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __waitid(
+pub unsafe extern "C-unwind" fn __waitid(
     idtype: c_int,
     id: libc::id_t,
     infop: *mut libc::siginfo_t,
     options: c_int,
 ) -> c_int {
-    unsafe { waitid(idtype, id, infop, options) }
+    unsafe { waitid_cp(idtype, id, infop, options) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1460,7 +1564,7 @@ unsafe fn clone_spawn_child(
             in("rdi") &args as *const raw_syscall::CloneArgs,
             in("rsi") std::mem::size_of::<raw_syscall::CloneArgs>(),
             in("r12") ctx as *const SpawnChildContext<'_>,
-            in("r13") spawn_child_main as usize,
+            in("r13") spawn_child_main as *const () as usize,
             lateout("rcx") _,
             lateout("r11") _,
         );
@@ -1593,10 +1697,10 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     let child_error = std::sync::atomic::AtomicI32::new(0);
     let use_pipe = cfg!(not(target_arch = "x86_64"));
     let mut err_pipe = [-1_i32; 2];
-    if use_pipe {
-        if let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) } {
-            return e;
-        }
+    if use_pipe
+        && let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) }
+    {
+        return e;
     }
 
     // The pipe must not become an implicit source/destination in user actions.

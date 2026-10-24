@@ -1,0 +1,92 @@
+name: POSIX AIO completion
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/aio_completion.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-core/src/pthread/**'
+      - 'tests/integration/fixture_aio_completion*'
+      - 'scripts/check_aio_completion.py'
+      - '.github/workflows/aio-completion.yml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aio-completion-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  completion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Record exact source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/aio-completion
+          git rev-parse HEAD > artifacts/aio-completion/revision.txt
+          rustc --version --verbose > artifacts/aio-completion/rustc.txt
+          for file in unistd_abi.rs aio_completion.rs; do
+            git hash-object "crates/frankenlibc-abi/src/$file" >> artifacts/aio-completion/source-blobs.txt
+          done
+      - name: Execute actual release AIO exports in both feature configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in default owned-tls-cache; do
+            args=()
+            if [[ "$feature" != default ]]; then args=(--features "$feature"); fi
+            mkdir -p "artifacts/aio-completion/$feature"
+            cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "artifacts/aio-completion/$feature/build.log"
+            cp target/release/libfrankenlibc_abi.so "artifacts/aio-completion/$feature/libfrankenlibc_abi.so"
+            python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "artifacts/aio-completion/$feature/cases"
+            cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "artifacts/aio-completion/$feature/regression.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "artifacts/aio-completion/$feature/regression.log"
+          done
+      - name: Stress owned-TLS signal waits and callback teardown
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path('artifacts/aio-completion/owned-tls-cache')
+          library = str((root / 'libfrankenlibc_abi.so').resolve())
+          env = dict(os.environ, LD_PRELOAD=library, FRANKENLIBC_TEST_LIBRARY=library,
+                     FRANKENLIBC_MODE='hardened', FRANKENLIBC_THREAD_NATIVE='0', RUST_BACKTRACE='1')
+          results = []
+          for case in ['suspend-signal', 'batch-signal', 'list-signal', 'thread-exit', 'thread-write-error']:
+              for iteration in range(32):
+                  result = subprocess.run([str(root / 'cases/fixture'), case], env=env, capture_output=True, timeout=12)
+                  ok = result.returncode == 0 and result.stdout == f'PASS {case}\n'.encode() and not result.stderr
+                  results.append({'case': case, 'iteration': iteration, 'passed': ok, 'returncode': result.returncode})
+                  (root / 'stress.json').write_text(json.dumps(results, indent=2) + '\n')
+                  if not ok:
+                      (root / f'stress-{case}-{iteration}.err').write_bytes(result.stderr)
+                      raise SystemExit(f'FAIL {case}/{iteration}: {result.stderr.decode(errors="replace")}')
+          print(f'Owned-TLS hardened stress: {len(results)} isolated cases passed')
+          PY
+      - name: Verify tests used the committed source unchanged
+        run: git diff --exit-code -- crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/src/aio_completion.rs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aio-completion-results
+          path: artifacts/aio-completion/
+          if-no-files-found: error
+          retention-days: 7

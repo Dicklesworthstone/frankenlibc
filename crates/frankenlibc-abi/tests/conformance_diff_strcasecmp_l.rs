@@ -41,7 +41,7 @@ fn host_strcasecmp_l() -> CasecmpLFn {
     unsafe {
         std::mem::transmute::<_, CasecmpLFn>(host_symbol(
             c"strcasecmp_l",
-            frankenlibc_abi::string_abi::strcasecmp_l as usize,
+            frankenlibc_abi::string_abi::strcasecmp_l as *const () as usize,
         ))
     }
 }
@@ -50,7 +50,7 @@ fn host_strncasecmp_l() -> NcasecmpLFn {
     unsafe {
         std::mem::transmute::<_, NcasecmpLFn>(host_symbol(
             c"strncasecmp_l",
-            frankenlibc_abi::string_abi::strncasecmp_l as usize,
+            frankenlibc_abi::string_abi::strncasecmp_l as *const () as usize,
         ))
     }
 }
@@ -59,7 +59,7 @@ fn host_newlocale() -> NewlocaleFn {
     unsafe {
         std::mem::transmute::<_, NewlocaleFn>(host_symbol(
             c"newlocale",
-            frankenlibc_abi::locale_abi::newlocale as usize,
+            frankenlibc_abi::locale_abi::newlocale as *const () as usize,
         ))
     }
 }
@@ -69,7 +69,7 @@ fn host_freelocale() -> FreelocaleFn {
     unsafe {
         std::mem::transmute::<_, FreelocaleFn>(host_symbol(
             c"freelocale",
-            frankenlibc_abi::locale_abi::freelocale as usize,
+            frankenlibc_abi::locale_abi::freelocale as *const () as usize,
         ))
     }
 }
@@ -111,7 +111,7 @@ fn strcasecmp_l_matches_glibc() {
         let b = CString::new(sb).unwrap();
         let g = unsafe { strcasecmp_l(a.as_ptr(), b.as_ptr(), loc) };
         let f = unsafe {
-            frankenlibc_abi::string_abi::strcasecmp_l(a.as_ptr(), b.as_ptr(), fl_loc as *mut c_void)
+            frankenlibc_abi::string_abi::strcasecmp_l(a.as_ptr(), b.as_ptr(), fl_loc)
         };
         assert_eq!(
             f.signum(),
@@ -126,7 +126,7 @@ fn strcasecmp_l_matches_glibc() {
                     a.as_ptr(),
                     b.as_ptr(),
                     n,
-                    fl_loc as *mut c_void,
+                    fl_loc,
                 )
             };
             assert_eq!(

@@ -6,6 +6,23 @@
 
 use core::arch::asm;
 
+/// Fill a Rust-owned slice with kernel entropy, returning the actual count.
+///
+/// Unlike the pointer-based veneer, this boundary is safe for core callers:
+/// the exclusive slice proves the writable extent for the whole syscall.
+/// Flags and partial/error results retain the Linux getrandom contract. No
+/// host libc call, descriptor, allocation, or fallback generator is involved.
+#[inline]
+pub fn sys_getrandom_slice(buffer: &mut [u8], flags: u32) -> Result<usize, i32> {
+    // SAFETY: buffer is exclusively borrowed and writable for buffer.len()
+    // bytes. The kernel does not retain its address after the syscall returns.
+    let count = unsafe { super::sys_getrandom(buffer.as_mut_ptr(), buffer.len(), flags) }?;
+    usize::try_from(count)
+        .ok()
+        .filter(|&count| count <= buffer.len())
+        .ok_or(crate::errno::EIO)
+}
+
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 const fn current_clone_tail_args(
@@ -542,6 +559,22 @@ mod tests {
     #[cfg(target_arch = "aarch64")]
     fn current_raw_clone_tail_abi_matches_aarch64_layout() {
         assert_eq!(current_clone_tail_args(1, 2, 3), (1, 3, 2));
+    }
+
+    #[test]
+    fn kernel_entropy_syscall_writes_only_the_supplied_slice() {
+        let mut storage = [0xa5; 258];
+        assert_eq!(super::sys_getrandom_slice(&mut storage[1..257], 1), Ok(256));
+        assert_eq!(storage[0], 0xa5);
+        assert_eq!(storage[257], 0xa5);
+    }
+
+    #[test]
+    fn kernel_entropy_syscall_preserves_invalid_flag_errors() {
+        assert_eq!(
+            super::sys_getrandom_slice(&mut [], u32::MAX),
+            Err(crate::errno::EINVAL)
+        );
     }
 }
 

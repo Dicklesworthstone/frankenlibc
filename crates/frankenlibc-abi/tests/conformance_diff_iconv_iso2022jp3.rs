@@ -38,9 +38,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }
@@ -282,7 +282,7 @@ fn iso2022jp3_decode_structured_and_fuzz() {
         0x1B, 0x1B, 0x28, 0x24, 0x42, 0x4A, 0x49, 0x4F, 0x50, 0x51, 0x40, 0x21, 0x30, 0x41, 0x7E,
         0x5C, 0x20, 0x0A, 0x00, 0x80, 0xFF, 0x24, 0x77,
     ];
-    let mut state: u64 = 0x2022_4a_50_03;
+    let mut state: u64 = 0x20_22_4a_50_03;
     let mut next = || {
         state = state
             .wrapping_mul(6364136223846793005)

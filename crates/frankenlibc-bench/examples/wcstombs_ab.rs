@@ -390,7 +390,7 @@ fn source_offset(input: &[libc::wchar_t], source: *const libc::wchar_t) -> Optio
     }
     let start = input.as_ptr() as usize;
     let address = source as usize;
-    let byte_len = input.len() * std::mem::size_of::<libc::wchar_t>();
+    let byte_len = std::mem::size_of_val(input);
     assert!(
         (start..=start + byte_len).contains(&address),
         "wcsrtombs returned a source pointer outside the input"
@@ -663,7 +663,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]

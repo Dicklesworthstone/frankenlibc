@@ -4,13 +4,13 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 use frankenlibc_core::syscall;
 use frankenlibc_core::unistd as unistd_core;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
 use crate::errno_abi::set_abi_errno;
@@ -34,13 +34,6 @@ struct NetEnt {
 }
 
 unsafe extern "C" {}
-
-#[inline]
-fn last_host_errno(default_errno: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default_errno)
-}
 
 #[inline]
 fn current_abi_errno() -> c_int {
@@ -109,7 +102,6 @@ fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 
-#[inline]
 /// Clamp a syscall's output length to what the allocator knows about `ptr`.
 ///
 /// TWO SHORT-CIRCUITS AHEAD OF THE LOOKUP, both behaviour-preserving and both
@@ -430,7 +422,12 @@ fn runtime_procfs_long(path: &str) -> Option<libc::c_long> {
         .and_then(|value| libc::c_long::try_from(value).ok())
 }
 
-fn maybe_clamp_io_len(requested: usize, addr: usize, enable_repair: bool) -> (usize, bool) {
+fn maybe_clamp_io_len(
+    symbol: &'static str,
+    requested: usize,
+    addr: usize,
+    enable_repair: bool,
+) -> (usize, bool) {
     if !enable_repair || requested == 0 || addr == 0 {
         return (requested, false);
     }
@@ -444,7 +441,12 @@ fn maybe_clamp_io_len(requested: usize, addr: usize, enable_repair: bool) -> (us
         requested,
         clamped: remaining,
     };
-    global_healing_policy().record(&action);
+    global_healing_policy().record(
+        "io_fd",
+        symbol,
+        &action,
+        RepairLogContext::new(0, Some(addr)),
+    );
     (remaining, true)
 }
 
@@ -477,6 +479,15 @@ pub(crate) unsafe fn sys_write_fd(fd: c_int, buf: *const c_void, count: usize) -
 /// `buf` must be valid for writes of up to `count` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc::ssize_t {
+    unsafe { read_cp(fd, buf, count) }
+}
+
+/// Body of [`read`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn read_cp(fd: c_int, buf: *mut c_void, count: usize) -> libc::ssize_t {
     if buf.is_null() && count > 0 {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -514,7 +525,8 @@ pub unsafe extern "C-unwind" fn read(fd: c_int, buf: *mut c_void, count: usize) 
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
+    let (effective_count, clamped) =
+        maybe_clamp_io_len("read", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for read(2); read is a cancellation point.
     let rc = unsafe {
         crate::pthread_abi::cancellation_point_syscall(
@@ -542,6 +554,12 @@ pub unsafe extern "C-unwind" fn write(
     buf: *const c_void,
     count: usize,
 ) -> libc::ssize_t {
+    unsafe { write_cp(fd, buf, count) }
+}
+
+/// Body of [`write`] and its aliases (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn write_cp(fd: c_int, buf: *const c_void, count: usize) -> libc::ssize_t {
     if buf.is_null() && count > 0 {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -579,7 +597,8 @@ pub unsafe extern "C-unwind" fn write(
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
+    let (effective_count, clamped) =
+        maybe_clamp_io_len("write", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for write(2); write is a cancellation point.
     let rc = unsafe {
         crate::pthread_abi::cancellation_point_syscall(
@@ -603,13 +622,19 @@ pub unsafe extern "C-unwind" fn write(
 /// `fd` should be a live file descriptor owned by the caller process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn close(fd: c_int) -> c_int {
+    unsafe { close_cp(fd) }
+}
+
+/// Body of [`close`] and its aliases (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn close_cp(fd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 6, true);
         return -1;
     }
-    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_close(fd)) {
+    let rc = match unsafe { crate::pthread_abi::at_cancellation_point(|| syscall::sys_close(fd)) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -634,12 +659,12 @@ pub unsafe extern "C-unwind" fn close(fd: c_int) -> c_int {
 ///
 /// C ABI entrypoint; no additional safety preconditions.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn posix_close(fd: c_int, flag: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn posix_close(fd: c_int, flag: c_int) -> c_int {
     if flag != 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let rc = unsafe { close(fd) };
+    let rc = unsafe { close_cp(fd) };
     if rc < 0 {
         let err = unsafe { *crate::errno_abi::__errno_location() };
         if err == errno::EINPROGRESS {
@@ -1587,7 +1612,7 @@ pub unsafe extern "C-unwind" fn fsync(fd: c_int) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_fsync(fd)) {
+    let rc = match unsafe { crate::pthread_abi::at_cancellation_point(|| syscall::sys_fsync(fd)) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1606,13 +1631,14 @@ pub unsafe extern "C-unwind" fn fdatasync(fd: c_int) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_fdatasync(fd)) {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    };
+    let rc =
+        match unsafe { crate::pthread_abi::at_cancellation_point(|| syscall::sys_fdatasync(fd)) } {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc != 0);
     rc
 }
@@ -1629,6 +1655,12 @@ pub unsafe extern "C-unwind" fn open(
     flags: c_int,
     mode: libc::mode_t,
 ) -> c_int {
+    unsafe { open_cp(path, flags, mode) }
+}
+
+/// Body of [`open`] and its aliases (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn open_cp(path: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1658,7 +1690,7 @@ pub unsafe extern "C-unwind" fn open(
 /// POSIX `creat` — equivalent to `open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn creat(path: *const c_char, mode: libc::mode_t) -> c_int {
-    unsafe { open(path, libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC, mode) }
+    unsafe { open_cp(path, libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC, mode) }
 }
 
 // ---------------------------------------------------------------------------
@@ -2052,6 +2084,17 @@ pub unsafe extern "C" fn flock(fd: c_int, operation: c_int) -> c_int {
 /// POSIX `openat` — open a file relative to a directory file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn openat(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    unsafe { openat_cp(dirfd, path, flags, mode) }
+}
+
+/// Body of [`openat`] and its aliases (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn openat_cp(
     dirfd: c_int,
     path: *const c_char,
     flags: c_int,
@@ -3105,11 +3148,8 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // POSIX option/version selectors.
         13 | 20 => 200809, // _SC_PRIORITIZED_IO, _SC_MESSAGE_PASSING
         45 => 2048,        // _SC_CHARCLASS_NAME_MAX
-        77..=82 => 200809, // _SC_THREAD_{ATTR_*,PRIORITY_*,PRIO_*,PROCESS_SHARED}
         88 => 8192,        // _SC_PASS_MAX
         89 => 700,         // _SC_XOPEN_VERSION
-        90 => 4,           // _SC_XOPEN_XCU_VERSION
-        91 | 93 | 94 => 1, // _SC_XOPEN_{UNIX,ENH_I18N,SHM}
         95 | 96 => 200809, // _SC_2_{CHAR_TERM,C_VERSION}
         98..=100 => 1,     // _SC_XOPEN_XPG{2,3,4}
         // C implementation limits reported by glibc's sysconf(3).
@@ -3136,7 +3176,7 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         120 => 2048, // _SC_NL_LANGMAX
         121..=124 => i32::MAX as libc::c_long,
         // _SC_NL_{MSGMAX,NMAX,SETMAX,TEXTMAX}
-        127 | 129 | 130 => 1, // _SC_XBS5_LP64_OFF64, _SC_XOPEN_{LEGACY,REALTIME}
+        127 => 1, // _SC_XBS5_LP64_OFF64
         // The signed lower bounds. Their _MAX counterparts are all present
         // above, but the four _MIN selectors were never added, so they fell
         // through to the unknown-selector arm and reported -1 with EINVAL
@@ -3418,6 +3458,14 @@ unsafe fn argv_byte_slices(argc: c_int, argv: *const *mut c_char) -> Option<Vec<
     let mut out = Vec::with_capacity(argc);
     for i in 0..argc {
         let p = unsafe { *argv.add(i) };
+        // getopt reads argv[0] only to name the program in diagnostics, so a
+        // NULL there is a valid spacer: GNU make parses MAKEFLAGS with
+        // `argv[0] = 0`, and refusing it left optind at 0, which make then
+        // dereferenced (`make -n`/`make -p` segfaulted).
+        if p.is_null() && i == 0 {
+            out.push(Vec::new());
+            continue;
+        }
         if p.is_null() {
             return None;
         }
@@ -3437,6 +3485,7 @@ fn getopt_is_option_like(elem: &[u8]) -> bool {
 /// argv element as a separate argument: true iff walking the bundle reaches
 /// a `Required`-argument option with no attached text after it. Used by the
 /// permutation step so an option and its separate argument move together.
+#[allow(dead_code)]
 fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
     let mut i = 1;
     while i < elem.len() {
@@ -3482,7 +3531,7 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
 /// fl wrote to fd 2 directly, so ftell(stderr) never moved (gnulib
 /// test-getopt detects the message that way).
 fn getopt_write_stderr(msg: &[u8]) {
-    let stream = unsafe { crate::stdio_abi::stderr };
+    let stream = crate::stdio_abi::active_stderr_stream();
     if stream.is_null() {
         let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
         return;
@@ -3606,7 +3655,6 @@ unsafe fn getopt_prepare(
         if first_nonopt != last_nonopt && last_nonopt != optind {
             unsafe { getopt_exchange(&mut argv_bytes, argv, first_nonopt, last_nonopt, optind) };
             first_nonopt += optind - last_nonopt;
-            last_nonopt = optind;
         } else if last_nonopt != optind {
             first_nonopt = optind;
         }
@@ -3629,7 +3677,6 @@ unsafe fn getopt_prepare(
                     getopt_exchange(&mut argv_bytes, argv, first_nonopt, last_nonopt, optind)
                 };
                 first_nonopt += optind - last_nonopt;
-                last_nonopt = optind;
             } else if first_nonopt == last_nonopt {
                 first_nonopt = optind;
             }
@@ -4626,8 +4673,9 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_printf("syslog", &fmt_bytes, arg_buf.as_ptr(), extract_count)
+    };
     syslog_send(priority, &rendered);
 }
 
@@ -4656,8 +4704,9 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
-    let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_printf("vsyslog", &fmt_bytes, arg_buf.as_ptr(), extract_count)
+    };
     syslog_send(priority, &rendered);
 }
 
@@ -5421,6 +5470,21 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
+    // Prevent a child handler from emitting through the parent's inherited
+    // runtime-log descriptor before the child can reopen the configured path.
+    let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            drop(malloc_guard);
+            drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+
     // SAFETY: fork via raw syscall
     let pid = crate::process_abi::clone_for_fork(host_fork);
     drop(malloc_guard);
@@ -5430,9 +5494,13 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     }
     let pid = match pid {
         Ok(p) => p,
-        Err(_) => {
-            drop(_environ_guard);
+        Err(error) => {
             drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            drop(signal_guard);
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
             return -1;
         }
     };
@@ -5442,8 +5510,8 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         // by the forking thread before the clone. See adopt_in_fork_child.
         unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
     }
-    drop(_environ_guard);
     drop(_pipeline_guard);
+    drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
@@ -5452,11 +5520,18 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     }
 
     if pid > 0 {
+        drop(signal_guard);
         // Parent: run atfork_parent for symmetry with fork(), then exit.
         crate::pthread_abi::run_atfork_parent(&atfork);
         syscall::sys_exit_group(0);
     }
 
+    // SAFETY: all fork guards are released, this is the sole surviving thread,
+    // and application signals remain masked until the inherited sink is
+    // replaced.
+    unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
+    crate::pthread_abi::remember_main_thread_host_handle();
+    drop(signal_guard);
     // Child: re-initialize via atfork_child before any further work.
     crate::pthread_abi::run_atfork_child(&atfork);
 
@@ -5628,7 +5703,7 @@ fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
     let (Some(f), Some(params)) = (f, params) else {
         VG_FAST.with(|c| {
             c.set(VdsoDrawFast {
-                state: 1 as *mut c_void,
+                state: std::ptr::dangling_mut::<c_void>(),
                 f: None,
                 state_len: 0,
             })
@@ -5641,7 +5716,7 @@ fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
     if VG_STATES_CLAIMED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= VG_STATE_SLOTS {
         VG_FAST.with(|c| {
             c.set(VdsoDrawFast {
-                state: 1 as *mut c_void,
+                state: std::ptr::dangling_mut::<c_void>(),
                 f: None,
                 state_len: 0,
             })
@@ -5663,7 +5738,7 @@ fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
         Err(_) => {
             VG_FAST.with(|c| {
                 c.set(VdsoDrawFast {
-                    state: 1 as *mut c_void,
+                    state: std::ptr::dangling_mut::<c_void>(),
                     f: None,
                     state_len: 0,
                 })
@@ -5880,9 +5955,16 @@ pub unsafe extern "C" fn statx(
 // fallocate — RawSyscall
 // ---------------------------------------------------------------------------
 
-/// Linux `fallocate` — allocate/deallocate file space.
+/// Linux `fallocate` — allocate/deallocate file space. A cancellation point,
+/// as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64) -> c_int {
+pub unsafe extern "C-unwind" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64) -> c_int {
+    unsafe { fallocate_cp(fd, mode, offset, len) }
+}
+
+/// Body of [`fallocate`] and its alias (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn fallocate_cp(fd: c_int, mode: c_int, offset: i64, len: i64) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, len as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5891,7 +5973,9 @@ pub unsafe extern "C" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64
         return -1;
     }
 
-    let rc = match syscall::sys_fallocate(fd, mode, offset, len) {
+    let rc = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_fallocate(fd, mode, offset, len))
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6347,12 +6431,18 @@ pub unsafe extern "C-unwind" fn open64(
     flags: c_int,
     mode: libc::mode_t,
 ) -> c_int {
-    unsafe { open(pathname, flags, mode) }
+    unsafe { open_cp(pathname, flags, mode) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn creat64(pathname: *const c_char, mode: libc::mode_t) -> c_int {
-    unsafe { creat(pathname, mode) }
+pub unsafe extern "C-unwind" fn creat64(pathname: *const c_char, mode: libc::mode_t) -> c_int {
+    unsafe {
+        open_cp(
+            pathname,
+            libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC,
+            mode,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6402,7 +6492,7 @@ pub unsafe extern "C-unwind" fn pread64(
     count: usize,
     offset: i64,
 ) -> isize {
-    unsafe { crate::io_abi::pread(fd, buf, count, offset) }
+    unsafe { crate::io_abi::pread_cp(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6412,7 +6502,7 @@ pub unsafe extern "C-unwind" fn pwrite64(
     count: usize,
     offset: i64,
 ) -> isize {
-    unsafe { crate::io_abi::pwrite(fd, buf, count, offset) }
+    unsafe { crate::io_abi::pwrite_cp(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6527,11 +6617,13 @@ pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
 // ---------------------------------------------------------------------------
 
 /// SEM_VALUE_MAX — POSIX specifies at least 32767.
+#[allow(dead_code)]
 const SEM_VALUE_MAX: c_uint = 0x7fff_ffff;
 
 /// Interpret the sem_t pointer as a pointer to an atomic i32 counter.
 /// On Linux/glibc, sem_t is a 32-byte union; the first 4 bytes hold the
 /// unsigned counter for unnamed semaphores.
+#[allow(dead_code)]
 unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI32 {
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
@@ -6539,8 +6631,10 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
 /// Marker in the sem_t word at offset 8 of a process-shared semaphore
 /// (`sem_init` with nonzero `pshared`, or `sem_open`): its futexes must be
 /// shared, since process-private futexes never wake another process.
+#[allow(dead_code)]
 const SEM_SHARED_MARK: u32 = 0x5345_4d53; // "SMES"
 
+#[allow(dead_code)]
 unsafe fn sem_shared_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
     // SAFETY: a Linux sem_t is at least 32 bytes and 4-aligned.
     unsafe {
@@ -6550,6 +6644,7 @@ unsafe fn sem_shared_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::
 }
 
 /// `FUTEX_PRIVATE_FLAG` for a process-private semaphore, 0 for a shared one.
+#[allow(dead_code)]
 pub(crate) fn sem_futex_private_flag(sem: *mut c_void) -> c_int {
     // SAFETY: `sem` is the caller's sem_t.
     if unsafe { sem_shared_as_atomic(sem) }.load(std::sync::atomic::Ordering::Acquire)
@@ -6567,6 +6662,7 @@ pub(crate) fn sem_futex_private_flag(sem: *mut c_void) -> c_int {
 /// FUTEX_WAKE syscall when nobody is blocked, and e634aff2a deleted the whole
 /// mechanism. Without it every sem_post issues a syscall even uncontended, and
 /// conformance_diff_semaphore's wake test has no registration to observe.
+#[allow(dead_code)]
 unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
     // SAFETY: callers provide a valid, suitably aligned Linux sem_t, which is
     // at least 32 bytes. Offset four is therefore an aligned AtomicU32 slot.
@@ -6579,6 +6675,7 @@ unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic:
 /// RAII registration: decrements on every exit path, including the error
 /// returns out of the sleeping loop, so a failed sem_wait cannot leak a
 /// phantom waiter and pin sem_post to the syscall path forever.
+#[allow(dead_code)]
 pub(crate) struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
 
 impl Drop for SemWaiterRegistration {
@@ -6587,12 +6684,17 @@ impl Drop for SemWaiterRegistration {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
     let waiters = unsafe { sem_waiters_as_atomic(sem) };
     waiters.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     SemWaiterRegistration(waiters)
 }
 
+// Always inlined: its futex wait is the cancellation point of the exported
+// sem_wait, whose caller decides whether it is one (at_cancellation_point).
+#[allow(dead_code)]
+#[inline(always)]
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     // Semaphore waits are cancellation points.
     match unsafe {
@@ -6612,6 +6714,7 @@ fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     }
 }
 
+#[allow(dead_code)]
 fn sem_realtime_now() -> Result<libc::timespec, c_int> {
     let mut now = libc::timespec {
         tv_sec: 0,
@@ -6623,6 +6726,7 @@ fn sem_realtime_now() -> Result<libc::timespec, c_int> {
     Ok(now)
 }
 
+#[allow(dead_code)]
 fn sem_relative_timeout(abs_timeout: *const libc::timespec) -> Result<libc::timespec, c_int> {
     if abs_timeout.is_null() {
         return Err(libc::EINVAL);
@@ -6652,6 +6756,9 @@ fn sem_relative_timeout(abs_timeout: *const libc::timespec) -> Result<libc::time
     Ok(rel)
 }
 
+// Always inlined, as sem_futex_wait is.
+#[allow(dead_code)]
+#[inline(always)]
 fn sem_futex_wait_timed(
     word: *mut c_void,
     expected: i32,
@@ -6679,6 +6786,7 @@ fn sem_futex_wait_timed(
     }
 }
 
+#[allow(dead_code)]
 fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
     match unsafe {
         syscall::sys_futex(
@@ -6702,12 +6810,14 @@ fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
 // sem_close munmaps it; sem_unlink removes the backing file.
 
 /// Size of the semaphore mapping (page-aligned minimum).
+#[allow(dead_code)]
 const SEM_MMAP_SIZE: usize = 32; // Must be >= sizeof(sem_t) = 32 on glibc/x86_64
 
 /// Resolve a POSIX semaphore name to its /dev/shm/sem.NAME path.
 ///
 /// The name MUST start with '/' and contain no further slashes.
 /// glibc convention: the backing file is `/dev/shm/sem.<name_without_slash>`.
+#[allow(dead_code)]
 #[inline]
 unsafe fn resolve_sem_path(name: *const c_char) -> Result<CString, c_int> {
     if name.is_null() {
@@ -6741,110 +6851,26 @@ unsafe fn resolve_sem_path(name: *const c_char) -> Result<CString, c_int> {
 
 /// POSIX `sem_open` — open/create a named semaphore.
 ///
-/// Native implementation using /dev/shm/sem.NAME + mmap. The mapped region
-/// contains a futex word compatible with our unnamed semaphore operations.
+/// Atomically publishes initialized storage and retains one reference-counted
+/// mapping per inode. O_CREAT never reinitializes an existing semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: ...) -> *mut c_void {
-    let path = match unsafe { resolve_sem_path(name) } {
-        Ok(p) => p,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return usize::MAX as *mut c_void; // SEM_FAILED = (sem_t*)-1
-        }
-    };
-
-    // Extract optional mode and value when O_CREAT is set.
     let (mode, initial_value) = if (oflag & libc::O_CREAT) != 0 {
         let m = unsafe { args.next_arg::<libc::mode_t>() };
         let v = unsafe { args.next_arg::<c_uint>() };
         (m, v)
     } else {
-        (0o600 as libc::mode_t, 0u32)
+        (0, 0)
     };
-
-    if initial_value > SEM_VALUE_MAX {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return usize::MAX as *mut c_void;
-    }
-
-    // Open the backing file.
-    let fd = match unsafe {
-        syscall::sys_openat(
-            libc::AT_FDCWD,
-            path.as_ptr() as *const u8,
-            oflag | libc::O_RDWR | libc::O_CLOEXEC,
-            mode,
-        )
-    } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return usize::MAX as *mut c_void;
-        }
-    };
-
-    // If we created a new file, initialize it with the semaphore value.
-    let created = (oflag & libc::O_CREAT) != 0;
-    if created {
-        // Set file size to SEM_MMAP_SIZE.
-        if let Err(e) = unsafe { syscall::sys_ftruncate(fd, SEM_MMAP_SIZE as i64) } {
-            let _ = syscall::sys_close(fd);
-            unsafe { set_abi_errno(e) };
-            return usize::MAX as *mut c_void;
-        }
-    }
-
-    // mmap the file.
-    let ptr = match unsafe {
-        syscall::sys_mmap(
-            std::ptr::null_mut(),
-            SEM_MMAP_SIZE,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
-            fd,
-            0,
-        )
-    } {
-        Ok(p) => p as *mut c_void,
-        Err(_) => libc::MAP_FAILED,
-    };
-
-    // Close the fd — the mapping keeps the file open.
-    let _ = syscall::sys_close(fd);
-
-    if ptr == libc::MAP_FAILED {
-        unsafe { set_abi_errno(last_host_errno(errno::ENOMEM)) };
-        return usize::MAX as *mut c_void;
-    }
-
-    // If we just created the semaphore, initialize the futex word.
-    if created {
-        let atom = unsafe { &*(ptr as *const std::sync::atomic::AtomicI32) };
-        atom.store(initial_value as i32, std::sync::atomic::Ordering::Release);
-    }
-    // Named semaphores are shared between processes by definition.
-    unsafe { sem_shared_as_atomic(ptr) }
-        .store(SEM_SHARED_MARK, std::sync::atomic::Ordering::Release);
-
-    ptr
+    unsafe { crate::named_semaphore::open_values(name, oflag, mode, initial_value) }
 }
 
 /// POSIX `sem_close` — close a named semaphore.
 ///
-/// Unmaps the shared memory region. The backing file remains.
+/// Unmaps only the final local open reference; the backing name remains.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
-    if sem.is_null() || sem == libc::MAP_FAILED {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    match unsafe { syscall::sys_munmap(sem as *mut u8, SEM_MMAP_SIZE) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::named_semaphore::close(sem) }
 }
 
 /// POSIX `sem_unlink` — remove a named semaphore.
@@ -6853,176 +6879,37 @@ pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
 /// until all processes call `sem_close`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
-    let path = match unsafe { resolve_sem_path(name) } {
-        Ok(p) => p,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return -1;
-        }
-    };
-
-    match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr() as *const u8, 0) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::named_semaphore::unlink(name) }
 }
 
 /// POSIX `sem_init` — initialize an unnamed semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int {
-    if sem.is_null() || value > SEM_VALUE_MAX {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // Zero the waiter counter too: a sem_t is often re-initialised over reused
-    // storage, and a stale nonzero count would keep sem_post on the syscall
-    // path for the life of the new semaphore.
-    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
-    unsafe { sem_shared_as_atomic(sem) }.store(
-        if pshared != 0 { SEM_SHARED_MARK } else { 0 },
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    atom.store(value as i32, std::sync::atomic::Ordering::Release);
-    0
+    unsafe { crate::semaphore_wait::init(sem, pshared, value) }
 }
 
 /// POSIX `sem_destroy` — destroy an unnamed semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    // No resources to reclaim for futex-based semaphores, but clear the waiter
-    // counter so reused storage starts clean.
-    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
-    0
+    unsafe { crate::semaphore_wait::destroy(sem) }
 }
 
 /// POSIX `sem_post` — increment the semaphore and wake one waiter.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // SeqCst, not Release: it must be ordered against the waiter load below and
-    // against the registering thread's SeqCst recheck in sem_wait. A Release
-    // increment paired with that load permits the store-buffering execution
-    // where neither side sees the other, i.e. a lost wake.
-    let old = atom.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    if old < 0 || old == i32::MAX {
-        // Overflow protection
-        atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        unsafe { set_abi_errno(libc::EOVERFLOW) };
-        return -1;
-    }
-    // Only syscall when somebody is actually blocked. Uncontended posts are the
-    // common case and were paying a FUTEX_WAKE each.
-    if unsafe { sem_waiters_as_atomic(sem) }.load(std::sync::atomic::Ordering::SeqCst) != 0 {
-        sem_futex_wake(sem, 1);
-    }
-    0
+    unsafe { crate::semaphore_wait::post(sem) }
 }
 
 /// POSIX `sem_wait` — decrement the semaphore, blocking if zero.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn sem_wait(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // Uncontended fast path: never registers, so an immediately-available
-    // token costs no extra atomics.
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::Acquire);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
-            break;
-        }
-    }
-
-    // Register BEFORE rechecking the value. With the matching SeqCst value
-    // increment and waiter load in sem_post, either the poster observes this
-    // registration and wakes us, or this thread observes the posted token and
-    // never sleeps. That ordering is what rules out the lost-wake
-    // store-buffering execution; registering after the recheck would reopen it.
-    let _registration = unsafe { sem_register_waiter(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
-            let ret = sem_futex_wait(sem, val);
-            if ret < 0 {
-                let err = -ret;
-                if err == libc::EINTR {
-                    unsafe { set_abi_errno(libc::EINTR) };
-                    return -1;
-                }
-                if err != libc::EAGAIN {
-                    unsafe { set_abi_errno(err) };
-                    return -1;
-                }
-                // EAGAIN is spurious wakeup or value mismatch — retry.
-            }
-        }
-    }
+    unsafe { crate::semaphore_wait::wait_cp(sem) }
 }
 
 /// POSIX `sem_trywait` — non-blocking decrement.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_trywait(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::Acquire);
-        if val <= 0 {
-            unsafe { set_abi_errno(libc::EAGAIN) };
-            return -1;
-        }
-        if atom
-            .compare_exchange_weak(
-                val,
-                val - 1,
-                std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Relaxed,
-            )
-            .is_ok()
-        {
-            return 0;
-        }
-    }
+    unsafe { crate::semaphore_wait::trywait(sem) }
 }
 
 /// POSIX `sem_timedwait` — decrement with absolute timeout.
@@ -7031,60 +6918,13 @@ pub unsafe extern "C-unwind" fn sem_timedwait(
     sem: *mut c_void,
     abs_timeout: *const libc::timespec,
 ) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // Register as a waiter before checking the value, as sem_wait does:
-    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
-    // unregistered sem_timedwait slept until its deadline after every post
-    // (CPython's multiprocessing Barrier, built on timed SemLock waits,
-    // stalled for its full timeouts).
-    let _registration = unsafe { sem_register_waiter(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
-            if abs_timeout.is_null() {
-                unsafe { set_abi_errno(libc::EINVAL) };
-                return -1;
-            }
-            let ret = sem_futex_wait_timed(sem, val, abs_timeout);
-            if ret < 0 {
-                let err = -ret;
-                if err != libc::EAGAIN {
-                    unsafe { set_abi_errno(err) };
-                    return -1;
-                }
-                // EAGAIN is spurious wakeup or value mismatch — retry.
-            }
-        }
-    }
+    unsafe { crate::semaphore_wait::timed_cp(sem, libc::CLOCK_REALTIME, abs_timeout, true) }
 }
 
 /// POSIX `sem_getvalue` — read the current semaphore value.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int {
-    if sem.is_null() || sval.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    let val = atom.load(std::sync::atomic::Ordering::Relaxed);
-    unsafe { *sval = val.max(0) };
-    0
+    unsafe { crate::semaphore_wait::getvalue(sem, sval) }
 }
 
 // ---------------------------------------------------------------------------
@@ -7234,6 +7074,18 @@ pub unsafe extern "C-unwind" fn mq_timedreceive(
     msg_prio: *mut c_uint,
     abs_timeout: *const libc::timespec,
 ) -> isize {
+    unsafe { mq_timedreceive_cp(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) }
+}
+
+/// Body of [`mq_timedreceive`] and `mq_clockreceive` (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn mq_timedreceive_cp(
+    mqdes: c_int,
+    msg_ptr: *mut c_char,
+    msg_len: usize,
+    msg_prio: *mut c_uint,
+    abs_timeout: *const libc::timespec,
+) -> isize {
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_mq_timedreceive(
@@ -7256,6 +7108,18 @@ pub unsafe extern "C-unwind" fn mq_timedreceive(
 /// `mq_timedsend` — send a message to a queue with timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn mq_timedsend(
+    mqdes: c_int,
+    msg_ptr: *const c_char,
+    msg_len: usize,
+    msg_prio: c_uint,
+    abs_timeout: *const libc::timespec,
+) -> c_int {
+    unsafe { mq_timedsend_cp(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) }
+}
+
+/// Body of [`mq_timedsend`] and `mq_clocksend` (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn mq_timedsend_cp(
     mqdes: c_int,
     msg_ptr: *const c_char,
     msg_len: usize,
@@ -7356,7 +7220,7 @@ fn mq_convert_mono_to_real(mono_abs: libc::timespec) -> Option<libc::timespec> {
 /// `msg_ptr` must point to at least `msg_len` readable bytes.
 /// `abs_timeout`, when non-NULL, must point to a valid timespec.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_clocksend(
+pub unsafe extern "C-unwind" fn mq_clocksend(
     mqdes: c_int,
     msg_ptr: *const c_char,
     msg_len: usize,
@@ -7365,7 +7229,7 @@ pub unsafe extern "C" fn mq_clocksend(
     abs_timeout: *const libc::timespec,
 ) -> c_int {
     if abs_timeout.is_null() || clockid == libc::CLOCK_REALTIME {
-        return unsafe { mq_timedsend(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) };
+        return unsafe { mq_timedsend_cp(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) };
     }
     if clockid == libc::CLOCK_MONOTONIC {
         // SAFETY: caller-supplied valid timespec.
@@ -7374,7 +7238,7 @@ pub unsafe extern "C" fn mq_clocksend(
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         };
-        return unsafe { mq_timedsend(mqdes, msg_ptr, msg_len, msg_prio, &real) };
+        return unsafe { mq_timedsend_cp(mqdes, msg_ptr, msg_len, msg_prio, &real) };
     }
     unsafe { set_abi_errno(libc::EINVAL) };
     -1
@@ -7390,7 +7254,7 @@ pub unsafe extern "C" fn mq_clocksend(
 /// `msg_prio`, when non-NULL, must point to writable `c_uint`.
 /// `abs_timeout`, when non-NULL, must point to a valid timespec.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_clockreceive(
+pub unsafe extern "C-unwind" fn mq_clockreceive(
     mqdes: c_int,
     msg_ptr: *mut c_char,
     msg_len: usize,
@@ -7399,7 +7263,7 @@ pub unsafe extern "C" fn mq_clockreceive(
     abs_timeout: *const libc::timespec,
 ) -> isize {
     if abs_timeout.is_null() || clockid == libc::CLOCK_REALTIME {
-        return unsafe { mq_timedreceive(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) };
+        return unsafe { mq_timedreceive_cp(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) };
     }
     if clockid == libc::CLOCK_MONOTONIC {
         // SAFETY: caller-supplied valid timespec.
@@ -7408,7 +7272,7 @@ pub unsafe extern "C" fn mq_clockreceive(
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         };
-        return unsafe { mq_timedreceive(mqdes, msg_ptr, msg_len, msg_prio, &real) };
+        return unsafe { mq_timedreceive_cp(mqdes, msg_ptr, msg_len, msg_prio, &real) };
     }
     unsafe { set_abi_errno(libc::EINVAL) };
     -1
@@ -8220,10 +8084,17 @@ pub unsafe extern "C" fn io_pgetevents(
 /// bytes. The kernel rejects calls with the wrong size for any of
 /// its known struct versions.
 ///
-/// Callers in Rust must be extremely careful: in the child branch,
-/// stack/TLS state may be unsafe to use until the kernel completes
-/// thread setup. Most usage should go through pthread_create or the
-/// portable libc clone wrapper instead.
+/// This ordinary return-style wrapper is usable in both parent and child only
+/// when `clone_args.stack == 0` and `clone_args.stack_size == 0`, so the kernel
+/// preserves the calling stack as it does for `fork`. A caller requesting a
+/// new stack (especially with `CLONE_VM` or `CLONE_VFORK`) must supply an
+/// architecture-specific assembly trampoline that never returns through this
+/// Rust frame; [`crate::process_abi::posix_spawn`] does that internally.
+///
+/// There is deliberately no generic Rust child epilogue here. In particular,
+/// process-local runtime-log admission recognizes a non-`CLONE_VM` child by
+/// its raw process ID on first use, without touching an arbitrary child stack
+/// or TLS configuration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clone3(cl_args: *mut c_void, size: usize) -> libc::pid_t {
     if cl_args.is_null() {
@@ -8484,28 +8355,22 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 // wordexp / wordfree — Implemented (native POSIX word expansion)
 // ---------------------------------------------------------------------------
 //
-// Supports: tilde expansion (~user), environment variable expansion ($VAR, ${VAR}),
-// arithmetic expansion ($((...))), pathname expansion (glob), field splitting on
-// IFS, and WRDE_NOCMD safety.
+// The expansion itself is `frankenlibc_core::stdlib::wordexp::
+// expand_input_fields`: one left-to-right pass doing tilde, parameter
+// (including the program's positional parameters and `$$`), arithmetic and
+// command substitution with quote removal, recording for every character
+// whether an unquoted expansion produced it (IFS splits only those) and
+// whether it was typed literally and unquoted (only those glob). This layer
+// supplies the environment, the NSS-aware home directory lookup, the
+// `/bin/sh -c` runner and pathname expansion through fl's glob, then builds
+// the wordexp_t.
 //
-// Command substitution ($(...) and `...`) is rejected with WRDE_CMDSUB when
-// WRDE_NOCMD is set, and executed through /bin/sh otherwise — both matching live
-// glibc, verified rather than assumed: an LD_PRELOADed C program gets the same rc
-// and the same words from fl as from glibc for $(echo hi) with and without
-// WRDE_NOCMD, for a backtick substitution, and for $((1+2)).
-//
-// ARITHMETIC IS NOT COMMAND SUBSTITUTION and is NOT gated by WRDE_NOCMD:
-// $((1+2)) expands to 3 even under WRDE_NOCMD, again matching glibc. Only an
-// arithmetic body that itself contains a command substitution is rejected, which
-// is what `arithmetic_contains_command_substitution` below exists to detect.
-//
-// HOW THE SHELL IS INVOKED, spelled out because the previous wording here
-// described the DANGEROUS shape rather than the implemented one. It is not
-// `sh -c "echo <word>"` with the caller's word interpolated into the script text;
-// that would be a command-injection hazard. The script is a FIXED string and the
-// caller's word is passed as a separate ARGUMENT, so the shell parses it only at
-// the one explicit evaluation point, and the results come back NUL-framed so
-// empty words survive without any whitespace decoding. See the call site below.
+// Command substitution runs each `$(...)`/backquote body as `/bin/sh -c BODY`
+// -- the body is the command, exactly as in a shell, never spliced into a
+// larger script -- with stdout captured and trailing newlines removed. Its
+// stderr goes to /dev/null unless WRDE_SHOWERR. Under WRDE_NOCMD any command
+// substitution, including one inside `$((...))` or `${...}`, is WRDE_CMDSUB
+// and nothing runs; `$((1+2))` alone still expands.
 
 // POSIX wordexp_t layout (matches glibc x86_64):
 // struct wordexp_t { size_t we_wordc; char **we_wordv; size_t we_offs; };
@@ -8513,7 +8378,6 @@ const WRDE_DOOFFS: c_int = 1 << 0;
 const WRDE_APPEND: c_int = 1 << 1;
 const WRDE_NOCMD: c_int = 1 << 2;
 const WRDE_REUSE: c_int = 1 << 3;
-#[allow(dead_code)]
 const WRDE_SHOWERR: c_int = 1 << 4;
 const WRDE_UNDEF: c_int = 1 << 5;
 
@@ -8530,625 +8394,118 @@ struct WordexpT {
     we_offs: usize,
 }
 
-struct WordexpSyntaxScan {
-    has_bad_char: bool,
-    has_command_substitution: bool,
-    has_syntax_error: bool,
-}
+// The program's argv, for wordexp's positional parameters ($0, $1, "$@"),
+// which glibc takes from the process arguments. Captured by an ELF
+// initializer (glibc's ld.so passes argc/argv/envp to init_array entries);
+// only integers are stored here.
+static WORDEXP_ARGC: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static WORDEXP_ARGV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn scan_braced_parameter_end(s: &[u8], open_brace: usize) -> Option<usize> {
-    let name_start = open_brace + 1;
-    let mut i = name_start;
-    while i < s.len() {
-        if s[i] == b'}' {
-            return (i > name_start).then_some(i + 1);
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Arithmetic expansion can itself contain command substitution.  It must be
-/// recognized separately because `scan_arith_end` otherwise skips the whole
-/// arithmetic body while the outer scanner is deciding whether WRDE_NOCMD
-/// applies.
-fn arithmetic_contains_command_substitution(s: &[u8]) -> bool {
-    let mut i = 0;
-    let mut escaped = false;
-    let mut in_single_quote = false;
-
-    while i < s.len() {
-        let byte = s[i];
-        if escaped {
-            escaped = false;
-            i += 1;
-            continue;
-        }
-        if byte == b'\\' && !in_single_quote {
-            escaped = true;
-            i += 1;
-            continue;
-        }
-        if byte == b'\'' {
-            in_single_quote = !in_single_quote;
-            i += 1;
-            continue;
-        }
-        if !in_single_quote && (byte == b'`' || (byte == b'$' && s.get(i + 1) == Some(&b'('))) {
-            return true;
-        }
-        i += 1;
-    }
-
-    false
-}
-
-/// Scan `wordexp` input while honoring shell quoting and escaping context.
-fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
-    let mut scan = WordexpSyntaxScan {
-        has_bad_char: false,
-        has_command_substitution: false,
-        has_syntax_error: false,
-    };
-    let mut i = 0;
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-
-    while i < s.len() {
-        let byte = s[i];
-        if escaped {
-            escaped = false;
-            i += 1;
-            continue;
-        }
-        if in_single_quote {
-            if byte == b'\'' {
-                in_single_quote = false;
-            }
-            i += 1;
-            continue;
-        }
-        if byte == b'\\' {
-            escaped = true;
-            i += 1;
-            continue;
-        }
-        if byte == b'\'' && !in_double_quote {
-            in_single_quote = true;
-            i += 1;
-            continue;
-        }
-        if in_double_quote {
-            if byte == b'"' {
-                in_double_quote = false;
-                i += 1;
-                continue;
-            }
-            if byte == b'`' {
-                scan.has_command_substitution = true;
-                return scan;
-            }
-            if byte == b'$' && i + 1 < s.len() {
-                match s[i + 1] {
-                    b'(' => {
-                        // `$((` is ARITHMETIC, not command substitution. glibc
-                        // permits arithmetic under WRDE_NOCMD and rejects only
-                        // `$(cmd)` and backticks, so classifying `$((1+2))` as
-                        // command substitution made fl return WRDE_CMDSUB for a
-                        // word glibc expands to "3". bd-yb9f9r.
-                        if s.get(i + 2) == Some(&b'(') {
-                            match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
-                                Some((expr, next)) => {
-                                    if arithmetic_contains_command_substitution(expr) {
-                                        scan.has_command_substitution = true;
-                                        return scan;
-                                    }
-                                    i = next;
-                                    continue;
-                                }
-                                None => {
-                                    scan.has_syntax_error = true;
-                                    return scan;
-                                }
-                            }
-                        }
-                        scan.has_command_substitution = true;
-                        return scan;
-                    }
-                    b'{' => match scan_braced_parameter_end(s, i + 1) {
-                        Some(next) => {
-                            i = next;
-                            continue;
-                        }
-                        None => {
-                            scan.has_syntax_error = true;
-                            return scan;
-                        }
-                    },
-                    _ => {}
-                }
-            }
-            i += 1;
-            continue;
-        }
-        if byte == b'"' {
-            in_double_quote = !in_double_quote;
-            i += 1;
-            continue;
-        }
-        if byte == b'`' {
-            scan.has_command_substitution = true;
-            return scan;
-        }
-        if byte == b'$' && i + 1 < s.len() {
-            match s[i + 1] {
-                b'(' => {
-                    // Same arithmetic-vs-command-substitution split as the
-                    // double-quoted branch above (bd-yb9f9r).
-                    if s.get(i + 2) == Some(&b'(') {
-                        match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
-                            Some((expr, next)) => {
-                                if arithmetic_contains_command_substitution(expr) {
-                                    scan.has_command_substitution = true;
-                                    return scan;
-                                }
-                                i = next;
-                                continue;
-                            }
-                            None => {
-                                scan.has_syntax_error = true;
-                                return scan;
-                            }
-                        }
-                    }
-                    scan.has_command_substitution = true;
-                    return scan;
-                }
-                b'{' => match scan_braced_parameter_end(s, i + 1) {
-                    Some(next) => {
-                        i = next;
-                        continue;
-                    }
-                    None => {
-                        scan.has_syntax_error = true;
-                        return scan;
-                    }
-                },
-                _ => {}
-            }
-        }
-        if matches!(
-            byte,
-            b'|' | b'&' | b';' | b'<' | b'>' | b'\n' | b'(' | b')' | b'{' | b'}'
-        ) {
-            scan.has_bad_char = true;
-            return scan;
-        }
-        i += 1;
-    }
-
-    if escaped {
-        scan.has_syntax_error = true;
-    }
-
-    scan
-}
-
-/// Perform tilde expansion on a word.
-fn expand_tilde(word: &str) -> String {
-    if !word.starts_with('~') {
-        return word.to_string();
-    }
-    let rest = &word[1..];
-    let (user, suffix) = match rest.find('/') {
-        Some(pos) => (&rest[..pos], &rest[pos..]),
-        None => (rest, ""),
-    };
-    if user.is_empty() {
-        // ~ alone → $HOME
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{home}{suffix}");
-        }
-        return word.to_string();
-    }
-    // `~user` → that user's home directory from the passwd backend. This was
-    // previously a TODO that returned the word unchanged, so `~root` stayed
-    // literal where glibc gives "/root". Measured against live glibc:
-    //   ~root  -> /root      ~root/sub -> /root/sub     ~bin -> /bin
-    //   ~nosuchuser -> ~nosuchuser     (unknown user stays LITERAL, rc=0)
-    //   a~root -> a~root                (tilde only applies at word start)
-    // bd-xyjzl0.
-    if let Ok(content) = std::fs::read("/etc/passwd")
-        && let Some(entry) = frankenlibc_core::pwd::lookup_by_name(&content, user.as_bytes())
-        && let Ok(dir) = core::str::from_utf8(&entry.pw_dir)
-    {
-        return format!("{dir}{suffix}");
-    }
-    // Unknown user (or an unreadable / non-UTF-8 backend): leave the word alone,
-    // which is what glibc does rather than erroring.
-    word.to_string()
-}
-
-/// Perform environment variable expansion on a word.
-///
-/// Thin shim over `frankenlibc_core::stdlib::wordexp::expand_vars` —
-/// supplies the env-lookup closure (using `std::env::var`) and maps
-/// the typed `ExpandError::UndefinedVariable` to the `WRDE_BADVAL`
-/// integer return code at the boundary.
-fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
-    let undef_is_error = (flags & WRDE_UNDEF) != 0;
-    frankenlibc_core::stdlib::wordexp::expand_vars(word, undef_is_error, |name| {
-        std::env::var(name).ok()
-    })
-    .or_else(|e| match e {
-        frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => Err(WRDE_BADVAL),
-        // glibc reports a malformed `$((...))` as WRDE_SYNTAX — measured for
-        // `$((1+))`, `$(( ))`, `$((abc))`, `$((1/0))`, `$((~5))`, `$((!0))`
-        // and `$((SETVAR+1))`. bd-yb9f9r.
-        frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax
-        | frankenlibc_core::stdlib::wordexp::ExpandError::BadSubstitution => Err(WRDE_SYNTAX),
-        // See the split-mask expander: a fired `?` is a diagnostic plus an empty
-        // expansion, not an error return. bd-xyjzl0.
-        frankenlibc_core::stdlib::wordexp::ExpandError::NullOrUnset { name, message } => {
-            eprintln!("{name}: {message}");
-            Ok(String::new())
-        }
-    })
-}
-
-fn push_masked_char(result: &mut String, split_mask: &mut Vec<bool>, ch: char, splittable: bool) {
-    result.push(ch);
-    split_mask.push(splittable);
-}
-
-fn expand_vars_with_split_mask(word: &str, flags: c_int) -> Result<(String, Vec<bool>), c_int> {
-    let undef_is_error = (flags & WRDE_UNDEF) != 0;
-    expand_vars_with_split_mask_dyn(word, undef_is_error, true)
-}
-
-fn expand_vars_with_split_mask_dyn(
-    word: &str,
-    undef_is_error: bool,
-    split_unquoted_expansions: bool,
-) -> Result<(String, Vec<bool>), c_int> {
-    let mut result = String::with_capacity(word.len());
-    let mut split_mask = Vec::with_capacity(word.len());
-    let bytes = word.as_bytes();
-    let mut i = 0usize;
-
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            push_masked_char(&mut result, &mut split_mask, bytes[i + 1] as char, false);
-            i += 2;
-            continue;
-        }
-        if bytes[i] == b'\'' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'\'' {
-                push_masked_char(&mut result, &mut split_mask, bytes[i] as char, false);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-        // `$((expr))` arithmetic, checked before the generic `$` handling so it
-        // is never mistaken for `$(command)`. This expander is reached whenever
-        // the word contains an unquoted `$`, which includes every arithmetic
-        // word, so the core expander's copy of this rule is not enough on its
-        // own. bd-yb9f9r.
-        if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'(') && bytes.get(i + 2) == Some(&b'(') {
-            let Some((expr, next)) =
-                frankenlibc_core::stdlib::wordexp::scan_arith_end(bytes, i + 3)
-            else {
-                return Err(WRDE_SYNTAX);
-            };
-            // The BODY is expanded before it is parsed as arithmetic. glibc's
-            // arithmetic engine itself has no variables at all — `$((FLARITH+1))`
-            // is WRDE_SYNTAX even with FLARITH exported — but `$(($FLARITH+1))`
-            // is 42, because the expansion layer substitutes the parameter and
-            // the parser only ever sees digits. Measured against live glibc 2.42
-            // (bd-6a9tuc): `$(($UNSET+1))` -> "1" and `$(($UNSET))` -> "0" (the
-            // empty body is zero, unlike `$(( ))` which is a syntax error),
-            // `$((${#FLARITH}))` -> "2", `$((${UNSET:-7}+1))` -> "8",
-            // `$((0x$FLARITH))` -> "65" (textual splice, then parse), and
-            // `$(($FLARITH$FLARITH))` -> "4141". Recursing through this same
-            // expander is also what keeps `\$FLARITH` and `'$FLARITH'` syntax
-            // errors: neither reaches the parser as a number.
-            let expr_text = core::str::from_utf8(expr).map_err(|_| WRDE_SYNTAX)?;
-            let (expanded, _) = expand_vars_with_split_mask_dyn(expr_text, undef_is_error, false)?;
-            let value = match frankenlibc_core::stdlib::wordexp::eval_arith(expanded.as_bytes()) {
-                Ok(v) => v,
-                Err(_) => return Err(WRDE_SYNTAX),
-            };
-            // POSIX groups arithmetic with parameter expansion for field
-            // splitting, so the digits are marked splittable; in practice a
-            // decimal integer contains no IFS character, so this is not
-            // observable against glibc either way.
-            for ch in value.to_string().chars() {
-                push_masked_char(&mut result, &mut split_mask, ch, split_unquoted_expansions);
-            }
-            i = next;
-            continue;
-        }
-        if bytes[i] == b'$' {
-            i += 1;
-            if i >= bytes.len() {
-                push_masked_char(&mut result, &mut split_mask, '$', false);
-                continue;
-            }
-            if bytes[i] == b'{' {
-                // `${...}` — full parameter expansion (default/alt/length forms),
-                // shared with the core expander.
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'}' {
-                    i += 1;
-                }
-                let content = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
-                if i < bytes.len() {
-                    i += 1;
-                }
-                if content.is_empty() {
-                    push_masked_char(&mut result, &mut split_mask, '$', false);
-                    continue;
-                }
-                let lookup = |name: &str| std::env::var(name).ok();
-                match frankenlibc_core::stdlib::wordexp::expand_braced_param(
-                    content,
-                    undef_is_error,
-                    &lookup,
-                ) {
-                    Ok(value) => {
-                        for ch in value.chars() {
-                            push_masked_char(
-                                &mut result,
-                                &mut split_mask,
-                                ch,
-                                split_unquoted_expansions,
-                            );
-                        }
-                    }
-                    // `${VAR?word}` / `${VAR:?word}` firing is NOT an error
-                    // return: glibc writes the diagnostic to stderr and expands
-                    // to nothing, with wordexp still reporting success
-                    // (measured: `${UNSET:?}` -> rc=0, zero words). bd-xyjzl0.
-                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::NullOrUnset {
-                        name,
-                        message,
-                    }) => {
-                        eprintln!("{name}: {message}");
-                    }
-                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax)
-                    | Err(frankenlibc_core::stdlib::wordexp::ExpandError::BadSubstitution) => {
-                        return Err(WRDE_SYNTAX);
-                    }
-                    Err(_) => return Err(WRDE_BADVAL),
-                }
-                continue;
-            }
-            // Bare `$VAR`.
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            let var_name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
-            if var_name.is_empty() {
-                push_masked_char(&mut result, &mut split_mask, '$', false);
-                continue;
-            }
-            match std::env::var(var_name) {
-                Ok(value) => {
-                    for ch in value.chars() {
-                        push_masked_char(
-                            &mut result,
-                            &mut split_mask,
-                            ch,
-                            split_unquoted_expansions,
-                        );
-                    }
-                }
-                Err(_) => {
-                    if undef_is_error {
-                        return Err(WRDE_BADVAL);
-                    }
-                }
-            }
-            continue;
-        }
-        if bytes[i] == b'"' {
-            i += 1;
-            let mut inner = String::new();
-            while i < bytes.len() && bytes[i] != b'"' {
-                inner.push(bytes[i] as char);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            let (expanded, inner_mask) =
-                expand_vars_with_split_mask_dyn(&inner, undef_is_error, false)?;
-            result.push_str(&expanded);
-            split_mask.extend(inner_mask);
-            continue;
-        }
-        push_masked_char(&mut result, &mut split_mask, bytes[i] as char, false);
-        i += 1;
-    }
-
-    Ok((result, split_mask))
-}
-
-fn has_unquoted_parameter_expansion(word: &str) -> bool {
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-
-    for &b in word.as_bytes() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if b == b'\\' && !in_single_quote {
-            escaped = true;
-            continue;
-        }
-        if b == b'\'' && !in_double_quote {
-            in_single_quote = !in_single_quote;
-            continue;
-        }
-        if b == b'"' && !in_single_quote {
-            in_double_quote = !in_double_quote;
-            continue;
-        }
-        if b == b'$' && !in_single_quote && !in_double_quote {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn push_wordexp_word(final_words: &mut Vec<CString>, expanded: &str) {
-    if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
-        // Use our glob infrastructure.
-        let pattern = std::path::Path::new(expanded);
-        match std::fs::read_dir(pattern.parent().unwrap_or(std::path::Path::new("."))) {
-            Ok(entries) => {
-                let pat_name = pattern
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let mut matched = false;
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if simple_glob_match(&pat_name, &name) {
-                        let full = if let Some(parent) = pattern.parent() {
-                            if parent == std::path::Path::new("") {
-                                name
-                            } else {
-                                format!("{}/{name}", parent.display())
-                            }
-                        } else {
-                            name
-                        };
-                        if let Ok(cs) = CString::new(full) {
-                            final_words.push(cs);
-                            matched = true;
-                        }
-                    }
-                }
-                if !matched && let Ok(cs) = CString::new(expanded) {
-                    final_words.push(cs);
-                }
-            }
-            Err(_) => {
-                if let Ok(cs) = CString::new(expanded) {
-                    final_words.push(cs);
-                }
-            }
-        }
-    } else if let Ok(cs) = CString::new(expanded) {
-        final_words.push(cs);
-    }
-}
-
-fn push_wordexp_masked_fields(
-    final_words: &mut Vec<CString>,
-    expanded: &str,
-    split_mask: &[bool],
-    ifs: &str,
+unsafe extern "C" fn capture_wordexp_arguments(
+    argc: c_int,
+    argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
 ) {
-    if ifs.is_empty() {
-        push_wordexp_word(final_words, expanded);
-        return;
-    }
-
-    let mut current = String::new();
-    let mut emitted_any = false;
-    let mut last_separator_was_nonwhitespace = false;
-
-    for (ch, splittable) in expanded.chars().zip(split_mask.iter().copied()) {
-        let is_ifs = splittable && ifs.contains(ch);
-        let is_ifs_whitespace = is_ifs && matches!(ch, ' ' | '\t' | '\n');
-        if is_ifs_whitespace {
-            if !current.is_empty() {
-                push_wordexp_word(final_words, &current);
-                current.clear();
-                emitted_any = true;
-                last_separator_was_nonwhitespace = false;
-            }
-            continue;
-        }
-
-        if is_ifs {
-            if !current.is_empty() {
-                push_wordexp_word(final_words, &current);
-                current.clear();
-                emitted_any = true;
-            } else if !emitted_any || last_separator_was_nonwhitespace {
-                push_wordexp_word(final_words, "");
-                emitted_any = true;
-            }
-            last_separator_was_nonwhitespace = true;
-            continue;
-        }
-
-        current.push(ch);
-        last_separator_was_nonwhitespace = false;
-    }
-
-    if !current.is_empty() {
-        push_wordexp_word(final_words, &current);
-    }
+    use std::sync::atomic::Ordering;
+    WORDEXP_ARGC.store(usize::try_from(argc).unwrap_or(0), Ordering::Relaxed);
+    WORDEXP_ARGV.store(argv as usize, Ordering::Release);
 }
 
-/// Execute the POSIX shell expansion for command-substitution input and return
-/// its resulting words.  The full input remains runtime-selected: this does
-/// not recognize or special-case any benchmark command.
-fn expand_command_substitution_with_shell(input: &str) -> Result<Vec<CString>, c_int> {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Process, input.len(), 0, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        return Err(WRDE_CMDSUB);
+#[used]
+#[unsafe(link_section = ".init_array")]
+static CAPTURE_WORDEXP_ARGUMENTS: unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) =
+    capture_wordexp_arguments;
+
+fn wordexp_positional_parameters() -> Vec<Vec<u8>> {
+    use std::sync::atomic::Ordering;
+    let argv = WORDEXP_ARGV.load(Ordering::Acquire) as *const *const c_char;
+    if argv.is_null() {
+        return Vec::new();
     }
-
-    // `$1` is passed as one argument, so the shell only parses it at the
-    // explicit `eval` point, exactly where wordexp must perform shell syntax.
-    // NUL framing preserves empty words and avoids whitespace-based decoding.
-    let output = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(r#"eval "set -- $1" || exit $?; printf '%s\0' "$@""#)
-        .arg("wordexp")
-        .arg(input)
-        .output();
-
-    let Ok(output) = output else {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        return Err(WRDE_NOSPACE);
-    };
-    if !output.status.success() || (!output.stdout.is_empty() && output.stdout.last() != Some(&0)) {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        return Err(WRDE_SYNTAX);
-    }
-
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 40, false);
-    if output.stdout.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    output.stdout[..output.stdout.len() - 1]
-        .split(|byte| *byte == 0)
-        .map(|word| CString::new(word).map_err(|_| WRDE_SYNTAX))
+    let argc = WORDEXP_ARGC.load(Ordering::Relaxed);
+    (0..argc)
+        .map_while(|i| {
+            // SAFETY: argv holds argc entries for the life of the process.
+            let arg = unsafe { *argv.add(i) };
+            (!arg.is_null()).then(|| unsafe { CStr::from_ptr(arg) }.to_bytes().to_vec())
+        })
         .collect()
 }
 
+/// Run one command substitution body with `/bin/sh -c`, returning its stdout.
+fn wordexp_run_command(body: &[u8], flags: c_int) -> Result<Vec<u8>, WordexpFailure> {
+    use std::os::unix::ffi::OsStrExt;
+    if flags & WRDE_NOCMD != 0 {
+        return Err(WordexpFailure::CmdSub);
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Process, body.len(), 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
+        return Err(WordexpFailure::CmdSub);
+    }
+    let stderr = if flags & WRDE_SHOWERR != 0 {
+        std::process::Stdio::inherit()
+    } else {
+        std::process::Stdio::null()
+    };
+    let output = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(std::ffi::OsStr::from_bytes(body))
+        .stdin(std::process::Stdio::inherit())
+        .stderr(stderr)
+        .output();
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 40, output.is_err());
+    // The command's exit status does not matter, as in glibc: only its output.
+    output
+        .map(|o| o.stdout)
+        .map_err(|_| WordexpFailure::NoSpace)
+}
+
+/// Home directory for `~` (empty name: the invoking user) or `~name`,
+/// through the passwd sources nsswitch.conf configures.
+fn wordexp_home_dir(user: &[u8]) -> Option<Vec<u8>> {
+    let entry = if user.is_empty() {
+        // SAFETY: getuid has no preconditions.
+        crate::pwd_abi::lookup_passwd_by_uid(unsafe { getuid() })
+    } else {
+        crate::pwd_abi::lookup_passwd_by_name(user)
+    };
+    entry.map(|entry| entry.pw_dir)
+}
+
+/// Pathname expansion of one field through fl's glob: the sorted matches, or
+/// `None` when nothing matches (the field is then kept as written).
+fn wordexp_glob(pattern: &[u8]) -> Option<Vec<CString>> {
+    let pattern = CString::new(pattern).ok()?;
+    // SAFETY: glob_t is plain data; glob fills it and globfree releases it.
+    let mut g: libc::glob_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        crate::string_abi::glob(
+            pattern.as_ptr(),
+            0,
+            None,
+            (&mut g as *mut libc::glob_t).cast(),
+        )
+    };
+    let matches = (rc == 0).then(|| {
+        (0..g.gl_pathc)
+            .filter_map(|i| {
+                // SAFETY: glob returned gl_pathc valid C strings.
+                let p = unsafe { *g.gl_pathv.add(i) };
+                (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_owned())
+            })
+            .collect::<Vec<_>>()
+    });
+    // SAFETY: g was filled by glob above.
+    unsafe { crate::string_abi::globfree((&mut g as *mut libc::glob_t).cast()) };
+    matches.filter(|m| !m.is_empty())
+}
+
+use frankenlibc_core::stdlib::wordexp::{
+    WordexpContext, WordexpFailure, expand_input_fields, field_glob_pattern, field_text,
+};
+
 /// POSIX `wordexp` — perform shell-like word expansion.
-///
-/// Native implementation supporting tilde, variable, and pathname (glob) expansion.
-/// Command substitution requires WRDE_NOCMD to be unset and uses /bin/sh.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wordexp(
     words: *const c_char,
@@ -9159,141 +8516,53 @@ pub unsafe extern "C" fn wordexp(
         return WRDE_NOSPACE;
     }
 
-    let Some(input_vec) = (unsafe { read_c_string_bytes(words) }) else {
+    let Some(input) = (unsafe { read_c_string_bytes(words) }) else {
         return WRDE_SYNTAX;
     };
-    let input = match std::str::from_utf8(&input_vec) {
-        Ok(s) => s,
-        Err(_) => return WRDE_SYNTAX,
+
+    let ifs = std::env::var_os("IFS")
+        .map(|v| {
+            use std::os::unix::ffi::OsStrExt;
+            v.as_bytes().to_vec()
+        })
+        .unwrap_or_else(|| b" \t\n".to_vec());
+    let positional = wordexp_positional_parameters();
+    let lookup = |name: &str| std::env::var(name).ok();
+    let mut run = |body: &[u8]| wordexp_run_command(body, flags);
+    let mut diagnostic = |message: &str| eprintln!("{message}");
+    let mut ctx = WordexpContext {
+        lookup_env: &lookup,
+        home_dir: &wordexp_home_dir,
+        run_command: &mut run,
+        positional: &positional,
+        pid: std::process::id(),
+        undef_is_error: flags & WRDE_UNDEF != 0,
+        diagnostic: &mut diagnostic,
+    };
+    let fields = match expand_input_fields(&input, &ifs, &mut ctx) {
+        Ok(fields) => fields,
+        Err(failure) => {
+            return match failure {
+                WordexpFailure::BadChar => WRDE_BADCHAR,
+                WordexpFailure::BadVal => WRDE_BADVAL,
+                WordexpFailure::CmdSub => WRDE_CMDSUB,
+                WordexpFailure::Syntax => WRDE_SYNTAX,
+                WordexpFailure::NoSpace => WRDE_NOSPACE,
+            };
+        }
     };
 
-    let input_bytes = input.as_bytes();
-
-    let syntax_scan = scan_wordexp_syntax(input_bytes);
-
-    // Check for bad characters
-    if syntax_scan.has_bad_char {
-        return WRDE_BADCHAR;
-    }
-    if syntax_scan.has_syntax_error {
-        return WRDE_SYNTAX;
-    }
-
-    let command_words = if syntax_scan.has_command_substitution {
-        if (flags & WRDE_NOCMD) != 0 {
-            return WRDE_CMDSUB;
-        }
-        match expand_command_substitution_with_shell(input) {
-            Ok(words) => Some(words),
-            Err(rc) => return rc,
-        }
-    } else {
-        None
-    };
-
-    // Split on IFS (whitespace by default)
-    let ifs = std::env::var("IFS").unwrap_or_else(|_| " \t\n".to_string());
-
-    // Process each word
-    let mut result_words: Vec<String> = Vec::new();
-
-    // Tokenize on unquoted shell blanks. IFS is applied later during
-    // post-expansion field splitting, not while reading literal input.
-    let mut current_word = String::new();
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-    // Parenthesis depth inside a `$((...))` arithmetic expansion. While this is
-    // non-zero the input is copied verbatim: no word splitting and no quote
-    // toggling, so `$(( 1 + 2 ))` survives tokenisation as ONE word. Without
-    // this the spaces split it into `$((`, `1`, `+`, `2`, `))` and the
-    // expression never reaches the evaluator. bd-yb9f9r.
-    let mut arith_depth = 0usize;
-
-    for &b in input_bytes {
-        if arith_depth > 0 {
-            current_word.push(b as char);
-            match b {
-                b'(' => arith_depth += 1,
-                b')' => arith_depth -= 1,
-                _ => {}
-            }
+    let mut final_words: Vec<CString> = Vec::with_capacity(fields.len());
+    for field in &fields {
+        if let Some(pattern) = field_glob_pattern(field)
+            && let Some(matches) = wordexp_glob(&pattern)
+        {
+            final_words.extend(matches);
             continue;
         }
-        if escaped {
-            // Preserve the backslash through tokenisation: it is only consumed
-            // here for word-splitting/quote decisions, but the expansion phase
-            // still needs it so an escaped `\$`/`` \` `` stays literal rather than
-            // triggering parameter/command expansion (bd-2g7oyh: glibc keeps the
-            // escape; fl previously dropped `\` and then expanded the bare `$`).
-            current_word.push('\\');
-            current_word.push(b as char);
-            escaped = false;
-            continue;
-        }
-        if b == b'\\' && !in_single_quote {
-            escaped = true;
-            continue;
-        }
-        if b == b'\'' && !in_double_quote {
-            in_single_quote = !in_single_quote;
-            current_word.push(b as char);
-            continue;
-        }
-        if b == b'"' && !in_single_quote {
-            in_double_quote = !in_double_quote;
-            current_word.push(b as char);
-            continue;
-        }
-        if !in_single_quote && !in_double_quote && matches!(b, b' ' | b'\t' | b'\n') {
-            if !current_word.is_empty() {
-                result_words.push(std::mem::take(&mut current_word));
-            }
-            continue;
-        }
-        current_word.push(b as char);
-        // Entering arithmetic. Detected on the trailing `$((` just pushed, since
-        // this loop has no lookahead. Single quotes make it literal; double
-        // quotes do not, so `"$((1+2))"` still expands.
-        if !in_single_quote && current_word.as_bytes().ends_with(b"$((") {
-            arith_depth = 2;
-        }
-    }
-    if !current_word.is_empty() {
-        result_words.push(current_word);
-    }
-
-    // Unclosed quotes
-    if command_words.is_none() && (in_single_quote || in_double_quote) {
-        return WRDE_SYNTAX;
-    }
-    // An unterminated `$((` is a syntax error, as it is for an unclosed quote.
-    if command_words.is_none() && arith_depth > 0 {
-        return WRDE_SYNTAX;
-    }
-
-    // Expand each word: tilde → variables → glob
-    let mut final_words = command_words.unwrap_or_default();
-
-    if !syntax_scan.has_command_substitution {
-        for word in &result_words {
-            let split_fields = has_unquoted_parameter_expansion(word);
-            // Tilde expansion
-            let expanded = expand_tilde(word);
-            if split_fields {
-                let (expanded, split_mask) = match expand_vars_with_split_mask(&expanded, flags) {
-                    Ok(s) => s,
-                    Err(e) => return e,
-                };
-                push_wordexp_masked_fields(&mut final_words, &expanded, &split_mask, &ifs);
-            } else {
-                // Variable expansion
-                let expanded = match expand_vars(&expanded, flags) {
-                    Ok(s) => s,
-                    Err(e) => return e,
-                };
-                push_wordexp_word(&mut final_words, &expanded);
-            }
+        match CString::new(field_text(field)) {
+            Ok(word) => final_words.push(word),
+            Err(_) => return WRDE_SYNTAX,
         }
     }
 
@@ -9392,18 +8661,6 @@ unsafe fn wordexp_free_wordv(we: &mut WordexpT) {
     we.we_wordv = std::ptr::null_mut();
     we.we_wordc = 0;
 }
-
-/// Simple glob pattern matching for wordexp pathname expansion.
-fn simple_glob_match(pattern: &str, name: &str) -> bool {
-    // Skip hidden files unless pattern starts with '.'
-    if name.starts_with('.') && !pattern.starts_with('.') {
-        return false;
-    }
-    glob_match_bytes(pattern.as_bytes(), name.as_bytes())
-}
-
-// glob_match_bytes moved to frankenlibc_core::string::wildcard::wildcard_match.
-use frankenlibc_core::string::wildcard::wildcard_match as glob_match_bytes;
 
 /// POSIX `wordfree` — free memory allocated by `wordexp`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9836,6 +9093,23 @@ pub unsafe extern "C" fn forkpty(
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
+    // Keep application handlers out of the clone-to-reopen interval, exactly
+    // as the public fork path does.
+    let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            drop(malloc_guard);
+            drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            let _ = syscall::sys_close(master);
+            let _ = syscall::sys_close(slave);
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+
     let pid = crate::process_abi::clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
@@ -9844,11 +9118,15 @@ pub unsafe extern "C" fn forkpty(
     }
     let pid = match pid {
         Ok(p) => p,
-        Err(_) => {
-            drop(_environ_guard);
+        Err(error) => {
             drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
+            drop(signal_guard);
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
             return -1;
         }
     };
@@ -9858,8 +9136,8 @@ pub unsafe extern "C" fn forkpty(
         // by the forking thread before the clone. See adopt_in_fork_child.
         unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
     }
-    drop(_environ_guard);
     drop(_pipeline_guard);
+    drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
@@ -9868,8 +9146,14 @@ pub unsafe extern "C" fn forkpty(
     }
 
     if pid == 0 {
+        // SAFETY: all fork guards are released, this is the sole surviving
+        // thread, and application signals remain masked until reopen finishes.
+        unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
+        crate::pthread_abi::remember_main_thread_host_handle();
+        drop(signal_guard);
         crate::pthread_abi::run_atfork_child(&atfork);
     } else {
+        drop(signal_guard);
         crate::pthread_abi::run_atfork_parent(&atfork);
     }
 
@@ -10011,7 +9295,7 @@ fn host_extended_crypt() -> Option<unsafe extern "C" fn(*const c_char, *const c_
         let symbol = host_libcrypt_symbol(c"crypt".as_ptr())?;
         // SAFETY: dlsym returned libxcrypt's `crypt` symbol, whose ABI is
         // exactly `CryptFn`.
-        Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt ABI
+        Some(unsafe { core::mem::transmute::<*mut c_void, CryptFn>(symbol) }) // ubs:ignore — dlsym result has verified crypt ABI
     });
     *HOST_CRYPT
 }
@@ -10023,7 +9307,7 @@ fn host_crypt_preferred_method() -> Option<*const c_char> {
             let symbol = host_libcrypt_symbol(c"crypt_preferred_method".as_ptr())?;
             // SAFETY: dlsym returned libxcrypt's `crypt_preferred_method`
             // symbol, whose ABI is exactly `PreferredMethodFn`.
-            Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt_preferred_method ABI
+            Some(unsafe { core::mem::transmute::<*mut c_void, PreferredMethodFn>(symbol) }) // ubs:ignore — dlsym result has verified crypt_preferred_method ABI
         });
     let preferred_method = (*HOST_PREFERRED_METHOD)?;
     let method = unsafe { preferred_method() };
@@ -13423,76 +12707,196 @@ pub unsafe extern "C" fn __nss_readline(
 
 // ---------------------------------------------------------------------------
 // __libc_alloc_buffer / __libc_dynarray / __libc_scratch_buffer / early_init +
-// nss_files_parse_spent + nss_netgroup_parseline (18 stubs)
+// nss_files_parse_spent + nss_netgroup_parseline
 // ---------------------------------------------------------------------------
 //
-// All GLIBC_PRIVATE-versioned. Stubs provide the safe failure path so
-// link-edit resolves cleanly and any caller falls into its existing
-// error handling.
+// GLIBC_PRIVATE helpers that glibc's own programs and NSS modules link against:
+// getent (__libc_dynarray_resize), gencat (__libc_scratch_buffer_set_array_size),
+// pldd and libnss_compat (__libc_scratch_buffer_grow). Under preload they bind
+// to these exports, so they must work: as always-fail stubs they made
+// `getent initgroups` print "Could not allocate group list" and fail.
+//
+// The layouts and contracts are glibc's internal ABI (include/scratch_buffer.h,
+// malloc/dynarray.h, include/alloc_buffer.h). Memory comes from fl's malloc,
+// which is what the callers' later free() reaches.
 
-// alloc_buffer is glibc's bounded sub-allocator over a caller buffer.
-// The minimum viable failure shape is: allocate returns NULL; copy
-// helpers do nothing; create_failure marks an alloc_buffer as
-// permanently failed (we no-op since we never produced a live one).
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_alloc_array(
-    _buf: *mut c_void,
-    _size: usize,
-    _align: usize,
-    _count: usize,
-) -> *mut c_void {
-    core::ptr::null_mut()
+/// `struct scratch_buffer`: a pointer/length pair over either the inline
+/// 1024-byte (max_align_t aligned) space or a heap block.
+#[repr(C)]
+struct ScratchBuffer {
+    data: *mut c_void,
+    length: usize,
+    space: ScratchSpace,
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_allocate(
-    _size: usize,
-    _pptr: *mut *mut c_void,
-) -> *mut c_void {
-    core::ptr::null_mut()
+#[repr(C, align(16))]
+struct ScratchSpace([u8; 1024]);
+
+impl ScratchBuffer {
+    fn inline_space(&mut self) -> *mut c_void {
+        self.space.0.as_mut_ptr().cast()
+    }
+
+    /// Release a heap block, leaving the buffer pointing at its inline space.
+    unsafe fn reset(&mut self) {
+        if self.data != self.inline_space() {
+            // SAFETY: a non-inline data pointer came from fl's malloc/realloc.
+            unsafe { crate::malloc_abi::free(self.data) };
+        }
+        self.data = self.inline_space();
+        self.length = self.space.0.len();
+    }
 }
 
+/// `__libc_scratch_buffer_grow(buf)` — double the buffer, discarding its
+/// contents. On failure the buffer is reset to its inline space.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_copy_bytes(
-    _buf: *mut c_void,
-    _src: *const c_void,
-    _len: usize,
-) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __libc_scratch_buffer_grow(buf: *mut c_void) -> c_int {
+    // SAFETY: caller passes an initialized struct scratch_buffer.
+    let buffer = unsafe { &mut *buf.cast::<ScratchBuffer>() };
+    let new_length = buffer.length.checked_mul(2);
+    unsafe { buffer.reset() };
+    let Some(new_length) = new_length else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return 0;
+    };
+    // SAFETY: plain allocation.
+    let block = unsafe { crate::malloc_abi::malloc(new_length) };
+    if block.is_null() {
+        return 0;
+    }
+    buffer.data = block;
+    buffer.length = new_length;
+    1
 }
 
+/// `__libc_scratch_buffer_grow_preserve(buf)` — double the buffer, keeping
+/// its contents. On failure the buffer is freed and reset.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_copy_string(
-    _buf: *mut c_void,
-    _src: *const c_char,
-) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __libc_scratch_buffer_grow_preserve(buf: *mut c_void) -> c_int {
+    // SAFETY: caller passes an initialized struct scratch_buffer.
+    let buffer = unsafe { &mut *buf.cast::<ScratchBuffer>() };
+    let Some(new_length) = buffer.length.checked_mul(2) else {
+        unsafe { buffer.reset() };
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return 0;
+    };
+    let block = if buffer.data == buffer.inline_space() {
+        // SAFETY: plain allocation; the inline space holds `length` bytes.
+        let block = unsafe { crate::malloc_abi::malloc(new_length) };
+        if block.is_null() {
+            return 0;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                buffer.data.cast::<u8>(),
+                block.cast::<u8>(),
+                buffer.length,
+            )
+        };
+        block
+    } else {
+        // SAFETY: heap data came from fl's malloc/realloc.
+        let block = unsafe { crate::malloc_abi::realloc(buffer.data, new_length) };
+        if block.is_null() {
+            unsafe { buffer.reset() };
+            return 0;
+        }
+        block
+    };
+    buffer.data = block;
+    buffer.length = new_length;
+    1
 }
 
-/// `__libc_alloc_buffer_create_failure(start, size) -> alloc_buffer` —
-/// glibc returns the failure-marked alloc_buffer struct by value. We
-/// model the return as void since our caller never inspects the
-/// failed buffer beyond knowing the allocation failed; the actual
-/// alloc_buffer struct is small enough that callers passing the
-/// return value through an alloc_buffer slot will see a partly-
-/// uninitialized struct, but glibc's check_alloc_buffer macro only
-/// looks at the failure bit which we never set (the caller's slot
-/// is treated as failed by the next allocate).
+/// `__libc_scratch_buffer_set_array_size(buf, nelem, size)` — make room for
+/// `nelem * size` bytes, discarding the contents if it has to grow.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_create_failure(_start: *mut c_void, _size: usize) {}
+pub unsafe extern "C" fn __libc_scratch_buffer_set_array_size(
+    buf: *mut c_void,
+    nelem: usize,
+    size: usize,
+) -> c_int {
+    // SAFETY: caller passes an initialized struct scratch_buffer.
+    let buffer = unsafe { &mut *buf.cast::<ScratchBuffer>() };
+    let Some(new_length) = nelem.checked_mul(size) else {
+        unsafe { buffer.reset() };
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return 0;
+    };
+    if new_length <= buffer.length {
+        return 1;
+    }
+    unsafe { buffer.reset() };
+    // SAFETY: plain allocation.
+    let block = unsafe { crate::malloc_abi::malloc(new_length) };
+    if block.is_null() {
+        return 0;
+    }
+    buffer.data = block;
+    buffer.length = new_length;
+    1
+}
 
-// dynarray is glibc's growable Vec-equivalent. Stubs:
-//   - at_failure: glibc convention is to abort; we abort_message().
-//   - emplace_enlarge / resize / resize_clear: 0 (failure) so caller
-//     short-circuits without reading our (unmaintained) buffer.
-//   - finalize: 0 (false) — finalize-into-result not provided.
+/// `struct dynarray_header`; `allocated == usize::MAX` marks a list whose
+/// earlier growth failed.
+#[repr(C)]
+struct DynarrayHeader {
+    used: usize,
+    allocated: usize,
+    array: *mut c_void,
+}
 
-/// Glibc convention: __libc_dynarray_at_failure aborts (out-of-bounds
-/// access on a dynarray is a fatal usage bug). Mirror that behavior.
+/// `struct dynarray_finalize_result`.
+#[repr(C)]
+struct DynarrayFinalizeResult {
+    array: *mut c_void,
+    length: usize,
+}
+
+/// Move `list` to a heap block of `count` elements (copying the used ones
+/// out of the caller's scratch array the first time).
+unsafe fn dynarray_reallocate(
+    list: &mut DynarrayHeader,
+    scratch: *mut c_void,
+    element_size: usize,
+    count: usize,
+) -> bool {
+    let Some(bytes) = count.checked_mul(element_size) else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return false;
+    };
+    let block = if list.array == scratch {
+        // SAFETY: plain allocation.
+        let block = unsafe { crate::malloc_abi::malloc(bytes) };
+        if !block.is_null() && !list.array.is_null() {
+            // SAFETY: the scratch array holds `used` initialized elements and
+            // the new block is at least that large (count > used here).
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    list.array.cast::<u8>(),
+                    block.cast::<u8>(),
+                    list.used * element_size,
+                )
+            };
+        }
+        block
+    } else {
+        // SAFETY: a non-scratch array came from fl's malloc/realloc.
+        unsafe { crate::malloc_abi::realloc(list.array, bytes) }
+    };
+    if block.is_null() {
+        return false;
+    }
+    list.array = block;
+    true
+}
+
+/// `__libc_dynarray_at_failure(size, index)` — out-of-bounds element access
+/// is a fatal usage error in glibc; report and abort the same way.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_dynarray_at_failure(_size: usize, _index: usize) -> ! {
-    let msg: &[u8] = b"__libc_dynarray_at: index out of range\n";
+pub unsafe extern "C" fn __libc_dynarray_at_failure(size: usize, index: usize) -> ! {
+    let msg = format!("Fatal glibc error: array index {index} not less than array length {size}\n");
     // SAFETY: writing to fd 2 is always safe.
     unsafe {
         let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
@@ -13500,66 +12904,233 @@ pub unsafe extern "C" fn __libc_dynarray_at_failure(_size: usize, _index: usize)
     }
 }
 
+/// `__libc_dynarray_emplace_enlarge(list, scratch, element_size)` — grow the
+/// allocation (exponentially) so one more element fits.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_emplace_enlarge(
-    _list: *mut c_void,
-    _scratch: *mut c_void,
-    _element_size: usize,
+    list: *mut c_void,
+    scratch: *mut c_void,
+    element_size: usize,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header.
+    let list = unsafe { &mut *list.cast::<DynarrayHeader>() };
+    let new_allocated = if list.allocated == 0 {
+        match element_size {
+            0..4 => 16,
+            4..8 => 8,
+            _ => 4,
+        }
+    } else {
+        match list.allocated.checked_add(list.allocated / 2 + 1) {
+            Some(n) => n,
+            None => {
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return 0;
+            }
+        }
+    };
+    if !unsafe { dynarray_reallocate(list, scratch, element_size, new_allocated) } {
+        return 0;
+    }
+    list.allocated = new_allocated;
+    1
 }
 
+/// `__libc_dynarray_resize(list, size, scratch, element_size)` — set the
+/// element count, reallocating to exactly `size` when it does not fit. New
+/// elements are uninitialized.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_resize(
-    _list: *mut c_void,
-    _new_size: usize,
-    _scratch: *mut c_void,
-    _element_size: usize,
+    list: *mut c_void,
+    new_size: usize,
+    scratch: *mut c_void,
+    element_size: usize,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header.
+    let list = unsafe { &mut *list.cast::<DynarrayHeader>() };
+    if new_size <= list.allocated {
+        list.used = new_size;
+        return 1;
+    }
+    if !unsafe { dynarray_reallocate(list, scratch, element_size, new_size) } {
+        return 0;
+    }
+    list.allocated = new_size;
+    list.used = new_size;
+    1
 }
 
+/// `__libc_dynarray_resize_clear(...)` — resize, zero-filling new elements.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_resize_clear(
-    _list: *mut c_void,
-    _new_size: usize,
-    _scratch: *mut c_void,
-    _element_size: usize,
+    list: *mut c_void,
+    new_size: usize,
+    scratch: *mut c_void,
+    element_size: usize,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header.
+    let old_size = unsafe { (*list.cast::<DynarrayHeader>()).used };
+    if unsafe { __libc_dynarray_resize(list, new_size, scratch, element_size) } == 0 {
+        return 0;
+    }
+    if new_size > old_size {
+        let header = unsafe { &*list.cast::<DynarrayHeader>() };
+        // SAFETY: resize succeeded, so the array holds `new_size` elements
+        // (size * element_size did not overflow).
+        unsafe {
+            std::ptr::write_bytes(
+                header.array.cast::<u8>().add(old_size * element_size),
+                0,
+                (new_size - old_size) * element_size,
+            )
+        };
+    }
+    1
 }
 
+/// `__libc_dynarray_finalize(list, scratch, element_size, result)` — hand
+/// the used elements over as an exactly sized heap array (NULL/0 for an
+/// empty list). False leaves freeing to the caller.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_finalize(
-    _list: *mut c_void,
-    _scratch: *mut c_void,
-    _element_size: usize,
-    _result: *mut c_void,
+    list: *mut c_void,
+    scratch: *mut c_void,
+    element_size: usize,
+    result: *mut c_void,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header and result slot.
+    let list = unsafe { &mut *list.cast::<DynarrayHeader>() };
+    let result = unsafe { &mut *result.cast::<DynarrayFinalizeResult>() };
+    if list.allocated == usize::MAX {
+        // An earlier failure the caller reports itself.
+        return 0;
+    }
+    if list.used == 0 {
+        if list.array != scratch {
+            // SAFETY: a non-scratch array came from fl's malloc/realloc.
+            unsafe { crate::malloc_abi::free(list.array) };
+        }
+        *result = DynarrayFinalizeResult {
+            array: std::ptr::null_mut(),
+            length: 0,
+        };
+        return 1;
+    }
+    let bytes = list.used * element_size;
+    // SAFETY: plain allocation.
+    let block = unsafe { crate::malloc_abi::malloc(bytes) };
+    if block.is_null() {
+        return 0;
+    }
+    if !list.array.is_null() {
+        // SAFETY: the list holds `used` initialized elements.
+        unsafe {
+            std::ptr::copy_nonoverlapping(list.array.cast::<u8>(), block.cast::<u8>(), bytes)
+        };
+    }
+    if list.array != scratch {
+        // SAFETY: a non-scratch array came from fl's malloc/realloc.
+        unsafe { crate::malloc_abi::free(list.array) };
+    }
+    *result = DynarrayFinalizeResult {
+        array: block,
+        length: list.used,
+    };
+    1
 }
 
-// scratch_buffer is glibc's stack-or-heap scratch space helper.
-// All grow/sizing entries return false (out of memory), forcing
-// callers to take the fail path.
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_scratch_buffer_grow(_buf: *mut c_void) -> c_int {
-    0
+/// `struct alloc_buffer`: a bump allocator over [current, end); both zero
+/// once an allocation has failed. Passed and returned by value.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AllocBuffer {
+    pub current: usize,
+    pub end: usize,
 }
 
+const ALLOC_BUFFER_FAILED: AllocBuffer = AllocBuffer { current: 0, end: 0 };
+
+/// `__libc_alloc_buffer_alloc_array(buf, size, align, count)` — carve
+/// `size * count` bytes aligned to `align` (a power of two), or mark the
+/// buffer failed and return NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_scratch_buffer_grow_preserve(_buf: *mut c_void) -> c_int {
-    0
+pub unsafe extern "C" fn __libc_alloc_buffer_alloc_array(
+    buf: *mut AllocBuffer,
+    size: usize,
+    align: usize,
+    count: usize,
+) -> *mut c_void {
+    // SAFETY: caller passes its alloc_buffer.
+    let buffer = unsafe { &mut *buf };
+    let current = buffer.current;
+    let aligned = current
+        .checked_add(align.wrapping_sub(1))
+        .map(|v| v & !align.wrapping_sub(1));
+    match (aligned, size.checked_mul(count)) {
+        (Some(aligned), Some(bytes)) if aligned <= buffer.end && bytes <= buffer.end - aligned => {
+            buffer.current = aligned + bytes;
+            aligned as *mut c_void
+        }
+        _ => {
+            *buffer = ALLOC_BUFFER_FAILED;
+            std::ptr::null_mut()
+        }
+    }
 }
 
+/// `__libc_alloc_buffer_allocate(size, pptr)` — a heap-backed alloc_buffer of
+/// `size` bytes; `*pptr` receives the block for the caller to free.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_scratch_buffer_set_array_size(
-    _buf: *mut c_void,
-    _nelem: usize,
+pub unsafe extern "C" fn __libc_alloc_buffer_allocate(
+    size: usize,
+    pptr: *mut *mut c_void,
+) -> AllocBuffer {
+    // SAFETY: plain allocation; pptr is the caller's out slot.
+    let block = unsafe { crate::malloc_abi::malloc(size) };
+    unsafe { *pptr = block };
+    if block.is_null() {
+        return ALLOC_BUFFER_FAILED;
+    }
+    AllocBuffer {
+        current: block as usize,
+        end: block as usize + size,
+    }
+}
+
+/// `__libc_alloc_buffer_copy_bytes(buf, src, len)` — append `len` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_copy_bytes(
+    mut buf: AllocBuffer,
+    src: *const c_void,
+    len: usize,
+) -> AllocBuffer {
+    // SAFETY: `buf` is a valid alloc_buffer value; src holds `len` bytes.
+    let dst = unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 1, 1, len) };
+    if !dst.is_null() {
+        unsafe { std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), len) };
+    }
+    buf
+}
+
+/// `__libc_alloc_buffer_copy_string(buf, src)` — append `src` with its NUL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_copy_string(
+    buf: AllocBuffer,
+    src: *const c_char,
+) -> AllocBuffer {
+    // SAFETY: src is a NUL-terminated string.
+    let len = unsafe { CStr::from_ptr(src) }.to_bytes_with_nul().len();
+    unsafe { __libc_alloc_buffer_copy_bytes(buf, src.cast(), len) }
+}
+
+/// `__libc_alloc_buffer_create_failure(start, size)` — the failed buffer
+/// alloc_buffer_create returns when [start, start+size) wraps around.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_create_failure(
+    _start: *mut c_void,
     _size: usize,
-) -> c_int {
-    0
+) -> AllocBuffer {
+    ALLOC_BUFFER_FAILED
 }
 
 /// `__libc_early_init(initial)` — early-init marker called by ld.so
@@ -13699,16 +13270,98 @@ pub unsafe extern "C" fn __libc_unwind_link_get() -> *mut c_void {
     core::ptr::null_mut()
 }
 
-/// `__open_catalog(name, *result) -> int` — locate and open a
-/// message catalog. Stub returns -1 (catopen failure).
+/// glibc's `struct catalog_info` (catgets/catgetsinfo.h), which
+/// `__open_catalog` fills: the loaded file plus pointers into its first hash
+/// plane and its strings.
+#[repr(C)]
+struct CatalogInfo {
+    /// 0 = mmapped, 1 = malloced (the caller frees `file_ptr` accordingly).
+    status: c_int,
+    plane_size: usize,
+    plane_depth: usize,
+    name_ptr: *mut u32,
+    strings: *const c_char,
+    file_ptr: *mut c_void,
+    file_size: usize,
+}
+
+/// `__open_catalog(name, nlspath, env_var, catalog) -> int` — load a GNU
+/// message catalog into glibc's `struct catalog_info` (GLIBC_PRIVATE; gencat
+/// uses it to merge into an existing catalog). A name with `/`, or a NULL
+/// `nlspath`, is opened as given; otherwise `nlspath` is searched with
+/// `env_var` as the locale. -1 with errno from the failing open (ENOENT when
+/// there is no catalog); a malformed catalog leaves errno alone.
+///
+/// The image is rebuilt in a malloc'd block (status malloced), header and
+/// first plane in native order, so the caller's `free(file_ptr)` releases it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open_catalog(
-    _name: *const c_char,
-    _nlspath: *const c_char,
-    _env_var: *const c_char,
-    _result: *mut c_void,
+    name: *const c_char,
+    nlspath: *const c_char,
+    env_var: *const c_char,
+    result: *mut c_void,
 ) -> c_int {
-    -1
+    if name.is_null() || result.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: NUL-terminated C strings from the caller.
+    let mut name = unsafe { CStr::from_ptr(name) }.to_bytes().to_vec();
+    let nlspath = (!nlspath.is_null()).then(|| unsafe { CStr::from_ptr(nlspath) }.to_bytes());
+    let locale = if env_var.is_null() {
+        &[][..]
+    } else {
+        unsafe { CStr::from_ptr(env_var) }.to_bytes()
+    };
+    if nlspath.is_none() && !name.contains(&b'/') {
+        // Opened as given, relative to the working directory.
+        name.splice(0..0, *b"./");
+    }
+    let catalog = match crate::locale_catalog::open(&name, locale, nlspath, false) {
+        Ok(catalog) => catalog,
+        Err(errno) => {
+            if errno != 0 {
+                unsafe { set_abi_errno(errno) };
+            }
+            return -1;
+        }
+    };
+    let words = [
+        frankenlibc_core::locale::catgets::CATGETS_MAGIC,
+        catalog.plane_size as u32,
+        catalog.plane_depth as u32,
+    ];
+    let header = std::mem::size_of_val(&words);
+    let plane = std::mem::size_of_val(&*catalog.table);
+    let total = header + 2 * plane + catalog.strings.len();
+    // SAFETY: plain allocation; filled below before anyone reads it.
+    let block = unsafe { crate::malloc_abi::malloc(total) }.cast::<u8>();
+    if block.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    }
+    // SAFETY: `block` holds `total` bytes; the four copies tile it exactly.
+    unsafe {
+        std::ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), block, header);
+        let table = catalog.table.as_ptr().cast::<u8>();
+        std::ptr::copy_nonoverlapping(table, block.add(header), plane);
+        std::ptr::copy_nonoverlapping(table, block.add(header + plane), plane);
+        std::ptr::copy_nonoverlapping(
+            catalog.strings.as_ptr(),
+            block.add(header + 2 * plane),
+            catalog.strings.len(),
+        );
+        *result.cast::<CatalogInfo>() = CatalogInfo {
+            status: 1,
+            plane_size: catalog.plane_size,
+            plane_depth: catalog.plane_depth,
+            name_ptr: block.add(header).cast::<u32>(),
+            strings: block.add(header + 2 * plane).cast::<c_char>(),
+            file_ptr: block.cast::<c_void>(),
+            file_size: total,
+        };
+    }
+    0
 }
 
 /// `__res_context_hostalias(*ctx, name, *buf, buflen) ->
@@ -14259,6 +13912,12 @@ const LOCKF_TEST: c_int = 3;
 /// `lockf` — apply, test or remove a POSIX lock on a file section.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
+    unsafe { lockf_cp(fd, cmd, len) }
+}
+
+/// Body of [`lockf`] and its alias (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn lockf_cp(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(libc::EPERM) };
@@ -14981,6 +14640,16 @@ pub unsafe extern "C-unwind" fn sigtimedwait(
     info: *mut c_void,
     timeout: *const libc::timespec,
 ) -> c_int {
+    unsafe { sigtimedwait_cp(set, info, timeout) }
+}
+
+/// Body of [`sigtimedwait`] and its alias (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigtimedwait_cp(
+    set: *const c_void,
+    info: *mut c_void,
+    timeout: *const libc::timespec,
+) -> c_int {
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_rt_sigtimedwait(
@@ -15001,6 +14670,12 @@ pub unsafe extern "C-unwind" fn sigtimedwait(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
+    unsafe { sigwaitinfo_cp(set, info) }
+}
+
+/// Body of [`sigwaitinfo`] and its alias (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigwaitinfo_cp(set: *const c_void, info: *mut c_void) -> c_int {
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_rt_sigtimedwait(
@@ -15035,8 +14710,8 @@ pub unsafe extern "C" fn __sigqueue(pid: libc::pid_t, sig: c_int, value: libc::s
 ///
 /// Same as [`sigwaitinfo`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
-    unsafe { sigwaitinfo(set, info) }
+pub unsafe extern "C-unwind" fn __sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
+    unsafe { sigwaitinfo_cp(set, info) }
 }
 
 // ---------------------------------------------------------------------------
@@ -15826,6 +15501,11 @@ pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
 // aio_* — Implemented (native thread-based POSIX async I/O)
 // ---------------------------------------------------------------------------
 
+#[path = "aio_completion.rs"]
+mod aio_completion;
+#[path = "aio_queue.rs"]
+mod aio_queue;
+
 /// POSIX AIO lio_listio opcodes.
 const LIO_READ: c_int = 0;
 const LIO_WRITE: c_int = 1;
@@ -15918,12 +15598,6 @@ unsafe fn aiocb_get_return(cb: *const c_void) -> isize {
     }
 }
 
-/// Global condvar for aio_suspend notification.
-/// Worker threads notify after completing an I/O operation, allowing
-/// aio_suspend to wake up and check completion status.
-static AIO_NOTIFY: std::sync::LazyLock<(std::sync::Mutex<u64>, std::sync::Condvar)> =
-    std::sync::LazyLock::new(|| (std::sync::Mutex::new(0), std::sync::Condvar::new()));
-
 /// Internal AIO operation type.
 #[derive(Clone, Copy)]
 enum AioOp {
@@ -15935,8 +15609,15 @@ enum AioOp {
 
 fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp) -> i64 {
     match op {
+        // A pipe or socket has no offset: pread/pwrite fail with ESPIPE and,
+        // like glibc's aio worker, the request falls back to read/write.
         AioOp::Read => {
-            match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
+            let buf = buf_addr as *mut u8;
+            let r = match unsafe { syscall::sys_pread64(fd, buf, nbytes, offset) } {
+                Err(libc::ESPIPE) => unsafe { syscall::sys_read(fd, buf, nbytes) },
+                r => r,
+            };
+            match r {
                 Ok(n) => n as i64,
                 Err(e) => {
                     unsafe { set_abi_errno(e) };
@@ -15945,7 +15626,12 @@ fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp
             }
         }
         AioOp::Write => {
-            match unsafe { syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset) } {
+            let buf = buf_addr as *const u8;
+            let r = match unsafe { syscall::sys_pwrite64(fd, buf, nbytes, offset) } {
+                Err(libc::ESPIPE) => unsafe { syscall::sys_write(fd, buf, nbytes) },
+                r => r,
+            };
+            match r {
                 Ok(n) => n as i64,
                 Err(e) => {
                     unsafe { set_abi_errno(e) };
@@ -15970,6 +15656,7 @@ fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp
     }
 }
 
+#[allow(dead_code)]
 unsafe fn aio_complete(aiocbp: *mut c_void, result: i64) {
     if result < 0 {
         let err = current_abi_errno();
@@ -15983,63 +15670,26 @@ unsafe fn aio_complete(aiocbp: *mut c_void, result: i64) {
     }
 }
 
+#[allow(dead_code)]
 fn aio_notify_waiters() {
-    let (lock, cvar) = &*AIO_NOTIFY;
-    if let Ok(mut generation) = lock.lock() {
-        *generation = generation.wrapping_add(1);
-        cvar.notify_all();
-    }
+    aio_completion::publish();
 }
 
 /// Submit an async I/O operation.
 ///
-/// Reads parameters from the aiocb struct, marks it EINPROGRESS, then
-/// schedules the operation. In the owned-TLS replacement lane, complete the
-/// syscall synchronously: POSIX permits immediate completion, and avoiding
-/// `std::thread` keeps Rust's thread-spawn TLS out of the standalone artifact.
+/// Snapshot the notification before publishing completion. SIGEV_THREAD uses
+/// a separate detached notification waiter, consuming attributes during
+/// submission; callbacks never occupy a bounded I/O worker.
 unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
-    let fd = unsafe { aiocb_i32(aiocbp, aiocb_off::FILDES) };
-    let buf = unsafe { aiocb_ptr(aiocbp, aiocb_off::BUF) };
-    let nbytes = unsafe { aiocb_usize(aiocbp, aiocb_off::NBYTES) };
-    let offset = unsafe { aiocb_i64(aiocbp, aiocb_off::OFFSET) };
+    unsafe { aio_submit_group(aiocbp, op, None) }
+}
 
-    // Mark as in-progress before spawning the thread.
-    unsafe { aiocb_set_return(aiocbp, 0) };
-    unsafe { aiocb_set_error_atomic(aiocbp, errno::EINPROGRESS) };
-
-    let buf_addr = buf as usize;
-
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        let result = aio_execute(fd, buf_addr, nbytes, offset, op);
-        unsafe { aio_complete(aiocbp, result) };
-        aio_notify_waiters();
-        0
-    }
-
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        // Transfer raw pointer addresses to the worker thread.
-        // POSIX guarantees the caller keeps the aiocb and buffer valid until
-        // aio_return is called, so these addresses remain valid.
-        let cb_addr = aiocbp as usize;
-        let spawn_result = std::thread::Builder::new()
-            .name("aio-worker".into())
-            .spawn(move || {
-                let cb = cb_addr as *mut c_void;
-                let result = aio_execute(fd, buf_addr, nbytes, offset, op);
-                unsafe { aio_complete(cb, result) };
-                aio_notify_waiters();
-            });
-
-        if spawn_result.is_err() {
-            unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
-            unsafe { set_abi_errno(errno::EAGAIN) };
-            -1
-        } else {
-            0
-        }
-    }
+unsafe fn aio_submit_group(
+    aiocbp: *mut c_void,
+    op: AioOp,
+    group: Option<std::sync::Arc<aio_completion::Group>>,
+) -> c_int {
+    unsafe { aio_queue::submit(aiocbp, op, group) }
 }
 
 /// `aio_read` — initiate an asynchronous read operation.
@@ -16090,40 +15740,37 @@ pub unsafe extern "C" fn aio_return(aiocbp: *mut c_void) -> libc::ssize_t {
 
 /// `aio_cancel` — attempt to cancel outstanding asynchronous I/O operations.
 ///
-/// Since our worker threads perform blocking syscalls, we cannot truly cancel
-/// in-flight operations. Returns AIO_ALLDONE if already complete,
-/// AIO_NOTCANCELED if still in progress, or AIO_CANCELED if the aiocb is NULL
-/// (cancel-all mode, which we approximate).
+/// Queued requests are canceled and notified normally. Running syscalls keep
+/// ownership of their buffers and complete normally (AIO_NOTCANCELED).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int {
-    if aiocbp.is_null() {
-        // Cancel all outstanding operations on fd — we cannot truly cancel
-        // in-flight syscalls, so report AIO_NOTCANCELED.
-        let _ = fd;
-        return AIO_NOTCANCELED;
-    }
-
-    let err = unsafe { aiocb_error_atomic(aiocbp) };
-    if err == errno::EINPROGRESS {
-        // Operation is still running; we cannot interrupt a blocking syscall.
-        AIO_NOTCANCELED
-    } else {
-        // Already completed (success or failure).
-        AIO_ALLDONE
-    }
+    unsafe { aio_queue::cancel(fd, aiocbp) }
 }
 
 /// `aio_suspend` — wait for one or more asynchronous I/O operations to complete.
 ///
 /// Blocks until at least one aiocb in the list completes (error_code != EINPROGRESS),
 /// or the timeout expires. Returns 0 on success, -1 on timeout/error.
+///
+/// The kernel wait is both interruptible and a cancellation point. Snapshot
+/// the completion epoch before inspecting requests to close the scan/wait race.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn aio_suspend(
+pub unsafe extern "C-unwind" fn aio_suspend(
     list: *const *const c_void,
     nent: c_int,
     timeout: *const libc::timespec,
 ) -> c_int {
-    if list.is_null() || nent <= 0 {
+    unsafe { aio_suspend_cp(list, nent, timeout) }
+}
+
+/// Body of [`aio_suspend`] and its alias (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn aio_suspend_cp(
+    list: *const *const c_void,
+    nent: c_int,
+    timeout: *const libc::timespec,
+) -> c_int {
+    if nent < 0 || (list.is_null() && nent != 0) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -16150,9 +15797,9 @@ pub unsafe extern "C" fn aio_suspend(
         std::time::Instant::now().checked_add(dur)
     };
 
-    let (lock, cvar) = &*AIO_NOTIFY;
-
     loop {
+        let epoch = aio_completion::EPOCH.load(std::sync::atomic::Ordering::Acquire);
+        let mut pending = false;
         // Check if any aiocb has completed.
         for i in 0..nent as usize {
             let cb = unsafe { *list.add(i) };
@@ -16162,30 +15809,39 @@ pub unsafe extern "C" fn aio_suspend(
             if unsafe { aiocb_error_atomic(cb) } != errno::EINPROGRESS {
                 return 0;
             }
+            pending = true;
         }
-
-        // Determine wait duration.
-        let wait_dur = if let Some(dl) = deadline {
+        if !pending {
+            return 0;
+        }
+        let interval = if let Some(dl) = deadline {
             let now = std::time::Instant::now();
             if now >= dl {
-                // Timeout expired.
                 unsafe { set_abi_errno(errno::EAGAIN) };
                 return -1;
             }
-            dl - now
+            let left = dl - now;
+            Some(libc::timespec {
+                tv_sec: left.as_secs() as libc::time_t,
+                tv_nsec: left.subsec_nanos() as libc::c_long,
+            })
         } else {
-            std::time::Duration::from_millis(100)
+            None
         };
-
-        // Wait on condvar with bounded duration.
-        let guard = match lock.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                unsafe { set_abi_errno(errno::EINTR) };
+        let timeout = interval
+            .as_ref()
+            .map_or(std::ptr::null(), |ts| ts as *const _);
+        // SAFETY: no lock or borrow crosses the async-cancel window. Keeping
+        // the window in this inlined body preserves the application's caller.
+        match unsafe {
+            crate::pthread_abi::at_cancellation_point(|| aio_completion::wait(epoch, timeout))
+        } {
+            Ok(()) | Err(libc::EAGAIN) | Err(libc::ETIMEDOUT) => continue,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
                 return -1;
             }
-        };
-        let _ = cvar.wait_timeout(guard, wait_dur.min(std::time::Duration::from_millis(100)));
+        }
     }
 }
 
@@ -16197,11 +15853,13 @@ pub unsafe extern "C" fn aio_fsync(op: c_int, aiocbp: *mut c_void) -> c_int {
         return -1;
     }
 
-    let aio_op = if op == O_DSYNC_FLAG {
-        AioOp::Fdatasync
-    } else {
-        // O_SYNC or default → full fsync
-        AioOp::Fsync
+    let aio_op = match op {
+        O_DSYNC_FLAG => AioOp::Fdatasync,
+        O_SYNC_FLAG => AioOp::Fsync,
+        _ => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
     };
 
     unsafe { aio_submit(aiocbp, aio_op) }
@@ -16216,9 +15874,9 @@ pub unsafe extern "C" fn lio_listio(
     mode: c_int,
     list: *const *mut c_void,
     nent: c_int,
-    _sevp: *mut c_void,
+    sevp: *mut c_void,
 ) -> c_int {
-    if list.is_null() || nent < 0 {
+    if nent < 0 || (list.is_null() && nent != 0) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -16227,7 +15885,21 @@ pub unsafe extern "C" fn lio_listio(
         return -1;
     }
 
+    // LIO_WAIT must not even inspect sevp. For NOWAIT the group's owned
+    // reservation prevents early notification while the list is submitted.
+    let group = if mode == LIO_NOWAIT && !sevp.is_null() {
+        match unsafe { aio_completion::Group::new(sevp.cast()) } {
+            Ok(group) => Some(group),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        }
+    } else {
+        None
+    };
     let mut had_error = false;
+    let mut resource_error = false;
 
     // Submit each request.
     for i in 0..nent as usize {
@@ -16242,22 +15914,26 @@ pub unsafe extern "C" fn lio_listio(
             LIO_WRITE => AioOp::Write,
             LIO_NOP => continue,
             _ => {
-                unsafe { set_abi_errno(errno::EINVAL) };
+                unsafe { aiocb_set_return(cb, -1) };
+                unsafe { aiocb_set_error_atomic(cb, errno::EINVAL) };
                 had_error = true;
                 continue;
             }
         };
 
-        if unsafe { aio_submit(cb, op) } != 0 {
+        if unsafe { aio_submit_group(cb, op, group.as_ref().map(std::sync::Arc::clone)) } != 0 {
             had_error = true;
+            resource_error |= current_abi_errno() == errno::EAGAIN;
         }
+    }
+    if let Some(group) = group {
+        group.finish();
     }
 
     if mode == LIO_WAIT {
         // Wait for all submitted operations to complete.
-        let (lock, cvar) = &*AIO_NOTIFY;
-
         loop {
+            let epoch = aio_completion::EPOCH.load(std::sync::atomic::Ordering::Acquire);
             let mut all_done = true;
             for i in 0..nent as usize {
                 let cb = unsafe { *list.add(i) };
@@ -16265,12 +15941,14 @@ pub unsafe extern "C" fn lio_listio(
                     continue;
                 }
                 let opcode = unsafe { aiocb_i32(cb, aiocb_off::LIO_OPCODE) };
-                if opcode == LIO_NOP {
+                if opcode != LIO_READ && opcode != LIO_WRITE {
                     continue;
                 }
-                if unsafe { aiocb_error_atomic(cb) } == errno::EINPROGRESS {
+                let error = unsafe { aiocb_error_atomic(cb) };
+                if error == errno::EINPROGRESS {
                     all_done = false;
-                    break;
+                } else if error != 0 {
+                    had_error = true;
                 }
             }
 
@@ -16278,15 +15956,31 @@ pub unsafe extern "C" fn lio_listio(
                 break;
             }
 
-            let guard = match lock.lock() {
-                Ok(g) => g,
-                Err(_) => break,
-            };
-            let _ = cvar.wait_timeout(guard, std::time::Duration::from_millis(50));
+            // Ordinary signals interrupt the wait, but glibc's lio_listio is
+            // not a cancellation point (its public declaration is noexcept).
+            // Do not introduce forced unwinding into existing C++ callers.
+            match aio_completion::wait(epoch, std::ptr::null()) {
+                Ok(()) | Err(libc::EAGAIN) => {}
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    return -1;
+                }
+            }
         }
     }
 
-    if had_error { -1 } else { 0 }
+    if had_error {
+        unsafe {
+            set_abi_errno(if resource_error {
+                errno::EAGAIN
+            } else {
+                errno::EIO
+            })
+        };
+        -1
+    } else {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -16639,15 +16333,20 @@ pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c
 // sendmmsg / recvmmsg — RawSyscall
 // ---------------------------------------------------------------------------
 
-/// `sendmmsg` — send multiple messages on a socket.
+/// `sendmmsg` — send multiple messages on a socket. A cancellation point, as
+/// in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sendmmsg(
+pub unsafe extern "C-unwind" fn sendmmsg(
     sockfd: c_int,
     msgvec: *mut c_void,
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    match unsafe { syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
+        })
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -16656,17 +16355,21 @@ pub unsafe extern "C" fn sendmmsg(
     }
 }
 
-/// `recvmmsg` — receive multiple messages on a socket.
+/// `recvmmsg` — receive multiple messages on a socket. A cancellation point,
+/// as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn recvmmsg(
+pub unsafe extern "C-unwind" fn recvmmsg(
     sockfd: c_int,
     msgvec: *mut c_void,
     vlen: c_uint,
     flags: c_int,
     timeout: *mut libc::timespec,
 ) -> c_int {
-    match unsafe { syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize) }
-    {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize)
+        })
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -17016,43 +16719,24 @@ pub unsafe extern "C" fn getgrouplist(
     groups: *mut libc::gid_t,
     ngroups: *mut c_int,
 ) -> c_int {
-    if user.is_null() || groups.is_null() || ngroups.is_null() {
+    if user.is_null() || ngroups.is_null() {
         return -1;
     }
     let Some(user_name) = (unsafe { read_c_string_bytes(user) }) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     };
-    let max_groups = unsafe { *ngroups } as usize;
+    // `getgrouplist(user, g, NULL, &n)` with n == 0 is the size query
+    // (getent initgroups uses it): glibc stores the count and returns -1.
+    // A NULL buffer claiming room is never written through.
+    let max_groups = if groups.is_null() {
+        0
+    } else {
+        usize::try_from(unsafe { *ngroups }).unwrap_or(0)
+    };
 
-    let mut result: Vec<libc::gid_t> = Vec::with_capacity(32);
-    result.push(group);
-
-    if let Ok(content) = std::fs::read("/etc/group") {
-        for line in content.split(|&b| b == b'\n') {
-            if line.is_empty() || line[0] == b'#' {
-                continue;
-            }
-            let fields: Vec<&[u8]> = line.splitn(4, |&b| b == b':').collect();
-            if fields.len() < 4 {
-                continue;
-            }
-            let gid: libc::gid_t = match std::str::from_utf8(fields[2]).unwrap_or("").parse() {
-                Ok(g) => g,
-                Err(_) => continue,
-            };
-            if gid == group {
-                continue;
-            }
-            for member in fields[3].split(|&b| b == b',') {
-                let member = member.strip_suffix(b"\r").unwrap_or(member);
-                if member == user_name.as_slice() && !result.contains(&gid) {
-                    result.push(gid);
-                    break;
-                }
-            }
-        }
-    }
+    // Every initgroups source nsswitch.conf names (files, sss, systemd, ...).
+    let result = super::grp_abi::initgroups_list(&user_name, group, -1);
 
     unsafe { *ngroups = result.len() as c_int };
     // glibc copies MIN(found, *ngroups) group IDs into the caller's buffer
@@ -17088,38 +16772,10 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
         return -1;
     };
 
-    let mut groups: Vec<libc::gid_t> = Vec::with_capacity(32);
-    groups.push(group);
-
-    // Parse /etc/group for supplementary memberships
-    if let Ok(content) = std::fs::read("/etc/group") {
-        for line in content.split(|&b| b == b'\n') {
-            if line.is_empty() || line[0] == b'#' {
-                continue;
-            }
-            // Format: name:password:gid:member1,member2,...
-            let fields: Vec<&[u8]> = line.splitn(4, |&b| b == b':').collect();
-            if fields.len() < 4 {
-                continue;
-            }
-            let gid_str = std::str::from_utf8(fields[2]).unwrap_or("");
-            let gid: libc::gid_t = match gid_str.parse() {
-                Ok(g) => g,
-                Err(_) => continue,
-            };
-            if gid == group {
-                continue; // Already in list
-            }
-            // Check if user is in the member list
-            for member in fields[3].split(|&b| b == b',') {
-                let member = member.strip_suffix(b"\r").unwrap_or(member);
-                if member == user_name.as_slice() && !groups.contains(&gid) {
-                    groups.push(gid);
-                    break;
-                }
-            }
-        }
-    }
+    // The kernel's NGROUPS_MAX bounds what setgroups accepts; modules are told.
+    const NGROUPS_MAX: usize = 65536;
+    let mut groups = super::grp_abi::initgroups_list(&user_name, group, NGROUPS_MAX as i64);
+    groups.truncate(NGROUPS_MAX);
 
     match unsafe { syscall::sys_setgroups(groups.len(), groups.as_ptr()) } {
         Ok(()) => 0,
@@ -18839,9 +18495,10 @@ pub unsafe extern "C" fn pidfd_getfd(pidfd: c_int, targetfd: c_int, flags: c_uin
     }
 }
 
-/// Linux `epoll_pwait2` — wait for events with nanosecond timeout.
+/// Linux `epoll_pwait2` — wait for events with nanosecond timeout. A
+/// cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn epoll_pwait2(
+pub unsafe extern "C-unwind" fn epoll_pwait2(
     epfd: c_int,
     events: *mut c_void,
     maxevents: c_int,
@@ -18849,14 +18506,16 @@ pub unsafe extern "C" fn epoll_pwait2(
     sigmask: *const libc::sigset_t,
 ) -> c_int {
     match unsafe {
-        syscall::sys_epoll_pwait2(
-            epfd,
-            events as *mut u8,
-            maxevents,
-            timeout as *const u8,
-            sigmask as *const u8,
-            std::mem::size_of::<libc::c_ulong>(),
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_epoll_pwait2(
+                epfd,
+                events as *mut u8,
+                maxevents,
+                timeout as *const u8,
+                sigmask as *const u8,
+                std::mem::size_of::<libc::c_ulong>(),
+            )
+        })
     } {
         Ok(n) => n,
         Err(e) => {
@@ -19173,25 +18832,12 @@ pub unsafe extern "C" fn pkey_mprotect(
 // Batch: Pthread scheduling — Implemented (delegates to kernel)
 // ===========================================================================
 
-/// Extract kernel TID from a pthread_t handle.
-/// On glibc x86_64, pthread_t is a pointer to the thread control block (TCB).
-/// The TID (pid field) is at offset 720 in the NPTL struct (glibc 2.34+).
-/// For the common case of pthread_self(), we can detect this and use SYS_gettid.
+/// Kernel TID of a pthread_t: the calling thread, an fl-managed handle, a
+/// registered host thread, or the main thread (which fl names by its tid).
+/// The former read of glibc's TCB at offset 720 dereferenced the main
+/// thread's tid as a pointer when another thread asked about it (SIGSEGV).
 unsafe fn pthread_to_tid(thread: libc::pthread_t) -> c_long {
-    let self_handle = unsafe { crate::pthread_abi::pthread_self() };
-    if thread == self_handle {
-        // Common case: operating on current thread
-        syscall::sys_gettid() as c_long
-    } else {
-        // For other threads, try reading TID from the glibc TCB.
-        // On glibc x86_64 (NPTL), the pid field is at offset 720.
-        // This is version-dependent but stable across glibc 2.17-2.38.
-        let tcb = thread as *const u8;
-        if tcb.is_null() {
-            return -1;
-        }
-        unsafe { *(tcb.add(720) as *const i32) as c_long }
-    }
+    crate::pthread_abi::resolve_thread_tid(thread).map_or(-1, c_long::from)
 }
 
 /// POSIX `pthread_setschedparam` — set thread scheduling policy and priority.
@@ -19462,15 +19108,20 @@ pub unsafe extern "C" fn posix_fadvise64(fd: c_int, offset: i64, len: i64, advic
     }
 }
 
-/// Linux `sync_file_range` — sync file segment to disk.
+/// Linux `sync_file_range` — sync file segment to disk. A cancellation point,
+/// as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sync_file_range(
+pub unsafe extern "C-unwind" fn sync_file_range(
     fd: c_int,
     offset: i64,
     nbytes: i64,
     flags: c_uint,
 ) -> c_int {
-    match syscall::sys_sync_file_range(fd, offset, nbytes, flags) {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_sync_file_range(fd, offset, nbytes, flags)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -20578,13 +20229,36 @@ pub unsafe extern "C" fn __cxa_get_globals_fast() -> *mut CxaEhGlobals {
 pub static __stack_chk_guard: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// Initialize __stack_chk_guard from AT_RANDOM.
-/// Called during startup before main().
+/// Per-process pointer guard for mangling saved code/stack pointers on
+/// aarch64, the FrankenLibC analogue of glibc's `pointer_guard`. It is seeded
+/// from the second 8 bytes of `AT_RANDOM` (the bytes glibc's loader also uses
+/// for its pointer guard, independent of the stack canary) and is the guard
+/// the aarch64 `setjmp`/`longjmp`/`__longjmp_chk` code XORs into the saved
+/// frame pointer, return address and stack pointer.
+///
+/// x86_64 does not use it: that path reads glibc's own guard from the TCB at
+/// `%fs:0x30`. aarch64 has no fixed TCB slot, and glibc's `__pointer_chk_guard`
+/// is a `GLIBC_PRIVATE` symbol that is not reliably resolvable from an
+/// interposing library, so FrankenLibC owns this word itself. It is seeded
+/// before `main` by the library's `.init_array` constructor (and re-seeded with
+/// the same bytes by the host-delegated startup path). The non-zero initial
+/// value means mangling is never a no-op in the window before seeding, though
+/// that value is a public constant, not a secret. Unlike glibc's RELRO copy,
+/// this word stays writable after startup.
+#[cfg(target_arch = "aarch64")]
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __frankenlibc_pointer_guard: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0x9e3779b97f4a7c15u64 as usize);
+
+/// Initialize __stack_chk_guard (and, on aarch64, __frankenlibc_pointer_guard)
+/// from AT_RANDOM. Called during startup before main().
 pub(crate) fn init_stack_canary() {
     use std::sync::atomic::Ordering;
     // Read AT_RANDOM (type 25) from auxv — it points to 16 random bytes
     // provided by the kernel.
-    let canary = auxv_entry(libc::AT_RANDOM)
+    let random = auxv_entry(libc::AT_RANDOM);
+    let canary = random
         .map(|random| {
             // AT_RANDOM points to 16 random bytes the kernel placed in memory.
             let mut bytes = [0u8; 8];
@@ -20596,6 +20270,22 @@ pub(crate) fn init_stack_canary() {
         })
         .unwrap_or(0x00000aff0a0d0000); // Fallback: static canary with sentinel bytes
     __stack_chk_guard.store(canary, Ordering::Release);
+
+    // Pointer guard: the SECOND 8 random bytes, kept distinct from the canary so
+    // leaking one does not reveal the other. Full 64-bit entropy (no NUL byte).
+    #[cfg(target_arch = "aarch64")]
+    if let Some(random) = random {
+        let mut bytes = [0u8; 8];
+        // SAFETY: AT_RANDOM provides 16 readable bytes; we read bytes 8..16.
+        unsafe {
+            std::ptr::copy_nonoverlapping((random as *const u8).add(8), bytes.as_mut_ptr(), 8)
+        };
+        let guard = usize::from_ne_bytes(bytes);
+        // Never install a zero guard (that would mangle to plaintext).
+        if guard != 0 {
+            __frankenlibc_pointer_guard.store(guard, Ordering::Release);
+        }
+    }
 }
 // ===========================================================================
 // Batch: Network database iterators — Implemented (parse /etc/ files)
@@ -20603,7 +20293,7 @@ pub(crate) fn init_stack_canary() {
 
 struct GetHostByName2State {
     hostent: libc::hostent,
-    buffer: [c_char; 1024],
+    buffer: Vec<c_char>,
 }
 
 // SAFETY: the owned-TLS experiment keys one boxed state value per thread id.
@@ -20617,7 +20307,7 @@ fn new_gethostbyname2_state() -> GetHostByName2State {
     GetHostByName2State {
         // SAFETY: zero is the C ABI empty value for hostent pointer/integer fields.
         hostent: unsafe { std::mem::zeroed() },
-        buffer: [0; 1024],
+        buffer: vec![0; 1024],
     }
 }
 
@@ -20643,27 +20333,49 @@ fn with_gethostbyname2_state<R>(callback: impl FnOnce(&mut GetHostByName2State) 
     }
 }
 
-/// `gethostbyname2` — IPv6-aware hostname lookup (C locale, /etc/hosts only).
+/// `gethostbyname2` — IPv4/IPv6 lookup through the configured hosts sources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
     with_gethostbyname2_state(|state| {
         let mut result: *mut libc::hostent = std::ptr::null_mut();
         let h_errno = unsafe { crate::resolv_abi::__h_errno_location() };
-        let rc = unsafe {
-            gethostbyname2_r(
-                name,
-                af,
-                (&mut state.hostent as *mut libc::hostent).cast(),
-                state.buffer.as_mut_ptr(),
-                state.buffer.len(),
-                (&mut result as *mut *mut libc::hostent).cast(),
-                h_errno,
-            )
-        };
-        if rc != 0 || result.is_null() {
+        loop {
+            let rc = unsafe {
+                gethostbyname2_r(
+                    name,
+                    af,
+                    (&mut state.hostent as *mut libc::hostent).cast(),
+                    state.buffer.as_mut_ptr(),
+                    state.buffer.len(),
+                    (&mut result as *mut *mut libc::hostent).cast(),
+                    h_errno,
+                )
+            };
+            if rc != libc::ERANGE {
+                return if rc == 0 {
+                    result.cast()
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            // A module can successfully resolve an answer larger than the
+            // initial TLS buffer. Retry serialization with owned storage,
+            // bounded like the module scratch allocation itself.
+            let length = state.buffer.len();
+            let error = if length >= 1 << 24 {
+                libc::ERANGE
+            } else if state.buffer.try_reserve_exact(length).is_err() {
+                libc::ENOMEM
+            } else {
+                state.buffer.resize(length * 2, 0);
+                continue;
+            };
+            unsafe {
+                *crate::errno_abi::__errno_location() = error;
+                *h_errno = -1; // NETDB_INTERNAL
+            }
             return std::ptr::null_mut();
         }
-        result.cast()
     })
 }
 
@@ -21799,13 +21511,18 @@ pub unsafe extern "C" fn fstatvfs64(fd: c_int, buf: *mut libc::statvfs) -> c_int
 /// `lockf64` — LFS alias for `lockf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn lockf64(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
-    unsafe { lockf(fd, cmd, len) }
+    unsafe { lockf_cp(fd, cmd, len) }
 }
 
 /// `fallocate64` — LFS alias for `fallocate`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fallocate64(fd: c_int, mode: c_int, offset: i64, len: i64) -> c_int {
-    unsafe { fallocate(fd, mode, offset, len) }
+pub unsafe extern "C-unwind" fn fallocate64(
+    fd: c_int,
+    mode: c_int,
+    offset: i64,
+    len: i64,
+) -> c_int {
+    unsafe { fallocate_cp(fd, mode, offset, len) }
 }
 
 /// `fcntl64` — LFS alias for `fcntl` (on 64-bit, identical ABI).
@@ -21820,29 +21537,29 @@ pub unsafe extern "C" fn fallocate64(fd: c_int, mode: c_int, offset: i64, len: i
 pub unsafe extern "C-unwind" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     // Commands that take no argument ignore it, as glibc's va_arg read does.
     let arg: c_long = unsafe { args.next_arg::<c_long>() };
-    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
+    unsafe { crate::io_abi::fcntl_cp(fd, cmd, arg) }
 }
 
 /// `preadv64` — LFS alias for `preadv`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn preadv64(
+pub unsafe extern "C-unwind" fn preadv64(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
     offset: libc::off_t,
 ) -> isize {
-    unsafe { crate::io_abi::preadv(fd, iov, iovcnt, offset) }
+    unsafe { crate::io_abi::preadv_cp(fd, iov, iovcnt, offset) }
 }
 
 /// `pwritev64` — LFS alias for `pwritev`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwritev64(
+pub unsafe extern "C-unwind" fn pwritev64(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
     offset: libc::off_t,
 ) -> isize {
-    unsafe { crate::io_abi::pwritev(fd, iov, iovcnt, offset) }
+    unsafe { crate::io_abi::pwritev_cp(fd, iov, iovcnt, offset) }
 }
 
 /// `readdir64_r` — reentrant readdir with dirent64 (LFS alias).
@@ -22014,6 +21731,10 @@ struct FtsEntryInternal {
 enum FtsVisit {
     Preorder,
     Postorder,
+    /// The post-order visit of a directory whose entries could not be read:
+    /// glibc reports it as FTS_DNR with this errno in place of FTS_DP (the
+    /// pre-order FTS_D has already been returned).
+    Unreadable(c_int),
 }
 
 /// Owned FTSENT for returning to caller.
@@ -22124,11 +21845,26 @@ fn fts_stat_entry(
     path: &std::path::Path,
     options: c_int,
     follow_symlink: bool,
+    level: i16,
+) -> (libc::stat, u16, c_int) {
+    // FTS_NOSTAT spares the stat of a CHILD that is not a directory (glibc
+    // goes by d_type): roots are always stat'ed, and a directory must still be
+    // classified FTS_D or the walk cannot descend into it -- Tcl's
+    // `file delete -force` unlinked directories (EISDIR) when fl answered
+    // FTS_NSOK for everything.
+    let (stat_buf, info, err) = fts_stat_entry_full(path, options, follow_symlink);
+    if options & FTS_NOSTAT != 0 && level > 0 && info != FTS_D {
+        return (unsafe { std::mem::zeroed() }, FTS_NSOK, 0);
+    }
+    (stat_buf, info, err)
+}
+
+fn fts_stat_entry_full(
+    path: &std::path::Path,
+    options: c_int,
+    follow_symlink: bool,
 ) -> (libc::stat, u16, c_int) {
     let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-    if options & FTS_NOSTAT != 0 {
-        return (stat_buf, FTS_NSOK, 0);
-    }
 
     let path_cstr = match fts_path_to_cstring(path) {
         Ok(path_cstr) => path_cstr,
@@ -22208,10 +21944,14 @@ impl FtsEntryOwned {
 
         let (stat_value, mut info, stat_errno) = if entry.visit == FtsVisit::Postorder {
             let (stat_value, _info, stat_errno) =
-                fts_stat_entry(&entry.path, options, entry.follow_symlink);
+                fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
             (stat_value, FTS_DP, stat_errno)
+        } else if let FtsVisit::Unreadable(err) = entry.visit {
+            let (stat_value, _info, _) =
+                fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
+            (stat_value, FTS_DNR, err)
         } else {
-            fts_stat_entry(&entry.path, options, entry.follow_symlink)
+            fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level)
         };
 
         if name_only {
@@ -22262,6 +22002,30 @@ impl FtsEntryOwned {
 
     fn entry(&self) -> &FTSENT {
         unsafe { &*(self.raw.as_ptr() as *const FTSENT) }
+    }
+
+    /// A root returned by fts_read is named by its last component, as glibc's
+    /// fts_load does ("/tmp/x/d" reads as "d"); before the first read,
+    /// fts_children lists roots under their full argv names. The basename is
+    /// never longer than the stored name, so it is rewritten in place.
+    fn rename_root_to_basename(&mut self) {
+        let mut name = fts_name_bytes(&self.path);
+        let stored = self.entry().fts_namelen as usize;
+        if name.len() > stored {
+            return;
+        }
+        let len = name.len();
+        name.push(0);
+        let entry = self.entry_mut();
+        // SAFETY: the inline name buffer holds `stored + 1 >= len + 1` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                entry.fts_name.as_mut_ptr() as *mut u8,
+                name.len(),
+            );
+        }
+        entry.fts_namelen = len as u16;
     }
 
     fn entry_mut(&mut self) -> &mut FTSENT {
@@ -22323,12 +22087,11 @@ fn fts_expand_pending_children(stream: &mut FtsStream) {
     let children = match fts_read_dir_paths(&dir_entry.path) {
         Ok(children) => children,
         Err(err) => {
-            if let Some(current) = stream.current.as_mut()
-                && current.path == dir_entry.path
-                && current.visit == FtsVisit::Preorder
-            {
-                current.entry_mut().fts_info = FTS_DNR;
-                current.entry_mut().fts_errno = err;
+            // Tcl's recursive `file delete`/`file copy` rely on this FTS_DNR
+            // to fail on a mode-000 subdirectory; fl reported FTS_DP and the
+            // operation silently succeeded.
+            if let Some(post) = stream.queue.front_mut() {
+                post.visit = FtsVisit::Unreadable(err);
             }
             unsafe { set_abi_errno(err) };
             return;
@@ -22495,13 +22258,16 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
         })
         .unwrap_or(std::ptr::null_mut());
 
-    let owned = match FtsEntryOwned::new(&entry, stream.options, parent, false) {
+    let mut owned = match FtsEntryOwned::new(&entry, stream.options, parent, false) {
         Ok(owned) => owned,
         Err(err) => {
             unsafe { set_abi_errno(err) };
             return std::ptr::null_mut();
         }
     };
+    if entry.level == 0 {
+        owned.rename_root_to_basename();
+    }
 
     stream.current = Some(owned);
     if entry.visit == FtsVisit::Preorder {
@@ -23567,7 +23333,78 @@ pub unsafe extern "C" fn fexecve(
     }
 }
 
-/// Linux `clone` — create child process (raw syscall wrapper).
+const CLONE_PIDFD_FLAG: c_int = 0x0000_1000;
+
+/// Number of positional GNU clone tail slots that the caller must supply.
+///
+/// glibc's `clone` and `__clone` are aliases of one machine entry. Their
+/// conceptual tail is always `(parent_tid, tls, child_tid)`: later operands do
+/// not slide left when an earlier flag is absent. A caller using only
+/// `CLONE_SETTLS`, for example, supplies a null parent-tid placeholder followed
+/// by the TLS value. Reading through the highest required slot preserves that
+/// ABI while avoiding reads of genuinely omitted arguments in the common
+/// four-argument form.
+#[inline]
+pub(crate) const fn clone_tail_arity(flags: c_int) -> usize {
+    if flags & (libc::CLONE_CHILD_SETTID | libc::CLONE_CHILD_CLEARTID) != 0 {
+        3
+    } else if flags & libc::CLONE_SETTLS != 0 {
+        2
+    } else if flags & (libc::CLONE_PARENT_SETTID | CLONE_PIDFD_FLAG) != 0 {
+        1
+    } else {
+        0
+    }
+}
+
+type HostCloneFn = unsafe extern "C" fn(
+    Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    *mut c_void,
+    c_int,
+    *mut c_void,
+    ...
+) -> c_int;
+
+fn host_clone() -> Option<HostCloneFn> {
+    static FUNC: std::sync::LazyLock<Option<HostCloneFn>> = std::sync::LazyLock::new(|| {
+        let symbol = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
+        if symbol.is_null() {
+            None
+        } else {
+            // SAFETY: RTLD_NEXT resolved glibc's GNU clone entry point.
+            Some(unsafe { std::mem::transmute::<*mut c_void, HostCloneFn>(symbol) })
+        }
+    });
+    *FUNC
+}
+
+/// Call the host clone entry with exactly the tail arity represented by
+/// `tail_count`. The child never returns through this Rust frame: glibc's clone
+/// trampoline invokes `fn_ptr` on the caller-provided stack and exits with its
+/// result.
+pub(crate) unsafe fn clone_with_tail(
+    fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    stack: *mut c_void,
+    flags: c_int,
+    arg: *mut c_void,
+    tail: [*mut c_void; 3],
+    tail_count: usize,
+) -> c_int {
+    let Some(host_clone) = host_clone() else {
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return -1;
+    };
+    match tail_count {
+        0 => unsafe { host_clone(fn_ptr, stack, flags, arg) },
+        1 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0]) },
+        2 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0], tail[1]) },
+        3 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0], tail[1], tail[2]) },
+        _ => unreachable!("GNU clone has exactly three optional tail slots"),
+    }
+}
+
+/// GNU `clone` — create a child through the host's architecture-specific
+/// stack-switching trampoline.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clone(
     fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
@@ -23576,39 +23413,12 @@ pub unsafe extern "C" fn clone(
     arg: *mut c_void,
     mut args: ...
 ) -> c_int {
-    // clone is extremely ABI-sensitive; delegate to glibc, with its optional
-    // ptid, tls and ctid arguments (read by glibc only under
-    // CLONE_PARENT_SETTID / CLONE_SETTLS / CLONE_CHILD_*TID; uninspected
-    // otherwise). Forwarding only four arguments broke those flags.
-    let (ptid, tls, ctid) = unsafe {
-        (
-            args.next_arg::<*mut c_void>(),
-            args.next_arg::<*mut c_void>(),
-            args.next_arg::<*mut c_void>(),
-        )
-    };
-    type CloneFn = unsafe extern "C" fn(
-        Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
-        *mut c_void,
-        c_int,
-        *mut c_void,
-        ...
-    ) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<CloneFn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, CloneFn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(fn_ptr, stack, flags, arg, ptid, tls, ctid) },
-        None => {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            -1
-        }
+    let tail_count = clone_tail_arity(flags);
+    let mut tail = [std::ptr::null_mut(); 3];
+    for slot in &mut tail[..tail_count] {
+        *slot = unsafe { args.next_arg::<*mut c_void>() };
     }
+    unsafe { clone_with_tail(fn_ptr, stack, flags, arg, tail, tail_count) }
 }
 
 /// GNU `eaccess` / `euidaccess` — check access using effective UID/GID.
@@ -24265,7 +24075,7 @@ unsafe fn dn_name_at_offset_equals(base: *const u8, mut off: usize, want: &[&[u8
         for (k, &wb) in label.iter().enumerate() {
             // SAFETY: bounded by `len`, which the message declares.
             let mb = unsafe { *base.add(off + 1 + k) };
-            if mb.to_ascii_lowercase() != wb.to_ascii_lowercase() {
+            if !mb.eq_ignore_ascii_case(&wb) {
                 return false;
             }
         }
@@ -25959,10 +25769,11 @@ pub unsafe extern "C" fn aio_fsync64(op: c_int, aiocbp: *mut c_void) -> c_int {
     unsafe { aio_fsync(op, aiocbp) }
 }
 
-/// `aio_init` — initialize AIO implementation (glibc extension, mostly no-op).
+/// `aio_init` — configure the bounded AIO pool before the first submission.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn aio_init(_init: *const c_void) {
-    // glibc hint struct; safe to ignore.
+pub unsafe extern "C" fn aio_init(init: *const c_void) {
+    // SAFETY: the caller supplies a live GNU struct aioinit, consumed here.
+    unsafe { aio_queue::init(init) };
 }
 
 /// `aio_read64` — LFS alias for aio_read (identical on 64-bit).
@@ -25979,12 +25790,12 @@ pub unsafe extern "C" fn aio_return64(aiocbp: *mut c_void) -> isize {
 
 /// `aio_suspend64` — LFS alias for aio_suspend (identical on 64-bit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn aio_suspend64(
+pub unsafe extern "C-unwind" fn aio_suspend64(
     list: *const *const c_void,
     nent: c_int,
     timeout: *const libc::timespec,
 ) -> c_int {
-    unsafe { aio_suspend(list, nent, timeout) }
+    unsafe { aio_suspend_cp(list, nent, timeout) }
 }
 
 /// `aio_write64` — LFS alias for aio_write (identical on 64-bit).
@@ -26043,7 +25854,7 @@ pub unsafe extern "C-unwind" fn openat64(
     } else {
         0
     };
-    unsafe { openat(dirfd, path, flags, mode) }
+    unsafe { openat_cp(dirfd, path, flags, mode) }
 }
 
 // ===========================================================================
@@ -26334,11 +26145,11 @@ unsafe fn argp_write_bytes(stream: *mut libc::FILE, bytes: &[u8]) -> bool {
 }
 
 fn argp_stderr() -> *mut libc::FILE {
-    unsafe { crate::stdio_abi::stderr }.cast()
+    crate::stdio_abi::active_stderr_stream().cast()
 }
 
 fn argp_stdout() -> *mut libc::FILE {
-    unsafe { crate::stdio_abi::stdout }.cast()
+    crate::stdio_abi::active_stdout_stream().cast()
 }
 
 /// Read one of the program-settable argp globals. Programs define these in
@@ -27231,8 +27042,9 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_printf("argp_error", &fmt_bytes, arg_buf.as_ptr(), extract_count)
+    };
     unsafe { argp_error_bytes(state.cast(), &rendered) };
 }
 
@@ -27290,7 +27102,14 @@ pub unsafe extern "C" fn argp_failure(
         let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
         let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
         extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) }
+        unsafe {
+            super::stdio_abi::render_printf(
+                "argp_failure",
+                &fmt_bytes,
+                arg_buf.as_ptr(),
+                extract_count,
+            )
+        }
     });
     unsafe { argp_failure_bytes(state.cast(), status, errnum, rendered.as_deref()) };
 }
@@ -27309,7 +27128,7 @@ pub unsafe extern "C" fn obstack_free(obstack: *mut c_void, block: *mut c_void) 
 /// `obstack_printf` — formatted print to obstack (variadic).
 /// Builds the va_list and forwards to `obstack_vprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn obstack_printf(
+pub unsafe extern "C-unwind" fn obstack_printf(
     obstack: *mut c_void,
     fmt: *const c_char,
     mut args: ...
@@ -27322,7 +27141,7 @@ pub unsafe extern "C" fn obstack_printf(
 /// Native implementation: format via our native vasprintf, then grow obstack.
 /// The obstack struct layout must match glibc's struct obstack (see glibc_internal_abi.rs).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn obstack_vprintf(
+pub unsafe extern "C-unwind" fn obstack_vprintf(
     obstack: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
@@ -27798,8 +27617,8 @@ fn rseq_cpu_id() -> Option<c_int> {
     // Some(TP-relative byte offset of the rseq area) once glibc's rseq is confirmed registered
     // with a `cpu_id` field (offset 4, so the area must be >= 8 bytes); None if unavailable.
     static RSEQ_OFFSET: LazyLock<Option<isize>> = LazyLock::new(|| unsafe {
-        let off = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_offset".as_ptr());
-        let size = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_size".as_ptr());
+        let off = crate::dlfcn_abi::dlsym(libc::RTLD_DEFAULT, c"__rseq_offset".as_ptr());
+        let size = crate::dlfcn_abi::dlsym(libc::RTLD_DEFAULT, c"__rseq_size".as_ptr());
         if off.is_null() || size.is_null() || *(size as *const u32) < 8 {
             return None;
         }
@@ -28220,9 +28039,16 @@ pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
 /// `sigpause` — atomically release blocked signal and pause.
 ///
 /// Native implementation via raw syscalls: gets current signal mask,
-/// clears the specified signal bit, then calls sigsuspend.
+/// clears the specified signal bit, then calls sigsuspend (a cancellation
+/// point).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn sigpause(sig: c_int) -> c_int {
+    unsafe { sigpause_cp(sig) }
+}
+
+/// Body of [`sigpause`] and its alias (see [`read_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigpause_cp(sig: c_int) -> c_int {
     if sig <= 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
@@ -28256,7 +28082,8 @@ pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
     }
     // Clear the bit for sig
     mask &= !(1u64 << (sig as u64 - 1));
-    let rc = unsafe { crate::signal_abi::sigsuspend(&mask as *const u64 as *const libc::sigset_t) };
+    let rc =
+        unsafe { crate::signal_abi::sigsuspend_cp(&mask as *const u64 as *const libc::sigset_t) };
     if rc != 0 {
         unsafe { set_abi_errno(libc::EINTR) };
     }
@@ -29780,21 +29607,34 @@ pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn _Fork() -> c_int {
-    // _Fork is async-signal-safe fork (C23), no atfork handlers
-    let _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
-
-    let ret = syscall::sys_clone_fork(libc::SIGCHLD as usize);
-    if ret == Ok(0) {
+    // `_Fork` exists specifically for async-signal-safe fork-without-handlers.
+    // Do not route through sys_clone_fork: that wrapper repairs the core's
+    // thread-local tid cache. Do not take the membrane pipeline, resolve host
+    // pthread state, reopen the log, or run atfork callbacks either. POSIX
+    // permits only async-signal-safe operations in the child before exec; the
+    // inherited log descriptor remains usable, and its raw-getpid keyed
+    // limiter distinguishes the new process without a child-side hook.
+    let raw = unsafe {
+        syscall::syscall2(
+            syscall::SYS_CLONE,
+            libc::SIGCHLD as usize,
+            0, // fork-style clone: inherit the current stack
+        )
+    };
+    let ret = syscall::syscall_result(raw).map(|pid| pid as c_int);
+    if matches!(ret, Ok(0)) {
+        // One atomic generation increment lets later membrane lock users take
+        // over locks orphaned by vanished parent threads. It allocates nothing,
+        // touches no TLS, invokes no libc symbol, and cannot block.
         frankenlibc_membrane::util::note_fork_child();
     }
-
-    drop(_pipeline_guard);
 
     match ret {
         Ok(pid) => pid,
         Err(e) => {
-            unsafe { set_abi_errno(e) };
+            // Use the hidden initial-exec TLS leaf explicitly so this error
+            // branch stays auditable as signal-safe at the ABI boundary.
+            unsafe { crate::errno_abi::set_abi_errno_local(e) };
             -1
         }
     }
@@ -31042,131 +30882,121 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
 // Async DNS (getaddrinfo_a family)
 // ===========================================================================
 
-const GAICB_ZERO_PROBE_BYTES: usize = 4 * std::mem::size_of::<*const c_void>();
+#[path = "gai_async.rs"]
+mod gai_async;
 
-unsafe fn is_zeroed_gaicb_request(req: *mut c_void) -> bool {
-    if req.is_null() || !tracked_region_fits(req as usize, GAICB_ZERO_PROBE_BYTES) {
-        return false;
-    }
-    // SAFETY: `req` is a caller-provided pointer. We only read the first four
-    // pointer-sized fields, which match glibc's public `gaicb` request-shape
-    // (name/service/request/result) well enough to recognize the degenerate
-    // all-zero handle without depending on the full struct layout.
-    let fields = unsafe { std::slice::from_raw_parts(req.cast::<*const c_void>(), 4) };
-    fields.iter().all(|field| field.is_null())
-}
-
+/// GNU asynchronous name/service resolution using the native resolver.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getaddrinfo_a(
+pub unsafe extern "C-unwind" fn getaddrinfo_a(
     mode: c_int,
     list: *mut *mut c_void,
     nitems: c_int,
-    _sevp: *mut c_void,
+    sevp: *mut c_void,
 ) -> c_int {
-    const GAI_WAIT: c_int = 0;
-    const GAI_NOWAIT: c_int = 1;
-
-    if mode != GAI_WAIT && mode != GAI_NOWAIT {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return libc::EAI_SYSTEM;
-    }
-    // Host glibc treats the empty request set as a synchronous no-op and
-    // returns success without mutating errno, even when `list` is NULL.
-    if nitems <= 0 {
-        return 0;
-    }
-    // Host glibc is crash-prone when `list` is NULL but `nitems > 0`.
-    // FrankenLibC intentionally treats that shape as unsupported and returns
-    // `EAI_SYSTEM`/`ENOSYS` instead of mirroring host UB at the ABI boundary.
-    if !list.is_null() {
-        let Some(list_bytes) = (nitems as usize).checked_mul(std::mem::size_of::<*mut c_void>())
-        else {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            return libc::EAI_SYSTEM;
-        };
-        if !tracked_region_fits(list as usize, list_bytes) {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            return libc::EAI_SYSTEM;
+    let saved_errno = current_abi_errno();
+    let submission = match unsafe { gai_async::submit(mode, list, nitems, sevp) } {
+        Ok(submission) => submission,
+        Err(error) => {
+            if error != libc::EAI_SYSTEM { unsafe { set_abi_errno(saved_errno) }; }
+            return error;
         }
-        // SAFETY: `list` is a C pointer to `nitems` request slots provided by the
-        // caller. We only create a shared slice after validating `nitems > 0`,
-        // the multiplication above did not overflow, tracked allocations have
-        // enough remaining bytes for all slots,
-        // and we only inspect `gaicb`-shaped entries enough to recognize the
-        // host-glibc degenerate success path where every request slot is either
-        // NULL or points at a zeroed request descriptor.
-        let requests =
-            unsafe { std::slice::from_raw_parts(list as *const *mut c_void, nitems as usize) };
-        if requests
-            .iter()
-            .all(|request| request.is_null() || unsafe { is_zeroed_gaicb_request(*request) })
-        {
-            return 0;
+    };
+    if mode == 0 {
+        loop {
+            let epoch = gai_async::EPOCH.load(std::sync::atomic::Ordering::Acquire);
+            if submission.done() { break; }
+            // No queue lock or borrowed request/list crosses the cancel window.
+            // GAI_WAIT restarts ordinary signal interruptions; request errors
+            // are read with gai_error rather than returned by this batch call.
+            let _ = unsafe { crate::pthread_abi::at_cancellation_point(||
+                gai_async::wait(epoch, std::ptr::null())) };
         }
     }
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+    unsafe { set_abi_errno(saved_errno) };
+    submission.status
 }
 
-// ---------------------------------------------------------------------------
-// Async DNS constants (glibc <netdb.h> values)
-// ---------------------------------------------------------------------------
-#[allow(dead_code)] // Defined for completeness; used if getaddrinfo_a is implemented.
-const EAI_INPROGRESS: c_int = -100;
-#[allow(dead_code)]
-const EAI_CANCELED: c_int = -101;
-#[allow(dead_code)]
-const EAI_NOTCANCELED: c_int = -102;
-#[allow(dead_code)]
-const EAI_ALLDONE: c_int = -103;
-
-/// `gai_cancel` — cancel an asynchronous name resolution request (bd-9dq5).
-///
-/// FrankenLibC resolves all `getaddrinfo` calls synchronously and does not
-/// export `getaddrinfo_a`, so no asynchronous requests can still be pending by
-/// the time a caller reaches `gai_cancel`. This is part of the proven
-/// host-parity path for the degenerate synchronous wrappers, so report
-/// `EAI_ALLDONE` without mutating `errno`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
-    let _ = req;
-    EAI_ALLDONE
-}
-
-/// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
-///
-/// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
-/// a zeroed request descriptor represents the completed synchronous stub
-/// handle, while opaque handles remain unsupported. The all-zero `gaicb` case
-/// is part of the proven host-parity path and reports success without mutating
-/// `errno`. Opaque or NULL handles are treated as an intentional safe
-/// divergence and return `EAI_SYSTEM` with `ENOSYS` instead of following
-/// crash-prone or otherwise host-UB-adjacent behavior.
+/// Query the release-published status, including native per-request errors.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
-    if unsafe { is_zeroed_gaicb_request(req) } {
-        return 0;
+    let saved_errno = current_abi_errno();
+    match unsafe { gai_async::error(req) } {
+        Ok(status) => {
+            // A stored EAI_SYSTEM is still a valid request status, not a new
+            // system failure in the observing thread. Preserve its errno too.
+            unsafe { set_abi_errno(saved_errno) };
+            status
+        }
+        Err(error) => error,
     }
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
 }
 
-/// `gai_suspend` — wait for async name resolution requests to complete (bd-9dq5).
-///
-/// Since all resolution is synchronous, every request in the list is already
-/// complete by the time `gai_suspend` is called. The empty-list and all-NULL
-/// list cases are part of the proven host-parity path and return `EAI_ALLDONE`
-/// without mutating `errno`, even when the caller supplies a timeout that
-/// would otherwise be invalid. Nonzero `ent` with a NULL list, including
-/// negative `ent`, is an intentional safe divergence from crash-prone host
-/// behavior and also returns `EAI_ALLDONE` without mutating `errno`.
+/// Cancel queued native requests; executing resolutions retain ownership.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gai_suspend(
-    _list: *const *const c_void,
-    _nitems: c_int,
-    _timeout: *const libc::timespec,
+pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
+    let saved_errno = current_abi_errno();
+    let result = gai_async::cancel(req);
+    unsafe { set_abi_errno(saved_errno) };
+    result
+}
+
+/// Wait for a request pending at entry, retaining its internal identity even
+/// when another thread reaps, retires or reuses the original gaicb address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn gai_suspend(
+    list: *const *const c_void,
+    nitems: c_int,
+    timeout: *const libc::timespec,
 ) -> c_int {
-    EAI_ALLDONE
+    let saved_errno = current_abi_errno();
+    let waiting = match unsafe { gai_async::WaitSet::read(list, nitems) } {
+        Ok(waiting) => waiting,
+        Err(error) => {
+            if error != libc::EAI_SYSTEM { unsafe { set_abi_errno(saved_errno) }; }
+            return error;
+        }
+    };
+    if waiting.is_empty() {
+        unsafe { set_abi_errno(saved_errno) };
+        return gai_async::ALLDONE;
+    }
+    let deadline = if timeout.is_null() {
+        None
+    } else {
+        if !(timeout as usize).is_multiple_of(std::mem::align_of::<libc::timespec>())
+            || !tracked_region_fits(timeout as usize, std::mem::size_of::<libc::timespec>())
+        {
+            unsafe { set_abi_errno(libc::ENOSYS) };
+            return libc::EAI_SYSTEM;
+        }
+        let ts = unsafe { *timeout };
+        if ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1_000_000_000 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return libc::EAI_SYSTEM;
+        }
+        std::time::Instant::now().checked_add(std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+    };
+    let result = loop {
+        let epoch = gai_async::EPOCH.load(std::sync::atomic::Ordering::Acquire);
+        if waiting.completed() { break 0; }
+        let interval = if let Some(deadline) = deadline {
+            let now = std::time::Instant::now();
+            if now >= deadline { break libc::EAI_AGAIN; }
+            let left = deadline - now;
+            Some(libc::timespec { tv_sec: left.as_secs() as libc::time_t,
+                tv_nsec: left.subsec_nanos() as libc::c_long })
+        } else { None };
+        let timeout = interval.as_ref().map_or(std::ptr::null(), |ts| ts as *const _);
+        // Keep this window in the public entry frame, as with aio_suspend.
+        match unsafe { crate::pthread_abi::at_cancellation_point(||
+            gai_async::wait(epoch, timeout)) }
+        {
+            Ok(()) | Err(libc::EAGAIN) | Err(libc::ETIMEDOUT) => {}
+            Err(_) => break gai_async::INTR,
+        }
+    };
+    unsafe { set_abi_errno(saved_errno) };
+    result
 }
 
 // ===========================================================================
@@ -31559,8 +31389,14 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
         // the slot for an X87 spec carries the argument's ADDRESS, and this
         // loop could only ever have produced a value there.
         extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        let body =
-            unsafe { crate::stdio_abi::render_printf(render_fmt, arg_buf.as_ptr(), extract_count) };
+        let body = unsafe {
+            crate::stdio_abi::render_printf(
+                "setproctitle",
+                render_fmt,
+                arg_buf.as_ptr(),
+                extract_count,
+            )
+        };
 
         if suppress_prefix {
             body
@@ -31798,8 +31634,8 @@ pub unsafe extern "C" fn MD5Transform(state: *mut u32, block: *const c_uchar) {
     let mut hasher = md5::Md5::new();
     hasher.update(blk);
     let out = hasher.finalize();
-    for (i, chunk) in out.chunks_exact(4).enumerate().take(4) {
-        let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (i, chunk) in out.as_chunks::<4>().0.iter().enumerate().take(4) {
+        let w = u32::from_le_bytes(*chunk);
         unsafe { *state.add(i) = w };
     }
 }

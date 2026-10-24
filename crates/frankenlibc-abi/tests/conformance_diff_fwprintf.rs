@@ -76,6 +76,7 @@ macro_rules! both {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn fwprintf_matches_glibc() {
     unsafe { g::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     // fl needs the same locale, not just the oracle: the call above is a

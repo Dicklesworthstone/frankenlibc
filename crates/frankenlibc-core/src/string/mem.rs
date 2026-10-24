@@ -698,7 +698,9 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             }
             let m6 = v6.simd_eq(needle_simd).to_bitmask();
             if m6 != 0 {
-                return Some(base + SIMD_FOLD_BYTES + SIMD_LANES * 2 + m6.trailing_zeros() as usize);
+                return Some(
+                    base + SIMD_FOLD_BYTES + SIMD_LANES * 2 + m6.trailing_zeros() as usize,
+                );
             }
             let m7 = v7.simd_eq(needle_simd).to_bitmask();
             return Some(base + SIMD_FOLD_BYTES + SIMD_LANES * 3 + m7.trailing_zeros() as usize);

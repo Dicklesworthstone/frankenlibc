@@ -4,9 +4,14 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-core/src/addrinfo.rs'
+      - 'crates/frankenlibc-core/src/addrinfo/**'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
+      - 'tests/integration/fixture_nss_module_lib.c'
       - '.github/workflows/addrinfo.yml'
   workflow_dispatch:
 permissions:
@@ -33,6 +38,21 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/core.log
           cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/addrinfo/abi.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/abi.log
+      - name: Exercise installed NSS hosts modules in strict and hardened modes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/addrinfo
+          status=0
+          for mode in strict hardened; do
+            log="artifacts/addrinfo/nss-modules-${mode}.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test nss_module_test hosts_modules_ -- --nocapture --test-threads=1 \
+              2>&1 | tee "$log"; then status=1; fi
+            if ! grep -Eq '^test result: ok\. 4 passed; 0 failed;' "$log"; then status=1; fi
+          done
+          exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

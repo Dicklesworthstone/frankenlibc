@@ -18,6 +18,7 @@
 //! 4. Metrics snapshot for observability
 //! 5. Redaction policy for privacy-safe evidence
 
+use frankenlibc_membrane::heal::RepairLogContext;
 use frankenlibc_membrane::{
     DecisionId, EvidenceCategory, EvidenceLedger, HealingAction, HealingPolicy, MembraneMetrics,
     PolicyId, RedactionPolicy, SafetyLevel, SafetyState, TraceId, ValidationEvidence,
@@ -41,16 +42,26 @@ fn main() {
     // Simulate a buffer overflow that hardened mode would clamp
     let action = policy.heal_copy_bounds(1024, Some(512), Some(512));
     println!("   copy(1024 bytes, 512 avail) -> {action:?}");
-    policy.record(&action);
+    policy.record(
+        "string_memory",
+        "memcpy",
+        &action,
+        RepairLogContext::new(0, None),
+    );
 
     // Simulate a string overflow
     let action = policy.heal_string_bounds(256, Some(64));
     println!("   strcpy(256 chars, 64 dst) -> {action:?}");
-    policy.record(&action);
+    policy.record(
+        "string_memory",
+        "strcpy",
+        &action,
+        RepairLogContext::new(0, None),
+    );
 
     // Simulate a double-free (no-op in strict, healed in hardened)
     let action = HealingAction::IgnoreDoubleFree;
-    policy.record(&action);
+    policy.record("allocator", "free", &action, RepairLogContext::new(0, None));
     println!("   double-free -> {action:?}");
     println!();
 

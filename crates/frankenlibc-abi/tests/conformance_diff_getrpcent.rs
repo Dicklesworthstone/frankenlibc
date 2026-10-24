@@ -75,11 +75,8 @@ fn getrpcent_matches_glibc() {
     // Lockstep enumeration.
     let mut glist: Vec<Snap> = Vec::new();
     g_set(1);
-    loop {
-        match snap(g_ent()) {
-            Some(s) => glist.push(s),
-            None => break,
-        }
+    while let Some(s) = snap(g_ent()) {
+        glist.push(s);
         if glist.len() > 2000 {
             break;
         }
@@ -88,11 +85,8 @@ fn getrpcent_matches_glibc() {
 
     let mut flist: Vec<Snap> = Vec::new();
     unsafe { flu::setrpcent(1) };
-    loop {
-        match snap(unsafe { flu::getrpcent().cast::<RpcEnt>() }) {
-            Some(s) => flist.push(s),
-            None => break,
-        }
+    while let Some(s) = snap(unsafe { flu::getrpcent().cast::<RpcEnt>() }) {
+        flist.push(s);
         if flist.len() > 2000 {
             break;
         }

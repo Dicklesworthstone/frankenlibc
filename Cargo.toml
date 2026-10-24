@@ -1,4 +1,4 @@
-cargo-features = ["panic-immediate-abort"]
+cargo-features = ["panic-immediate-abort", "profile-rustflags"]
 
 [workspace]
 resolver = "2"
@@ -67,4 +67,16 @@ codegen-units = 1
 # The versioned math entries and their .symver directives must share an ELF
 # object. Keep this confined to the ABI crate, not the workspace dependencies.
 [profile.release.package.frankenlibc-abi]
+codegen-units = 1
+
+# x86-64-v3 (AVX2 + FMA) build, for A/B benchmarking against the shipped
+# baseline x86-64 artifact (bd-rc0923-epic-eeuy4f.13). NOT the release
+# artifact: it refuses to start on a CPU without these extensions.
+#   cargo build -p frankenlibc-abi --profile release-x86-64-v3
+#   -> target/release-x86-64-v3/libfrankenlibc_abi.so
+[profile.release-x86-64-v3]
+inherits = "release"
+rustflags = ["-Ctarget-feature=+avx2,+fma"]
+
+[profile.release-x86-64-v3.package.frankenlibc-abi]
 codegen-units = 1

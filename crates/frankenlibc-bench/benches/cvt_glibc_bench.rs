@@ -19,6 +19,7 @@ unsafe extern "C" {
 // NB: DBL_MAX/extreme magnitudes are intentionally excluded — fl ecvt is
 // deliberately MORE correct than glibc there (documented non-mirror,
 // bd-2g7oyh.101), so a byte-equality parity assert would (correctly) differ.
+#[allow(clippy::approx_constant)]
 const CASES: &[(&str, f64, i32)] = &[
     ("pi_17", 3.141592653589793, 17),
     ("pi_6", 3.141592653589793, 6),

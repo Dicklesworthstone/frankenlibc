@@ -5,83 +5,127 @@
 
 use std::ffi::c_int;
 
-#[cfg(not(feature = "owned-tls-cache"))]
-use std::cell::UnsafeCell;
-#[cfg(not(feature = "owned-tls-cache"))]
-use std::sync::{LazyLock, Mutex};
+// `_Fork` is required to set errno even when it is called from a signal
+// handler. Rust `thread_local!` is unsuitable for that path: first access may
+// enter the TLS runtime, and its teardown fallback allocated behind a mutex.
+//
+// The interpose build therefore addresses glibc's existing static
+// `errno@GLIBC_PRIVATE` TLS object directly with the initial-exec model. The
+// standalone build owns an equivalent four-byte `.tbss` object. Both variants
+// expose the same hidden leaf, with no PLT call, allocator, resolver, or lock.
+#[cfg(all(target_arch = "x86_64", not(feature = "standalone")))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_host_errno",
+    ".symver __frankenlibc_host_errno,errno@GLIBC_PRIVATE",
+    ".pushsection .text.frankenlibc_errno,\"ax\",@progbits",
+    ".p2align 4",
+    ".globl frankenlibc_errno_location_async",
+    ".hidden frankenlibc_errno_location_async",
+    ".type frankenlibc_errno_location_async,@function",
+    "frankenlibc_errno_location_async:",
+    "movq __frankenlibc_host_errno@GOTTPOFF(%rip), %rax",
+    "addq %fs:0, %rax",
+    "ret",
+    ".size frankenlibc_errno_location_async, . - frankenlibc_errno_location_async",
+    ".popsection",
+    options(att_syntax),
+);
 
-#[cfg(feature = "owned-tls-cache")]
-static ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
-    crate::owned_tls_cache::OwnedTlsCache::new(zero_c_int);
+#[cfg(all(target_arch = "x86_64", feature = "standalone"))]
+core::arch::global_asm!(
+    ".pushsection .tbss.frankenlibc_errno,\"awT\",@nobits",
+    ".p2align 2",
+    ".hidden __frankenlibc_errno_tls",
+    ".type __frankenlibc_errno_tls,@object",
+    ".size __frankenlibc_errno_tls,4",
+    "__frankenlibc_errno_tls:",
+    ".zero 4",
+    ".popsection",
+    ".pushsection .text.frankenlibc_errno,\"ax\",@progbits",
+    ".p2align 4",
+    ".globl frankenlibc_errno_location_async",
+    ".hidden frankenlibc_errno_location_async",
+    ".type frankenlibc_errno_location_async,@function",
+    "frankenlibc_errno_location_async:",
+    "movq __frankenlibc_errno_tls@GOTTPOFF(%rip), %rax",
+    "addq %fs:0, %rax",
+    "ret",
+    ".size frankenlibc_errno_location_async, . - frankenlibc_errno_location_async",
+    ".popsection",
+    options(att_syntax),
+);
 
-#[cfg(feature = "owned-tls-cache")]
-fn zero_c_int() -> c_int {
-    0
-}
+#[cfg(all(target_arch = "aarch64", not(feature = "standalone")))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_host_errno",
+    ".symver __frankenlibc_host_errno,errno@GLIBC_PRIVATE",
+    ".pushsection .text.frankenlibc_errno,\"ax\",@progbits",
+    ".p2align 4",
+    ".globl frankenlibc_errno_location_async",
+    ".hidden frankenlibc_errno_location_async",
+    ".type frankenlibc_errno_location_async,%function",
+    "frankenlibc_errno_location_async:",
+    "adrp x1, :gottprel:__frankenlibc_host_errno",
+    "ldr x1, [x1, #:gottprel_lo12:__frankenlibc_host_errno]",
+    "mrs x0, tpidr_el0",
+    "add x0, x0, x1",
+    "ret",
+    ".size frankenlibc_errno_location_async, . - frankenlibc_errno_location_async",
+    ".popsection",
+);
 
-#[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static ERRNO: UnsafeCell<c_int> = const { UnsafeCell::new(0) };
-}
+#[cfg(all(target_arch = "aarch64", feature = "standalone"))]
+core::arch::global_asm!(
+    ".pushsection .tbss.frankenlibc_errno,\"awT\",@nobits",
+    ".p2align 2",
+    ".hidden __frankenlibc_errno_tls",
+    ".type __frankenlibc_errno_tls,%object",
+    ".size __frankenlibc_errno_tls,4",
+    "__frankenlibc_errno_tls:",
+    ".zero 4",
+    ".popsection",
+    ".pushsection .text.frankenlibc_errno,\"ax\",@progbits",
+    ".p2align 4",
+    ".globl frankenlibc_errno_location_async",
+    ".hidden frankenlibc_errno_location_async",
+    ".type frankenlibc_errno_location_async,%function",
+    "frankenlibc_errno_location_async:",
+    "adrp x1, :gottprel:__frankenlibc_errno_tls",
+    "ldr x1, [x1, #:gottprel_lo12:__frankenlibc_errno_tls]",
+    "mrs x0, tpidr_el0",
+    "add x0, x0, x1",
+    "ret",
+    ".size frankenlibc_errno_location_async, . - frankenlibc_errno_location_async",
+    ".popsection",
+);
 
-#[cfg(not(feature = "owned-tls-cache"))]
-static FALLBACK_ERRNO_SLOTS: LazyLock<
-    Mutex<std::collections::HashMap<std::thread::ThreadId, Box<c_int>>>,
-> = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-
-#[cfg(not(feature = "owned-tls-cache"))]
-fn fallback_errno_slot_for_current_thread() -> *mut c_int {
-    let thread_id = std::thread::current().id();
-    let mut slots = FALLBACK_ERRNO_SLOTS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let slot = slots.entry(thread_id).or_insert_with(|| Box::new(0));
-    slot.as_mut() as *mut c_int
+unsafe extern "C" {
+    fn frankenlibc_errno_location_async() -> *mut c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int)
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        match ERRNO.try_with(|cell| cell.get()) {
-            Ok(ptr) => ptr,
-            Err(_) => fallback_errno_slot_for_current_thread(),
-        }
-    }
+    unsafe { frankenlibc_errno_location_async() }
 }
 
 /// Set the thread-local errno value.
 ///
-/// In interpose mode, sets BOTH our internal errno and the host libc's errno
-/// to ensure the value is visible regardless of which `__errno_location` the
-/// caller reads from. In standalone mode, we are the only libc, so only our
-/// internal errno is updated.
+/// In interpose mode, `__errno_location` directly returns glibc's canonical
+/// static TLS slot. In standalone mode it returns FrankenLibC's owned TLS slot.
 ///
 /// Uses volatile write to prevent the LTO optimizer from eliminating the store.
 #[inline]
 pub unsafe fn set_abi_errno(val: c_int) {
     unsafe { set_abi_errno_local(val) };
-
-    // In interpose mode, also set libc's errno so callers using
-    // the host libc's errno slot see the same value. In standalone mode,
-    // we are the sole libc implementation, so this is unnecessary.
-    #[cfg(not(feature = "standalone"))]
-    unsafe {
-        crate::host_resolve::write_host_errno_if_available(val)
-    };
 }
 
-/// Set only FrankenLibC's own thread-local errno slot.
+/// Set errno without host symbol lookup, Rust TLS, allocation, or locking.
 ///
-/// Native replacement-clean paths use this when host errno mirroring would be
-/// the only remaining host-libc dependency for the symbol.
+/// This is the errno path used by async-signal-safe ABI entries such as
+/// `_Fork`. The hidden assembly leaf is initial-exec TLS in both build modes.
 #[inline]
 pub(crate) unsafe fn set_abi_errno_local(val: c_int) {
-    let p = unsafe { __errno_location() };
+    let p = unsafe { frankenlibc_errno_location_async() };
     unsafe { std::ptr::write_volatile(p, val) };
 }
 
@@ -90,20 +134,26 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(not(feature = "owned-tls-cache"))]
-    fn fallback_errno_slot_is_stable_per_thread() {
-        let p1 = fallback_errno_slot_for_current_thread();
-        let p2 = fallback_errno_slot_for_current_thread();
-        assert_eq!(p1, p2);
+    fn errno_slot_is_stable_and_isolated_across_threads() {
+        let main_ptr = unsafe { __errno_location() };
+        assert_eq!(main_ptr, unsafe { __errno_location() });
+        let other_ptr = std::thread::spawn(|| unsafe { __errno_location() } as usize)
+            .join()
+            .unwrap();
+        assert_ne!(main_ptr as usize, other_ptr);
     }
 
     #[test]
-    #[cfg(not(feature = "owned-tls-cache"))]
-    fn fallback_errno_slot_isolated_across_threads() {
-        let main_ptr = fallback_errno_slot_for_current_thread() as usize;
-        let handle = std::thread::spawn(|| fallback_errno_slot_for_current_thread() as usize);
-        let other_ptr = handle.join().unwrap();
-        assert_ne!(main_ptr, other_ptr);
+    #[cfg(not(feature = "standalone"))]
+    fn interpose_errno_accessor_is_the_host_tls_slot() {
+        let ours = unsafe { __errno_location() };
+        let host = unsafe { libc::__errno_location() };
+        assert_eq!(ours, host);
+
+        let original = unsafe { std::ptr::read_volatile(host) };
+        unsafe { set_abi_errno_local(libc::EAGAIN) };
+        assert_eq!(unsafe { std::ptr::read_volatile(host) }, libc::EAGAIN);
+        unsafe { set_abi_errno_local(original) };
     }
 
     #[test]

@@ -20,6 +20,14 @@ use crate::tls_cache::bump_shard_epoch;
 /// Maximum quarantine size in bytes, across all shards.
 const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
+/// Trailing redzone allocated after every arena user buffer (first `CANARY_SIZE`
+/// bytes hold the cryptographic canary; the full 32-byte trailing redzone matches
+/// the 32-byte leading header so multi-step out-of-bounds writes past the initial
+/// canary remain recognized by `arena.lookup()` and clamped to 0 bytes rather than
+/// escaping into adjacent host allocator chunk headers, e.g., CVE-2024-33599/33601).
+pub const TRAILING_REDZONE_SIZE: usize = 32;
+const _: () = assert!(TRAILING_REDZONE_SIZE >= CANARY_SIZE);
+
 /// Where arena blocks (header + user bytes + canary) come from.
 ///
 /// Defaults to the Rust global allocator. Inside libc.so that allocator IS the
@@ -109,7 +117,14 @@ struct IndexNodePoolState {
 
 const INDEX_POOL_BINS: usize = 4;
 const INDEX_POOL_CHUNK: usize = 64 * 1024;
+const INDEX_POOL_FALLBACK_CHUNK: usize = 4 * 1024;
 const INDEX_POOL_CHUNK_ALIGN: usize = 64;
+
+#[repr(C)]
+struct IndexPoolChunkHeader {
+    next: *mut u8,
+    size: usize,
+}
 
 // SAFETY: see the exclusivity note on `IndexNodePool`: every access happens
 // under the owning shard's lock, which also orders accesses across threads.
@@ -135,11 +150,11 @@ impl Drop for IndexNodePool {
         let state = self.state.get_mut();
         let mut chunk = state.chunks;
         while !chunk.is_null() {
-            // SAFETY: each chunk stores the next chunk pointer in its first word.
-            let next = unsafe { chunk.cast::<*mut u8>().read() };
+            // SAFETY: each chunk stores `(next, size)` in its 64-byte aligned header.
+            let header = unsafe { chunk.cast::<IndexPoolChunkHeader>().read() };
             // SAFETY: the chunk came from the block allocator with this layout.
-            unsafe { release_block(chunk as usize, INDEX_POOL_CHUNK, INDEX_POOL_CHUNK_ALIGN) };
-            chunk = next;
+            unsafe { release_block(chunk as usize, header.size, INDEX_POOL_CHUNK_ALIGN) };
+            chunk = header.next;
         }
     }
 }
@@ -206,17 +221,39 @@ unsafe impl std::alloc::Allocator for IndexNodeAlloc {
         }
         let mut start = state.cursor.next_multiple_of(layout.align());
         if state.cursor == 0 || start + layout.size() > state.end {
-            // SAFETY: valid non-zero layout; the chunk is released on drop.
-            let chunk =
-                unsafe { (raw_block_allocator().alloc)(INDEX_POOL_CHUNK, INDEX_POOL_CHUNK_ALIGN) };
+            let min_chunk =
+                INDEX_POOL_CHUNK_ALIGN + layout.size().next_multiple_of(INDEX_POOL_CHUNK_ALIGN);
+            let mut chunk = std::ptr::null_mut();
+            let mut chunk_size = 0;
+            for candidate in [
+                INDEX_POOL_CHUNK,
+                INDEX_POOL_FALLBACK_CHUNK.max(min_chunk),
+                min_chunk,
+            ] {
+                // SAFETY: valid non-zero layout; the chunk is released on drop.
+                let ptr =
+                    unsafe { (raw_block_allocator().alloc)(candidate, INDEX_POOL_CHUNK_ALIGN) };
+                if !ptr.is_null() {
+                    chunk = ptr;
+                    chunk_size = candidate;
+                    break;
+                }
+            }
             if chunk.is_null() {
                 return Err(std::alloc::AllocError);
             }
-            // SAFETY: the chunk is at least one word and suitably aligned.
-            unsafe { chunk.cast::<*mut u8>().write(state.chunks) };
+            // SAFETY: the chunk has a 64-byte aligned header (`INDEX_POOL_CHUNK_ALIGN`).
+            unsafe {
+                chunk
+                    .cast::<IndexPoolChunkHeader>()
+                    .write(IndexPoolChunkHeader {
+                        next: state.chunks,
+                        size: chunk_size,
+                    });
+            }
             state.chunks = chunk;
             state.cursor = chunk as usize + INDEX_POOL_CHUNK_ALIGN;
-            state.end = chunk as usize + INDEX_POOL_CHUNK;
+            state.end = chunk as usize + chunk_size;
             start = state.cursor.next_multiple_of(layout.align());
         }
         state.cursor = start + layout.size();
@@ -305,12 +342,12 @@ const RETIRE_BATCH_BYTES: usize = 1024 * 1024;
 impl ArenaShard {
     fn new() -> Self {
         Self {
-            slots: Vec::new(),
+            slots: Vec::with_capacity(8),
             addr_to_slot: std::collections::BTreeMap::new_in(IndexNodeAlloc::new()),
-            free_list: Vec::new(),
-            quarantine: VecDeque::new(),
+            free_list: Vec::with_capacity(8),
+            quarantine: VecDeque::with_capacity(8),
             quarantine_bytes: 0,
-            retire_pending: Vec::new(),
+            retire_pending: Vec::with_capacity(8),
             retire_pending_bytes: 0,
         }
     }
@@ -333,7 +370,7 @@ impl Drop for ArenaShard {
             }
             // Reconstruct the layout used at allocation time.
             let offset = slot.user_base.saturating_sub(slot.raw_base);
-            let total_size = offset + slot.user_size + CANARY_SIZE;
+            let total_size = offset + slot.user_size + TRAILING_REDZONE_SIZE;
             let align = offset.max(1);
             // SAFETY: slot.raw_base came from the block allocator with this layout.
             unsafe { release_block(slot.raw_base, total_size, align) };
@@ -440,7 +477,9 @@ impl AllocationArena {
         }
 
         let offset = align;
-        let total_size = offset.checked_add(user_size)?.checked_add(CANARY_SIZE)?;
+        let total_size = offset
+            .checked_add(user_size)?
+            .checked_add(TRAILING_REDZONE_SIZE)?;
 
         let generation = self
             .next_generation
@@ -469,7 +508,7 @@ impl AllocationArena {
         // Write trailing canary
         let canary = fp.canary();
         let canary_bytes = canary.to_bytes();
-        // SAFETY: canary sits at user_base + user_size. Valid since total_size = offset + user_size + CANARY_SIZE.
+        // SAFETY: canary sits at user_base + user_size. Valid since total_size = offset + user_size + TRAILING_REDZONE_SIZE (>= CANARY_SIZE).
         unsafe {
             let canary_ptr = (user_base as *mut u8).add(user_size);
             std::ptr::copy_nonoverlapping(canary_bytes.as_ptr(), canary_ptr, CANARY_SIZE);
@@ -491,6 +530,12 @@ impl AllocationArena {
             shard.slots[free_idx] = slot;
             free_idx
         } else {
+            if shard.slots.try_reserve(1).is_err() {
+                drop(shard);
+                // SAFETY: `raw_base` came from `raw_block_allocator().alloc` with `(total_size, align)`.
+                unsafe { release_block(raw_base, total_size, align) };
+                return None;
+            }
             let idx = shard.slots.len();
             shard.slots.push(slot);
             idx
@@ -550,6 +595,22 @@ impl AllocationArena {
         user_ptr: *mut u8,
         batched: bool,
     ) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        struct FreeContentionGuard;
+        impl FreeContentionGuard {
+            #[inline]
+            fn enter() -> Self {
+                crate::quarantine_controller::CONTENTION.free_begin();
+                Self
+            }
+        }
+        impl Drop for FreeContentionGuard {
+            #[inline]
+            fn drop(&mut self) {
+                crate::quarantine_controller::CONTENTION.free_end();
+            }
+        }
+        let _contention_guard = FreeContentionGuard::enter();
+
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
 
@@ -593,7 +654,7 @@ impl AllocationArena {
 
             let raw_base = slot.raw_base;
             let offset = user_base - raw_base;
-            let total_size = offset + slot.user_size + CANARY_SIZE;
+            let total_size = offset + slot.user_size + TRAILING_REDZONE_SIZE;
             let align = offset;
 
             self.enqueue_quarantine(
@@ -676,14 +737,14 @@ impl AllocationArena {
             }
         }
 
-        // Check exact match or inner pointer / canary (user_base <= user_ptr)
+        // Check exact match or inner pointer / trailing redzone (user_base <= user_ptr)
         if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(..=user_ptr).next_back() {
             let slot = &shard.slots[slot_idx];
             if slot.state.is_live() || slot.state == SafetyState::Quarantined {
                 let end = slot
                     .user_base
                     .saturating_add(slot.user_size)
-                    .saturating_add(CANARY_SIZE);
+                    .saturating_add(TRAILING_REDZONE_SIZE);
                 if user_ptr >= slot.raw_base && user_ptr < end {
                     return Some(*slot);
                 }
@@ -697,7 +758,7 @@ impl AllocationArena {
                 let end = slot
                     .user_base
                     .saturating_add(slot.user_size)
-                    .saturating_add(CANARY_SIZE);
+                    .saturating_add(TRAILING_REDZONE_SIZE);
                 if user_ptr >= slot.raw_base && user_ptr < end {
                     return Some(*slot);
                 }
@@ -741,7 +802,7 @@ impl AllocationArena {
             AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation);
         let expected_canary = fp.canary();
         let canary_addr = slot.user_base + slot.user_size;
-
+        // Read the 8-byte trailing canary at user_base + user_size.
         let mut actual = [0u8; CANARY_SIZE];
         // SAFETY: canary_addr points to valid memory within the allocation's total size.
         unsafe {
@@ -797,18 +858,25 @@ impl AllocationArena {
     }
 
     fn drain_quarantine_into(&self, shard: &mut ArenaShard, drained: &mut Vec<QuarantineEntry>) {
-        // The budget and the controller's depth bound the whole arena: checked
-        // per shard only, they let a hardened process hold 16x (one budget per
-        // shard) the documented 64 MB of freed memory -- a realloc- or
-        // printf-heavy loop grew to ~1.1 GB resident. A free drains its own
-        // shard's oldest entries while the arena is over budget, so one shard
-        // may still use the whole window when frees concentrate there.
+        // The 64 MB byte budget bounds the whole arena: checked per shard only,
+        // it let a hardened process hold 16x (one budget per shard) the
+        // documented 64 MB of freed memory -- a realloc- or printf-heavy loop
+        // grew to ~1.1 GB resident. Each shard's entry count is bounded by
+        // `current_depth()`, and the arena-wide entry count is bounded by
+        // `current_depth() * NUM_SHARDS` while the 64 MB global byte budget
+        // caps total retained memory.
         let depth = crate::quarantine_controller::current_depth();
+        let total_depth = depth.saturating_mul(NUM_SHARDS);
         while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
             || shard.quarantine.len() > depth
-            || self.quarantine_total_bytes.load(std::sync::atomic::Ordering::Relaxed)
+            || self
+                .quarantine_total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed)
                 > QUARANTINE_MAX_BYTES
-            || self.quarantine_total_entries.load(std::sync::atomic::Ordering::Relaxed) > depth
+            || self
+                .quarantine_total_entries
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > total_depth
         {
             let Some(entry) = shard.quarantine.pop_front() else {
                 break;
@@ -1012,7 +1080,10 @@ mod tests {
             "quarantine holds {held} bytes, over the {QUARANTINE_MAX_BYTES}-byte budget"
         );
         // Still a real window: within one block of the whole budget.
-        assert!(held > QUARANTINE_MAX_BYTES - (2 << 20), "held only {held} bytes");
+        assert!(
+            held > QUARANTINE_MAX_BYTES - (2 << 20),
+            "held only {held} bytes"
+        );
     }
 
     #[test]
@@ -1766,5 +1837,30 @@ mod tests {
         for h in handles {
             h.join().expect("thread panicked");
         }
+    }
+
+    #[test]
+    fn trailing_redzone_beyond_canary_is_recognized_by_lookup() {
+        let arena = AllocationArena::new();
+        let alloc = arena.allocate(32).expect("alloc");
+        let base = alloc.user_base;
+
+        for offset_past_end in [0usize, CANARY_SIZE, 16, TRAILING_REDZONE_SIZE - 1] {
+            let oob_addr = base + 32 + offset_past_end;
+            let slot = arena
+                .lookup(oob_addr)
+                .expect("address within trailing redzone must resolve to owning slot");
+            assert_eq!(slot.user_base, base);
+            assert!(
+                arena.remaining_from(oob_addr).is_none(),
+                "address past user_size must have no remaining writable/readable bytes"
+            );
+        }
+
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
     }
 }

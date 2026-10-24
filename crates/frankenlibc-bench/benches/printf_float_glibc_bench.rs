@@ -19,6 +19,7 @@ unsafe extern "C" {
     fn strfromd(str: *mut c_char, n: usize, format: *const c_char, fp: f64) -> c_int;
 }
 
+#[allow(clippy::approx_constant)]
 const CASES: &[(&str, f64, usize)] = &[
     ("f_mid_p6", 12345.678901, 6),
     ("g_profile_p6", 12345.678901, 6),
@@ -117,6 +118,7 @@ fn bench_deployed_e(c: &mut Criterion) {
     // fixed-scaled fast path now lives inside it (after its dyadic path). Compare
     // vs glibc; the pre-change baseline is captured in the commit ledger from the
     // same pinned setup (legacy render_pct_e_into, glibc control stable).
+    #[allow(clippy::approx_constant)]
     const E_CASES: &[(&str, f64, usize)] = &[
         ("dep_e_pi_p6", 3.141592653589793, 6),
         ("dep_e_simple_p6", 2.5, 6),
@@ -150,6 +152,7 @@ fn bench_deployed_e(c: &mut Criterion) {
 /// is captured in the commit ledger from the same pinned setup.
 fn bench_deployed_g(c: &mut Criterion) {
     use frankenlibc_core::stdlib::ecvt::render_pct_g_into;
+    #[allow(clippy::approx_constant)]
     const G_CASES: &[(&str, f64, usize)] = &[
         ("dep_g_mid_p6", 12345.678901, 6),
         ("dep_g_pi_p6", 3.141592653589793, 6),
@@ -186,7 +189,7 @@ fn bench_deployed_g(c: &mut Criterion) {
 /// String and has no deployed width-0 fast branch (only %e/%g do).
 fn bench_diag_a(c: &mut Criterion) {
     use frankenlibc_core::stdio::printf::{
-        FormatSegment, __bench_format_a, format_float, parse_format_string,
+        __bench_format_a, FormatSegment, format_float, parse_format_string,
     };
     let a_spec = parse_format_string(b"%a")
         .as_slice()
@@ -202,7 +205,10 @@ fn bench_diag_a(c: &mut Criterion) {
             let fmt = std::ffi::CString::new("%a").unwrap();
             let mut buf = [0i8; 64];
             unsafe { strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), value) };
-            buf.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect::<Vec<u8>>()
+            buf.iter()
+                .take_while(|&&b| b != 0)
+                .map(|&b| b as u8)
+                .collect::<Vec<u8>>()
         };
         assert_eq!(fl.as_bytes(), g.as_slice(), "%a {name} mismatch vs glibc");
         // deployed path parity check
@@ -224,12 +230,20 @@ fn bench_diag_a(c: &mut Criterion) {
         grp.bench_function("host_glibc_inprocess", |b| {
             b.iter(|| {
                 let mut buf = [0i8; 64];
-                black_box(unsafe { strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(value)) });
+                black_box(unsafe {
+                    strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(value))
+                });
             })
         });
         grp.finish();
     }
 }
 
-criterion_group!(benches, bench, bench_deployed_e, bench_deployed_g, bench_diag_a);
+criterion_group!(
+    benches,
+    bench,
+    bench_deployed_e,
+    bench_deployed_g,
+    bench_diag_a
+);
 criterion_main!(benches);

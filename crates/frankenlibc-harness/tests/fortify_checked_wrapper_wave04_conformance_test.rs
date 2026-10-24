@@ -165,8 +165,7 @@ fn fortify_checked_wrapper_wave04_fixture_exists_and_names_campaign() -> Result<
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "fortify/checked-wrapper");
     assert_eq!(
-        fixture.campaign.bead,
-        "bd-reality-202609-lx578q.6.1",
+        fixture.campaign.bead, "bd-reality-202609-lx578q.6.1",
         "wave04 belongs to the replacement-integration bead"
     );
     assert_eq!(fixture.campaign.campaign_id, "fcq-fortify-bounds");

@@ -27,7 +27,7 @@ extern "C" fn on_sigint(_sig: c_int) {
 fn install_sigint_handler() {
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = on_sigint as usize;
+        sa.sa_sigaction = on_sigint as *const () as usize;
         libc::sigemptyset(&mut sa.sa_mask);
         sa.sa_flags = 0;
         libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());

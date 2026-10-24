@@ -554,7 +554,6 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
             tmp[tp..tp + 4].copy_from_slice(&v4);
             tp += 4;
             xdigits_seen = 0;
-            i = n; // the IPv4 consumed the remainder
             break;
         }
 

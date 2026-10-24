@@ -94,9 +94,21 @@ fn span_range_matches_scalar_reference_and_golden() {
                 let got_spn = strspn(&s, accept);
                 let got_cspn = strcspn(&s, accept);
                 let got_pbrk = strpbrk(&s, accept);
-                assert_eq!(got_spn, ref_span(&s, accept, true), "strspn s={s:?} accept={accept:?}");
-                assert_eq!(got_cspn, ref_span(&s, accept, false), "strcspn s={s:?} accept={accept:?}");
-                assert_eq!(got_pbrk, ref_pbrk(&s, accept), "strpbrk s={s:?} accept={accept:?}");
+                assert_eq!(
+                    got_spn,
+                    ref_span(&s, accept, true),
+                    "strspn s={s:?} accept={accept:?}"
+                );
+                assert_eq!(
+                    got_cspn,
+                    ref_span(&s, accept, false),
+                    "strcspn s={s:?} accept={accept:?}"
+                );
+                assert_eq!(
+                    got_pbrk,
+                    ref_pbrk(&s, accept),
+                    "strpbrk s={s:?} accept={accept:?}"
+                );
                 mix(got_spn as u64, &mut hash);
                 mix(got_cspn as u64, &mut hash);
                 mix(got_pbrk.map(|x| x as u64 + 1).unwrap_or(0), &mut hash);
@@ -107,5 +119,8 @@ fn span_range_matches_scalar_reference_and_golden() {
     // Golden digest of every result over the fixed corpus. The scalar-reference
     // asserts above already prove correctness; this pins the exact output so a
     // regression in the SIMD fast path is caught even if the reference drifts.
-    assert_eq!(hash, 9462047517241184641, "golden span-range digest changed");
+    assert_eq!(
+        hash, 9462047517241184641,
+        "golden span-range digest changed"
+    );
 }

@@ -109,7 +109,7 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut out = [0u8; 4];
             let rc = core_inet::net_pton::parse(black_box(&net_bytes[..]), &mut out);
-            black_box((rc, out));
+            let _ = black_box((rc, out));
         });
     });
     netg.bench_function("host_glibc_inprocess", |b| {

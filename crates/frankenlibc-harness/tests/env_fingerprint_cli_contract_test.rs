@@ -64,15 +64,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -178,10 +184,7 @@ fn harness_source_registers_env_fingerprint_subcommand() -> TestResult {
 
 #[test]
 fn cli_detect_mode_honors_env_override() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let tmp = unique_tmp("detect_override")?;
     let pinned = "linux-x86_64-7cpu-6.5.0-pinned";
     let out = Command::new(&bin)
@@ -225,10 +228,7 @@ fn cli_detect_mode_honors_env_override() -> TestResult {
 
 #[test]
 fn cli_validate_mode_round_trips_well_formed_input() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let tmp = unique_tmp("validate_ok")?;
     let input = "linux-x86_64-32cpu-6.1.0-25-amd64";
     let out = Command::new(&bin)
@@ -279,10 +279,7 @@ fn cli_validate_mode_round_trips_well_formed_input() -> TestResult {
 
 #[test]
 fn cli_validate_mode_fails_closed_on_malformed_input_without_panic() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let tmp = unique_tmp("validate_bad")?;
     // Missing the `cpu` suffix on the third segment → InvalidFormat.
     let bad = "linux-x86_64-7nope-6.5.0";

@@ -6,12 +6,13 @@
 
 #[path = "runtime_log.rs"]
 mod runtime_log;
-pub use runtime_log::{RuntimeLogSnapshot, runtime_log_snapshot};
+pub use runtime_log::{RuntimeLogSnapshot, next_runtime_log_sequence, runtime_log_snapshot};
 
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
 use crate::util::NoPoisonMutex as Mutex;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::fmt::{self, Write as _};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 /// Actions the membrane can take to heal an unsafe operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,6 +44,27 @@ impl HealingAction {
     }
 }
 
+/// Explicit provenance attached to a repair evidence row.
+///
+/// `errno` is the value selected by the repair decision itself. Zero means
+/// that the decision selected no errno; the ambient thread-local errno is
+/// never sampled or cleared. `address`, when present, is the primary address
+/// implicated by the repair. It is intentionally optional because some
+/// repairs concern only scalar arguments, and it is not complete provenance
+/// for operations involving multiple pointers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairLogContext {
+    pub errno: i32,
+    pub address: Option<usize>,
+}
+
+impl RepairLogContext {
+    #[must_use]
+    pub const fn new(errno: i32, address: Option<usize>) -> Self {
+        Self { errno, address }
+    }
+}
+
 const HEALING_LOG_CAPACITY: usize = 1024;
 const HEALING_BEAD_ID: &str = "bd-32e.4";
 
@@ -56,6 +78,156 @@ thread_local! {
     static WRITING_RUNTIME_LOG: std::cell::Cell<bool> = const {
         std::cell::Cell::new(false)
     };
+}
+
+// The ABI owns the signal trampoline and its fixed, atomically keyed
+// per-thread marker. Keeping only a function pointer here avoids touching
+// Rust's global-dynamic TLS while executing a signal handler.
+static SIGNAL_CONTEXT_PROBE: AtomicUsize = AtomicUsize::new(0);
+
+const RUNTIME_LOG_BUFFER_BYTES: usize = 1024;
+
+/// Fixed-capacity JSONL record buffer. Formatting through `core::fmt::Write`
+/// copies only into these stack bytes; it never grows or allocates.
+pub struct RuntimeLogBuffer {
+    bytes: [std::mem::MaybeUninit<u8>; RUNTIME_LOG_BUFFER_BYTES],
+    len: usize,
+}
+
+impl RuntimeLogBuffer {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            // Leaving the backing bytes uninitialized is load-bearing: zeroing
+            // a 1 KiB array lowers to this DSO's interposed `memset`, which can
+            // enter validation TLS in a signal handler.
+            bytes: [std::mem::MaybeUninit::uninit(); RUNTIME_LOG_BUFFER_BYTES],
+            len: 0,
+        }
+    }
+
+    #[must_use]
+    #[allow(unsafe_code)]
+    pub fn as_str(&self) -> &str {
+        // SAFETY: `write_str` initializes exactly `0..len` from valid UTF-8
+        // fragments and advances `len` only after all bytes are stored.
+        let initialized =
+            unsafe { std::slice::from_raw_parts(self.bytes.as_ptr().cast::<u8>(), self.len) };
+        // SAFETY: concatenating valid UTF-8 fragments remains valid UTF-8.
+        unsafe { std::str::from_utf8_unchecked(initialized) }
+    }
+}
+
+impl Default for RuntimeLogBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Write for RuntimeLogBuffer {
+    #[allow(unsafe_code)]
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let Some(end) = self.len.checked_add(value.len()) else {
+            return Err(fmt::Error);
+        };
+        // Keep one byte of headroom for the newline written by writev.
+        if end >= self.bytes.len() {
+            return Err(fmt::Error);
+        }
+        // A normal slice copy can lower to this DSO's interposed `memcpy`,
+        // which enters validation TLS before it notices signal context. Keep
+        // this tiny adverse-event path compiler-proof and leaf-like: volatile
+        // byte stores cannot be coalesced into a libc call.
+        for (offset, byte) in value.bytes().enumerate() {
+            // SAFETY: `end < self.bytes.len()` above proves every indexed byte
+            // lies inside the fixed buffer, and `&mut self` gives unique access.
+            unsafe {
+                std::ptr::write_volatile(
+                    self.bytes.as_mut_ptr().add(self.len + offset).cast::<u8>(),
+                    byte,
+                );
+            }
+        }
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Write one JSON string, including quotes, without allocating.
+pub fn write_runtime_log_json_string(output: &mut impl fmt::Write, value: &str) -> fmt::Result {
+    output.write_char('"')?;
+    for character in value.chars() {
+        match character {
+            '"' => output.write_str("\\\"")?,
+            '\\' => output.write_str("\\\\")?,
+            '\u{08}' => output.write_str("\\b")?,
+            '\u{0c}' => output.write_str("\\f")?,
+            '\n' => output.write_str("\\n")?,
+            '\r' => output.write_str("\\r")?,
+            '\t' => output.write_str("\\t")?,
+            control if control <= '\u{1f}' => {
+                write!(output, "\\u{:04x}", control as u32)?;
+            }
+            printable => output.write_char(printable)?,
+        }
+    }
+    output.write_char('"')
+}
+
+/// What the allocation-free ABI probe knows about the calling context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSignalContext {
+    Outside,
+    Inside,
+    /// The bounded allocator-slot lookup could not identify the thread.
+    Unknown,
+}
+
+impl RuntimeSignalContext {
+    /// Unknown context takes the same allocation/TLS-free path as a confirmed
+    /// signal handler; only `Outside` may enter normal logging machinery.
+    #[must_use]
+    pub const fn requires_signal_safe_path(self) -> bool {
+        !matches!(self, Self::Outside)
+    }
+
+    #[must_use]
+    const fn is_inside(self) -> bool {
+        matches!(self, Self::Inside)
+    }
+
+    #[must_use]
+    const fn is_known(self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+}
+
+/// Install the allocation-free ABI probe that classifies whether the calling
+/// thread is currently executing a user signal handler. Startup must install
+/// it before user code can register or run handlers.
+pub fn install_signal_context_probe(probe: fn() -> RuntimeSignalContext) {
+    SIGNAL_CONTEXT_PROBE.store(probe as *const () as usize, Ordering::Release);
+}
+
+#[inline]
+#[allow(unsafe_code)]
+fn runtime_signal_context() -> RuntimeSignalContext {
+    let address = SIGNAL_CONTEXT_PROBE.load(Ordering::Acquire);
+    if address == 0 {
+        return RuntimeSignalContext::Outside;
+    }
+    // SAFETY: `install_signal_context_probe` stores only a live function with
+    // this exact signature, and the ABI that installs it remains loaded for
+    // the life of this membrane instance.
+    let probe = unsafe { std::mem::transmute::<usize, fn() -> RuntimeSignalContext>(address) };
+    probe()
+}
+
+/// Read the startup-installed signal-context probe without allocation, locks,
+/// environment access, or Rust TLS.
+#[must_use]
+pub fn runtime_log_signal_context() -> RuntimeSignalContext {
+    runtime_signal_context()
 }
 
 /// A thread-bound reentry guard. A rejected nested entry must not clear the
@@ -162,15 +334,25 @@ impl HealingPolicy {
     /// the fields of one JSON object (no braces), also used by exit summaries.
     #[must_use]
     pub fn counters_json_fields(&self) -> String {
+        let mut fields = String::new();
+        let _ = self.write_counters_json_fields(&mut fields);
+        fields
+    }
+
+    /// Write the counter fields without requiring a heap-backed destination.
+    pub fn write_counters_json_fields(&self, output: &mut impl fmt::Write) -> fmt::Result {
         let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG);
         let n = |c: &AtomicU64| c.load(Ordering::Relaxed);
         let sink = runtime_log_snapshot();
-        format!(
+        write!(
+            output,
             "\"total_heals\":{},\"size_clamps\":{},\"null_truncations\":{},\
 \"double_frees\":{},\"foreign_frees\":{},\"realloc_as_mallocs\":{},\
 \"safe_defaults\":{},\"variant_upgrades\":{},\"healing_log_reentry_drops\":{},\
 \"runtime_log_written_records\":{},\"runtime_log_dropped_records\":{},\
-\"runtime_log_short_writes\":{},\"runtime_log_open_failures\":{}",
+\"runtime_log_rate_limited_records\":{},\"runtime_log_admission_clock_failures\":{},\
+\"runtime_log_short_writes\":{},\
+\"runtime_log_open_failures\":{}",
             n(&self.total_heals),
             n(&self.size_clamps),
             n(&self.null_truncations),
@@ -182,6 +364,8 @@ impl HealingPolicy {
             n(&self.healing_log_reentry_drops),
             sink.written_records,
             sink.dropped_records,
+            sink.rate_limited_records,
+            sink.admission_clock_failures,
             sink.short_writes,
             sink.open_failures,
         )
@@ -218,7 +402,13 @@ impl HealingPolicy {
     /// frame `F` is preserved.
     /// @separation-frame: `F` (non-counter memory is untouched).
     /// @separation-alias: `repair_apply`.
-    pub fn record(&self, action: &HealingAction) {
+    pub fn record(
+        &self,
+        api_family: &'static str,
+        symbol: &'static str,
+        action: &HealingAction,
+        context: RepairLogContext,
+    ) {
         if action.is_heal() {
             self.total_heals.fetch_add(1, Ordering::Relaxed);
         }
@@ -248,7 +438,7 @@ impl HealingPolicy {
             HealingAction::None => {}
         }
 
-        self.emit_healing_log(action);
+        self.emit_healing_log(api_family, symbol, action, context);
     }
 
     /// Decide healing for a copy/memory operation with bounds.
@@ -296,18 +486,52 @@ impl HealingPolicy {
         }
     }
 
-    fn emit_healing_log(&self, action: &HealingAction) {
-        if !action.is_heal() || self.healing_logging.load(Ordering::Relaxed) == 1 {
+    fn emit_healing_log(
+        &self,
+        api_family: &'static str,
+        symbol: &'static str,
+        action: &HealingAction,
+        context: RepairLogContext,
+    ) {
+        if !action.is_heal() {
             return;
         }
-        // Must precede environment access, ledger initialization, formatting,
-        // and ring locking. Counting a nested repair is safe; logging it can
-        // recursively acquire whichever allocator/ledger/ring lock led here.
-        let Some(_guard) = LogReentryGuard::enter(&EMITTING_HEALING_LOG) else {
-            self.healing_log_reentry_drops.fetch_add(1, Ordering::Relaxed);
-            return;
+        let signal_context = runtime_signal_context();
+        let signal_safe_path = signal_context.requires_signal_safe_path();
+        if signal_safe_path {
+            match RUNTIME_LOG_FD.load(Ordering::Acquire) {
+                0.. => {}
+                RUNTIME_LOG_UNINITIALIZED | RUNTIME_LOG_INITIALIZING => {
+                    runtime_log::note_dropped();
+                    return;
+                }
+                _ => return,
+            }
+        }
+        // Never touch global-dynamic Rust TLS from a signal handler. Signal
+        // records use only their stack buffer, atomics, and one O_APPEND
+        // writev; nested/concurrent handlers therefore need no shared guard.
+        let _thread_guard = if signal_safe_path {
+            None
+        } else {
+            let guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG);
+            if guard.is_none() {
+                self.healing_log_reentry_drops
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            guard
         };
-        if !self.healing_logging_active() {
+        // FRANKENLIBC_HEAL_LOG controls only the heap-backed diagnostic
+        // ledger/ring. The deployed FRANKENLIBC_LOG sink is independent: when
+        // configured, it must receive every repair even if the mirror is off.
+        let mirror_active = !signal_safe_path && self.healing_logging_active();
+        let runtime_sink_active = if signal_safe_path {
+            true
+        } else {
+            initialize_runtime_log_fd() >= 0
+        };
+        if !mirror_active && !runtime_sink_active {
             return;
         }
 
@@ -316,35 +540,53 @@ impl HealingPolicy {
                 .fetch_add(1, Ordering::Relaxed)
                 + 1,
         );
-        let level = healing_log_level(action);
-        let escalated = healing_action_escalated(action);
-        let trace_id = decision_id.scoped_trace_id("membrane::heal");
+        let event_seq = next_runtime_log_sequence();
+        let runtime_mode = runtime_mode_label();
+        let mut line = RuntimeLogBuffer::new();
+        if write_healing_log_line(
+            &mut line,
+            RepairLogRecord {
+                event_seq,
+                decision_id,
+                api_family,
+                symbol,
+                action,
+                context,
+                runtime_mode,
+                signal_context: signal_context.is_inside(),
+                signal_context_known: signal_context.is_known(),
+            },
+        )
+        .is_err()
+        {
+            runtime_log::note_dropped();
+            return;
+        }
+        if runtime_sink_active {
+            append_to_runtime_log(line.as_str());
+        }
 
-        // Emit to unified evidence ledger for cross-stream correlation.
-        crate::evidence_ledger::global_evidence_ledger().record_healing(
-            action,
-            trace_id.clone(),
-            decision_id,
-            "membrane-heal",
-            "",
-        );
+        // A signal handler may have interrupted either allocator or evidence
+        // lock ownership on this thread. The deployed JSONL record above is
+        // complete; do not enter the heap-backed diagnostic mirrors here.
+        if signal_safe_path {
+            return;
+        }
 
-        let line = format!(
-            "{{\"trace_id\":\"{trace_id}\",\"decision_id\":{},\"schema_version\":\"{}\",\
-\"bead_id\":\"{HEALING_BEAD_ID}\",\"runtime_mode\":\"{}\",\"level\":\"{level}\",\
-\"api_family\":\"membrane-heal\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
-\"healing_action\":\"{}\",\"escalated\":{escalated},\"details\":{}}}",
-            decision_id.as_u64(),
-            MEMBRANE_SCHEMA_VERSION,
-            runtime_mode_label(),
-            healing_action_name(action),
-            healing_action_details_json(action)
-        );
-        self.push_healing_log_line(line);
+        if mirror_active {
+            let trace_id = decision_id.scoped_trace_id("membrane::heal");
+            crate::evidence_ledger::global_evidence_ledger().record_healing(
+                action,
+                trace_id,
+                decision_id,
+                api_family,
+                symbol,
+            );
+            self.push_healing_log_line(line.as_str().to_owned());
+        }
     }
 
     fn push_healing_log_line(&self, line: String) {
-        append_to_runtime_log(&line);
         let mut logs = self.healing_logs.lock();
         while logs.len() >= HEALING_LOG_CAPACITY {
             let _ = logs.pop_front();
@@ -362,21 +604,22 @@ impl Default for HealingPolicy {
 /// `FRANKENLIBC_HEAL_LOG`, resolved once and reentrancy-safe: a heal recorded
 /// while the variable is being read (the read itself runs fl string ops)
 /// sees "off" instead of recursing.
+// 0 = unresolved, 1 = resolving, 2 = off, 3 = on.
+static HEALING_LOG_STATE: AtomicU8 = AtomicU8::new(0);
+
 fn heal_logging_env_enabled() -> bool {
-    // 0 = unresolved, 1 = resolving, 2 = off, 3 = on.
-    static STATE: AtomicU8 = AtomicU8::new(0);
-    match STATE.load(Ordering::Acquire) {
+    match HEALING_LOG_STATE.load(Ordering::Acquire) {
         2 | 1 => false,
         3 => true,
         _ => {
-            if STATE
+            if HEALING_LOG_STATE
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_err()
             {
-                return STATE.load(Ordering::Acquire) == 3;
+                return HEALING_LOG_STATE.load(Ordering::Acquire) == 3;
             }
             let on = heal_logging_enabled_by_default();
-            STATE.store(if on { 3 } else { 2 }, Ordering::Release);
+            HEALING_LOG_STATE.store(if on { 3 } else { 2 }, Ordering::Release);
             on
         }
     }
@@ -392,26 +635,78 @@ fn heal_logging_enabled_by_default() -> bool {
     }
 }
 
-/// The `FRANKENLIBC_LOG` JSONL file, opened on the first heal after the
-/// variable is found set. `None` inside means unset or unopenable.
-static RUNTIME_LOG: crate::util::LazyBox<Option<std::fs::File>> = crate::util::LazyBox::new();
+const RUNTIME_LOG_UNINITIALIZED: i32 = -3;
+const RUNTIME_LOG_INITIALIZING: i32 = -2;
+const RUNTIME_LOG_DISABLED: i32 = -1;
+
+/// Owned process-wide `FRANKENLIBC_LOG` descriptor. Non-negative values are
+/// live descriptors; negative values are explicit initialization states.
+static RUNTIME_LOG_FD: AtomicI32 = AtomicI32::new(RUNTIME_LOG_UNINITIALIZED);
+
+/// Resolve logging controls and open the runtime sink before user code can
+/// install a signal handler. Safe to call repeatedly.
+pub fn initialize_runtime_log() {
+    // Repair rows include runtime_mode; resolve its environment-backed cache
+    // here so signal-time formatting is an atomic read only.
+    let _ = crate::config::safety_level();
+    let _ = heal_logging_env_enabled();
+    let _ = initialize_runtime_log_fd();
+}
+
+fn initialize_runtime_log_fd() -> i32 {
+    let current = RUNTIME_LOG_FD.load(Ordering::Acquire);
+    if current != RUNTIME_LOG_UNINITIALIZED {
+        return current;
+    }
+    if RUNTIME_LOG_FD
+        .compare_exchange(
+            RUNTIME_LOG_UNINITIALIZED,
+            RUNTIME_LOG_INITIALIZING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return RUNTIME_LOG_FD.load(Ordering::Acquire);
+    }
+
+    let fd = std::env::var_os("FRANKENLIBC_LOG")
+        .filter(|path| !path.is_empty())
+        .and_then(|path| runtime_log::open_fd(&path))
+        .unwrap_or(RUNTIME_LOG_DISABLED);
+    RUNTIME_LOG_FD.store(fd, Ordering::Release);
+    fd
+}
 
 /// Append to a configured regular file. Linux writes borrow the record and
 /// newline in one raw writev, rather than allocating another String or calling
 /// back into the interposed write/cancellation path. Oversized and failed
 /// writes are counted; positive short writes are never retried piecemeal.
 fn append_to_runtime_log(line: &str) {
-    let Some(_guard) = LogReentryGuard::enter(&WRITING_RUNTIME_LOG) else {
-        return;
-    };
-    let file = RUNTIME_LOG.get_or_init(|| {
-        let path = std::env::var_os("FRANKENLIBC_LOG").filter(|path| !path.is_empty())?;
-        runtime_log::open_file(&path)
-    });
-    if let Some(file) = file {
-        append_line(file, line);
+    append_to_runtime_log_with_limit(line, true);
+}
+
+fn append_to_runtime_log_with_limit(line: &str, rate_limited: bool) {
+    let signal_safe_path = runtime_signal_context().requires_signal_safe_path();
+    let fd = if signal_safe_path {
+        RUNTIME_LOG_FD.load(Ordering::Acquire)
     } else {
-        runtime_log::note_unavailable();
+        let Some(_guard) = LogReentryGuard::enter(&WRITING_RUNTIME_LOG) else {
+            runtime_log::note_dropped();
+            return;
+        };
+        return append_to_runtime_log_with_fd(initialize_runtime_log_fd(), line, rate_limited);
+    };
+    append_to_runtime_log_with_fd(fd, line, rate_limited);
+}
+
+fn append_to_runtime_log_with_fd(fd: i32, line: &str, rate_limited: bool) {
+    match fd {
+        0.. if !rate_limited || runtime_log::admit_record() => runtime_log::append_fd(fd, line),
+        0.. => {}
+        RUNTIME_LOG_DISABLED => runtime_log::note_unavailable(),
+        RUNTIME_LOG_UNINITIALIZED | RUNTIME_LOG_INITIALIZING => runtime_log::note_dropped(),
+        _ => runtime_log::note_dropped(),
     }
 }
 
@@ -422,8 +717,70 @@ pub fn append_runtime_log_record(line: &str) {
     append_to_runtime_log(line);
 }
 
+/// Append the one process-exit summary without consuming the adverse-event
+/// rate budget. This record must remain observable because it reports how many
+/// repair/deny rows the limiter suppressed.
+pub fn append_runtime_log_summary_record(line: &str) {
+    append_to_runtime_log_with_limit(line, false);
+}
+
+/// Whether startup opened a live runtime evidence sink.
+#[must_use]
+pub fn runtime_log_is_configured() -> bool {
+    RUNTIME_LOG_FD.load(Ordering::Acquire) >= 0
+}
+
+/// Account for a record that could not be formatted or emitted.
+pub fn note_runtime_log_drop() {
+    runtime_log::note_dropped();
+}
+
+/// Reopen an already-initialized runtime evidence sink in a freshly forked
+/// child.
+///
+/// A disabled sink remains disabled. Only an inherited live file is reopened,
+/// so the child gets a distinct open file description and observes path
+/// rotation independently of the parent. If the configured replacement cannot
+/// be opened, the inherited descriptor remains live so evidence is not lost;
+/// the open-failure counter makes that fallback visible in the exit summary.
+///
+/// # Safety
+///
+/// This must run only in the freshly forked, single-threaded child after the
+/// allocator and membrane fork guards have been released. The surviving
+/// thread must not be inside [`append_runtime_log_record`] or
+/// [`HealingPolicy::record`]. Fork-like callers must keep every blockable signal
+/// masked from immediately before clone until this function has replaced the
+/// inherited descriptor.
+#[allow(unsafe_code)]
+pub unsafe fn reopen_runtime_log_in_fork_child() {
+    let inherited = RUNTIME_LOG_FD.load(Ordering::Acquire);
+    if inherited < 0 {
+        return;
+    }
+
+    runtime_log::reset_rate_limit_after_fork();
+    let Some(path) = std::env::var_os("FRANKENLIBC_LOG").filter(|path| !path.is_empty()) else {
+        let replaced = RUNTIME_LOG_FD.swap(RUNTIME_LOG_DISABLED, Ordering::AcqRel);
+        runtime_log::close_fd(replaced);
+        return;
+    };
+    let Some(reopened) = runtime_log::open_fd(&path) else {
+        return;
+    };
+    let replaced = RUNTIME_LOG_FD.swap(reopened, Ordering::AcqRel);
+    runtime_log::close_fd(replaced);
+}
+
+#[cfg(test)]
 fn append_line(file: &std::fs::File, line: &str) {
     runtime_log::append_line(file, line);
+}
+
+/// Process id used in stack-formatted deployed records.
+#[must_use]
+pub fn runtime_log_process_id() -> u32 {
+    runtime_log::process_id()
 }
 
 fn healing_log_level(action: &HealingAction) -> &'static str {
@@ -462,24 +819,98 @@ fn healing_action_name(action: &HealingAction) -> &'static str {
     }
 }
 
-fn healing_action_details_json(action: &HealingAction) -> String {
+fn write_healing_action_details(
+    output: &mut impl fmt::Write,
+    action: &HealingAction,
+) -> fmt::Result {
     match action {
         HealingAction::ClampSize { requested, clamped } => {
-            format!("{{\"requested\":{requested},\"clamped\":{clamped}}}")
+            write!(
+                output,
+                "{{\"requested\":{requested},\"clamped\":{clamped}}}"
+            )
         }
         HealingAction::TruncateWithNull {
             requested,
             truncated,
         } => {
-            format!("{{\"requested\":{requested},\"truncated\":{truncated}}}")
+            write!(
+                output,
+                "{{\"requested\":{requested},\"truncated\":{truncated}}}"
+            )
         }
-        HealingAction::ReallocAsMalloc { size } => format!("{{\"size\":{size}}}"),
+        HealingAction::ReallocAsMalloc { size } => {
+            write!(output, "{{\"size\":{size}}}")
+        }
         HealingAction::IgnoreDoubleFree
         | HealingAction::IgnoreForeignFree
         | HealingAction::ReturnSafeDefault
         | HealingAction::UpgradeToSafeVariant
-        | HealingAction::None => "{}".to_string(),
+        | HealingAction::None => output.write_str("{}"),
     }
+}
+
+struct RepairLogRecord<'a> {
+    event_seq: u64,
+    decision_id: DecisionId,
+    api_family: &'static str,
+    symbol: &'static str,
+    action: &'a HealingAction,
+    context: RepairLogContext,
+    runtime_mode: &'static str,
+    signal_context: bool,
+    signal_context_known: bool,
+}
+
+fn write_healing_log_line(
+    output: &mut RuntimeLogBuffer,
+    record: RepairLogRecord<'_>,
+) -> fmt::Result {
+    let RepairLogRecord {
+        event_seq,
+        decision_id,
+        api_family,
+        symbol,
+        action,
+        context,
+        runtime_mode,
+        signal_context,
+        signal_context_known,
+    } = record;
+    let level = healing_log_level(action);
+    let escalated = healing_action_escalated(action);
+    write!(
+        output,
+        "{{\"event\":\"repair\",\"seq\":{event_seq},\"trace_id\":\"membrane::heal::{:016x}\",\
+\"decision_id\":{},\"schema_version\":\"{}\",\"pid\":{},\"bead_id\":\"{HEALING_BEAD_ID}\",\
+\"runtime_mode\":\"{}\",\"level\":\"{level}\",\"api_family\":",
+        decision_id.as_u64(),
+        decision_id.as_u64(),
+        MEMBRANE_SCHEMA_VERSION,
+        runtime_log_process_id(),
+        runtime_mode,
+    )?;
+    write_runtime_log_json_string(output, api_family)?;
+    output.write_str(",\"symbol\":")?;
+    write_runtime_log_json_string(output, symbol)?;
+    write!(
+        output,
+        ",\"action\":\"Repair\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
+\"healing_action\":\"{}\",\"escalated\":{escalated},\"errno\":{}",
+        healing_action_name(action),
+        context.errno,
+    )?;
+    if runtime_mode == "hardened"
+        && let Some(address) = context.address
+    {
+        write!(output, ",\"address\":\"{address:#x}\"")?;
+    }
+    write!(
+        output,
+        ",\"signal_context\":{signal_context},\"signal_context_known\":{signal_context_known},\"details\":"
+    )?;
+    write_healing_action_details(output, action)?;
+    output.write_str("}")
 }
 
 /// Recommended default healing action for a Gröbner canonical root-cause class.
@@ -539,6 +970,15 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    fn record_test(policy: &HealingPolicy, action: &HealingAction) {
+        policy.record(
+            "test",
+            "healing_policy",
+            action,
+            RepairLogContext::new(0, None),
+        );
+    }
+
     /// The FRANKENLIBC_LOG sink appends whole newline-terminated lines and
     /// keeps what the file already held (bd-rc0923-epic-eeuy4f.16).
     #[test]
@@ -558,6 +998,46 @@ mod tests {
         let written = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(written, "{\"existing\":1}\n{\"a\":1}\n{\"b\":2}\n");
+    }
+
+    #[test]
+    fn fixed_runtime_record_escapes_json_without_allocation_backing() {
+        let mut line = RuntimeLogBuffer::new();
+        write_healing_log_line(
+            &mut line,
+            RepairLogRecord {
+                event_seq: 7,
+                decision_id: DecisionId::from_raw(42),
+                api_family: "string\nmemory",
+                symbol: "str\"len\\probe",
+                action: &HealingAction::ReturnSafeDefault,
+                context: RepairLogContext::new(0, Some(0xdead_beef)),
+                runtime_mode: "hardened",
+                signal_context: false,
+                signal_context_known: true,
+            },
+        )
+        .unwrap();
+        let row: Value = serde_json::from_str(line.as_str()).unwrap();
+        assert_eq!(row["trace_id"], "membrane::heal::000000000000002a");
+        assert_eq!(row["seq"], 7);
+        assert_eq!(row["api_family"], "string\nmemory");
+        assert_eq!(row["symbol"], "str\"len\\probe");
+        assert_eq!(row["errno"], 0);
+        assert_eq!(row["address"], "0xdeadbeef");
+        assert_eq!(row["signal_context"], false);
+        assert_eq!(row["signal_context_known"], true);
+        assert_eq!(row["details"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn fixed_runtime_record_rejects_overflow() {
+        let mut line = RuntimeLogBuffer::new();
+        assert!(
+            line.write_str(&"x".repeat(RUNTIME_LOG_BUFFER_BYTES))
+                .is_err()
+        );
+        assert!(line.as_str().is_empty());
     }
 
     #[test]
@@ -603,12 +1083,15 @@ mod tests {
     #[test]
     fn record_increments_counters() {
         let policy = HealingPolicy::new();
-        policy.record(&HealingAction::IgnoreDoubleFree);
-        policy.record(&HealingAction::IgnoreDoubleFree);
-        policy.record(&HealingAction::ClampSize {
-            requested: 10,
-            clamped: 5,
-        });
+        record_test(&policy, &HealingAction::IgnoreDoubleFree);
+        record_test(&policy, &HealingAction::IgnoreDoubleFree);
+        record_test(
+            &policy,
+            &HealingAction::ClampSize {
+                requested: 10,
+                clamped: 5,
+            },
+        );
 
         assert_eq!(policy.total_heals.load(Ordering::Relaxed), 3);
         assert_eq!(policy.double_frees.load(Ordering::Relaxed), 2);
@@ -658,18 +1141,28 @@ mod tests {
         policy.set_healing_logging_enabled(true);
         policy.clear_healing_logs();
 
-        policy.record(&HealingAction::ClampSize {
-            requested: 32,
-            clamped: 8,
-        });
+        policy.record(
+            "string_memory",
+            "memcpy",
+            &HealingAction::ClampSize {
+                requested: 32,
+                clamped: 8,
+            },
+            RepairLogContext::new(0, Some(0x1234)),
+        );
 
         let jsonl = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(jsonl.trim()).expect("row must be valid JSON");
         assert_eq!(row["bead_id"], HEALING_BEAD_ID);
-        assert_eq!(row["api_family"], "membrane-heal");
+        assert_eq!(row["event"], "repair");
+        assert_eq!(row["action"], "Repair");
+        assert_eq!(row["symbol"], "memcpy");
+        assert!(row["pid"].as_u64().is_some_and(|pid| pid > 0));
+        assert_eq!(row["api_family"], "string_memory");
         assert_eq!(row["decision_path"], "record");
         assert_eq!(row["outcome"], "repair");
         assert_eq!(row["healing_action"], "ClampSize");
+        assert_eq!(row["errno"], 0);
         assert_eq!(row["level"], "info");
         assert_eq!(row["details"]["requested"], 32);
         assert_eq!(row["details"]["clamped"], 8);
@@ -688,7 +1181,7 @@ mod tests {
         policy.set_healing_logging_enabled(true);
         policy.clear_healing_logs();
 
-        policy.record(&HealingAction::ReturnSafeDefault);
+        record_test(&policy, &HealingAction::ReturnSafeDefault);
 
         let jsonl = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(jsonl.trim()).expect("row must be valid JSON");
@@ -703,7 +1196,7 @@ mod tests {
         policy.set_healing_logging_enabled(true);
         policy.clear_healing_logs();
 
-        policy.record(&HealingAction::None);
+        record_test(&policy, &HealingAction::None);
 
         assert!(
             policy.export_healing_log_jsonl().trim().is_empty(),
@@ -718,7 +1211,7 @@ mod tests {
         policy.clear_healing_logs();
 
         for i in 0..(HEALING_LOG_CAPACITY + 32) {
-            policy.record(&HealingAction::ReallocAsMalloc { size: i });
+            record_test(&policy, &HealingAction::ReallocAsMalloc { size: i });
         }
 
         let row_count = policy
@@ -850,7 +1343,7 @@ mod tests {
         policy.set_healing_logging_enabled(false); // avoid log noise
 
         for action in &actions {
-            policy.record(action);
+            record_test(&policy, action);
         }
 
         // Each counter should be exactly 1
@@ -867,7 +1360,7 @@ mod tests {
 
         // HealingAction::None should NOT increment any counter
         let before_total = policy.total_heals.load(Ordering::Relaxed);
-        policy.record(&HealingAction::None);
+        record_test(&policy, &HealingAction::None);
         assert_eq!(
             policy.total_heals.load(Ordering::Relaxed),
             before_total,
@@ -905,7 +1398,7 @@ mod tests {
         ];
 
         for action in &actions {
-            policy.record(action);
+            record_test(&policy, action);
         }
 
         let jsonl = policy.export_healing_log_jsonl();
@@ -952,7 +1445,7 @@ mod tests {
         ];
 
         for action in &actions {
-            policy.record(action);
+            record_test(&policy, action);
         }
 
         let rows = policy
@@ -964,7 +1457,7 @@ mod tests {
         assert_eq!(rows.len(), actions.len());
         for row in rows {
             assert_eq!(row["outcome"], "repair");
-            assert_eq!(row["api_family"], "membrane-heal");
+            assert_eq!(row["api_family"], "test");
             assert!(
                 row["healing_action"]
                     .as_str()
@@ -992,8 +1485,8 @@ mod tests {
         {
             let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
             let logs = policy.healing_logs.lock();
-            policy.record(&HealingAction::IgnoreDoubleFree);
-            policy.record(&HealingAction::None);
+            record_test(&policy, &HealingAction::IgnoreDoubleFree);
+            record_test(&policy, &HealingAction::None);
             assert_eq!(policy.total_heals.load(Ordering::Relaxed), 1);
             assert_eq!(policy.double_frees.load(Ordering::Relaxed), 1);
             assert_eq!(policy.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
@@ -1002,7 +1495,7 @@ mod tests {
             assert!(policy.export_healing_log_jsonl().is_empty());
             policy.clear_healing_logs();
         }
-        policy.record(&HealingAction::ReturnSafeDefault);
+        record_test(&policy, &HealingAction::ReturnSafeDefault);
         let rows = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(&rows).unwrap();
         assert_eq!(row["healing_action"], "ReturnSafeDefault");
@@ -1016,8 +1509,8 @@ mod tests {
         first.set_healing_logging_enabled(true);
         second.set_healing_logging_enabled(true);
         let guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
-        first.record(&HealingAction::IgnoreDoubleFree);
-        second.record(&HealingAction::IgnoreForeignFree);
+        record_test(&first, &HealingAction::IgnoreDoubleFree);
+        record_test(&second, &HealingAction::IgnoreForeignFree);
         assert!(LogReentryGuard::enter(&EMITTING_HEALING_LOG).is_none());
         assert_eq!(first.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
         assert_eq!(second.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
@@ -1044,7 +1537,7 @@ mod tests {
         let rows = std::thread::spawn(|| {
             let policy = HealingPolicy::new();
             policy.set_healing_logging_enabled(true);
-            policy.record(&HealingAction::IgnoreForeignFree);
+            record_test(&policy, &HealingAction::IgnoreForeignFree);
             assert_eq!(policy.healing_log_reentry_drops.load(Ordering::Relaxed), 0);
             policy.export_healing_log_jsonl()
         })
@@ -1063,6 +1556,8 @@ mod tests {
             "healing_log_reentry_drops",
             "runtime_log_written_records",
             "runtime_log_dropped_records",
+            "runtime_log_rate_limited_records",
+            "runtime_log_admission_clock_failures",
             "runtime_log_short_writes",
             "runtime_log_open_failures",
         ] {

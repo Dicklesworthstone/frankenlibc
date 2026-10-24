@@ -22,7 +22,10 @@ fn message(answers: u16) -> Vec<u8> {
 fn handle(bytes: &[u8]) -> CNsMsg {
     // SAFETY: all-zero integers/pointers are valid in this C-compatible struct.
     let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { ns_initparse(bytes.as_ptr(), bytes.len() as i32, &mut handle) }, 0);
+    assert_eq!(
+        unsafe { ns_initparse(bytes.as_ptr(), bytes.len() as i32, &mut handle) },
+        0
+    );
     assert_eq!((handle._sect, handle._rrnum), (4, -1));
     assert!(handle._msg_ptr.is_null());
     handle
@@ -46,9 +49,18 @@ fn cursor(handle: &CNsMsg) -> (i32, i32, *const u8) {
 fn answer(handle: &mut CNsMsg, requested: i32, expected: i32) {
     let mut rr = record();
     assert_eq!(unsafe { ns_parserr(handle, 1, requested, &mut rr) }, 0);
-    assert_eq!(unsafe { CStr::from_ptr(rr.name.as_ptr()) }.to_bytes(), b"host.test");
-    assert_eq!((rr._type, rr.rr_class, rr.ttl, rr.rdlength), (1, 1, 60 + expected as u32, 4));
-    assert_eq!(unsafe { std::slice::from_raw_parts(rr.rdata, 4) }, [192, 0, 2, expected as u8]);
+    assert_eq!(
+        unsafe { CStr::from_ptr(rr.name.as_ptr()) }.to_bytes(),
+        b"host.test"
+    );
+    assert_eq!(
+        (rr._type, rr.rr_class, rr.ttl, rr.rdlength),
+        (1, 1, 60 + expected as u32, 4)
+    );
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(rr.rdata, 4) },
+        [192, 0, 2, expected as u8]
+    );
     assert_eq!((handle._sect, handle._rrnum), (1, expected + 1));
     assert_eq!(handle._msg_ptr, unsafe { rr.rdata.add(4) });
 }
@@ -88,8 +100,17 @@ fn exhausted_and_full_width_invalid_indices_fail_without_losing_cursor() {
     answer(&mut h, -1, 0);
     let saved = cursor(&h);
     let mut rr = record();
-    for (section, index) in [(1, -1), (1, 1), (1, 65536), (1, i32::MAX),
-        (1, -2), (1, i32::MIN), (4, 0), (-1, 0), (2, -1)] {
+    for (section, index) in [
+        (1, -1),
+        (1, 1),
+        (1, 65536),
+        (1, i32::MAX),
+        (1, -2),
+        (1, i32::MIN),
+        (4, 0),
+        (-1, 0),
+        (2, -1),
+    ] {
         unsafe { *__errno_location() = 0 };
         assert_eq!(unsafe { ns_parserr(&mut h, section, index, &mut rr) }, -1);
         assert_eq!(unsafe { *__errno_location() }, libc::ENODEV);
@@ -104,14 +125,20 @@ fn truncated_frames_and_trailing_bytes_never_publish_a_handle() {
     for length in 0..bytes.len() {
         let mut h: CNsMsg = unsafe { std::mem::zeroed() };
         h._id = 0xbeef;
-        assert_eq!(unsafe { ns_initparse(bytes.as_ptr(), length as i32, &mut h) }, -1);
+        assert_eq!(
+            unsafe { ns_initparse(bytes.as_ptr(), length as i32, &mut h) },
+            -1
+        );
         assert_eq!(unsafe { *__errno_location() }, libc::EMSGSIZE);
         assert_eq!(h._id, 0xbeef);
         assert!(h._msg.is_null());
     }
     bytes.push(0);
     let mut h: CNsMsg = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { ns_initparse(bytes.as_ptr(), bytes.len() as i32, &mut h) }, -1);
+    assert_eq!(
+        unsafe { ns_initparse(bytes.as_ptr(), bytes.len() as i32, &mut h) },
+        -1
+    );
     assert_eq!(unsafe { *__errno_location() }, libc::EMSGSIZE);
     assert!(h._msg.is_null());
 }

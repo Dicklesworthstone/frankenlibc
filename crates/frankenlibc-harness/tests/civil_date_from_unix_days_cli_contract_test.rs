@@ -78,18 +78,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -259,10 +262,7 @@ fn harness_source_registers_civil_date_subcommand() -> TestResult {
 
 #[test]
 fn cli_anchor_table_matches_manifest() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let root = workspace_root()?;
     let manifest = load_json(&manifest_path(&root))?;
     let anchors = manifest
@@ -302,10 +302,7 @@ fn cli_anchor_table_matches_manifest() -> TestResult {
 
 #[test]
 fn cli_pins_unix_epoch_and_negative_day() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let epoch = run_and_parse(&bin, 0, "epoch")?;
     require(
         json_i64(&epoch, "year")? == 1970
@@ -324,10 +321,7 @@ fn cli_pins_unix_epoch_and_negative_day() -> TestResult {
 
 #[test]
 fn cli_pins_leap_days_and_y2038_boundary() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     for (unix_days, year, month, day) in [
         (789, 1972, 2, 29),
         (11_016, 2000, 2, 29),
@@ -346,10 +340,7 @@ fn cli_pins_leap_days_and_y2038_boundary() -> TestResult {
 
 #[test]
 fn cli_month_and_day_stay_in_civil_ranges() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     for unix_days in [
         -146_097, -36_525, -365, -1, 0, 365, 11_016, 20_586, 24_855, 146_097,
     ] {
@@ -364,10 +355,7 @@ fn cli_month_and_day_stay_in_civil_ranges() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = run_and_parse(&bin, 20_586, "det_a")?;
     let b = run_and_parse(&bin, 20_586, "det_b")?;
     require(a == b, "same unix_days must produce identical output")

@@ -75,9 +75,9 @@ impl Capabilities {
         if isa_index >= u32::from(self.x86_level) {
             return None;
         }
-        NAMES.iter().position(|candidate| {
-            candidate.as_bytes() == name && self.names().contains(candidate)
-        })
+        NAMES
+            .iter()
+            .position(|candidate| candidate.as_bytes() == name && self.names().contains(candidate))
     }
 
     #[cfg(test)]
@@ -91,19 +91,19 @@ impl Capabilities {
 fn detect() -> Capabilities {
     use core::arch::x86_64::__cpuid_count;
 
-    // SAFETY: CPUID is available on x86-64. Check maximum leaves before
-    // querying feature leaves, rather than accepting unspecified leaf data.
-    let basic_max = unsafe { __cpuid_count(0, 0) }.eax;
-    let extended_max = unsafe { __cpuid_count(0x8000_0000, 0) }.eax;
+    // Check maximum leaves before querying feature leaves, rather than
+    // accepting unspecified leaf data.
+    let basic_max = __cpuid_count(0, 0).eax;
+    let extended_max = __cpuid_count(0x8000_0000, 0).eax;
     let mut features = X86Features::default();
     if basic_max >= 1 {
-        features.ecx1 = unsafe { __cpuid_count(1, 0) }.ecx;
+        features.ecx1 = __cpuid_count(1, 0).ecx;
     }
     if basic_max >= 7 {
-        features.ebx7 = unsafe { __cpuid_count(7, 0) }.ebx;
+        features.ebx7 = __cpuid_count(7, 0).ebx;
     }
     if extended_max >= 0x8000_0001 {
-        features.extended_ecx = unsafe { __cpuid_count(0x8000_0001, 0) }.ecx;
+        features.extended_ecx = __cpuid_count(0x8000_0001, 0).ecx;
     }
     if features.ecx1 & ((1 << 26) | (1 << 27)) == ((1 << 26) | (1 << 27)) {
         let xcr0: u32;
@@ -146,7 +146,11 @@ mod tests {
     #[test]
     fn capabilities_are_cumulative_and_priority_ordered() {
         assert!(Capabilities::default().names().is_empty());
-        assert!(Capabilities::from_x86(X86Features::default()).names().is_empty());
+        assert!(
+            Capabilities::from_x86(X86Features::default())
+                .names()
+                .is_empty()
+        );
         assert_eq!(Capabilities::from_x86(all_features()).names(), NAMES);
         for level in 1..=4 {
             let caps = Capabilities::for_x86_level(level);
@@ -176,7 +180,9 @@ mod tests {
     fn every_v3_feature_and_xmm_ymm_state_is_required() {
         for bit in 0..32 {
             for (register, mask) in [(0, V3_ECX), (1, V3_EBX7), (2, 1 << 5), (3, 0x6)] {
-                if mask & (1 << bit) == 0 { continue; }
+                if mask & (1 << bit) == 0 {
+                    continue;
+                }
                 let mut features = all_features();
                 let value = match register {
                     0 => &mut features.ecx1,
@@ -185,7 +191,11 @@ mod tests {
                     _ => &mut features.xcr0,
                 };
                 *value &= !(1 << bit);
-                assert_eq!(Capabilities::from_x86(features).x86_level, 2, "register {register}, bit {bit}");
+                assert_eq!(
+                    Capabilities::from_x86(features).x86_level,
+                    2,
+                    "register {register}, bit {bit}"
+                );
             }
         }
     }
@@ -194,11 +204,21 @@ mod tests {
     fn every_v4_feature_and_opmask_zmm_state_is_required() {
         for bit in 0..32 {
             for (register, mask) in [(0, V4_EBX7), (1, 0xe0)] {
-                if mask & (1 << bit) == 0 { continue; }
+                if mask & (1 << bit) == 0 {
+                    continue;
+                }
                 let mut features = all_features();
-                let value = if register == 0 { &mut features.ebx7 } else { &mut features.xcr0 };
+                let value = if register == 0 {
+                    &mut features.ebx7
+                } else {
+                    &mut features.xcr0
+                };
                 *value &= !(1 << bit);
-                assert_eq!(Capabilities::from_x86(features).x86_level, 3, "register {register}, bit {bit}");
+                assert_eq!(
+                    Capabilities::from_x86(features).x86_level,
+                    3,
+                    "register {register}, bit {bit}"
+                );
             }
         }
     }
@@ -208,7 +228,12 @@ mod tests {
         let caps = Capabilities::for_x86_level(3);
         assert_eq!(caps.rank(b"x86-64-v2", 0), Some(2));
         assert_eq!(caps.rank(b"x86-64-v3", 2), Some(1));
-        for name in [b"x86-64-v4".as_slice(), b"x86-64-v9", b"../x86-64-v3", b"X86-64-v3"] {
+        for name in [
+            b"x86-64-v4".as_slice(),
+            b"x86-64-v9",
+            b"../x86-64-v3",
+            b"X86-64-v3",
+        ] {
             assert_eq!(caps.rank(name, 0), None);
         }
         for isa_index in [3, 4, 31, 32, 1023, u32::MAX] {

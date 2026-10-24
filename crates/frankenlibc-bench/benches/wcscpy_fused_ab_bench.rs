@@ -111,10 +111,16 @@ fn bench(c: &mut Criterion) {
         let pg = d_g.as_mut_ptr();
         let mut grp = c.benchmark_group(format!("wcscpy_{n}"));
         grp.bench_function("old_2pass", |b| {
-            b.iter(|| black_box(unsafe { wcscpy_2pass(black_box(po), black_box(ps)) }))
+            b.iter(|| {
+                unsafe { wcscpy_2pass(black_box(po), black_box(ps)) };
+                black_box(po)
+            })
         });
         grp.bench_function("new_fused", |b| {
-            b.iter(|| black_box(unsafe { wcscpy_fused(black_box(pn), black_box(ps)) }))
+            b.iter(|| {
+                unsafe { wcscpy_fused(black_box(pn), black_box(ps)) };
+                black_box(pn)
+            })
         });
         grp.bench_function("host_glibc", |b| {
             b.iter(|| black_box(unsafe { wcscpy(black_box(pg.cast()), black_box(ps.cast())) }))

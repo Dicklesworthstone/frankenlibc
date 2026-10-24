@@ -174,6 +174,43 @@ pub fn lookup_by_gid(content: &[u8], gid: u32) -> Option<Group> {
     None
 }
 
+/// Whether a reentrant files lookup (`getgrnam_r`/`getgrgid_r`) into a
+/// `buflen`-byte buffer at address `buf_addr` fails with ERANGE, as glibc's
+/// files backend does.
+///
+/// Measured on glibc 2.39: every line examined (up to and including the first
+/// match, all of them on a miss) is read into the caller's buffer -- its bytes
+/// with newline, a NUL and a spare byte must fit -- and is then parsed in
+/// place, with the member pointer vector placed at the next pointer-aligned
+/// ADDRESS after the line and sized for every member plus two slots.
+pub fn files_lookup_exceeds_buffer(
+    content: &[u8],
+    buf_addr: usize,
+    buflen: usize,
+    mut is_match: impl FnMut(&Group) -> bool,
+) -> bool {
+    const PTR: usize = std::mem::size_of::<usize>();
+    for (line, raw_len) in crate::pwd::raw_lines(content) {
+        if raw_len.saturating_add(2) > buflen {
+            return true;
+        }
+        let Some(entry) = parse_group_line(line) else {
+            continue;
+        };
+        let line_end = buf_addr.wrapping_add(raw_len + 1);
+        let vector_start = line_end.wrapping_add(PTR - 1) & !(PTR - 1);
+        let needed = (vector_start.wrapping_sub(buf_addr))
+            .saturating_add(entry.gr_mem.len().saturating_add(2).saturating_mul(PTR));
+        if needed > buflen {
+            return true;
+        }
+        if !is_nis_compat_name(&entry.gr_name) && is_match(&entry) {
+            return false;
+        }
+    }
+    false
+}
+
 /// Append a serialized group line to `out`.
 ///
 /// Produces `"name:passwd:gid:m1,m2,...\n"` — the canonical
@@ -279,6 +316,55 @@ sudo:x:27:ubuntu
 users:x:100:alice,bob,charlie
 ubuntu:x:1000:
 ";
+
+    #[test]
+    fn files_lookup_buffer_threshold_matches_glibc() {
+        // glibc 2.39 thresholds (smallest buflen that is not ERANGE) for a
+        // 16-aligned buffer at offset 0 and 4.
+        let cases: [(&[u8], &[u8], usize, usize); 6] = [
+            (b"abcdefgh:x:9:u1\n", b"abcdefgh", 48, 44),
+            (b"abcdefg:x:9:u1\n", b"abcdefgh", 40, 44),
+            (b"abcdefghi:x:9:u1\n", b"abcdefgh", 48, 44),
+            (b"grp:x:9:u1,u2\n", b"grp", 48, 52),
+            (b"grp:x:9:u1,u2", b"grp", 48, 52),
+            (b"grp:x:9:\n", b"grp", 32, 28),
+        ];
+        let base = 0x1000usize;
+        for (content, name, at0, at4) in cases {
+            for (addr, threshold) in [(base, at0), (base + 4, at4)] {
+                assert!(
+                    files_lookup_exceeds_buffer(content, addr, threshold - 1, |g| g.gr_name
+                        == name),
+                    "{:?} at {addr:#x}: {} must be ERANGE",
+                    std::str::from_utf8(content),
+                    threshold - 1
+                );
+                assert!(
+                    !files_lookup_exceeds_buffer(content, addr, threshold, |g| g.gr_name == name),
+                    "{:?} at {addr:#x}: {threshold} must fit",
+                    std::str::from_utf8(content)
+                );
+            }
+        }
+        // "grp:x:9:u1,u2,u3,u4\n" needs 72; a long comment needs its length + 2.
+        assert!(files_lookup_exceeds_buffer(
+            b"grp:x:9:u1,u2,u3,u4\n",
+            base,
+            71,
+            |_| true
+        ));
+        assert!(!files_lookup_exceeds_buffer(
+            b"grp:x:9:u1,u2,u3,u4\n",
+            base,
+            72,
+            |_| true
+        ));
+        let comment = b"# comment line that is long ......................\nabcdefgh:x:9:u1\n";
+        assert!(files_lookup_exceeds_buffer(comment, base, 52, |g| g.gr_gid == 9));
+        assert!(!files_lookup_exceeds_buffer(comment, base, 53, |g| g
+            .gr_gid
+            == 9));
+    }
 
     #[test]
     fn parse_valid_line_no_members() {

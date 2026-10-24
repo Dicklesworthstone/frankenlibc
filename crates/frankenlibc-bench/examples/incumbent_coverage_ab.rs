@@ -35,8 +35,16 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
+//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|pthread_kill_invalid_unset_log|malloc_free|mtx_trylock|\
+//!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs|\
+//!  isa_kernels|io_cancel_points`
+//!
+//! `isa_kernels` (and `sscanf`, `io_cancel_points`) also take `--fl-so-b PATH`: a
+//! SECOND FrankenLibC object as the comparison arm, for a same-invocation self-A/B
+//! of two builds -- e.g. the baseline x86-64 artifact against a
+//! `release-x86-64-v3` one (bd-rc0923-epic-eeuy4f.13), or a change to the
+//! cancellation window of `read`/`write` against its base
+//! (`io_cancel_points`, bd-rc0923-epic-eeuy4f.24).
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -88,6 +96,15 @@ const MEMORY_DEST_SENTINEL: u8 = 0xA5;
 const TDELETE_DELETIONS_PER_BATCH: usize = 8192;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
+const PTHREAD_KILL_INVALID_REPS: usize = 2_000_000;
+// Two live baseline runs resolved the effect by a huge margin (FL/glibc <
+// 0.03), but 36 retained FrankenLibC A/A ratios left the unchanged 1% null-CI
+// gate blocked at 1.056% and 1.780%. Making each batch four times longer did
+// not help (1.646%): between-batch drift, not timer resolution, dominates.
+// Split the same total work into a time-symmetric A/B/B/A/B/A/A/B schedule,
+// then aggregate it back to one bootstrap unit per outer sample. This cancels
+// linear within-cell drift without pretending nested chunks are independent.
+const PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL: usize = 4;
 const MALLOC_FREE_REPS: usize = 100_000;
 // A 4 KiB memory stream drained as 64 64-byte reads mirrors the legacy
 // `stdio_fread_mem_mt_ab` workload while keeping this incumbent harness fully
@@ -123,6 +140,9 @@ const WCSNRTOMBS_CODEPOINTS_PER_ARM: usize = 20_000_000;
 const WCSNRTOMBS_MIN_REPS: usize = 2_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
+const PTHREAD_KILL_INVALID_SIGNALS: [c_int; 2] = [-1, 65];
+const PTHREAD_KILL_UNSET_LOG_MAX_RATIO: f64 = 1.02;
+const PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH: f64 = 0.01;
 const IPV4_LOOPBACK: [u8; 4] = [127, 0, 0, 1];
 const WCSNRTOMBS_OUTPUT_SENTINEL: u8 = 0xa5;
 
@@ -136,6 +156,7 @@ type SemDestroyFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemPostFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type ThrdCurrentFn = unsafe extern "C" fn() -> libc::pthread_t;
+type PthreadKillFn = unsafe extern "C" fn(libc::pthread_t, c_int) -> c_int;
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
@@ -276,6 +297,10 @@ unsafe extern "C" {
     fn linked_host_sem_trywait(sem: *mut libc::sem_t) -> c_int;
     #[link_name = "thrd_current"]
     fn linked_host_thrd_current() -> libc::pthread_t;
+    #[link_name = "pthread_self"]
+    fn linked_host_pthread_self() -> libc::pthread_t;
+    #[link_name = "pthread_kill"]
+    fn linked_host_pthread_kill(thread: libc::pthread_t, signal: c_int) -> c_int;
     #[link_name = "malloc"]
     fn linked_host_malloc(size: usize) -> *mut c_void;
     #[link_name = "free"]
@@ -614,6 +639,7 @@ enum Family {
     Getauxval,
     SemPost,
     ThrdCurrent,
+    PthreadKillInvalidUnsetLog,
     MallocFree,
     FreadMem,
     FscanfFd,
@@ -632,6 +658,8 @@ enum Family {
     Sscanf,
     Wcsnrtombs,
     Strcasestr,
+    IsaKernels,
+    IoCancelPoints,
 }
 
 struct Case {
@@ -1111,6 +1139,9 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
+                Some(value) if value == OsStr::new("pthread_kill_invalid_unset_log") => {
+                    Family::PthreadKillInvalidUnsetLog
+                }
                 Some(value) if value == OsStr::new("malloc_free") => Family::MallocFree,
                 Some(value) if value == OsStr::new("fread_mem") => Family::FreadMem,
                 Some(value) if value == OsStr::new("fscanf_fd") => Family::FscanfFd,
@@ -1129,10 +1160,12 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 Some(value) if value == OsStr::new("strcasestr") => Family::Strcasestr,
+                Some(value) if value == OsStr::new("isa_kernels") => Family::IsaKernels,
+                Some(value) if value == OsStr::new("io_cancel_points") => Family::IoCancelPoints,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
-                     sem_post, thrd_current, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
-                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, or strcasestr"
+                     sem_post, thrd_current, pthread_kill_invalid_unset_log, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
+                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, strcasestr, isa_kernels, or io_cancel_points"
                 ),
             };
         } else {
@@ -1141,10 +1174,10 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] [--fl-deepbind] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|pthread_kill_invalid_unset_log|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
-                  wcsnrtombs|strcasestr]"
+                  wcsnrtombs|strcasestr|isa_kernels|io_cancel_points]"
             );
         }
     }
@@ -2798,6 +2831,73 @@ fn measure_thrd_current_case(host: ThrdCurrentFn, fl: ThrdCurrentFn) -> CaseResu
         fl_null_b,
         glibc_null_a,
         glibc_null_b,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct PthreadKillInvalidArm {
+    function: PthreadKillFn,
+    thread: libc::pthread_t,
+}
+
+#[inline(never)]
+fn run_pthread_kill_invalid_batch(arm: PthreadKillInvalidArm, reps: usize) -> i64 {
+    let mut accumulator = 0i64;
+    for index in 0..reps {
+        let signal = PTHREAD_KILL_INVALID_SIGNALS[index & 1];
+        let result = unsafe { black_box(arm.function)(black_box(arm.thread), black_box(signal)) };
+        accumulator = accumulator.wrapping_add(i64::from(black_box(result)));
+    }
+    black_box(accumulator)
+}
+
+fn time_pthread_kill_invalid_batch(arm: PthreadKillInvalidArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_pthread_kill_invalid_batch(
+        arm,
+        PTHREAD_KILL_INVALID_REPS,
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / PTHREAD_KILL_INVALID_REPS as f64
+}
+
+fn time_pthread_kill_invalid_fl_null_pair(
+    arm: PthreadKillInvalidArm,
+    reverse_labels: bool,
+) -> (f64, f64) {
+    // Four chunks per label in A B B A B A A B order. Reversing labels on odd
+    // outer samples keeps the order balance exact across the retained sample
+    // set. Each label has equal total work and equal first/second temporal
+    // moments, so constant and linear drift cancel before the ratio is formed.
+    const LABEL_B: [bool; 8] = [false, true, true, false, true, false, false, true];
+    let mut a = 0.0;
+    let mut b = 0.0;
+    for label_b in LABEL_B {
+        let elapsed = time_pthread_kill_invalid_batch(arm);
+        if label_b ^ reverse_labels {
+            b += elapsed;
+        } else {
+            a += elapsed;
+        }
+    }
+    assert_eq!(PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL, 4);
+    let chunks = PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL as f64;
+    (a / chunks, b / chunks)
+}
+
+fn measure_pthread_kill_invalid_case(
+    host: PthreadKillInvalidArm,
+    fl: PthreadKillInvalidArm,
+) -> CaseResult {
+    measure_arm_case_with_null_timers(
+        "invalid_signal_local_rejection",
+        "FRANKENLIBC_LOG unset; alternating pthread_kill signal -1 and 65 semantic denials",
+        PTHREAD_KILL_INVALID_REPS,
+        host,
+        fl,
+        time_pthread_kill_invalid_batch,
+        time_pthread_kill_invalid_batch,
+        time_pthread_kill_invalid_batch,
+        Some(time_pthread_kill_invalid_fl_null_pair),
     )
 }
 
@@ -6406,6 +6506,235 @@ fn run_thrd_current(config: &Config) {
     }
 }
 
+fn run_pthread_kill_invalid_unset_log(config: &Config) {
+    for name in ["FRANKENLIBC_LOG", "FRANKENLIBC_LOG_FILE"] {
+        assert!(
+            std::env::var_os(name).is_none(),
+            "{name} must be unset before loading FrankenLibC for the unset-sink overhead proof"
+        );
+    }
+    println!(
+        "UNSET_SINK_PRECONDITION FRANKENLIBC_LOG=unset FRANKENLIBC_LOG_FILE=unset verdict=pass"
+    );
+
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &fl_path, "pthread_kill");
+    let fl_symbol = unsafe { libc::dlsym(handle, c"pthread_kill".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC pthread_kill")
+    );
+    let fl_errno_symbol = unsafe { libc::dlsym(handle, c"__errno_location".as_ptr()) };
+    assert!(
+        !fl_errno_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __errno_location")
+    );
+
+    let host: PthreadKillFn = linked_host_pthread_kill;
+    let fl: PthreadKillFn = unsafe { std::mem::transmute(fl_symbol) };
+    let host_errno: ErrnoLocationFn = linked_host_errno_location;
+    let fl_errno: ErrnoLocationFn = unsafe { std::mem::transmute(fl_errno_symbol) };
+    let incumbent_identity = symbol_object(host as *const () as *const c_void)
+        .expect("identify host pthread_kill object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC pthread_kill object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=pthread_kill");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=pthread_kill");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_eq!(
+        fl_identity.path, supplied_fl.path,
+        "dladdr resolved FrankenLibC pthread_kill to a different object path"
+    );
+    assert_ne!(
+        incumbent_identity.path, fl_identity.path,
+        "dladdr resolved both pthread_kill arms to the same object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=pthread_kill incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    // Use one real incumbent handle in both arms. FrankenLibC rejects these
+    // signal numbers before consulting `thread`, so this does not pretend a
+    // host-created handle exercises FrankenLibC's valid-signal lookup path.
+    let thread = unsafe { linked_host_pthread_self() };
+    let host_errno_slot = unsafe { host_errno() };
+    let fl_errno_slot = unsafe { fl_errno() };
+    assert!(!host_errno_slot.is_null(), "host errno slot is null");
+    assert!(!fl_errno_slot.is_null(), "FrankenLibC errno slot is null");
+    assert_ne!(
+        host_errno_slot, fl_errno_slot,
+        "host and FrankenLibC errno domains unexpectedly alias"
+    );
+    println!(
+        "ERRNO_DOMAINS symbol=pthread_kill host_slot={host_errno_slot:p} fl_slot={fl_errno_slot:p} distinct=true"
+    );
+    const HOST_ERRNO_SENTINEL: c_int = libc::EBUSY;
+    const FL_ERRNO_SENTINEL: c_int = libc::EINTR;
+    for signal in PTHREAD_KILL_INVALID_SIGNALS {
+        unsafe { *host_errno_slot = HOST_ERRNO_SENTINEL };
+        let host_result = unsafe { host(thread, signal) };
+        let host_errno_after = unsafe { *host_errno_slot };
+
+        unsafe {
+            *host_errno_slot = HOST_ERRNO_SENTINEL;
+            *fl_errno_slot = FL_ERRNO_SENTINEL;
+        }
+        let fl_result = unsafe { fl(thread, signal) };
+        let host_errno_after_fl = unsafe { *host_errno_slot };
+        let fl_errno_after = unsafe { *fl_errno_slot };
+        assert_eq!(
+            (host_result, host_errno_after),
+            (libc::EINVAL, HOST_ERRNO_SENTINEL),
+            "host pthread_kill invalid-signal contract failed for signal {signal}"
+        );
+        assert_eq!(
+            (fl_result, host_errno_after_fl, fl_errno_after),
+            (libc::EINVAL, HOST_ERRNO_SENTINEL, FL_ERRNO_SENTINEL),
+            "FrankenLibC pthread_kill invalid-signal contract failed for signal {signal}"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=pthread_kill comparisons=4 \
+         signals=-1,65 return_value=EINVAL host_errno_preserved=true \
+         fl_errno_preserved=true verdict=pass"
+    );
+    let threads_pre_guard = observed_threads();
+    println!(
+        "THREADS_OBSERVED symbol=pthread_kill_invalid_unset_log phase=pre_guard count={threads_pre_guard}"
+    );
+    if config.verify_only {
+        println!(
+            "INCUMBENT_COVERAGE_VERIFY_ONLY symbol=pthread_kill_invalid_unset_log verdict=pass"
+        );
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "pthread_kill unset-sink observed thread count changed before measurement"
+    );
+    println!(
+        "UNSET_SINK_MEASUREMENT_PROTOCOL symbol=pthread_kill \
+         effect_reps_per_arm={PTHREAD_KILL_INVALID_REPS} \
+         fl_aa_chunk_reps={PTHREAD_KILL_INVALID_REPS} \
+         fl_aa_chunks_per_label={PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL} \
+         fl_aa_schedule=ABBABAAB_reversed_on_odd_samples \
+         incumbent_aa_reps_per_arm={PTHREAD_KILL_INVALID_REPS} \
+         retained_samples={} bootstrap_resamples={BOOTSTRAP_RESAMPLES}",
+        SAMPLES - WARMUPS,
+    );
+
+    let result = measure_pthread_kill_invalid_case(
+        PthreadKillInvalidArm {
+            function: host,
+            thread,
+        },
+        PthreadKillInvalidArm {
+            function: fl,
+            thread,
+        },
+    );
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "pthread_kill unset-sink observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "pthread_kill_invalid_unset_log",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let fl_null_ci_half_width = (result.fl_null_high - result.fl_null_low) / 2.0;
+    let glibc_null_ci_half_width = (result.glibc_null_high - result.glibc_null_low) / 2.0;
+    let null_medians_hold = result.fl_null_holds && result.glibc_null_holds;
+    let null_precision_holds = fl_null_ci_half_width
+        <= PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH
+        && glibc_null_ci_half_width <= PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH;
+    let noninferiority_holds = result.effect_high <= PTHREAD_KILL_UNSET_LOG_MAX_RATIO;
+    let passes = null_medians_hold && null_precision_holds && noninferiority_holds;
+    let verdict = if passes { "PASS" } else { "BLOCKED" };
+    println!(
+        "UNSET_SINK_OVERHEAD_CONTRACT symbol=pthread_kill case={} \
+         candidate_over_incumbent_median={:.6} candidate_over_incumbent_ci95=[{:.6},{:.6}] \
+         max_candidate_over_incumbent={PTHREAD_KILL_UNSET_LOG_MAX_RATIO:.6} \
+         fl_aa_median={:.6} fl_aa_ci95=[{:.6},{:.6}] fl_aa_ci_half_width={fl_null_ci_half_width:.6} \
+         incumbent_aa_median={:.6} incumbent_aa_ci95=[{:.6},{:.6}] \
+         incumbent_aa_ci_half_width={glibc_null_ci_half_width:.6} \
+         aa_median_bounds=[{:.6},{:.6}] max_aa_ci_half_width={PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH:.6} \
+         null_medians_hold={null_medians_hold} null_precision_holds={null_precision_holds} \
+         noninferiority_holds={noninferiority_holds} noise_policy=block verdict={verdict}",
+        result.label,
+        result.effect_median,
+        result.effect_low,
+        result.effect_high,
+        result.fl_null_median,
+        result.fl_null_low,
+        result.fl_null_high,
+        result.glibc_null_median,
+        result.glibc_null_low,
+        result.glibc_null_high,
+        1.0 - NULL_BIAS_TOLERANCE,
+        1.0 + NULL_BIAS_TOLERANCE,
+    );
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=pthread_kill_invalid_unset_log \
+         verdict={verdict} cases=1 overhead_contract=noninferiority \
+         headline_case={} headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        result.label, result.effect_median,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if !passes {
+        std::process::exit(2);
+    }
+}
+
 fn run_malloc_free(config: &Config) {
     assert!(
         config.fl_deepbind,
@@ -8205,6 +8534,1145 @@ fn run_tanhf(config: &Config) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// isa_kernels: the kernels a baseline x86-64 build runs through AVX2(+FMA)
+// twins (bd-rc0923-epic-eeuy4f.13) -- f64/f32 math and the string scans --
+// plus `sqrt`, `exp2` and short `memchr` (no twin on their path) as controls.
+//
+// Incumbent mode times host libm/libc. With `--fl-so-b` the comparison arm is a
+// second FrankenLibC object (SELF-A/B): the ratio is CANDIDATE/BASE, both
+// objects must agree exactly on every input before anything is timed, and the
+// controls are expected to sit inside their nulls.
+// ---------------------------------------------------------------------------
+
+type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
+type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
+type StrcmpFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
+type StrchrFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_char;
+type MemcmpFn = unsafe extern "C" fn(*const c_void, *const c_void, usize) -> c_int;
+
+/// Math sweep inputs per case, cycled.
+const ISA_SWEEP: usize = 256;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IsaKind {
+    Unary,
+    Binary,
+    UnaryF32,
+    Strcmp,
+    Memchr,
+    Strlen,
+    Strchr,
+    Memcmp,
+}
+
+#[derive(Clone, Copy)]
+enum IsaArm {
+    Unary(F64UnaryFn),
+    Binary(F64BinaryFn),
+    UnaryF32(F32UnaryFn),
+    Strcmp(StrcmpFn),
+    Memchr(MemrchrFn),
+    Strlen(StrlenFn),
+    Strchr(StrchrFn),
+    Memcmp(MemcmpFn),
+}
+
+struct IsaCase {
+    symbol: &'static str,
+    label: &'static str,
+    kind: IsaKind,
+    /// Math: uniform input band for x (and y for binary symbols).
+    x: (f64, f64),
+    y: (f64, f64),
+    /// Strings: bytes scanned/compared (equal strings, absent needle).
+    len: usize,
+    /// Calls per arm per sample.
+    reps: usize,
+    note: &'static str,
+}
+
+const fn math_case(
+    symbol: &'static str,
+    kind: IsaKind,
+    x: (f64, f64),
+    y: (f64, f64),
+    note: &'static str,
+) -> IsaCase {
+    IsaCase {
+        symbol,
+        label: symbol,
+        kind,
+        x,
+        y,
+        len: 0,
+        reps: 262_144,
+        note,
+    }
+}
+
+const fn string_case(
+    symbol: &'static str,
+    label: &'static str,
+    kind: IsaKind,
+    len: usize,
+    reps: usize,
+    note: &'static str,
+) -> IsaCase {
+    IsaCase {
+        symbol,
+        label,
+        kind,
+        x: (0.0, 0.0),
+        y: (0.0, 0.0),
+        len,
+        reps,
+        note,
+    }
+}
+
+const NO_Y: (f64, f64) = (0.0, 0.0);
+const ISA_CASES: [IsaCase; 21] = [
+    math_case(
+        "sin",
+        IsaKind::Unary,
+        (-10.0, 10.0),
+        NO_Y,
+        "CORE-MATH sin; twin",
+    ),
+    math_case(
+        "cos",
+        IsaKind::Unary,
+        (-10.0, 10.0),
+        NO_Y,
+        "CORE-MATH cos; twin",
+    ),
+    math_case(
+        "tan",
+        IsaKind::Unary,
+        (-1.5, 1.5),
+        NO_Y,
+        "CORE-MATH tan; twin",
+    ),
+    math_case(
+        "atan",
+        IsaKind::Unary,
+        (-10.0, 10.0),
+        NO_Y,
+        "CORE-MATH atan; twin",
+    ),
+    math_case("exp", IsaKind::Unary, (-20.0, 20.0), NO_Y, "ARM exp; twin"),
+    math_case(
+        "exp2",
+        IsaKind::Unary,
+        (-20.0, 20.0),
+        NO_Y,
+        "control: ARM exp2 has no FMA, no twin",
+    ),
+    math_case("log", IsaKind::Unary, (0.01, 1000.0), NO_Y, "ARM log; twin"),
+    math_case(
+        "log2",
+        IsaKind::Unary,
+        (0.01, 1000.0),
+        NO_Y,
+        "ARM log2; twin",
+    ),
+    math_case(
+        "pow",
+        IsaKind::Binary,
+        (0.1, 10.0),
+        (-5.0, 5.0),
+        "ARM pow; twin",
+    ),
+    math_case(
+        "sinf",
+        IsaKind::UnaryF32,
+        (-10.0, 10.0),
+        NO_Y,
+        "f64 pi/2 reduction twin + musl kernel",
+    ),
+    math_case(
+        "sqrt",
+        IsaKind::Unary,
+        (0.0, 100.0),
+        NO_Y,
+        "control: no twin, no FMA",
+    ),
+    string_case(
+        "strcmp",
+        "strcmp_16",
+        IsaKind::Strcmp,
+        16,
+        262_144,
+        "equal strings; scan_strcmp twin",
+    ),
+    string_case(
+        "strcmp",
+        "strcmp_256",
+        IsaKind::Strcmp,
+        256,
+        131_072,
+        "equal strings; scan_strcmp twin",
+    ),
+    string_case(
+        "strcmp",
+        "strcmp_4096",
+        IsaKind::Strcmp,
+        4096,
+        16_384,
+        "equal strings; scan_strcmp twin",
+    ),
+    string_case(
+        "memchr",
+        "memchr_16",
+        IsaKind::Memchr,
+        16,
+        262_144,
+        "control: absent, SWAR path below 32 B",
+    ),
+    string_case(
+        "memchr",
+        "memchr_4096",
+        IsaKind::Memchr,
+        4096,
+        32_768,
+        "absent; core memchr twin",
+    ),
+    string_case(
+        "strlen",
+        "strlen_16",
+        IsaKind::Strlen,
+        16,
+        262_144,
+        "short; the scan_c_string dispatch runs on every call",
+    ),
+    string_case(
+        "strlen",
+        "strlen_64",
+        IsaKind::Strlen,
+        64,
+        262_144,
+        "short; the scan_c_string dispatch runs on every call",
+    ),
+    string_case(
+        "strlen",
+        "strlen_4096",
+        IsaKind::Strlen,
+        4096,
+        32_768,
+        "scan_c_string twin",
+    ),
+    string_case(
+        "strchr",
+        "strchr_4096",
+        IsaKind::Strchr,
+        4096,
+        32_768,
+        "absent; explicit AVX2 kernel",
+    ),
+    string_case(
+        "memcmp",
+        "memcmp_256",
+        IsaKind::Memcmp,
+        256,
+        262_144,
+        "equal; explicit AVX2 kernel",
+    ),
+];
+
+struct IsaInputs {
+    xs: Vec<f64>,
+    ys: Vec<f64>,
+    /// `len` bytes of 'x' then NUL, twice (equal strings in distinct buffers).
+    a: Vec<u8>,
+    b: Vec<u8>,
+}
+
+fn isa_inputs(case: &IsaCase) -> IsaInputs {
+    let mut state = 0x2545_f491_4f6c_dd1du64 ^ case.label.len() as u64;
+    let mut next = |(lo, hi): (f64, f64)| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        lo + (hi - lo) * ((state >> 11) as f64 / (1u64 << 53) as f64)
+    };
+    let xs = (0..ISA_SWEEP).map(|_| next(case.x)).collect::<Vec<_>>();
+    let ys = (0..ISA_SWEEP).map(|_| next(case.y)).collect::<Vec<_>>();
+    let mut a = vec![b'x'; case.len + 1];
+    a[case.len] = 0;
+    let b = a.clone();
+    IsaInputs { xs, ys, a, b }
+}
+
+/// One call; the result as bits, or as an offset from the buffer for the
+/// pointer-returning scans (both arms scan the same buffer).
+fn isa_call(arm: IsaArm, inputs: &IsaInputs, len: usize, index: usize) -> u64 {
+    let (x, y) = (inputs.xs[index], inputs.ys[index]);
+    let (a, b) = (inputs.a.as_ptr(), inputs.b.as_ptr());
+    let offset = |p: *const u8| {
+        if p.is_null() {
+            u64::MAX
+        } else {
+            p as u64 - a as u64
+        }
+    };
+    // SAFETY: each arm is the matching libm/libc/FrankenLibC entry point, and
+    // the buffers are NUL-terminated with `len` readable bytes before the NUL.
+    unsafe {
+        match arm {
+            IsaArm::Unary(f) => f(x).to_bits(),
+            IsaArm::Binary(f) => f(x, y).to_bits(),
+            IsaArm::UnaryF32(f) => u64::from(f(x as f32).to_bits()),
+            IsaArm::Strcmp(f) => f(a.cast(), b.cast()) as u64,
+            IsaArm::Memchr(f) => offset(f(a.cast(), c_int::from(b'Q'), len).cast::<u8>()),
+            IsaArm::Strlen(f) => f(a.cast()) as u64,
+            IsaArm::Strchr(f) => offset(f(a.cast(), c_int::from(b'Q')).cast::<u8>()),
+            IsaArm::Memcmp(f) => f(a.cast(), b.cast(), len) as u64,
+        }
+    }
+}
+
+#[inline(never)]
+fn run_isa_batch(arm: IsaArm, inputs: &IsaInputs, len: usize, reps: usize) -> u64 {
+    let mask = inputs.xs.len() - 1;
+    let mut accumulator = 0u64;
+    for index in 0..reps {
+        accumulator ^= black_box(isa_call(black_box(arm), inputs, len, index & mask));
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(accumulator)
+}
+
+fn time_isa_batch(arm: IsaArm, inputs: &IsaInputs, len: usize, reps: usize) -> f64 {
+    let started = Instant::now();
+    black_box(run_isa_batch(arm, inputs, len, reps));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / reps as f64
+}
+
+fn measure_isa_case(case: &IsaCase, host: IsaArm, fl: IsaArm) -> CaseResult {
+    let inputs = isa_inputs(case);
+    let (len, reps) = (case.len, case.reps);
+    let time = |arm: IsaArm| time_isa_batch(arm, &inputs, len, reps);
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+    for sample in 0..SAMPLES {
+        let (mut effect_fl, mut effect_glibc) = (0.0, 0.0);
+        let (mut fa, mut fb, mut ga, mut gb) = (0.0, 0.0, 0.0, 0.0);
+        // Same six-cell phase/order rotation as the other families.
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time(fl);
+                    fb = time(fl);
+                }
+                0 => {
+                    fb = time(fl);
+                    fa = time(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time(host);
+                    gb = time(host);
+                }
+                1 => {
+                    gb = time(host);
+                    ga = time(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time(fl);
+                    effect_glibc = time(host);
+                }
+                2 => {
+                    effect_glibc = time(host);
+                    effect_fl = time(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+    summarize_case(
+        case.label,
+        case.note,
+        reps,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+fn f64_ulp_distance(left: f64, right: f64) -> u64 {
+    if left.to_bits() == right.to_bits() || (left.is_nan() && right.is_nan()) {
+        return 0;
+    }
+    if left.is_nan() || right.is_nan() || left.is_sign_negative() != right.is_sign_negative() {
+        return u64::MAX;
+    }
+    (left.to_bits() as i64 - right.to_bits() as i64).unsigned_abs()
+}
+
+fn isa_kind_is_math(kind: IsaKind) -> bool {
+    matches!(kind, IsaKind::Unary | IsaKind::Binary | IsaKind::UnaryF32)
+}
+
+fn run_isa_kernels(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &fl_path, "isa_kernels");
+    // The comparison arms: host libm (math) and libc (strings), or (SELF-A/B) a
+    // second FrankenLibC object for both.
+    let (comparison_handles, supplied_b) = match &config.fl_so_b {
+        Some(path_b) => {
+            let supplied_b = sha256_file(path_b).expect("hash second FrankenLibC SO");
+            assert_ne!(
+                supplied_b.sha256, supplied_fl.sha256,
+                "--fl-so and --fl-so-b are the SAME object; a self-A/B against an \
+                 identical build measures nothing"
+            );
+            let path_b_c = CString::new(supplied_b.path.as_os_str().as_bytes())
+                .expect("second FrankenLibC path has NUL");
+            let handle_b =
+                dlopen_fl_so_with_plain_model(config, &path_b_c, "isa_kernels_b", "plain_dlopen");
+            ((handle_b, handle_b), Some(supplied_b))
+        }
+        None => {
+            // SAFETY: NUL-terminated sonames of objects this process already
+            // maps; RTLD_LOCAL keeps them private.
+            let libm =
+                unsafe { libc::dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(!libm.is_null(), "{}", dl_error("dlopen host libm.so.6"));
+            // SAFETY: as above.
+            let libc_handle =
+                unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(
+                !libc_handle.is_null(),
+                "{}",
+                dl_error("dlopen host libc.so.6")
+            );
+            ((libm, libc_handle), None)
+        }
+    };
+    let resolve = |handle: *mut c_void, symbol: &str| {
+        let name = CString::new(symbol).expect("symbol has NUL");
+        // SAFETY: `handle` came from dlopen and the name is NUL-terminated.
+        let address = unsafe { libc::dlsym(handle, name.as_ptr()) };
+        assert!(
+            !address.is_null(),
+            "{}",
+            dl_error(&format!("dlsym {symbol}"))
+        );
+        address
+    };
+    let arm = |address: *mut c_void, case: &IsaCase| -> IsaArm {
+        // SAFETY: the resolved symbol has the C signature its name implies.
+        unsafe {
+            match case.kind {
+                IsaKind::Unary => {
+                    IsaArm::Unary(std::mem::transmute::<*mut c_void, F64UnaryFn>(address))
+                }
+                IsaKind::Binary => {
+                    IsaArm::Binary(std::mem::transmute::<*mut c_void, F64BinaryFn>(address))
+                }
+                IsaKind::UnaryF32 => {
+                    IsaArm::UnaryF32(std::mem::transmute::<*mut c_void, F32UnaryFn>(address))
+                }
+                IsaKind::Strcmp => {
+                    IsaArm::Strcmp(std::mem::transmute::<*mut c_void, StrcmpFn>(address))
+                }
+                IsaKind::Memchr => {
+                    IsaArm::Memchr(std::mem::transmute::<*mut c_void, MemrchrFn>(address))
+                }
+                IsaKind::Strlen => {
+                    IsaArm::Strlen(std::mem::transmute::<*mut c_void, StrlenFn>(address))
+                }
+                IsaKind::Strchr => {
+                    IsaArm::Strchr(std::mem::transmute::<*mut c_void, StrchrFn>(address))
+                }
+                IsaKind::Memcmp => {
+                    IsaArm::Memcmp(std::mem::transmute::<*mut c_void, MemcmpFn>(address))
+                }
+            }
+        }
+    };
+
+    let mut arms = Vec::with_capacity(ISA_CASES.len());
+    let mut incumbent_identities: Vec<ObjectIdentity> = Vec::new();
+    for case in &ISA_CASES {
+        let is_math = isa_kind_is_math(case.kind);
+        let comparison_handle = if is_math {
+            comparison_handles.0
+        } else {
+            comparison_handles.1
+        };
+        let fl_address = resolve(handle, case.symbol);
+        let host_address = resolve(comparison_handle, case.symbol);
+        assert_ne!(
+            fl_address, host_address,
+            "both {} arms resolve to the same address",
+            case.symbol
+        );
+        let fl_identity = symbol_object(fl_address.cast_const()).expect("identify FL object");
+        let host_identity =
+            symbol_object(host_address.cast_const()).expect("identify comparison object");
+        assert_eq!(
+            fl_identity.sha256, supplied_fl.sha256,
+            "{} resolved outside the supplied FrankenLibC object",
+            case.symbol
+        );
+        match &supplied_b {
+            Some(supplied_b) => assert_eq!(
+                host_identity.sha256, supplied_b.sha256,
+                "{} comparison arm resolved outside --fl-so-b",
+                case.symbol
+            ),
+            None => {
+                let want: &[u8] = if is_math { b"libm.so" } else { b"libc.so" };
+                assert!(
+                    host_identity
+                        .path
+                        .file_name()
+                        .is_some_and(|name| name.as_bytes().starts_with(want)),
+                    "{} incumbent resolved to {}, not host {}",
+                    case.symbol,
+                    host_identity.path.display(),
+                    String::from_utf8_lossy(want)
+                );
+            }
+        }
+        println!(
+            "ARM_DISTINCT symbol={} case={} incumbent_address={host_address:p} \
+             fl_address={fl_address:p}",
+            case.symbol, case.label
+        );
+        arms.push((arm(host_address, case), arm(fl_address, case)));
+        if !incumbent_identities
+            .iter()
+            .any(|known| known.sha256 == host_identity.sha256)
+        {
+            incumbent_identities.push(host_identity);
+        }
+    }
+    for identity in &incumbent_identities {
+        print_identity("INCUMBENT", identity);
+    }
+    print_identity("FL", &supplied_fl);
+    match &supplied_b {
+        Some(supplied_b) => println!(
+            "SELF_AB_MODE comparison_arm=frankenlibc base_sha256={} candidate_sha256={} \
+             note=\"ratio is CANDIDATE/BASE, not fl/glibc; no incumbent was measured\"",
+            supplied_b.sha256, supplied_fl.sha256
+        ),
+        None => println!("INCUMBENT_LINKAGE explicit_dlopen_local objects=libm.so.6,libc.so.6"),
+    }
+    println!("FL_LINKAGE explicit_dlopen_local family=isa_kernels");
+
+    // Conformance: math within the 4-ULP math contract against host libm,
+    // string results exact; in SELF-A/B mode the two FrankenLibC builds must
+    // agree exactly everywhere.
+    let ulp_limit = if supplied_b.is_some() { 0 } else { 4 };
+    let mut comparisons = 0usize;
+    for (case, &(host, fl)) in ISA_CASES.iter().zip(&arms) {
+        let inputs = isa_inputs(case);
+        let mut worst = 0u64;
+        for index in 0..ISA_SWEEP {
+            let (want, got) = (
+                isa_call(host, &inputs, case.len, index),
+                isa_call(fl, &inputs, case.len, index),
+            );
+            let distance = match case.kind {
+                IsaKind::Unary | IsaKind::Binary => {
+                    f64_ulp_distance(f64::from_bits(got), f64::from_bits(want))
+                }
+                IsaKind::UnaryF32 => u64::from(f32_ulp_distance(
+                    f32::from_bits(got as u32),
+                    f32::from_bits(want as u32),
+                )),
+                _ => u64::from(got != want) * u64::MAX,
+            };
+            let limit = if isa_kind_is_math(case.kind) {
+                ulp_limit
+            } else {
+                0
+            };
+            assert!(
+                distance <= limit,
+                "{} input #{index}: fl={got:#x} comparison={want:#x} distance={distance} \
+                 limit={limit}",
+                case.label
+            );
+            worst = worst.max(distance);
+            comparisons += 1;
+            if !isa_kind_is_math(case.kind) {
+                break; // one fixed input; the sweep varies only math arguments
+            }
+        }
+        println!(
+            "INCUMBENT_COVERAGE_CONFORMANCE symbol={} case={} ulp_limit={ulp_limit} \
+             worst_distance={worst} verdict=pass",
+            case.symbol, case.label
+        );
+    }
+    let threads_pre_guard = observed_threads();
+    println!(
+        "THREADS_OBSERVED family=isa_kernels phase=pre_guard count={threads_pre_guard} \
+         comparisons={comparisons}"
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY family=isa_kernels verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "isa_kernels observed thread count changed between conformance and measurement"
+    );
+    let results = ISA_CASES
+        .iter()
+        .zip(&arms)
+        .map(|(case, &(host, fl))| measure_isa_case(case, host, fl))
+        .collect::<Vec<_>>();
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "isa_kernels observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for (case, result) in ISA_CASES.iter().zip(&results) {
+        let incumbent = &incumbent_identities[usize::from(
+            supplied_b.is_none() && !isa_kind_is_math(case.kind) && incumbent_identities.len() > 1,
+        )];
+        result.print(case.symbol, &incumbent.path, threads_pre, threads_post);
+    }
+    let wins = results
+        .iter()
+        .filter(|r| r.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|r| r.comparison == "FL_SLOWER")
+        .count();
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT family=isa_kernels verdict={verdict} cases={} \
+         wins={wins} losses={losses} undecidable={} self_ab={} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        results.len() - wins - losses,
+        supplied_b.is_some(),
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// io_cancel_points: `read`/`write`, the hottest cancellation points
+// (bd-rc0923-epic-eeuy4f.24). In a multi-threaded process fl runs each call's
+// syscall inside an asynchronous-cancel window (two host
+// `pthread_setcanceltype` calls, opened only for a caller outside fl);
+// single-threaded it skips the window. Each case is a 1-byte write to
+// /dev/null or read from /dev/zero, timed before ("_st") and after ("_mt") a
+// thread has been created and joined through every measured object's own
+// `pthread_create` -- the real way fl's `__libc_single_threaded` clears.
+// `lseek` (not a cancellation point; its code is untouched by the change)
+// is the layout control in each phase: a build-to-build move it shows is not
+// the window's.
+//
+// Incumbent mode times host libc. With `--fl-so-b` the comparison arm is a
+// second FrankenLibC object (SELF-A/B, ratio CANDIDATE/BASE). An undecidable
+// row is a result here (no detectable difference), not a harness failure; only
+// a violated A/A null fails the run.
+// ---------------------------------------------------------------------------
+
+type ReadFn = unsafe extern "C" fn(c_int, *mut c_void, usize) -> isize;
+type WriteFn = unsafe extern "C" fn(c_int, *const c_void, usize) -> isize;
+type LseekFn = unsafe extern "C" fn(c_int, libc::off_t, c_int) -> libc::off_t;
+type PthreadCreateFn = unsafe extern "C" fn(
+    *mut libc::pthread_t,
+    *const libc::pthread_attr_t,
+    extern "C" fn(*mut c_void) -> *mut c_void,
+    *mut c_void,
+) -> c_int;
+type PthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> c_int;
+
+/// Calls per timed batch: a 1-byte /dev/null or /dev/zero syscall is a few
+/// hundred nanoseconds, so a batch is a few milliseconds.
+const IO_CANCEL_REPS: usize = 20_000;
+
+#[derive(Clone, Copy)]
+struct IoArm {
+    read: ReadFn,
+    write: WriteFn,
+    lseek: LseekFn,
+}
+
+struct IoCase {
+    label: &'static str,
+    symbol: &'static str,
+    multithreaded: bool,
+    /// What one call returns.
+    expect_each: isize,
+    note: &'static str,
+}
+
+/// Single-threaded cases first, then (after the switch) multi-threaded ones,
+/// in the same symbol order.
+const IO_CASES: [IoCase; 6] = [
+    IoCase {
+        label: "write_devnull_1_st",
+        symbol: "write",
+        multithreaded: false,
+        expect_each: 1,
+        note: "1-byte write to /dev/null; fl single-threaded: no cancellation window",
+    },
+    IoCase {
+        label: "read_devzero_1_st",
+        symbol: "read",
+        multithreaded: false,
+        expect_each: 1,
+        note: "1-byte read from /dev/zero; fl single-threaded: no cancellation window",
+    },
+    IoCase {
+        label: "lseek_devzero_st_control",
+        symbol: "lseek",
+        multithreaded: false,
+        expect_each: 0,
+        note: "lseek(SEEK_CUR) on /dev/zero; not a cancellation point: layout control",
+    },
+    IoCase {
+        label: "write_devnull_1_mt",
+        symbol: "write",
+        multithreaded: true,
+        expect_each: 1,
+        note: "1-byte write to /dev/null after a thread was created through each object: window open",
+    },
+    IoCase {
+        label: "read_devzero_1_mt",
+        symbol: "read",
+        multithreaded: true,
+        expect_each: 1,
+        note: "1-byte read from /dev/zero after a thread was created through each object: window open",
+    },
+    IoCase {
+        label: "lseek_devzero_mt_control",
+        symbol: "lseek",
+        multithreaded: true,
+        expect_each: 0,
+        note: "lseek(SEEK_CUR) on /dev/zero, multi-threaded; not a cancellation point: layout control",
+    },
+];
+
+const IO_ST_CASES: usize = 3;
+
+#[inline(never)]
+fn run_io_batch(arm: IoArm, case: &IoCase, devnull: c_int, devzero: c_int) -> isize {
+    let mut byte = [0u8; 1];
+    let mut total = 0isize;
+    for _ in 0..IO_CANCEL_REPS {
+        // SAFETY: valid descriptors and a live 1-byte buffer.
+        let result = unsafe {
+            match case.symbol {
+                "write" => (arm.write)(black_box(devnull), black_box(b"x".as_ptr().cast()), 1),
+                "read" => (arm.read)(black_box(devzero), black_box(byte.as_mut_ptr().cast()), 1),
+                _ => (arm.lseek)(black_box(devzero), 0, libc::SEEK_CUR) as isize,
+            }
+        };
+        total = total.wrapping_add(black_box(result));
+    }
+    black_box(byte);
+    black_box(total)
+}
+
+fn time_io_batch(arm: IoArm, case: &IoCase, devnull: c_int, devzero: c_int) -> f64 {
+    let started = Instant::now();
+    let total = run_io_batch(arm, case, devnull, devzero);
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / IO_CANCEL_REPS as f64;
+    assert_eq!(
+        total,
+        IO_CANCEL_REPS as isize * case.expect_each,
+        "{} timed batch had a short or failed call",
+        case.label
+    );
+    elapsed
+}
+
+fn measure_io_case(
+    case: &IoCase,
+    host: IoArm,
+    fl: IoArm,
+    devnull: c_int,
+    devzero: c_int,
+) -> CaseResult {
+    let time = |arm: IoArm| time_io_batch(arm, case, devnull, devzero);
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+    for sample in 0..SAMPLES {
+        let (mut effect_fl, mut effect_glibc) = (0.0, 0.0);
+        let (mut fa, mut fb, mut ga, mut gb) = (0.0, 0.0, 0.0, 0.0);
+        // Same six-cell phase/order rotation as the other families.
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time(fl);
+                    fb = time(fl);
+                }
+                0 => {
+                    fb = time(fl);
+                    fa = time(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time(host);
+                    gb = time(host);
+                }
+                1 => {
+                    gb = time(host);
+                    ga = time(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time(fl);
+                    effect_glibc = time(host);
+                }
+                2 => {
+                    effect_glibc = time(host);
+                    effect_fl = time(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+    summarize_case(
+        case.label,
+        case.note,
+        IO_CANCEL_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+extern "C" fn io_cancel_noop_thread(_arg: *mut c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// Create and join one thread through `handle`'s own `pthread_create`, then
+/// require that object's `__libc_single_threaded` to read 0 (multi-threaded).
+fn make_object_multithreaded(handle: *mut c_void, role: &str) {
+    let resolve = |symbol: &CStr| {
+        // SAFETY: `handle` came from dlopen; the name is NUL-terminated.
+        let address = unsafe { libc::dlsym(handle, symbol.as_ptr()) };
+        assert!(
+            !address.is_null(),
+            "{}",
+            dl_error(&format!("dlsym {role} {}", symbol.to_string_lossy()))
+        );
+        address
+    };
+    // SAFETY: the resolved symbols have these C signatures.
+    let create: PthreadCreateFn = unsafe { std::mem::transmute(resolve(c"pthread_create")) };
+    let join: PthreadJoinFn = unsafe { std::mem::transmute(resolve(c"pthread_join")) };
+    let threads_before = observed_threads();
+    let mut thread: libc::pthread_t = 0;
+    // SAFETY: valid out-pointer and start routine.
+    let rc = unsafe {
+        create(
+            &mut thread,
+            std::ptr::null(),
+            io_cancel_noop_thread,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0, "{role} pthread_create failed");
+    // SAFETY: `thread` was just created and is joinable.
+    let rc = unsafe { join(thread, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "{role} pthread_join failed");
+    // The join returns before the kernel drops the thread's /proc/self/task
+    // entry; the timed cases assert a stable task count, so wait for it to go
+    // (see `observed_threads_settled`).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while observed_threads() > threads_before && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(
+        observed_threads(),
+        threads_before,
+        "{role}'s joined thread did not leave /proc/self/task within 2 s"
+    );
+    let flag = resolve(c"__libc_single_threaded").cast::<u8>();
+    // SAFETY: the exported flag is one byte of the object's data.
+    let value = unsafe { std::ptr::read_volatile(flag) };
+    assert_eq!(
+        value, 0,
+        "{role} still reports single-threaded after a thread was created"
+    );
+    println!("IO_CANCEL_MULTITHREADED role={role} libc_single_threaded={value}");
+}
+
+fn run_io_cancel_points(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &fl_path, "io_cancel_points");
+    let (comparison_handle, supplied_b) = match &config.fl_so_b {
+        Some(path_b) => {
+            let supplied_b = sha256_file(path_b).expect("hash second FrankenLibC SO");
+            assert_ne!(
+                supplied_b.sha256, supplied_fl.sha256,
+                "--fl-so and --fl-so-b are the SAME object; a self-A/B against an \
+                 identical build measures nothing"
+            );
+            let path_b_c = CString::new(supplied_b.path.as_os_str().as_bytes())
+                .expect("second FrankenLibC path has NUL");
+            let handle_b = dlopen_fl_so_with_plain_model(
+                config,
+                &path_b_c,
+                "io_cancel_points_b",
+                "plain_dlopen",
+            );
+            (handle_b, Some(supplied_b))
+        }
+        None => {
+            // SAFETY: NUL-terminated soname of an object this process maps.
+            let libc_handle =
+                unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(
+                !libc_handle.is_null(),
+                "{}",
+                dl_error("dlopen host libc.so.6")
+            );
+            (libc_handle, None)
+        }
+    };
+    let arm = |object: *mut c_void, expected: Option<&str>, role: &str| -> IoArm {
+        let resolve = |symbol: &CStr| {
+            // SAFETY: `object` came from dlopen; the name is NUL-terminated.
+            let address = unsafe { libc::dlsym(object, symbol.as_ptr()) };
+            assert!(
+                !address.is_null(),
+                "{}",
+                dl_error(&format!("dlsym {role} {symbol:?}"))
+            );
+            let identity = symbol_object(address.cast_const()).expect("identify serving object");
+            if let Some(sha) = expected {
+                assert_eq!(
+                    identity.sha256, sha,
+                    "{role} {symbol:?} resolved outside its object"
+                );
+            } else {
+                assert!(
+                    identity
+                        .path
+                        .file_name()
+                        .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+                    "{role} {symbol:?} resolved to {}, not host libc",
+                    identity.path.display()
+                );
+            }
+            address
+        };
+        // SAFETY: `read`/`write`/`lseek` have these C signatures.
+        unsafe {
+            IoArm {
+                read: std::mem::transmute::<*mut c_void, ReadFn>(resolve(c"read")),
+                write: std::mem::transmute::<*mut c_void, WriteFn>(resolve(c"write")),
+                lseek: std::mem::transmute::<*mut c_void, LseekFn>(resolve(c"lseek")),
+            }
+        }
+    };
+    let fl = arm(handle, Some(&supplied_fl.sha256), "fl");
+    let comparison = arm(
+        comparison_handle,
+        supplied_b.as_ref().map(|b| b.sha256.as_str()),
+        "comparison",
+    );
+    assert_ne!(
+        fl.read as usize, comparison.read as usize,
+        "both read arms are one function"
+    );
+    assert_ne!(
+        fl.write as usize, comparison.write as usize,
+        "both write arms are one function"
+    );
+    assert_ne!(
+        fl.lseek as usize, comparison.lseek as usize,
+        "both lseek arms are one function"
+    );
+    print_identity("FL", &supplied_fl);
+    match &supplied_b {
+        Some(supplied_b) => println!(
+            "SELF_AB_MODE comparison_arm=frankenlibc base_sha256={} candidate_sha256={} \
+             note=\"ratio is CANDIDATE/BASE, not fl/glibc; no incumbent was measured\"",
+            supplied_b.sha256, supplied_fl.sha256
+        ),
+        None => println!("INCUMBENT_LINKAGE explicit_dlopen_local objects=libc.so.6"),
+    }
+    println!("FL_LINKAGE explicit_dlopen_local family=io_cancel_points");
+
+    // SAFETY: NUL-terminated paths; the descriptors live for the whole run.
+    let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+    // SAFETY: as above.
+    let devzero = unsafe { libc::open(c"/dev/zero".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    assert!(devnull >= 0 && devzero >= 0, "open /dev/null and /dev/zero");
+
+    // Conformance: one call through each arm writes 1, reads a zero byte, and
+    // finds /dev/zero at offset 0.
+    for (role, arm) in [("fl", fl), ("comparison", comparison)] {
+        let mut byte = [0xffu8; 1];
+        // SAFETY: valid descriptors and buffers.
+        let (wrote, read, offset) = unsafe {
+            (
+                (arm.write)(devnull, b"x".as_ptr().cast(), 1),
+                (arm.read)(devzero, byte.as_mut_ptr().cast(), 1),
+                (arm.lseek)(devzero, 0, libc::SEEK_CUR),
+            )
+        };
+        assert_eq!(
+            (wrote, read, byte[0], offset),
+            (1, 1, 0, 0),
+            "{role} read/write/lseek contract"
+        );
+    }
+    println!("INCUMBENT_COVERAGE_CONFORMANCE family=io_cancel_points comparisons=6 verdict=pass");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY family=io_cancel_points verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let mut results = Vec::with_capacity(IO_CASES.len());
+    let mut threads = (0, 0);
+    for case in &IO_CASES {
+        if case.multithreaded && results.len() == IO_ST_CASES {
+            make_object_multithreaded(handle, "fl");
+            if supplied_b.is_some() {
+                make_object_multithreaded(comparison_handle, "comparison");
+            }
+        }
+        let threads_pre = observed_threads();
+        let result = measure_io_case(case, comparison, fl, devnull, devzero);
+        let threads_post = observed_threads();
+        assert_eq!(
+            threads_post, threads_pre,
+            "{} thread count changed while timing",
+            case.label
+        );
+        threads = (threads_pre, threads_post);
+        results.push(result);
+    }
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    let comparison_path = supplied_b
+        .as_ref()
+        .map_or_else(|| PathBuf::from("libc.so.6"), |b| b.path.clone());
+    for (case, result) in IO_CASES.iter().zip(&results) {
+        result.print(case.symbol, &comparison_path, threads.0, threads.1);
+    }
+    // The window's cost inside each object: the multi-threaded median minus the
+    // single-threaded one, same object, same invocation (cross-row, so outside
+    // the A/A-gated ratios above). The lseek control's delta is what becoming
+    // multi-threaded costs a call that has no window.
+    for st in 0..IO_ST_CASES {
+        let mt = st + IO_ST_CASES;
+        println!(
+            "IO_CANCEL_WINDOW_COST symbol={} fl_st_ns={:.3} fl_mt_ns={:.3} fl_delta_ns={:.3} \
+             comparison_st_ns={:.3} comparison_mt_ns={:.3} comparison_delta_ns={:.3}",
+            IO_CASES[st].symbol,
+            results[st].fl_median_ns,
+            results[mt].fl_median_ns,
+            results[mt].fl_median_ns - results[st].fl_median_ns,
+            results[st].glibc_median_ns,
+            results[mt].glibc_median_ns,
+            results[mt].glibc_median_ns - results[st].glibc_median_ns,
+        );
+    }
+    let nulls_hold = results.iter().all(|r| r.comparison != "NULL_VIOLATED");
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT family=io_cancel_points verdict={} cases={} faster={} slower={} \
+         undecidable={} self_ab={}",
+        if nulls_hold {
+            "NULLS_HOLD"
+        } else {
+            "NULL_VIOLATED"
+        },
+        results.len(),
+        results
+            .iter()
+            .filter(|r| r.comparison == "FL_FASTER")
+            .count(),
+        results
+            .iter()
+            .filter(|r| r.comparison == "FL_SLOWER")
+            .count(),
+        results
+            .iter()
+            .filter(|r| r.comparison == "UNDECIDABLE")
+            .count(),
+        supplied_b.is_some(),
+    );
+    if !nulls_hold {
+        std::process::exit(2);
+    }
+}
+
 fn first_non_edge_offset(address: usize, element_size: usize) -> usize {
     let to_next_page = (4096 - (address & 4095)) & 4095;
     (to_next_page + 64) / element_size
@@ -9720,6 +11188,35 @@ fn measure_arm_case_with_reps<A: Copy>(
     fl: A,
     time_batch: fn(A) -> f64,
 ) -> CaseResult {
+    measure_arm_case_with_null_timers(
+        label,
+        note,
+        reps_per_arm,
+        host,
+        fl,
+        time_batch,
+        time_batch,
+        time_batch,
+        None,
+    )
+}
+
+/// Run the shared six-cell schedule with an optional drift-balanced FL A/A
+/// timer. The paired timer still returns one observation per outer sample, so
+/// the bootstrap units remain independent at the same level as every other
+/// family rather than treating nested timing chunks as extra samples.
+#[allow(clippy::too_many_arguments)]
+fn measure_arm_case_with_null_timers<A: Copy>(
+    label: &'static str,
+    note: &'static str,
+    reps_per_arm: usize,
+    host: A,
+    fl: A,
+    effect_time_batch: fn(A) -> f64,
+    fl_null_time_batch: fn(A) -> f64,
+    host_null_time_batch: fn(A) -> f64,
+    fl_null_time_pair: Option<fn(A, bool) -> (f64, f64)>,
+) -> CaseResult {
     let retained = SAMPLES - WARMUPS;
     let mut fl_effect = Vec::with_capacity(retained);
     let mut glibc_effect = Vec::with_capacity(retained);
@@ -9738,29 +11235,32 @@ fn measure_arm_case_with_reps<A: Copy>(
 
         for slot in 0..3 {
             match (sample + slot) % 3 {
-                0 if sample % 2 == 0 => {
-                    fa = time_batch(fl);
-                    fb = time_batch(fl);
-                }
                 0 => {
-                    fb = time_batch(fl);
-                    fa = time_batch(fl);
+                    if let Some(time_pair) = fl_null_time_pair {
+                        (fa, fb) = time_pair(fl, sample % 2 != 0);
+                    } else if sample % 2 == 0 {
+                        fa = fl_null_time_batch(fl);
+                        fb = fl_null_time_batch(fl);
+                    } else {
+                        fb = fl_null_time_batch(fl);
+                        fa = fl_null_time_batch(fl);
+                    }
                 }
                 1 if sample % 2 == 0 => {
-                    ga = time_batch(host);
-                    gb = time_batch(host);
+                    ga = host_null_time_batch(host);
+                    gb = host_null_time_batch(host);
                 }
                 1 => {
-                    gb = time_batch(host);
-                    ga = time_batch(host);
+                    gb = host_null_time_batch(host);
+                    ga = host_null_time_batch(host);
                 }
                 2 if sample % 2 == 0 => {
-                    effect_fl = time_batch(fl);
-                    effect_glibc = time_batch(host);
+                    effect_fl = effect_time_batch(fl);
+                    effect_glibc = effect_time_batch(host);
                 }
                 2 => {
-                    effect_glibc = time_batch(host);
-                    effect_fl = time_batch(fl);
+                    effect_glibc = effect_time_batch(host);
+                    effect_fl = effect_time_batch(fl);
                 }
                 _ => unreachable!(),
             }
@@ -10900,6 +12400,7 @@ fn main() {
         Family::Getauxval => run_getauxval(&config),
         Family::SemPost => run_sem_post(&config),
         Family::ThrdCurrent => run_thrd_current(&config),
+        Family::PthreadKillInvalidUnsetLog => run_pthread_kill_invalid_unset_log(&config),
         Family::MallocFree => run_malloc_free(&config),
         Family::FreadMem => run_fread_mem(&config),
         Family::FscanfFd => run_fscanf_fd(&config),
@@ -10922,6 +12423,8 @@ fn main() {
         // real runner rather than building on it.
         Family::Wcsnrtombs => run_wcsnrtombs(&config),
         Family::Strcasestr => run_strcasestr(&config),
+        Family::IsaKernels => run_isa_kernels(&config),
+        Family::IoCancelPoints => run_io_cancel_points(&config),
     }
 }
 

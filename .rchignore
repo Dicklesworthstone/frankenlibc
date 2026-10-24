@@ -1,0 +1,5 @@
+# Local conformance runner binaries are generated test artifacts, not build inputs.
+tests/conformance/*-case-runner-*.bin
+
+# Beads databases and recovery snapshots are local task-tracker state, not build inputs.
+.beads/

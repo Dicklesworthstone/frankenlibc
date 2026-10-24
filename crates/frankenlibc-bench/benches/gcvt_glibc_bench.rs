@@ -19,6 +19,7 @@ unsafe extern "C" {
     fn gcvt(value: f64, ndigit: c_int, buf: *mut c_char) -> *mut c_char;
 }
 
+#[allow(clippy::approx_constant)]
 const CASES: &[(&str, f64, i32)] = &[
     ("pi_p17", 3.141592653589793, 17),
     ("pi_p6", 3.141592653589793, 6),

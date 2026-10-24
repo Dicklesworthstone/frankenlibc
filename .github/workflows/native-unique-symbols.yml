@@ -1,0 +1,59 @@
+name: Native GNU unique symbols
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_unique_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-unique-symbols.yml'
+  pull_request:
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_unique_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-unique-symbols.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-unique:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
+    env:
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-09-11
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute native and host GNU unique regressions
+        run: |
+          mkdir -p artifacts/native-unique
+          cargo test --keep-going -p frankenlibc-abi --test dlfcn_native_unique_test -- --nocapture \
+            2>&1 | tee "artifacts/native-unique/${FRANKENLIBC_MODE}.log"
+          # Child runs filter other cases out. Require the unfiltered parent
+          # suite to execute nonzero tests as well as returning success.
+          grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
+            "artifacts/native-unique/${FRANKENLIBC_MODE}.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-unique-${{ matrix.mode }}
+          path: artifacts/native-unique/

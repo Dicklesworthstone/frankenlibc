@@ -1800,8 +1800,8 @@ fn bootstrap_median_ratio_ci(num: &[f64], den: &[f64], seed: u64) -> (f64, f64) 
 /// the fleet is not homogeneous (8-16 cores, 2197-3195 MHz observed on the same
 /// day), so a row without this line cannot be compared against any other row.
 fn print_run_provenance() {
-    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .unwrap_or_else(|_| "unknown\n".into());
+    let host =
+        std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_else(|_| "unknown\n".into());
     let model = std::fs::read_to_string("/proc/cpuinfo")
         .ok()
         .and_then(|info| {
@@ -2303,20 +2303,30 @@ fn bench(c: &mut Criterion) {
                 assert_eq!(unsafe { g_wnlen(p, limit) }, pos, "glibc wcsnlen first");
                 wbuf[off + pos] = 0x41 + (pos as u32 % 26);
             }
-            old_s.push(measure_precise(|| unsafe { wnlen_old(black_box(p), limit) } as u64));
-            new_s.push(measure_precise(|| unsafe { wnlen_new(black_box(p), limit) } as u64));
+            old_s.push(measure_precise(
+                || unsafe { wnlen_old(black_box(p), limit) } as u64,
+            ));
+            new_s.push(measure_precise(
+                || unsafe { wnlen_new(black_box(p), limit) } as u64,
+            ));
             // A/A WITNESS: the SAME function timed a second time, interleaved
             // exactly like the real arms. Its ratio against `new_s` is what this
             // harness can resolve at this sample size — an effect inside that
             // interval is not distinguishable from re-timing one function.
-            aa_s.push(measure_precise(|| unsafe { wnlen_new(black_box(p), limit) } as u64));
-            g_s.push(measure_precise(|| unsafe { g_wnlen(black_box(p), limit) } as u64));
+            aa_s.push(measure_precise(
+                || unsafe { wnlen_new(black_box(p), limit) } as u64,
+            ));
+            g_s.push(measure_precise(
+                || unsafe { g_wnlen(black_box(p), limit) } as u64
+            ));
         }
         let old_p50 = p50(&mut old_s.clone());
         let new_p50 = p50(&mut new_s.clone());
         let g_p50 = p50(&mut g_s.clone());
-        let (eff_lo, eff_hi) = bootstrap_median_ratio_ci(&new_s, &old_s, 0x5EED_0001 ^ limit as u64);
-        let (null_lo, null_hi) = bootstrap_median_ratio_ci(&aa_s, &new_s, 0x5EED_0002 ^ limit as u64);
+        let (eff_lo, eff_hi) =
+            bootstrap_median_ratio_ci(&new_s, &old_s, 0x5EED_0001 ^ limit as u64);
+        let (null_lo, null_hi) =
+            bootstrap_median_ratio_ci(&aa_s, &new_s, 0x5EED_0002 ^ limit as u64);
         let (gl_lo, gl_hi) = bootstrap_median_ratio_ci(&new_s, &g_s, 0x5EED_0003 ^ limit as u64);
         println!(
             "WNLEN_AB lim={limit:<3} old_p50_ns={old_p50:.3} new_p50_ns={new_p50:.3} \

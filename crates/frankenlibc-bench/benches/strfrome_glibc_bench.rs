@@ -14,6 +14,7 @@ unsafe extern "C" {
     fn strfromd(str: *mut c_char, n: usize, format: *const c_char, fp: f64) -> c_int;
 }
 
+#[allow(clippy::approx_constant)]
 const CASES: &[(&str, f64, usize)] = &[
     ("pi_p6", 3.141592653589793, 6),
     ("pi_p17", 3.141592653589793, 17),

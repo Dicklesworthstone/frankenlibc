@@ -51,7 +51,7 @@ fn run_fl(fmt: &str, v: f64) -> (isize, Vec<u8>) {
         let n = flu::strfmon_l(
             buf.as_mut_ptr() as *mut c_char,
             128,
-            loc as *mut c_void,
+            loc,
             cf.as_ptr(),
             v,
         );

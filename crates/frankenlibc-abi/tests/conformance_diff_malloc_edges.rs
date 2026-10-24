@@ -11,6 +11,7 @@
 //!   - free(NULL) is a no-op (no crash)
 //!   - calloc zero-fills, and calloc with a zero dimension returns non-NULL
 //!   - calloc detects multiplication overflow (returns NULL)
+//!
 //! Each impl is exercised with its own paired malloc/free so pointers never
 //! cross allocators. No mocks.
 

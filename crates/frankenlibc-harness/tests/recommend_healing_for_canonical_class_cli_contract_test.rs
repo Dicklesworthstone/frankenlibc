@@ -83,18 +83,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -249,10 +252,7 @@ fn run_and_parse(bin: &Path, class_id: u8, label: &str) -> TestResult<Value> {
 
 #[test]
 fn cli_full_action_table_matches_manifest() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let root = workspace_root()?;
     let manifest = load_json(&manifest_path(&root))?;
     let table = manifest
@@ -294,10 +294,7 @@ fn cli_full_action_table_matches_manifest() -> TestResult {
 
 #[test]
 fn cli_none_class_yields_none_action() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(&bin, 0, "none")?;
     require(
         json_string(&parsed, "action")? == "none",
@@ -314,10 +311,7 @@ fn cli_none_class_yields_none_action() -> TestResult {
 
 #[test]
 fn cli_congestion_class_yields_clamp_size() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(&bin, 2, "congestion")?;
     require(
         json_string(&parsed, "action")? == "clamp-size",
@@ -335,10 +329,7 @@ fn cli_congestion_class_yields_clamp_size() -> TestResult {
 
 #[test]
 fn cli_out_of_range_falls_through_to_return_safe_default() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // 99 is outside the 0..=7 canonical class range; should hit the catch-all
     // return-safe-default path per the lib's compound-default behavior.
     let parsed = run_and_parse(&bin, 99, "oor")?;
@@ -350,10 +341,7 @@ fn cli_out_of_range_falls_through_to_return_safe_default() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = run_and_parse(&bin, 6, "det_a")?;
     let b = run_and_parse(&bin, 6, "det_b")?;
     require(a == b, "same inputs must produce identical output")

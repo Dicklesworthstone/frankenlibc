@@ -16,8 +16,7 @@ type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut libc::
 type SetvbufFn = unsafe extern "C" fn(*mut libc::c_void, *mut c_char, i32, usize) -> i32;
 type FputsFn = unsafe extern "C" fn(*const c_char, *mut libc::c_void) -> i32;
 type FflushFn = unsafe extern "C" fn(*mut libc::c_void) -> i32;
-type FwriteFn =
-    unsafe extern "C" fn(*const libc::c_void, usize, usize, *mut libc::c_void) -> usize;
+type FwriteFn = unsafe extern "C" fn(*const libc::c_void, usize, usize, *mut libc::c_void) -> usize;
 
 fn dl<T: Copy>(h: *mut libc::c_void, n: &[u8]) -> T {
     let p = unsafe { libc::dlsym(h, n.as_ptr().cast()) };
@@ -133,7 +132,6 @@ fn main() {
             }
             assert_eq!(unsafe { fl::fflush(ff) }, 0);
             fl_b.push(t.elapsed().as_nanos() as f64 / calls as f64);
-
         }
         let (fl_a, fl_b) = (pctl(&fl_a, 0.5), pctl(&fl_b, 0.5));
         let (glibc_a, glibc_b) = (pctl(&glibc_a, 0.5), pctl(&glibc_b, 0.5));

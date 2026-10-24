@@ -39,9 +39,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }
@@ -178,7 +178,7 @@ fn big5hkscs_decode_matches_glibc() {
         }
     }
     // random multi-byte streams
-    let mut state: u64 = 0x5_4a_15_2004;
+    let mut state: u64 = 0x0005_4a15_2004;
     let mut next = || {
         state = state
             .wrapping_mul(6364136223846793005)
@@ -219,22 +219,22 @@ fn big5hkscs_encode_roundtrip_matches_glibc() {
     // the combining cells).
     for b in 0u16..256 {
         let inp = [b as u8];
-        if let Some(u) = g_full(&g, "UTF-8", NAME, &inp) {
-            if !u.is_empty()
-                && g_full(&g, NAME, "UTF-8", &u) != f_full(NAME, "UTF-8", &u)
-                && mism.len() < 30
-            {
-                mism.push(format!("re-sb {b:02x}"));
-            }
+        if let Some(u) = g_full(&g, "UTF-8", NAME, &inp)
+            && !u.is_empty()
+            && g_full(&g, NAME, "UTF-8", &u) != f_full(NAME, "UTF-8", &u)
+            && mism.len() < 30
+        {
+            mism.push(format!("re-sb {b:02x}"));
         }
     }
     for b0 in 0x81u16..=0xFC {
         for b1 in 0x40u16..=0xFE {
             let inp = [b0 as u8, b1 as u8];
-            if let Some(u) = g_full(&g, "UTF-8", NAME, &inp) {
-                if g_full(&g, NAME, "UTF-8", &u) != f_full(NAME, "UTF-8", &u) && mism.len() < 60 {
-                    mism.push(format!("re-db {b0:02x}{b1:02x}"));
-                }
+            if let Some(u) = g_full(&g, "UTF-8", NAME, &inp)
+                && g_full(&g, NAME, "UTF-8", &u) != f_full(NAME, "UTF-8", &u)
+                && mism.len() < 60
+            {
+                mism.push(format!("re-db {b0:02x}{b1:02x}"));
             }
         }
     }

@@ -84,10 +84,10 @@ impl AnytimeEProcessMonitor {
             adverse: std::array::from_fn(|_| AtomicU64::new(0)),
             log_e_scaled: std::array::from_fn(|_| AtomicI64::new(0)),
             warmup_calls,
-            warning_log_e_scaled: (warning_e.ln() * SCALE).round() as i64,
-            alarm_log_e_scaled: (alarm_e.ln() * SCALE).round() as i64,
-            adverse_delta_scaled: (adverse_delta * SCALE).round() as i64,
-            clean_delta_scaled: (clean_delta * SCALE).round() as i64,
+            warning_log_e_scaled: crate::util::round_f64(warning_e.ln() * SCALE) as i64,
+            alarm_log_e_scaled: crate::util::round_f64(alarm_e.ln() * SCALE) as i64,
+            adverse_delta_scaled: crate::util::round_f64(adverse_delta * SCALE) as i64,
+            clean_delta_scaled: crate::util::round_f64(clean_delta * SCALE) as i64,
         }
     }
 

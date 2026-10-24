@@ -114,11 +114,23 @@ fn fl_fopen_returns_a_glibc_layout_fl_handle() {
     );
     // SAFETY: f is a live glibc-layout FILE; _flags is its first int field.
     let flags = unsafe { *(f as *const i32) } as u32;
-    assert_eq!(flags & 0xFFFF_0000, 0xFBAD_0000, "_IO_MAGIC missing: {flags:#x}");
-    assert_eq!(flags & 0x8, 0x8, "read-only stream must carry _IO_NO_WRITES: {flags:#x}");
+    assert_eq!(
+        flags & 0xFFFF_0000,
+        0xFBAD_0000,
+        "_IO_MAGIC missing: {flags:#x}"
+    );
+    assert_eq!(
+        flags & 0x8,
+        0x8,
+        "read-only stream must carry _IO_NO_WRITES: {flags:#x}"
+    );
     // SAFETY: _fileno sits at glibc x86_64 offset 112 in _IO_FILE.
     let fileno_field = unsafe { *((f as *const u8).add(112) as *const c_int) };
-    assert_eq!(fileno_field, unsafe { fl::fileno(f) }, "_fileno must match fileno()");
+    assert_eq!(
+        fileno_field,
+        unsafe { fl::fileno(f) },
+        "_fileno must match fileno()"
+    );
     assert_eq!(unsafe { fl::fclose(f) }, 0, "first fclose should succeed");
 }
 

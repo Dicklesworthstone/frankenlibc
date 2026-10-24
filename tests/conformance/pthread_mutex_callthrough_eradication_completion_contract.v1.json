@@ -138,8 +138,8 @@
         "support_matrix.json:10271",
         "support_matrix.json:10280",
         "crates/frankenlibc-abi/src/pthread_abi.rs:2391",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2451",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2491",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2450",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2490",
         "crates/frankenlibc-abi/src/pthread_abi.rs:2562",
         "crates/frankenlibc-abi/src/pthread_abi.rs:2632"
       ],

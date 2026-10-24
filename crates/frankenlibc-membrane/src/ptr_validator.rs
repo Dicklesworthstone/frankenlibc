@@ -13,6 +13,10 @@
 
 #![allow(unsafe_code)]
 
+#[cfg(test)]
+#[path = "ptr_validator_access_tests.rs"]
+mod access_tests;
+
 use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::check_oracle::CheckStage;
@@ -24,7 +28,8 @@ use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
 use crate::tls_cache::{
-    CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs, with_tls_cache,
+    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs,
+    try_with_tls_cache_hit, with_tls_cache,
 };
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
@@ -175,6 +180,47 @@ impl ValidationOutcome {
         }
     }
 
+    /// Project the verdict into an abstraction used to authorize memory access.
+    ///
+    /// `abstraction()` retains allocation metadata for diagnostics. A failed
+    /// fingerprint or canary check can therefore carry a slot whose recorded
+    /// state is still `Valid`. Access consumers must not turn that metadata
+    /// back into permission to use the allocation.
+    ///
+    /// Keep quarantined allocations recognizable, but expose no usable bytes.
+    /// A `Freed` temporal record is deliberately left unchanged: unlike a
+    /// quarantined block, its storage may already belong to a new host allocation.
+    /// Bounds consumers must ignore that stale extent and consult current
+    /// ownership (as `known_remaining` does), not clamp the new owner's access.
+    /// Explicit `Denied` and `Invalid` verdicts still take precedence over any
+    /// recorded state, including `Freed` or `Unknown`.
+    ///
+    /// This is a snapshot, not a lifetime guard. Foreign and bypassed pointers
+    /// do not acquire a proof of accessibility through this projection.
+    #[must_use]
+    pub fn access_abstraction(&self) -> Option<PointerAbstraction> {
+        use crate::lattice::SafetyState;
+
+        match self {
+            Self::TemporalViolation(a) if a.state == SafetyState::Freed => Some(*a),
+            Self::TemporalViolation(a) | Self::Invalid(a) | Self::Denied(a) => {
+                let state = if matches!(self, Self::TemporalViolation(_))
+                    && a.state == SafetyState::Quarantined
+                {
+                    SafetyState::Quarantined
+                } else {
+                    SafetyState::Invalid
+                };
+                Some(PointerAbstraction {
+                    state,
+                    remaining: Some(0),
+                    ..*a
+                })
+            }
+            _ => self.abstraction(),
+        }
+    }
+
     /// Whether this classification permits reads under the validation policy.
     ///
     /// This is a snapshot, not a lifetime guard: a later free can invalidate
@@ -250,6 +296,10 @@ use std::sync::Arc;
 pub struct PipelineAtforkGuard<'a> {
     _arena: crate::arena::ArenaAtforkGuard<'a>,
     _page_oracle: crate::page_oracle::PageOracleForkGuard<'a>,
+    /// Declared last so it drops after the locks are released: while this
+    /// thread holds them it is inside validation, and a membrane-validated
+    /// libc call it makes copies through without taking them again.
+    _validation: ValidationExecutionGuard,
 }
 
 /// The validation pipeline with all backing data structures.
@@ -742,10 +792,16 @@ impl ValidationPipeline {
     /// page-oracle readers to drain while holding every shard). The arena
     /// guard does not allocate, so taking it under the page lock is safe.
     pub fn atfork_prepare(&self) -> PipelineAtforkGuard<'_> {
+        // Before the locks: moving the guards is a `memcpy`, which in the
+        // libc build is the exported, membrane-validated one. Its validation
+        // took the page-oracle lock this thread had just taken for writing,
+        // and the forking thread (git's test shell under hardened) hung.
+        let validation = enter_validation_execution_context();
         let page_oracle = self.page_oracle.atfork_prepare();
         PipelineAtforkGuard {
             _arena: self.arena.atfork_prepare(),
             _page_oracle: page_oracle,
+            _validation: validation,
         }
     }
 
@@ -803,17 +859,62 @@ impl ValidationPipeline {
             return Some(ValidationOutcome::Bypassed);
         }
 
-        let cached = with_tls_cache(|cache| cache.lookup_hit_only(addr));
-        if let Some(cv) = cached {
-            let metrics = global_metrics();
-            MembraneMetrics::inc(&metrics.validations);
-            MembraneMetrics::inc(&metrics.tls_cache_hits);
-            return Some(ValidationOutcome::CachedValid(
-                Self::abstraction_from_cached(addr, cv),
-            ));
-        }
+        let cached = try_with_tls_cache_hit(None, |cache| {
+            let hit = cache.lookup_hit_only(addr);
+            if hit.is_some() {
+                cache.record_pipeline_hits(1);
+            }
+            hit
+        });
+        cached.map(|cv| ValidationOutcome::CachedValid(Self::abstraction_from_cached(addr, cv)))
+    }
 
-        None
+    /// Resolve remaining bytes from the thread-local validation cache without
+    /// constructing a 72-byte `ValidationOutcome` on the stack.
+    #[inline(always)]
+    pub fn try_validate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
+        if addr == 0 || self.validation_logging_enabled() || !safety_level().validation_enabled() {
+            return None;
+        }
+        try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
+            let hit = cache.lookup_hit_remaining(addr);
+            if hit.is_hit() {
+                cache.record_pipeline_hits(1);
+            }
+            hit
+        })
+        .decode()
+    }
+
+    /// Resolve remaining bytes for two pointers in a single TLS cache borrow,
+    /// returning two single-register `CachedRemaining` values in `(rax, rdx)`
+    /// without stack `sret` spills.
+    #[inline(always)]
+    pub fn try_validate_cached_remaining_pair(
+        &self,
+        lhs: usize,
+        rhs: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        if self.validation_logging_enabled() || !safety_level().validation_enabled() {
+            return (CachedRemaining::MISS, CachedRemaining::MISS);
+        }
+        try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
+            let lhs_hit = if lhs != 0 {
+                cache.lookup_hit_remaining(lhs)
+            } else {
+                CachedRemaining::MISS
+            };
+            let rhs_hit = if rhs != 0 {
+                cache.lookup_hit_remaining(rhs)
+            } else {
+                CachedRemaining::MISS
+            };
+            let hits = u64::from(lhs_hit.is_hit()) + u64::from(rhs_hit.is_hit());
+            if hits != 0 {
+                cache.record_pipeline_hits(hits);
+            }
+            (lhs_hit, rhs_hit)
+        })
     }
 
     #[inline]
@@ -1309,48 +1410,26 @@ impl ValidationPipeline {
                             ApiFamily::PointerValidation,
                             ValidationProfile::Fast,
                             elapsed_ns,
-                            recent_page,
+                            false,
                         );
-
-                        if recent_page {
-                            self.emit_terminal_transition(
-                                &trace,
-                                mode,
-                                "arena_lookup",
-                                "pipeline::stage4::arena",
-                                "Deny",
-                                "Invalid",
-                                elapsed_ns,
-                                aligned,
-                                recent_page,
-                                bloom_negative,
-                                false,
-                                0,
-                                0,
-                                0,
-                                false,
-                            );
-                            return ValidationOutcome::Invalid(PointerAbstraction::invalid(addr));
-                        } else {
-                            self.emit_terminal_transition(
-                                &trace,
-                                mode,
-                                "arena_lookup",
-                                "pipeline::stage4::arena",
-                                "Allow",
-                                "Foreign",
-                                elapsed_ns,
-                                aligned,
-                                recent_page,
-                                bloom_negative,
-                                false,
-                                0,
-                                0,
-                                0,
-                                false,
-                            );
-                            return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
-                        }
+                        self.emit_terminal_transition(
+                            &trace,
+                            mode,
+                            "arena_lookup",
+                            "pipeline::stage4::arena",
+                            "Allow",
+                            "Foreign",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                            false,
+                        );
+                        return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
                     };
                     if !found.state.is_live() {
                         let abs = self.abstraction_from_slot(addr, &found);
@@ -2030,7 +2109,16 @@ impl ValidationPipeline {
                     slot.state,
                 )
             } else {
-                (0, crate::lattice::SafetyState::Invalid)
+                // Geometry must not erase lifetime. A retired raw block can
+                // be reused by the host, including its former header/canary.
+                // Keep Freed so ABI consumers can consult the new owner; keep
+                // Quarantined so still-owned metadata remains inaccessible.
+                let state = match slot.state {
+                    crate::lattice::SafetyState::Freed
+                    | crate::lattice::SafetyState::Quarantined => slot.state,
+                    _ => crate::lattice::SafetyState::Invalid,
+                };
+                (0, state)
             };
         PointerAbstraction::validated(addr, state, slot.user_base, remaining, slot.generation)
     }
@@ -2175,6 +2263,37 @@ mod tests {
             }
         }
         stages
+    }
+
+    /// The ABI's validated memcpy copies through without validating while
+    /// `in_validation_context()`; fork's guard must keep that true for as
+    /// long as it holds the page-oracle lock, or a guard move (a memcpy)
+    /// re-enters `PageOracle::query` and blocks on its own write lock.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    #[test]
+    fn atfork_guard_marks_thread_in_validation_while_locks_held() {
+        let pipeline = ValidationPipeline::new();
+        // An empty oracle answers without its lock.
+        pipeline.page_oracle.insert(0x7000_0000, 4096);
+        assert!(!in_validation_context());
+        let guard = pipeline.atfork_prepare();
+        assert!(in_validation_context());
+        // A second thread cannot read the oracle until the guard drops.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                assert!(pipeline.page_oracle.query(0x7000_0010));
+                tx.send(()).unwrap();
+            });
+            assert!(
+                rx.recv_timeout(std::time::Duration::from_millis(50))
+                    .is_err()
+            );
+            drop(guard);
+            assert!(!in_validation_context());
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .expect("oracle readable after the fork guard drops");
+        });
     }
 
     #[test]
@@ -2742,6 +2861,34 @@ mod tests {
         let abs = outcome.abstraction().expect("invalid abstraction");
         assert_eq!(abs.alloc_base, Some(base));
         assert_eq!(abs.state, SafetyState::Invalid);
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn foreign_pointer_sharing_owned_page_is_classified_as_foreign_not_invalid() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let base = ptr as usize;
+        let page_base = base & !0xFFFusize;
+        // Pick an address on the same 4 KiB page that is outside [raw_base, user_base + 64 + CANARY_SIZE).
+        let candidate = if (base & 0xFFF) >= 512 {
+            page_base + 64
+        } else {
+            page_base + 2048
+        };
+        assert!(pipeline.page_oracle.query(candidate));
+        assert!(pipeline.arena.lookup(candidate).is_none());
+
+        let outcome = pipeline.validate(candidate);
+        assert!(
+            matches!(outcome, ValidationOutcome::Foreign(_)),
+            "unowned address on shared page must be Foreign, got {outcome:?}"
+        );
+        let access = outcome.access_abstraction().expect("foreign abstraction");
+        assert_eq!(access.state, SafetyState::Unknown);
+        assert_eq!(access.remaining, None);
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::Freed);

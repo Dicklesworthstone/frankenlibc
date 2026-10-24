@@ -29,7 +29,7 @@
 //! reject the trailing hyphen — three ways to be defensibly wrong and
 //! ABI-incompatible.
 
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CString, c_char, c_int};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;

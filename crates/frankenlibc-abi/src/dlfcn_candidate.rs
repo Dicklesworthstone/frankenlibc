@@ -93,7 +93,10 @@ mod tests {
                 assert!(incompatible_header(&bytes, native));
             }
             for foreign in [0, 3, 40, 62, 183, 243, 65535] {
-                assert_eq!(incompatible_header(&header(foreign), native), foreign != native);
+                assert_eq!(
+                    incompatible_header(&header(foreign), native),
+                    foreign != native
+                );
             }
         }
     }
@@ -104,7 +107,16 @@ mod tests {
         for length in 0..ELF64_HEADER_SIZE {
             assert!(!incompatible_header(&native[..length], 62));
         }
-        for (offset, value) in [(0, 0), (5, 2), (6, 2), (7, 255), (8, 255), (16, 2), (20, 2), (54, 1)] {
+        for (offset, value) in [
+            (0, 0),
+            (5, 2),
+            (6, 2),
+            (7, 255),
+            (8, 255),
+            (16, 2),
+            (20, 2),
+            (54, 1),
+        ] {
             let mut bytes = native;
             bytes[offset] = value;
             assert!(!incompatible_header(&bytes, 62), "offset {offset}");
@@ -168,7 +180,11 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let mut file = std::fs::OpenOptions::new()
-            .create_new(true).read(true).write(true).open(&path).unwrap();
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
         let bytes = header(NATIVE_MACHINE);
         file.write_all(&bytes).unwrap();
         file.seek(SeekFrom::Start(7)).unwrap();

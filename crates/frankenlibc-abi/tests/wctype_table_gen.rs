@@ -43,7 +43,7 @@ const UPPER: u16 = 1 << 10;
 const XDIGIT: u16 = 1 << 11;
 
 fn mask_of(cp: u32) -> u16 {
-    let w = cp as u32;
+    let w = cp;
     let mut m = 0u16;
     unsafe {
         if iswalnum(w) != 0 {

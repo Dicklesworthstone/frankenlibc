@@ -801,7 +801,10 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
         {
             match actual {
                 ScanValue::Unset => {
-                    return Err(format!("value {} unexpectedly exposed an unused scanner slot", i));
+                    return Err(format!(
+                        "value {} unexpectedly exposed an unused scanner slot",
+                        i
+                    ));
                 }
                 ScanValue::SignedInt(v) => {
                     if let Some(e) = expected.as_i64()

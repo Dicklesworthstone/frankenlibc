@@ -1,8 +1,8 @@
 //! Differential gate: f128 powf128 matches glibc bit-for-bit on VALUE
 //! (bd-9z5ikz). powf128 was a garbage f64-ABI stub. The fix ports glibc's
 //! ldbl-128 `__ieee754_powl` (fdlibm) verbatim — full special-case lattice +
-//! two-piece log2(x) (LN/LD rational) + simulated extended-precision y·log2(x)
-//! + 2^n·exp(y'·log2) (PN/PD rational). Self-contained → byte-exact. (errno is
+//! two-piece log2(x) (LN/LD rational) + simulated extended-precision y·log2(x) +
+//! 2^n·exp(y'·log2) (PN/PD rational). Self-contained → byte-exact. (errno is
 //! layered in a follow-up; this gate pins the value contract.)
 #![cfg(target_os = "linux")]
 #![feature(f128)]

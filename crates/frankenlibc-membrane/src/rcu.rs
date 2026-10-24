@@ -80,36 +80,69 @@ impl<T> RcuCell<T> {
     /// Update the shared state atomically.
     ///
     /// The old version is kept alive until all readers holding `Arc` clones
-    /// drop them (implicit QSBR via reference counting).
+    /// drop them (implicit QSBR via reference counting). Its destructor runs
+    /// after publication and outside the cell lock, and may reenter the cell.
+    ///
+    /// # Panics
+    ///
+    /// If the epoch is exhausted, panics before changing the current snapshot.
     pub fn update(&self, new_value: T) {
-        let mut guard = self.current.lock();
-        *guard = Arc::new(new_value);
-        // Release ensures the new Arc contents are visible before epoch is bumped.
-        let new_epoch = self.epoch.fetch_add(1, Ordering::Release) + 1;
+        let replacement = Arc::new(new_value);
+        let (new_epoch, previous) = {
+            let mut guard = self.current.lock();
+            let new_epoch = self
+                .epoch
+                .load(Ordering::Relaxed)
+                .checked_add(1)
+                .expect("RCU epoch exhausted");
+            // Move, rather than drop, the old Arc while holding the lock.
+            // T::drop may call load/update or panic. Neither may interrupt
+            // publication of the snapshot/epoch pair or retain this lock.
+            let previous = std::mem::replace(&mut *guard, replacement);
+            self.epoch.store(new_epoch, Ordering::Release);
+            (new_epoch, previous)
+        };
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::RcuUpdate,
             new_epoch,
             "rcu",
         );
+        drop(previous);
     }
 
     /// Update the shared state using a closure that receives the current value.
     ///
     /// The closure receives a reference to the current snapshot and must return
-    /// a new value. The old value is replaced atomically.
+    /// a new value. It runs under the writer lock to avoid lost updates and must
+    /// not reenter this cell. The old snapshot's destructor runs outside the
+    /// lock after publication, so destructor reentry is supported.
+    ///
+    /// # Panics
+    ///
+    /// A panic in the closure or epoch exhaustion leaves the snapshot and epoch
+    /// unchanged. A panic in the old value's destructor occurs after publication.
     pub fn update_with<F>(&self, f: F)
     where
         F: FnOnce(&T) -> T,
     {
-        let mut guard = self.current.lock();
-        let new_value = f(&guard);
-        *guard = Arc::new(new_value);
-        let new_epoch = self.epoch.fetch_add(1, Ordering::Release) + 1;
+        let (new_epoch, previous) = {
+            let mut guard = self.current.lock();
+            let new_epoch = self
+                .epoch
+                .load(Ordering::Relaxed)
+                .checked_add(1)
+                .expect("RCU epoch exhausted");
+            let replacement = Arc::new(f(&guard));
+            let previous = std::mem::replace(&mut *guard, replacement);
+            self.epoch.store(new_epoch, Ordering::Release);
+            (new_epoch, previous)
+        };
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::RcuUpdate,
             new_epoch,
             "rcu",
         );
+        drop(previous);
     }
 
     /// Get the current epoch.
@@ -192,26 +225,28 @@ impl<'a, T> RcuReader<'a, T> {
     pub fn read(&mut self) -> &T {
         let current_epoch = self.cell.epoch();
         if self.cached_epoch != current_epoch {
-            self.cached_snapshot = self.cell.load();
-            self.cached_epoch = current_epoch;
-            crate::alien_cs_metrics::emit_alien_cs_event(
-                crate::alien_cs_metrics::MetricEventKind::RcuReaderRefresh,
-                current_epoch,
-                "rcu",
-            );
+            self.refresh();
         }
         &self.cached_snapshot
     }
 
     /// Force a refresh of the cached snapshot, regardless of epoch.
     pub fn refresh(&mut self) {
-        self.cached_snapshot = self.cell.load();
-        self.cached_epoch = self.cell.epoch();
+        // A separate load() followed by epoch() can stamp an old snapshot with
+        // a newer writer's epoch and suppress every subsequent refresh. Both
+        // values must come from the same locked publication observation.
+        let (epoch, snapshot) = self.cell.load_versioned();
+        let previous = std::mem::replace(&mut self.cached_snapshot, snapshot);
+        self.cached_epoch = epoch;
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::RcuReaderRefresh,
-            self.cached_epoch,
+            epoch,
             "rcu",
         );
+        // Install the complete pair before T::drop: reentrant publication is
+        // noticed on the next read, and a caught destructor panic leaves this
+        // reader consistent. No cell lock is held while reclaiming the Arc.
+        drop(previous);
     }
 
     /// Returns the epoch of the currently cached snapshot.
@@ -996,3 +1031,7 @@ mod tests {
         assert_eq!(drained.len(), 100);
     }
 }
+
+#[cfg(test)]
+#[path = "rcu_consistency_tests.rs"]
+mod consistency_tests;

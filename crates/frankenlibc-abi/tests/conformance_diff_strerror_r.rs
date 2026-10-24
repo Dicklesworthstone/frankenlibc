@@ -34,8 +34,8 @@ fn strerror_r_gnu_matches_glibc() {
 
     // Known errnos across the Linux range, plus unknown/edge ones.
     let codes: Vec<c_int> = (0..40)
-        .chain([95, 100, 125, 131, 133].into_iter())
-        .chain([99999, -5, 134, 4095].into_iter())
+        .chain([95, 100, 125, 131, 133])
+        .chain([99999, -5, 134, 4095])
         .collect();
 
     let mut mismatches = Vec::new();

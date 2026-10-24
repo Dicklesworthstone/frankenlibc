@@ -6,7 +6,9 @@
 //! test rather than hanging the whole test runner.
 
 use frankenlibc_membrane::heal::{
-    HealingAction, append_runtime_log_record, global_healing_policy, runtime_log_snapshot,
+    HealingAction, RepairLogContext, RuntimeSignalContext, append_runtime_log_record,
+    global_healing_policy, initialize_runtime_log, install_signal_context_probe,
+    runtime_log_snapshot,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -19,6 +21,15 @@ static MODE: AtomicU8 = AtomicU8::new(0);
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static CALLBACKS: AtomicU64 = AtomicU64::new(0);
 static IN_CALLBACK: AtomicBool = AtomicBool::new(false);
+static SIGNAL_CONTEXT: AtomicU8 = AtomicU8::new(0);
+
+fn test_signal_context() -> RuntimeSignalContext {
+    match SIGNAL_CONTEXT.load(Ordering::Relaxed) {
+        1 => RuntimeSignalContext::Inside,
+        2 => RuntimeSignalContext::Unknown,
+        _ => RuntimeSignalContext::Outside,
+    }
+}
 
 struct ReenteringAllocator;
 
@@ -31,7 +42,12 @@ fn callback(allocating: bool) {
         return;
     }
     CALLBACKS.fetch_add(1, Ordering::Relaxed);
-    global_healing_policy().record(&HealingAction::IgnoreForeignFree);
+    global_healing_policy().record(
+        "allocator",
+        "free",
+        &HealingAction::IgnoreForeignFree,
+        RepairLogContext::new(0, None),
+    );
     IN_CALLBACK.store(false, Ordering::Relaxed);
 }
 
@@ -71,8 +87,13 @@ fn child_probe() {
     MODE.store(COUNT, Ordering::Relaxed);
     let policy = std::hint::black_box(global_healing_policy());
     MODE.store(0, Ordering::Relaxed);
-    assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0, "first policy access allocated");
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "first policy access allocated"
+    );
     policy.set_healing_logging_enabled(true);
+    initialize_runtime_log();
 
     // Initialization may allocate. After opening, the actual write path must
     // not allocate a String just to add a newline or call through libc write.
@@ -83,8 +104,61 @@ fn child_probe() {
     MODE.store(COUNT, Ordering::Relaxed);
     append_runtime_log_record("{\"probe\":true}");
     MODE.store(0, Ordering::Relaxed);
-    assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0, "initialized sink allocated");
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "initialized sink allocated"
+    );
     assert_eq!(runtime_log_snapshot().written_records, 2);
+
+    // The signal-selected repair producer must bypass heap-backed formatting,
+    // the evidence ledger, and the diagnostic ring. Its sole output is the
+    // preopened raw-fd JSONL record.
+    install_signal_context_probe(test_signal_context);
+    ALLOCATIONS.store(0, Ordering::Relaxed);
+    MODE.store(COUNT, Ordering::Relaxed);
+    SIGNAL_CONTEXT.store(1, Ordering::Relaxed);
+    policy.record(
+        "string_memory",
+        "strlen",
+        &HealingAction::ReturnSafeDefault,
+        RepairLogContext::new(0, Some(0)),
+    );
+    SIGNAL_CONTEXT.store(0, Ordering::Relaxed);
+    MODE.store(0, Ordering::Relaxed);
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "signal-selected repair path allocated"
+    );
+    assert!(policy.export_healing_log_jsonl().is_empty());
+    assert_eq!(runtime_log_snapshot().written_records, 3);
+
+    // A bounded ABI slot lookup can fail without proving that execution is
+    // outside a signal handler. Force that exact unknown result: it must take
+    // the same allocation/TLS-free path while reporting the uncertainty
+    // honestly instead of fabricating signal_context=false as known fact.
+    ALLOCATIONS.store(0, Ordering::Relaxed);
+    MODE.store(COUNT, Ordering::Relaxed);
+    SIGNAL_CONTEXT.store(2, Ordering::Relaxed);
+    policy.record(
+        "string_memory",
+        "memcpy",
+        &HealingAction::ClampSize {
+            requested: 8,
+            clamped: 0,
+        },
+        RepairLogContext::new(0, Some(0)),
+    );
+    SIGNAL_CONTEXT.store(0, Ordering::Relaxed);
+    MODE.store(0, Ordering::Relaxed);
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "unknown signal context entered the allocating evidence path"
+    );
+    assert!(policy.export_healing_log_jsonl().is_empty());
+    assert_eq!(runtime_log_snapshot().written_records, 4);
 
     // Exercise first ring growth, ledger initialization, formatting, eviction,
     // export allocations and clear-time deallocation. Each real allocator
@@ -92,29 +166,52 @@ fn child_probe() {
     // acquire a ring/ledger lock that the interrupted outer operation holds.
     MODE.store(REENTER, Ordering::Relaxed);
     for size in 0..OUTER_RECORDS {
-        policy.record(&HealingAction::ReallocAsMalloc { size });
+        policy.record(
+            "allocator",
+            "realloc",
+            &HealingAction::ReallocAsMalloc { size },
+            RepairLogContext::new(0, None),
+        );
     }
     let rows = policy.export_healing_log_jsonl();
     policy.clear_healing_logs();
     MODE.store(0, Ordering::Relaxed);
 
-    assert!(CALLBACKS.load(Ordering::Relaxed) > 0, "allocator injector never ran");
+    assert!(
+        CALLBACKS.load(Ordering::Relaxed) > 0,
+        "allocator injector never ran"
+    );
     assert!(policy.healing_log_reentry_drops.load(Ordering::Relaxed) > 0);
     assert_eq!(rows.lines().count(), 1024);
     for (index, line) in rows.lines().enumerate() {
         let row: serde_json::Value = serde_json::from_str(line).unwrap();
         assert_eq!(row["healing_action"], "ReallocAsMalloc");
-        assert_eq!(row["details"]["size"].as_u64(), Some((OUTER_RECORDS - 1024 + index) as u64));
+        assert_eq!(
+            row["details"]["size"].as_u64(),
+            Some((OUTER_RECORDS - 1024 + index) as u64)
+        );
     }
     assert!(policy.export_healing_log_jsonl().is_empty());
     // The guard must have been restored, not left permanently suppressing logs.
-    policy.record(&HealingAction::ReturnSafeDefault);
+    policy.record(
+        "allocator",
+        "free",
+        &HealingAction::ReturnSafeDefault,
+        RepairLogContext::new(0, None),
+    );
     let last = policy.export_healing_log_jsonl();
     let row: serde_json::Value = serde_json::from_str(&last).unwrap();
     assert_eq!(row["healing_action"], "ReturnSafeDefault");
     let sink = runtime_log_snapshot();
-    assert_eq!(sink.written_records, OUTER_RECORDS as u64 + 3);
-    assert_eq!(sink.dropped_records, 0);
+    let attempted_records = OUTER_RECORDS as u64 + 5;
+    assert_eq!(
+        sink.written_records + sink.dropped_records,
+        attempted_records
+    );
+    assert_eq!(
+        sink.dropped_records,
+        sink.rate_limited_records + sink.admission_clock_failures
+    );
     assert_eq!(sink.short_writes, 0);
     assert_eq!(sink.open_failures, 0);
 }
@@ -174,12 +271,30 @@ fn allocator_callbacks_do_not_reenter_evidence_locks() {
         .lines()
         .map(|line| serde_json::from_str(line).expect("damaged runtime JSONL"))
         .collect();
-    assert_eq!(rows.len(), OUTER_RECORDS + 3);
+    assert!((1024..=OUTER_RECORDS + 5).contains(&rows.len()));
     assert_eq!(rows[0]["warmup"], true);
     assert_eq!(rows[1]["probe"], true);
-    for (size, row) in rows[2..2 + OUTER_RECORDS].iter().enumerate() {
+    assert_eq!(rows[2]["api_family"], "string_memory");
+    assert_eq!(rows[2]["symbol"], "strlen");
+    assert_eq!(rows[2]["healing_action"], "ReturnSafeDefault");
+    assert_eq!(rows[2]["signal_context"], true);
+    assert_eq!(rows[2]["signal_context_known"], true);
+    assert_eq!(rows[3]["api_family"], "string_memory");
+    assert_eq!(rows[3]["symbol"], "memcpy");
+    assert_eq!(rows[3]["healing_action"], "ClampSize");
+    assert_eq!(rows[3]["signal_context"], false);
+    assert_eq!(rows[3]["signal_context_known"], false);
+    let mut previous_size = None;
+    for (index, row) in rows[4..].iter().enumerate() {
+        if row["healing_action"] == "ReturnSafeDefault" {
+            assert_eq!(index + 4, rows.len() - 1);
+            continue;
+        }
         assert_eq!(row["healing_action"], "ReallocAsMalloc");
-        assert_eq!(row["details"]["size"].as_u64(), Some(size as u64));
+        let size = row["details"]["size"].as_u64().unwrap();
+        if let Some(previous) = previous_size {
+            assert!(size > previous);
+        }
+        previous_size = Some(size);
     }
-    assert_eq!(rows.last().unwrap()["healing_action"], "ReturnSafeDefault");
 }

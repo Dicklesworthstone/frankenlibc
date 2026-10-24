@@ -133,7 +133,7 @@ impl Rng {
 /// so leading/trailing/consecutive-delimiter cases arise frequently.
 fn rand_input(rng: &mut Rng) -> (Vec<u8>, Vec<u8>) {
     // Delimiter set: 1-3 chars from {b',', b';', b' '}.
-    let pool = [b',', b';', b' '];
+    let pool = b",; ";
     let dn = 1 + rng.below(3);
     let mut delim: Vec<u8> = Vec::new();
     for _ in 0..dn {
@@ -143,7 +143,7 @@ fn rand_input(rng: &mut Rng) -> (Vec<u8>, Vec<u8>) {
         }
     }
     // Input alphabet: letters a/b/c plus the delimiter chars (so they appear).
-    let alphabet = [b'a', b'b', b'c', b',', b';', b' '];
+    let alphabet = b"abc,; ";
     let len = rng.below(24);
     let s: Vec<u8> = (0..len)
         .map(|_| alphabet[rng.below(alphabet.len())])

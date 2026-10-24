@@ -11,6 +11,7 @@ use std::io::Write;
 #[cfg(feature = "abi-bench")]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "abi-bench")]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, OnceLock, RwLock};

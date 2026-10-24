@@ -124,8 +124,8 @@ fn host_stdio() -> (FdopenFn, FflushFn) {
     // SAFETY: both symbols have the C signatures transmuted to.
     unsafe {
         (
-            std::mem::transmute::<_, FdopenFn>(host_sym(c"fdopen")),
-            std::mem::transmute::<_, FflushFn>(host_sym(c"fflush")),
+            std::mem::transmute::<*mut c_void, FdopenFn>(host_sym(c"fdopen")),
+            std::mem::transmute::<*mut c_void, FflushFn>(host_sym(c"fflush")),
         )
     }
 }
@@ -136,7 +136,7 @@ fn host_glibc_populates_the_sizes_block() {
     // <sizes>, then fl's empty block was never a divergence and this gate is
     // asserting a convention that does not exist.
     // SAFETY: the resolved symbol has malloc_info's C signature.
-    let mi = unsafe { std::mem::transmute::<_, MallocInfoFn>(host_sym(c"malloc_info")) };
+    let mi = unsafe { std::mem::transmute::<*mut c_void, MallocInfoFn>(host_sym(c"malloc_info")) };
     let (fo, ff) = host_stdio();
 
     // Occupy a spread of bins through the HOST allocator, keeping half live.

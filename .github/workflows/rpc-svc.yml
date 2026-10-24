@@ -1,0 +1,105 @@
+name: Native UDP and TCP RPC services
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/rpc*'
+      - 'crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs'
+      - 'crates/frankenlibc-core/src/rpc/**'
+      - 'tests/integration/fixture_rpc_svc*'
+      - 'scripts/check_rpc_svc*.py'
+      - '.github/workflows/rpc-svc.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rpc-svc-cache-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  service:
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Record the committed reply-cache implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=artifacts/rpc-svc
+          mkdir -p "$root/source"
+          git rev-parse HEAD > "$root/revision.txt"
+          rustc --version --verbose > "$root/rustc.txt"
+          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs scripts/check_rpc_svc*.py tests/integration/fixture_rpc_svc*
+          for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs; do
+            cp "crates/frankenlibc-abi/src/$file" "$root/source/"
+            git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
+          done
+      - name: Execute release cache, services and existing ABI regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then args=(--features '${{ matrix.feature }}'); fi
+          root=artifacts/rpc-svc
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
+          cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
+          cp Cargo.lock "$root/Cargo.lock"
+          sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
+          python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
+          python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
+          # UDP registerrpc and TCP svc_register publish through an exclusive loopback port 111 peer,
+          # using the same privilege boundary as the existing RPC client gate.
+          sudo python3 "$PWD/scripts/check_rpc_svc.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/cases"
+          cargo test -p frankenlibc-abi --test rpc_svc_cache_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/cache-unit.log"
+          grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-unit.log"
+          cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture --test-threads=1 2>&1 | tee "$root/core.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/core.log"
+          cargo test -p frankenlibc-abi --test rpc_abi_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/abi.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/abi.log"
+          # The unchanged DNS fixture binds loopback port 53, just as in
+          # gai-async.yml. No global resolver or kernel configuration is changed.
+          sudo python3 "$PWD/scripts/check_gai_async.py" "$PWD/target/release/libfrankenlibc_abi.so" --output "$PWD/$root/dns"
+          python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/aio"
+      - name: Verify tested sources still match the checkout
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+          subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--',
+              'crates/frankenlibc-abi/src/rpc*.rs', 'scripts/check_rpc_svc*.py',
+              'tests/integration/fixture_rpc_svc*'], check=True)
+          assert pathlib.Path('Cargo.lock').read_bytes() == pathlib.Path('artifacts/rpc-svc/Cargo.lock').read_bytes()
+          result = {}
+          for name in ['rpc_svc.rs', 'rpc_abi.rs', 'rpc_svc_cache.rs']:
+              path = pathlib.Path('crates/frankenlibc-abi/src') / name
+              data = path.read_bytes()
+              assert data == (pathlib.Path('artifacts/rpc-svc/source') / name).read_bytes()
+              expected = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
+              result[str(path)] = expected
+          pathlib.Path('artifacts/rpc-svc/source-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc-svc-${{ matrix.feature }}
+          path: artifacts/rpc-svc/
+          if-no-files-found: error
+          retention-days: 7

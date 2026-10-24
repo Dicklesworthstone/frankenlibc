@@ -7,6 +7,7 @@
 pub mod cond;
 pub mod mutex;
 pub mod rwlock;
+pub mod semaphore;
 #[allow(unsafe_code)]
 pub mod thread;
 pub mod tls;
@@ -26,10 +27,12 @@ pub use rwlock::{
 };
 pub use thread::{
     THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, THREAD_RUNNING, THREAD_STARTING, ThreadHandle,
+    ThreadStack,
 };
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use thread::{
-    create_thread, detach_thread, exit_current_thread, handle_for_tid, join_thread, self_tid,
+    create_thread, create_thread_with_stack, detach_thread, exit_current_thread, handle_for_tid,
+    join_thread, self_tid,
 };
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use tls::run_exiting_thread_key_destructors;

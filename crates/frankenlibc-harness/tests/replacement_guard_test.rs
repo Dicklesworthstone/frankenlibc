@@ -34,6 +34,13 @@ fn load_profile() -> serde_json::Value {
     serde_json::from_str(&content).expect("replacement_profile.json should be valid JSON")
 }
 
+fn load_host_delegation_census() -> serde_json::Value {
+    let path = workspace_root().join("tests/conformance/host_delegation_census.v1.json");
+    let content =
+        std::fs::read_to_string(&path).expect("host_delegation_census.v1.json should exist");
+    serde_json::from_str(&content).expect("host_delegation_census.v1.json should be valid JSON")
+}
+
 fn load_fixture_pack() -> serde_json::Value {
     let path =
         workspace_root().join("tests/conformance/replacement_zero_unapproved_fixtures.v1.json");
@@ -247,6 +254,16 @@ fn unique_target_dir(prefix: &str) -> PathBuf {
         .expect("system clock should be after Unix epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+fn managed_nested_cargo_target_dir() -> PathBuf {
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        return PathBuf::from(target_dir).join("nested-standalone-guard");
+    }
+    if let Some(target_base) = std::env::var_os("RCH_TARGET_BASE") {
+        return PathBuf::from(target_base).join("frankenlibc-standalone-guard");
+    }
+    workspace_root().join("target/nested-standalone-guard")
 }
 
 fn unique_report_paths(prefix: &str) -> (PathBuf, PathBuf) {
@@ -857,30 +874,42 @@ fn standalone_build_matches_replacement_guard_outcome() {
         .output()
         .expect("failed to run replacement guard in replacement mode");
 
-    let cargo_output = Command::new("cargo")
-        .args(["check", "-p", "frankenlibc-abi", "--features", "standalone"])
-        .env(
-            "CARGO_TARGET_DIR",
-            unique_target_dir("frankenlibc-standalone-guard"),
-        )
+    let cargo_output = Command::new(env!("CARGO"))
+        .args([
+            "check",
+            "--release",
+            "-p",
+            "frankenlibc-abi",
+            "--features",
+            "standalone",
+        ])
+        .env("CARGO_TARGET_DIR", managed_nested_cargo_target_dir())
+        .env("RCH_CARGO_WRAPPER_BYPASS", "1")
         .current_dir(&root)
         .output()
         .expect("failed to run cargo check for standalone feature");
 
+    let census = load_host_delegation_census();
+    let blockers = census
+        .pointer("/profile_census/standalone-release-linux-x86_64/admission_blockers")
+        .and_then(serde_json::Value::as_array)
+        .expect("standalone profile should provide admission blockers");
+
     let guard_passes = guard_output.status.success();
+    let expected_cargo_passes = guard_passes && blockers.is_empty();
     let cargo_passes = cargo_output.status.success();
 
     assert_eq!(
         cargo_passes,
-        guard_passes,
-        "standalone build result must match replacement guard result\nreplacement_guard_stdout=\n{}\nreplacement_guard_stderr=\n{}\nstandalone_stdout=\n{}\nstandalone_stderr=\n{}",
+        expected_cargo_passes,
+        "standalone build result must match replacement guard + census admission outcome\nreplacement_guard_stdout=\n{}\nreplacement_guard_stderr=\n{}\nstandalone_stdout=\n{}\nstandalone_stderr=\n{}",
         String::from_utf8_lossy(&guard_output.stdout),
         String::from_utf8_lossy(&guard_output.stderr),
         String::from_utf8_lossy(&cargo_output.stdout),
         String::from_utf8_lossy(&cargo_output.stderr)
     );
 
-    if !guard_passes {
+    if !cargo_passes {
         let combined = format!(
             "{}\n{}",
             String::from_utf8_lossy(&cargo_output.stdout),
@@ -894,5 +923,26 @@ fn standalone_build_matches_replacement_guard_outcome() {
             combined.contains("scripts/check_replacement_guard.sh replacement"),
             "standalone build failure should point to the replacement guard script\n{combined}"
         );
+
+        if !blockers.is_empty() {
+            assert!(
+                combined.contains("tests/conformance/host_delegation_census.v1.json")
+                    && combined.contains("standalone-release-linux-x86_64"),
+                "standalone build must identify the consumed profile evidence\n{combined}"
+            );
+            for blocker in blockers {
+                let code = blocker["code"]
+                    .as_str()
+                    .expect("standalone admission blocker should have a code");
+                let count = blocker["count"]
+                    .as_u64()
+                    .expect("standalone admission blocker should have an integer count");
+                let expected = format!("{code}={count}");
+                assert!(
+                    combined.contains(&expected),
+                    "standalone build must report derived blocker count {expected}\n{combined}"
+                );
+            }
+        }
     }
 }

@@ -1,7 +1,9 @@
 //! Host glibc baseline comparisons for top ported libc hot paths.
 
 use std::cell::RefCell;
-use std::ffi::{CStr, c_void};
+#[cfg(feature = "abi-bench")]
+use std::ffi::CStr;
+use std::ffi::c_void;
 use std::hint::black_box;
 use std::mem;
 #[cfg(feature = "abi-bench")]

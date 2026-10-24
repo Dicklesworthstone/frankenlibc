@@ -2003,7 +2003,10 @@ fn scan_string(
         return None;
     }
 
-    Some((Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))), i))
+    Some((
+        Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))),
+        i,
+    ))
 }
 
 #[cfg(test)]
@@ -2098,7 +2101,10 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
         return None;
     }
 
-    Some((Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))), i))
+    Some((
+        Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))),
+        i,
+    ))
 }
 
 /// Scan a pointer (%p). Expects 0xHEX or (nil).
@@ -2809,7 +2815,13 @@ mod tests {
     fn scanned_strings_round_trip_across_the_inline_boundary() {
         // Through the real engine, not just the constructor: a token one byte
         // either side of the boundary must scan to exactly the same bytes.
-        for len in [1usize, SCAN_INLINE_CAP - 1, SCAN_INLINE_CAP, SCAN_INLINE_CAP + 1, 100] {
+        for len in [
+            1usize,
+            SCAN_INLINE_CAP - 1,
+            SCAN_INLINE_CAP,
+            SCAN_INLINE_CAP + 1,
+            100,
+        ] {
             let token: Vec<u8> = (0..len).map(|i| b'A' + (i % 26) as u8).collect();
             let dirs = parse_scanf_format(b"%s");
             let result = scan_input(&token, &dirs);

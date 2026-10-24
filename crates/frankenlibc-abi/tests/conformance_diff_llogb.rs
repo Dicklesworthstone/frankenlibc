@@ -57,12 +57,16 @@ fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
 
 fn host_llogb_fn() -> LlogbFn {
     // SAFETY: the resolved symbol has C23's documented llogb signature.
-    unsafe { std::mem::transmute::<_, LlogbFn>(host_symbol(c"llogb", fl_llogb as usize)) }
+    unsafe {
+        std::mem::transmute::<_, LlogbFn>(host_symbol(c"llogb", fl_llogb as *const () as usize))
+    }
 }
 
 fn host_llogbf_fn() -> LlogbfFn {
     // SAFETY: the resolved symbol has C23's documented llogbf signature.
-    unsafe { std::mem::transmute::<_, LlogbfFn>(host_symbol(c"llogbf", fl_llogbf as usize)) }
+    unsafe {
+        std::mem::transmute::<_, LlogbfFn>(host_symbol(c"llogbf", fl_llogbf as *const () as usize))
+    }
 }
 
 use frankenlibc_abi::math_abi::{llogb as fl_llogb, llogbf as fl_llogbf};
@@ -112,7 +116,7 @@ fn llogb_special_values_match_glibc() {
 #[test]
 fn llogb_finite_sweep_matches_glibc() {
     let host_llogb_bound = host_llogb_fn();
-    let host_llogbf_bound = host_llogbf_fn();
+    let _host_llogbf_bound = host_llogbf_fn();
     // Sweep exponents across the f64 normal + subnormal range.
     let mut diffs = Vec::new();
     let mut x = 5e-324_f64; // smallest subnormal
@@ -144,8 +148,8 @@ fn llogb_finite_sweep_matches_glibc() {
 
 #[test]
 fn llogb_special_inputs_raise_fe_invalid() {
-    let host_llogb_bound = host_llogb_fn();
-    let host_llogbf_bound = host_llogbf_fn();
+    let _host_llogb_bound = host_llogb_fn();
+    let _host_llogbf_bound = host_llogbf_fn();
     for &x in &[0.0_f64, f64::INFINITY, f64::NAN] {
         unsafe { feclearexcept(FE_INVALID) };
         let _ = unsafe { fl_llogb(x) };

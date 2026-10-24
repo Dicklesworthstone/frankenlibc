@@ -13,10 +13,18 @@ const CHILD: &str = "FRANKENLIBC_CANDIDATE_CHILD";
 
 fn compile(source: &Path, output: &Path, extra: &[String]) {
     let mut command = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()));
-    command.args(["-shared", "-fPIC", "-nostdlib"])
-        .arg(source).args(extra).arg("-o").arg(output);
+    command
+        .args(["-shared", "-fPIC", "-nostdlib"])
+        .arg(source)
+        .args(extra)
+        .arg("-o")
+        .arg(output);
     let result = command.output().expect("execute C compiler");
-    assert!(result.status.success(), "compiler failed: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "compiler failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 unsafe fn open(path: &Path) -> *mut std::ffi::c_void {
@@ -31,12 +39,18 @@ fn check_child() {
     unsafe {
         let handle = open(&path);
         if !succeeds {
-            assert!(handle.is_null(), "malformed first native candidate must stop search");
+            assert!(
+                handle.is_null(),
+                "malformed first native candidate must stop search"
+            );
             assert!(!dl::dlerror().is_null());
             return;
         }
         assert!(!handle.is_null(), "compatible later candidate must load");
-        assert!(dl::native_dso_handle_for_tests(handle), "host fallback cannot satisfy this test");
+        assert!(
+            dl::native_dso_handle_for_tests(handle),
+            "host fallback cannot satisfy this test"
+        );
         let symbol = dl::dlsym(handle, c"candidate_entry".as_ptr());
         assert!(!symbol.is_null());
         let entry: unsafe extern "C" fn() -> i32 = std::mem::transmute(symbol);
@@ -64,9 +78,12 @@ fn native_candidate_search() {
         return;
     }
     let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "frankenlibc-candidate-search-{}-{stamp}", std::process::id()
+        "frankenlibc-candidate-search-{}-{stamp}",
+        std::process::id()
     ));
     let bad = root.join("bad");
     let good = root.join("good");
@@ -109,13 +126,31 @@ fn native_candidate_search() {
         ("ident-two", modified(&[(6, &[2])]), false),
         ("ident-max", modified(&[(6, &[255])]), false),
         ("file-zero", modified(&[(20, &0u32.to_le_bytes())]), false),
-        ("file-max", modified(&[(20, &u32::MAX.to_le_bytes())]), false),
-        ("file-high-byte", modified(&[(20, &257u32.to_le_bytes())]), false),
-        ("foreign-bad-version", modified(&[
-            (18, &foreign.to_le_bytes()), (20, &2u32.to_le_bytes()),
-        ]), false),
-        ("foreign-bad-ident", modified(&[(18, &foreign.to_le_bytes()), (6, &[2])]), true),
-        ("class-bad-version", modified(&[(4, &[1]), (20, &2u32.to_le_bytes())]), true),
+        (
+            "file-max",
+            modified(&[(20, &u32::MAX.to_le_bytes())]),
+            false,
+        ),
+        (
+            "file-high-byte",
+            modified(&[(20, &257u32.to_le_bytes())]),
+            false,
+        ),
+        (
+            "foreign-bad-version",
+            modified(&[(18, &foreign.to_le_bytes()), (20, &2u32.to_le_bytes())]),
+            false,
+        ),
+        (
+            "foreign-bad-ident",
+            modified(&[(18, &foreign.to_le_bytes()), (6, &[2])]),
+            true,
+        ),
+        (
+            "class-bad-version",
+            modified(&[(4, &[1]), (20, &2u32.to_le_bytes())]),
+            true,
+        ),
         ("class-bad-ident", modified(&[(4, &[1]), (6, &[2])]), true),
     ];
     let exe = std::env::current_exe().unwrap();
@@ -136,15 +171,31 @@ fn native_candidate_search() {
         for (case, bytes, succeeds) in &cases {
             std::fs::write(bad.join(soname), bytes).unwrap();
             let mut command = Command::new(&exe);
-            command.args(["--exact", "native_candidate_search", "--nocapture", "--test-threads=1"])
+            command
+                .args([
+                    "--exact",
+                    "native_candidate_search",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env_remove("LD_PRELOAD")
                 .env(CHILD, &parent)
-                .env("FRANKENLIBC_CANDIDATE_EXPECT", if *succeeds { "success" } else { "failure" });
-            if search == "environment" { command.env("LD_LIBRARY_PATH", &environment); }
-            else { command.env_remove("LD_LIBRARY_PATH"); }
+                .env(
+                    "FRANKENLIBC_CANDIDATE_EXPECT",
+                    if *succeeds { "success" } else { "failure" },
+                );
+            if search == "environment" {
+                command.env("LD_LIBRARY_PATH", &environment);
+            } else {
+                command.env_remove("LD_LIBRARY_PATH");
+            }
             let result = command.output().unwrap();
-            assert!(result.status.success(), "{search}/{case}\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+            assert!(
+                result.status.success(),
+                "{search}/{case}\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
             assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed;"));
             invocations += 1;
         }
@@ -153,17 +204,30 @@ fn native_candidate_search() {
     std::fs::write(bad.join(soname), &native).unwrap();
     let parent = root.join("parent-runpath.so");
     let result = Command::new(&exe)
-        .args(["--exact", "native_candidate_search", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "native_candidate_search",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env_remove("LD_PRELOAD")
         .env(CHILD, &parent)
         .env("FRANKENLIBC_CANDIDATE_EXPECT", "success")
         .env("FRANKENLIBC_CANDIDATE_RESIDENT", "1")
         .env_remove("LD_LIBRARY_PATH")
-        .output().unwrap();
-    assert!(result.status.success(), "resident image\n{}\n{}",
-        String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "resident image\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed;"));
     invocations += 1;
     assert_eq!(invocations, 49);
-    eprintln!("native candidate search: {invocations} isolated cases; fixtures {}", root.display());
+    eprintln!(
+        "native candidate search: {invocations} isolated cases; fixtures {}",
+        root.display()
+    );
 }

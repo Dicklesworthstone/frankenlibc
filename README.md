@@ -10,12 +10,12 @@
 ![rust](https://img.shields.io/badge/rust-nightly-f74c00)
 ![platform](https://img.shields.io/badge/platform-linux-181717)
 ![arch](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64-005f87)
-![coverage](https://img.shields.io/badge/native_coverage-69.3%25-2ea043)
+![coverage](https://img.shields.io/badge/native_coverage-68.7%25-2ea043)
 ![license](https://img.shields.io/badge/license-MIT%20with%20rider-8a2be2)
 
 </div>
 
-**A clean-room, memory-safe Rust reimplementation of glibc.** FrankenLibC produces a glibc-shaped `libc.so` that real Linux binaries can load with `LD_PRELOAD`, classifies every exported symbol as native Rust, a direct Linux syscall, host-backed wrapper, call-through, or stub, and runs every entrypoint through a **Transparent Safety Membrane** that validates, sanitizes, repairs, denies, and audits unsafe operations at the ABI boundary.
+**A clean-room Rust reimplementation of glibc with an opt-in safety membrane.** FrankenLibC produces a glibc-shaped `libc.so` that real Linux binaries can load with `LD_PRELOAD` and classifies every exported symbol as native Rust, a direct Linux syscall, a host-backed wrapper, a call-through, or a stub. The **Transparent Safety Membrane** validates, repairs, denies, and audits calls on paths explicitly wired through it; it is not yet universal, and strict-mode hot paths intentionally bypass much of it for compatibility and latency (`crates/frankenlibc-abi/src/runtime_policy.rs`, `support_matrix.json`).
 
 ```bash
 git clone https://github.com/Dicklesworthstone/frankenlibc.git
@@ -36,21 +36,21 @@ glibc is enormous, security-critical, and written in a language that cannot enfo
 
 ### The Solution
 
-FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped ABI. Every libc entrypoint goes through five steps before doing real work: runtime policy decision, deny check, input validation, delegation to safe Rust kernels or raw Linux syscalls, and outcome recording. The membrane sees every pointer, every region, every fd, every state transition.
+FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts of a glibc-shaped ABI. A membrane-gated entrypoint can perform a runtime-policy decision, deny check, input validation, delegation to safe Rust kernels or raw Linux syscalls, and outcome recording. Coverage is path-specific: many strict-mode hot paths use compatibility-first fast paths, and support-taxonomy classification alone does not prove that a pointer, region, fd, or state transition was validated (`crates/frankenlibc-abi/src/runtime_policy.rs`, `tests/conformance/semantic_contract_symbol_join.v1.json`).
 
 ### Why FrankenLibC
 
 | Why it matters | Current state |
 |---|---|
 | Large classified ABI surface | **4,119 exported symbols** all classified |
-| Native ownership is substantial and measured | **2,441 `Implemented` + 414 `RawSyscall` = 2,855 / 4,119 (69.3% native coverage)** |
-| Host-backed interpose subset is explicit | **1,264 `WrapsHostLibc` (30.7%), 0 `GlibcCallThrough`, 0 `Stub`** |
-| Interposition exercises real workloads today | Real-world preload corpus: **189 passes / 0 fails / 4 optional skips / 1 tracked known failure** across strict + hardened modes with byte-exact parity against host glibc, including git, sed, tar -z, C++ programs and Python C extensions; backed by the checked smoke artifact (see `docs/planning/COMPATIBILITY.md`) |
+| Native ownership is substantial and measured | **2,419 `Implemented` + 410 `RawSyscall` = 2,829 / 4,119 (68.7% native coverage)** |
+| Host-backed and unsupported subsets are explicit | **1,272 `WrapsHostLibc` (30.9%), 0 `GlibcCallThrough`, 18 `Stub` (0.4%)** |
+| Interposition has a checked workload snapshot | The committed 2026-09-24 preload artifact reports **189 passes / 0 fails / 4 optional skips / 1 xfail** across strict + hardened modes. It was produced from source commit `a8a4110b…`, not current HEAD, so it is historical evidence rather than a current-release result (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
-| Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
-| Verification is first-class | Harness CLI, **134 fixture families**, **282 completion-contract artifacts**, **69 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings |
+| Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
+| Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
 | Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 control-kernel modules** with live execution paths, not just design docs (which calls reach them depends on mode; see [Runtime Math Controllers](#runtime-math-controllers)) |
-| Build-time formal infrastructure | SOS polynomial certificates synthesized and verified at build; per-file atomic-barrier coverage audit |
+| Build-time proof-oriented infrastructure | Three supplied Gram matrices are checked for PSD/Cholesky validity and an algebraic recomposition identity; a source scanner inventories selected atomic sites. These are consistency checks, not proofs of allocator fragmentation, thread safety, or size-class correctness (`crates/frankenlibc-membrane/build.rs`) |
 
 ### Claim-Field Contract
 
@@ -112,7 +112,7 @@ bash scripts/ci.sh
 
 ## The Transparent Safety Membrane
 
-The TSM is the architectural centerpiece. Instead of trusting raw C pointers because the caller crossed an ABI boundary, FrankenLibC treats that boundary as the place where unsafe information must be classified, validated, and either accepted, repaired, or denied; every call, every pointer, every region.
+The TSM is the architectural centerpiece. Instead of trusting raw C pointers because the caller crossed an ABI boundary, FrankenLibC provides explicit validation/repair paths where those entrypoints are wired to the membrane. Current coverage is incomplete and mode-dependent; it must be established per entrypoint rather than inferred from the architecture diagram.
 
 ### Pipeline
 
@@ -169,31 +169,42 @@ In hardened mode the membrane can choose a deterministic repair instead of allow
 | `ReturnSafeDefault` | Read from null/UAF/quarantined | Return zero/empty/EINVAL per family |
 | `UpgradeToSafeVariant` | Policy demands the safer semantic | Switch to a stricter contract (e.g., bounded variant) |
 
-Every repair is **deterministic** (replayable from the same input) and **audited** (emits a structured evidence record).
+The repair actions are deterministic for the validated input and state. Hardened paths that choose a repair increment the corresponding metrics and can emit a heal record through `FRANKENLIBC_LOG`; this is narrower than a universal record of every fast-path decision.
 
 ---
 
-## Current State (reconciled 2026-09-18)
+## Checked Taxonomy State (snapshot generated 2026-10-19)
 
-Source of truth: `support_matrix.json` for support taxonomy classification.
-Current source of truth: `support_matrix.json` plus `tests/conformance/replacement_levels.json`.
-Source of truth: `tests/conformance/reality_report.v1.json` (regenerated from the checked-in matrix).
-Reality snapshot: total_exported=4119, implemented=2441, raw_syscall=414, wraps_host_libc=1264, glibc_call_through=0, stub=0.
+Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
+`tests/conformance/reality_report.v1.json` is the generated snapshot from 2026-10-19. The current matrix includes six hosts-lookup reclassifications to `WrapsHostLibc`, because installed NSS modules use the host dynamic loader. These are classification artifacts, not semantic-parity evidence.
+Reality snapshot: total_exported=4119, implemented=2419, raw_syscall=410, wraps_host_libc=1272, glibc_call_through=0, stub=18.
 
-Declared replacement level: **L1 — Hardened Interpose**.
-Declared replacement level claim: **L1 — Hardened Interpose**.
-Total currently classified exports: **4119**.
+Declared replacement level: **L0 — Interpose**.
+Declared replacement level claim: **L0 — Interpose**.
+Total exports in the checked taxonomy snapshot: **4119**.
 
 | Status | Count | % | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 2441 | 59% | Native ABI-backed Rust-owned behavior |
-| `RawSyscall` | 414 | 10% | ABI path delegates directly to Linux syscalls |
-| `WrapsHostLibc` | 1264 | 31% | Native wrapper that still calls host libc symbols internally |
+| `Implemented` | 2419 | 58.7% | Native ABI-backed Rust-owned behavior |
+| `RawSyscall` | 410 | 10.0% | ABI path delegates directly to Linux syscalls |
+| `WrapsHostLibc` | 1272 | 30.9% | Native wrapper that still calls host libc symbols internally |
 | `GlibcCallThrough` | 0 | 0% | No opaque host-glibc symbol call-through rows remain |
-| `Stub` | 0 | 0% | None — semantic no-op / fallback / bootstrap contracts are tracked separately in the semantic overlay |
+| `Stub` | 18 | 0.4% | Deterministic unsupported/failure contracts; explicit list below |
 | **Total classified** | 4119 | 100% | Native coverage = `Implemented + RawSyscall`; host-backed L1 interpose = `WrapsHostLibc + GlibcCallThrough` |
 
+The 18 explicit stubs are: `_authenticate`, `callrpc`, `clnt_create`, `clnt_perror`, `clnt_sperror`, `clntraw_create`, `clntunix_create`, `register_printf_function`, `register_printf_modifier`, `register_printf_specifier`, `register_printf_type`, `registerrpc`, `svcfd_create`, `svcraw_create`, `svctcp_create`, `svcudp_enablecache`, `svcunix_create`, and `svcunixfd_create`. Fourteen are SunRPC APIs; four are printf registration APIs.
+
+That list describes the dated taxonomy snapshot. Subsequent native RPC work now supplies bounded behavior for `_authenticate` (AUTH_NONE/AUTH_SYS), `callrpc`, `clnt_create`, `clnt_perror`, `clnt_sperror`, `clntraw_create`, `clntunix_create`, `registerrpc`, `svcudp_enablecache`, `svcfd_create`, `svcraw_create`, `svctcp_create`, `svcunix_create`, and `svcunixfd_create`. The stream service paths support IPv4 and Unix listeners, incremental record decoding, queued nonblocking replies, and callback unwinding. Unix services receive and send kernel credentials, retain the local verifier per transport, and reject received descriptors and credential changes within a record. Listener socket pathnames remain after destruction. Service records are limited to 16 MiB and 4096 fragments; service constructor buffer sizes are hints. `svcfd_create` currently requires a connected stream socket, and `svcunixfd_create` requires a connected Unix stream socket. Full Unix service caller-address compatibility remains unqualified.
+
+The Unix client shares the native stream client's deadlines, framing, authentication callbacks, and ownership controls. It supports pathname connections and borrowed connected Unix sockets, sends effective process credentials, and returns the complete `sockaddr_un` through client address controls. Borrowed descriptors retain their file flags; Unix I/O enables `SO_PASSCRED`. Client call/reply buffers are currently hard bounds, with a 16 MiB maximum. The gate checks GNU Unix XID and thread-local creation-error behavior, authenticated client/server calls, partial-reply timeout recovery, and received-descriptor cleanup. The service gate in `scripts/check_rpc_svc.py` distinguishes host comparisons from native bounds/lifetime tests, including acceptance of empty nonfinal fragments that glibc rejects.
+
+The raw constructors now connect caller-thread memory clients and services through native XDR, authentication and dispatch, without opening a socket or registering a poll descriptor. Register the service with `svc_register(..., 0)` before calling the raw client on that thread. Each request/reply buffer is limited to 8800 bytes, including its RPC envelope. Calls are synchronous and ignore the timeout argument; recursive calls on the same client fail rather than corrupting its buffers. Construction reuses the thread's client and resets AUTH_NONE. Client control returns false; client geterr and client/service destroy are GNU-style no-ops, and logical service descriptor zero never owns stdin. The live glibc 2.43 raw round-trip probe crashed; its constructor diagnostics are retained separately from native positive tests. Socket-syscall denial, authenticated exchanges, errors, string cleanup, thread isolation and callback unwinding execute in both modes and both TLS feature configurations. Full fourteen-contract qualification remains open under `bd-rc0923-epic-eeuy4f.35`; these increments do not promote the checked taxonomy or replacement level.
+
 The classified surface is not fully native at the support-taxonomy layer. The shipping artifact is the interpose-first preload library (`libfrankenlibc_abi.so`); it remains host-glibc-dependent for the explicit `WrapsHostLibc` subset and is not a full standalone libc replacement. The staged path to a fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating host-backed rows, closing promotion-evidence gaps surfaced by the support-matrix maintenance gate, and by the L1 / L2 / L3 replacement-level promotion contracts.
+
+Secure RPC identity lookup now reads authoritative `/etc/netid` and `/etc/publickey` records. `netname2user` returns the configured 32-bit UID, primary GID and supplementary groups instead of deriving credentials from the netname; `netname2host` returns the mapped host name, and `getpublickey` returns a validated 48-digit public key. The `publickey` NSS database honors source ordering and status actions, including public GNU `netname2user` and `getpublickey` module callbacks. Invalid records, module results and undersized tracked output buffers fail before publishing caller-visible data. `scripts/check_rpc_identity.py` compares isolated files lookups with libtirpc and module policies with GNU libc, then exercises the candidate in strict and hardened modes with C and C++ callers. Secret-key decryption remains unimplemented; this increment does not qualify the complete Secure RPC surface.
+
+The GNU `printf_size` and `printf_size_info` callbacks now have native implementations and can be called directly through `<printf.h>`. They reuse the exact floating-point formatter for double, x87 long double and binary128, with narrow and wide FILE output, GNU size suffixes and error propagation. Standard `parse_printf_format` introspection now uses GNU type codes and positional argument slots, preserving untouched slots and respecting the supplied array capacity. The live differential fixture covers the C locale on x86-64, including special values, 25-digit precision and the 65,535/65,536-digit boundary. Ordinary double and extended decimal/hexadecimal output honor all four rounding directions. The gate exercises narrow buffers, allocated strings, streams and wide output, including their `v*` variants, positional width/precision, truncation counts, subnormals, carry boundaries and concurrent threads restoring their own environments. Binary64 hexadecimal subnormals retain GNU's leading-zero/exponent convention. Floating-point exception-flag parity, other locales and aarch64 remain unqualified by this gate. Run `FRANKENLIBC_TEST_LIBRARY=/absolute/path/to/libfrankenlibc_abi.so bash scripts/check_stdio_native.sh --gnu-printf` to qualify an existing artifact against the host GNU library in both modes. This command qualifies these callbacks, introspection and the original printf fixture; the full stdio gate remains separate and currently fails its legacy `_IO_2_1_*` alias check. The four `register_printf_*` APIs now register native handlers, argument readers and modifier bits, and dispatch through all twelve narrow and six wide printf entry points. Registered introspection supports positional and multiargument conversions; callbacks may recursively format or change registrations because each call releases the registry lock before invoking them. The same qualifier runs independent GNU registration fixtures, including truncation, `%n`, replacement, unregistration, fallback and wide output. One GNU mixed custom/native-fallback case emits 17 bytes and stores `%n = 17` while returning 14; its exact return-count comparison remains an explicit diagnostic, so full qualification under `bd-rc0923-epic-eeuy4f.33` and `.34` remains open.
 
 ### Claim Field Contract
 
@@ -212,20 +223,30 @@ User-facing support and replacement claims must keep these fields separate:
 
 ### Curated LD_PRELOAD Smoke Battery
 
-Canonical smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json`.
 Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T195208Z`, checked September 24, 2026) reports 189 passes / 0 fails / 4 skips overall, with strict 94/0/2 and hardened 95/0/2 across the curated preload smoke battery.
 
-| Mode | Pass | Fail | Skip | Programs exercised |
-|---|---:|---:|---:|---|
-| `strict` | 90 | 0 | 2 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
-| `hardened` | 90 | 0 | 2 | same battery with `FRANKENLIBC_MODE=hardened` |
-| **Total** | **180** | **0** | **4** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
+| Mode | Pass | Fail | Skip | Xfail | Programs exercised |
+|---|---:|---:|---:|---:|---|
+| `strict` | 94 | 0 | 2 | 1 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
+| `hardened` | 95 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
+| **Total** | **189** | **0** | **4** | **1** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
+
+The artifact's structured `modes` object assigns the xfail to strict, while its free-text notes call it hardened `sed_substitute`; that internal inconsistency is another reason to treat this as a historical snapshot pending regeneration under `bd-rc0923-epic-eeuy4f.4`.
 
 | Workload family | Commands |
 |---|---|
-| Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/usr/bin/wc` |
+| Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/bin/wc` |
 
-The checked curated preload smoke battery has 189 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 tracked known failure: `fork_multithreaded_parent` is functionally correct in both modes but exceeds the strict perf-ratio budget, because fork is ~4x glibc (bd-rc0923-epic-eeuy4f.25); the L1 objective gate is blocked on it. Both strict and hardened modes are green, with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions, TZ-aware `localtime`/`date`/`ls -l` across eight zone settings plus a 44-zone 1900-2100 transition sweep, GNU argp parsing/help byte parity and glibc's argp tools `getent`/`iconv`, `//TRANSLIT`/`//IGNORE` iconv and `iconv(1)`, `/etc/hosts` alias lookups, named locales (`en_US.UTF-8` strftime, collation for `sort`/`ls`, wide ctype over every code point), glibc-ordered `getaddrinfo` results, and glibc-mangled `setjmp`/`longjmp` with `__longjmp_chk`, and C++ exceptions thrown from `qsort`/`tsearch`/`pthread_once`/`dl_iterate_phdr`/`fopencookie`/`ftw`/`scandir` callbacks, and `pthread_cancel` of threads blocked in `read`/`sleep`/`nanosleep`/`poll`/`pthread_cond_wait` with cleanup handlers, process-shared/robust/priority-inheritance mutexes and process-shared condition variables across `fork`, and fork/popen/system/posix_spawn while other threads are inside malloc and stdio) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: printf's `'` grouping and a named locale's radix character (in printf and in `strtod`/`scanf` parsing) now follow `LC_NUMERIC` (gate `conformance_diff_printf_grouping`, en_US/de_DE/fr_FR vs glibc), and so do the `locale_t`-scoped variants: the `*_l` functions (including `__strcoll_l`/`__strxfrm_l`, which C++ `std::collate` uses) apply their locale argument and `uselocale` switches the thread's numeric formatting (smoke cases `locale_l_variants` and `locale_decimal_comma`). The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
+The committed curated preload snapshot has 189 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 xfail. Those numbers describe run `rc0923-corpus-20260924T195208Z` at source commit `a8a4110b…`; they do **not** describe current HEAD. Later commits added many cases without regenerating the committed summary. The artifact establishes that the cases recorded in that run passed (or xfailed) under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`, bd-rc0923-epic-eeuy4f.4).
+
+### Known broken or not yet freshly evidenced under preload
+
+- The committed real-program summary is stale relative to HEAD and the declared corpus is still narrower than the bead's target; refresh and breadth are tracked by `bd-rc0923-epic-eeuy4f.4`.
+- Hardened sorting remains far outside the glibc performance target (`bd-rc0923-epic-eeuy4f.9`), while multi-threaded allocation remains blocked on a larger architecture decision (`bd-rc0923-epic-eeuy4f.26`).
+- `fork`/exit and fork/exec remain materially slower than glibc (`bd-rc0923-epic-eeuy4f.25`).
+- Native-loader metadata/TLS closure is incomplete even though common libc-linked pathname loads now delegate safely to the host loader (`bd-rc0923-epic-eeuy4f.3`).
+- NSS standalone module support, concurrency/cache-coherence closure, and complete blocked-cancellation-point coverage remain open (`bd-rc0923-epic-eeuy4f.19`, `bd-rc0923-epic-eeuy4f.24`).
+- Support-matrix labels and several evidence/closure gates still need executable reconciliation (`bd-rc0923-epic-eeuy4f.17`, `bd-rc0923-epic-eeuy4f.18`).
 
 ---
 
@@ -266,7 +287,8 @@ The checked curated preload smoke battery has 189 pass / 0 fail / 4 optional ski
    ┌──────────────────────────┐                       ┌──────────────────────────────┐
    │ Native Rust kernels      │                       │ Raw syscall veneers          │
    │ crates/frankenlibc-core  │                       │ crates/frankenlibc-core/src/ │
-   │ (~70 kLOC, 134 modules)  │                       │  syscall/  (typed wrappers)  │
+   │ (197 files; generated    │                       │  syscall/  (typed wrappers)  │
+   │ tables dominate size)    │                       │                             │
    │                          │                       │                              │
    │ stdio, string, math,     │                       │ io_uring, landlock, futex2,  │
    │ malloc, pthread,         │                       │ process_vm_*, scheduler,     │
@@ -278,8 +300,8 @@ The checked curated preload smoke battery has 189 pass / 0 fail / 4 optional ski
               ┌────────────────────────────────────────────────────────┐
               │ Verification & evidence                                │
               │ crates/frankenlibc-harness  (44 modules, ~34 kLOC)      │
-              │ tests/conformance/  (258 completion-contract JSONs +    │
-              │                     68 CLI-contract manifests)         │
+              │ tests/conformance/  (282 completion-contract JSONs +    │
+              │                     69 CLI-contract manifests)         │
               │ scripts/  (554 shell scripts: gates, smoke, perf)       │
               │ docs/proofs/  (9 proof notes; obligation mappings)      │
               │ no machine-checked proof artifacts committed yet         │
@@ -290,9 +312,9 @@ The checked curated preload smoke battery has 189 pass / 0 fail / 4 optional ski
 
 | Crate | Purpose | Approx size |
 |---|---|---:|
-| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 50 files, ~121 kLOC |
-| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 109 files, ~75 kLOC |
-| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 134 files, ~70 kLOC |
+| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 115 Rust source files, ~216 kLOC |
+| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~82 kLOC |
+| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 201 Rust source files, ~1.16 MLOC including generated codec tables |
 | `frankenlibc-harness` | Conformance CLI, fixture capture/verify, reports, evidence tooling | 44 files, ~34 kLOC |
 | `frankenlibc-bench` | Criterion benches | 1 module, ~25 kLOC |
 | `frankenlibc-fuzz` | 66 `cargo-fuzz` targets | — |
@@ -310,11 +332,11 @@ This project is only interesting if existing binaries can talk to it. The ABI bo
 
 ### 2. Safety at the edge
 
-Unsafe C inputs are not trusted. The TSM sits at the libc boundary and classifies pointers, regions, fds, and contexts before anything meaningful happens. Safe-Rust kernels run after classification, never before.
+On membrane-wired paths, the TSM classifies pointers, regions, fds, and contexts before dispatching the protected operation. Other compatibility paths, particularly strict-mode hot paths, bypass full validation. Safe-Rust implementation code alone does not establish safety for the raw C caller.
 
 ### 3. Native by default
 
-Every exported symbol is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`, and the matrix is machine-checked. As of the 2026-09-18 reconciliation, the native classified subset is 2,855 symbols (`Implemented + RawSyscall`); 1,264 `WrapsHostLibc` rows remain as explicit host-backed L1 interpose scope, with zero `GlibcCallThrough` and zero `Stub` rows.
+Every row in the checked-in support matrix is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`. In the matrix snapshot generated 2026-10-19, the native classified subset is 2,829 symbols (`Implemented + RawSyscall`); 1,272 `WrapsHostLibc` rows remain as explicit host-backed interpose scope, with zero `GlibcCallThrough` and 18 `Stub` rows. The downgrade evidence is derived conservatively from source; the taxonomy does not by itself prove semantic parity.
 
 ### 4. Clean-room over translation
 
@@ -326,7 +348,7 @@ Support claims, mode semantics, fixture coverage, drift checks, smoke runs, and 
 
 ### 6. Developer transparency
 
-Contributors write normal Rust APIs, tests, and policy tables. The runtime math machinery (conformal risk, sequential e-processes, Galois maps, sheaf consistency, SOS certificates) compiles down to compact deterministic guards in the hot path. The heavy theorem machinery lives in offline synthesis, proof notes, and future proof artifacts, not in runtime call stacks.
+Contributors write normal Rust APIs, tests, and policy tables. Some runtime-math controllers compile to compact deterministic guards on the hardened paths that invoke the kernel; strict hot paths can bypass them. Proof-oriented names do not imply machine-checked theorems: the repository currently has runtime monitors, build-time consistency checks, proof notes, and future proof obligations.
 
 ---
 
@@ -341,8 +363,8 @@ These invariants are maintained as the codebase grows:
 | Hardened repairs are deterministic | Makes behavior replayable and auditable |
 | Every exported symbol must be explicitly classified | Prevents silent unknown-support zones |
 | Documentation and machine artifacts are expected to agree | Drift is treated as a bug, not a cosmetic issue |
-| Bead closure requires a binding evidence artifact | Each closed bead (`bd-*`) maps to a `*_completion_contract.v1.json` JSONL receipt |
-| Every harness CLI subcommand has a paired gate test | Enforced by ~50 `cli_contract` manifest meta-gates |
+| Bead closure should cite executable evidence | Historical coverage is incomplete: 282 heterogeneous completion-contract files do not bind every closed bead; remediation is tracked by `bd-rc0923-epic-eeuy4f.18` |
+| CLI-contract manifests are mechanically checked | 69 manifests are subject to roughly 50 meta-gates; count alone does not prove one executable gate per subcommand |
 | Clean-room implementation remains the rule | Keeps the project from degenerating into line-by-line translation |
 
 ---
@@ -355,11 +377,11 @@ These invariants are maintained as the codebase grows:
 | Memory-safe implementation goal | No | No | No | Yes for native paths |
 | Runtime repair mode | No | No | No | Yes — `FRANKENLIBC_MODE=hardened` |
 | Per-symbol implementation census | No | No | No | Yes — `support_matrix.json` |
-| Host-glibc dependency in classified surface | N/A | No | Yes | **Partial — 1,264 explicit `WrapsHostLibc` rows call host libc internally; 0 opaque `GlibcCallThrough`** |
-| Raw syscall fallback paths | Internal | Internal | No | Explicit taxonomy: 414 `RawSyscall` |
+| Host-glibc dependency in classified surface | N/A | No | Yes | **Partial — 1,272 explicit `WrapsHostLibc` rows call host libc internally; 0 opaque `GlibcCallThrough`** |
+| Raw syscall fallback paths | Internal | Internal | No | Explicit taxonomy: 410 `RawSyscall` |
 | Auditable structured verification artifacts | Limited | Limited | Limited | Core workflow — 282 completion contracts + 69 CLI contracts |
 | Machine-checked proof catalog | No | No | No | Not yet; `docs/proofs/` currently holds proof notes and obligation mappings |
-| Build-time SOS / barrier audit | No | No | No | Yes — `crates/frankenlibc-membrane/build.rs` |
+| Build-time matrix consistency / atomic-site inventory | No | No | No | Yes — `crates/frankenlibc-membrane/build.rs`; not a proof of the named system invariants |
 
 ---
 
@@ -420,7 +442,7 @@ The Galois proof notes live under `docs/proofs/galois_monotonic_probability_boun
 
 The progression is geometric in spirit but not strictly so; the larger bins jump to power-of-two-friendly steps so the LargeAllocator threshold (`MAX_SMALL_SIZE = 32 KiB`) is reached without wasting slab slots on rarely-used intermediate sizes. The table is declared as `SIZE_TABLE: [usize; NUM_SIZE_CLASSES]` in `crates/frankenlibc-core/src/malloc/size_class.rs`.
 
-Each size class is backed by **64 KB slabs**. In this core model every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`). On the deployed paths today: hardened-mode allocations come from the membrane's generational arena and DO carry the SipHash fingerprint header and trailing canary (`arena.rs`); strict-mode allocations come from the segment allocator (or the host allocator) and carry NEITHER, so overflow/underflow detection is a hardened-mode property.
+Each size class is backed by **64 KB slabs**. In this core model every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`). Hardened allocations served by the membrane's generational arena carry its SipHash fingerprint header and trailing canary (`arena.rs`). Bootstrap/reentrant allocations and the uninitialized-pipeline fallback can use other providers, even in hardened mode. Strict segment/host allocations do not carry the arena metadata. Canary-based overflow/underflow detection therefore depends on the allocation's provider and a later check being reached.
 
 ### Thread-Local Magazine Cache
 
@@ -442,7 +464,7 @@ Requests > 32 KB bypass the slab system:
 
 ### Generational Arena
 
-`crates/frankenlibc-membrane/src/arena.rs` tracks every live allocation:
+`crates/frankenlibc-membrane/src/arena.rs` tracks allocations served by the hardened arena. Strict segment and host-fallback allocations are not arena allocations:
 
 | Parameter | Value |
 |---|---:|
@@ -499,7 +521,7 @@ The bloom filter sits early in the validation pipeline because it can reject mos
 
 **Design invariant:** no single format specifier can produce more than `width + precision + 64` bytes. This bounds memory growth from crafted format strings and prevents a class of denial-of-service where unbounded allocation triggers from format input.
 
-Arguments are dispatched through a `FormatArg` enum (`SignedInt(i64)`, `UnsignedInt(u64)`, `Float(f64)`, `Char(u8)`) with string arguments handled out-of-band as byte slices. Special handling:
+Arguments are dispatched through a `FormatArg` enum (`SignedInt(i64)`, `UnsignedInt(u64)`, `Float(f64)`, `Char(u8)`, `Pointer(usize)`, and `Errno`) with string arguments handled out-of-band as byte slices (`crates/frankenlibc-core/src/stdio/printf.rs`). Special handling:
 
 - `%g`/`%G` switch to `%e`/`%E` when rounding overflows the requested precision
 - `%a`/`%A` hex-float exponent arithmetic is hardened against extreme inputs
@@ -514,13 +536,15 @@ Arguments are dispatched through a `FormatArg` enum (`SignedInt(i64)`, `Unsigned
 | Line buffered | `_IOLBF` (1) | Flush on newline (`\n`) |
 | Unbuffered | `_IONBF` (2) | No buffering; immediate write-through |
 
-Default buffer size is **8,192 bytes** (`BUFSIZ`). POSIX's requirement that `setvbuf` cannot be called after I/O has started is enforced: mode is monotonically locked after the first operation. Line-buffered writes use a reverse scan (`rposition`) to find the last newline, flushing through that point and retaining the remainder. The `unget()` path supports pushing a single byte back for `ungetc` semantics with LIFO ordering.
+Default buffer size is **8,192 bytes** (`BUFSIZ`). POSIX's requirement that `setvbuf` cannot be called after I/O has started is enforced: mode is monotonically locked after the first operation. Line-buffered writes use a reverse scan (`rposition`) to find the last newline, flushing through that point and retaining the remainder. Repeated `ungetc` calls use the read buffer plus a one-byte overflow slot and preserve LIFO order until buffer capacity is exhausted (`crates/frankenlibc-core/src/stdio/file.rs`).
 
 ---
 
 ## pthread — Futex-Backed Synchronization
 
 `crates/frankenlibc-core/src/pthread/` is a clean-room futex-backed design. fl's own mutexes (including process-shared, robust and priority-inheritance ones), condition variables and rwlocks run on it. Thread creation, join and cancellation, however, go through the host's NPTL by default when fl is preloaded into a glibc process; the native thread backend is opt-in (`FRANKENLIBC_THREAD_NATIVE=1`) and is what standalone builds use.
+
+**Cancellation points.** glibc 2.41+ acts on a deferred cancel only when it interrupts glibc's own syscall bridge, so fl runs each blocking syscall it implements itself (read/write and their vector and positional forms, the sleeps, poll/select/epoll, accept/connect/recv*/send* including `recvmmsg`/`sendmmsg`, the waits, the signal waits, semaphores, condvars, `open` of a FIFO, `fcntl(F_SETLKW)`, `lockf`, splice/tee/vmsplice, `system`, ...) inside an asynchronous-cancel window -- glibc's own scheme before 2.41 -- and so do their `_FORTIFY_SOURCE` entry points (`__read_chk`, `__recv_chk`, `__open_2`, ...) and glibc-namespace aliases (`__read`, `__waitpid`, ...). The window opens only in a multi-threaded process (or after a thread cancelled itself) and only when the entry point was called from outside fl's image: fl's own file and socket I/O (Rust std inside getpwnam, getaddrinfo, lazy symbol resolution) reaches the same exported symbols, and a forced unwind started there would cross frames that cannot unwind, so glibc would abort the process. `tests/integration/fixture_pthread_cancel.c` checks 73 of these points (blocked in the call, or entered with a request pending), fortified and alias forms among them, and that a pending request does not abort getpwnam/getgrnam/getaddrinfo, byte-for-byte against glibc (`pthread_cancel` in the preload smoke corpus). Not yet: cancellation of threads on the native backend; an unwind out of `main` (its cancellation, or `pthread_exit` from it) under fl's default owned startup, which does not give the main thread glibc's cancellation jump buffer (`FRANKENLIBC_STARTUP_DELEGATE=1` does); stdio calls (`fgets`, `fwrite`, ...) do not act as cancellation points; `thrd_sleep` is not one; `sem_wait`/`sem_timedwait` act only once they block (glibc also acts on a request already pending when the semaphore is available); `aio_suspend` acts on a cancel only between its 100 ms wait slices.
 
 ### Mutex
 
@@ -558,15 +582,19 @@ Full POSIX TLS key lifecycle (`pthread_key_create`, `pthread_setspecific`, `pthr
 
 ## DNS Resolver — Native, nsswitch-Ordered
 
-`crates/frankenlibc-core/src/resolv/` and `crates/frankenlibc-core/src/dns_transport.rs` implement host lookup natively: no host libc resolver and no `libnss_*` modules are called.
+`crates/frankenlibc-core/src/resolv/` and `crates/frankenlibc-core/src/dns_transport.rs` implement native files and DNS lookup. The ABI also dispatches configured installed `libnss_*` modules through the existing host dynamic-loader bridge, extending the same source policy to names supplied by those modules.
 
 ### Resolution Order
 
 1. Numeric IPv4/IPv6 literals are answered directly.
-2. The `hosts:` line of `/etc/nsswitch.conf` decides which sources run and in what order, including `[STATUS=action]` items (`crates/frankenlibc-core/src/addrinfo/hosts_policy.rs`). `files` is `/etc/hosts`; `dns` is the native resolver below. Other modules (`myhostname`, `mdns4_minimal`, `resolve`, …) are treated as unavailable sources, so names only they can resolve are not found. A missing or unparseable file means glibc's default, `files dns`.
+2. The `hosts:` line of `/etc/nsswitch.conf` decides which sources run and in what order, including `[STATUS=action]` items (`crates/frankenlibc-core/src/addrinfo/hosts_policy.rs`). `files` is `/etc/hosts`; `dns` is the native resolver below. Other sources load `libnss_<service>.so.2` and use its public hosts entry points, allowing installed modules such as `myhostname`, `mdns4_minimal` and `resolve` to answer. Missing modules remain unavailable sources, with the configured status action deciding whether to continue. A missing or unparseable file means glibc's default, `files dns`.
 3. The native DNS resolver reads `/etc/resolv.conf` (`nameserver`, `search`/`domain`, `ndots`, `timeout`, `attempts`, `rotate`, `use-vc`, `trust-ad`) and queries over UDP with TCP fallback, following CNAME chains. The search-list failure rules follow glibc's `res_search`: an as-is name tried first decides the final error, a search-domain timeout stops the search, and a search-domain SERVFAIL keeps searching but leaves `TRY_AGAIN` as the fallback.
 
 `getaddrinfo`, `getnameinfo`, `gethostbyname{,2}{,_r}` and `gethostbyaddr{,_r}` all use this one engine, so they agree within a process. `FRANKENLIBC_RESOLV_CONF`, `FRANKENLIBC_NSSWITCH_CONF` and `FRANKENLIBC_HOSTS_PATH` redirect the configuration files, for tests.
+
+The module bridge tries `gethostbyname3_r`, then `gethostbyname2_r`, then the IPv4-only `gethostbyname_r` when newer symbols are absent. Reverse lookup tries `gethostbyaddr2_r`, then `gethostbyaddr_r`. It copies names, aliases and full address lists before releasing module scratch storage, grows that storage on ERANGE, and keeps the separate canonical-name output for `AI_CANONNAME`. A negative answer from an implemented entry point is passed to the source policy. The internal `_nss_files_*` exports remain files-only.
+
+This is L0 interpose functionality: installed modules use the host dynamic loader. Standalone builds report module sources unavailable. Modules that export only tuple-based `gethostbyname4_r` are not supported by the bridge, and `bd-rc0923-epic-eeuy4f.19` remains open for the remaining NSS scope.
 
 ### What's Live
 
@@ -612,7 +640,11 @@ The loader is intentionally narrow at L1 (interpose); the broad dynamic-linking 
 
 ### Release builds (the shipped `libfrankenlibc_abi.so`)
 
-The x86_64 release path (`setjmp_abi.rs`, naked asm) uses glibc's exact 200-byte `jmp_buf` layout and stores the saved `rbp`, `rsp` and `rip` **mangled exactly as glibc's `PTR_MANGLE`**: `rol(value ^ pointer_guard, 17)`, with the per-process random guard the loader seeds from `AT_RANDOM` at `%fs:0x30`. An attacker who overwrites a `jmp_buf` therefore cannot aim `rip`/`rsp` without knowing the guard, and buffers stay byte-compatible with glibc's own `__libc_longjmp` (used on cancellation unwind buffers). `__longjmp_chk` (`_FORTIFY_SOURCE`) enforces glibc's stack-direction rule and aborts with `*** longjmp causes uninitialized stack frame ***` on a jump into a frame that already returned. `tests/integration/fixture_setjmp_guard.c` checks all of this byte-for-byte against glibc in the preload smoke corpus (`setjmp_guard`). The aarch64 release path does not mangle yet.
+The x86_64 release path (`setjmp_abi.rs`, naked asm) uses glibc's exact 200-byte `jmp_buf` layout and stores the saved `rbp`, `rsp` and `rip` **mangled exactly as glibc's `PTR_MANGLE`**: `rol(value ^ pointer_guard, 17)`, with the per-process random guard the loader seeds from `AT_RANDOM` at `%fs:0x30`. An attacker who overwrites a `jmp_buf` therefore cannot aim `rip`/`rsp` without knowing the guard, and buffers stay byte-compatible with glibc's own `__libc_longjmp` (used on cancellation unwind buffers). `__longjmp_chk` (`_FORTIFY_SOURCE`) enforces glibc's stack-direction rule and aborts with `*** longjmp causes uninitialized stack frame ***` on a jump into a frame that already returned. `tests/integration/fixture_setjmp_guard.c` checks all of this byte-for-byte against glibc in the preload smoke corpus (`setjmp_guard`).
+
+The aarch64 asm mangles too. It stores the saved frame pointer (`x29`), return address (`x30`) and stack pointer (`sp`) as `value ^ pointer_guard` (`eor`, with no rotate: glibc rotates only on x86_64; glibc also leaves `x29` in plaintext). aarch64 has no fixed TCB slot for the guard the way x86_64 has `%fs:0x30`. glibc's `__pointer_chk_guard` is a `GLIBC_PRIVATE` symbol that an interposing library cannot rely on resolving. So the guard is FrankenLibC's own `__frankenlibc_pointer_guard`, which the library's `.init_array` constructor seeds from the same `AT_RANDOM` bytes glibc uses, and the asm reads through the GOT. Unlike glibc's RELRO copy, the word stays writable after startup. `__longjmp_chk` performs the same stack-direction check there. aarch64's `jmp_buf` word layout is FrankenLibC's own; it is not byte-identical to glibc's aarch64 `__jmp_buf`. So the inspection and overwritten-return-address checks live in `tests/integration/fixture_setjmp_edges.c`, under the FrankenLibC preload, rather than in the byte-compared corpus.
+
+**aarch64 remains a bring-up target with bounded release evidence** (`bd-rc0923-epic-eeuy4f.41`–`.42`). On 2026-10-23 a linked AArch64 release library passed provider-verified C probes under QEMU in strict and hardened modes, including the ARM blocks of `fixture_setjmp_edges.c`. The qualifier checks both symbol lookups and executable call bindings; GNU FORTIFY aliases such as `longjmp` to `__longjmp_chk` must resolve to the same tested library. The release build also executed 163 FORTIFY integration tests and two raw-poll tests successfully. Full workload coverage, native ARM hardware qualification and standalone replacement remain open.
 
 The guard metadata below is **not** in release builds: it does not fit glibc's layout, and rejecting cross-thread jumps would diverge from glibc in strict mode.
 
@@ -644,7 +676,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,166 LOC) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,862 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -673,7 +705,7 @@ The L1 CRT proof rows (Epic `bd-0qjk0`) cover:
 - `errno` TLS isolation across threads
 - Init/fini array order
 
-All five proofs ship as binding artifacts under `tests/conformance/*_completion_contract.v1.json`.
+All five claims have completion-contract artifacts under `tests/conformance/*_completion_contract.v1.json`. Those artifacts are evidence receipts, not machine-checked proofs; their executable strength must be inspected individually.
 
 ---
 
@@ -694,7 +726,7 @@ All five proofs ship as binding artifacts under `tests/conformance/*_completion_
 
 ## Runtime Math Controllers
 
-`crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules. Which calls reach them depends on the mode: in hardened mode allocator and validation calls go through `RuntimeMathKernel::decide` (58 distinct runtime-math symbols in a `perf` profile of an allocation-heavy perl run, 2026-10-06), while the strict-mode hot paths bypass the kernel (no runtime-math or runtime-policy symbol at all in the same perl run under strict). Decision law for a call that reaches the kernel:
+`crates/frankenlibc-membrane/src/runtime_math/` contains ~71 controller modules. Routing is path- and mode-specific: the ABI policy's seven high-frequency hardened families return before its kernel decision, while the pointer-validation pipeline can consult a separate `RuntimeMathKernel`. A historical allocation-heavy Perl profile (2026-10-06) contained 58 runtime-math symbols in hardened mode and none in strict mode; execution in a profile does not prove that a controller changed an ABI-visible decision. That influence needs a route-specific causal test. Decision law for a call that reaches the kernel:
 
 ```
 mode + context + risk + budget + pareto + design + barrier + consistency
@@ -730,7 +762,7 @@ Standalone (non-`runtime_math/`) controllers in the membrane:
 - `hji_reachability.rs` — Hamilton-Jacobi-Isaacs differential-game reachability viability controller (also referenced in the runtime-math safety family above)
 - `mean_field_game.rs` — Mean-field-game Nash equilibrium congestion controller (also referenced above)
 
-The runtime decision logic compiles to compact deterministic guards. The heavy math machinery (theorem proofs, SOS certificate synthesis, formal verification) lives in offline `build.rs` artifacts and proof reports, never in the runtime hot path.
+The runtime decision logic compiles to compact deterministic guards. Proof notes and the supplied-matrix consistency checks live outside the runtime hot path; they are not machine-checked proofs of the named libc invariants.
 
 ### Conformal Risk Engine
 
@@ -766,7 +798,7 @@ Each stage maintains a `Beta(α, β)` distribution initialized to `Beta(1, 1)`. 
 
 ## alien_cs — Concurrency Primitives
 
-The membrane is called on every libc entrypoint. Global locks would create unacceptable contention. The `alien_cs` toolkit in `crates/frankenlibc-membrane/src/` provides lock-free and wait-free primitives beyond what `parking_lot` offers:
+Membrane-gated paths need to avoid global-lock contention. The `alien_cs` toolkit in `crates/frankenlibc-membrane/src/` provides specialized concurrency primitives beyond what `parking_lot` offers; its presence does not mean every libc entrypoint reaches the membrane or every primitive is on a deployed hot path:
 
 | Primitive | Source | Purpose | Size |
 |---|---|---|---:|
@@ -822,9 +854,9 @@ Each parser ships with a `cargo-fuzz` target validating malformed-input behavior
 
 ---
 
-## The Validate-Delegate Pattern
+## The Validate-Delegate Pattern (Where Wired)
 
-Every ABI entrypoint in `crates/frankenlibc-abi/src/` follows a five-step pattern:
+Membrane-gated ABI entrypoints are designed around this five-step pattern:
 
 ```text
 1. runtime_policy::decide()   ← membrane consults risk, mode, and context
@@ -834,7 +866,7 @@ Every ABI entrypoint in `crates/frankenlibc-abi/src/` follows a five-step patter
 5. runtime_policy::observe()  ← record outcome for metrics and healing
 ```
 
-This is structurally enforced. The ABI module files are minimal glue. The real work happens in the membrane and core layers. The shared `runtime_policy.rs` chokepoint (~87 KB) is the only place that decides whether a call proceeds, repairs, or denies.
+This is not universal today. ABI modules also contain strict fast paths, raw-syscall veneers, substantial local ABI logic, and host-backed wrappers. `runtime_policy.rs` is the shared decision point for calls that reach it, but source inspection is required to establish each entrypoint's routing.
 
 ---
 
@@ -895,7 +927,7 @@ LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so /bin/echo hello
 
 ### Requirements
 
-- Linux (x86_64 primary; aarch64 supported and cross-compile-tested)
+- Linux (x86_64 primary; aarch64 has bounded QEMU release/interposition qualification). The x86_64 release artifact targets baseline x86-64 and picks SSE4.2/AVX2/FMA kernels at run time, so no particular CPU generation is required.
 - Rust nightly with `rustfmt` and `clippy` (pinned via `rust-toolchain.toml`)
 - A normal Cargo workspace; no mixed package-manager build system
 
@@ -934,8 +966,8 @@ LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
 ### 5. Run the default repo gates
 
 ```bash
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --all-targets --keep-going
+cargo clippy --workspace --all-targets --keep-going -- -D warnings
 cargo test --workspace
 ```
 
@@ -947,6 +979,25 @@ bash scripts/check_c_fixture_suite.sh
 TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 ```
 
+The smoke script also enforces deployed hardened overhead: separate short
+`strlen`/`memcmp` stack and heap cases must stay within 200 ns per warmed batch
+mean, and both lexical and numeric sort100k must stay within 3x GNU libc and
+2x strict mode. Run only that performance group with
+`bash scripts/ld_preload_smoke.sh --performance-only`; this scoped invocation
+does not run the functional corpus. The same provider-pinned group is available
+through the existing bench entrypoint:
+
+```bash
+cargo bench -p frankenlibc-bench --bench strict_hardened_overhead_harness -- \
+  --deployed "$PWD/target/release/libfrankenlibc_abi.so"
+```
+
+Add `--incumbent /absolute/path/to/earlier.so` to retain a live comparison arm.
+The runner retains raw warmups, measured rows, provider checks and hashes; it
+returns nonzero on a missed budget or failed setup. Each benchmark output
+directory must be empty so a new run cannot overwrite earlier evidence. Set
+`FRANKENLIBC_OVERHEAD_HARNESS_OUT_DIR` to a fresh directory for each Cargo run.
+
 ---
 
 ## Common Commands
@@ -954,8 +1005,8 @@ TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 | Workflow | Command | What it does |
 |---|---|---|
 | Build interpose library | `cargo build -p frankenlibc-abi --release` | Produces `libfrankenlibc_abi.so` |
-| Workspace correctness gate | `cargo check --workspace --all-targets` | Compile validation |
-| Lint gate | `cargo clippy --workspace --all-targets -- -D warnings` | Lint validation |
+| Workspace correctness gate | `cargo check --workspace --all-targets --keep-going` | Compile validation across targets |
+| Lint gate | `cargo clippy --workspace --all-targets --keep-going -- -D warnings` | Lint validation across targets |
 | Test gate | `cargo test --workspace` | Unit + integration coverage |
 | Repo CI gate | `bash scripts/ci.sh` | Project-standard default gate |
 | Support-matrix drift check | `bash scripts/check_support_matrix_maintenance.sh` | Regenerates and validates maintenance report |
@@ -966,7 +1017,8 @@ TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 | Membrane verification | `cargo run -p frankenlibc-harness --bin harness -- verify-membrane --mode both --output /tmp/healing.json` | Runs strict/hardened healing oracle |
 | Benchmarking | `cargo bench -p frankenlibc-bench` | Benchmarks library hot paths |
 | Fuzzing (target) | `cargo +nightly fuzz run <target>` | Runs a `cargo-fuzz` target |
-| aarch64 cross-compile gate | `bash scripts/check_aarch64_crosscompile.sh` | Cross-compile validation |
+| aarch64 cross-compile gate | `bash scripts/check_aarch64_crosscompile.sh` | Rust frontend validation |
+| aarch64 linked-library smoke | `FRANKENLIBC_AARCH64_ARTIFACT=/absolute/path/to/libfrankenlibc_abi.so bash scripts/run_aarch64_smoke.sh run` | Dynamic providers and C behavior in both modes, with foreign-provider controls |
 | L1 dashboard freshness | `bash scripts/check_release_gate.sh` | Top-level claim coherence |
 
 Interpretation note:
@@ -1100,7 +1152,7 @@ C caller
 | `fault-inject` | Targeted fault-injection campaign | Per-case evidence |
 | `tail-stats` | Tail-latency distribution analysis from evidence ring | JSON statistics |
 
-Every subcommand has a paired `*_cli_contract.v1.json` manifest under `tests/conformance/` (68 such manifests currently) enforcing schema, naming, flag shape, JSONL output contract, and policy keys. The contracts themselves are validated by ~50 meta-gates (see [CLI-Contract Manifest Meta-Gates](#cli-contract-manifest-meta-gates) below).
+The repository has 69 `*_cli_contract.v1.json` manifests under `tests/conformance/`, covering schema, naming, flag shape, JSONL output contracts, and policy keys. They are validated by roughly 50 meta-gates (see [CLI-Contract Manifest Meta-Gates](#cli-contract-manifest-meta-gates) below); manifest count alone does not prove a one-to-one executable gate for every subcommand.
 
 ### Healing Oracle Test Matrix
 
@@ -1122,11 +1174,11 @@ Every subcommand has a paired `*_cli_contract.v1.json` manifest under `tests/con
 
 ## Conformance Framework
 
-The project is organized around verification artifacts. Every claim about behavior, ownership, or readiness has a corresponding machine-checkable gate.
+The project is organized around verification artifacts. Coverage is uneven: some claims have executable differential gates, while others have only source/manifest receipts or no historical closure binding yet.
 
 ### Completion-Contract Evidence Framework
 
-`tests/conformance/` contains **258 named `*_completion_contract.v1.json` artifacts** (plus 68 `*_cli_contract.v1.json` manifests for the harness CLI). Each closed bead (`bd-*`) must point at a binding evidence artifact before its closure is accepted by the audit gates.
+`tests/conformance/` contains **282 files matching `*completion_contract*.json`** and **69 files matching `*cli_contract*.json`**. These artifacts are heterogeneous—many are source/manifest receipts, not executed semantic tests—and they do not cover every historical bead closure. Executable closure-evidence coverage is still being repaired under `bd-rc0923-epic-eeuy4f.18`; file count alone is not proof that a closed bead was implemented.
 
 Categories include:
 
@@ -1190,7 +1242,7 @@ Each case collects baseline + preload stdout/stderr, a metadata bundle (mode, ex
 
 ### Fixture Corpus
 
-`tests/conformance/fixtures/` contains 40+ JSON fixture families, each capturing input/output pairs from host glibc. Representative families:
+`tests/conformance/fixtures/` contains 132 top-level JSON fixture files with 94 distinct non-empty `family` values at this snapshot. Representative families:
 
 - Allocator: `allocator`, `stdlib_conversion`, `stdlib_numeric`, `stdlib_sort`
 - String: `string_ops`, `string_memory_full`, `strlen_strict`, `string_strtok`, `memcpy_strict`
@@ -1208,7 +1260,7 @@ These fixtures are the ground truth for differential verification: FrankenLibC's
 
 ### C Integration Fixtures
 
-`tests/integration/` contains 17 C test programs compiled against the produced `libfrankenlibc_abi.so`:
+`tests/integration/` contains 107 C source fixtures at this snapshot. The following older core set is representative, not exhaustive:
 
 | Fixture | What it exercises |
 |---|---|
@@ -1255,15 +1307,15 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 | Property | Mechanism | Confidence |
 |---|---|---|
-| Monotonic safety degradation | Lattice join is commutative, associative, idempotent | Proven by construction |
-| Galois soundness | `γ(α(c)) ≥ c` for all C operations | Proven by construction |
-| Allocation integrity | `P(undetected corruption) ≤ 2⁻⁶⁴` | Bounded by SipHash collision probability |
+| Monotonic safety degradation | Lattice join is commutative, associative, idempotent | Unit/property-test evidence plus proof notes; not machine-checked |
+| Galois soundness | `γ(α(c)) ≥ c` is the intended abstraction/concretization law | Unit/property-test evidence plus proof notes; not established for every deployed ABI path |
+| Allocation integrity | Hardened-arena fingerprint checks use a keyed 64-bit SipHash value | A targeted forgery is bounded by `2⁻⁶⁴` under the keyed-hash assumptions when the check is reached |
 | Use-after-free detection (hardened) | Freed blocks sit in a quarantine queue; access to a quarantined block is recognised | Deterministic while the block is quarantined. A raw C pointer carries no generation, so once the address is reused a stale pointer resolves to the NEW allocation and is not detected (`arena.rs` module doc) |
 | Buffer overflow detection (hardened arena allocations) | Trailing canary checked at `free` | `P(miss) ≤ 2⁻⁶⁴` per corrupted canary; detected when the block is freed, not at the overflowing write |
 | Bloom filter soundness | Zero false negatives | By construction (all insertions are remembered) |
-| Healing completeness | Every libc family has defined healing for every class of invalid input | Enforced by policy-table coverage |
-| SOS certificate validity | Fragmentation, thread safety, size-class invariants | Verified at build time via Cholesky decomposition |
-| Memory model barrier coverage | Minimum atomic site counts per source file | Enforced at build time by `build.rs` audit |
+| Healing policy coverage | Explicitly membrane-gated families map wired validation outcomes to policy actions | Partial; universal per-function/per-invalid-input completeness is not established |
+| Supplied SOS-task consistency | Three supplied Gram matrices are PSD and the generated quadratic terms recompose algebraically | Checked at build time; this does not connect the variables to allocator fragmentation, thread safety, or size-class behavior |
+| Memory-model site inventory | Selected source files retain minimum counted atomic sites | Enforced syntactically by `build.rs`; counts do not prove that the orderings are sufficient |
 
 ### Proof Notes and Obligations Catalog
 
@@ -1281,22 +1333,24 @@ These catch failures that escape direct fixture comparison because the metamorph
 | `sheaf_global_consistency.md` | Cross-shard membrane metadata is sheaf-consistent under overlap |
 | `cpomdp_feasibility.md` | Constrained POMDP repair policy is feasible under the runtime budget |
 
-### Build-Time SOS Certificates
+### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (~1,030 lines) synthesizes and verifies three polynomial invariant certificates:
+`crates/frankenlibc-membrane/build.rs` (1,049 lines at this snapshot) parses three pre-supplied task files and checks their internal algebraic consistency:
 
-| Certificate | What it proves |
+| Task label | What the build actually checks |
 |---|---|
-| Fragmentation | Allocator fragmentation stays within budget bounds |
-| Thread Safety | Concurrent access patterns satisfy safety constraints |
-| Size Class | Size-class routing satisfies allocation invariants |
+| Fragmentation | Its supplied Gram matrix is PSD and participates in the generated quadratic identity |
+| Thread Safety | Its supplied Gram matrix is PSD and participates in the generated quadratic identity |
+| Size Class | Its supplied Gram matrix is PSD and participates in the generated quadratic identity |
 
 Each certificate undergoes:
 
 1. Gram matrix construction
 2. PSD (positive semi-definite) verification via Cholesky decomposition with tolerance `1e-9`
-3. Polynomial identity verification for barrier budget bounds
+3. Algebraic recomposition of an identity constructed from the same matrix (`B = (B - sigma) + sigma`)
 4. Artifact generation as Rust `const` values and JSON soundness reports
+
+The task files contain dimensions, budgets, and matrices but no binding from variables to allocator or concurrency state. The checks therefore validate the supplied artifacts' shape and arithmetic, not the named system invariants (`crates/frankenlibc-membrane/artifacts/sos/*.task`, `build.rs::verify_polynomial_identity`).
 
 ### Build-Time Memory-Model Barrier Audit
 
@@ -1312,11 +1366,11 @@ The same `build.rs` scans source files for atomic operations and verifies minimu
 | `pthread/cond.rs` | 29 | futex |
 | **Total minimum** | **20+** | |
 
-If any source file has fewer atomic sites than expected, the build fails. This prevents silent removal of synchronization barriers during refactoring.
+If any source file has fewer matching atomic sites than expected, the build fails. This catches a decrease in the selected syntactic inventory; it does not establish that each counted ordering is correct or that every required barrier is present.
 
 ### ABI Build Script
 
-`crates/frankenlibc-abi/build.rs` links the GNU ld version script (`libc.map`) into non-debug, non-fuzz `cdylib` builds when present. Debug and fuzz builds skip version-script linking to avoid conflicts with rustc's generated export list. Native packaging checks that need the versioned `libc.so` link the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
+The ABI manifest selects `crates/frankenlibc-abi/build_elf.rs`, which runs the existing `build.rs` policy checks. For Linux x86_64 interpose builds it also supplies `version_scripts/fromfp.map` version nodes for the C23 `fromfp` exports and the corresponding linker handling. This is distinct from applying the full `libc.map` to every default interpose export. Native packaging checks that need the versioned `libc.so` link the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
 
 ---
 
@@ -1364,8 +1418,8 @@ FrankenLibC is deliberately staged.
 
 | Stage | Meaning |
 |---|---|
-| **L0 — Interpose only** | `LD_PRELOAD` deployment; host glibc still in the process |
-| **L1 — Hardened interpose** | Current declared level; hardened mode + maintenance gates + L1 dashboard freshness |
+| **L0 — Interpose only** | Current declared level; `LD_PRELOAD` deployment with host glibc still in the process |
+| **L1 — Hardened interpose** | Promotion target; blocked until the zero-stub and workload/performance gates pass |
 | **L2 — Standalone-ready** | All replacement-blocking gates green; ready to ship a non-preload artifact |
 | **L3 — Standalone** | Fully standalone `libfrankenlibc_replace.so`; no host-glibc deployment dependency |
 
@@ -1374,20 +1428,20 @@ The symbol taxonomy is what makes this staged model legible:
 - `Implemented` + `RawSyscall` symbols apply to both artifacts.
 - `WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
-As of the 2026-09-18 reconciliation against the checked-in `support_matrix.json`, the classified surface is 69.3% native: 2,441 `Implemented` plus 414 `RawSyscall` rows. The remaining 1,264 `WrapsHostLibc` rows are explicit host-backed interpose scope, and the path to L2 and L3 requires eliminating those host-backed rows in addition to closing support-matrix promotion-evidence gaps, semantic-overlay gaps, packaging contracts, and the broader hard-parts work.
+In the checked-in `support_matrix.json` snapshot (generated 2026-10-19), the classified surface is 68.7% native: 2,419 `Implemented` plus 410 `RawSyscall` rows. The remaining surface is 1,272 explicit host-backed `WrapsHostLibc` rows and 18 deterministic-failure `Stub` rows. These are taxonomy counts, not semantic-parity proof; native-promotion and standalone-admission evidence remain tracked by `bd-rc0923-epic-eeuy4f.17`.
 
 ### Today
 
-- Interpose shared library exists and is usable on the curated workload battery
+- Interpose shared library exists; the committed curated-workload result is the historical 2026-09-24 snapshot described above, not fresh HEAD evidence
 - Host glibc is still part of the deployment story because the shipping artifact is interpose-first
 - Support taxonomy is machine-checked and separates native rows from host-backed L1 interpose rows
-- Hardened mode and verification flows are live
+- Hardened mode and verification flows are live on explicitly wired paths
 
 ### Next
 
 - Keep the classified surface clean while closing broader preload, hardened-mode, and artifact-packaging gaps
 - Tighten replacement gates so "replace-ready" is mechanically enforced
-- Maintain L1 dashboard freshness as new evidence lands
+- Eliminate the 18 explicit stubs and keep the L1 objective evidence current
 
 ### End state
 
@@ -1404,23 +1458,23 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 |---|---|---|---|
 | `string` | Strong native ownership | Full classified surface, hardened single-pass kernels, tracked-region bound sweep, internal-alias differentials | Continued metamorphic and fuzz coverage expansion |
 | `stdio` | Native end-to-end | Full printf engine, scanf, FILE I/O, `_IO_*` internals, memstreams, vis() family | Edge-case stress closure |
-| `malloc` | Production-grade | Size-class slabs, thread magazines, large mmap, generational arena, fingerprint + canary, EBR quarantine | Long-tail concurrency stress |
-| `pthread` | Native, futex-backed | Mutex (3 types), condvar (2 clocks), rwlock (3 modes), TLS keys, cancellation, named threads, futex2 | Edge-case scheduling and stress closure |
-| `resolver` | Native bootstrap path | Numeric, `/etc/hosts`, `/etc/services`, multi-address addrinfo, IDNA, b64, metamorphic round-trip | Full NSS / DNS network backends (out of bootstrap scope) |
+| `malloc` | Split deployed paths | Strict mode uses the segment allocator with host fallback; hardened mode normally uses the generational arena. Bootstrap/reentry and uninitialized-pipeline fallbacks bypass that arena. The core slab/magazine model is not the deployed provider | Multi-threaded allocation architecture and performance (`bd-rc0923-epic-eeuy4f.26`) |
+| `pthread` | Mixed native + host-backed | Native mutex/condvar/rwlock paths; thread creation, join, and cancellation use host NPTL by default under preload | Native lifecycle/cancellation and stress closure |
+| `resolver` | Native resolver with bounded NSS coverage | Numeric, `/etc/hosts`, nsswitch `hosts:` ordering, native UDP/TCP DNS, CNAME/PTR, multi-address addrinfo, IDNA, b64 | NSS module breadth and policy/concurrency closure (`bd-rc0923-epic-eeuy4f.19`) |
 | `locale` | Native bootstrap | C/POSIX, `setlocale`, `localeconv`, `nl_langinfo`, ctype/wchar locale variants, catgets | Full localedata breadth |
-| `iconv` | Phase 1 | UTF-8 ↔ ISO-8859-1 / UTF-16LE / UTF-32; deterministic strict + hardened fixtures; locked scope ledger | Full `iconvdata` breadth |
+| `iconv` | Broad native codec engine | About 300 `Encoding` variants, `//TRANSLIT`/`//IGNORE`, and a per-codec scope ledger; generated tables dominate source size | Per-codec conformance and deterministic table-generation closure |
 | `loader / dlfcn` | Phase-1 native + host-backed interpose | Main-program handles plus self-contained pathname ELF64 DSO `dlopen`/`dlsym`/`dlclose`; native `dlerror`; host-backed `dladdr` / `dl_iterate_phdr` metadata in interpose builds | Dependency-loading, constructors, TLS, and broader replacement loader closure |
 | `startup` | Phase-0 native | `__libc_start_main`, init/fini array order proofs, errno TLS isolation proof, atexit order proof | Full `csu`/TLS init-order hardening for replacement |
-| `runtime_math` | Extensive live code | ~71 controllers, build-time SOS certificates, snapshot goldens, linkage checks | Continued integration and proof-quality closure |
+| `runtime_math` | Mode-dependent live code | ~71 modules; hardened profiles reach many controllers while strict hot paths can bypass the kernel; build-time supplied-matrix consistency checks, snapshot goldens, linkage checks | Continued integration and proof-quality closure |
 
 ### Hard-Parts Truth Table
 
 - `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
-- `resolver`: `IMPLEMENTED_PARTIAL` — bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign.
+- `resolver`: `IMPLEMENTED_PARTIAL` — source implements numeric/files/native DNS lookup and native addrinfo-list disposal, with installed NSS modules loaded through the host bridge. The support taxonomy still labels `getaddrinfo` and `freeaddrinfo` host-backed; that classification needs reconciliation with provider evidence. Deferred scope: NSS breadth, policy/concurrency closure and full retry/cache/poisoning hardening qualification.
 - `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
-- `iconv`: `IMPLEMENTED_PARTIAL` — phase-1 codec core and fixtures exist, and `iconv_open`/`iconv`/`iconv_close` are native bootstrap implementations in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure.
+- `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the engine contains about 300 `Encoding` variants; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope is per-codec conformance and deterministic table-generation closure, not the obsolete four-codec phase-1 breadth.
 
 ---
 
@@ -1526,11 +1580,11 @@ cargo test -p frankenlibc-harness --test cli_contract_manifest_paired_gate_file_
 cargo test -p frankenlibc-harness --test cli_contract_manifest_jsonl_required_fields_unique_test
 ```
 
-Every harness CLI subcommand must have a paired `*_cli_contract.v1.json` manifest and matching gate test; both are subject to ~50 meta-gates.
+CLI-contract manifests are subject to roughly 50 meta-gates. The repository currently has 69 manifests; their existence does not by itself prove one executable gate per harness subcommand.
 
-### Build-script SOS / barrier audit fails
+### Build-script matrix / atomic-site check fails
 
-The membrane crate's `build.rs` will fail loudly if Cholesky verification trips or a source file falls below its atomic-site floor. Read the build output; the failing certificate or file is named.
+The membrane crate's `build.rs` fails if supplied-matrix Cholesky verification trips or a selected source file falls below its atomic-site floor. Read the build output; the failing task or file is named. Passing is an artifact-consistency/site-count result, not a proof of the named runtime invariant.
 
 ---
 
@@ -1538,11 +1592,11 @@ The membrane crate's `build.rs` will fail loudly if Cholesky verification trips 
 
 ### Is FrankenLibC a drop-in replacement for glibc today?
 
-The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`, with 69.3% native coverage in the classified surface and a checked strict + hardened real-world smoke battery at 189 passes / 0 fails / 4 optional skips. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the 30.7% host-backed wrapper subset and by L2/L3 contracts; it is not yet declared ready. The interpose artifact is real and works on many real-program smoke cases today, but the checked smoke artifact is the source of truth for workload status.
+The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 68.7% of rows as native/direct-syscall, and the historical 2026-09-24 smoke artifact reports 189 passes / 0 fails / 4 optional skips plus 1 xfail at source `a8a4110b…`. The matrix includes the NSS module dependency reclassification described above; the smoke result is historical rather than fresh HEAD evidence. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed and stub subsets and by L2/L3 contracts; it is not yet declared ready.
 
 ### Does it implement a lot of symbols natively?
 
-Yes. The current classified surface has **4,119 symbols**: 2,441 `Implemented`, 414 `RawSyscall`, 1,264 `WrapsHostLibc`, 0 `GlibcCallThrough`, and 0 `Stub`. The native subset is 2,855 symbols (69.3%).
+Yes. The current classified surface has **4,119 symbols**: 2,419 `Implemented`, 410 `RawSyscall`, 1,272 `WrapsHostLibc`, 0 `GlibcCallThrough`, and 18 `Stub`. The native subset is 2,829 symbols (68.7%).
 
 ### Do the CVE validation scripts prove FrankenLibC would have prevented famous exploits?
 
@@ -1558,7 +1612,7 @@ Yes. The architecture and implementation are spec-first and verification-driven,
 
 ### Is the runtime math real code or just naming theater?
 
-Real code. `crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules with live execution paths, snapshot goldens, linkage checks, and decision recordings. The heavy theorem machinery (SOS synthesis, Cholesky verification, proof notes, and future proof artifacts) runs outside the hot path.
+Real code. `crates/frankenlibc-membrane/src/runtime_math/` is ~71 modules with live hardened-mode execution paths, snapshot goldens, linkage checks, and decision recordings; strict hot paths can bypass the kernel. The build performs supplied-matrix Cholesky consistency checks, while machine-checked theorem work remains future scope.
 
 ### Should I trust the README or the generated reports?
 
@@ -1578,11 +1632,11 @@ Because libc risk is broader than allocation. String APIs, stdio, resolver paths
 
 ### Why are there so many JSON and JSONL artifacts?
 
-Because the project reconciles implementation claims, evidence, and release readiness mechanically rather than socially. The 258 completion contracts (and 68 CLI contracts) under `tests/conformance/` are the bookkeeping infrastructure that makes "claim without supporting evidence" not a valid state.
+Because the project is building machinery to reconcile implementation claims, evidence, and release readiness. The 282 completion-contract files and 69 CLI-contract files are useful bookkeeping, but their existence does not yet make unsupported closure impossible; executable coverage and historical closure binding remain open work (`bd-rc0923-epic-eeuy4f.18`).
 
 ### What does "native coverage" actually mean?
 
-It means the share of symbols in `support_matrix.json` classified as `Implemented` (native Rust) or `RawSyscall` (direct Linux syscall). The current count is 2,855 / 4,119, or 69.3% native. The remaining 1,264 `WrapsHostLibc` rows are host-backed L1 interpose scope; zero rows are opaque `GlibcCallThrough` and zero rows are `Stub`.
+It means the share of symbols in `support_matrix.json` classified as `Implemented` (native Rust) or `RawSyscall` (direct Linux syscall). The current count is 2,829 / 4,119, or 68.7% native. The remaining surface includes 1,272 host-backed `WrapsHostLibc` rows, zero opaque `GlibcCallThrough` rows, and 18 explicit `Stub` rows.
 
 ### What's the difference between "interpose" and "replace"?
 
@@ -1598,18 +1652,18 @@ Via `thread_local! { static ERRNO: Cell<i32> = ... }`. `__errno_location()` retu
 |---|---|
 | `frankenlibc-core` | `#![deny(unsafe_code)]` (SIMD/arena modules `#[allow(unsafe_code)]` with `// SAFETY:` per block) |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` (arena/fingerprint modules `#[allow(unsafe_code)]` with `// SAFETY:` per block) |
-| `frankenlibc-abi` | `#![allow(unsafe_code)]` (ABI boundary is inherently unsafe; every function body is minimal: validate via membrane, delegate to core) |
+| `frankenlibc-abi` | `#![allow(unsafe_code)]` (the ABI boundary is inherently unsafe; entrypoints mix membrane-gated delegation, raw syscalls, local ABI logic, and host-backed wrappers) |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` |
 | `frankenlibc-bench` | `#![allow(unsafe_code)]` (benchmarks call `extern "C"`) |
 | `frankenlibc-fuzz` | `#![allow(unsafe_code)]` (fuzz harnesses call `extern "C"`) |
 
-Unsafe is permitted only in explicitly documented boundary modules. Memory safety is achieved through the TSM, not by pretending FFI unsafety doesn't exist.
+Unsafe is permitted only in explicitly documented boundary modules. The TSM adds validation and repair on the entrypoints wired to it; bootstrap, strict fast paths, raw syscalls, and host-backed wrappers retain their own safety obligations.
 
 ---
 
 ## How LD_PRELOAD Interposition Works
 
-`LD_PRELOAD` tells the Linux dynamic linker to load a shared library before any others. When a program calls `malloc`, `strlen`, or any libc function, the linker resolves the symbol to FrankenLibC's implementation first. The classified ABI surface is 69.3% native, and the remaining host-backed `WrapsHostLibc` rows are explicit in `support_matrix.json`. Internal fallback paths such as the `__libc_start_main` host fallback chain in `startup_abi.rs` or `host_resolve.rs` for `dlvsym_next` lookups are part of why the shipping artifact is interpose-first, not standalone replace.
+`LD_PRELOAD` tells the Linux dynamic linker to load a shared library before any others. When a program calls `malloc`, `strlen`, or any libc function, the linker resolves the symbol to FrankenLibC's implementation first. The classified ABI surface is 68.7% native, and the host-backed and stub rows are explicit in `support_matrix.json`. Internal fallback paths such as the `__libc_start_main` host fallback chain in `startup_abi.rs` or `host_resolve.rs` for `dlvsym_next` lookups are part of why the shipping artifact is interpose-first, not standalone replace.
 
 FrankenLibC is usable for many experiments without relinking: same binary, same kernel, same filesystem, different libc implementation behind the ABI boundary.
 
@@ -1681,7 +1735,7 @@ Do not rely on adjectives in the README. Use the artifacts.
 
 | Question | Where to look |
 |---|---|
-| How much of the exported surface is native? | `support_matrix.json` and `tests/conformance/replacement_levels.json` (69.3% as of the 2026-09-18 reconciliation) |
+| How much of the exported surface is native? | `support_matrix.json` and `tests/conformance/replacement_levels.json` (68.7% in the source-derived 2026-10-19 snapshot) |
 | Is a symbol really implemented or still delegated? | `support_matrix.json` |
 | Does the repo still reconcile code and docs? | `bash scripts/check_support_matrix_maintenance.sh` |
 | Does interposition work on actual programs? | `bash scripts/ld_preload_smoke.sh` |
@@ -1713,7 +1767,7 @@ bash scripts/check_release_gate.sh
 | `tests/conformance/runtime_env_inventory.v1.json` | Machine-generated inventory of documented `FRANKENLIBC_*` env vars |
 | `tests/conformance/iconv_codec_scope_ledger.v1.json` | Locked iconv phase-1 scope |
 | `tests/conformance/ld_preload_smoke_summary.v1.json` | Canonical curated smoke summary |
-| `tests/conformance/*_completion_contract.v1.json` | 258 binding evidence artifacts for closed beads |
+| `tests/conformance/*completion_contract*.json` | 282 heterogeneous evidence/receipt artifacts; not universal closure proof |
 | `tests/conformance/*_cli_contract.v1.json` | Per-subcommand harness CLI contracts |
 | `tests/runtime_math/golden/` | Runtime-math golden snapshots |
 | `target/conformance/*.json` / `*.jsonl` | Generated local evidence from harness runs |
@@ -1756,15 +1810,15 @@ FrankenLibC's position is straightforward: if the ABI boundary is where the ambi
 These principles are explicit, not implicit. Every decision in the repo defers to them.
 
 1. **ABI is the contract.** Symbol names, calling conventions, version tags, `errno`, modes, secure-mode classification, and process-level semantics are *the* deliverable. Anything that breaks the contract gets backed out, no matter how clever.
-2. **Validate before delegate.** No core kernel runs on caller-supplied state before the membrane has classified it. The five-step pattern is structurally enforced.
+2. **Make validation coverage explicit.** A membrane-gated path validates before its protected operation. Current coverage is path- and mode-specific; strict compatibility paths may bypass the full pipeline and must be documented as such.
 3. **Repairs are deterministic.** Hardened mode never "tries something different" — it picks the prescribed healing action for the (family, condition) pair every time. Replay is a property, not an aspiration.
 4. **Evidence is mechanical, not social.** Claims that cannot be cited from a generated artifact under `tests/conformance/` are not load-bearing. The `docs_semantic_claims.v1.json` claim-field contract enforces this for README and FEATURE_PARITY prose.
-5. **Fail closed.** Drift, missing evidence, stale source pins, or claim/evidence disagreement abort the build or the gate. The default state of an unverified claim is *rejected*.
+5. **Fail closed where a gate exists.** Drift, missing evidence, stale source pins, or claim/evidence disagreement should fail the responsible gate. Because historical coverage is incomplete, an unverified claim remains unproven rather than being promoted by prose.
 6. **No tech debt.** No backwards-compatibility shims, no wrapper-around-wrapper layers, no `_v2` files. We are pre-1.0; the right way is the only way.
 7. **Clean-room, not transliteration.** Behavior is driven by spec, fixtures, and verification artifacts. Reference glibc is consulted; never copied.
 8. **No scripted bulk edits.** Every refactor is manual or routed through parallel subagents that understand the change. Regex-based source rewrites are banned because they create more correctness problems than they solve.
 9. **Developer transparency.** Contributors write normal Rust APIs and policy tables. The heavy math machinery compiles to compact deterministic guards in the hot path; theorem-proving stays offline.
-10. **One bead, one outcome.** Every implementation effort is anchored to a `bd-*` issue with a binding evidence artifact. "Closed" means "closure is backed by JSONL receipt." The audit gate enforces it.
+10. **One bead, one outcome.** Implementation work is anchored to a `bd-*` issue and should close on cited executable evidence. Historical closure-to-artifact coverage is incomplete and under repair in `bd-rc0923-epic-eeuy4f.18`; do not infer compliance from a closed status alone.
 
 These principles are why the project has so many JSON artifacts, so many gates, so much fixture work, and so few wrappers.
 
@@ -1772,7 +1826,7 @@ These principles are why the project has so many JSON artifacts, so many gates, 
 
 ## Inside the Validation Pipeline
 
-Each membrane stage has a specific job, a specific cost target, and a specific *failure mode* it is designed to surface before the stage that follows.
+When an entrypoint invokes full pointer validation, each membrane stage has a specific job, cost target, and failure mode. The sequence below is the membrane design, not a statement that every exported ABI call executes every stage.
 
 ### Stage 0 — Runtime Policy Decision
 
@@ -1802,11 +1856,11 @@ Each thread carries a 1,024-entry direct-mapped cache indexed by `ptr >> 4` (16-
 
 ### Stage 5 — Fingerprint Check (~20 ns)
 
-The 24-byte header sitting at `user_base − 24` is hashed with SipHash-2-4 keyed by allocation metadata. If the hash doesn't match the recomputation, the header has been corrupted (buffer underflow, foreign write, or an outright fake pointer). Probability of an undetected collision is bounded by 2⁻⁶⁴.
+For a hardened-arena allocation, the 24-byte header at `user_base − 24` carries a keyed SipHash-derived value plus generation and size. If a reached check does not match the recomputation, the header has been corrupted (buffer underflow, foreign write, or an outright fake pointer). A targeted forgery is bounded by 2⁻⁶⁴ under the keyed-hash assumptions.
 
 ### Stage 6 — Canary Check (~10 ns)
 
-The 8-byte trailing canary at `user_base + user_size` is derived from the same SipHash key. Corruption here means a write went past the allocation end. Together with the header check, the membrane closes both buffer-underflow and buffer-overflow detection at the same cryptographic strength.
+The 8-byte trailing canary at `user_base + user_size` is derived from the same key. A mismatch when the check is reached reports that bytes past the allocation end changed. Strict segment/host allocations do not carry this metadata, and an unchecked raw write is not intercepted at the instant it happens.
 
 ### Stage 7 — Bounds + Policy Check (~5 ns)
 
@@ -1814,13 +1868,15 @@ Final per-call check: does the proposed access fit inside `[user_base, user_base
 
 ### Decision
 
-The pipeline outputs `Allow`, `Heal(action)`, or `Deny`. Each ABI entrypoint then routes to the safe-Rust kernel, applies the healing action (if hardened), or returns the family-specific failure (if strict). The whole outcome, including elapsed nanoseconds, decision, and any healing action, is fed back into `runtime_policy::observe()` so the runtime-math controllers update their state for the *next* call.
+The validation pipeline returns a pointer-classification outcome, while the runtime-policy layer can choose `Allow`, `FullValidate`, `Repair`, or `Deny` on calls routed through it. Individual ABI entrypoints decide how those results affect delegation. Hardened callers can apply wired repairs and call `runtime_policy::observe()`; strict hot paths may bypass the kernel entirely. Source-level routing, not this generic diagram, is authoritative.
 
-The ordering is not arbitrary. Stages 1-3 are cheap, can reject early, and remove the bulk of "obviously not ours" cases. Stages 4-6 are more expensive but cryptographically strong. Stage 7 is policy-aware. The Thompson sampling oracle (see below) continuously learns which stage ordering minimizes expected total latency for the observed workload, and re-packs the optimal ordering into a single `u64` (4 bits per stage) every 128 calls.
+The ordering is not arbitrary. Stages 1-3 are cheap, can reject early, and remove the bulk of "obviously not ours" cases. Stages 4-6 are more expensive but cryptographically strong. Stage 7 is policy-aware. The oracle ranks stages by posterior-mean exit probability divided by cost—a greedy Weitzman-style index, not Thompson sampling—and re-packs the ordering into a single `u64` (4 bits per stage) every 128 calls.
 
 ---
 
 ## Allocator: The Math Behind the Geometry
+
+This section describes the core slab/magazine allocator model under `crates/frankenlibc-core/src/malloc/`. The deployed ABI allocator does not currently call that model: strict mode uses the ABI segment allocator with host fallback, and hardened mode uses the membrane arena (`crates/frankenlibc-abi/src/malloc_abi.rs`).
 
 ### Why 32 size classes?
 
@@ -1870,7 +1926,7 @@ A small `static` bump allocator services allocations during early process startu
 
 ## Generational Arena: Lifecycle State Machine
 
-Every allocation moves through a deterministic lifecycle:
+Every allocation owned by the hardened generational arena moves through this lifecycle:
 
 ```
                     alloc()
@@ -1926,7 +1982,7 @@ The header layout `[hash:8][generation:4][size:8]` is laid out so that:
 - The generation is the verify-critical quantity for UAF
 - The hash binds the metadata to the allocation address, defeating "swap two headers" attacks
 
-Trailing canaries derive from the same SipHash key but use a different domain separator. An adversary who corrupts both header and canary needs to forge a 64-bit MAC twice with no key: `P(success) ≤ 2⁻¹²⁸` if treated as independent forgeries, `≤ 2⁻⁶⁴` if treated as a single coordinated guess.
+Trailing canaries derive from the same SipHash key but use a different domain separator. The documented bound is `P(success) ≤ 2⁻⁶⁴` for a coordinated 64-bit forgery; the implementation does not establish the independence needed to multiply header and canary probabilities.
 
 The fingerprint and canary together are a *detection* mechanism, not an *exclusion* mechanism for an attacker who has already achieved arbitrary write. The membrane's job is to make corruption visible, not to make it impossible.
 
@@ -1970,7 +2026,7 @@ After the terminal state is reached, every subsequent call observes the resolved
 - **IPC:** `semop`, `msgsnd`, `msgrcv`, `shmat`, SysV ID space tracked through the symplectic-reduction controller
 - **Namespaces / mount:** `unshare`, `setns`, `mount`, `umount2`, `move_mount`, `fsopen`, `fsmount`, `fsconfig`
 
-Every wrapper has explicit safety documentation. The membrane crate's build-time barrier audit enforces that the wrappers maintain the required atomic-barrier coverage for cross-thread visibility.
+The wrappers are intended to carry explicit safety documentation. The membrane build script does not audit this syscall directory: its atomic-site inventory scans a selected file list and only checks source-pattern counts, not the correctness of wrapper orderings.
 
 As of Phase 9, **zero `libc::syscall` callthroughs remain** in the ABI surface (Epic `bd-h5x`). The library talks to the kernel directly.
 
@@ -2015,7 +2071,7 @@ A 256-entry circular buffer tracks recent scores. Thresholds are quantile-calibr
 - `full_threshold = Q_{1-α/4}`; scores above this trigger exhaustive checks
 - Recalibration runs every `N = 64` observations or on alarm
 
-An anytime-valid e-process accumulates evidence on the log scale. When the e-process exceeds `10.0`, the engine enters alarm mode: every call gets `Full` validation until the e-process subsides. The e-process formulation gives finite-sample correctness without needing to know the workload's score distribution in advance.
+An e-process-inspired monitor accumulates likelihood-ratio evidence on the log scale. When it crosses the configured alarm threshold, the engine requests `Full` validation. The implementation clamps `log(e)` to `[-20, 50]` and uses fixed-point updates (`runtime_math/eprocess.rs`), so the production state is a bounded sequential alarm heuristic; the repository does not claim the unclamped anytime-valid guarantee for this implementation.
 
 The math here is conformal prediction (Vovk et al. 2005) wrapped around a per-family conformal risk-control envelope. The validation-depth decision ends up calibrated against the observed call distribution instead of against a hand-picked threshold that ages badly.
 
@@ -2055,7 +2111,7 @@ glibc binaries built before C11 frequently reference internal libio symbols: `__
 
 In earlier phases these were `GlibcCallThrough` (the membrane delegated to the host libc's `_IO_*` routines). In Phase 6 (per the CHANGELOG) and continued through Phase 9, every `_IO_*` symbol in the classified surface was nativized:
 
-- The `FILE` struct layout is a Rust type that's binary-compatible with glibc's `_IO_FILE` for the parts that callers may peek into.
+- Native streams normally receive glibc-layout handles whose public flag, offset, orientation, and read/write-window fields are mirrored for common inline/gnulib access. Internal state lives in a separate Rust registry, and handle-table exhaustion falls back to legacy synthetic IDs; this is partial field compatibility, not wholesale `_IO_FILE_plus` equivalence (`stdio_abi.rs::alloc_stream_handle`).
 - The vtable-style dispatch (`__overflow` → buffer-grow-and-write) is replaced by an explicit method dispatch on the Rust `Stream` type.
 - Line-buffered semantics use the reverse-scan optimization (`rposition`) to keep flush cost proportional to the last newline, not the buffer size.
 - The `unget` path supports LIFO byte pushback for `ungetc` correctness.
@@ -2121,11 +2177,11 @@ The list is not a "we used all the math" trophy. The design audit rejects shortc
 
 ## Evidence Ledger and Replay
 
-`runtime_math/evidence.rs` defines a structured per-call evidence symbol: `(timestamp, family, decision, latency_ns, healing_action, controller_state_hash)`. The evidence ledger is a lock-free ring buffer in shared memory; consumers (the harness, metrics scrapers, or external replay tools) read from it without back-pressure on the producer.
+`runtime_math/evidence.rs` defines a structured evidence-record type: `(timestamp, family, decision, latency_ns, healing_action, controller_state_hash)`. The lock-free ring records adverse kernel decisions and sampled non-adverse decisions; it is not one record per libc call, and calls that bypass the kernel do not appear.
 
 Two consumers matter most:
 
-1. **Runtime metrics:** atomic counters in `metrics.rs` aggregate decisions by `(family, decision)` pair. The counters are scraped by the harness for end-of-run summaries.
+1. **Membrane metrics:** `metrics.rs` exposes 14 process-wide aggregate counters for validations, cache/bloom/arena/fingerprint/canary outcomes, and selected healing categories. They are not keyed by `(family, decision, profile)`; family/symbol labels are supplied only when exporting a snapshot.
 2. **Replay verifier:** the JSONL record format is declared in code (`crates/frankenlibc-membrane/src/runtime_math/evidence.rs`); the gate config lives in `tests/conformance/runtime_evidence_replay_gate.v1.json` and is consumed by the harness's `validate-runtime-evidence-rows` subcommand. This is how `deterministic_replay.md` is operationalized into a gate.
 
 Bead `bd-fp4tm.6` ("workload evidence loop handoff") landed the end-to-end pipeline in Phase 13.
@@ -2139,11 +2195,11 @@ Tests in this repo come in four distinct *kinds*. They are not interchangeable.
 | Kind | What it proves | Where it lives |
 |---|---|---|
 | **Unit** | One Rust module behaves correctly on its own contract | inline `#[cfg(test)]` in every component crate |
-| **Fixture / Differential** | FrankenLibC output for a given input matches host glibc output for the same input | `tests/conformance/fixtures/` (40+ families) |
+| **Fixture / Differential** | FrankenLibC output for a given input matches host glibc output for the same input | `tests/conformance/fixtures/` (132 JSON files; 94 distinct non-empty `family` values at this snapshot) |
 | **Metamorphic** | An algebraic relation holds between two related calls (round-trip, monotonicity, commutativity) even when the absolute output is hard to enumerate | `tests/conformance/*_metamorphic_*.v1.json` |
 | **Property-based** | A randomized invariant holds across thousands of generated inputs | `proptest` harnesses under each crate's tests |
 | **Fuzz (coverage-guided)** | The implementation does not crash, hang, or violate memory safety on adversarial input | `crates/frankenlibc-fuzz/fuzz_targets/` (66 targets) |
-| **Integration (C)** | A real C program linked against the produced `.so` works correctly | `tests/integration/*.c` (17 fixtures) |
+| **Integration (C)** | A real C program linked against the produced `.so` works correctly | `tests/integration/**/*.c` (107 source fixtures at this snapshot) |
 | **Smoke (`LD_PRELOAD`)** | A real binary runs under interposition with output and latency parity | `scripts/ld_preload_smoke.sh` |
 | **Healing-oracle** | Hardened mode applies the prescribed healing action for each unsafe condition | `verify-membrane` harness CLI |
 | **Snapshot / golden** | A generated artifact (runtime-math kernel output, fixture pack, evidence ledger) hasn't drifted | `tests/runtime_math/golden/` + `scripts/snapshot_gate.sh` |
@@ -2157,7 +2213,9 @@ Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) 
 
 ## Cargo Profile and Build Configuration
 
-The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). LTO, a single codegen unit and stripping are untried tuning for the shipped artifact, not current settings. Every crate is compiled with `-Ctarget-feature=+avx2,+fma` (`.cargo/config.toml`), so the default artifact requires an x86-64-v3 CPU; on older CPUs an IFUNC-time check exits with a clear message instead of SIGILL (bd-rc0923-epic-eeuy4f.13).
+The workspace inherits Cargo's release defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`), with a package override setting **`codegen-units = 1` for `frankenlibc-abi`** so versioned math entries share an ELF object. LTO and stripping are not enabled for the default release artifact.
+
+The default target is **baseline x86-64** (`.cargo/config.toml` adds no target features). Its SSE4.2/AVX/AVX2/AVX-512 string and memory kernels and AVX2+FMA math variants require runtime dispatch. `scripts/check_baseline_isa.sh` qualifies an actual artifact using an objdump allow-list, C fixtures and selected programs under `qemu-x86_64 -cpu Nehalem` and `-cpu qemu64`. Source configuration alone is not that artifact qualification. The `release-x86-64-v3` profile (`cargo build -p frankenlibc-abi --profile release-x86-64-v3`, output in `target/release-x86-64-v3/`) enables `+avx2,+fma` for A/B benchmarking and requires those CPU extensions; it is not the default release artifact.
 
 `Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-08-31`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
 
@@ -2196,7 +2254,7 @@ The two companion crates (`asupersync-conformance`, `ftui-harness`) are explicit
 |---|---|---|
 | `frankenlibc-core` | `#![deny(unsafe_code)]` | SIMD modules and the arena layer get `#[allow(unsafe_code)]` with per-block `// SAFETY:` comments |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena / fingerprint / page-oracle modules `#[allow]` with `// SAFETY:` |
-| `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe; every function is minimal: validate via membrane, delegate to core |
+| `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe; entrypoints use path-specific membrane, raw-syscall, local, or host-backed logic |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | The test harness never needs unsafe |
 | `frankenlibc-bench` | `#![allow(unsafe_code)]` | Benchmarks call `extern "C"` |
 | `frankenlibc-fuzz` | `#![allow(unsafe_code)]` | Fuzz harnesses call `extern "C"` |
@@ -2206,7 +2264,7 @@ Rules:
 1. Unsafe is permitted only in explicitly documented boundary modules
 2. Every unsafe block must have a `// SAFETY:` comment stating its invariants and preconditions
 3. Core algorithmic behavior stays in safe Rust
-4. Memory safety is achieved via the TSM, not by pretending FFI unsafety doesn't exist
+4. The TSM hardens the paths wired to it; unsafe ABI, bootstrap, raw-syscall, and host-wrapper paths remain explicit review obligations
 
 No script-based bulk source rewrites are permitted (AGENTS.md). Manual edits or parallel subagents only.
 
@@ -2216,7 +2274,7 @@ No script-based bulk source rewrites are permitted (AGENTS.md). Manual edits or 
 
 ### For operators and platform engineers
 
-You have a production Linux fleet and want to layer some safety or observability on glibc-linked binaries without rebuilding them. Build `libfrankenlibc_abi.so`, deploy via your existing config-management tool, and start with `FRANKENLIBC_MODE=strict` on non-critical workloads. The structured runtime log (`FRANKENLIBC_LOG`) gives you JSONL evidence of every membrane decision. Promote to hardened on suspect workloads once you have baseline data.
+You have a production Linux fleet and want to experiment with safety or observability on glibc-linked binaries without rebuilding them. Build `libfrankenlibc_abi.so`, start with `FRANKENLIBC_MODE=strict` on non-critical workloads, and treat the current artifact as pre-production. `FRANKENLIBC_LOG` records heals, denials, and an exit summary; allowed calls and paths that bypass the kernel are not logged (`runtime_policy.rs`).
 
 ### For security researchers
 
@@ -2228,7 +2286,7 @@ The crate layout mirrors how the system works: ABI → membrane → core → har
 
 ### For conformance auditors
 
-`bash scripts/ci.sh` is the canonical default gate. `bash scripts/check_release_gate.sh` checks top-level claim coherence. `cargo run -p frankenlibc-harness --bin harness -- reality-report` generates a machine-readable current-state snapshot. The 258 completion-contract JSONLs under `tests/conformance/` are the bookkeeping evidence; the 68 CLI-contract JSONLs validate the harness CLI surface itself.
+`bash scripts/ci.sh` is the canonical default gate. `bash scripts/check_release_gate.sh` checks top-level claim coherence. `cargo run -p frankenlibc-harness --bin harness -- reality-report` generates a machine-readable current-state snapshot. The 282 completion-contract JSON files are heterogeneous bookkeeping artifacts; the 69 CLI-contract JSON files describe the harness CLI surface.
 
 ### For language / API designers
 
@@ -2245,8 +2303,8 @@ Run the curated preload smoke battery: `TIMEOUT_SECONDS=10 bash scripts/ld_prelo
 The default gate is `bash scripts/ci.sh`, which runs:
 
 1. `cargo fmt --check`
-2. `cargo check --workspace --all-targets`
-3. `cargo clippy --workspace --all-targets -- -D warnings`
+2. `cargo check --workspace --all-targets --keep-going`
+3. `cargo clippy --workspace --all-targets --keep-going -- -D warnings`
 4. `cargo test --workspace`
 5. Repo-standard drift checks (`scripts/check_*.sh` for support-matrix, runtime env, claim fields)
 
@@ -2255,12 +2313,12 @@ Additional gates routinely run:
 | Gate | What it checks |
 |---|---|
 | `check_support_matrix_maintenance.sh` | Symbol classification drift between source and the maintenance report |
-| `check_c_fixture_suite.sh` | All 17 C integration fixtures compile and run |
+| `check_c_fixture_suite.sh` | C integration-fixture compilation/execution gate (107 `.c` files exist at this snapshot) |
 | `check_conformance_fixture_pipeline.sh` | Fixture capture, replay, and verification round-trip |
 | `ld_preload_smoke.sh` | Real-program interposition in both modes |
 | `check_allocator_e2e.sh` | Concurrent alloc/free with glibc parity diff |
-| `check_cve_uaf_validation.sh` | Use-after-free detection against known CVE patterns |
-| `check_cve_heap_overflow_validation.sh` | Heap-overflow detection against known CVE patterns |
+| `check_cve_uaf_validation.sh` | CVE manifest/trigger presence, C-trigger compilation, declared pattern/action coverage; it does not execute a vulnerable upstream program |
+| `check_cve_heap_overflow_validation.sh` | Heap-overflow manifest/trigger presence, C-trigger compilation, declared CWE/action coverage; it does not execute an end-to-end exploit |
 | `check_anytime_valid_monitor.sh` | Sequential testing monitor correctness |
 | `check_changepoint_drift.sh` | Bayesian change-point detection |
 | `check_pressure_sensing.sh` | Runtime pressure sensing |
@@ -2300,12 +2358,12 @@ The bundle gives you a real-world stress test surface: run any Gentoo ebuild's t
 
 Most "safer libc" projects are either (a) a wrapper that you must adopt by changing your code, or (b) a sanitizer that needs recompilation and shifts behavior visibly. FrankenLibC's TSM is transparent in a specific technical sense:
 
-- **Caller-invisible.** From the C program's perspective, every call goes through `malloc`, `strlen`, `read`, etc. The symbols, calling convention, errno discipline, and return values match glibc.
-- **Replay-deterministic.** Identical inputs and runtime evidence reproduce identical outputs across runs and across machines (modulo the explicit RNG-seeded code paths).
-- **Auditable.** Every repair, every denial, every fast-path decision is emittable as a structured evidence record. Nothing is "magic that just happened."
-- **Mode-coherent.** Strict mode preserves compatibility-relevant behavior; hardened mode adds repairs that are deterministic refinements of the underlying POSIX contract. Neither mode introduces undocumented behavior.
+- **Caller-invisible at the ABI boundary.** Interposed calls retain the C symbol and calling convention; errno and return-value parity are established only where the relevant source path and differential gate cover them.
+- **Deterministic on bounded paths.** Given the same validated inputs and controller state, repair selection is deterministic. The repository does not establish machine-independent replay for every syscall-, time-, scheduling-, or RNG-dependent path.
+- **Auditable where instrumented.** Heal and deny outcomes can be written to `FRANKENLIBC_LOG`, and process-exit summaries expose aggregate counters. Fast-path decisions are not all emitted as individual records.
+- **Mode-specific.** Strict mode prioritizes compatibility and often bypasses the membrane; hardened mode enables selected validation and repair paths. The documentation does not claim that every hardened divergence is already specified or fixture-covered.
 
-The math underneath (Galois maps, sheaf consistency, conformal risk, Thompson sampling, SOS certificates, …) is *not* in the call path that contributors see. Contributors write normal Rust, add a fixture, run the gates. The math machinery either compiled down to a few branchless instructions in the hot path, runs at build time, or is tracked in offline proof notes and future proof artifacts. That's what the "developer-transparency contract" in `AGENTS.md` is about.
+The math underneath (Galois maps, sheaf consistency, conformal risk, greedy posterior-mean stage ordering, SOS-oriented consistency checks, …) is *not* in the call path that contributors see. Contributors write normal Rust, add a fixture, run the gates. Some controllers execute on hardened paths, strict hot paths bypass the kernel, and other machinery runs at build time or remains in proof notes. That's what the "developer-transparency contract" in `AGENTS.md` is about.
 
 ---
 
@@ -2344,14 +2402,14 @@ present?  artifact?
 closed!   reopen + flag in audit
 ```
 
-The "Beads compliance audit" runs against `.beads/issues.jsonl` and `tests/conformance/*_completion_contract.v1.json` to make sure every closed bead has a binding artifact and no false closures exist.
+The current compliance machinery joins `.beads/issues.jsonl` with completion-contract artifacts, but its historical coverage is incomplete: the tracked audit bead reports only about 215 of 7,423 closed beads covered and 2,089 empty closure reasons. Treat the diagram as the intended lifecycle for historical beads, not proof that every legacy closure has a binding artifact; `scripts/check_closure_gate.sh` (Check 5) enforces verifiable commit/artifact and gate-outcome evidence on all beads closed after `2026-10-15T00:00:00Z`, all 68 `crates/frankenlibc-harness/tests/*_cli_contract_test.rs` suites resolve the `harness` binary fail-closed via `CARGO_BIN_EXE_harness`, and the 267 `scripts/check_*completion_contract*.sh` checker scripts are classified into **147 `executes`** (gates that execute binaries, C fixtures under `LD_PRELOAD`, or sub-gates, including the top 30 user-impact `malloc`, `stdio`, `string`, `pthread`, `locale`, `loader`, and `resolver` contracts) and **120 `receipt`** (static manifest/source-anchor validators) (`bd-rc0923-epic-eeuy4f.18`).
 
 ### Why is the membrane in its own crate?
 
 Three reasons:
 
 1. **Compile-time safety policy.** `#![deny(unsafe_code)]` with per-module exceptions is cleaner at crate scope.
-2. **Build-time verification.** The membrane crate's `build.rs` synthesizes SOS certificates and audits atomic-barrier coverage. Keeping the membrane in its own crate gives `build.rs` a clean compilation unit to scan.
+2. **Build-time consistency checking.** The membrane crate's `build.rs` verifies supplied Gram matrices and inventories selected atomic sites. Keeping the membrane in its own crate gives `build.rs` a clean compilation unit to scan.
 3. **Dependency direction.** The ABI crate depends on the membrane and the core; the core depends on the membrane; the membrane has no internal dependencies. This DAG makes circular concerns impossible.
 
 ### Why so many env vars?
@@ -2360,7 +2418,7 @@ Most of the `FRANKENLIBC_*` vars exist for *gates*, not runtime behavior. The ru
 
 ### Why do you keep talking about beads?
 
-Because the work tracking is part of the auditability story. Every implementation effort traces commit → bead → evidence → claim. Without that trace, you can't tell a real claim from an aspirational one. The `[bd-xxxxx]` prefix in commit subjects is what makes the audit gates possible.
+Because the work tracking is part of the auditability story. The intended chain is commit → bead → evidence → claim, and `[bd-xxxxx]` subjects make that join possible. Historical coverage is not complete, as the closure-audit gap above documents; absence of a binding artifact must therefore be treated as missing evidence, not inferred success.
 
 ### How does the project consult reference glibc behavior?
 
@@ -2384,89 +2442,55 @@ The classified surface is already 4,119 symbols, which is the practical glibc su
 
 ---
 
-## A Complete Call Trace: `p = malloc(64)`
+## Deployed Call Trace: `p = malloc(64)`
 
-What actually happens when a C program calls `malloc(64)` against `libfrankenlibc_abi.so` in hardened mode:
+The deployed path is mode-dependent (`crates/frankenlibc-abi/src/malloc_abi.rs::malloc`):
 
 ```
-1. C caller jumps to PLT entry for `malloc`.
-2. Dynamic linker resolves `malloc` to FrankenLibC's exported symbol
-   (because LD_PRELOAD loaded `libfrankenlibc_abi.so` first).
-3. ABI entrypoint in `crates/frankenlibc-abi/src/malloc_abi.rs` runs:
-   a. `runtime_policy::decide(ApiFamily::Allocator, ptr=null, size=64,
-      is_startup=false, is_null_likely=false, context_flags=0)`
-   b. RuntimeKernelSnapshot is sampled atomically from the runtime-math
-      controllers (risk, bandit, control, barrier, pareto, design, …).
-   c. RuntimeDecision returns {Allow, Fast} based on:
-      - mode is HARDENED (so the policy is allowed to repair, but no
-        unsafe condition was detected yet)
-      - size=64 is below the size-anomaly threshold
-      - per-family risk is below alarm threshold
-      - bandit chose Fast validation profile
-4. The ABI delegates to the allocator path in
-   `crates/frankenlibc-core/src/malloc/allocator.rs`:
-   a. Size 64 → size class 3 (the bucket holding the 64-byte sizes).
-   b. Thread-local magazine for class 3 is consulted via `thread_local!`.
-   c. If magazine is non-empty: LIFO pop a free object → fast path done
-      in ~30 ns including membrane overhead.
-   d. If magazine is empty: bulk-fetch 32 objects from the sharded
-      central allocator (shard chosen by thread-affinity hash), drop
-      31 into the magazine, return the first to the caller.
-5. Allocator generates the 24-byte fingerprint header:
-   - `hash = SipHash-2-4((base_addr, size=64, generation=N, secret))`
-   - `generation = N` (current generation counter for this slot)
-   - `size = 64`
-   Header is written at base_addr..base_addr+24.
-6. Allocator writes the 8-byte canary at base_addr+24+64.
-7. Allocator inserts the (raw_base, user_base, user_size, generation,
-   SafetyState=Valid) tuple into the arena shard.
-8. Allocator updates the bloom filter with user_base.
-9. Allocator's `user_base = raw_base + 24` is the pointer returned to
-   the caller.
-10. `runtime_policy::observe(ApiFamily::Allocator, Fast, latency_ns,
-    denied=false)` records the outcome for the runtime-math controllers'
-    next-call state.
-11. Pointer returned to caller.
+1. The dynamic linker resolves `malloc` to FrankenLibC's ABI symbol.
+2. Reentrant/bootstrap calls bypass the membrane and use the bootstrap path.
+3. In strict mode:
+   a. The common path calls `strict_small_or_host_allocate`.
+   b. A small allocation normally comes from the ABI segment allocator;
+      overflow/fallback uses the host allocator.
+   c. Neither provider is the core slab/magazine allocator, and neither adds
+      the hardened arena's fingerprint/canary metadata.
+   d. Most strict calls return without invoking the runtime-math kernel. A
+      proof-carried fast-path configuration can call `runtime_policy::decide`
+      for evidence before performing the same segment-or-host allocation.
+4. In hardened mode:
+   a. `runtime_policy::decide(ApiFamily::Allocator, ...)` runs.
+   b. `Deny` returns NULL with ENOMEM; otherwise the global validation
+      pipeline's `allocate` method calls the generational arena.
+   c. The arena writes the 24-byte fingerprint header and 8-byte trailing
+      canary, while the pipeline registers the allocation in the bloom filter
+      and page oracle (`ptr_validator.rs::allocate`).
+   d. `runtime_policy::observe` records the routed outcome.
 ```
 
-End-to-end this is a few hundred nanoseconds on the fast path. The single most expensive contribution is the fingerprint SipHash (~20 ns), and even that is amortized when the magazine hits the fast path because there's no allocator-lock acquisition.
+The size-class/slab/magazine implementation in `frankenlibc-core` is a real model with tests, but it is not the provider reached by deployed `malloc`. No latency number is asserted here without a same-invocation benchmark against the live path.
 
 ---
 
-## A Complete Call Trace: `free(p)`
+## Deployed Call Trace: `free(p)`
 
 ```
-1. C caller calls `free(p)`.
-2. ABI entrypoint in malloc_abi.rs runs:
-   a. runtime_policy::decide(ApiFamily::Allocator, ptr=p, size=0,
-      is_startup=false, is_null_likely=false, context_flags=FREE)
-   b. Membrane validation pipeline runs through stages 1–7:
-      - Null check: p is not null → continue
-      - TLS cache: hit → snapshot says (Valid, generation=N) → continue
-        (or miss → run bloom + arena lookup to confirm ownership)
-      - Bloom: positive → continue
-      - Arena lookup: (raw_base, user_size=64, generation=N, Valid)
-      - Fingerprint: SipHash-2-4 recomputes; matches header → continue
-      - Canary: 8-byte check at p+64 → matches → continue
-      - Bounds + state: SafetyState=Valid for free → Allow
-3. ABI delegates to the deallocator path:
-   a. Generation counter for this slot is bumped: N → N+1.
-   b. SafetyState in the arena transitions Valid → Freed → Quarantined.
-   c. The (raw_base, mapped_size) pair is appended to the shard's
-      quarantine queue.
-   d. The TLS cache entry is invalidated by epoch advance.
-   e. The bloom filter is NOT mutated (would require false-negative
-      proof; instead, quarantine drain handles reclamation).
-4. If quarantine_bytes > QUARANTINE_MAX_BYTES (64 MiB) or EBR epoch
-   advances past safe-reclaim threshold:
-   a. Quarantine drain runs under the flat-combining primitive.
-   b. Drained objects: SafetyState transitions Quarantined → Recycle.
-   c. Slab slots are returned to the central allocator's free list.
-   d. Large mmap-backed regions are munmap'd.
-5. runtime_policy::observe(...) updates controllers.
+1. `free(NULL)` returns immediately on the strict passthrough path.
+2. Segment-owned pointers are retired by `segment_free`; an owned-invalid
+   segment pointer follows the strict glibc-style diagnostic/abort path.
+3. Tracked host-fallback pointers are returned to the host allocator. Unknown
+   pointers in strict mode are also delegated to the host for compatibility.
+4. Only an arena-owned pointer reaches `free_membrane_path`:
+   a. the allocator runtime policy can deny the operation;
+   b. `ValidationPipeline::free_with_size` asks the arena to verify/retire the
+      allocation and schedules drained blocks for EBR reclamation;
+   c. canary corruption is reported but the already-damaged block is still
+      retired; double/foreign frees become healing actions only when healing
+      is enabled;
+   d. `runtime_policy::observe` and allocator stage telemetry record the result.
 ```
 
-If the caller had tried to free a freed pointer (double-free), step 2b's arena lookup would have returned `SafetyState=Quarantined` or `Freed`, the runtime policy would have returned `Heal(IgnoreDoubleFree)`, and the deallocator path would have been *skipped entirely*, preserving allocator state and emitting a structured evidence record. In strict mode, the same condition returns an `EFAULT` instead of a heal.
+A raw C pointer carries no generation. A repeated free while an arena slot remains quarantined is detectable; after same-address reuse, address-only lookup resolves the new occupant. Strict segment misuse does not return `EFAULT`: detected invalid frees use the allocator diagnostic path, while some unknown pointers are deliberately delegated to host glibc (`malloc_abi.rs::free`, `arena.rs` module documentation).
 
 ---
 
@@ -2519,7 +2543,7 @@ POSIX prescribes `errno` is not set to zero on success and not modified except b
 
 ### `ungetc` LIFO Ordering
 
-POSIX guarantees that pushed-back bytes are read in reverse order. The implementation supports a single byte of pushback (the minimum POSIX requires) via the `unget` slot, but the LIFO order is preserved correctly across the buffer-overflow / underflow boundary.
+POSIX guarantees at least one byte of pushback and returns pushed bytes in reverse order. `StdioStream::ungetc` first rewinds the existing read buffer; when that is unavailable it uses a one-byte overflow slot, and repeated calls can move the prior overflow byte into buffer space. The implementation therefore supports more than one byte when buffer capacity permits and preserves LIFO order (`crates/frankenlibc-core/src/stdio/file.rs::ungetc`).
 
 ### `setvbuf` Lock-After-First-IO
 
@@ -2613,7 +2637,7 @@ A symbol with `status: "Implemented"` could be:
 
 These five buckets live in `tests/conformance/support_semantic_overlay.v1.json`. The `docs_semantic_claims.v1.json` contract prevents prose in this README or `FEATURE_PARITY.md` from promoting taxonomy ownership to full semantic parity by accident.
 
-"Native coverage" is a *taxonomy* claim. The current native subset is 69.3%; the number of symbols at "Full semantic parity" is meaningfully smaller and grows along a different schedule. Conflating taxonomy ownership with semantic parity is a category error this project refuses to commit.
+"Native coverage" is a *taxonomy* claim. The current native subset is 68.7%; the number of symbols at "Full semantic parity" is meaningfully smaller and grows along a different schedule. Conflating taxonomy ownership with semantic parity is a category error this project refuses to commit.
 
 ---
 
@@ -2715,7 +2739,7 @@ Not every libc concern belongs in scope. Listing the non-goals explicitly is par
 - **macOS or Windows.** Out of scope for v0.1.
 - **A modified kernel ABI.** Every syscall path goes through the standard Linux ABI; we don't require kernel patches.
 - **A new memory-safety language.** Rust is the implementation language. C is the interface. We don't propose changes to either.
-- **A new build system.** Standard Cargo. No bespoke build infrastructure beyond `build.rs` for SOS synthesis and barrier audit.
+- **A new build system.** Standard Cargo. No bespoke build infrastructure beyond `build.rs` for supplied-matrix consistency checks and an atomic-site inventory.
 - **A new package manager or distribution.** The WS-8.3 package gate produces a conventional Debian package for validation, not a new package manager or distro.
 - **An eBPF agent.** eBPF observes the kernel from the inside; FrankenLibC observes libc from the outside. Complementary, not competing.
 
@@ -2753,15 +2777,13 @@ The tracker integration is part of the auditability story:
 ```
 Bead is created:        br create --title "..." --type=task --priority=2
 Bead is picked up:      br update bd-xxxxx --status=in_progress
-Work happens:           code lands; binding evidence artifact lands
-Bead is closed:         br close bd-xxxxx --reason "Completed; see <path>"
+Work happens:           code lands; named gates execute; evidence is cited
+Bead is closed:         br close bd-xxxxx --reason "Completed; see <gate/result>"
 Tracker is flushed:     br sync --flush-only  → .beads/issues.jsonl
 Commit lands:           git commit -m "[bd-xxxxx] ..."
-Audit gate scans:       does .beads/issues.jsonl show closed?
-                        does a binding *_completion_contract.v1.json
-                        exist for bd-xxxxx?
-                        ✓ → bead is auditable-closed
-                        ✗ → bead is reopened or flagged
+Audit gates scan the portions of closure history for which executable
+coverage exists. Completion-contract files are heterogeneous receipts;
+they are not universal proof of implementation or execution.
 ```
 
 The bead ID conventions:
@@ -2778,7 +2800,7 @@ This structure is what makes `[bd-xxxxx]`-prefixed commit messages mechanically 
 
 ## Conformance Fixture Format
 
-A conformance fixture is a JSON file under `tests/conformance/fixtures/<family>/`. Schematically:
+A conformance fixture is normally a top-level JSON file under `tests/conformance/fixtures/`, with its family named in the JSON `family` field. Schematically:
 
 ```json
 {
@@ -2818,25 +2840,23 @@ This pattern lets the project add a new behavior contract by *capturing* it from
 
 ## Cross-Architecture: aarch64 Today
 
-x86_64 is the primary target. aarch64 is gated and tested via cross-compile. The aarch64-specific completion contracts:
+x86_64 is the primary target. aarch64 has source branches, a Rust type-check gate, and bounded linked-release QEMU evidence. The aarch64-specific completion contracts describe intended coverage:
 
 - `aarch64_arch_regression_gate_completion_contract.v1.json` — Ensures aarch64 builds remain green
 - `aarch64_conformance_perf_matrix_completion_contract.v1.json` — Performance parity matrix
 - `aarch64_raw_syscall_tls_completion_contract.v1.json` — TLS layout differences and raw-syscall correctness
 
-The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) builds the workspace with `--target aarch64-unknown-linux-gnu` and asserts that:
+The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) runs `cargo check` for the core and ABI crates with `--target aarch64-unknown-linux-gnu`. It checks the Rust frontend paths, including architecture-specific source and inline-assembly declarations. It does not link a release library, verify its dynamic symbols, or execute syscall/TLS behavior.
 
-- All crates compile cleanly
-- The version script `libc.map` exports the right symbols
-- The native syscall layer correctly uses the aarch64 syscall numbering (different from x86_64)
-- The futex implementation uses the right argument-passing convention
-- TLS access uses the aarch64-specific `tpidr_el0` register rather than x86_64's `fs:`
+`scripts/run_aarch64_smoke.sh` qualifies an explicit linked AArch64 library. It checks ELF architecture and exports, builds dynamic C probes, verifies both lookup and call-binding providers, and executes allocator/string, constructor, TLS/thread, FORTIFY, raw-I/O and jump cases in strict and hardened modes. Volatile function pointers keep compiler inlining from replacing the memory and printf operations being tested. Partial foreign interposers must be rejected; missing tools/artifacts, compile failures, static probes and timeouts cannot qualify. Generated sources, binaries and logs are retained.
+
+The 2026-10-23 release artifact (`sha256:6445302cfa3a3abf93b85188567ad200674e1305f95d177fb88f810837070650`) passed 26 named-provider checks and 48 behavior checks per mode, with both fortified and unfortified callers. A renamed library also passed, including its ARM jump-edge cases. An eight-case acceptance run verified these positives and rejection of missing artifacts, wrong architecture, missing compiler, compile failure, static-only execution and compiler timeout. The artifact was built through RCH from `5e9008051` plus the recorded ARM repair overlay; exact commands and receipts are attached to `bd-rc0923-epic-eeuy4f.41`. This is L0 interposition evidence, with full ABI differential coverage and hardware performance still unqualified.
 
 What's *not* yet done on aarch64:
 
 - Full ABI-fixture differential coverage (the fixture corpus is x86_64-captured)
 - Hardware-transactional-memory fast path (HTM is x86-specific; aarch64 needs its own LSE / SVE equivalents)
-- Production `LD_PRELOAD` smoke run (curated battery is x86_64-only today)
+- Broad production-workload `LD_PRELOAD` smoke run (the curated real-program battery is x86_64-only today)
 
 RISC-V, MIPS, and others are explicitly out of scope for v0.1.
 
@@ -2846,7 +2866,7 @@ RISC-V, MIPS, and others are explicitly out of scope for v0.1.
 
 The performance discipline is "measure, don't assume."
 
-**Membrane overhead per call.** Criterion benches in `crates/frankenlibc-bench/` measure the validation-pipeline cost. Target: < 20 ns strict, < 200 ns hardened. Current numbers on a tuned x86_64 host with `cpupower frequency-set --governor performance` and `FRANKENLIBC_BENCH_PIN=1` typically come in well inside budget.
+**Membrane overhead per call.** Criterion benches in `crates/frankenlibc-bench/` measure the validation-pipeline cost. Target: < 20 ns strict, < 200 ns hardened. The checked baseline does **not** generally meet that target: `runtime_math/strict/decide` is 187.404 ns and membrane `validate_known` is 4,331.049 ns strict / 3,499.877 ns hardened (`scripts/perf_baseline.json`, generated 2026-05-05). Those are historical baseline measurements, not a fresh HEAD benchmark.
 
 **End-to-end latency.** The preload smoke harness records baseline (host glibc) and preload (FrankenLibC) wall-clock latency for each program. The latency ratio is the headline number; > 2× is a perf regression that fails `startup_perf_regression`.
 
@@ -2877,13 +2897,13 @@ What we *don't* measure (yet):
 | **gVisor** | User-mode kernel that intercepts syscalls | Kernel-replacement sandbox | We don't replace the kernel; we sit one layer up |
 | **mimalloc / tcmalloc / jemalloc** | Drop-in safer allocator | malloc-only | We replace much more than malloc; allocator is just one of dozens of families |
 | **GrapheneOS hardened_malloc** | Hardened allocator with guard pages | malloc-only | Similar threat model for malloc; we extend the discipline across the libc surface |
-| **musl libc** | Cleaner C reimplementation of libc | Whole libc | We're memory-safe in Rust; we preserve glibc-shape compat; staged replacement |
+| **musl libc** | Cleaner C reimplementation of libc | Whole libc | We implement large safe-Rust cores behind an unsafe ABI and add selected membrane hardening; glibc-shape compatibility and staged replacement remain works in progress |
 | **uclibc / dietlibc** | Smaller libc for embedded | Whole libc | Different target; we're not embedded |
 | **picolibc / newlib** | Bootstrap libc for embedded | Whole libc | Different target |
 | **Wuffs (Wrangling Untrusted File Formats Safely)** | Safe-by-construction parsers | File-format parsing | Inspirational for parser-class hardening; we apply similar discipline at libc boundary |
-| **CHERI** | Capability-machine architecture | HW + OS + compiler | Strictly stronger memory-safety model at the cost of HW; we ship on commodity x86_64/aarch64 |
+| **CHERI** | Capability-machine architecture | HW + OS + compiler | Strictly stronger memory-safety model at the cost of HW; FrankenLibC's current shipping interpose artifact is x86_64, while aarch64 remains cross-build/porting work |
 
-FrankenLibC's niche sits at the intersection of: glibc-shape compatibility (so existing binaries run), memory-safe implementation in Rust (so safety is structural), runtime enforcement (so deployed binaries are covered), evidence-driven verification (so claims are checkable), and staged replacement (so the path from "interpose" to "standalone" is mechanical, not aspirational).
+FrankenLibC's intended niche sits at the intersection of glibc-shape compatibility, safe-Rust implementation cores, path-specific runtime enforcement, evidence-driven verification, and staged replacement. The current artifact demonstrates parts of that design as an x86_64 interposer; it does not yet establish universal binary compatibility, memory safety, or standalone replacement.
 
 ---
 
@@ -2901,19 +2921,19 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,030 lines. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,049 lines at this snapshot. It performs three jobs at compile time:
 
-### Job 1: SOS Certificate Synthesis
+### Job 1: Supplied SOS-Task Consistency
 
-For each of three invariants (fragmentation, thread safety, size class), the build script:
+For each of three task labels (fragmentation, thread safety, size class), the build script:
 
-1. Loads the polynomial constraints from the invariant's spec file
-2. Constructs the Gram matrix candidate
+1. Loads a dimension, budget, and pre-supplied Gram matrix from a `.task` file
+2. Validates the matrix shape and numeric fields
 3. Runs Cholesky decomposition with numerical tolerance `1e-9`
-4. If decomposition succeeds, the Gram matrix is PSD, so the invariant has a valid SOS certificate
-5. Emits the certificate as a `const` value in the generated source plus a JSON soundness report
+4. Checks the tautological recomposition `B = (B - sigma) + sigma`
+5. Emits constants plus a JSON consistency report
 
-A failure at any of these steps fails the build. This means refactors that would break an invariant cannot land silently.
+A failure at any of these steps fails the build. Because the task files do not bind variables to allocator or concurrency state, this catches malformed/internally inconsistent artifacts; it does not prove the task label's system property.
 
 ### Job 2: Memory-Model Barrier Audit
 
@@ -2929,11 +2949,11 @@ pthread/cond.rs     expected ≥ 29
 total minimum       ≥ 20+
 ```
 
-Counts below threshold fail the build. The audit prevents a refactor from silently removing a barrier that's needed for cross-thread visibility, a class of bug that's notoriously hard to detect at runtime.
+Counts below threshold fail the build. This catches decreases in the selected syntactic atomic-site inventory, but it does not show that a counted operation has the right ordering or that every required barrier is present.
 
-### Job 3: Feature-Flag Enforcement
+### Feature-Flag Enforcement
 
-The script emits a `compile_error!` if the `runtime-math-production` feature isn't enabled:
+The crate root—not `build.rs`—emits a `compile_error!` if the `runtime-math-production` feature isn't enabled (`crates/frankenlibc-membrane/src/lib.rs`):
 
 ```
 frankenlibc-membrane requires the `runtime-math-production` feature
@@ -3102,7 +3122,7 @@ step 5: return RuntimeDecision
 
 The reason to layer this much machinery isn't theoretical elegance; it's *adaptivity*. The bandit learns the routing for *this* workload; the e-process raises an alarm when *this* workload starts producing anomalies; the CVaR controller protects against tail latency that hand-picked thresholds would miss; the HJI safety controller refuses decisions that could land in the unsafe set under the worst attacker model.
 
-`observe()` runs after the call completes, feeding `(family, profile, latency_ns, denied)` back into each controller so the next call's decision incorporates this call's outcome. The combination is *anytime-valid*: finite-sample guarantees hold at every call number, not just asymptotically.
+`observe()` runs after a routed call completes, feeding `(family, profile, latency_ns, denied)` back into the controller state. The e-process component uses likelihood-ratio-style updates, but its production log value is clamped to `[-20, 50]`; neither that bounded process nor the controller combination is claimed here to retain a formal anytime-valid guarantee (`runtime_math/eprocess.rs`).
 
 ---
 
@@ -3124,7 +3144,7 @@ The membrane uses every atomic ordering primitive Rust offers, and the choices m
 | Runtime-math snapshot read | `Acquire` (cross-controller) | Avoid torn reads across controllers |
 | Quarantine drain release | `SeqCst` (rare) | Quarantine drain must serialize with all readers |
 
-Wrong ordering here is the kind of bug that *only* surfaces under heavy multi-thread load, takes weeks to diagnose, and resists reproduction. The build-time barrier audit (in `build.rs`) enforces minimum atomic-operation counts per file to prevent silent ordering changes during refactors.
+Wrong ordering here can surface only under heavy multi-thread load and resist reproduction. The `build.rs` check enforces minimum atomic-operation source-pattern counts in selected files; it can catch removal of a counted site but cannot detect an ordering changed from `Acquire` to `Relaxed` or prove that the table is complete.
 
 ---
 
@@ -3254,7 +3274,7 @@ The JSONL format is intentional: line-oriented, diff-friendly, easy to mine with
 
 ## Multi-Agent Workflow Layer
 
-The repository contains 4,932 commits made by one author working in tandem with a small swarm of AI agents. The coordination layer:
+The repository has a five-figure commit history produced by a human maintainer working in tandem with coding agents. The coordination layer:
 
 | Tool | Role |
 |---|---|
@@ -3270,7 +3290,7 @@ The repository contains 4,932 commits made by one author working in tandem with 
 | `slb` | Two-person rule guard for destructive commands |
 | `sbh` | Disk-pressure defense for AI coding workloads |
 
-The combination is what makes the 4,932-commits-in-97-days pace possible. Without the bead tracker, claims about closure would drift; without file reservations, two agents would clobber each other; without the bug scanner, the membrane's invariants would silently regress; without remote compilation offload, a single workstation would have melted under the cargo build load.
+The combination supports a high change rate. The safeguards reduce collision and stale-claim risk, but they are not proofs: closure coverage is incomplete, file reservations are advisory, and every executable gate still has to be observed.
 
 None of this tooling is in the runtime artifact; it's purely the *development* workflow, and most of it lives outside this repository in companion projects under `/dp/`.
 
@@ -3284,7 +3304,7 @@ A safety-critical libc must be deterministically replayable. The mechanisms:
 2. **Fixed clocks where appropriate.** Test harnesses use a frozen monotonic clock; the membrane uses real clock in production but emits `ts_ns` to the evidence ledger so traces can be aligned post-hoc.
 3. **Evidence replay verifier.** `tests/conformance/runtime_evidence_replay_gate.v1.json` and the replay tool re-run a recorded decision sequence against a fresh process and assert match.
 4. **Controller snapshot hashing.** Every runtime-math controller's state is hashable to a BLAKE3 digest; the evidence record carries the hash so replay can verify the same controller state at each decision point.
-5. **Deterministic SOS certificate generation.** The build script produces identical certificates given identical sources, so the build artifact hashes are reproducible.
+5. **Deterministic supplied-matrix artifact generation.** The build script checks and emits the same Gram-matrix-derived constants for identical task inputs; this is reproducibility of the artifact, not proof of the task label's system invariant.
 6. **Deterministic fixture-pack format.** Fixtures are JSON with stable key ordering; capture is rerun-stable.
 7. **No `HashMap` iteration in test-relevant paths.** Where ordering matters for reproducibility, `BTreeMap` is used.
 
@@ -3319,7 +3339,7 @@ Every category of detectable issue and what surfaces it:
 | Stale source commit in evidence | Closure-gate freshness check | Fail gate |
 | Closed bead without binding artifact | Audit gate | Reopen / flag |
 
-Each row corresponds to a code path that exists today, not a planned check.
+The table describes intended and implemented handling, but not every row has an independent executable negative control today. Treat a row as a claim to verify against its cited source/gate; the missing executable-evidence work is tracked by `bd-rc0923-epic-eeuy4f.18`.
 
 ---
 
@@ -3402,7 +3422,7 @@ Edition 2024 also brings `unsafe extern "C"` defaults (which make the FFI bounda
 - Version-symbol resolution for compatibility shims that need `@@GLIBC_x.y` precision
 - One-time bootstrap discovery of host-loader state for the phase-0 startup envelope
 
-Every entrypoint in `host_resolve.rs` is gated by the membrane policy and is logged through the evidence ledger. There are no opaque "just call into glibc" paths; every host-resolution call is named, audited, and replay-deterministic.
+`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,272 `WrapsHostLibc` taxonomy rows are explicit evidence that host delegation remains part of the interpose artifact.
 
 This is the practical difference between the L1 interpose artifact and the future L2/L3 replace artifact: the replace artifact removes `host_resolve.rs` entirely, since by definition no host glibc is loaded.
 
@@ -3499,7 +3519,8 @@ The sequence counter is the crucial detail. Without it, a signal that arrives be
       host_resolve.rs::host_dlvsym_next_raw.
    f. Run init hooks, then main(argc, argv, envp).
    g. After main returns, run fini and rtld_fini hooks.
-10. From here on, every libc call goes through the full membrane.
+10. After bootstrap, each entrypoint follows its implemented routing; only
+    explicitly membrane-gated paths run the full validation pipeline.
 ```
 
 The bootstrap-deadlock-avoidance is everywhere in this flow: the `STARTUP_PHASE0` flag tells the membrane to be permissive; `RESOLVING` state lets `getenv` work without recursing; the pre-TLS bump allocator handles allocations before TLS is alive; the version-symbol fallback chain handles cases where our `__libc_start_main` rejects the call but the host's might accept it. Each piece is small; the combination is what makes the bootstrap work without locking up.
@@ -3510,15 +3531,15 @@ The bootstrap-deadlock-avoidance is everywhere in this flow: the `STARTUP_PHASE0
 
 XDR (External Data Representation, RFC 4506) is what RPC and NFS speak on the wire. glibc historically exported ~68 XDR symbols (`xdr_int`, `xdr_long`, `xdr_string`, `xdr_array`, `xdr_pointer`, `xdr_reference`, `xdr_union`, and many more), each wrapped around glibc's internal XDR machinery.
 
-Phase 5 (per the CHANGELOG) replaced all 68 XDR symbols with a pure-Rust implementation. The implementation lives in `crates/frankenlibc-core/src/rpc/`. Key design choices:
+Phase 5 (per the CHANGELOG) replaced the XDR surface with Rust implementations split between `crates/frankenlibc-core/src/rpc/` (safe codecs/types) and `crates/frankenlibc-abi/src/rpc_abi.rs` (C ABI stream/callback glue). Key design choices:
 
 - **Function-per-type encoding pattern** — each basic XDR type has a dedicated `xdr_<type>` function (`xdr_int`, `xdr_long`, `xdr_string`, etc.); complex types compose via `xdr_array`, `xdr_pointer`, `xdr_union`, and a shared `XDR` stream state. No encoder/decoder trait abstraction is layered over them; the API mirrors glibc's C-style entry points one-for-one.
 - **Bounded recursion** — `xdr_pointer` and `xdr_union` track recursion depth and refuse to recurse beyond a configured limit. This defeats the "4 GB XDR DoS" bug Phase 10 discovered: a malicious payload with deeply-nested pointers would have exhausted the stack.
 - **`elsize=0` rejection** — `xdr_array(eltsize=0, ...)` returns `false` (XDR failure) rather than computing nonsense. Phase 10's fuzz_xdr campaign caught this case explicitly.
 - **No external state** — every XDR call is stateless beyond the explicit stream pointer. No global lookup tables, no per-process registries.
-- **Bit-exact round-trip** — XDR-encoded bytes from FrankenLibC decode to the same Rust values when read by glibc, and vice versa. The fixture corpus under `tests/conformance/fixtures/xdr_*` enforces this.
+- **Self-round-trip coverage** — `crates/frankenlibc-abi/tests/xdr_abi_test.rs` exercises FrankenLibC encode/decode round trips. No tracked `tests/conformance/fixtures/xdr_*` corpus exists at this snapshot, so bidirectional byte parity with glibc is not established here.
 
-The XDR implementation is also one of the larger demonstrations of the clean-room rule: glibc's XDR is ~5K lines of dense C; FrankenLibC's is ~3K lines of Rust, organized around the trait-based encode/decode pattern.
+The XDR implementation is also a clean-room example: the safe core provides typed helpers, while the exported C surface deliberately follows function-per-type entrypoints and explicit stream state. It is not organized around a public encoder/decoder trait abstraction.
 
 ---
 
@@ -3549,14 +3570,14 @@ When `free(p)` or any later call hits the membrane validation pipeline for this 
 - The fingerprint header at `base..base+24` is unchanged (the overflow was forward, not backward).
 - The 8-byte trailing canary at `base+88..base+96` is compared against `SipHash(base+24, size=64, gen=N, secret)`.
 - The canary doesn't match (because 6 of its 8 bytes were overwritten).
-- The membrane returns `Heal(TruncateWithNull {requested: 70, truncated: 64})` for the *string* case, or `Deny(EFAULT)` for the *bounds-check* case.
-- In hardened mode, the next-object's fingerprint corruption is also caught: when that object is later validated, *its* header SipHash recomputation fails, and the membrane refuses the call.
+- A membrane-gated copy can clamp/truncate **before** an out-of-bounds write when it knows the allocation bound. If the program performed the raw write itself, `free(p)` reports `FreedWithCanaryCorruption` but still retires the block; it does not retroactively return `TruncateWithNull` or `EFAULT` (`arena.rs`, `malloc_abi.rs`).
+- Corruption of a neighboring hardened-arena header can be detected when that neighboring allocation is later validated. Strict segment/host allocations do not carry these fingerprint/canary fields.
 
 ### Why this is structural
 
 The detection doesn't depend on the caller asking; it happens automatically on the *next* call that touches either the overflowed allocation or its neighbor. A program that does `memset(p, 0x42, 70)` and then immediately calls `exit()` would not surface the bug (because no later call hits the membrane), but the *next* allocator or membrane operation against either allocation would.
 
-The 8-byte canary's `P(miss) ≤ 2⁻⁶⁴` is the cryptographic guarantee. The neighbor-fingerprint catch is the second layer; cross-object corruption requires both checks to fail, which has compound probability `≤ 2⁻¹²⁸`.
+For a hardened-arena block whose canary is checked, a uniformly unpredictable 64-bit canary gives a per-check forgery bound of `2⁻⁶⁴`. The code does not establish independence between a canary failure and neighboring-header corruption, so it does not claim a compounded `2⁻¹²⁸` bound.
 
 ---
 
@@ -3575,7 +3596,7 @@ Concrete scenario: a caller frees the same pointer twice.
 - ABI runtime policy decide for `ApiFamily::Allocator`.
 - Membrane validation: TLS cache miss (just invalidated). Arena lookup returns the slot, now in state `Quarantined`, generation `N+1`. The caller is presenting generation `N` (encoded in their stale knowledge of `p`).
 - Actually the *caller* doesn't carry the generation in the pointer; the *arena* has recorded that the generation was bumped. The mismatch is implicit: the pointer is now associated with a slot whose state is `Quarantined`.
-- The membrane returns `Heal(IgnoreDoubleFree)` in hardened mode, or `Deny(EFAULT)` in strict mode.
+- Hardened mode returns `Heal(IgnoreDoubleFree)`. Strict mode's deployed allocator path does not translate this into `Deny(EFAULT)`; when FrankenLibC detects allocator misuse it follows the glibc-style abort/diagnostic path described in the runtime-modes table (`malloc_abi.rs`).
 - Structured evidence record is emitted to the ledger.
 
 ### Why this is meaningful
@@ -3596,7 +3617,7 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
 3. Cargo compiles all transitive dependencies (membrane, core,
    parking_lot, blake3, …) in release mode.
 4. The membrane crate's build.rs runs:
-   a. SOS certificate synthesis (3 invariants, Cholesky verification).
+   a. Supplied SOS-task consistency checks (3 matrices, Cholesky verification).
    b. Memory-model barrier audit (≥20 atomic sites across 6 files).
    c. Feature flag enforcement (`runtime-math-production` required).
 5. The ABI crate's build.rs runs:
@@ -3623,54 +3644,16 @@ The static library (`libfrankenlibc_abi.a`) is also produced. It's used by `scri
 
 ## Symbol Visibility Discipline
 
-Every exported symbol in the ABI crate follows a strict pattern:
+ABI entrypoints use several path-specific patterns. Many functions validate or consult runtime policy before delegating, while bootstrap, strict compatibility, raw-syscall, and host-wrapper paths deliberately differ. The deployed `malloc` in `malloc_abi.rs`, for example, rejects oversize requests, handles allocator re-entry/bootstrap, then selects a strict segment/host path or a hardened arena path; it does not delegate to the core allocator shown in older design sketches.
 
-```rust
-#[no_mangle]
-pub extern "C" fn malloc(size: usize) -> *mut c_void {
-    // Step 1: runtime_policy::decide
-    let (snapshot, decision) = runtime_policy::decide(
-        ApiFamily::Allocator,
-        core::ptr::null(),
-        size,
-        false,
-        false,
-        0,
-    );
+A membrane-routed entrypoint generally identifies its `ApiFamily`, calls the current `runtime_policy::decide` API with integer address/size hints, inspects `decision.action`, dispatches to the selected implementation, and calls `runtime_policy::observe` with `decision.profile`, the selected validation profile. The exact control flow and error mapping are entrypoint-specific.
 
-    // Step 2: check for Deny
-    if let RuntimeDecision::Deny(reason) = decision {
-        set_abi_errno(reason.errno_code());
-        return core::ptr::null_mut();
-    }
-
-    // Step 3: validate inputs (size > 0 for malloc semantics, etc.)
-    if size == 0 {
-        // Implementation-defined; we return NULL with errno=0
-        return core::ptr::null_mut();
-    }
-
-    // Step 4: delegate to core
-    let ptr = frankenlibc_core::malloc::malloc_aligned(size);
-
-    // Step 5: runtime_policy::observe
-    runtime_policy::observe(
-        ApiFamily::Allocator,
-        snapshot.profile,
-        elapsed_ns(),
-        ptr.is_null(),
-    );
-
-    ptr
-}
-```
-
-This is the validate-delegate pattern made concrete:
+This validate-dispatch-observe pattern does not describe every exported function:
 
 - `#[no_mangle]` keeps the symbol name as-is so the dynamic linker can resolve it.
 - `pub extern "C"` exports with C calling convention; `extern "C"` blocks in Edition 2024 are `unsafe` by default, so the FFI boundary is syntactically marked.
 - The `.symver` directive (emitted via inline assembly or `link_section`) attaches the GLIBC version tag.
-- The body is minimal: validate, dispatch, observe.
+- Membrane-routed bodies aim to keep validation, dispatch, and observation explicit; bootstrap and compatibility paths have additional state handling.
 
 Phase 5's Symbol cleanup removed 175 duplicate `#[no_mangle]` symbol definitions that had accumulated as the surface grew. The audit gate scans for accidental duplicates because two symbols with the same name would create a linker error or, worse, silent ambiguity.
 
@@ -3750,7 +3733,7 @@ A non-exhaustive list of bugs surfaced by `cargo-fuzz` campaigns and fixed in th
 - **`snprintf` truncation off-by-one** (`fuzz_printf`): When the formatted output exactly equals the buffer size, the trailing NUL was sometimes overwritten. Fix: explicit NUL-write after truncation.
 - **`getaddrinfo_a` reentrancy** (manual review during `fuzz_resolv`): The async glibc-compat variant had a race in the result-list mutation. Fix: rewrite the linked-list mutation under a mutex.
 
-Each of these has a corresponding bead in `.beads/issues.jsonl` and binding evidence in a `*_completion_contract.v1.json`. The fuzz campaigns are not theater; they catch real bugs that fixture-based testing would miss.
+These entries are historical bug reports tied to bead work and fuzz targets. Some have completion-contract receipts, but the repository does not currently prove one-to-one binding evidence for every listed fix; inspect the cited target, commit history, and executable regression before relying on a particular claim.
 
 ---
 
@@ -3806,22 +3789,17 @@ The proof note in `docs/proofs/galois_monotonic_probability_bounds.md` works thr
 
 Membrane decisions feed three sinks, at different granularities:
 
-1. **Atomic metrics counters** (`metrics.rs`): `(family, decision, profile)` counters incremented with `Relaxed` ordering. Aggregated by the harness for end-of-run summaries.
+1. **Atomic membrane counters** (`metrics.rs`): 14 process-wide totals for validation stages and selected heals, incremented with `Relaxed` ordering. They are not a `(family, decision, profile)` cube; the snapshot exporter accepts family/symbol labels for the emitted row.
 2. **Evidence ledger record** (`runtime_math/evidence.rs`): a record with `(ts_ns, family, decision, latency_ns, healing_action, ptr, size, generation, controller_snapshot_hash, seqno)` for every adverse decision (Repair/Deny) the runtime-math kernel makes, and for one in 16384 of its other decisions (`RuntimeMathKernel::decide`, cadence-gated because recording hashes and publishes into the ring). Calls that never reach the kernel (the release fast paths of hot families) are not recorded. Lock-free MPSC ring buffer.
 3. **`FRANKENLIBC_LOG` JSONL stream**: when set, every heal and every deny is appended to the configured file as one JSON record, plus an `exit_summary` record with the counters when the process exits. Allowed calls are not written. Suitable for `tail -f` or `jq`.
 
-What's instrumented at the membrane level:
+Telemetry hooks available on membrane/runtime-policy paths include:
 
-- Every validation stage outcome (cache hit/miss, bloom positive/negative, arena lookup result, fingerprint pass/fail, canary pass/fail)
-- Every healing action triggered, with old + new values
-- Every Deny reason
-- Every runtime-math controller snapshot (hashable)
-- Every latency observation with elapsed nanoseconds
-- Every mode-resolution event at startup (one-time)
-- Every quarantine drain event (rare but informative)
-- Every TLS cache epoch invalidation
-- Every bloom filter rebuild (also rare)
-- Every fixture/oracle/replay assertion result during testing
+- validation-stage outcomes where the call site publishes them (cache, bloom, arena, fingerprint, canary)
+- heal and deny outcomes on wired paths
+- sampled runtime-math controller snapshot hashes and latency observations
+- mode-resolution, quarantine, cache-epoch, and bloom events where explicitly instrumented
+- fixture/oracle/replay assertions produced by their respective test tools
 
 What's *not* instrumented:
 
@@ -3829,7 +3807,7 @@ What's *not* instrumented:
 - Per-string-byte processing counts (same)
 - Internal-controller intermediate values (only the snapshot hash is recorded)
 
-The granularity is every heal and deny, plus sampled allows, which gives meaningful aggregation without overwhelming the consumer.
+The deployed file stream records every heal and deny; it does not currently emit allowed decisions. The separate runtime-math evidence ledger retains its one-in-16384 sample of non-adverse decisions.
 
 ---
 
@@ -3844,11 +3822,11 @@ runtime-math-production = []
 runtime-math-research = ["runtime-math-production"]
 ```
 
-`runtime-math-production` enables the live runtime-math control plane that's compiled into every shipping artifact. It's mandatory; the membrane crate's `build.rs` emits `compile_error!` if it's not set.
+`runtime-math-production` enables the live runtime-math control plane compiled into the normal artifact. It is mandatory because the membrane crate root (`src/lib.rs`), not `build.rs`, emits `compile_error!` when it is absent.
 
-`runtime-math-research` is additive: it enables additional controllers, experimental modules, and richer telemetry that are useful for offline analysis but not yet ready for the production hot path. Research-feature controllers may have higher latency, broader instrumentation, or unsynthesized SOS certificates. The release artifact is built with `runtime-math-production` only.
+`runtime-math-research` is additive: it enables additional controllers, experimental modules, and richer telemetry that are useful for offline analysis but not yet ready for the production hot path. Research-feature controllers may have higher latency, broader instrumentation, or incomplete evidence/proof artifacts. The release artifact is built with `runtime-math-production` only.
 
-This split lets the project develop new controllers (e.g., a new e-process variant, a new HJI safety controller, a new conformal scoring scheme) without disturbing the production behavior. Once a research controller proves itself, it gets promoted to production via the math-governance gate (`scripts/check_math_governance.sh`) and a corresponding completion contract.
+This split lets the project develop new controllers (e.g., a new e-process variant, a new HJI safety controller, a new conformal scoring scheme) without enabling them in the production feature. Promotion is expected to use the math-governance gate (`scripts/check_math_governance.sh`) plus cited executable evidence; a completion-contract receipt alone is insufficient.
 
 ---
 
@@ -3883,21 +3861,21 @@ The snapshot gate (`scripts/snapshot_gate.sh`) re-runs the controller against th
 
 This is how the runtime-math code stays *deterministic* despite being numerically intricate. Changes to a controller require regenerating the snapshot, which forces a code review of every observable behavior change. Hidden numerical changes that affect runtime decisions cannot land silently.
 
-The current golden corpus covers all ~71 controllers across a representative set of scenarios: nominal operation, alarm conditions, regime transitions, drift detection, and worst-case tail-risk events. Regenerating the corpus is a one-line invocation (`bash scripts/regenerate_runtime_math_goldens.sh`) but each regen is a deliberate act that gets reviewed in the corresponding bead.
+The checked golden directory currently contains one JSON snapshot (`kernel_snapshot_smoke.v1.json`) plus its checksum manifest. It does not provide per-controller coverage for all ~71 modules. Snapshot regeneration must not be used to bless unexplained drift; the relevant executable gate and behavioral change still need review.
 
 ---
 
-## Why FrankenLibC Doesn't Need an `unsafe` Audit
+## Unsafe-Code Policy and Audit Limits
 
-Standard projects with a lot of `unsafe` need an `unsafe` audit: a manual review of every block to verify the SAFETY comment matches the actual invariants. FrankenLibC's structure makes this audit *structural* rather than manual:
+Crate-level linting narrows where `unsafe` may appear, but it does not replace semantic review of every unsafe invariant:
 
-1. **The membrane crate** sets `#![deny(unsafe_code)]` at the crate root. Only specific modules (`fingerprint.rs`, `arena.rs`, `bloom.rs`, etc.) get `#[allow(unsafe_code)]`, and every unsafe block has a `// SAFETY:` comment. The build fails if a new unsafe block lacks the comment.
+1. **The membrane crate** sets `#![deny(unsafe_code)]` at the crate root. Specific boundary modules opt back in with `#[allow(unsafe_code)]`. A `// SAFETY:` comment is required by project policy, but rustc's lint alone does not validate the comment or guarantee one exists.
 2. **The core crate** does the same.
 3. **The harness crate** sets `#![forbid(unsafe_code)]` — no unsafe at all, even with `#[allow]` attempts.
-4. **The ABI crate** is the only place where `extern "C"` minimal-glue is permitted. Every entrypoint follows the validate-delegate pattern; the body is minimal so the review surface is small.
-5. The `build.rs` barrier audit enforces minimum atomic-operation counts so a refactor cannot silently strip an `unsafe` block's safety-relevant synchronization.
+4. **The ABI crate** necessarily permits unsafe FFI glue. Entrypoints currently mix membrane-gated delegation, raw syscalls, local ABI logic, and host-backed wrappers; not every body is minimal or validate-delegate.
+5. The `build.rs` atomic-site inventory counts selected source patterns. It is not an unsafe-block audit and cannot establish synchronization correctness.
 
-The audit *is* the code structure. There is no separate periodic-review event because the rules are enforced at build time.
+The structure reduces the audit surface. Manual/source-aware review, targeted concurrency testing, and executable gates remain necessary.
 
 ---
 
@@ -3928,25 +3906,25 @@ Selected project health snapshot:
 
 | Dimension | Status |
 |---|---|
-| Total commits | 4,932 across 97 days of active development |
-| Classified ABI surface | 4,119 symbols; 2,855 native/direct-syscall rows (69.3%) and 1,264 host-backed wrapper rows (30.7%) |
+| Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
+| Classified ABI surface | 4,119 symbols; 2,829 native/direct-syscall rows (68.7%), 1,272 host-backed wrapper rows (30.9%), and 18 explicit stubs (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Rust files in `crates/` | ~1,305 |
-| `crates/frankenlibc-abi/src/` | 50 ABI module files, 121 kLOC total |
-| `crates/frankenlibc-membrane/src/` | 109 files, ~75 kLOC total |
-| `crates/frankenlibc-core/src/` | 134 files, ~70 kLOC total |
+| Tracked Rust files in `crates/` | 2,879 |
+| `crates/frankenlibc-abi/src/` | 115 Rust files, 216,293 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,393 lines |
+| `crates/frankenlibc-core/src/` | 201 Rust files, 1,164,398 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
-| Conformance fixture families | 134 |
-| C integration fixtures | 17 |
-| Completion contracts | 282 |
+| Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
+| C integration fixtures | 123 |
+| Completion contracts | 282 (267 checker scripts: 147 `executes`, 120 `receipt`) |
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Shell scripts (CI / gates / smoke / perf) | 554 |
+| Top-level shell/scripts files | 719 files under `scripts/` |
 | GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
-| Membrane `build.rs` | 1,030 lines (SOS synthesis + barrier audit) |
-| Curated `LD_PRELOAD` smoke battery | 189 pass / 0 fail / 4 optional skip + 1 tracked known failure (fork perf); strict and hardened green |
+| Membrane `build.rs` | 1,049 lines (supplied-matrix consistency + atomic-site inventory) |
+| Curated `LD_PRELOAD` snapshot | 189 pass / 0 fail / 4 optional skip + 1 xfail at source `a8a4110b…`; stale relative to HEAD |
 
 ---
 
@@ -3957,21 +3935,21 @@ Selected project health snapshot:
 | TSM | Transparent Safety Membrane |
 | `Implemented` | Symbol path is natively owned in FrankenLibC |
 | `RawSyscall` | Symbol path goes directly to Linux syscalls rather than host glibc |
-| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,264 today) |
-| `GlibcCallThrough` | Symbol still depends opaquely on host glibc for behavior (0 today) |
-| `Stub` | Deterministic fallback/error contract (0 today in classified surface) |
+| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,272 in the checked 2026-10-19 taxonomy snapshot) |
+| `GlibcCallThrough` | Symbol still depends opaquely on host glibc for behavior (0 in that snapshot) |
+| `Stub` | Deterministic unsupported/failure contract (18 taxonomy rows in that snapshot; not proof that every other fallback/no-op semantic has reached full parity) |
 | `strict` | Compatibility-first runtime mode (default) |
 | `hardened` | Repair/deny-capable runtime mode |
 | reality report | Generated report summarizing current classified symbol state |
 | maintenance report | Canonical artifact used to detect support-matrix drift |
 | interpose artifact | `libfrankenlibc_abi.so`, used via `LD_PRELOAD` |
 | replace artifact | Planned standalone libc artifact with no host-glibc deployment dependency |
-| completion contract | `*_completion_contract.v1.json` binding evidence artifact for a closed bead |
+| completion contract | A heterogeneous `*_completion_contract.v1.json` evidence receipt intended to bind a claim/bead; executable strength varies and historical coverage is incomplete |
 | CLI contract | `*_cli_contract.v1.json` manifest for a harness subcommand |
 | meta-gate | Pinned Rust test that validates a CLI contract or other artifact against ~50 invariants |
 | bead | An issue tracked by `beads_rust` (`br`) under `.beads/`; ID format `bd-xxxxx` |
 | alien_cs | The membrane's lock-free / wait-free concurrency primitive toolkit (SeqLock, RCU, EBR, FlatCombining) |
-| evidence ledger | The structured JSONL ring buffer of runtime decisions and outcomes |
+| evidence ledger | Structured runtime evidence for heal/deny outcomes and sampled allowed decisions on paths that reach the kernel |
 | L0 / L1 / L2 / L3 | Replacement-level promotion stages |
 | PCPT | Proof-Carrying Policy Table (`policy_table.rs`) |
 
@@ -3990,7 +3968,7 @@ Selected project health snapshot:
 | `crates/frankenlibc-membrane/` | Safety membrane, healing, runtime math, alien_cs |
 | `crates/frankenlibc-core/` | Safe semantic kernels |
 | `crates/frankenlibc-harness/` | Verification and evidence tooling |
-| `crates/frankenlibc-membrane/build.rs` | Build-time SOS certificate synthesis + barrier audit |
+| `crates/frankenlibc-membrane/build.rs` | Supplied-matrix consistency checks + atomic-site inventory |
 | `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,749 lines) |
 | `tests/conformance/` | Canonical reports, fixtures, completion contracts, CLI contracts |
 | `tests/conformance/fixtures/` | Host-libc fixture corpus |

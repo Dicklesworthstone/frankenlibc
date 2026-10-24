@@ -364,7 +364,10 @@ fn main() {
     // giving a bogus tiny-source ratio.
     let build_sbcs_source = |codec: &[u8], target: usize| -> Vec<u8> {
         let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), codec.as_ptr().cast()) };
-        assert!(cd as isize != -1 && !cd.is_null(), "build_sbcs_source open failed");
+        assert!(
+            cd as isize != -1 && !cd.is_null(),
+            "build_sbcs_source open failed"
+        );
         let mut valid = Vec::new();
         for bv in 0u16..=0xFF {
             let b = bv as u8;
@@ -509,22 +512,58 @@ fn main() {
     // PROBE the remaining dedicated Vec-two-pass decoders (-> UTF-8) for negative ledger.
     // Stateful ISO-2022-* built authoritatively by host glibc from real script sources.
     let iso2022jp_src = host_to(b"ISO-2022-JP\0", &jp_full);
-    run_conv(c, "iso2022jp_to_utf8", b"UTF-8\0", b"ISO-2022-JP\0", &iso2022jp_src);
+    run_conv(
+        c,
+        "iso2022jp_to_utf8",
+        b"UTF-8\0",
+        b"ISO-2022-JP\0",
+        &iso2022jp_src,
+    );
     // ENCODE direction: UTF-8 -> ISO-2022-JP. `jp_full` Hiragana is JIS X 0208, so the
     // stateful encoder emits ESC $ B ... runs. Probes iso2022jp_convert (was Vec-two-pass).
-    run_conv(c, "utf8_to_iso2022jp", b"ISO-2022-JP\0", b"UTF-8\0", &jp_full);
+    run_conv(
+        c,
+        "utf8_to_iso2022jp",
+        b"ISO-2022-JP\0",
+        b"UTF-8\0",
+        &jp_full,
+    );
     // ISO-2022-JP-2 / JP-3 (supersets, still Vec-two-pass decoders). Hiragana is JIS X 0208
     // (JP-2) / JIS X 0213 plane 1 (JP-3), so host_to yields a full-length source.
     let iso2022jp2_src = host_to(b"ISO-2022-JP-2\0", &jp_full);
-    run_conv(c, "iso2022jp2_to_utf8", b"UTF-8\0", b"ISO-2022-JP-2\0", &iso2022jp2_src);
+    run_conv(
+        c,
+        "iso2022jp2_to_utf8",
+        b"UTF-8\0",
+        b"ISO-2022-JP-2\0",
+        &iso2022jp2_src,
+    );
     // ENCODE direction: UTF-8 -> ISO-2022-JP-2. `jp_full` Hiragana is JIS X 0208 (G0 set 2).
     // Probes iso2022jp2_convert (was Vec-two-pass, now single-pass).
-    run_conv(c, "utf8_to_iso2022jp2", b"ISO-2022-JP-2\0", b"UTF-8\0", &jp_full);
+    run_conv(
+        c,
+        "utf8_to_iso2022jp2",
+        b"ISO-2022-JP-2\0",
+        b"UTF-8\0",
+        &jp_full,
+    );
     let iso2022jp3_src = host_to(b"ISO-2022-JP-3\0", &jp_full);
-    run_conv(c, "iso2022jp3_to_utf8", b"UTF-8\0", b"ISO-2022-JP-3\0", &iso2022jp3_src);
+    run_conv(
+        c,
+        "iso2022jp3_to_utf8",
+        b"UTF-8\0",
+        b"ISO-2022-JP-3\0",
+        &iso2022jp3_src,
+    );
     // ENCODE direction: UTF-8 -> ISO-2022-JP-3. `jp_full` Hiragana is JIS X 0208.
     // Probes iso2022jp3_convert (was Vec-two-pass, now single-pass).
-    run_conv(c, "utf8_to_iso2022jp3", b"ISO-2022-JP-3\0", b"UTF-8\0", &jp_full);
+    run_conv(
+        c,
+        "utf8_to_iso2022jp3",
+        b"ISO-2022-JP-3\0",
+        b"UTF-8\0",
+        &jp_full,
+    );
     // IBM930 (EBCDIC Japanese Katakana+Kanji, SO/SI DBCS) -> UTF-8. cjk = U+4E00 Kanji.
     let ibm930_src = build_sbcs_source(b"IBM930\0", 512);
     run_conv(c, "ibm930_to_utf8", b"UTF-8\0", b"IBM930\0", &ibm930_src);
@@ -534,21 +573,45 @@ fn main() {
     let euckr_valid = build_dbcs_source(b"EUC-KR\0", 0xB0..=0xC8, 0xA1..=0xFE, 512);
     let ksc_utf8 = host_from(b"EUC-KR\0", &euckr_valid);
     let iso2022kr_src = host_to(b"ISO-2022-KR\0", &ksc_utf8);
-    run_conv(c, "iso2022kr_to_utf8", b"UTF-8\0", b"ISO-2022-KR\0", &iso2022kr_src);
+    run_conv(
+        c,
+        "iso2022kr_to_utf8",
+        b"UTF-8\0",
+        b"ISO-2022-KR\0",
+        &iso2022kr_src,
+    );
     // ENCODE direction: UTF-8 -> ISO-2022-KR. `ksc_utf8` is Wansung Hangul (KSC 5601),
     // so the stateful encoder emits SO + double-byte cells. Probes iso2022kr_convert
     // (was Vec-two-pass, now single-pass).
-    run_conv(c, "utf8_to_iso2022kr", b"ISO-2022-KR\0", b"UTF-8\0", &ksc_utf8);
+    run_conv(
+        c,
+        "utf8_to_iso2022kr",
+        b"ISO-2022-KR\0",
+        b"UTF-8\0",
+        &ksc_utf8,
+    );
     // ISO-2022-CN's default G1 is GB2312; round-trip a GB2312-encodable UTF-8 corpus so
     // host_to yields a full source (plain `cjk` has U+4E00 cps outside GB2312 that truncate).
     let gb2312_valid = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);
     let gb_utf8 = host_from(b"GB2312\0", &gb2312_valid);
     let iso2022cn_src = host_to(b"ISO-2022-CN\0", &gb_utf8);
-    run_conv(c, "iso2022cn_to_utf8", b"UTF-8\0", b"ISO-2022-CN\0", &iso2022cn_src);
+    run_conv(
+        c,
+        "iso2022cn_to_utf8",
+        b"UTF-8\0",
+        b"ISO-2022-CN\0",
+        &iso2022cn_src,
+    );
     // ENCODE direction: UTF-8 -> ISO-2022-CN. `gb_utf8` is GB2312 Hanzi, so the stateful
     // encoder emits ESC $ ) A designator + SO + double-byte cells. Probes iso2022cn_convert
     // (was Vec-two-pass, now single-pass).
-    run_conv(c, "utf8_to_iso2022cn", b"ISO-2022-CN\0", b"UTF-8\0", &gb_utf8);
+    run_conv(
+        c,
+        "utf8_to_iso2022cn",
+        b"ISO-2022-CN\0",
+        b"UTF-8\0",
+        &gb_utf8,
+    );
     // TSCII (Tamil, visual-order maximal-munch decode): honest single-byte source
     // (a contiguous Tamil host_to truncated on unassigned/non-TSCII cps).
     let tscii_src = build_sbcs_source(b"TSCII\0", 512);
@@ -563,7 +626,13 @@ fn main() {
     // ENCODE-DIRECTION SCAN #3: the last unbenched encode paths — iso2022cnext_convert
     // (Vec-two-pass, flagged "likely false-gap glibc-CN-slow"), + encode_sbcs_mb (TCVN /
     // CP1255, multibyte-decompose; cp1258 was loop-floor — confirm TCVN/CP1255).
-    run_conv(c, "utf8_to_iso2022cnext", b"ISO-2022-CN-EXT\0", b"UTF-8\0", &gb_utf8);
+    run_conv(
+        c,
+        "utf8_to_iso2022cnext",
+        b"ISO-2022-CN-EXT\0",
+        b"UTF-8\0",
+        &gb_utf8,
+    );
     let tcvn_bytes = build_sbcs_source(b"TCVN\0", 512);
     let tcvn_utf8 = host_from(b"TCVN\0", &tcvn_bytes);
     run_conv(c, "utf8_to_tcvn", b"TCVN\0", b"UTF-8\0", &tcvn_utf8);
@@ -574,8 +643,20 @@ fn main() {
     // eucjisx0213_decode / tscii_decode) single-pass ONLY for to==UTF-8; a UTF-16
     // target falls to the Vec<char>+Vec<u8> two-pass body (the ~6x class the ->UTF-8
     // single-pass cleared). Probe whether ->UTF-16 is still catastrophic + fixable.
-    run_conv(c, "big5hkscs_to_utf16", b"UTF-16LE\0", b"BIG5-HKSCS\0", &big5hkscs_src);
-    run_conv(c, "eucjisx0213_to_utf16", b"UTF-16LE\0", b"EUC-JISX0213\0", &eucjisx_src);
+    run_conv(
+        c,
+        "big5hkscs_to_utf16",
+        b"UTF-16LE\0",
+        b"BIG5-HKSCS\0",
+        &big5hkscs_src,
+    );
+    run_conv(
+        c,
+        "eucjisx0213_to_utf16",
+        b"UTF-16LE\0",
+        b"EUC-JISX0213\0",
+        &eucjisx_src,
+    );
     run_conv(c, "tscii_to_utf16", b"UTF-16LE\0", b"TSCII\0", &tscii_src);
     // SINGLE-BYTE -> UTF-16 (COMMON on Windows): NO GAP — fl already wins (the
     // from_decode.cp fast path at ~50050 emits one UTF-16 unit/byte). koi8r/latin1/cp1251
@@ -584,11 +665,29 @@ fn main() {
     // on a build_sbcs_source enumerate-all-bytes corpus whose 1/2/3-byte widths are scattered
     // — a pathological source, NOT a gap.)
     let koi8r_bytes = build_sbcs_source(b"KOI8-R\0", 512);
-    run_conv(c, "koi8r_to_utf16", b"UTF-16LE\0", b"KOI8-R\0", &koi8r_bytes);
+    run_conv(
+        c,
+        "koi8r_to_utf16",
+        b"UTF-16LE\0",
+        b"KOI8-R\0",
+        &koi8r_bytes,
+    );
     let latin1_bytes = build_sbcs_source(b"ISO-8859-1\0", 512);
-    run_conv(c, "latin1_to_utf16", b"UTF-16LE\0", b"ISO-8859-1\0", &latin1_bytes);
+    run_conv(
+        c,
+        "latin1_to_utf16",
+        b"UTF-16LE\0",
+        b"ISO-8859-1\0",
+        &latin1_bytes,
+    );
     let cp1251_bytes = build_sbcs_source(b"CP1251\0", 512);
-    run_conv(c, "cp1251_to_utf16", b"UTF-16LE\0", b"CP1251\0", &cp1251_bytes);
+    run_conv(
+        c,
+        "cp1251_to_utf16",
+        b"UTF-16LE\0",
+        b"CP1251\0",
+        &cp1251_bytes,
+    );
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {
@@ -665,7 +764,13 @@ fn main() {
     // the new DBCS->UTF-16 scalar run fixes (the pure-2-byte arms above never exercise
     // the post-gather-break tail).
     let jp_mixed_cps: Vec<u32> = (0..512u32)
-        .map(|k| if k % 4 == 0 { 0x41 + (k % 26) } else { 0x3041 + (k % 0x5E) })
+        .map(|k| {
+            if k % 4 == 0 {
+                0x41 + (k % 26)
+            } else {
+                0x3041 + (k % 0x5E)
+            }
+        })
         .collect();
     let jp_mixed = u8enc(&jp_mixed_cps);
     let cp932_mixed_src = host_to(b"CP932\0", &jp_mixed);
@@ -685,7 +790,13 @@ fn main() {
         &eucjp_mixed_src,
     );
     // Same vpgatherdd-vs-scalar question for the fast-glibc EUC-JP/-MS -> UTF-16 path.
-    run_conv(c, "eucjp_to_utf16le", b"UTF-16LE\0", b"EUC-JP\0", &eucjp_src);
+    run_conv(
+        c,
+        "eucjp_to_utf16le",
+        b"UTF-16LE\0",
+        b"EUC-JP\0",
+        &eucjp_src,
+    );
     run_conv(
         c,
         "eucjpms_to_utf16le",

@@ -188,9 +188,9 @@ impl FamilyTracker {
 
         // Conformal quantiles with finite-sample correction
         // Floor for fast (conservative: fewer false skips)
-        let fast_idx = ((n as f64) * DEFAULT_ALPHA).floor() as usize;
+        let fast_idx = crate::util::floor_f64((n as f64) * DEFAULT_ALPHA) as usize;
         // Ceil for full (conservative: fewer missed threats)
-        let full_idx = ((n as f64) * (1.0 - DEFAULT_ALPHA)).ceil() as usize;
+        let full_idx = crate::util::ceil_f64((n as f64) * (1.0 - DEFAULT_ALPHA)) as usize;
 
         self.fast_threshold = sorted[fast_idx.min(n - 1)];
         self.full_threshold = sorted[full_idx.min(n - 1)];

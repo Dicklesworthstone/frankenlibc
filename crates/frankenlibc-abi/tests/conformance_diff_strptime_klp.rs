@@ -26,7 +26,7 @@ fn host_strptime() -> StrptimeFn {
     assert!(!raw.is_null(), "dlsym strptime");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::time_abi::strptime as usize,
+        frankenlibc_abi::time_abi::strptime as *const () as usize,
         "the resolved oracle IS fl's strptime — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented strptime signature.

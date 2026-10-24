@@ -244,7 +244,7 @@ fn environ_aliases_track_the_live_environment_like_glibc() {
     // asserted here is the observable contract instead: walking any of the three
     // must reveal the variable that getenv returns.
     let key = format!("FL_ENVIRON_ALIAS_{}", std::process::id());
-    let entry = CString::new(format!("{key}=alias-1")).unwrap();
+    let _entry = CString::new(format!("{key}=alias-1")).unwrap();
     let rc = unsafe {
         frankenlibc_abi::stdlib_abi::setenv(
             CString::new(key.as_str()).unwrap().as_ptr(),

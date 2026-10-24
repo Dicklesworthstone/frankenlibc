@@ -139,7 +139,7 @@ fn get_robust_list_each_null_output_matches_host_syscall() {
 
 #[test]
 fn get_robust_list_invalid_pid_matches_host_without_writing_outputs() {
-    let sentinel_head = 1usize as *mut c_void;
+    let sentinel_head = ptr::dangling_mut::<c_void>();
     let sentinel_len = usize::MAX;
 
     let mut host_head = sentinel_head;

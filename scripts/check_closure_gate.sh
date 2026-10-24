@@ -346,6 +346,109 @@ print(f'  Coverage debt: {no_entry + missing + partial} beads need evidence impr
 echo ""
 
 # ---------------------------------------------------------------------------
+# Check 5: Post-cutoff (2026-10-15T00:00:00Z) closed-bead evidence audit
+# ---------------------------------------------------------------------------
+echo "--- Check 5: Post-cutoff (2026-10-15T00:00:00Z) closed-bead audit ---"
+
+if [[ -f "${BEADS}" ]]; then
+    post_cutoff_check=$(python3 -c "
+import json
+import os
+import re
+import subprocess
+
+cutoff = os.environ.get('FRANKENLIBC_CLOSURE_CUTOFF', '2026-10-15T00:00:00Z')
+root = '${ROOT}'
+beads_path = '${BEADS}'
+
+all_files = set()
+for base in ('crates', 'scripts', 'tests', 'docs'):
+    base_dir = os.path.join(root, base)
+    if not os.path.isdir(base_dir):
+        continue
+    for dp, _, fns in os.walk(base_dir):
+        for fn in fns:
+            rel = os.path.relpath(os.path.join(dp, fn), root)
+            all_files.add(rel)
+            all_files.add(fn)
+
+post_total = 0
+post_pass = 0
+post_failures = []
+
+with open(beads_path, encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        b = json.loads(line)
+        if b.get('status') != 'closed':
+            continue
+        if b.get('issue_type') == 'epic':
+            continue
+        ca = b.get('closed_at') or b.get('updated_at') or ''
+        if ca < cutoff:
+            continue
+        post_total += 1
+        bid = b.get('id', '<unknown>')
+        cr = (b.get('close_reason') or '').strip()
+        issues = []
+        if len(cr) < 40:
+            issues.append(f'close_reason_too_short({len(cr)}<40)')
+        if 'BLOCKER: superseded by' in cr and 'passed;' not in cr and 'PASS' not in cr:
+            issues.append('unverified_superseded_claim')
+        has_verif = bool(re.search(r'(cargo\s+(?:test|check|clippy)|passed;\s*0\s+failed|\bPASS\b|scripts/check_|cve_arena_gate)', cr))
+        if not has_verif:
+            issues.append('missing_verification_outcome')
+
+        valid_ref = False
+        file_tokens = re.findall(r'[A-Za-z0-9_./-]+\.(?:rs|sh|c|json|md|toml)', cr)
+        for tok in file_tokens:
+            if tok in all_files or os.path.exists(os.path.join(root, tok)):
+                valid_ref = True
+                break
+        if not valid_ref:
+            for m in re.finditer(r'--test\s+([A-Za-z0-9_-]+)', cr):
+                if f\"{m.group(1)}.rs\" in all_files:
+                    valid_ref = True
+                    break
+        if not valid_ref:
+            for sha in re.findall(r'\b[0-9a-f]{7,40}\b', cr):
+                r = subprocess.run(['git', '-C', root, 'cat-file', '-e', f'{sha}^{{commit}}'], capture_output=True)
+                if r.returncode == 0:
+                    valid_ref = True
+                    break
+        if not valid_ref:
+            issues.append('missing_valid_commit_or_artifact_ref')
+
+        if issues:
+            post_failures.append(f'{bid}: {\", \".join(issues)}')
+        else:
+            post_pass += 1
+
+print(f'POST_TOTAL={post_total}')
+print(f'POST_PASS={post_pass}')
+print(f'POST_FAIL={len(post_failures)}')
+for pf in post_failures:
+    print(f'  {pf}')
+")
+    post_total=$(echo "${post_cutoff_check}" | grep '^POST_TOTAL=' | cut -d= -f2)
+    post_pass=$(echo "${post_cutoff_check}" | grep '^POST_PASS=' | cut -d= -f2)
+    post_fail=$(echo "${post_cutoff_check}" | grep '^POST_FAIL=' | cut -d= -f2)
+    echo "Post-cutoff closed beads: ${post_total} (pass=${post_pass}, fail=${post_fail})"
+    if [[ "${post_fail}" -gt 0 ]]; then
+        echo "FAIL: ${post_fail} post-cutoff closed bead(s) lack verifiable commit/artifact or gate outcome:"
+        echo "${post_cutoff_check}" | grep '^  ' || true
+        failures=$((failures + 1))
+    else
+        echo "PASS: All post-cutoff closed beads cite verifiable commit/artifact and gate outcome"
+    fi
+else
+    echo "SKIP: ${BEADS} not present"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "=== Summary ==="

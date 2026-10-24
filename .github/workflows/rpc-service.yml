@@ -1,0 +1,46 @@
+name: Native RPC services
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-core/src/rpc/**'
+      - 'crates/frankenlibc-core/tests/rpc_service_test.rs'
+      - 'crates/frankenlibc-abi/src/rpc*.rs'
+      - 'tests/integration/fixture_rpc_service*'
+      - 'scripts/check_rpc_service.py'
+      - '.github/workflows/rpc-service.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rpc-service-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute bounded service protocol contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/rpc-service
+          git rev-parse HEAD > artifacts/rpc-service/revision.txt
+          cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture 2>&1 | tee artifacts/rpc-service/protocol.log
+          grep -F 'test result: ok. 12 passed; 0 failed;' artifacts/rpc-service/protocol.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc-service-results
+          path: artifacts/rpc-service/

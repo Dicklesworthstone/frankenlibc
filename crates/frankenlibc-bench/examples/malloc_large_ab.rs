@@ -21,7 +21,7 @@ fn glibc_syms() -> (MallocFn, FreeFn) {
     let (m, f) = *SYMS.get_or_init(|| unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_NOW | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc.so.6 failed");
@@ -84,7 +84,10 @@ fn main() {
         let (fm, gm) = (fl_v[15], g_v[15]);
         println!(
             "size={:>7}: fl={:>8.1}ns glibc={:>8.1}ns ratio={:.3}",
-            size, fm, gm, fm / gm
+            size,
+            fm,
+            gm,
+            fm / gm
         );
     }
 }

@@ -6,7 +6,7 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::os::unix::ffi::OsStrExt;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::locale as locale_core;
@@ -179,6 +179,8 @@ fn set_category_charset(cat: c_int, charset: Charset) {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 #[inline]
 fn set_active_charset(charset: Charset) {
     set_category_charset(locale_core::LC_ALL, charset);
@@ -252,6 +254,8 @@ fn locale_name_for(charset: Charset) -> &'static [u8] {
 }
 
 /// The `nl_langinfo(CODESET)` string for `charset`.
+#[cfg(test)]
+#[allow(dead_code)]
 #[inline]
 fn codeset_for(charset: Charset) -> &'static [u8] {
     match charset {
@@ -292,6 +296,77 @@ struct NamedCategory {
     blob: CategoryBlob<'static>,
     /// For LC_CTYPE: the wide-character class/case/width tables.
     ctype: Option<frankenlibc_core::locale::data::CtypeTables<'static>>,
+    /// For LC_CTYPE: the single-byte tables, when they differ from C's.
+    bytes: Option<&'static ByteCtype>,
+}
+
+/// A named LC_CTYPE's single-byte tables, glibc's `_NL_CTYPE_CLASS`,
+/// `_NL_CTYPE_TOUPPER` and `_NL_CTYPE_TOLOWER`: 384 entries each, for
+/// `c` in -128..=255, in `<ctype.h>`'s bit layout. Kept only when they differ
+/// from the C tables -- in UTF-8 locales that is the Turkic dotless i
+/// (tr_TR: `toupper('i') == 'i'`, `tolower('I') == 'I'`, because their case
+/// partners are multibyte), in single-byte locales the upper half.
+pub(crate) struct ByteCtype {
+    pub(crate) class: [u16; 384],
+    pub(crate) toupper: [i32; 384],
+    pub(crate) tolower: [i32; 384],
+}
+
+/// Set once any loaded LC_CTYPE has [`ByteCtype`] tables; until then every
+/// byte classification is the C table's, with no locale lookup.
+static NON_C_BYTE_CTYPE: AtomicBool = AtomicBool::new(false);
+
+fn byte_ctype_from_blob(blob: &CategoryBlob<'static>) -> Option<&'static ByteCtype> {
+    let table = |index: usize, width: usize| -> Option<&[u8]> {
+        let off = blob.offset(index)?;
+        blob.bytes().get(off..off.checked_add(384 * width)?)
+    };
+    let (class, upper, lower) = (table(0, 2)?, table(1, 4)?, table(3, 4)?);
+    let mut tables = ByteCtype {
+        class: [0; 384],
+        toupper: [0; 384],
+        tolower: [0; 384],
+    };
+    for i in 0..384 {
+        tables.class[i] = u16::from_ne_bytes([class[2 * i], class[2 * i + 1]]);
+        let word =
+            |t: &[u8]| i32::from_ne_bytes([t[4 * i], t[4 * i + 1], t[4 * i + 2], t[4 * i + 3]]);
+        tables.toupper[i] = word(upper);
+        tables.tolower[i] = word(lower);
+    }
+    if tables.class == crate::ctype_abi::CTYPE_B_TABLE
+        && tables.toupper == crate::ctype_abi::TOUPPER_TABLE
+        && tables.tolower == crate::ctype_abi::TOLOWER_TABLE
+    {
+        return None;
+    }
+    NON_C_BYTE_CTYPE.store(true, Ordering::Release);
+    Some(Box::leak(Box::new(tables)))
+}
+
+fn category_byte_ctype(category: Resolved) -> Option<&'static ByteCtype> {
+    match category {
+        Resolved::Named(n) => n.bytes,
+        Resolved::Builtin(_) => None,
+    }
+}
+
+/// The calling thread's LC_CTYPE byte tables (`None`: the C tables).
+#[inline]
+pub(crate) fn thread_byte_ctype() -> Option<&'static ByteCtype> {
+    if !NON_C_BYTE_CTYPE.load(Ordering::Acquire) {
+        return None;
+    }
+    named(locale_core::LC_CTYPE).and_then(|n| n.bytes)
+}
+
+/// The byte tables of a `locale_t`'s LC_CTYPE (`None`: the C tables).
+pub(crate) fn handle_byte_ctype(handle: LocaleT) -> Option<&'static ByteCtype> {
+    if !NON_C_BYTE_CTYPE.load(Ordering::Acquire) {
+        return None;
+    }
+    let slot = locale_core::category_slot(locale_core::LC_CTYPE)?;
+    categories_for_handle(handle).and_then(|categories| category_byte_ctype(categories[slot]))
 }
 
 /// The wide-character tables of the active LC_CTYPE (null: see
@@ -300,6 +375,7 @@ static CTYPE_TABLES: AtomicPtr<frankenlibc_core::locale::data::CtypeTables<'stat
     AtomicPtr::new(std::ptr::null_mut());
 
 /// How wide-character classification, case mapping and `wcwidth` behave.
+#[allow(dead_code)]
 pub(crate) enum WideCtype {
     /// The C/POSIX locale: ASCII only, as glibc's built-in C locale.
     Ascii,
@@ -494,16 +570,20 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     let mut stored = name.to_vec();
     stored.push(0);
     let blob = blob?;
-    let ctype = if category == locale_core::LC_CTYPE {
-        frankenlibc_core::locale::data::CtypeTables::from_blob(&blob)
+    let (ctype, bytes) = if category == locale_core::LC_CTYPE {
+        (
+            frankenlibc_core::locale::data::CtypeTables::from_blob(&blob),
+            byte_ctype_from_blob(&blob),
+        )
     } else {
-        None
+        (None, None)
     };
     let entry: &'static NamedCategory = Box::leak(Box::new(NamedCategory {
         category,
         name: stored.into_boxed_slice(),
         blob,
         ctype,
+        bytes,
     }));
     loaded.push(entry);
     Some(entry)
@@ -606,6 +686,9 @@ fn apply_category(category: c_int, resolved: Resolved) {
             }
         }
     }
+    if category == locale_core::LC_CTYPE {
+        crate::ctype_abi::refresh_thread_ctype_slots();
+    }
 }
 
 /// The name `setlocale` reports for one category. Always process-global,
@@ -652,13 +735,6 @@ fn parse_composite(name: &[u8]) -> Option<Vec<(c_int, Vec<u8>)>> {
     }
     (!out.is_empty()).then_some(out)
 }
-
-/// POSIX C-locale radix character.
-static C_LOCALE_RADIX: &[u8] = b".\0";
-/// POSIX C-locale thousands separator (empty string).
-static C_LOCALE_THOUSEP: &[u8] = b"\0";
-/// Generic empty locale string result.
-static EMPTY_LOCALE_STR: &[u8] = b"\0";
 
 /// Static `struct lconv` for the C locale.
 ///
@@ -734,7 +810,7 @@ unsafe impl Sync for LConv {}
 /// are accepted as aliases; other names fail with `ENOENT` in strict mode.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *const c_char {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Locale, category as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, true);
@@ -869,6 +945,7 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 
 /// Collation tables when LC_COLLATE is on a named locale with rules
 /// (`None` for byte-order collation, including C and C.UTF-8).
+#[allow(dead_code)]
 pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
     let n = named(locale_core::LC_COLLATE)?;
     frankenlibc_core::locale::collate::CollateTables::from_blob(&n.blob)
@@ -876,6 +953,7 @@ pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::Colla
 
 /// LC_TIME strings for `strftime` when LC_TIME is on a named locale.
 /// Item indices are the LC_TIME `nl_item` offsets (ABDAY_1 = 0 ... T_FMT_AMPM = 43).
+#[allow(dead_code)]
 pub(crate) fn named_time_locale() -> Option<frankenlibc_core::time::TimeLocale<'static>> {
     let n = named(locale_core::LC_TIME)?;
     let s = |i: usize| n.blob.string(i).unwrap_or(b"");
@@ -997,11 +1075,11 @@ fn named_localeconv() -> Option<*const LConv> {
 // nl_langinfo
 // ---------------------------------------------------------------------------
 
-/// The `nl_langinfo` table for a given character set.
-///
-/// Only `CODESET` varies: every other item in the POSIX C locale is identical
-/// between `C` and `C.UTF-8` (both are the unlocalised English set), which is
-/// why the parameter threads through to exactly one arm.
+// The `nl_langinfo` table for a given character set.
+//
+// Only `CODESET` varies: every other item in the POSIX C locale is identical
+// between `C` and `C.UTF-8` (both are the unlocalised English set), which is
+// why the parameter threads through to exactly one arm.
 
 #[repr(transparent)]
 struct PtrTable<const N: usize>([*const c_char; N]);
@@ -1279,22 +1357,6 @@ const _: () = assert!(libc::THOUSEP - (1 << 16) == 1);
 const _: () = assert!(libc::YESEXPR - (5 << 16) == 0);
 const _: () = assert!(libc::NOEXPR - (5 << 16) == 1);
 
-static LC_NUMERIC_TABLE: PtrTable<2> = PtrTable([c".".as_ptr(), c"".as_ptr()]);
-
-static LC_MONETARY_TABLE: PtrTable<9> = PtrTable([
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"-".as_ptr(),
-]);
-
-static LC_MESSAGES_TABLE: PtrTable<2> = PtrTable([c"^[yY]".as_ptr(), c"^[nN]".as_ptr()]);
-
 #[inline(always)]
 fn codeset_ptr(charset: Charset) -> *const c_char {
     match charset {
@@ -1303,15 +1365,224 @@ fn codeset_ptr(charset: Charset) -> *const c_char {
     }
 }
 
-/// The C locale's LC_PAPER..LC_IDENTIFICATION items (categories 7..=12), as
-/// glibc defines them. `Codeset` marks each category's CODESET item, which
-/// follows the active charset; `Int` items are returned as the pointer value
-/// itself, as glibc does (paper height/width, country number).
+/// The C locale's items outside LC_TIME, as glibc defines them. `Codeset`
+/// marks each category's CODESET item, which follows the active charset;
+/// `Int` items are glibc's word-valued items, returned as the pointer value
+/// itself (paper height/width, country number, MB_CUR_MAX, ...). `List` is a
+/// run of NUL-terminated strings ended by an empty one, `Wide` a `wchar_t`
+/// string or word array, and `ByCharset` an item whose C and C.UTF-8 values
+/// differ.
 enum CItem {
     Str(&'static CStr),
+    List(&'static [u8]),
+    Wide(&'static [u32]),
     Int(usize),
     Codeset,
+    ByCharset(&'static CItem, &'static CItem),
 }
+
+/// LC_CTYPE (category 0). The class/case/width/transliteration tables are not
+/// served for the built-in locales (`""`), so `_NL_CTYPE_TRANSLIT_TAB_SIZE`
+/// reports 0 entries rather than glibc's table size, keeping a caller that
+/// walks the table inside it.
+const LC_CTYPE_C: &[CItem] = &[
+    // 0..=9 class/case tables and gaps
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 10 _NL_CTYPE_CLASS_NAMES, 11 _NL_CTYPE_MAP_NAMES
+    CItem::ByCharset(
+        &CItem::List(b"upper\0lower\0alpha\0digit\0xdigit\0space\0print\0graph\0blank\0cntrl\0punct\0alnum\0\0"),
+        &CItem::List(b"upper\0lower\0alpha\0digit\0xdigit\0space\0print\0graph\0blank\0cntrl\0punct\0alnum\0combining\0combining_level3\0\0"),
+    ),
+    CItem::ByCharset(
+        &CItem::List(b"toupper\0tolower\0\0"),
+        &CItem::List(b"toupper\0tolower\0totitle\0\0"),
+    ),
+    // 12 _NL_CTYPE_WIDTH table
+    CItem::Str(c""),
+    // 13 _NL_CTYPE_MB_CUR_MAX, 14 CODESET
+    CItem::ByCharset(&CItem::Int(1), &CItem::Int(6)),
+    CItem::Codeset,
+    // 15, 16 _NL_CTYPE_TOUPPER32/_NL_CTYPE_TOLOWER32
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 17 _NL_CTYPE_CLASS_OFFSET, 18 _NL_CTYPE_MAP_OFFSET
+    CItem::Int(72),
+    CItem::ByCharset(&CItem::Int(84), &CItem::Int(86)),
+    // 19 _NL_CTYPE_INDIGITS_MB_LEN, 20..=29 _NL_CTYPE_INDIGITS0_MB..9
+    CItem::Int(1),
+    CItem::Str(c"0"),
+    CItem::Str(c"1"),
+    CItem::Str(c"2"),
+    CItem::Str(c"3"),
+    CItem::Str(c"4"),
+    CItem::Str(c"5"),
+    CItem::Str(c"6"),
+    CItem::Str(c"7"),
+    CItem::Str(c"8"),
+    CItem::Str(c"9"),
+    // 30 _NL_CTYPE_INDIGITS_WC_LEN, 31..=40 _NL_CTYPE_INDIGITS0_WC..9
+    CItem::Int(1),
+    CItem::Wide(&[0x30, 0]),
+    CItem::Wide(&[0x31, 0]),
+    CItem::Wide(&[0x32, 0]),
+    CItem::Wide(&[0x33, 0]),
+    CItem::Wide(&[0x34, 0]),
+    CItem::Wide(&[0x35, 0]),
+    CItem::Wide(&[0x36, 0]),
+    CItem::Wide(&[0x37, 0]),
+    CItem::Wide(&[0x38, 0]),
+    CItem::Wide(&[0x39, 0]),
+    // 41..=50 _NL_CTYPE_OUTDIGIT0_MB..9
+    CItem::Str(c"0"),
+    CItem::Str(c"1"),
+    CItem::Str(c"2"),
+    CItem::Str(c"3"),
+    CItem::Str(c"4"),
+    CItem::Str(c"5"),
+    CItem::Str(c"6"),
+    CItem::Str(c"7"),
+    CItem::Str(c"8"),
+    CItem::Str(c"9"),
+    // 51..=60 _NL_CTYPE_OUTDIGIT0_WC..9
+    CItem::Int(0x30),
+    CItem::Int(0x31),
+    CItem::Int(0x32),
+    CItem::Int(0x33),
+    CItem::Int(0x34),
+    CItem::Int(0x35),
+    CItem::Int(0x36),
+    CItem::Int(0x37),
+    CItem::Int(0x38),
+    CItem::Int(0x39),
+    // 61 _NL_CTYPE_TRANSLIT_TAB_SIZE, 62..=65 the table itself
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 66 _NL_CTYPE_TRANSLIT_DEFAULT_MISSING_LEN, 67 ..._DEFAULT_MISSING
+    CItem::Int(1),
+    CItem::Wide(&[b'?' as u32, 0]),
+    // 68 _NL_CTYPE_TRANSLIT_IGNORE_LEN, 69 _NL_CTYPE_TRANSLIT_IGNORE
+    CItem::Int(0),
+    CItem::Str(c""),
+    // 70 _NL_CTYPE_MAP_TO_NONASCII, 71 _NL_CTYPE_NONASCII_CASE
+    CItem::Int(0),
+    CItem::Int(0),
+];
+
+/// LC_NUMERIC (category 1): RADIXCHAR, THOUSEP, grouping, the wide radix and
+/// separator, CODESET.
+const LC_NUMERIC_C: &[CItem] = &[
+    CItem::Str(c"."),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Int(b'.' as usize),
+    CItem::Int(0),
+    CItem::Codeset,
+];
+
+/// LC_COLLATE (category 3): no rules, no tables.
+const LC_COLLATE_C: &[CItem] = &[
+    // 0 _NL_COLLATE_NRULES
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 13 _NL_COLLATE_SYMB_HASH_SIZEMB
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+
+/// LC_MONETARY (category 4). Every `char`-valued field is CHAR_MAX ("not
+/// available"), as POSIX specifies for the C locale.
+const LC_MONETARY_C: &[CItem] = &[
+    // 0..=6 int_curr_symbol .. negative_sign
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 7..=14 int_frac_digits .. n_sign_posn
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    // 15 CRNCYSTR
+    CItem::Str(c"-"),
+    // 16..=21 int_p_cs_precedes .. int_n_sign_posn
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    // 22, 23 duo_int_curr_symbol, duo_currency_symbol
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 24..=37 duo_int_frac_digits .. duo_int_n_sign_posn
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    // 38..=41 uno_valid_from/to, duo_valid_from/to
+    CItem::Int(10101),
+    CItem::Int(99991231),
+    CItem::Int(10101),
+    CItem::Int(99991231),
+    // 42 conversion_rate (two words), 43, 44 wide decimal point/separator
+    CItem::Wide(&[1, 1]),
+    CItem::Int(0),
+    CItem::Int(0),
+    CItem::Codeset,
+];
+
+/// LC_MESSAGES (category 5): YESEXPR, NOEXPR, YESSTR, NOSTR, CODESET.
+const LC_MESSAGES_C: &[CItem] = &[
+    CItem::Str(c"^[yY]"),
+    CItem::Str(c"^[nN]"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
 
 const LC_PAPER_C: &[CItem] = &[CItem::Int(297), CItem::Int(210), CItem::Codeset];
 const LC_NAME_C: &[CItem] = &[
@@ -1347,24 +1618,70 @@ const LC_TELEPHONE_C: &[CItem] = &[
 ];
 // _NL_MEASUREMENT_MEASUREMENT is the byte 1 (metric), not a C string of text.
 const LC_MEASUREMENT_C: &[CItem] = &[CItem::Str(c"\x01"), CItem::Codeset];
+/// LC_IDENTIFICATION (category 12). glibc's C.UTF-8 is a compiled locale with
+/// its own identification block; C keeps the ISO 14652 FDCC-set one.
 const LC_IDENTIFICATION_C: &[CItem] = &[
-    CItem::Str(c"ISO/IEC 14652 i18n FDCC-set"),
-    CItem::Str(c"ISO/IEC JTC1/SC22/WG20 - internationalization"),
-    CItem::Str(c"C/o Keld Simonsen, Skt. Jorgens Alle 8, DK-1615 Kobenhavn V"),
-    CItem::Str(c"Keld Simonsen"),
-    CItem::Str(c"keld@dkuug.dk"),
-    CItem::Str(c"+45 3122-6543"),
-    CItem::Str(c"+45 3325-6543"),
+    CItem::ByCharset(
+        &CItem::Str(c"ISO/IEC 14652 i18n FDCC-set"),
+        &CItem::Str(c"C locale"),
+    ),
+    CItem::ByCharset(
+        &CItem::Str(c"ISO/IEC JTC1/SC22/WG20 - internationalization"),
+        &CItem::Str(c""),
+    ),
+    CItem::ByCharset(
+        &CItem::Str(c"C/o Keld Simonsen, Skt. Jorgens Alle 8, DK-1615 Kobenhavn V"),
+        &CItem::Str(c""),
+    ),
+    CItem::ByCharset(&CItem::Str(c"Keld Simonsen"), &CItem::Str(c"")),
+    CItem::ByCharset(
+        &CItem::Str(c"keld@dkuug.dk"),
+        &CItem::Str(c"bug-glibc-locales@gnu.org"),
+    ),
+    CItem::ByCharset(&CItem::Str(c"+45 3122-6543"), &CItem::Str(c"")),
+    CItem::ByCharset(&CItem::Str(c"+45 3325-6543"), &CItem::Str(c"")),
     CItem::Str(c""),
-    CItem::Str(c"ISO"),
+    CItem::ByCharset(&CItem::Str(c"ISO"), &CItem::Str(c"")),
     CItem::Str(c""),
     CItem::Str(c""),
     CItem::Str(c""),
-    CItem::Str(c"1.0"),
-    CItem::Str(c"1997-12-20"),
-    CItem::Str(c"i18n:1999"),
+    CItem::ByCharset(&CItem::Str(c"1.0"), &CItem::Str(c"2.1")),
+    CItem::ByCharset(&CItem::Str(c"1997-12-20"), &CItem::Str(c"2022-01-30")),
+    CItem::ByCharset(&CItem::Str(c"i18n:1999"), &CItem::Str(c"i18n:2012")),
     CItem::Codeset,
 ];
+
+/// The pointer `nl_langinfo` returns for one built-in item; `codeset` is only
+/// consulted for the items that depend on it.
+#[inline]
+fn citem_ptr(item: &CItem, codeset: impl FnOnce() -> *const c_char) -> *const c_char {
+    let codeset = match item {
+        CItem::Codeset | CItem::ByCharset(..) => codeset(),
+        _ => std::ptr::null(),
+    };
+    citem_ptr_with_codeset(item, codeset)
+}
+
+fn citem_ptr_with_codeset(item: &CItem, codeset: *const c_char) -> *const c_char {
+    match item {
+        CItem::Str(s) => s.as_ptr(),
+        CItem::List(bytes) => bytes.as_ptr().cast(),
+        CItem::Wide(words) => words.as_ptr().cast(),
+        CItem::Int(v) => std::ptr::without_provenance(*v),
+        CItem::Codeset => codeset,
+        // A built-in category's codeset pointer is one of the two static
+        // names (an LC_CTYPE item is served here only while LC_CTYPE is
+        // built in).
+        CItem::ByCharset(ascii, utf8) => citem_ptr_with_codeset(
+            if codeset == codeset_ptr(Charset::Utf8) {
+                utf8
+            } else {
+                ascii
+            },
+            codeset,
+        ),
+    }
+}
 
 #[inline(always)]
 fn langinfo_non_time_non_codeset(
@@ -1373,48 +1690,25 @@ fn langinfo_non_time_non_codeset(
 ) -> *const c_char {
     let category = (item as u32) >> 16;
     let index = ((item as u32) & 0xffff) as usize;
-    let extended = match category {
-        7 => Some(LC_PAPER_C),
-        8 => Some(LC_NAME_C),
-        9 => Some(LC_ADDRESS_C),
-        10 => Some(LC_TELEPHONE_C),
-        11 => Some(LC_MEASUREMENT_C),
-        12 => Some(LC_IDENTIFICATION_C),
-        _ => None,
+    let table = match category {
+        0 => LC_CTYPE_C,
+        1 => LC_NUMERIC_C,
+        3 => LC_COLLATE_C,
+        4 => LC_MONETARY_C,
+        5 => LC_MESSAGES_C,
+        7 => LC_PAPER_C,
+        8 => LC_NAME_C,
+        9 => LC_ADDRESS_C,
+        10 => LC_TELEPHONE_C,
+        11 => LC_MEASUREMENT_C,
+        12 => LC_IDENTIFICATION_C,
+        _ => return c"".as_ptr(),
     };
-    if let Some(table) = extended {
-        // These categories were all "" here; perl's Langinfo.t and
-        // XS-APItest locale.t check _NL_IDENTIFICATION_TERRITORY == "ISO".
-        return match table.get(index) {
-            Some(CItem::Str(s)) => s.as_ptr(),
-            Some(CItem::Int(v)) => *v as *const c_char,
-            Some(CItem::Codeset) => codeset(),
-            None => c"".as_ptr(),
-        };
-    }
-    match category {
-        1 => {
-            if index < 2 {
-                // SAFETY: index is bounds-checked < 2.
-                return unsafe { *LC_NUMERIC_TABLE.0.get_unchecked(index) };
-            }
-        }
-        4 => {
-            let offset = index.wrapping_sub(7);
-            if offset < 9 {
-                // SAFETY: offset is bounds-checked < 9.
-                return unsafe { *LC_MONETARY_TABLE.0.get_unchecked(offset) };
-            }
-        }
-        5 => {
-            if index < 2 {
-                // SAFETY: index is bounds-checked < 2.
-                return unsafe { *LC_MESSAGES_TABLE.0.get_unchecked(index) };
-            }
-        }
-        _ => {}
-    }
-    c"".as_ptr()
+    // perl's Langinfo.t and XS-APItest locale.t check
+    // _NL_IDENTIFICATION_TERRITORY == "ISO"; `locale -k` prints them all.
+    table
+        .get(index)
+        .map_or(c"".as_ptr(), |entry| citem_ptr(entry, codeset))
 }
 
 #[inline(always)]
@@ -1433,13 +1727,6 @@ fn langinfo_c_fast(item: libc::nl_item, charset: Charset) -> *const c_char {
     langinfo_non_time_non_codeset(item, || codeset_ptr(charset))
 }
 
-#[inline]
-fn langinfo_value_for(charset: Charset, item: libc::nl_item) -> &'static [u8] {
-    let ptr = langinfo_c_fast(item, charset);
-    // SAFETY: every pointer returned by langinfo_c_fast is a static NUL-terminated C string literal.
-    unsafe { std::ffi::CStr::from_ptr(ptr).to_bytes_with_nul() }
-}
-
 #[cold]
 #[inline(never)]
 fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
@@ -1454,16 +1741,54 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
     value
 }
 
+/// Whether item `index` of `category` is one of glibc's word-valued items,
+/// which `nl_langinfo` returns as the number itself cast to a pointer (as the
+/// built-in tables' `CItem::Int` entries are), not a pointer to the number.
+/// `locale -k`, util-linux `cal` (`_NL_TIME_WEEK_1STDAY`) and paper/measurement
+/// queries read them through a `{ char *string; unsigned int word; }` union.
+#[inline]
+fn is_word_item(category: u32, index: usize) -> bool {
+    match category {
+        // MB_CUR_MAX, CLASS_OFFSET, MAP_OFFSET, INDIGITS_MB_LEN,
+        // INDIGITS_WC_LEN, OUTDIGIT0..9_WC, TRANSLIT_TAB_SIZE,
+        // TRANSLIT_DEFAULT_MISSING_LEN, TRANSLIT_IGNORE_LEN, MAP_TO_NONASCII,
+        // NONASCII_CASE
+        0 => matches!(index, 13 | 17 | 18 | 19 | 30 | 51..=61 | 66 | 68 | 70 | 71),
+        // DECIMAL_POINT_WC, THOUSANDS_SEP_WC
+        1 => matches!(index, 3 | 4),
+        // ERA_NUM_ENTRIES, WEEK_1STDAY
+        2 => matches!(index, 50 | 102),
+        // NRULES, SYMB_HASH_SIZEMB
+        3 => matches!(index, 0 | 13),
+        // UNO/DUO_VALID_FROM/TO, DECIMAL_POINT_WC, THOUSANDS_SEP_WC
+        4 => matches!(index, 38..=41 | 43 | 44),
+        // PAPER_HEIGHT, PAPER_WIDTH
+        7 => matches!(index, 0 | 1),
+        // ADDRESS_COUNTRY_NUM
+        9 => index == 6,
+        _ => false,
+    }
+}
+
+/// Item `index` of a compiled category blob (`""` for an index it lacks).
+#[inline]
+fn blob_langinfo(n: &NamedCategory, index: usize) -> *const c_char {
+    if is_word_item(n.category as u32, index) {
+        return n.blob.word(index).map_or(c"".as_ptr(), |word| {
+            std::ptr::without_provenance(word as usize)
+        });
+    }
+    n.blob
+        .offset(index)
+        .map_or(c"".as_ptr(), |off| n.blob.bytes()[off..].as_ptr().cast())
+}
+
 /// `nl_langinfo` for a category on a named locale: the item straight from
-/// the compiled blob (`""` for an index the blob does not have).
+/// the compiled blob.
 #[inline(always)]
 fn named_langinfo(item: libc::nl_item) -> Option<*const c_char> {
     let n = named(((item as u32) >> 16) as c_int)?;
-    let index = ((item as u32) & 0xffff) as usize;
-    Some(match n.blob.offset(index) {
-        Some(off) => n.blob.bytes()[off..].as_ptr().cast::<c_char>(),
-        None => c"".as_ptr(),
-    })
+    Some(blob_langinfo(n, ((item as u32) & 0xffff) as usize))
 }
 
 #[inline]
@@ -1473,12 +1798,7 @@ fn resolved_langinfo(item: libc::nl_item, category: Resolved) -> *const c_char {
     }
     match category {
         Resolved::Builtin(charset) => langinfo_c_fast(item, charset),
-        Resolved::Named(n) => {
-            let index = (item as u32 & 0xffff) as usize;
-            n.blob
-                .offset(index)
-                .map_or(c"".as_ptr(), |off| n.blob.bytes()[off..].as_ptr().cast())
-        }
+        Resolved::Named(n) => blob_langinfo(n, (item as u32 & 0xffff) as usize),
     }
 }
 
@@ -1573,6 +1893,10 @@ impl LoadedCatalog {
     }
 }
 
+type ConvertedEntryKey = (usize, usize, Vec<u8>);
+type TranslationCacheKey = (Vec<u8>, Vec<u8>, c_int, Vec<u8>);
+type TranslationCacheValue = (c_int, &'static [u8], &'static mo::PluralRule);
+
 #[derive(Default)]
 struct CatalogCache {
     /// File path -> its catalog, or None when absent or not a catalog.
@@ -1581,15 +1905,12 @@ struct CatalogCache {
     searches: std::collections::HashMap<Vec<u8>, &'static [&'static LoadedCatalog]>,
     /// (catalog, entry offset, target codeset) -> the converted entry with its
     /// NUL, or None when the entry is not valid in the catalog's charset.
-    converted: std::collections::HashMap<(usize, usize, Vec<u8>), Option<&'static [u8]>>,
+    converted: std::collections::HashMap<ConvertedEntryKey, Option<&'static [u8]>>,
     /// glibc's known-translation cache: (msgid, domain, category, category
     /// locale name) -> (catalog counter when found, entry, its plural rule).
     /// LANGUAGE is not part of the key, so -- exactly as in glibc -- changing
     /// it at run time has no effect on a cached msgid until the counter moves.
-    translations: std::collections::HashMap<
-        (Vec<u8>, Vec<u8>, c_int, Vec<u8>),
-        (c_int, &'static [u8], &'static mo::PluralRule),
-    >,
+    translations: std::collections::HashMap<TranslationCacheKey, TranslationCacheValue>,
 }
 
 /// glibc's `_nl_msg_cat_cntr`, which invalidates cached translations.
@@ -1786,7 +2107,7 @@ pub(crate) unsafe fn dcigettext(
     };
     let mut start = 0;
     if plural {
-        match mo::plural_form(&entry[..entry.len() - 1], rule.index(n as u64)) {
+        match mo::plural_form(&entry[..entry.len() - 1], rule.index(n)) {
             Some(form) => start = form,
             // Fewer forms than the rule selects: glibc returns msgid1.
             None => return msgid1.cast_mut(),
@@ -2071,6 +2392,7 @@ pub unsafe extern "C" fn bindtextdomain(
 /// GNU `bind_textdomain_codeset`: select (or, with a NULL `codeset`, query)
 /// the encoding `domainname`'s translations are returned in. NULL when no
 /// codeset has been bound, or for a NULL/empty domain.
+#[allow(dead_code)]
 pub(crate) unsafe fn bind_textdomain_codeset_impl(
     domainname: *const c_char,
     codeset: *const c_char,
@@ -2180,6 +2502,18 @@ struct LocaleSelection {
     categories: LocaleCategories,
 }
 
+#[derive(Clone, Copy)]
+struct CachedLocaleHandle {
+    handle: usize,
+    epoch: u64,
+    categories: LocaleCategories,
+}
+
+static LOCALE_OBJECTS_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+/// Set once any thread selects a non-global locale via `uselocale`; until then
+/// `thread_category` skips the per-call TLS lookup on `isw*`/`tow*`/`mbrtowc`.
+static THREAD_LOCALE_EVER_USED: AtomicBool = AtomicBool::new(false);
+
 std::thread_local! {
     // Copy the immutable view when selecting a handle. Locale-sensitive hot
     // paths need neither a registry lock nor a dereference of a caller handle.
@@ -2187,10 +2521,20 @@ std::thread_local! {
     static THREAD_LOCALE: std::cell::Cell<Option<LocaleSelection>> = const {
         std::cell::Cell::new(None)
     };
+    // 2-entry per-thread MRU cache of custom `locale_t` handles so repeated
+    // `uselocale(loc)` / `*_l(..., loc)` calls resolve without taking the
+    // process-wide `locale_objects().lock()` mutex (bd-rc0923-epic-eeuy4f.30).
+    // Invalidated whenever `retire_locale` bumps `LOCALE_OBJECTS_EPOCH`.
+    static THREAD_HANDLE_CACHE: std::cell::Cell<[Option<CachedLocaleHandle>; 2]> = const {
+        std::cell::Cell::new([None, None])
+    };
 }
 
 #[inline]
 fn thread_category(category: c_int) -> Option<Resolved> {
+    if !THREAD_LOCALE_EVER_USED.load(Ordering::Relaxed) {
+        return None;
+    }
     let slot = locale_core::category_slot(category)?;
     THREAD_LOCALE.with(|selected| selected.get().map(|view| view.categories[slot]))
 }
@@ -2243,13 +2587,52 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
     if handle == locale_handle_for(Charset::Utf8) {
         return Some([Resolved::Builtin(Charset::Utf8); locale_core::CATEGORY_COUNT]);
     }
-    let objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
-    objects.iter().find_map(|object| {
-        let address = (&**object as *const LocaleObject)
-            .cast_mut()
-            .cast::<c_void>();
-        (address == handle).then_some(object.categories)
-    })
+    let key = handle as usize;
+    let epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+    if let Some(categories) = THREAD_HANDLE_CACHE.with(|cache| {
+        let slots = cache.get();
+        if let Some(entry) = slots[0]
+            && entry.handle == key
+            && entry.epoch == epoch
+        {
+            return Some(entry.categories);
+        }
+        if let Some(entry) = slots[1]
+            && entry.handle == key
+            && entry.epoch == epoch
+        {
+            cache.set([Some(entry), slots[0]]);
+            return Some(entry.categories);
+        }
+        None
+    }) {
+        return Some(categories);
+    }
+    let (found, live_epoch) = {
+        let objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+        let live_epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Relaxed);
+        let found = objects.iter().find_map(|object| {
+            let address = (&**object as *const LocaleObject)
+                .cast_mut()
+                .cast::<c_void>();
+            (address == handle).then_some(object.categories)
+        });
+        (found, live_epoch)
+    };
+    if let Some(categories) = found {
+        THREAD_HANDLE_CACHE.with(|cache| {
+            let slots = cache.get();
+            cache.set([
+                Some(CachedLocaleHandle {
+                    handle: key,
+                    epoch: live_epoch,
+                    categories,
+                }),
+                slots[0],
+            ]);
+        });
+    }
+    found
 }
 
 fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
@@ -2266,6 +2649,14 @@ fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
         if let Some(slot) = locale_core::category_slot(category) {
             abi.names[category as usize] = resolved_name(categories[slot]).as_ptr().cast();
         }
+    }
+    // isalpha_l-style macros and libstdc++'s ctype<char> index these directly.
+    if let Some(slot) = locale_core::category_slot(locale_core::LC_CTYPE)
+        && let Some(tables) = category_byte_ctype(categories[slot])
+    {
+        abi.ctype_b = tables.class.as_ptr().wrapping_add(128);
+        abi.ctype_toupper = tables.toupper.as_ptr().wrapping_add(128);
+        abi.ctype_tolower = tables.tolower.as_ptr().wrapping_add(128);
     }
     let mut objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
     objects.try_reserve(1).map_err(|_| libc::ENOMEM)?;
@@ -2286,7 +2677,7 @@ fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
 fn retire_locale(handle: LocaleT) {
     let retired = {
         let mut objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
-        objects
+        let removed = objects
             .iter()
             .position(|object| {
                 (&**object as *const LocaleObject)
@@ -2294,7 +2685,11 @@ fn retire_locale(handle: LocaleT) {
                     .cast::<c_void>()
                     == handle
             })
-            .map(|index| objects.swap_remove(index))
+            .map(|index| objects.swap_remove(index));
+        if removed.is_some() {
+            LOCALE_OBJECTS_EPOCH.fetch_add(1, Ordering::Release);
+        }
+        removed
     };
     // Reclamation can enter the allocator; do it outside the registry lock.
     drop(retired);
@@ -2408,6 +2803,7 @@ pub unsafe extern "C" fn newlocale(
 /// ignore the argument, so `strftime_l(.., newlocale("en_US.UTF-8"))` gave C
 /// output. An invalid handle runs `f` under the current locale (uselocale
 /// has set EINVAL).
+#[allow(dead_code)]
 pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
     if locale.is_null() {
         return f();
@@ -2438,18 +2834,21 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
     if newloc == GLOBAL_LOCALE_HANDLE {
         THREAD_LOCALE.with(|selected| selected.set(None));
         frankenlibc_core::stdio::printf::clear_thread_numeric();
+        crate::ctype_abi::refresh_thread_ctype_slots();
         return previous;
     }
     let Some(categories) = categories_for_handle(newloc) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         return std::ptr::null_mut();
     };
+    THREAD_LOCALE_EVER_USED.store(true, Ordering::Release);
     THREAD_LOCALE.with(|selected| {
         selected.set(Some(LocaleSelection {
             handle: newloc,
             categories,
         }));
     });
+    crate::ctype_abi::refresh_thread_ctype_slots();
     // printf's radix and `'` grouping follow the thread's LC_NUMERIC.
     if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
         let field = |item: libc::nl_item| {
@@ -3057,5 +3456,88 @@ mod tests {
         worker.join().unwrap();
         assert_eq!(active_charset(), Charset::Utf8);
         unsafe { uselocale(previous) };
+    }
+
+    #[test]
+    fn locale_objects_tls_handle_cache_and_invalidation() {
+        let loc_a = unsafe {
+            newlocale(
+                libc::LC_CTYPE_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        let loc_b = unsafe {
+            newlocale(
+                libc::LC_NUMERIC_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(!loc_a.is_null());
+        assert!(!loc_b.is_null());
+        assert_ne!(loc_a, c_locale_handle());
+        assert_ne!(loc_a, locale_handle_for(Charset::Utf8));
+        assert_ne!(loc_b, c_locale_handle());
+        assert_ne!(loc_b, locale_handle_for(Charset::Utf8));
+
+        // Populate both slots of the 2-entry TLS MRU cache.
+        let cats_a = categories_for_handle(loc_a).expect("loc_a should resolve");
+        let cats_b = categories_for_handle(loc_b).expect("loc_b should resolve");
+        assert_eq!(
+            resolved_charset(cats_a[locale_core::LC_CTYPE as usize]),
+            Charset::Utf8
+        );
+        assert_eq!(
+            resolved_charset(cats_b[locale_core::LC_NUMERIC as usize]),
+            Charset::Utf8
+        );
+
+        // Hold the non-reentrant registry mutex on the same thread while resolving
+        // both cached handles. If either call misses the TLS cache, locking
+        // `locale_objects()` on this thread would deadlock immediately.
+        {
+            let _held = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+            let hit_b1 = categories_for_handle(loc_b).expect("loc_b should hit TLS cache");
+            assert_eq!(
+                resolved_charset(hit_b1[locale_core::LC_NUMERIC as usize]),
+                Charset::Utf8
+            );
+            assert_eq!(
+                resolved_charset(hit_b1[locale_core::LC_CTYPE as usize]),
+                Charset::Ascii
+            );
+            let hit_a = categories_for_handle(loc_a).expect("loc_a should hit TLS cache");
+            assert_eq!(
+                resolved_charset(hit_a[locale_core::LC_CTYPE as usize]),
+                Charset::Utf8
+            );
+            assert_eq!(
+                resolved_charset(hit_a[locale_core::LC_NUMERIC as usize]),
+                Charset::Ascii
+            );
+            let hit_b2 = categories_for_handle(loc_b).expect("loc_b should hit TLS cache again");
+            assert_eq!(
+                resolved_charset(hit_b2[locale_core::LC_NUMERIC as usize]),
+                Charset::Utf8
+            );
+        }
+
+        // Retiring `loc_a` must bump `LOCALE_OBJECTS_EPOCH` and invalidate stale
+        // TLS cache entries while still allowing `loc_b` to re-populate on lookup.
+        let epoch_before = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+        unsafe { freelocale(loc_a) };
+        let epoch_after = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+        assert!(epoch_after > epoch_before);
+        assert!(categories_for_handle(loc_a).is_none());
+        let repopulated_b =
+            categories_for_handle(loc_b).expect("loc_b should re-resolve after epoch bump");
+        assert_eq!(
+            resolved_charset(repopulated_b[locale_core::LC_NUMERIC as usize]),
+            Charset::Utf8
+        );
+
+        unsafe { freelocale(loc_b) };
+        assert!(categories_for_handle(loc_b).is_none());
     }
 }

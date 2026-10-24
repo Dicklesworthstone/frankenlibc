@@ -29,7 +29,11 @@ macro_rules! floating {
         #[unsafe(export_name = concat!("__frankenlibc_c23_", stringify!($name)))]
         pub extern "C" fn $name(x: $ty, direction: i32, width: u32) -> $ty {
             let rounded = round_to_width(
-                x.to_bits() as u128, Format::$format, direction, width, $unsigned,
+                x.to_bits() as u128,
+                Format::$format,
+                direction,
+                width,
+                $unsigned,
             );
             <$ty>::from_bits(finish(rounded, $inexact) as $bits)
         }
@@ -45,13 +49,49 @@ macro_rules! family {
 }
 family!(f64, u64, Binary64, fromfp, fromfpx, ufromfp, ufromfpx);
 family!(f32, u32, Binary32, fromfpf, fromfpxf, ufromfpf, ufromfpxf);
-family!(f32, u32, Binary32, fromfpf32, fromfpxf32, ufromfpf32, ufromfpxf32);
-family!(f64, u64, Binary64, fromfpf64, fromfpxf64, ufromfpf64, ufromfpxf64);
-family!(f64, u64, Binary64, fromfpf32x, fromfpxf32x, ufromfpf32x, ufromfpxf32x);
-family!(f128, u128, Binary128, fromfpf128, fromfpxf128, ufromfpf128, ufromfpxf128);
+family!(
+    f32,
+    u32,
+    Binary32,
+    fromfpf32,
+    fromfpxf32,
+    ufromfpf32,
+    ufromfpxf32
+);
+family!(
+    f64,
+    u64,
+    Binary64,
+    fromfpf64,
+    fromfpxf64,
+    ufromfpf64,
+    ufromfpxf64
+);
+family!(
+    f64,
+    u64,
+    Binary64,
+    fromfpf32x,
+    fromfpxf32x,
+    ufromfpf32x,
+    ufromfpxf32x
+);
+family!(
+    f128,
+    u128,
+    Binary128,
+    fromfpf128,
+    fromfpxf128,
+    ufromfpf128,
+    ufromfpxf128
+);
 
 unsafe extern "C" fn long_double(
-    slot: *const u8, direction: i32, width: u32, unsigned: bool, inexact: bool,
+    slot: *const u8,
+    direction: i32,
+    width: u32,
+    unsigned: bool,
+    inexact: bool,
 ) -> u128 {
     // SAFETY: the naked entry passes its caller's 16-byte long-double argument
     // slot. Read only the ten value bytes, never its indeterminate padding.
@@ -59,7 +99,10 @@ unsafe extern "C" fn long_double(
         u128::from(slot.cast::<u64>().read_unaligned())
             | (u128::from(slot.add(8).cast::<u16>().read_unaligned()) << 64)
     };
-    finish(round_to_width(bits, Format::Extended80, direction, width, unsigned), inexact)
+    finish(
+        round_to_width(bits, Format::Extended80, direction, width, unsigned),
+        inexact,
+    )
 }
 
 macro_rules! extended {

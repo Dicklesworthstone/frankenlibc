@@ -1985,7 +1985,7 @@ fn glibc_internal_compat_wave03_actual(function: &str) -> Result<String, String>
             glibc_internal_compat_reset_host_errno();
             let rc = unsafe {
                 frankenlibc_abi::glibc_internal_abi::__clone(
-                    std::ptr::null_mut(),
+                    None,
                     std::ptr::null_mut(),
                     0,
                     std::ptr::null_mut(),
@@ -2674,8 +2674,11 @@ fn rpc_legacy_network_netname_class(ptr: *const c_char) -> &'static str {
     }
     // SAFETY: caller passes a local buffer that getnetname NUL-terminates on success.
     let value = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-    if value.starts_with("unix.") && value.ends_with("@localhost") {
-        "UNIX_LOCALHOST"
+    if value
+        .strip_prefix("unix.")
+        .is_some_and(|identity| identity.contains('@'))
+    {
+        "UNIX_NETNAME"
     } else {
         "OTHER"
     }
@@ -14457,9 +14460,9 @@ fn run_impl_math_finite_alias_mapped_f64(func: &str, x: f64) -> Result<f64, Stri
         match func {
             "__acosl_finite" => frankenlibc_abi::math_abi::__acosl_finite(x),
             "__acoshl_finite" => frankenlibc_abi::math_abi::__acoshl_finite(x),
-            "__acosf128_finite" => frankenlibc_abi::math_abi::__acosf128_finite(x.into()) as f64,
-            "__acoshf128_finite" => frankenlibc_abi::math_abi::__acoshf128_finite(x.into()) as f64,
-            "__asinf128_finite" => frankenlibc_abi::math_abi::__asinf128_finite(x.into()) as f64,
+            "__acosf128_finite" => frankenlibc_abi::math_abi::__acosf128_finite(x),
+            "__acoshf128_finite" => frankenlibc_abi::math_abi::__acoshf128_finite(x),
+            "__asinf128_finite" => frankenlibc_abi::math_abi::__asinf128_finite(x),
             _ => return Err(format!("unsupported mapped finite alias: {func}")),
         }
     };
@@ -14471,15 +14474,27 @@ fn execute_math_lib_version_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let impl_output = math_lib_version_label(frankenlibc_abi::math_abi::_LIB_VERSION);
+    // SAFETY: a plain read of fl's exported int; nothing writes it here.
+    let ours = unsafe { *std::ptr::addr_of!(frankenlibc_abi::math_abi::_LIB_VERSION) };
+    let impl_output = math_lib_version_label(ours);
+    // The host value is glibc's compat data symbol _LIB_VERSION@GLIBC_2.2.5
+    // (new binaries cannot link it, so look it up by version).
+    // SAFETY: dlopen/dlvsym with NUL-terminated names; the symbol is an int.
+    let host = unsafe {
+        let h = libc::dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        let p = if h.is_null() {
+            std::ptr::null()
+        } else {
+            libc::dlvsym(h, c"_LIB_VERSION".as_ptr(), c"GLIBC_2.2.5".as_ptr()) as *const c_int
+        };
+        (!p.is_null()).then(|| *p)
+    };
+    let host_output = host.map_or_else(|| "SKIP".to_string(), math_lib_version_label);
     Ok(DifferentialExecution {
-        host_output: "SKIP".to_string(),
+        host_parity: host.is_none_or(|h| h == ours),
+        host_output,
         impl_output,
-        host_parity: true,
-        note: Some(
-            "_LIB_VERSION is a versioned libm data symbol; fixture records FrankenLibC value only"
-                .to_string(),
-        ),
+        note: None,
     })
 }
 
@@ -14633,9 +14648,7 @@ fn math_finite_special_wave03_classes(
             let actual = classify_math_finite_alias_f64(unsafe {
                 match func {
                     "__asinl_finite" => frankenlibc_abi::math_abi::__asinl_finite(x),
-                    "__atanhf128_finite" => {
-                        frankenlibc_abi::math_abi::__atanhf128_finite(x.into()) as f64
-                    }
+                    "__atanhf128_finite" => frankenlibc_abi::math_abi::__atanhf128_finite(x),
                     "__atanhl_finite" => frankenlibc_abi::math_abi::__atanhl_finite(x),
                     _ => unreachable!(),
                 }
@@ -14653,9 +14666,7 @@ fn math_finite_special_wave03_classes(
             // fixture values by value and are covered as FrankenLibC f64 mappings.
             let actual = classify_math_finite_alias_f64(unsafe {
                 match func {
-                    "__atan2f128_finite" => {
-                        frankenlibc_abi::math_abi::__atan2f128_finite(y.into(), x.into()) as f64
-                    }
+                    "__atan2f128_finite" => frankenlibc_abi::math_abi::__atan2f128_finite(y, x),
                     "__atan2l_finite" => frankenlibc_abi::math_abi::__atan2l_finite(y, x),
                     _ => unreachable!(),
                 }
@@ -28443,6 +28454,7 @@ fn fortify_readlink_missing_actual(marker_prefix: &str) -> Result<String, String
 
 /// Opaque C stream handle for the vfprintf member (fl's own FILE on the
 /// conformance link).
+#[allow(dead_code)]
 #[repr(C)]
 struct ShimFile {
     _private: [u8; 0],
@@ -28452,6 +28464,7 @@ struct ShimFile {
 unsafe extern "C" {
     fn shim_vasprintf_chk(strp: *mut *mut c_char, flag: c_int, fmt: *const c_char, ...) -> c_int;
     fn shim_vdprintf_chk(fd: c_int, flag: c_int, fmt: *const c_char, ...) -> c_int;
+    #[allow(dead_code)]
     fn shim_vfprintf_chk(stream: *mut ShimFile, flag: c_int, fmt: *const c_char, ...) -> c_int;
     fn shim_vprintf_chk(flag: c_int, fmt: *const c_char, ...) -> c_int;
     fn shim_vsnprintf_chk(
@@ -28471,6 +28484,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn shim_vwprintf_chk(flag: c_int, fmt: *const i32, ...) -> c_int;
     fn shim_vsyslog_chk(priority: c_int, flag: c_int, fmt: *const c_char, ...);
+    #[allow(dead_code)]
     fn shim_vfwprintf_chk(stream: *mut ShimFile, flag: c_int, fmt: *const i32, ...) -> c_int;
     fn shim_drive_vfwprintf(
         impl_fn: *const c_void,

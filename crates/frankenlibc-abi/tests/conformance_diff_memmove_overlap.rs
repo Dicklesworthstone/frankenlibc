@@ -35,12 +35,12 @@ impl Arena {
         let h = unsafe {
             libc::dlmopen(
                 libc::LM_ID_NEWLM,
-                b"libc.so.6\0".as_ptr().cast(),
+                c"libc.so.6".as_ptr(),
                 libc::RTLD_LAZY | libc::RTLD_LOCAL,
             )
         };
         assert!(!h.is_null(), "dlmopen libc failed");
-        let sym = unsafe { libc::dlsym(h, b"memmove\0".as_ptr().cast()) };
+        let sym = unsafe { libc::dlsym(h, c"memmove".as_ptr()) };
         assert!(!sym.is_null(), "dlsym memmove failed");
         let glibc: MFn = unsafe { std::mem::transmute(sym) };
         Arena {

@@ -71,18 +71,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str, ext: &str) -> TestResult<PathBuf> {
@@ -243,10 +246,7 @@ fn run_and_parse(
 
 #[test]
 fn cli_identity_with_empty_rule_table() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(&bin, 5, "[]", 64, "identity")?;
     require(
         json_string(&parsed, "kind")? == "reduce_mask",
@@ -269,10 +269,7 @@ fn cli_identity_with_empty_rule_table() -> TestResult {
 
 #[test]
 fn cli_drops_redundant_atom_a_or_b_to_a() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Rule: lhs=3 (A|B) -> rhs=1 (A); mask=3 reduces to 1.
     let parsed = run_and_parse(&bin, 3, r#"[{"lhs":3,"rhs":1}]"#, 64, "drop")?;
     require(
@@ -288,10 +285,7 @@ fn cli_drops_redundant_atom_a_or_b_to_a() -> TestResult {
 
 #[test]
 fn cli_canonical_root_cause_c0_and_c3_to_c3() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Canonical: c0&c3 -> c3, c1&c4 -> c1, c2&c5 -> c5; mask=9 (c0|c3) -> 8 (c3).
     let rules = r#"[{"lhs":9,"rhs":8},{"lhs":18,"rhs":2},{"lhs":36,"rhs":32}]"#;
     let parsed = run_and_parse(&bin, 9, rules, 64, "canonical_c0c3")?;
@@ -303,10 +297,7 @@ fn cli_canonical_root_cause_c0_and_c3_to_c3() -> TestResult {
 
 #[test]
 fn cli_canonical_full_support_reduces_to_disjoint_class_union() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Full support 0x3F (63) under canonical rules collapses to
     // c1 | c3 | c5 = 2 | 8 | 32 = 42.
     let rules = r#"[{"lhs":9,"rhs":8},{"lhs":18,"rhs":2},{"lhs":36,"rhs":32}]"#;
@@ -323,10 +314,7 @@ fn cli_canonical_full_support_reduces_to_disjoint_class_union() -> TestResult {
 
 #[test]
 fn cli_step_limit_exceeded_preserves_input_and_flags_error() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Cyclic rules a->b, b->a with step_limit=2 will exceed.
     let rules = r#"[{"lhs":1,"rhs":2},{"lhs":2,"rhs":1}]"#;
     let parsed = run_and_parse(&bin, 1, rules, 2, "stepcap")?;
@@ -350,10 +338,7 @@ fn cli_step_limit_exceeded_preserves_input_and_flags_error() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let rules = r#"[{"lhs":9,"rhs":8},{"lhs":18,"rhs":2},{"lhs":36,"rhs":32}]"#;
     let a = run_and_parse(&bin, 27, rules, 64, "det_a")?;
     let b = run_and_parse(&bin, 27, rules, 64, "det_b")?;
@@ -362,10 +347,7 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
 
 #[test]
 fn cli_echoes_inputs_into_record() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(&bin, 7, r#"[{"lhs":3,"rhs":1}]"#, 99, "echo")?;
     require(
         json_string(&parsed, "input_mask")? == "7",

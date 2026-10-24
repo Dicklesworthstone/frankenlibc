@@ -1,16 +1,27 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.2",
-  "generated_at": "2026-06-05T17:28:17Z",
+  "generated_at": "2026-10-19T05:38:03Z",
   "summary": {
     "total_format_string_tests": 1,
     "manifests_valid": 1,
     "with_trigger_files": 1,
     "c_triggers_compile": 1,
+    "c_triggers_hardened_healed": 1,
     "c_triggers_total": 1,
-    "unique_healing_actions": ["UpgradeToSafeVariant"],
-    "attack_vectors_covered": ["crash", "info_leak", "write"],
-    "attack_vectors_target": ["crash", "info_leak", "write"],
+    "unique_healing_actions": [
+      "UpgradeToSafeVariant"
+    ],
+    "attack_vectors_covered": [
+      "crash",
+      "info_leak",
+      "write"
+    ],
+    "attack_vectors_target": [
+      "crash",
+      "info_leak",
+      "write"
+    ],
     "coverage_matrix_present": true,
     "total_issues": 0
   },
@@ -19,15 +30,66 @@
       "cve_id": "CVE-2024-23113 (synthetic)",
       "test_name": "format_string_cve_2024_23113",
       "category": "synthetic",
-      "cwe_ids": ["CWE-134"],
+      "cwe_ids": [
+        "CWE-134"
+      ],
       "cvss_score": 9.8,
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "c_compiles": true,
-      "healing_actions": ["UpgradeToSafeVariant"],
-      "tsm_features": ["UpgradeToSafeVariant"],
+      "c_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "UpgradeToSafeVariant": 2
+          },
+          "healing_actions_observed": [
+            "UpgradeToSafeVariant"
+          ]
+        },
+        "heal_counter_deltas": {
+          "UpgradeToSafeVariant": 2
+        },
+        "hardened_healed": true
+      },
+      "healing_actions": [
+        "UpgradeToSafeVariant"
+      ],
+      "tsm_features": [
+        "UpgradeToSafeVariant"
+      ],
       "attack_vectors": {
         "total": 3,
-        "covered": ["crash", "info_leak", "write"],
+        "covered": [
+          "crash",
+          "info_leak",
+          "write"
+        ],
         "missing": [],
         "vector_details": [
           {

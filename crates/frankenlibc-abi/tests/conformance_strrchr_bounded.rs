@@ -99,7 +99,7 @@ fn bounded_last_byte_matches_scalar_reference() {
 fn bounded_last_byte_panel_boundary_edges() {
     // 1) NUL at index 32 (start of the 2nd SIMD panel), target at 10 and 40.
     {
-        let mut buf = vec![b'a'; 128];
+        let mut buf = [b'a'; 128];
         buf[10] = b'Z';
         buf[32] = 0;
         buf[40] = b'Z'; // after the NUL — must NOT be reported when limit > 32
@@ -117,7 +117,7 @@ fn bounded_last_byte_panel_boundary_edges() {
     }
     // 3) target == NUL: strrchr(s,'\0') reports the terminator index.
     {
-        let mut buf = vec![b'a'; 64];
+        let mut buf = [b'a'; 64];
         buf[50] = 0;
         let p = buf.as_ptr().cast::<c_char>();
         let got = unsafe { bench_scan_c_string_last_byte(p, 0, Some(64)) };

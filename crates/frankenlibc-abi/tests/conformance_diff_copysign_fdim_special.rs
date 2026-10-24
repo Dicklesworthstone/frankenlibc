@@ -26,8 +26,6 @@ mod dlsym_oracle;
 /// file's arms reach `libm.so.6` and stay link-time declarations, because
 /// converting them would be churn against the evidence rather than because
 /// of it.
-type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
-type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
 type F32BinaryFn = unsafe extern "C" fn(f32, f32) -> f32;
 

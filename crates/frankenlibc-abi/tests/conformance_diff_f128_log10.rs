@@ -17,6 +17,7 @@ fn el() -> *mut c_int {
     unsafe { libc::__errno_location() }
 }
 
+#[allow(clippy::approx_constant)]
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
         0.0,

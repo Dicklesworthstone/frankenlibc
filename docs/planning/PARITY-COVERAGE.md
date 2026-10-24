@@ -1,9 +1,16 @@
 # FrankenLibC Parity Coverage Report
 
-**Generated:** 2026-05-25  
-**Method:** Symbol-level comparison against host glibc + behavioral verification
+**Reconciled:** 2026-10-20. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
 
-## Summary
+## Current Scope
+
+The declared replacement level is **L0 interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,419 `Implemented`, 410 `RawSyscall`, 1,272 `WrapsHostLibc`, zero `GlibcCallThrough`, and eighteen `Stub`. The 2,829 native/direct-syscall classifications (68.7%) measure ownership, not complete semantics or a standalone process.
+
+The committed support-maintenance report rejects 1,079 classifications; the live maintenance gate also reports a stale host census. Those mismatches require reviewed source/provider evidence, not blanket promotion. Fixture linkage covers 1,190/4,119 rows (28.9%); linkage is not an executed pass rate. The nine-entry semantic overlay is representative, not exhaustive.
+
+The September 24 committed preload summary records 189 passes, zero failures, four skips and one xfail for its identified artifact. Current-source workload/performance qualification and L1 promotion remain open. See [the bridge plan](REALITY_CHECK_BRIDGE_PLAN.md) and [compatibility guide](COMPATIBILITY.md) for evidence boundaries and active tasks.
+
+## Historical Symbol-Presence Comparison — May 25, 2026
 
 | Metric | Count | Notes |
 |--------|-------|-------|
@@ -13,9 +20,9 @@
 | Missing from FrankenLibC | 251 | **All internal/private** |
 | Extra in FrankenLibC | 1438 | `__*_finite` math, fortify, extensions |
 
-### User-Facing API Coverage: **100%**
+### Symbol Presence Does Not Establish Full API Coverage
 
-All 251 "missing" symbols are internal glibc implementation details:
+The May comparison categorized its 251 missing names as follows. That categorization does not demonstrate that every present public export implements its full contract:
 
 - **GLIBC_*** (42): Version markers, not callable symbols
 - **_dl_*** (12): Dynamic linker internals (`_dl_allocate_tls`, `_dl_signal_error`, etc.)
@@ -23,34 +30,37 @@ All 251 "missing" symbols are internal glibc implementation details:
 - **_rtld_*** (2): Runtime linker globals
 - **_thread_db_*** (113): Thread debug interface internals
 
-## Out-of-Scope Subsystems
+## Scope and Host-Dependency Boundaries
 
-These glibc subsystems are intentionally not reimplemented:
+The full POSIX/GNU objective remains. Historical exclusions must not silently remove required behavior from that objective:
 
 | Subsystem | Reason | Impact |
 |-----------|--------|--------|
-| NSS plugins (`_nss_*`) | Internal plugin ABI, not user-facing | None - public APIs (`getpwnam`, etc.) work |
+| NSS plugins (`_nss_*`) | Native files/DNS coexist with installed host-loaded NSS modules | Public lookup behavior and provider independence need separate qualification |
 | Thread debug (`_thread_db_*`) | GDB/debugger integration internals | Debuggers use libthread_db.so |
-| Dynamic linker globals (`_rtld_*`, `_dl_*`) | ld.so internals | Normal apps don't use these |
-| Sun RPC/XDR | Deprecated legacy, replaced by gRPC/REST | Obsolete since glibc 2.26 |
+| Dynamic linker globals (`_rtld_*`, `_dl_*`) | Host-loader internals differ from the public symbol surface | Owned startup, TLS and transitive loading remain standalone integration obligations |
+| Sun RPC/XDR | Declared legacy ABI remains in scope | Native code exists, but fourteen RPC symbols remain classified as stubs pending implementation/qualification |
 | STREAMS (`fattach`, `getmsg`, `putmsg`) | SVR4 legacy, never widely used on Linux | Effectively dead API |
 
 ## Support Matrix Breakdown
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| Implemented | 3550 | Pure Rust, no host dependency |
-| RawSyscall | 414 | Direct syscall, no glibc |
-| WrapsHostLibc | 155 | Delegates to host glibc |
+| Implemented | 2419 | Classified native Rust behavior |
+| RawSyscall | 410 | Classified direct syscall path |
+| WrapsHostLibc | 1272 | Explicit host-backed subset |
+| GlibcCallThrough | 0 | Opaque call-through subset |
+| Stub | 18 | Explicit unsupported contracts |
 
-**Standalone-capable:** 3964 symbols (Implemented + RawSyscall)  
-**Host-dependent:** 155 symbols (WrapsHostLibc)
+**Native-classified:** 2,829 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
+
+**Host-backed:** 1,272 symbols (`WrapsHostLibc`). Taxonomy/source disagreements are described above.
 
 ## Behavioral Parity Verification
 
-### Verified Function Families (154 test functions)
+### Function Families in the Historical Test Inventory
 
-The following families have dedicated `glibc_*` parity tests comparing FrankenLibC output against host glibc:
+The May inventory counted 154 test functions across these families. Test presence and that historical count do not establish current compilation, nonzero execution or complete family semantics:
 
 - **string/memory:** memcpy, memmove, memset, memcmp, memchr, strlen, strcmp, strncmp, strchr, strrchr, strstr, strcpy, strncpy, strcat, strncat, strdup, strndup, strerror
 - **ctype:** isalpha, isdigit, isalnum, isspace, ispunct, isupper, islower, isprint, isxdigit, iscntrl, isgraph, tolower, toupper
@@ -70,7 +80,7 @@ The following families have dedicated `glibc_*` parity tests comparing FrankenLi
 - **mmap:** mmap, munmap, mprotect
 - **socket:** socket, bind, listen, accept, connect, send, recv
 
-### Edge Cases Explicitly Tested
+### Edge Cases Named by the Historical Inventory
 
 - `strtol` with C23 binary prefix (`0b101`)
 - `strftime` trailing `%` handling
@@ -82,20 +92,19 @@ The following families have dedicated `glibc_*` parity tests comparing FrankenLi
 - errno preservation across calls
 - NULL pointer handling where permitted
 
-## Known Behavioral Divergences
+## Behavioral Divergence Evidence
 
-| Function | Divergence | Rationale |
-|----------|------------|-----------|
-| `random()` | Different sequence | Uses Rust's `rand` crate; POSIX doesn't mandate sequence |
-| `drand48()` family | Not seeded identically | Seed state differs but statistical properties match |
+The old assertions that `random()` uses Rust's `rand` crate and that `drand48()` necessarily has a different seed sequence are not current verified divergence evidence. Use the native implementation and differential tests for the exact family, state and seed. POSIX permission to differ does not establish GNU/glibc parity, and statistical similarity is not a substitute for the required sequence contract. Record current divergences with a named oracle and executed counterexample.
 
 ## Performance Contracts
 
 | Mode | Target | Measured |
 |------|--------|----------|
-| Strict membrane overhead | ≤20ns/call for hotpath | ✓ Met |
-| Hardened membrane overhead | ≤200ns/call for hotpath | ✓ Met |
-| Hardened vs native glibc | ≤2× for memcpy, malloc | ✓ Met (bd-38x82.5) |
+| Strict membrane overhead | <20ns/call for membrane-gated hot paths | Not established for the current artifact |
+| Hardened membrane overhead | <200ns/call for membrane-gated hot paths | Not established for the current artifact |
+| Hardened vs native glibc | ≤2× for the specified workload contracts | Current allocator/sort and other named budgets remain open |
+
+Targets require deployed-path measurements with the live incumbent in the same invocation. A closed bead, symbol classification or historical self-speedup does not establish these budgets globally.
 
 ## Automated Gates
 
@@ -107,9 +116,11 @@ The following families have dedicated `glibc_*` parity tests comparing FrankenLi
 | Aarch64 toolchain | `scripts/check_aarch64_toolchain.sh` | Preflight cross-compile prerequisites |
 | Soak freshness | `scripts/check_soak_artifact_freshness.sh` | Verify artifact matches source |
 | Buffer audit | `scripts/audit_unterminated_buffers.sh` | Audit tracked buffer handling |
-| Aarch64 smoke | `scripts/run_aarch64_smoke.sh` | Run smoke tests via QEMU |
+| Aarch64 smoke | `scripts/run_aarch64_smoke.sh` | Currently runs a static system-libc program; actual library qualification is tracked by `bd-rc0923-epic-eeuy4f.41`–`.42` |
 
-## Session Progress (2026-05-25)
+## Historical Session Record (2026-05-25)
+
+The statuses below describe that session, not current closure verification or current proof that its gates exercised FrankenLibC.
 
 Beads closed this session (13 total):
 - bd-gq1kz7.10: Zero-host-reference gate (86b348b2)
@@ -138,4 +149,4 @@ Blocked beads (require implementation):
 
 ---
 
-*This report is machine-verifiable. Run `scripts/verify-parity-coverage.sh` to regenerate.*
+*This is a maintained interpretation of source and dated artifacts. Run the existing support-maintenance, semantic-claim and replacement-level checks, and inspect their predicates and source identities; fresh execution evidence must come from actual tests.*

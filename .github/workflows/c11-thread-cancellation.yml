@@ -1,0 +1,59 @@
+name: C11 thread cancellation
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/c11threads_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/tests/c11threads_abi_test.rs'
+      - 'tests/integration/fixture_c11_thread_cancel*'
+      - 'scripts/check_c11_thread_cancellation.sh'
+      - '.github/workflows/c11-thread-cancellation.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: c11-thread-cancellation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  cancellation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      C11_CANCEL_OUTPUT_DIR: artifacts/c11-cancellation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Build actual release exports
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/c11-cancellation
+          git rev-parse HEAD > artifacts/c11-cancellation/revision.txt
+          cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/c11-cancellation/build.log
+      - name: Execute bounded C cancellation and signal cases in both modes
+        run: bash scripts/check_c11_thread_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
+      - name: Preserve existing C11 ABI tests
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --test c11threads_abi_test -- --test-threads=1 2>&1 | tee artifacts/c11-cancellation/unit.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c11-cancellation-results
+          path: artifacts/c11-cancellation/
+          if-no-files-found: error
+          retention-days: 7

@@ -26,7 +26,8 @@ impl<const N: usize, const B: usize> PackedTranslit<N, B> {
     pub(super) fn lookup(&self, code_point: u32) -> Option<&[u8]> {
         let index = self.keys.binary_search(&code_point).ok()?;
         let (start, len) = self.spans[index];
-        self.bytes.get(start as usize..start as usize + len as usize)
+        self.bytes
+            .get(start as usize..start as usize + len as usize)
     }
 }
 
@@ -72,7 +73,7 @@ const BYTES: usize = translit_bytes(&C_TRANSLIT);
 pub(super) static C_TRANSLIT_PACKED: PackedTranslit<LEN, BYTES> = pack_translit(&C_TRANSLIT);
 
 /// Source table, used only at compile time to build [`C_TRANSLIT_PACKED`].
-const C_TRANSLIT: [(u32, &[u8]); 1656] = [
+static C_TRANSLIT: [(u32, &[u8]); 1656] = [
     (0xA0, b" "),
     (0xA9, b"(C)"),
     (0xAB, b"<<"),

@@ -489,8 +489,12 @@ fn build_std_zero_tls_probe_records_zero_tls_artifact() -> TestResult {
 
     let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml"))
         .map_err(|err| format!("read Cargo.toml: {err}"))?;
+    // The opt-in is one entry of the manifest's leading `cargo-features` array,
+    // which also carries `profile-rustflags` (the x86-64-v3 profile).
+    let cargo_features = cargo_toml.lines().next().unwrap_or_default();
     ensure(
-        cargo_toml.starts_with("cargo-features = [\"panic-immediate-abort\"]"),
+        cargo_features.starts_with("cargo-features = [")
+            && cargo_features.contains("\"panic-immediate-abort\""),
         "workspace manifest must opt into Cargo panic-immediate-abort before using the profile lane",
     )?;
     ensure_eq(

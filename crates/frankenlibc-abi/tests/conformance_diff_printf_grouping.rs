@@ -27,7 +27,7 @@ mod dlsym_oracle;
 use dlsym_oracle::host_fn;
 
 type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
-type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type SnprintfFn = unsafe extern "C-unwind" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
 type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
 type StrtofFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f32;
 

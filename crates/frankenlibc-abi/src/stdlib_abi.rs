@@ -200,10 +200,7 @@ unsafe fn parse_strtol_positive_hex_fast(ptr: *const u8) -> (i64, usize, Convers
 
     let mut acc = 0u64;
     let mut digits = 0usize;
-    loop {
-        let Some(digit) = strtol_hex_digit(byte) else {
-            break;
-        };
+    while let Some(digit) = strtol_hex_digit(byte) {
         let digit = digit as u64;
         if digits < 15 {
             acc = (acc << 4) | digit;
@@ -532,7 +529,7 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
             let token = unsafe { core::str::from_utf8_unchecked(token) };
             return token.parse::<f64>().ok().map(|value| (value, consumed));
         }
-        if acc % 10 != 0 {
+        if !acc.is_multiple_of(10) {
             return None;
         }
         acc /= 10;
@@ -573,6 +570,14 @@ struct GetenvNameProbe {
     hi: u64,
 }
 
+/// The last found variable: the `environ` array, the slot it sat in and the
+/// entry string. The epoch covers fl's own setenv/putenv/unsetenv, but a
+/// program may write `environ` directly -- Tcl replaces `environ[i]` with a new
+/// malloc'd string and frees the old one -- so a hit is also re-validated
+/// against the live table: same array, same entry pointer in the same slot,
+/// name still in place. (Without that, getenv returned the previous value from
+/// freed memory: Tcl's unixFile tests saw each PATH one update late.) Misses
+/// are not cached: an appended entry cannot be ruled out cheaply.
 #[derive(Clone, Copy)]
 struct GetenvHotCache {
     epoch: u64,
@@ -580,7 +585,9 @@ struct GetenvHotCache {
     name_len: usize,
     lo: u64,
     hi: u64,
-    result: usize,
+    environ: usize,
+    slot: usize,
+    entry: usize,
 }
 
 impl GetenvHotCache {
@@ -591,7 +598,37 @@ impl GetenvHotCache {
             name_len: 0,
             lo: 0,
             hi: 0,
-            result: 0,
+            environ: 0,
+            slot: 0,
+            entry: 0,
+        }
+    }
+
+    /// The cached variable's value if the live environ table still holds the
+    /// same entry in the same slot with the same name.
+    #[inline]
+    unsafe fn live_value(&self) -> Option<*mut c_char> {
+        // SAFETY: `slot` was a slot of `environ`, which is still the active
+        // array (checked first) and is not reallocated without an epoch bump;
+        // `entry` is read only after the slot is seen to still hold it.
+        unsafe {
+            if HOST_ENVIRON as usize != self.environ
+                || *(self.slot as *const *mut c_char) as usize != self.entry
+            {
+                return None;
+            }
+            let entry = self.entry as *const u8;
+            for i in 0..self.name_len {
+                let expected = if i < 8 {
+                    (self.lo >> (i * 8)) as u8
+                } else {
+                    (self.hi >> ((i - 8) * 8)) as u8
+                };
+                if *entry.add(i) != expected {
+                    return None;
+                }
+            }
+            (*entry.add(self.name_len) == b'=').then(|| entry.add(self.name_len + 1) as *mut c_char)
         }
     }
 }
@@ -757,8 +794,21 @@ pub(crate) unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
     unsafe { native_getenv_raw(name_bytes.as_ptr(), name_bytes.len()) }
 }
 
+/// Where `native_getenv_slot` found a variable (null slot: not found).
+#[derive(Clone, Copy)]
+struct GetenvFound {
+    value: *mut c_char,
+    environ: *mut *mut c_char,
+    slot: *const *mut c_char,
+    entry: *const c_char,
+}
+
 #[inline]
 unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char {
+    unsafe { native_getenv_slot(name_ptr, name_len) }.value
+}
+
+unsafe fn native_getenv_slot(name_ptr: *const u8, name_len: usize) -> GetenvFound {
     // Hold ENVIRON_LOCK during the array walk so a concurrent setenv that
     // host_passthrough_realloc()s the HOST_ENVIRON array out from under us
     // cannot turn this read into a use-after-free. The lock is released
@@ -784,9 +834,15 @@ unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char
     // SAFETY: HOST_ENVIRON is owned by libc; we only read pointers/bytes
     // and the array layout is stable while we hold the mutator lock.
     unsafe {
+        let not_found = GetenvFound {
+            value: ptr::null_mut(),
+            environ: HOST_ENVIRON,
+            slot: ptr::null(),
+            entry: ptr::null(),
+        };
         let mut cursor = HOST_ENVIRON;
         if cursor.is_null() {
-            return ptr::null_mut();
+            return not_found;
         }
         while !(*cursor).is_null() {
             let entry = *cursor as *const u8;
@@ -795,11 +851,16 @@ unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char
                 i += 1;
             }
             if i == name_len && *entry.add(i) == b'=' {
-                return entry.add(i + 1) as *mut c_char;
+                return GetenvFound {
+                    value: entry.add(i + 1) as *mut c_char,
+                    environ: HOST_ENVIRON,
+                    slot: cursor,
+                    entry: entry.cast(),
+                };
             }
             cursor = cursor.add(1);
         }
-        ptr::null_mut()
+        not_found
     }
 }
 
@@ -901,7 +962,7 @@ unsafe fn getenv_hot_cache_lookup_same_ptr(name: *const c_char) -> Option<*mut c
             && cache.name_len <= 16
             && unsafe { getenv_cached_name_matches(name, cache) }
         {
-            Some(cache.result as *mut c_char)
+            unsafe { cache.live_value() }
         } else {
             None
         }
@@ -916,17 +977,21 @@ fn getenv_hot_cache_lookup(probe: GetenvNameProbe) -> Option<*mut c_char> {
     let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
     GETENV_HOT_CACHE.with(|slot| {
         let cache = slot.get();
-        (cache.epoch == epoch
+        if cache.epoch == epoch
             && cache.name_len == probe.len
             && cache.lo == probe.lo
-            && cache.hi == probe.hi)
-            .then_some(cache.result as *mut c_char)
+            && cache.hi == probe.hi
+        {
+            unsafe { cache.live_value() }
+        } else {
+            None
+        }
     })
 }
 
 #[inline]
-fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, result: *mut c_char) {
-    if !getenv_hot_cache_enabled() || probe.len > 16 {
+fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, found: GetenvFound) {
+    if !getenv_hot_cache_enabled() || probe.len > 16 || found.slot.is_null() {
         return;
     }
     let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
@@ -937,7 +1002,9 @@ fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, result: *
             name_len: probe.len,
             lo: probe.lo,
             hi: probe.hi,
-            result: result as usize,
+            environ: found.environ as usize,
+            slot: found.slot as usize,
+            entry: found.entry as usize,
         });
     });
 }
@@ -1958,9 +2025,8 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     // Let's implement the full POSIX exit here, calling `_exit`.
 
     // 1. Run atexit/on_exit handlers in one reverse-registration stack.
-    //    Swap-extract under the lock, release, then iterate: invoking user
-    //    callbacks while holding the mutex would self-deadlock on re-entrant
-    //    registrations (bd-3jpoz).
+    //    Claim one entry under the lock, then invoke it without the lock.
+    //    Reentrant registrations take precedence over older entries.
     run_exit_handlers(status);
 
     // 2. Then the process finalizers saved at startup: the executable's fini
@@ -2518,9 +2584,9 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         if let Some(cached) = getenv_hot_cache_lookup(probe) {
             return cached;
         }
-        let result = unsafe { native_getenv_raw(name.cast::<u8>(), probe.len) };
-        getenv_hot_cache_store(name, probe, result);
-        return result;
+        let found = unsafe { native_getenv_slot(name.cast::<u8>(), probe.len) };
+        getenv_hot_cache_store(name, probe, found);
+        return found.value;
     } else {
         let bound = env_name_scan_bound(name);
         let (_mode, decision) = runtime_policy::decide(
@@ -3265,6 +3331,11 @@ unsafe fn system_default_signal(sig: c_int) {
 /// runs during the forced unwind.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn system(command: *const c_char) -> c_int {
+    unsafe { system_cp(command) }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         command as usize,
@@ -4911,46 +4982,10 @@ enum ExitHandler {
     Cxa(CxaEntry),
 }
 
-static EXIT_HANDLERS: std::sync::Mutex<Vec<ExitHandler>> = std::sync::Mutex::new(Vec::new());
-
-fn register_exit_handler(handler: ExitHandler) -> c_int {
-    {
-        let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        handlers.push(handler);
-    }
-    0
-}
-
-/// `__cxa_atexit`: an entry in the shared exit-function list.
-pub(crate) fn register_cxa_exit_handler(
-    func: unsafe extern "C" fn(*mut c_void),
-    arg: *mut c_void,
-    dso: *mut c_void,
-) -> c_int {
-    register_exit_handler(ExitHandler::Cxa(CxaEntry { func, arg, dso }))
-}
-
-/// `__cxa_finalize`: run and remove the `__cxa_atexit` entries of `dso` (all
-/// of them for NULL), newest first. Entries already run by exit are gone.
-pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
-    let run: Vec<CxaEntry> = {
-        let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        let mut run = Vec::new();
-        let mut kept = Vec::with_capacity(handlers.len());
-        for handler in handlers.drain(..) {
-            match handler {
-                ExitHandler::Cxa(entry) if dso.is_null() || entry.dso == dso => run.push(entry),
-                other => kept.push(other),
-            }
-        }
-        *handlers = kept;
-        run
-    };
-    for entry in run.into_iter().rev() {
-        // SAFETY: a callback and argument registered through __cxa_atexit.
-        unsafe { (entry.func)(entry.arg) };
-    }
-}
+#[path = "exit_handlers.rs"]
+mod exit_handlers;
+use exit_handlers::{register_exit_handler, run_exit_handlers};
+pub(crate) use exit_handlers::{finalize_cxa_handlers, register_cxa_exit_handler};
 
 /// The executable's `fini` and the loader's `rtld_fini` (`_dl_fini`), handed
 /// over by the owned startup path so [`exit`] can run them after the
@@ -4980,25 +5015,6 @@ fn run_exit_finalizers() {
     }
 }
 
-fn run_exit_handlers(status: c_int) {
-    loop {
-        let batch: Vec<ExitHandler> = {
-            let mut guard = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_empty() {
-                break;
-            }
-            std::mem::take(&mut *guard)
-        };
-        for handler in batch.into_iter().rev() {
-            match handler {
-                ExitHandler::Atexit(func) => func(),
-                ExitHandler::OnExit(entry) => unsafe { (entry.func)(status, entry.arg) },
-                ExitHandler::Cxa(entry) => unsafe { (entry.func)(entry.arg) },
-            }
-        }
-    }
-}
-
 /// `on_exit` — register a function to be called at exit (with status and arg).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn on_exit(
@@ -5010,9 +5026,9 @@ pub unsafe extern "C" fn on_exit(
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return -1;
     };
-    register_exit_handler(ExitHandler::OnExit(OnExitEntry { func: f, arg }));
-    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
-    0
+    let result = register_exit_handler(ExitHandler::OnExit(OnExitEntry { func: f, arg }));
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, result != 0);
+    result
 }
 
 /// Exit handler entries for `at_quick_exit`.
@@ -5370,6 +5386,7 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
                 // For full printf compatibility, delegate to our printf engine.
                 let msg = unsafe {
                     crate::stdio_abi::vprintf_extract_and_render(
+                        "error",
                         f,
                         (&mut args) as *mut _ as *mut c_void,
                     )
@@ -5503,7 +5520,11 @@ pub unsafe extern "C" fn error_at_line(
         && let Ok(f) = std::str::from_utf8(&fmt_bytes)
     {
         let msg = unsafe {
-            crate::stdio_abi::vprintf_extract_and_render(f, (&mut args) as *mut _ as *mut c_void)
+            crate::stdio_abi::vprintf_extract_and_render(
+                "error_at_line",
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            )
         };
         let _ = write!(out, "{msg}");
     }
@@ -5905,16 +5926,17 @@ pub extern "C" fn endusershell() {
 
 /// `gets` — read a line from stdin (DEPRECATED, insecure).
 ///
-/// POSIX removed this in 2008; kept for legacy compatibility.
+/// POSIX removed this in 2008; kept for legacy compatibility. Its `read` is
+/// a cancellation point, as glibc's stdin read is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gets(s: *mut c_char) -> *mut c_char {
+pub unsafe extern "C-unwind" fn gets(s: *mut c_char) -> *mut c_char {
     if s.is_null() {
         return ptr::null_mut();
     }
     let mut i = 0usize;
     loop {
         let mut ch: u8 = 0;
-        let n = unsafe { crate::unistd_abi::read(0, &mut ch as *mut u8 as *mut c_void, 1) };
+        let n = unsafe { crate::unistd_abi::read_cp(0, &mut ch as *mut u8 as *mut c_void, 1) };
         if n <= 0 {
             if i == 0 {
                 return ptr::null_mut();

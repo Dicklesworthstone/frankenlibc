@@ -92,8 +92,8 @@ fn bench(c: &mut Criterion) {
     let inputs: Vec<f64> = (0..64).map(|k| -10.0 + k as f64 * 0.3125).collect();
     let mut group = c.benchmark_group("exp2_f64");
     group.sample_size(50);
-    run(&mut group, "fl", &inputs, |x| math::exp2(x));
-    run(&mut group, "fl_old", &inputs, |x| libm::exp2(x));
+    run(&mut group, "fl", &inputs, math::exp2);
+    run(&mut group, "fl_old", &inputs, libm::exp2);
     run(&mut group, "glibc", &inputs, |x| unsafe { host_exp2(x) });
     group.finish();
 }

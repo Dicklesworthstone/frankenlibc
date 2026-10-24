@@ -56,7 +56,7 @@ fn narrow_strto_l_family_matches_glibc() {
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
         let f = unsafe {
-            frankenlibc_abi::stdlib_abi::strtoul_l(c.as_ptr(), &mut fe, base, loc as *mut c_void)
+            frankenlibc_abi::stdlib_abi::strtoul_l(c.as_ptr(), &mut fe, base, loc)
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "strtoul_l({s:?},{base}) value");
@@ -72,7 +72,7 @@ fn narrow_strto_l_family_matches_glibc() {
         let mut fe2: *mut c_char = std::ptr::null_mut();
         let g2 = unsafe { strtoll_l(c.as_ptr(), &mut ge2, base, loc) };
         let f2 = unsafe {
-            frankenlibc_abi::stdlib_abi::strtoll_l(c.as_ptr(), &mut fe2, base, loc as *mut c_void)
+            frankenlibc_abi::stdlib_abi::strtoll_l(c.as_ptr(), &mut fe2, base, loc)
         };
         assert_eq!(f2, g2, "strtoll_l({s:?},{base}) value");
 
@@ -81,7 +81,7 @@ fn narrow_strto_l_family_matches_glibc() {
         let mut fe3: *mut c_char = std::ptr::null_mut();
         let g3 = unsafe { strtoull_l(c.as_ptr(), &mut ge3, base, loc) };
         let f3 = unsafe {
-            frankenlibc_abi::stdlib_abi::strtoull_l(c.as_ptr(), &mut fe3, base, loc as *mut c_void)
+            frankenlibc_abi::stdlib_abi::strtoull_l(c.as_ptr(), &mut fe3, base, loc)
         };
         assert_eq!(f3, g3, "strtoull_l({s:?},{base}) value");
     }
@@ -103,7 +103,7 @@ fn narrow_strto_l_family_matches_glibc() {
         let mut fe: *mut c_char = std::ptr::null_mut();
         let g = unsafe { strtof_l(c.as_ptr(), &mut ge, loc) };
         let f = unsafe {
-            frankenlibc_abi::stdlib_abi::strtof_l(c.as_ptr(), &mut fe, loc as *mut c_void)
+            frankenlibc_abi::stdlib_abi::strtof_l(c.as_ptr(), &mut fe, loc)
         };
         assert!(same32(f, g), "strtof_l({s:?}): fl={f:?} glibc={g:?}");
         assert_eq!(

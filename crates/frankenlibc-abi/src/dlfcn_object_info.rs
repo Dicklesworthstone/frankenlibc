@@ -43,7 +43,11 @@ impl ObjectInfo {
             return None;
         }
         let mut loads = Vec::new();
-        for header in object.program_headers.iter().filter(|header| header.is_load()) {
+        for header in object
+            .program_headers
+            .iter()
+            .filter(|header| header.is_load())
+        {
             let start = base.checked_add(usize::try_from(header.p_vaddr).ok()?)?;
             let end = start.checked_add(usize::try_from(header.p_memsz).ok()?)?;
             if start != end {
@@ -57,26 +61,52 @@ impl ObjectInfo {
             // internal, undefined, absolute, common or TLS-offset definitions.
             if !matches!(symbol.st_info >> 4, 1 | 2 | 10)
                 || matches!(symbol.st_other & 3, 1 | 2)
-                || symbol.st_shndx == 0 || symbol.st_shndx >= 0xff00
+                || symbol.st_shndx == 0
+                || symbol.st_shndx >= 0xff00
                 || !matches!(symbol.st_info & 15, 0 | 1 | 2 | 10)
             {
                 continue;
             }
-            let Some(address) = usize::try_from(symbol.st_value).ok()
-                .and_then(|offset| base.checked_add(offset)) else { continue; };
-            let Ok(size) = usize::try_from(symbol.st_size) else { continue; };
-            let Ok(name) = usize::try_from(symbol.st_name) else { continue; };
-            let Some(tail) = strings.get(name..) else { continue; };
-            if !tail.iter().position(|&byte| byte == 0).is_some_and(|len| len != 0) {
+            let Some(address) = usize::try_from(symbol.st_value)
+                .ok()
+                .and_then(|offset| base.checked_add(offset))
+            else {
+                continue;
+            };
+            let Ok(size) = usize::try_from(symbol.st_size) else {
+                continue;
+            };
+            let Ok(name) = usize::try_from(symbol.st_name) else {
+                continue;
+            };
+            let Some(tail) = strings.get(name..) else {
+                continue;
+            };
+            if !tail
+                .iter()
+                .position(|&byte| byte == 0)
+                .is_some_and(|len| len != 0)
+            {
                 continue;
             }
-            if !loads.iter().any(|&(start, end)| start <= address && address < end) {
+            if !loads
+                .iter()
+                .any(|&(start, end)| start <= address && address < end)
+            {
                 continue;
             }
-            symbols.push(AddressSymbol { address, size, name });
+            symbols.push(AddressSymbol {
+                address,
+                size,
+                name,
+            });
         }
         Some(Self {
-            name, base, loads, strings, symbols,
+            name,
+            base,
+            loads,
+            strings,
+            symbols,
             phdrs: object.program_headers.iter().map(abi_phdr).collect(),
         })
     }
@@ -84,14 +114,25 @@ impl ObjectInfo {
     pub(super) fn address_info(&self, address: usize) -> Option<libc::Dl_info> {
         // The reserved image extent can contain unmapped gaps. Only PT_LOAD
         // intervals establish ownership; do not attribute an arbitrary hole.
-        if !self.loads.iter().any(|&(start, end)| start <= address && address < end) {
+        if !self
+            .loads
+            .iter()
+            .any(|&(start, end)| start <= address && address < end)
+        {
             return None;
         }
-        let symbol = self.symbols.iter().filter(|symbol| {
-            address >= symbol.address
-                && if symbol.size == 0 { address == symbol.address }
-                   else { address - symbol.address < symbol.size }
-        }).max_by_key(|symbol| symbol.address);
+        let symbol = self
+            .symbols
+            .iter()
+            .filter(|symbol| {
+                address >= symbol.address
+                    && if symbol.size == 0 {
+                        address == symbol.address
+                    } else {
+                        address - symbol.address < symbol.size
+                    }
+            })
+            .max_by_key(|symbol| symbol.address);
         Some(libc::Dl_info {
             dli_fname: self.name.as_ptr(),
             dli_fbase: self.base as *mut c_void,

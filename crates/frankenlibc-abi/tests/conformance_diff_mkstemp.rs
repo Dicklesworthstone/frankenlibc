@@ -80,27 +80,46 @@ fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
 fn host_mkstemp() -> MkstempFn {
     // SAFETY: the resolved symbol has POSIX's documented mkstemp signature.
     unsafe {
-        std::mem::transmute::<_, MkstempFn>(host_symbol(c"mkstemp", fl_wchar::mkstemp as usize))
+        std::mem::transmute::<_, MkstempFn>(host_symbol(
+            c"mkstemp",
+            fl_wchar::mkstemp as *const () as usize,
+        ))
     }
 }
 fn host_mkstemps() -> MkstempsFn {
     // SAFETY: the resolved symbol has glibc's documented mkstemps signature.
-    unsafe { std::mem::transmute::<_, MkstempsFn>(host_symbol(c"mkstemps", fl::mkstemps as usize)) }
+    unsafe {
+        std::mem::transmute::<_, MkstempsFn>(host_symbol(
+            c"mkstemps",
+            fl::mkstemps as *const () as usize,
+        ))
+    }
 }
 fn host_mkostemp() -> MkostempFn {
     // SAFETY: the resolved symbol has glibc's documented mkostemp signature.
-    unsafe { std::mem::transmute::<_, MkostempFn>(host_symbol(c"mkostemp", fl::mkostemp as usize)) }
+    unsafe {
+        std::mem::transmute::<_, MkostempFn>(host_symbol(
+            c"mkostemp",
+            fl::mkostemp as *const () as usize,
+        ))
+    }
 }
 fn host_mkostemps() -> MkostempsFn {
     // SAFETY: the resolved symbol has glibc's documented mkostemps signature.
     unsafe {
-        std::mem::transmute::<_, MkostempsFn>(host_symbol(c"mkostemps", fl::mkostemps as usize))
+        std::mem::transmute::<_, MkostempsFn>(host_symbol(
+            c"mkostemps",
+            fl::mkostemps as *const () as usize,
+        ))
     }
 }
 fn host_mkdtemp() -> MkdtempFn {
     // SAFETY: the resolved symbol has POSIX's documented mkdtemp signature.
     unsafe {
-        std::mem::transmute::<_, MkdtempFn>(host_symbol(c"mkdtemp", fl_unistd::mkdtemp as usize))
+        std::mem::transmute::<_, MkdtempFn>(host_symbol(
+            c"mkdtemp",
+            fl_unistd::mkdtemp as *const () as usize,
+        ))
     }
 }
 

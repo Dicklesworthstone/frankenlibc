@@ -10182,6 +10182,7 @@ fn pathconf_and_fpathconf_match_host_for_root_limits() {
 /// So this now asserts the CONTRACT — the clamp, the negative-means-default rule,
 /// and a handful of exact glibc strings — instead of fl against itself.
 #[test]
+#[allow(clippy::approx_constant)]
 fn qgcvt_precision_contract_matches_measured_glibc() {
     let mut buf = [0 as libc::c_char; 640];
     let mut render = |value: f64, ndigit: libc::c_int| -> String {

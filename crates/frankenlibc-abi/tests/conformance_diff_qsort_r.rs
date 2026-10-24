@@ -40,7 +40,7 @@ fn host_qsort_r() -> QsortRFn {
     assert!(!raw.is_null(), "dlsym qsort_r");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::stdlib_abi::qsort_r as usize,
+        frankenlibc_abi::stdlib_abi::qsort_r as *const () as usize,
         "the resolved oracle IS fl's qsort_r — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has glibc's documented qsort_r signature.

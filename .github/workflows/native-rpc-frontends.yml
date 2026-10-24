@@ -1,0 +1,62 @@
+name: Native RPC frontends
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-rpc-frontends.yml'
+      - 'crates/frankenlibc-abi/src/rpc*.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn_socket.rs'
+      - 'crates/frankenlibc-abi/tests/rpc*_test.rs'
+      - 'crates/frankenlibc-core/src/rpc/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-rpc-frontends
+  cancel-in-progress: false
+jobs:
+  execute:
+    name: rpc-frontends
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+          clean: false
+          persist-credentials: false
+      - name: Install repository-pinned Rust
+        shell: bash
+        run: |
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal
+          rustc --version
+          mkdir -p artifacts/native-rpc
+          git rev-parse HEAD > artifacts/native-rpc/source-commit.txt
+      - name: Execute production RPC frontends in both modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in strict hardened; do
+            for target in rpc_tcp_frontend_test rpc_auth_recovery_test; do
+              FRANKENLIBC_MODE=$mode cargo test -p frankenlibc-abi --test "$target" --no-fail-fast -- --nocapture --test-threads=1 2>&1 | tee artifacts/native-rpc/$mode-$target.log
+              grep -Eq 'test result: ok\. [1-9][0-9]* passed' artifacts/native-rpc/$mode-$target.log
+            done
+          done
+      - name: Execute safe wire and record parser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --lib rpc::wire -- --nocapture 2>&1 | tee artifacts/native-rpc/wire.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' artifacts/native-rpc/wire.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-rpc-${{ github.run_id }}
+          path: artifacts/native-rpc/
+          retention-days: 7

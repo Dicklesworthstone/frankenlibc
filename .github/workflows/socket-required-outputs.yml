@@ -1,0 +1,54 @@
+name: Socket required outputs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/socket_abi.rs'
+      - 'crates/frankenlibc-abi/src/sockaddr_snapshot.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/socket_required_outputs_test.rs'
+      - 'crates/frankenlibc-abi/tests/sockaddr_snapshot_test.rs'
+      - '.github/workflows/socket-required-outputs.yml'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: socket-required-outputs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  required-outputs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: socket-required-outputs
+      - name: Compile actual ABI and regression targets
+        run: cargo test -p frankenlibc-abi --test socket_required_outputs_test --test sockaddr_snapshot_test --no-run
+      - name: Required outputs and aliases in isolated strict/hardened processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 300s cargo test -p frankenlibc-abi --test socket_required_outputs_test -- --nocapture --test-threads=1
+      - name: Existing address importer regressions in both modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 300s cargo test -p frankenlibc-abi --test sockaddr_snapshot_test -- --nocapture --test-threads=1
+          done

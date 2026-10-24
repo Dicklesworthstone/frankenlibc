@@ -20,7 +20,6 @@ mod dlsym_oracle;
 /// these symbols into this test binary, so a link-time reference can bind to fl
 /// and leave BOTH arms as fl -- green while comparing nothing, which would leave
 /// the defect documented above ungated and free to regress (bd-v0388t).
-
 type StrfmonFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> isize;
 type SetlocaleFn = unsafe extern "C" fn(i32, *const c_char) -> *mut c_char;
 

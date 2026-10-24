@@ -93,15 +93,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp_dir(stem: &str) -> TestResult<PathBuf> {
@@ -121,6 +127,7 @@ fn unique_tmp_dir(stem: &str) -> TestResult<PathBuf> {
 fn write_sample_support_matrix(path: &Path) -> TestResult {
     let body = r#"{
   "generated_at_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
   "total_exported": 6,
   "symbols": [
     {"symbol": "zeta", "status": "Stub"},
@@ -166,6 +173,10 @@ fn validate_sample_report(report: &Value) -> TestResult {
     require(
         json_string(report, "generated_at_utc")? == "2026-05-14T00:00:00Z",
         "generated_at_utc must come from support matrix",
+    )?;
+    require(
+        json_string(report, "source_commit")? == "0123456789abcdef0123456789abcdef01234567",
+        "source_commit must come from support matrix",
     )?;
     require(
         json_u64(report, "total_exported")? == 6,
@@ -248,6 +259,10 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "support_matrix_symbol_count_mismatch_must_fail_closed must be true",
         ),
         (
+            "source_commit_must_be_full_git_oid",
+            "source_commit_must_be_full_git_oid must be true",
+        ),
+        (
             "must_preserve_support_reality_regeneration_bead",
             "must_preserve_support_reality_regeneration_bead must be true",
         ),
@@ -305,10 +320,7 @@ fn harness_source_registers_reality_report_subcommand() -> TestResult {
 
 #[test]
 fn cli_stdout_mode_emits_reality_report_json() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = unique_tmp_dir("stdout")?;
     let support_matrix = dir.join("support_matrix.json");
     write_sample_support_matrix(&support_matrix)?;
@@ -328,10 +340,7 @@ fn cli_stdout_mode_emits_reality_report_json() -> TestResult {
 
 #[test]
 fn cli_output_mode_creates_parent_and_writes_reality_report_json() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = unique_tmp_dir("output")?;
     let support_matrix = dir.join("support_matrix.json");
     let output = dir.join("nested").join("reality_report.current.v1.json");
@@ -352,10 +361,7 @@ fn cli_output_mode_creates_parent_and_writes_reality_report_json() -> TestResult
 
 #[test]
 fn cli_missing_support_matrix_fails_closed() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = unique_tmp_dir("missing")?;
     let missing = dir.join("missing_support_matrix.json");
     let out = run_reality_report(&bin, &missing)?;

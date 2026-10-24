@@ -91,15 +91,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -202,10 +208,7 @@ fn run_cli(
 
 #[test]
 fn cli_zero_k_source_yields_zero_r_repair_and_loss_fraction() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("zero")?;
     let out = run_cli(&bin, "0", "10", &output)?;
     if !out.status.success() {
@@ -235,10 +238,7 @@ fn cli_zero_k_source_yields_zero_r_repair_and_loss_fraction() -> TestResult {
 
 #[test]
 fn cli_baseline_k_source_100_overhead_10_matches_known_math() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("baseline")?;
     let out = run_cli(&bin, "100", "10", &output)?;
     if !out.status.success() {
@@ -272,10 +272,7 @@ fn cli_baseline_k_source_100_overhead_10_matches_known_math() -> TestResult {
 
 #[test]
 fn cli_loss_fraction_clamped_at_ppm_cap_for_high_overhead() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("ppm_cap")?;
     // Drive r_repair high enough that the algebraic loss fraction
     // approaches 1.0 — saturating arithmetic + the explicit min(...,
@@ -300,10 +297,7 @@ fn cli_loss_fraction_clamped_at_ppm_cap_for_high_overhead() -> TestResult {
 
 #[test]
 fn cli_r_repair_at_or_above_slack_decode_for_positive_k_source() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("slack_floor")?;
     // overhead=0 with k_source>0 must still yield r_repair>=slack_decode (=2).
     let out = run_cli(&bin, "50", "0", &output)?;

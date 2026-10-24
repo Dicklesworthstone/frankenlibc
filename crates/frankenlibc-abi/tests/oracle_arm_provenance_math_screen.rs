@@ -1043,15 +1043,15 @@ fn owning_object(addr: *const c_void) -> String {
     path.rsplit('/').next().unwrap_or(&path).to_owned()
 }
 
-/// Census the math oracle arms and print where each one actually resolves.
-/// Arms that live in libresolv/libcrypt rather than libc, declared in their own
-/// linked block.
-///
-/// These were the last known residual on bd-v0388t: 21 symbols that
-/// conformance_diff_* gates declare and the census could not cover, because
-/// naming them in the ordinary block is an undefined symbol on this binary's
-/// link line. `#[link(name = ..)]` pulls the library in, which is the whole fix
-/// -- the exclusion was never about these symbols being uninteresting.
+// Census the math oracle arms and print where each one actually resolves.
+// Arms that live in libresolv/libcrypt rather than libc, declared in their own
+// linked block.
+//
+// These were the last known residual on bd-v0388t: 21 symbols that
+// conformance_diff_* gates declare and the census could not cover, because
+// naming them in the ordinary block is an undefined symbol on this binary's
+// link line. `#[link(name = ..)]` pulls the library in, which is the whole fix
+// -- the exclusion was never about these symbols being uninteresting.
 #[link(name = "resolv")]
 unsafe extern "C" {
     fn __b64_ntop(a: *const c_void, b: usize, c: *mut c_char, d: usize) -> c_int;

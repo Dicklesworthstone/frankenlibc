@@ -35,7 +35,7 @@ fn host_versionsort64() -> CmpFn {
     unsafe {
         std::mem::transmute::<_, CmpFn>(host_symbol(
             c"versionsort64",
-            frankenlibc_abi::unistd_abi::versionsort64 as usize,
+            frankenlibc_abi::unistd_abi::versionsort64 as *const () as usize,
         ))
     }
 }
@@ -45,7 +45,7 @@ fn host_alphasort64() -> CmpFn {
     unsafe {
         std::mem::transmute::<_, CmpFn>(host_symbol(
             c"alphasort64",
-            frankenlibc_abi::unistd_abi::alphasort64 as usize,
+            frankenlibc_abi::unistd_abi::alphasort64 as *const () as usize,
         ))
     }
 }

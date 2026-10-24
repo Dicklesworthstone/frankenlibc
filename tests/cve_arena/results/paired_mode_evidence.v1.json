@@ -108,7 +108,10 @@
         "structured_log_contains_paired_mode_evidence",
         "paired_mode_checker_accepts_completion_debt_bindings"
       ],
-      "required_events": ["paired_mode_scenario", "paired_mode_summary"],
+      "required_events": [
+        "paired_mode_scenario",
+        "paired_mode_summary"
+      ],
       "required_fields": [
         "timestamp",
         "trace_id",
@@ -137,8 +140,14 @@
       "test_name": "syslog_heap_overflow_suite",
       "dossier_id": "dossier-8cca65617f9b",
       "cvss_score": 8.4,
-      "vulnerability_classes": ["heap_overflow", "integer_overflow", "size_miscalculation"],
-      "trigger_files": ["trigger.c"],
+      "vulnerability_classes": [
+        "heap_overflow",
+        "integer_overflow",
+        "size_miscalculation"
+      ],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
@@ -155,9 +164,51 @@
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize", "TruncateWithNull"],
+        "healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "double free or corruption (out)",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 2
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 2
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-8cca65617f9b",
@@ -170,7 +221,11 @@
           "dossier-8cca65617f9b/hardened/metrics.json",
           "dossier-8cca65617f9b/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -183,7 +238,10 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
         "strict_detection_flags": [
           "arithmetic_violation",
           "bounds_violation",
@@ -191,7 +249,10 @@
           "out_of_bounds_write",
           "size_miscalculation"
         ],
-        "hardened_healing_actions": ["ClampSize", "TruncateWithNull"],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
         "artifact_paths": [
           "dossier-8cca65617f9b/strict/stdout.log",
           "dossier-8cca65617f9b/strict/stderr.log",
@@ -210,21 +271,69 @@
       "test_name": "iconv_iso2022cn_ext_buffer_overflow",
       "dossier_id": "dossier-04fe53b4a67c",
       "cvss_score": 8.8,
-      "vulnerability_classes": ["heap_overflow"],
-      "trigger_files": ["trigger.c"],
+      "vulnerability_classes": [
+        "heap_overflow"
+      ],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["bounds_violation", "out_of_bounds_write"],
+        "detection_flags": [
+          "bounds_violation",
+          "out_of_bounds_write"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize"],
+        "healing_actions": [
+          "ClampSize"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 4
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 4
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-04fe53b4a67c",
@@ -237,7 +346,11 @@
           "dossier-04fe53b4a67c/hardened/metrics.json",
           "dossier-04fe53b4a67c/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -250,9 +363,17 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["bounds_violation", "out_of_bounds_write"],
-        "hardened_healing_actions": ["ClampSize"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "out_of_bounds_write"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize"
+        ],
         "artifact_paths": [
           "dossier-04fe53b4a67c/strict/stdout.log",
           "dossier-04fe53b4a67c/strict/stderr.log",
@@ -277,7 +398,9 @@
         "stack_overflow",
         "uninitialized_memory"
       ],
-      "trigger_files": ["trigger.c"],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
@@ -296,9 +419,51 @@
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize", "ReturnSafeDefault"],
+        "healing_actions": [
+          "ClampSize",
+          "ReturnSafeDefault"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "double free or corruption (out)",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 1,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 3
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 3
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-cffcb20dfd00",
@@ -311,7 +476,11 @@
           "dossier-cffcb20dfd00/hardened/metrics.json",
           "dossier-cffcb20dfd00/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -324,7 +493,10 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
         "strict_detection_flags": [
           "bounds_violation",
           "memory_safety",
@@ -334,7 +506,10 @@
           "stack_overflow_detected",
           "uninitialized_read"
         ],
-        "hardened_healing_actions": ["ClampSize", "ReturnSafeDefault"],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "ReturnSafeDefault"
+        ],
         "artifact_paths": [
           "dossier-cffcb20dfd00/strict/stdout.log",
           "dossier-cffcb20dfd00/strict/stderr.log",
@@ -353,21 +528,69 @@
       "test_name": "regcomp_double_free_on_alloc_failure",
       "dossier_id": "dossier-00ed24f9a8b1",
       "cvss_score": 5.5,
-      "vulnerability_classes": ["double_free"],
-      "trigger_files": ["trigger.c"],
+      "vulnerability_classes": [
+        "double_free"
+      ],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["double_free", "invalid_free"],
+        "detection_flags": [
+          "double_free",
+          "invalid_free"
+        ],
         "signal": "SIGABRT",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["IgnoreDoubleFree"],
+        "healing_actions": [
+          "IgnoreDoubleFree"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "free(): double free detected in tcache 2",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "free(): double free detected in tcache 2",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "IgnoreDoubleFree": 4
+          },
+          "healing_actions_observed": [
+            "IgnoreDoubleFree"
+          ]
+        },
+        "heal_counter_deltas": {
+          "IgnoreDoubleFree": 4
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-00ed24f9a8b1",
@@ -380,7 +603,11 @@
           "dossier-00ed24f9a8b1/hardened/metrics.json",
           "dossier-00ed24f9a8b1/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -393,9 +620,17 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["double_free", "invalid_free"],
-        "hardened_healing_actions": ["IgnoreDoubleFree"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "double_free",
+          "invalid_free"
+        ],
+        "hardened_healing_actions": [
+          "IgnoreDoubleFree"
+        ],
         "artifact_paths": [
           "dossier-00ed24f9a8b1/strict/stdout.log",
           "dossier-00ed24f9a8b1/strict/stderr.log",
@@ -414,21 +649,70 @@
       "test_name": "dcerpc_heap_overflow_cve_2024_38812",
       "dossier_id": "dossier-f62d4ecb58e8",
       "cvss_score": 9.8,
-      "vulnerability_classes": ["heap_overflow"],
-      "trigger_files": ["trigger.c"],
+      "vulnerability_classes": [
+        "heap_overflow"
+      ],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["bounds_violation", "heap_overflow_detected"],
+        "detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected"
+        ],
         "signal": "SIGABRT",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize", "FreedWithCanaryCorruption"],
+        "healing_actions": [
+          "ClampSize",
+          "FreedWithCanaryCorruption"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "malloc(): corrupted top size",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "ClampSize": 1
+          },
+          "healing_actions_observed": [
+            "ClampSize"
+          ]
+        },
+        "heal_counter_deltas": {
+          "ClampSize": 1
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-f62d4ecb58e8",
@@ -441,7 +725,11 @@
           "dossier-f62d4ecb58e8/hardened/metrics.json",
           "dossier-f62d4ecb58e8/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -454,9 +742,18 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["bounds_violation", "heap_overflow_detected"],
-        "hardened_healing_actions": ["ClampSize", "FreedWithCanaryCorruption"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected"
+        ],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "FreedWithCanaryCorruption"
+        ],
         "artifact_paths": [
           "dossier-f62d4ecb58e8/strict/stdout.log",
           "dossier-f62d4ecb58e8/strict/stderr.log",
@@ -475,21 +772,69 @@
       "test_name": "format_string_cve_2024_23113",
       "dossier_id": "dossier-6395aa19eab9",
       "cvss_score": 9.8,
-      "vulnerability_classes": ["format_string"],
-      "trigger_files": ["trigger.c"],
+      "vulnerability_classes": [
+        "format_string"
+      ],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["format_string_violation", "unsafe_printf"],
+        "detection_flags": [
+          "format_string_violation",
+          "unsafe_printf"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["UpgradeToSafeVariant"],
+        "healing_actions": [
+          "UpgradeToSafeVariant"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "UpgradeToSafeVariant": 2
+          },
+          "healing_actions_observed": [
+            "UpgradeToSafeVariant"
+          ]
+        },
+        "heal_counter_deltas": {
+          "UpgradeToSafeVariant": 2
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-6395aa19eab9",
@@ -502,7 +847,11 @@
           "dossier-6395aa19eab9/hardened/metrics.json",
           "dossier-6395aa19eab9/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -515,9 +864,17 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["format_string_violation", "unsafe_printf"],
-        "hardened_healing_actions": ["UpgradeToSafeVariant"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "format_string_violation",
+          "unsafe_printf"
+        ],
+        "hardened_healing_actions": [
+          "UpgradeToSafeVariant"
+        ],
         "artifact_paths": [
           "dossier-6395aa19eab9/strict/stdout.log",
           "dossier-6395aa19eab9/strict/stderr.log",
@@ -536,21 +893,70 @@
       "test_name": "quic_uaf_cve_2024_24990",
       "dossier_id": "dossier-2704c3f4d1db",
       "cvss_score": 7.5,
-      "vulnerability_classes": ["use_after_free"],
-      "trigger_files": ["trigger.c"],
+      "vulnerability_classes": [
+        "use_after_free"
+      ],
+      "trigger_files": [
+        "trigger.c"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["dangling_pointer", "use_after_free"],
+        "detection_flags": [
+          "dangling_pointer",
+          "use_after_free"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ReturnSafeDefault", "IgnoreDoubleFree"],
+        "healing_actions": [
+          "ReturnSafeDefault",
+          "IgnoreDoubleFree"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
+      },
+      "live_execution": {
+        "compiles": true,
+        "preload_lib": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+        "glibc_baseline": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "free(): double free detected in tcache 2",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "strict": {
+          "rc": -6,
+          "signal": "SIGABRT",
+          "timed_out": false,
+          "crashed": true,
+          "stderr_snippet": "free(): double free detected in tcache 2",
+          "heal_counts": {},
+          "healing_actions_observed": []
+        },
+        "hardened": {
+          "rc": 0,
+          "signal": null,
+          "timed_out": false,
+          "crashed": false,
+          "stderr_snippet": "",
+          "heal_counts": {
+            "IgnoreDoubleFree": 1
+          },
+          "healing_actions_observed": [
+            "IgnoreDoubleFree"
+          ]
+        },
+        "heal_counter_deltas": {
+          "IgnoreDoubleFree": 1
+        },
+        "hardened_healed": true
       },
       "evidence_bundle": {
         "dossier_ref": "dossier-2704c3f4d1db",
@@ -563,7 +969,11 @@
           "dossier-2704c3f4d1db/hardened/metrics.json",
           "dossier-2704c3f4d1db/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -576,9 +986,18 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["dangling_pointer", "use_after_free"],
-        "hardened_healing_actions": ["ReturnSafeDefault", "IgnoreDoubleFree"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "dangling_pointer",
+          "use_after_free"
+        ],
+        "hardened_healing_actions": [
+          "ReturnSafeDefault",
+          "IgnoreDoubleFree"
+        ],
         "artifact_paths": [
           "dossier-2704c3f4d1db/strict/stdout.log",
           "dossier-2704c3f4d1db/strict/stderr.log",
@@ -597,22 +1016,34 @@
       "test_name": "curl_asn1_stack_use_after_free",
       "dossier_id": "dossier-0971c8e2d14f",
       "cvss_score": 7.5,
-      "vulnerability_classes": ["expired_pointer", "use_after_free"],
-      "trigger_files": ["trigger.sh"],
+      "vulnerability_classes": [
+        "expired_pointer",
+        "use_after_free"
+      ],
+      "trigger_files": [
+        "trigger.sh"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["dangling_pointer", "expired_pointer", "use_after_free"],
+        "detection_flags": [
+          "dangling_pointer",
+          "expired_pointer",
+          "use_after_free"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["IgnoreForeignFree"],
+        "healing_actions": [
+          "IgnoreForeignFree"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
       },
+      "live_execution": null,
       "evidence_bundle": {
         "dossier_ref": "dossier-0971c8e2d14f",
         "artifacts": [
@@ -624,7 +1055,11 @@
           "dossier-0971c8e2d14f/hardened/metrics.json",
           "dossier-0971c8e2d14f/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -637,9 +1072,18 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["dangling_pointer", "expired_pointer", "use_after_free"],
-        "hardened_healing_actions": ["IgnoreForeignFree"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "dangling_pointer",
+          "expired_pointer",
+          "use_after_free"
+        ],
+        "hardened_healing_actions": [
+          "IgnoreForeignFree"
+        ],
         "artifact_paths": [
           "dossier-0971c8e2d14f/strict/stdout.log",
           "dossier-0971c8e2d14f/strict/stderr.log",
@@ -658,22 +1102,35 @@
       "test_name": "perl_tr_transliteration_heap_overflow",
       "dossier_id": "dossier-c945f72d7ca0",
       "cvss_score": 8.6,
-      "vulnerability_classes": ["heap_overflow"],
-      "trigger_files": ["trigger.sh", "trigger.pl"],
+      "vulnerability_classes": [
+        "heap_overflow"
+      ],
+      "trigger_files": [
+        "trigger.sh",
+        "trigger.pl"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["bounds_violation", "heap_overflow_detected", "out_of_bounds_write"],
+        "detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected",
+          "out_of_bounds_write"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize", "TruncateWithNull"],
+        "healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
       },
+      "live_execution": null,
       "evidence_bundle": {
         "dossier_ref": "dossier-c945f72d7ca0",
         "artifacts": [
@@ -685,7 +1142,11 @@
           "dossier-c945f72d7ca0/hardened/metrics.json",
           "dossier-c945f72d7ca0/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -698,13 +1159,19 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
         "strict_detection_flags": [
           "bounds_violation",
           "heap_overflow_detected",
           "out_of_bounds_write"
         ],
-        "hardened_healing_actions": ["ClampSize", "TruncateWithNull"],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
         "artifact_paths": [
           "dossier-c945f72d7ca0/strict/stdout.log",
           "dossier-c945f72d7ca0/strict/stderr.log",
@@ -723,22 +1190,34 @@
       "test_name": "redis_lua_gc_use_after_free",
       "dossier_id": "dossier-879d016e738d",
       "cvss_score": 10.0,
-      "vulnerability_classes": ["use_after_free"],
-      "trigger_files": ["trigger.sh", "trigger.py"],
+      "vulnerability_classes": [
+        "use_after_free"
+      ],
+      "trigger_files": [
+        "trigger.sh",
+        "trigger.py"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["dangling_pointer", "use_after_free"],
+        "detection_flags": [
+          "dangling_pointer",
+          "use_after_free"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["IgnoreDoubleFree", "ReturnSafeDefault"],
+        "healing_actions": [
+          "IgnoreDoubleFree",
+          "ReturnSafeDefault"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
       },
+      "live_execution": null,
       "evidence_bundle": {
         "dossier_ref": "dossier-879d016e738d",
         "artifacts": [
@@ -750,7 +1229,11 @@
           "dossier-879d016e738d/hardened/metrics.json",
           "dossier-879d016e738d/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -763,9 +1246,18 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
-        "strict_detection_flags": ["dangling_pointer", "use_after_free"],
-        "hardened_healing_actions": ["IgnoreDoubleFree", "ReturnSafeDefault"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
+        "strict_detection_flags": [
+          "dangling_pointer",
+          "use_after_free"
+        ],
+        "hardened_healing_actions": [
+          "IgnoreDoubleFree",
+          "ReturnSafeDefault"
+        ],
         "artifact_paths": [
           "dossier-879d016e738d/strict/stdout.log",
           "dossier-879d016e738d/strict/stderr.log",
@@ -784,22 +1276,34 @@
       "test_name": "sudo_baron_samedit_heap_overflow",
       "dossier_id": "dossier-c9bf18faaf80",
       "cvss_score": 7.8,
-      "vulnerability_classes": ["heap_overflow"],
-      "trigger_files": ["trigger.sh"],
+      "vulnerability_classes": [
+        "heap_overflow"
+      ],
+      "trigger_files": [
+        "trigger.sh"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
-        "detection_flags": ["bounds_violation", "heap_overflow_detected", "out_of_bounds_write"],
+        "detection_flags": [
+          "bounds_violation",
+          "heap_overflow_detected",
+          "out_of_bounds_write"
+        ],
         "signal": "SIGSEGV",
         "verdict": "detected"
       },
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize", "TruncateWithNull"],
+        "healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
       },
+      "live_execution": null,
       "evidence_bundle": {
         "dossier_ref": "dossier-c9bf18faaf80",
         "artifacts": [
@@ -811,7 +1315,11 @@
           "dossier-c9bf18faaf80/hardened/metrics.json",
           "dossier-c9bf18faaf80/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -824,13 +1332,19 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
         "strict_detection_flags": [
           "bounds_violation",
           "heap_overflow_detected",
           "out_of_bounds_write"
         ],
-        "hardened_healing_actions": ["ClampSize", "TruncateWithNull"],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "TruncateWithNull"
+        ],
         "artifact_paths": [
           "dossier-c9bf18faaf80/strict/stdout.log",
           "dossier-c9bf18faaf80/strict/stderr.log",
@@ -849,8 +1363,13 @@
       "test_name": "vlc_mms_integer_overflow_heap_overflow",
       "dossier_id": "dossier-382e0154a887",
       "cvss_score": 7.5,
-      "vulnerability_classes": ["heap_overflow", "integer_overflow"],
-      "trigger_files": ["trigger.sh"],
+      "vulnerability_classes": [
+        "heap_overflow",
+        "integer_overflow"
+      ],
+      "trigger_files": [
+        "trigger.sh"
+      ],
       "strict_mode": {
         "crashes_expected": true,
         "detection_expected": true,
@@ -866,10 +1385,14 @@
       "hardened_mode": {
         "crashes_expected": false,
         "exit_code": 0,
-        "healing_actions": ["ClampSize", "ReallocAsMalloc"],
+        "healing_actions": [
+          "ClampSize",
+          "ReallocAsMalloc"
+        ],
         "no_uncontrolled_unsafety": true,
         "verdict": "prevented"
       },
+      "live_execution": null,
       "evidence_bundle": {
         "dossier_ref": "dossier-382e0154a887",
         "artifacts": [
@@ -881,7 +1404,11 @@
           "dossier-382e0154a887/hardened/metrics.json",
           "dossier-382e0154a887/paired_verdict.json"
         ],
-        "joinable_on": ["dossier_id", "cve_id", "test_name"]
+        "joinable_on": [
+          "dossier_id",
+          "cve_id",
+          "test_name"
+        ]
       },
       "paired_fuzz_seed": {
         "seed_payload_schema": "cve-paired-mode-fuzz-seed/v1",
@@ -894,14 +1421,20 @@
           "hardened_healing_action",
           "evidence_bundle_path"
         ],
-        "replay_modes": ["strict", "hardened"],
+        "replay_modes": [
+          "strict",
+          "hardened"
+        ],
         "strict_detection_flags": [
           "arithmetic_violation",
           "bounds_violation",
           "heap_overflow_detected",
           "integer_overflow"
         ],
-        "hardened_healing_actions": ["ClampSize", "ReallocAsMalloc"],
+        "hardened_healing_actions": [
+          "ClampSize",
+          "ReallocAsMalloc"
+        ],
         "artifact_paths": [
           "dossier-382e0154a887/strict/stdout.log",
           "dossier-382e0154a887/strict/stderr.log",

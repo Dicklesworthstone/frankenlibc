@@ -9,12 +9,16 @@ use std::ffi::{c_int, c_void};
 use frankenlibc_core::errno;
 use frankenlibc_core::poll as poll_core;
 use frankenlibc_core::syscall as raw_syscall;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+
+use crate::io_abi::iov_snapshot;
+#[path = "wait_snapshot.rs"]
+mod wait_snapshot;
 
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
@@ -75,6 +79,15 @@ pub unsafe extern "C-unwind" fn poll(
     nfds: libc::nfds_t,
     timeout: c_int,
 ) -> c_int {
+    unsafe { poll_cp(fds, nfds, timeout) }
+}
+
+/// Body of [`poll`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn poll_cp(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Poll, fds as usize, nfds as usize, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -86,10 +99,15 @@ pub unsafe extern "C-unwind" fn poll(
     let actual_nfds = if !poll_core::valid_nfds(nfds) {
         if mode.heals_enabled() {
             let clamped = poll_core::clamp_poll_nfds(nfds);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: nfds as usize,
-                clamped: clamped as usize,
-            });
+            global_healing_policy().record(
+                "poll",
+                "poll",
+                &HealingAction::ClampSize {
+                    requested: nfds as usize,
+                    clamped: clamped as usize,
+                },
+                RepairLogContext::new(0, None),
+            );
             clamped
         } else {
             unsafe { set_abi_errno(errno::EINVAL) };
@@ -165,6 +183,17 @@ pub unsafe extern "C-unwind" fn ppoll(
     timeout_ts: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
+    unsafe { ppoll_cp(fds, nfds, timeout_ts, sigmask) }
+}
+
+/// Body of [`ppoll`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn ppoll_cp(
+    fds: *mut libc::pollfd,
+    nfds: libc::nfds_t,
+    timeout_ts: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Poll, fds as usize, nfds as usize, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -176,10 +205,15 @@ pub unsafe extern "C-unwind" fn ppoll(
     let actual_nfds = if !poll_core::valid_nfds(nfds) {
         if mode.heals_enabled() {
             let clamped = poll_core::clamp_poll_nfds(nfds);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: nfds as usize,
-                clamped: clamped as usize,
-            });
+            global_healing_policy().record(
+                "poll",
+                "ppoll",
+                &HealingAction::ClampSize {
+                    requested: nfds as usize,
+                    clamped: clamped as usize,
+                },
+                RepairLogContext::new(0, None),
+            );
             clamped
         } else {
             unsafe { set_abi_errno(errno::EINVAL) };
@@ -205,29 +239,28 @@ pub unsafe extern "C-unwind" fn ppoll(
         return reject_efault();
     }
 
-    // The kernel ppoll WRITES the remaining time back into the timeout struct.
-    // POSIX (and glibc) require ppoll to leave the caller's timeout unmodified,
-    // so we pass a local copy to the syscall — never the caller's pointer.
-    let mut local_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
+    // Own the timeout and (in hardened mode) the kernel-width signal mask.
+    // Prepare before entering the cancellation window; aliases still reach
+    // the same always-inlined cancellation-point body.
+    let mut input = match unsafe {
+        wait_snapshot::PreparedWait::prepare(timeout_ts, sigmask, mode.heals_enabled())
+    } {
+        Ok(input) => input,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, true);
+            return -1;
+        }
     };
-    let ts_ptr = if timeout_ts.is_null() {
-        std::ptr::null::<u8>()
-    } else {
-        local_ts = unsafe { *timeout_ts };
-        &local_ts as *const libc::timespec as *const u8
-    };
-
-    // Use SYS_ppoll with sigset size parameter.
-    let sigset_size = core::mem::size_of::<libc::c_ulong>();
+    let (ts_ptr, mask_ptr) = input.kernel_args();
+    let sigset_size = wait_snapshot::KERNEL_SIGSET_BYTES;
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             raw_syscall::sys_ppoll(
                 fds as *mut u8,
                 actual_nfds as usize,
                 ts_ptr,
-                sigmask as *const u8,
+                mask_ptr,
                 sigset_size,
             )
         })
@@ -255,7 +288,19 @@ pub unsafe extern "C-unwind" fn select(
     exceptfds: *mut libc::fd_set,
     timeout: *mut libc::timeval,
 ) -> c_int {
-    let (mode, decision) = runtime_policy::decide(
+    unsafe { select_cp(nfds, readfds, writefds, exceptfds, timeout) }
+}
+
+/// Body of [`select`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn select_cp(
+    nfds: c_int,
+    readfds: *mut libc::fd_set,
+    writefds: *mut libc::fd_set,
+    exceptfds: *mut libc::fd_set,
+    timeout: *mut libc::timeval,
+) -> c_int {
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Poll,
         readfds as usize,
         nfds as usize,
@@ -365,6 +410,19 @@ pub unsafe extern "C-unwind" fn pselect(
     timeout: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
+    unsafe { pselect_cp(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
+}
+
+/// Body of [`pselect`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pselect_cp(
+    nfds: c_int,
+    readfds: *mut libc::fd_set,
+    writefds: *mut libc::fd_set,
+    exceptfds: *mut libc::fd_set,
+    timeout: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Poll,
         readfds as usize,
@@ -404,27 +462,24 @@ pub unsafe extern "C-unwind" fn pselect(
         return reject_efault();
     }
 
-    // pselect6 expects a struct { sigset_t*, size_t } as the last parameter.
-    let sigset_size = core::mem::size_of::<libc::c_ulong>();
-    let sig_data: [usize; 2] = [sigmask as usize, sigset_size];
-    let sig_ptr = if sigmask.is_null() {
+    let mut input = match unsafe {
+        wait_snapshot::PreparedWait::prepare(timeout, sigmask, mode.heals_enabled())
+    } {
+        Ok(input) => input,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, true);
+            return -1;
+        }
+    };
+    let (ts_ptr, mask_ptr) = input.kernel_args();
+    // pselect6 expects { kernel_sigset_t*, size_t }. Build this only after
+    // input stops moving, so it points to the same imported mask we own.
+    let sig_data: [usize; 2] = [mask_ptr as usize, wait_snapshot::KERNEL_SIGSET_BYTES];
+    let sig_ptr = if mask_ptr.is_null() {
         std::ptr::null::<[usize; 2]>()
     } else {
         &sig_data as *const [usize; 2]
-    };
-
-    // The kernel pselect6 WRITES the remaining time back into the timeout
-    // struct. POSIX (and glibc) require pselect to leave the caller's timeout
-    // unmodified, so we pass a local copy — never the caller's pointer.
-    let mut local_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    let ts_ptr = if timeout.is_null() {
-        std::ptr::null::<u8>()
-    } else {
-        local_ts = unsafe { *timeout };
-        &local_ts as *const libc::timespec as *const u8
     };
 
     let (rc, adverse) = match unsafe {
@@ -522,6 +577,17 @@ pub unsafe extern "C-unwind" fn epoll_wait(
     maxevents: c_int,
     timeout: c_int,
 ) -> c_int {
+    unsafe { epoll_wait_cp(epfd, events, maxevents, timeout) }
+}
+
+/// Body of [`epoll_wait`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn epoll_wait_cp(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+) -> c_int {
     if maxevents <= 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -556,6 +622,18 @@ pub unsafe extern "C-unwind" fn epoll_wait(
 /// Linux `epoll_pwait` — wait for events with signal mask.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn epoll_pwait(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    unsafe { epoll_pwait_cp(epfd, events, maxevents, timeout, sigmask) }
+}
+
+/// Body of [`epoll_pwait`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn epoll_pwait_cp(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
@@ -745,13 +823,13 @@ pub unsafe extern "C" fn prctl(
 ///
 /// Same as [`ppoll`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __ppoll(
+pub unsafe extern "C-unwind" fn __ppoll(
     fds: *mut libc::pollfd,
     nfds: libc::nfds_t,
     timeout_ts: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    unsafe { ppoll(fds, nfds, timeout_ts, sigmask) }
+    unsafe { ppoll_cp(fds, nfds, timeout_ts, sigmask) }
 }
 
 /// glibc reserved-namespace alias for [`pselect`].
@@ -760,7 +838,7 @@ pub unsafe extern "C" fn __ppoll(
 ///
 /// Same as [`pselect`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pselect(
+pub unsafe extern "C-unwind" fn __pselect(
     nfds: c_int,
     readfds: *mut libc::fd_set,
     writefds: *mut libc::fd_set,
@@ -768,7 +846,7 @@ pub unsafe extern "C" fn __pselect(
     timeout: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    unsafe { pselect(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
+    unsafe { pselect_cp(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
 }
 
 /// glibc reserved-namespace alias for [`epoll_wait`].
@@ -777,13 +855,13 @@ pub unsafe extern "C" fn __pselect(
 ///
 /// Same as [`epoll_wait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __epoll_wait(
+pub unsafe extern "C-unwind" fn __epoll_wait(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
     timeout: c_int,
 ) -> c_int {
-    unsafe { epoll_wait(epfd, events, maxevents, timeout) }
+    unsafe { epoll_wait_cp(epfd, events, maxevents, timeout) }
 }
 
 /// glibc reserved-namespace alias for [`epoll_pwait`].
@@ -792,12 +870,12 @@ pub unsafe extern "C" fn __epoll_wait(
 ///
 /// Same as [`epoll_pwait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __epoll_pwait(
+pub unsafe extern "C-unwind" fn __epoll_pwait(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
     timeout: c_int,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    unsafe { epoll_pwait(epfd, events, maxevents, timeout, sigmask) }
+    unsafe { epoll_pwait_cp(epfd, events, maxevents, timeout, sigmask) }
 }

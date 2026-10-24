@@ -79,7 +79,7 @@ fn wmr_mask(s: &[u32], c: u32, n: usize) -> Option<usize> {
     for chunk in scan[..end].rchunks_exact(SHORT) {
         let start = end - SHORT;
         let lanes = Simd::<u32, SHORT>::from_slice(chunk);
-        let bits = lanes.simd_eq(target).to_bitmask() as u64;
+        let bits = lanes.simd_eq(target).to_bitmask();
         if bits != 0 {
             return Some(start + (63 - bits.leading_zeros() as usize));
         }
@@ -93,11 +93,11 @@ fn glibc_wmemrchr() -> GFn {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
-        let s = libc::dlsym(h, b"wmemrchr\0".as_ptr().cast());
+        let s = libc::dlsym(h, c"wmemrchr".as_ptr());
         assert!(!s.is_null(), "dlsym wmemrchr failed");
         std::mem::transmute::<*mut c_void, GFn>(s)
     }

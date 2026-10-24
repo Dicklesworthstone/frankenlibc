@@ -24,7 +24,7 @@ unsafe extern "C" {
 }
 
 fn fl_group_member(gid: libc::gid_t) -> c_int {
-    unsafe { frankenlibc_abi::glibc_internal_abi::group_member(gid as u32) }
+    unsafe { frankenlibc_abi::glibc_internal_abi::group_member(gid) }
 }
 
 /// glibc returns non-zero (not necessarily 1) for membership; compare as bools.
@@ -38,7 +38,7 @@ fn agrees(gid: libc::gid_t) -> bool {
 fn group_member_matches_glibc_for_real_group_set() {
     // Effective gid: must be a member.
     let egid = unsafe { libc::getegid() };
-    assert_eq!(fl_group_member(egid) != 0, true, "egid must be a member");
+    assert!(fl_group_member(egid) != 0, "egid must be a member");
     assert!(agrees(egid), "egid membership disagrees with glibc");
 
     // Every supplementary group the process actually belongs to.

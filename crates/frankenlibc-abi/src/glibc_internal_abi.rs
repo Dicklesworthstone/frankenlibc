@@ -754,7 +754,10 @@ pub unsafe extern "C" fn strfromf64(
 ) -> c_int {
     unsafe { crate::string_abi::strfromd(str, n, fmt, fp) }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn strfromf64x(
     str: *mut c_char,
     n: SizeT,
@@ -1528,7 +1531,11 @@ pub unsafe extern "C" fn __res_nmkquery(
     buflen: c_int,
 ) -> c_int {
     // SAFETY: the native boundary validates the caller-owned state and buffers.
-    unsafe { crate::resolv_state::mkquery(_statp, op, dname, class, typ, data, datalen, newrr, buf, buflen) }
+    unsafe {
+        crate::resolv_state::mkquery(
+            _statp, op, dname, class, typ, data, datalen, newrr, buf, buflen,
+        )
+    }
 }
 
 // __res_nquery: query through the caller endpoints and update its error slot.
@@ -2302,7 +2309,7 @@ fn dns_name_fully_qualified(name: &[u8]) -> bool {
         backslashes += 1;
         i -= 1;
     }
-    backslashes % 2 == 0
+    backslashes.is_multiple_of(2)
 }
 
 /// `ns_name_ntop` — convert uncompressed wire-format labels to dotted text (RFC 1035).
@@ -2877,7 +2884,7 @@ pub unsafe extern "C" fn _obstack_memory_used(h: *mut c_void) -> SizeT {
 // __obstack_printf_chk: fortified printf to obstack. The flag is fortify
 // metadata; obstack growth is bounds-checked by the native obstack path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __obstack_printf_chk(
+pub unsafe extern "C-unwind" fn __obstack_printf_chk(
     h: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -2889,7 +2896,7 @@ pub unsafe extern "C" fn __obstack_printf_chk(
 
 // __obstack_vprintf_chk: vprintf to obstack with overflow checking
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __obstack_vprintf_chk(
+pub unsafe extern "C-unwind" fn __obstack_vprintf_chk(
     h: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -3403,8 +3410,8 @@ pub unsafe extern "C" fn inet6_option_next(cmsg: *const c_void, tptrp: *mut *mut
         if clen < I6O_CMSG_HDR + I6O_IP6_EXT || clen < I6O_CMSG_HDR + (ip6e_len + 1) * 8 {
             return -1;
         }
-        let endp = ip6e.add((ip6e_len + 1) * 8) as *const u8;
-        let first = ip6e.add(I6O_IP6_EXT) as *const u8; // ip6e + 1
+        let endp = ip6e.add((ip6e_len + 1) * 8);
+        let first = ip6e.add(I6O_IP6_EXT); // ip6e + 1
         let mut result: *const u8;
         if (*tptrp).is_null() {
             result = first;
@@ -3447,12 +3454,12 @@ pub unsafe extern "C" fn inet6_option_find(
         if clen < I6O_CMSG_HDR + I6O_IP6_EXT || clen < I6O_CMSG_HDR + (ip6e_len + 1) * 8 {
             return -1;
         }
-        let endp = ip6e.add((ip6e_len + 1) * 8) as *const u8;
+        let endp = ip6e.add((ip6e_len + 1) * 8);
         let mut next: *const u8;
         if (*tptrp).is_null() {
-            next = ip6e.add(I6O_IP6_EXT) as *const u8;
+            next = ip6e.add(I6O_IP6_EXT);
         } else {
-            if (*tptrp as *const u8) < ip6e.add(I6O_IP6_EXT) as *const u8 {
+            if (*tptrp as *const u8) < ip6e.add(I6O_IP6_EXT) {
                 return -1;
             }
             next = core::ptr::null();
@@ -3882,23 +3889,17 @@ pub unsafe extern "C" fn __arch_prctl(_code: c_int, _addr: c_ulong) -> c_int {
     unsafe { set_abi_errno(libc::ENOSYS) };
     -1
 }
-// __asprintf: glibc internal alias for asprintf — forward to our vasprintf via va_list
-// Since this is variadic and we can't easily forward varargs, use dlsym fallback
-// to host glibc's __asprintf. This is one of the few symbols that genuinely needs
-// host delegation because variadic→va_list forwarding in Rust is not portable.
-// Return ENOSYS stub for the replace profile; interpose profile keeps passthrough.
+// GNU's internal variadic alias shares the native vasprintf implementation,
+// including registered callbacks and their unwind-safe buffer ownership.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __asprintf(
+pub unsafe extern "C-unwind" fn __asprintf(
     strp: *mut *mut c_char,
-    _fmt: *const c_char, // ... variadic
+    fmt: *const c_char,
+    mut args: ...
 ) -> c_int {
-    // Cannot forward variadic args to vasprintf without platform-specific va_list tricks.
-    // For safety, return error. Real callers should use asprintf() which we handle natively.
-    if !strp.is_null() {
-        unsafe { *strp = std::ptr::null_mut() };
-    }
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    // SAFETY: the C variadic ABI supplies the same live va_list representation
+    // consumed by the ordinary asprintf and fortified alias entrypoints.
+    unsafe { super::stdio_abi::vasprintf(strp, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 // __backtrace: native — forward to our backtrace
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3934,98 +3935,29 @@ pub unsafe extern "C" fn __bsd_getpgrp(pid: c_int) -> c_int {
     }
 }
 // __check_rhosts_file is a global variable, defined below as a static
-// __clone: glibc-compatible clone wrapper (must be asm — child runs on different stack).
-// Signature: __clone(fn, child_stack, flags, arg) -> pid_t or -1
-// x86_64 C ABI: rdi=fn, rsi=child_stack, edx=flags, rcx=arg
-#[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-#[unsafe(naked)]
-pub unsafe extern "C" fn __clone(
-    _fn: *mut c_void,
-    _stack: *mut c_void,
-    _flags: c_int,
-    _arg: *mut c_void,
-) -> c_int {
-    std::arch::naked_asm!(
-        // Validate fn (rdi) and stack (rsi)
-        "test rdi, rdi",
-        "jz 90f",
-        "test rsi, rsi",
-        "jz 90f",
-        // Place fn and arg on child stack (rsi points to top, grows down)
-        "and rsi, -16", // align child stack to 16
-        "sub rsi, 16",
-        "mov [rsi], rdi",   // fn at [rsp] for child
-        "mov [rsi+8], rcx", // arg at [rsp+8] for child
-        // Rearrange for clone syscall:
-        // syscall(SYS_clone, flags, child_stack, ptid, ctid, newtls)
-        //   rax=56, rdi=flags, rsi=child_stack, rdx=ptid, r10=ctid, r8=newtls
-        "mov rdi, rdx", // flags (was in edx)
-        // rsi already has child_stack
-        "xor edx, edx",   // ptid = NULL
-        "xor r10d, r10d", // ctid = NULL
-        "xor r8d, r8d",   // newtls = NULL
-        "mov eax, 56",    // SYS_clone
-        "syscall",
-        // Check parent vs child
-        "test rax, rax",
-        "jz 10f", // child (rax==0)
-        "js 80f", // error (rax<0)
-        // Parent: return child pid
-        "ret",
-        // === Child path (on new stack) ===
-        "10:",
-        "xor ebp, ebp", // clear frame pointer
-        "pop rax",      // fn pointer
-        "pop rdi",      // arg
-        "call rax",     // call fn(arg)
-        "mov edi, eax", // exit status
-        "mov eax, 60",  // SYS_exit
-        "syscall",
-        "ud2",
-        // === Error: syscall failed ===
-        "80:",
-        "neg eax",      // rax was -errno, make positive
-        "mov edi, eax", // errno value
-        "push rdi",     // save errno across call
-        "call __errno_location",
-        "pop rdi",
-        "mov [rax], edi", // *__errno_location() = errno
-        "mov eax, -1",
-        "ret",
-        // === Error: EINVAL (null fn or stack) ===
-        "90:",
-        "mov edi, 22", // EINVAL
-        "push rdi",
-        "call __errno_location",
-        "pop rdi",
-        "mov [rax], edi",
-        "mov eax, -1",
-        "ret",
-    )
-}
-
-#[cfg(not(target_arch = "x86_64"))]
+// `__clone` is glibc's strong internal name for the same variadic machine ABI
+// exposed publicly as weak `clone`. Keep both front doors on one fixed helper
+// so x86_64, aarch64, and future host architectures use glibc's own
+// stack-switching trampoline and the same positional tail-slot rule.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __clone(
-    _fn: *mut c_void,
-    _stack: *mut c_void,
-    _flags: c_int,
-    _arg: *mut c_void,
+    fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    stack: *mut c_void,
+    flags: c_int,
+    arg: *mut c_void,
+    mut args: ...
 ) -> c_int {
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    -1
-}
-// __close: native syscall
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __close(fd: c_int) -> c_int {
-    match raw_syscall::sys_close(fd) {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
+    let tail_count = crate::unistd_abi::clone_tail_arity(flags);
+    let mut tail = [std::ptr::null_mut(); 3];
+    for slot in &mut tail[..tail_count] {
+        *slot = unsafe { args.next_arg::<*mut c_void>() };
     }
+    unsafe { crate::unistd_abi::clone_with_tail(fn_ptr, stack, flags, arg, tail, tail_count) }
+}
+// __close: `close`, a cancellation point as in glibc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __close(fd: c_int) -> c_int {
+    unsafe { crate::unistd_abi::close_cp(fd) }
 }
 // __cmsg_nxthdr: native — navigate to next CMSG header
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4059,16 +3991,14 @@ pub unsafe extern "C" fn __cmsg_nxthdr(mhdr: *mut c_void, cmsg: *mut c_void) -> 
         next as *mut c_void
     }
 }
-// __connect: native syscall
+// __connect: `connect`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __connect(sockfd: c_int, addr: *const c_void, addrlen: c_uint) -> c_int {
-    match unsafe { raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __connect(
+    sockfd: c_int,
+    addr: *const c_void,
+    addrlen: c_uint,
+) -> c_int {
+    unsafe { crate::socket_abi::connect_cp(sockfd, addr.cast(), addrlen) }
 }
 // __cyg_profile_func_enter/exit: GCC -finstrument-functions hooks — no-op
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4112,7 +4042,7 @@ pub unsafe extern "C" fn __fbufsize(fp: *mut c_void) -> SizeT {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __fcntl(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     let arg: c_long = unsafe { args.next_arg::<c_long>() };
-    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
+    unsafe { crate::io_abi::fcntl_cp(fd, cmd, arg) }
 }
 // __fdelt_warn: FD_SET overflow check — return d if valid, abort otherwise
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4180,10 +4110,7 @@ pub unsafe extern "C" fn __fsetlocking(fp: *mut c_void, typ: c_int) -> c_int {
     // it. Returns the mode in effect before the call. fl previously ignored
     // `typ` and the stream, always returning 2 (BYCALLER) — wrong default (glibc
     // streams default to INTERNAL=1) and never honoring a set. bd-zwtrcz.
-    match crate::stdio_abi::stream_set_locking(fp, typ) {
-        Some(prev) => prev,
-        None => 1, // unknown stream: glibc's default is FSETLOCKING_INTERNAL
-    }
+    crate::stdio_abi::stream_set_locking(fp, typ).unwrap_or(1)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fwritable(fp: *mut c_void) -> c_int {
@@ -4368,16 +4295,10 @@ pub unsafe extern "C" fn __mbrtowc(
 pub unsafe extern "C" fn __monstartup(lowpc: c_ulong, highpc: c_ulong) {
     let _ = (lowpc, highpc);
 }
-// __nanosleep: native syscall
+// __nanosleep: `nanosleep`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> c_int {
-    match unsafe { raw_syscall::sys_nanosleep(rqtp as *const u8, rmtp as *mut u8) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> c_int {
+    unsafe { crate::time_abi::nanosleep_cp(rqtp.cast(), rmtp.cast()) }
 }
 // __open/__open64: glibc's internal aliases of open, which is variadic: the
 // mode is the third argument with O_CREAT/O_TMPFILE. It is taken as a fixed
@@ -4389,7 +4310,7 @@ pub unsafe extern "C-unwind" fn __open(
     flags: c_int,
     mode: libc::mode_t,
 ) -> c_int {
-    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
+    unsafe { crate::unistd_abi::open_cp(pathname, flags, mode) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __open64(
@@ -4397,7 +4318,7 @@ pub unsafe extern "C-unwind" fn __open64(
     flags: c_int,
     mode: libc::mode_t,
 ) -> c_int {
-    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
+    unsafe { crate::unistd_abi::open_cp(pathname, flags, mode) }
 }
 // __overflow: glibc stdio vtable helper — native file overflow bridge
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4425,10 +4346,10 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     crate::stdio_abi::republish_read_window(fp);
     rc
 }
-// __poll: native syscall
+// __poll: `poll`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
-    unsafe { crate::poll_abi::poll(fds.cast::<libc::pollfd>(), nfds as libc::nfds_t, timeout) }
+pub unsafe extern "C-unwind" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
+    unsafe { crate::poll_abi::poll_cp(fds.cast::<libc::pollfd>(), nfds as libc::nfds_t, timeout) }
 }
 // __posix_getopt → getopt (POSIX semantics — same as getopt)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4439,25 +4360,15 @@ pub unsafe extern "C" fn __posix_getopt(
 ) -> c_int {
     unsafe { super::unistd_abi::getopt(argc, argv, optstring) }
 }
-// __pread64/__pwrite64: native syscall
+// __pread64/__pwrite64: `pread`/`pwrite`, cancellation points as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pread64(
+pub unsafe extern "C-unwind" fn __pread64(
     fd: c_int,
     buf: *mut c_void,
     count: SizeT,
     offset: i64,
 ) -> SSizeT {
-    if tracked_output_too_short(buf, count) {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::pread_cp(fd, buf, count, offset) }
 }
 // __printf_fp: glibc-internal float printf helper — returns -1 (not exposed in public API)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4501,19 +4412,13 @@ pub unsafe extern "C" fn __profile_frequency() -> c_int {
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pwrite64(
+pub unsafe extern "C-unwind" fn __pwrite64(
     fd: c_int,
     buf: *const c_void,
     count: SizeT,
     offset: i64,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_pwrite64(fd, buf as *const u8, count, offset) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::pwrite_cp(fd, buf, count, offset) }
 }
 // __rcmd_errstr: pointer to rcmd error string (thread-local for reentrancy)
 #[cfg(feature = "owned-tls-cache")]
@@ -4542,20 +4447,11 @@ fn rcmd_errstr_ptr() -> *mut *mut c_char {
 pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
     rcmd_errstr_ptr()
 }
-// __read/__write: native syscall
+// __read: glibc's exported `__read` is `read`, a cancellation point (the
+// non-cancelling variant is the GLIBC_PRIVATE `__read_nocancel`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
-    if tracked_output_too_short(buf, count) {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    match unsafe { raw_syscall::sys_read(fd, buf as *mut u8, count) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
+    unsafe { crate::unistd_abi::read_cp(fd, buf, count) }
 }
 // __register_atfork: native — forward to our pthread_atfork (dso_handle ignored)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4597,9 +4493,9 @@ pub unsafe extern "C" fn __secure_getenv(name: *const c_char) -> *mut c_char {
     }
     unsafe { crate::stdlib_abi::getenv(name) as *mut c_char }
 }
-// __select: native syscall
+// __select: `select`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __select(
+pub unsafe extern "C-unwind" fn __select(
     nfds: c_int,
     readfds: *mut c_void,
     writefds: *mut c_void,
@@ -4607,7 +4503,7 @@ pub unsafe extern "C" fn __select(
     timeout: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::poll_abi::select(
+        crate::poll_abi::select_cp(
             nfds,
             readfds.cast::<libc::fd_set>(),
             writefds.cast::<libc::fd_set>(),
@@ -4616,23 +4512,15 @@ pub unsafe extern "C" fn __select(
         )
     }
 }
-// __send: native syscall
+// __send: `send`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __send(
+pub unsafe extern "C-unwind" fn __send(
     sockfd: c_int,
     buf: *const c_void,
     len: SizeT,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe {
-        raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
-    } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::socket_abi::send_cp(sockfd, buf, len, flags) }
 }
 // __setmntent: native — forward to our setmntent
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4696,18 +4584,18 @@ pub unsafe extern "C" fn __sigismember(set: *const c_void, signum: c_int) -> c_i
 }
 // __sigpause → sigpause (BSD compatibility)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigpause(sig_or_mask: c_int) -> c_int {
-    unsafe { super::unistd_abi::sigpause(sig_or_mask) }
+pub unsafe extern "C-unwind" fn __sigpause(sig_or_mask: c_int) -> c_int {
+    unsafe { super::unistd_abi::sigpause_cp(sig_or_mask) }
 }
 // __sigsetjmp: NOT exported — setjmp-family functions must save the
 // caller's CPU context and cannot work through a trampoline.
 pub unsafe extern "C" fn __sigsetjmp(env: *mut c_void, savesigs: c_int) -> c_int {
     unsafe { super::setjmp_abi::sigsetjmp(env, savesigs) }
 }
-// __sigsuspend: native via signal_abi
+// __sigsuspend: `sigsuspend`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigsuspend(set: *const c_void) -> c_int {
-    unsafe { crate::signal_abi::sigsuspend(set.cast()) }
+pub unsafe extern "C-unwind" fn __sigsuspend(set: *const c_void) -> c_int {
+    unsafe { crate::signal_abi::sigsuspend_cp(set.cast()) }
 }
 /// __statfs: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4752,7 +4640,7 @@ pub unsafe extern "C" fn __vfscanf(
 }
 // __vsnprintf: native — forward to our vsnprintf
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsnprintf(
+pub unsafe extern "C-unwind" fn __vsnprintf(
     buf: *mut c_char,
     size: SizeT,
     fmt: *const c_char,
@@ -4765,38 +4653,20 @@ pub unsafe extern "C" fn __vsnprintf(
 pub unsafe extern "C" fn __vsscanf(s: *const c_char, fmt: *const c_char, ap: *mut c_void) -> c_int {
     unsafe { super::stdio_abi::vsscanf(s, fmt, ap) }
 }
-// __wait: native — wait4 with pid=-1, options=0
+// __wait: `wait`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wait(status: *mut c_int) -> c_int {
-    match unsafe { raw_syscall::sys_wait4(-1, status, 0, std::ptr::null_mut()) } {
-        Ok(pid) => pid,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __wait(status: *mut c_int) -> c_int {
+    unsafe { crate::process_abi::waitpid_cp(-1, status, 0) }
 }
-// __waitpid: native syscall
+// __waitpid: `waitpid`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_wait4(pid, status, options, std::ptr::null_mut()) } {
-        Ok(ret_pid) => ret_pid,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int {
+    unsafe { crate::process_abi::waitpid_cp(pid, status, options) }
 }
-// __write: native syscall
+// __write: `write`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
-    match unsafe { raw_syscall::sys_write(fd, buf as *const u8, count) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
+    unsafe { crate::unistd_abi::write_cp(fd, buf, count) }
 }
 // __xmknod: native — forward to mknodat syscall with AT_FDCWD (ignoring ver)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4844,20 +4714,26 @@ pub unsafe extern "C" fn __xmknodat(
 }
 // __xpg_sigpause: native — XPG sigpause removes sig from mask then sigsuspend
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __xpg_sigpause(sig: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn __xpg_sigpause(sig: c_int) -> c_int {
     unsafe {
         let mut mask: libc::sigset_t = std::mem::zeroed();
         crate::signal_abi::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
         crate::signal_abi::sigdelset(&mut mask, sig);
-        crate::signal_abi::sigsuspend(&mask)
+        crate::signal_abi::sigsuspend_cp(&mask)
     }
 }
 // --- Native math: long-double classification (long double = f64 in this ABI) ---
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __signbitl(x: f64) -> c_int {
     (x.to_bits() >> 63) as c_int
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __isinfl(x: f64) -> c_int {
     if x == f64::INFINITY {
         1
@@ -4867,11 +4743,17 @@ pub unsafe extern "C" fn __isinfl(x: f64) -> c_int {
         0
     }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __isnanl(x: f64) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn __finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
@@ -5275,12 +5157,52 @@ pub static mut sys_errlist: *const *const c_char = std::ptr::null();
 // ==========================================================================
 // environ / timezone globals (8 symbols)
 // ==========================================================================
+//
+// glibc's `environ`, `_environ` and `__environ` are ONE variable under three
+// names, and programs write it: coreutils `env -i` assigns `environ =
+// dummy_environ` and then calls putenv. As three separate statics, that write
+// landed in `environ` while fl's environment functions kept reading
+// `__environ`, so `env -i A=1 cmd` handed cmd the whole inherited environment
+// and `env -i PATH=/usr/bin cmd` handed it nothing. The deployed library
+// therefore defines the storage once, as `__environ`, and exports the other
+// two names as versioned aliases of the same address (glibc's GLIBC_2.2.5;
+// the node is in version_scripts/fromfp.map). Test binaries keep three Rust
+// statics, whose names are not exported and cannot shadow the host's.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut __environ: *mut *mut c_char = std::ptr::null_mut();
+#[cfg(not(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+)))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _environ: *mut *mut c_char = std::ptr::null_mut();
+#[cfg(not(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+)))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut environ: *mut *mut c_char = std::ptr::null_mut();
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+))]
+pub use self::{__environ as _environ, __environ as environ};
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+))]
+core::arch::global_asm!(
+    ".symver __environ, environ@@GLIBC_2.2.5",
+    ".symver __environ, _environ@@GLIBC_2.2.5",
+);
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut __timezone: c_long = 0;
@@ -5353,7 +5275,7 @@ pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_vo
                 addr = resolved;
             }
         }
-        if addr != 0 && addr != _dl_find_object as usize {
+        if addr != 0 && addr != _dl_find_object as *const () as usize {
             // SAFETY: resolved from the already-loaded host dynamic linker,
             // which exports `_dl_find_object(void *, struct dl_find_object *)`.
             let host: HostDlFindObject = unsafe { core::mem::transmute(addr) };
@@ -5513,7 +5435,7 @@ unsafe fn host_profil_fn() -> Option<HostProfilFn> {
     let addr = crate::host_resolve::resolve_host_symbol_raw("profil")?;
     // SAFETY: the raw ELF resolver returns the host libc's `profil` symbol,
     // whose ABI is exactly `HostProfilFn` on the supported Linux targets.
-    Some(unsafe { core::mem::transmute(addr) })
+    Some(unsafe { core::mem::transmute::<usize, HostProfilFn>(addr) })
 }
 
 #[inline]
@@ -5521,7 +5443,7 @@ unsafe fn host_sprofil_fn() -> Option<HostSprofilFn> {
     let addr = crate::host_resolve::resolve_host_symbol_raw("sprofil")?;
     // SAFETY: the raw ELF resolver returns the host libc's `sprofil` symbol,
     // whose ABI is exactly `HostSprofilFn` on the supported Linux targets.
-    Some(unsafe { core::mem::transmute(addr) })
+    Some(unsafe { core::mem::transmute::<usize, HostSprofilFn>(addr) })
 }
 
 // profil: host sampling engine
@@ -5708,7 +5630,6 @@ pub fn adjtime_timeval_to_offset_micros_for_tests(tv_sec: i64, tv_usec: i64) -> 
         tv_sec: tv_sec as _,
         tv_usec: tv_usec as _,
     })
-    .map(|v| v as i64)
 }
 
 /// Test hook (bd-xh08pf): the reading half of the same pair. Returns
@@ -5717,7 +5638,7 @@ pub fn adjtime_timeval_to_offset_micros_for_tests(tv_sec: i64, tv_usec: i64) -> 
 #[must_use]
 pub fn adjtime_offset_micros_to_timeval_for_tests(offset: i64) -> (i64, i64) {
     let tv = offset_micros_to_timeval(offset as _);
-    (tv.tv_sec as i64, tv.tv_usec as i64)
+    (tv.tv_sec, tv.tv_usec)
 }
 
 // arch_prctl: native syscall
@@ -5768,7 +5689,10 @@ pub unsafe extern "C" fn chflags(path: *const c_char, flags: c_ulong) -> c_int {
     -1
 }
 // copysignl: native — copy sign of y to x
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn copysignl(x: f64, y: f64) -> f64 {
     f64::from_bits((x.to_bits() & 0x7FFF_FFFF_FFFF_FFFF) | (y.to_bits() & 0x8000_0000_0000_0000))
 }
@@ -5794,8 +5718,8 @@ pub unsafe extern "C" fn delete_module(name: *const c_char, flags: c_uint) -> c_
 }
 /// `dladdr1` — extended dladdr with extra info (ELF symbol/header).
 ///
-/// Native: delegates to `dladdr` for the base Dl_info lookup, then
-/// clears the extra_info pointer since we don't provide ELF details.
+/// Owned objects expose stable link maps and validated mapped ELF symbols.
+/// Host-owned objects retain the existing cached host resolver path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dladdr1(
     addr: *const c_void,
@@ -5803,6 +5727,12 @@ pub unsafe extern "C" fn dladdr1(
     extra_info: *mut *mut c_void,
     flags: c_int,
 ) -> c_int {
+    // Native metadata must be selected before the host path: ld.so neither
+    // owns these mappings nor knows their public ELF symbol records.
+    if unsafe { crate::dlfcn_abi::native_address_info_extra(addr, info.cast(), extra_info, flags) }
+    {
+        return 1;
+    }
     // The host knows every object it loaded and returns its link_map /
     // ElfW(Sym) for RTLD_DL_LINKMAP / RTLD_DL_SYMENT. Callers dereference
     // them on success: CPython's faulthandler reads map->l_addr, and
@@ -5821,7 +5751,7 @@ pub unsafe extern "C" fn dladdr1(
             return rc;
         }
     }
-    // Objects only fl's own loader knows: dladdr's answer, no extra info.
+    // Retain the existing self/builtin fallback for otherwise unmatched addresses.
     if !extra_info.is_null() {
         unsafe { *extra_info = std::ptr::null_mut() };
     }
@@ -5905,11 +5835,16 @@ fn self_link_map() -> *const LinkMap {
 
 /// `dlinfo` — get dynamic linker information about a loaded object (bd-olgi).
 ///
-/// Supports RTLD_DI_LINKMAP (2) and RTLD_DI_ORIGIN (6) for the default/self
-/// handle. For other handles, delegates to host dlinfo if available.
-/// Returns -1 with errno set on error.
+/// Preserve the legacy null/self LINKMAP/ORIGIN extension. Live native and
+/// synthetic-main handles are inspected by the owning loader, never passed
+/// to host ld.so as tagged IDs. Non-null failures are reported via dlerror.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut c_void) -> c_int {
+    if !handle.is_null() {
+        // The native router also translates our synthetic main handle and
+        // delegates genuinely host-owned handles without either loader lock.
+        return unsafe { crate::dlfcn_abi::query_object_info(handle, request, info) };
+    }
     if info.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
@@ -6029,7 +5964,10 @@ pub unsafe extern "C" fn fdetach(path: *const c_char) -> c_int {
     -1
 }
 // frexpl: native — decompose into significand * 2^exp (0.5 <= |frac| < 1.0)
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn frexpl(x: f64, exp: *mut c_int) -> f64 {
     if x == 0.0 || x.is_nan() || x.is_infinite() {
         if !exp.is_null() {
@@ -6127,10 +6065,7 @@ pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
     // unset and mode != 0; sticky thereafter) and return the result. Previously
     // `mode` was ignored entirely, so fwide(s, +1)/fwide(s, -1) never oriented
     // the stream and always returned 0. bd-ifu9ll.
-    match crate::stdio_abi::stream_set_orientation(stream, mode) {
-        Some(orientation) => orientation,
-        None => 0, // stream not owned by fl: orientation unknown
-    }
+    crate::stdio_abi::stream_set_orientation(stream, mode).unwrap_or_default()
 }
 // get_kernel_syms: removed in Linux 2.6 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6643,7 +6578,10 @@ pub unsafe extern "C" fn isinff(x: f32) -> c_int {
         0
     }
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn isinfl(x: f64) -> c_int {
     if x == f64::INFINITY {
         1
@@ -6657,11 +6595,17 @@ pub unsafe extern "C" fn isinfl(x: f64) -> c_int {
 pub unsafe extern "C" fn isnanf(x: f32) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn isnanl(x: f64) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
@@ -6694,7 +6638,10 @@ pub unsafe extern "C" fn lchmod(pathname: *const c_char, mode: c_uint) -> c_int 
     }
 }
 // ldexpl: native — x * 2^exp via repeated doubling/halving
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn ldexpl(x: f64, exp: c_int) -> f64 {
     native_ldexp(x, exp)
 }
@@ -6745,7 +6692,10 @@ pub unsafe extern "C" fn mkstemps64(template: *mut c_char, suffixlen: c_int) -> 
     unsafe { crate::stdlib_abi::mkstemps(template, suffixlen) }
 }
 // modfl: native — split into integer + fractional parts
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
     if x.is_nan() || x.is_infinite() {
         if !iptr.is_null() {
@@ -6757,7 +6707,7 @@ pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
             x
         };
     }
-    let int_part = x.trunc();
+    let int_part = frankenlibc_core::math::trunc(x);
     if !iptr.is_null() {
         unsafe { *iptr = int_part };
     }
@@ -6784,16 +6734,43 @@ pub unsafe extern "C" fn modify_ldt(_func: c_int, _ptr: *mut c_void, _bytecount:
 }
 // parse_printf_format: introspect printf format string to get argument types
 // glibc PA_* type constants
-const PA_INT: c_int = 1;
-const PA_CHAR: c_int = 2;
-const PA_STRING: c_int = 4;
-const PA_POINTER: c_int = 6;
-const PA_DOUBLE: c_int = 8;
-const PA_FLAG_LONG: c_int = 0x100;
-const PA_FLAG_LONG_LONG: c_int = 0x200;
+const PA_INT: c_int = 0;
+const PA_CHAR: c_int = 1;
+const PA_WCHAR: c_int = 2;
+const PA_STRING: c_int = 3;
+const PA_WSTRING: c_int = 4;
+const PA_POINTER: c_int = 5;
+const PA_DOUBLE: c_int = 7;
+const PA_FLAG_LONG_DOUBLE: c_int = 0x100;
+const PA_FLAG_LONG: c_int = 0x200;
 const PA_FLAG_SHORT: c_int = 0x400;
+const PA_FLAG_PTR: c_int = 0x800;
+
+fn printf_decimal(bytes: &[u8], pos: &mut usize) -> usize {
+    let mut value = 0usize;
+    while let Some(digit) = bytes.get(*pos).filter(|c| c.is_ascii_digit()) {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((digit - b'0') as usize);
+        *pos += 1;
+    }
+    value
+}
+
+fn printf_position(bytes: &[u8], pos: &mut usize) -> Option<usize> {
+    let start = *pos;
+    let value = printf_decimal(bytes, pos);
+    if *pos > start && bytes.get(*pos) == Some(&b'$') {
+        *pos += 1;
+        (value <= c_int::MAX as usize).then_some(value)
+    } else {
+        *pos = start;
+        None
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn parse_printf_format(
+pub unsafe extern "C-unwind" fn parse_printf_format(
     fmt: *const c_char,
     n: SizeT,
     argtypes: *mut c_int,
@@ -6801,104 +6778,139 @@ pub unsafe extern "C" fn parse_printf_format(
     if fmt.is_null() {
         return 0;
     }
-    let mut p = fmt as *const u8;
-    let mut count: usize = 0;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
+    // SAFETY: the caller supplies a terminated C format. The allocation-aware
+    // scan retains the existing ABI's protection for tracked unterminated data.
+    let len = unsafe { bounded_c_string_len(fmt) };
+    // SAFETY: the scan established these len readable bytes in the C string.
+    let bytes = unsafe { std::slice::from_raw_parts(fmt.cast::<u8>(), len) };
+    if crate::stdio_abi::printf_extensions_active() {
+        // SAFETY: the same format and caller-provided output capacity are
+        // consumed by the registered arginfo path without holding its lock.
+        return unsafe { crate::stdio_abi::parse_printf_extensions(bytes, n, argtypes) };
+    }
+    let mut pos = 0;
+    let mut next = 0usize;
+    let mut count = 0usize;
+    let mut record = |index: usize, kind: Option<c_int>| {
+        count = count.max(index.saturating_add(1));
+        if index < n
+            && !argtypes.is_null()
+            && let Some(kind) = kind
+        {
+            // SAFETY: n is the caller's writable array capacity. Unreferenced
+            // positional holes deliberately retain the caller's original bytes.
+            unsafe { *argtypes.add(index) = kind };
+        }
+    };
+    while pos < bytes.len() {
+        if bytes[pos] != b'%' {
+            pos += 1;
+            continue;
+        }
+        pos += 1;
+        let value_position = printf_position(bytes, &mut pos);
+        if value_position == Some(0) {
             break;
         }
-        if c != b'%' {
-            p = unsafe { p.add(1) };
-            continue;
+        if let Some(position) = value_position {
+            // GNU counts an explicit reference even for a conversion which
+            // consumes no value (%m, %% or an unregistered custom character).
+            record(position - 1, None);
         }
-        p = unsafe { p.add(1) }; // skip '%'
-        if unsafe { *p } == b'%' {
-            p = unsafe { p.add(1) };
-            continue;
+        while bytes.get(pos).is_some_and(|b| b"-+0 #'I".contains(b)) {
+            pos += 1;
         }
-        // Skip flags: -+0 #'
-        while {
-            let f = unsafe { *p };
-            f == b'-' || f == b'+' || f == b'0' || f == b' ' || f == b'#' || f == b'\''
-        } {
-            p = unsafe { p.add(1) };
-        }
-        // Skip width (may be * which consumes an int arg)
-        if unsafe { *p } == b'*' {
-            if count < n && !argtypes.is_null() {
-                unsafe { *argtypes.add(count) = PA_INT };
-            }
-            count += 1;
-            p = unsafe { p.add(1) };
-        } else {
-            while unsafe { (*p).is_ascii_digit() } {
-                p = unsafe { p.add(1) };
-            }
-        }
-        // Skip precision
-        if unsafe { *p } == b'.' {
-            p = unsafe { p.add(1) };
-            if unsafe { *p } == b'*' {
-                if count < n && !argtypes.is_null() {
-                    unsafe { *argtypes.add(count) = PA_INT };
+        for precision in [false, true] {
+            if precision {
+                if bytes.get(pos) != Some(&b'.') {
+                    break;
                 }
-                count += 1;
-                p = unsafe { p.add(1) };
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'*') {
+                pos += 1;
+                let index = match printf_position(bytes, &mut pos) {
+                    Some(position) if position > 0 => position - 1,
+                    _ => {
+                        let index = next;
+                        next = next.saturating_add(1);
+                        index
+                    }
+                };
+                record(index, Some(PA_INT));
             } else {
-                while unsafe { (*p).is_ascii_digit() } {
-                    p = unsafe { p.add(1) };
-                }
+                printf_decimal(bytes, &mut pos);
             }
         }
-        // Length modifiers
-        let mut length_flag: c_int = 0;
-        match unsafe { *p } {
-            b'h' => {
-                p = unsafe { p.add(1) };
-                if unsafe { *p } == b'h' {
-                    p = unsafe { p.add(1) };
-                }
-                length_flag = PA_FLAG_SHORT;
-            }
-            b'l' => {
-                p = unsafe { p.add(1) };
-                if unsafe { *p } == b'l' {
-                    p = unsafe { p.add(1) };
-                    length_flag = PA_FLAG_LONG_LONG;
+        let mut integer_type = PA_INT;
+        let mut long_double = false;
+        match bytes.get(pos) {
+            Some(b'h') => {
+                pos += 1;
+                integer_type = if bytes.get(pos) == Some(&b'h') {
+                    pos += 1;
+                    PA_CHAR
                 } else {
-                    length_flag = PA_FLAG_LONG;
+                    PA_INT | PA_FLAG_SHORT
+                };
+            }
+            Some(b'l') => {
+                pos += 1;
+                if bytes.get(pos) == Some(&b'l') {
+                    pos += 1;
+                    long_double = true;
                 }
+                // On the supported LP64 ABI long and long long have the same
+                // argument representation; glibc reports PA_FLAG_LONG for both.
+                integer_type = PA_INT | PA_FLAG_LONG;
             }
-            b'L' | b'q' => {
-                p = unsafe { p.add(1) };
-                length_flag = PA_FLAG_LONG_LONG;
+            Some(b'j' | b'z' | b't') => {
+                pos += 1;
+                integer_type = PA_INT | PA_FLAG_LONG;
             }
-            b'z' | b'j' | b't' => {
-                p = unsafe { p.add(1) };
-                length_flag = PA_FLAG_LONG;
+            Some(b'L' | b'q') => {
+                pos += 1;
+                long_double = true;
+            }
+            Some(b'w') => {
+                pos += 1;
+                let fast = bytes.get(pos) == Some(&b'f');
+                pos += usize::from(fast);
+                integer_type = match (fast, printf_decimal(bytes, &mut pos)) {
+                    (_, 8) => PA_CHAR,
+                    (false, 16) => PA_INT | PA_FLAG_SHORT,
+                    (false, 32) => PA_INT,
+                    (_, 64) | (true, 16 | 32) => PA_INT | PA_FLAG_LONG,
+                    _ => break,
+                };
             }
             _ => {}
         }
-        // Conversion specifier
-        let argtype = match unsafe { *p } {
-            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' => PA_INT | length_flag,
-            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => PA_DOUBLE | length_flag,
-            b'c' => PA_CHAR | length_flag,
-            b's' => PA_STRING | length_flag,
-            b'p' => PA_POINTER,
-            b'n' => PA_POINTER,
-            _ => PA_INT,
+        let Some(&conversion) = bytes.get(pos) else {
+            break;
         };
-        if unsafe { *p } != 0 {
-            p = unsafe { p.add(1) };
-        }
-        if count < n && !argtypes.is_null() {
-            unsafe { *argtypes.add(count) = argtype };
-        }
-        count += 1;
+        pos += 1;
+        let kind = match conversion {
+            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' | b'b' | b'B' => integer_type,
+            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => {
+                PA_DOUBLE | if long_double { PA_FLAG_LONG_DOUBLE } else { 0 }
+            }
+            b'c' => PA_CHAR,
+            b'C' => PA_WCHAR,
+            b's' => PA_STRING,
+            b'S' => PA_WSTRING,
+            b'p' => PA_POINTER,
+            b'n' => PA_INT | PA_FLAG_PTR,
+            _ => continue,
+        };
+        let index = value_position.map(|p| p - 1).unwrap_or_else(|| {
+            let index = next;
+            next = next.saturating_add(1);
+            index
+        });
+        record(index, Some(kind));
     }
-    count as SizeT
+    count
 }
 /// pidfd_getpid: native syscall (Linux 6.9+)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6940,22 +6952,16 @@ pub unsafe extern "C" fn pidfd_spawnp(
         crate::process_abi::pidfd_spawn_impl(pidfd, file, file_actions, attrp, argv, envp, true)
     }
 }
-// preadv64v2: native syscall
+// preadv64v2: `preadv2` (LFS alias), a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn preadv64v2(
+pub unsafe extern "C-unwind" fn preadv64v2(
     fd: c_int,
     iov: *const c_void,
     iovcnt: c_int,
     offset: i64,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::preadv2_cp(fd, iov.cast(), iovcnt, offset, flags) }
 }
 // putgrent: native — write group entry to file
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7095,22 +7101,16 @@ pub unsafe extern "C" fn putpwent(pw: *const c_void, fp: *mut c_void) -> c_int {
     let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }
 }
-// pwritev64v2: native syscall
+// pwritev64v2: `pwritev2` (LFS alias), a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwritev64v2(
+pub unsafe extern "C-unwind" fn pwritev64v2(
     fd: c_int,
     iov: *const c_void,
     iovcnt: c_int,
     offset: i64,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::pwritev2_cp(fd, iov.cast(), iovcnt, offset, flags) }
 }
 // query_module: removed in Linux 2.6 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7153,37 +7153,31 @@ pub unsafe extern "C" fn rcmd_af(
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     -1
 }
-// register_printf_function: GNU extension for custom printf formatters — not supported
+// GNU printf callbacks are consumed by the opt-in native formatting path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_function(
-    _spec: c_int,
-    _render: *mut c_void,
-    _arginfo: *mut c_void,
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    crate::stdio_abi::register_printf_conversion(spec, render, arginfo, false)
 }
-// register_printf_modifier: GNU extension — not supported
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn register_printf_modifier(_str: *const WcharT) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn register_printf_modifier(str: *const WcharT) -> c_int {
+    // SAFETY: GNU's registration contract supplies a terminated wide string.
+    unsafe { crate::stdio_abi::register_printf_modifier_impl(str) }
 }
-// register_printf_specifier: GNU extension — not supported
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_specifier(
-    _spec: c_int,
-    _render: *mut c_void,
-    _arginfo: *mut c_void,
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    crate::stdio_abi::register_printf_conversion(spec, render, arginfo, true)
 }
-// register_printf_type: GNU extension — not supported
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn register_printf_type(_fct: *mut c_void) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn register_printf_type(fct: *mut c_void) -> c_int {
+    crate::stdio_abi::register_printf_type_impl(fct)
 }
 // revoke: BSD — not implemented on Linux
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7337,7 +7331,10 @@ pub unsafe extern "C" fn ruserpass(
     -1
 }
 // scalbnl: native — x * 2^n (same as ldexp)
-#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn scalbnl(x: f64, n: c_int) -> f64 {
     native_ldexp(x, n)
 }
@@ -7396,73 +7393,7 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
     clockid: c_int,
     abstime: *const c_void,
 ) -> c_int {
-    // glibc allows only CLOCK_REALTIME/CLOCK_MONOTONIC for sem_clockwait
-    // (lll_futex_supported_clockid); any other clock is EINVAL. bd-44y7sl.
-    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    // Use futex FUTEX_WAIT_BITSET with clock selection
-    // sem_t is an int at offset 0; if value > 0, decrement and return
-    let sem_val = sem as *mut std::sync::atomic::AtomicI32;
-    // Register as a waiter before re-checking the value, as sem_wait does:
-    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
-    // unregistered sem_clockwait slept until its deadline.
-    let _registration = unsafe { crate::unistd_abi::sem_register_waiter(sem) };
-    loop {
-        let val = unsafe { (*sem_val).load(std::sync::atomic::Ordering::Acquire) };
-        if val > 0 {
-            if unsafe {
-                (*sem_val)
-                    .compare_exchange(
-                        val,
-                        val - 1,
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Relaxed,
-                    )
-                    .is_ok()
-            } {
-                return 0;
-            }
-            continue;
-        }
-        // Wait using futex with absolute timeout
-        let clock_flag = if clockid == libc::CLOCK_REALTIME {
-            0
-        } else {
-            libc::FUTEX_CLOCK_REALTIME // bit to NOT set for CLOCK_MONOTONIC
-        };
-        let _ = clock_flag;
-        let ts = abstime as *const libc::timespec;
-        let futex_op = libc::FUTEX_WAIT_BITSET
-            | crate::unistd_abi::sem_futex_private_flag(sem.cast())
-            | (libc::FUTEX_CLOCK_REALTIME
-                * (if clockid == libc::CLOCK_REALTIME {
-                    1
-                } else {
-                    0
-                }));
-        if let Err(err) = unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_futex(
-                    sem_val as *mut u32,
-                    futex_op,
-                    val as u32,
-                    ts as usize,
-                    std::ptr::null::<c_void>() as usize,
-                    !0u32, // FUTEX_BITSET_MATCH_ANY
-                )
-            })
-        } {
-            // A signal handler interrupting the wait fails it with EINTR, even
-            // under SA_RESTART, as glibc's sem_clockwait does: CPython's lock
-            // acquire waits here and must return to run Python signal handlers.
-            if err != libc::EAGAIN {
-                unsafe { crate::errno_abi::set_abi_errno(err) };
-                return -1;
-            }
-        }
-    }
+    unsafe { crate::semaphore_wait::timed_cp(sem, clockid, abstime.cast(), false) }
 }
 // setaliasent: mail alias iterator reset — native via endaliasent
 // (resets the thread-local alias iterator so getaliasent starts from the top)
@@ -7919,8 +7850,7 @@ pub unsafe extern "C" fn sgetspent_r(
     }
     let parse_long = |idx: usize| -> Option<c_long> {
         match fields.get(idx) {
-            None => Some(-1),
-            Some(s) if s.is_empty() => Some(-1),
+            None | Some(&"") => Some(-1),
             Some(s) => shadow_strtoul(s).map(|v| v as c_long),
         }
     };
@@ -7935,8 +7865,7 @@ pub unsafe extern "C" fn sgetspent_r(
         return libc::EINVAL;
     };
     let flag = match fields.get(8) {
-        None => c_ulong::MAX,
-        Some(s) if s.is_empty() => c_ulong::MAX,
+        None | Some(&"") => c_ulong::MAX,
         Some(s) => match shadow_strtoul(s) {
             Some(v) => v as c_ulong,
             None => return libc::EINVAL,
@@ -8623,23 +8552,254 @@ pub static mut _obstack: *mut c_void = std::ptr::null_mut();
 
 // __stpcpy_small: optimized small-string stpcpy
 
-// printf_size: custom printf formatter for human-readable sizes — requires register_printf_specifier, not supported
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn printf_size(
-    _fp: *mut c_void,
-    _info: *const c_void,
-    _args: *const *const c_void,
-) -> c_int {
-    -1
+// GNU printf_info's bitfield storage on the supported Linux LP64 targets.
+// Keep the pad after the two 16-bit fields: treating the flags as a u32 with
+// no user field silently reads a different wide/pad contract.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PrintfInfo {
+    pub(crate) precision: c_int,
+    pub(crate) width: c_int,
+    pub(crate) spec: WcharT,
+    pub(crate) flags: u16,
+    pub(crate) user: u16,
+    pub(crate) pad: WcharT,
 }
-// printf_size_info: arginfo callback for printf_size — not supported
+
+unsafe fn printf_size_write(fp: *mut c_void, wide: bool, bytes: &[u8]) -> bool {
+    if wide {
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            // SAFETY: setting the calling thread's ABI errno owns no FILE data.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return false;
+        };
+        for ch in text.chars() {
+            // SAFETY: the caller owns the FILE and requests wide output. The
+            // existing wide writer handles orientation, encoding, and errors.
+            if unsafe { crate::wchar_abi::fputwc(ch as u32, fp) } == u32::MAX {
+                return false;
+            }
+        }
+        true
+    } else {
+        // SAFETY: bytes is live for this synchronous native FILE write.
+        let written =
+            unsafe { crate::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), fp) };
+        written == bytes.len()
+    }
+}
+
+unsafe fn printf_size_padding(fp: *mut c_void, wide: bool, byte: u8, mut n: usize) -> bool {
+    let chunk = [byte; 128];
+    while n > 0 {
+        let len = n.min(chunk.len());
+        // SAFETY: same live FILE and bounded initialized chunk as the caller.
+        if !unsafe { printf_size_write(fp, wide, &chunk[..len]) } {
+            return false;
+        }
+        n -= len;
+    }
+    true
+}
+
+// Positive normal values only: printf_size scales only values >= the unit.
+// Dividing a 64/113-bit significand by 1000 needs at most 123 numerator bits,
+// so integer division gives the exact rounding remainder without double
+// rounding through the compiler's always-nearest binary128 arithmetic.
+fn printf_size_divide(bits: u128, binary_unit: bool, x87: bool) -> u128 {
+    use frankenlibc_core::float128::RoundingMode;
+    if binary_unit {
+        return bits - (10u128 << 112);
+    }
+    let precision = if x87 { 64 } else { 113 };
+    let significand = ((bits & ((1u128 << 112) - 1)) | (1u128 << 112)) >> (113 - precision);
+    let shift = if (significand << 10) / 1000 >= 1u128 << precision {
+        9
+    } else {
+        10
+    };
+    let numerator = significand << shift;
+    let mut quotient = numerator / 1000;
+    let remainder = numerator % 1000;
+    let increment = match RoundingMode::current() {
+        RoundingMode::Nearest => remainder > 500 || (remainder == 500 && quotient & 1 != 0),
+        RoundingMode::Upward => remainder != 0,
+        RoundingMode::Downward | RoundingMode::TowardZero => false,
+    };
+    quotient += u128::from(increment);
+    let mut exponent = ((bits >> 112) & 0x7fff) - shift;
+    if quotient >= 1u128 << precision {
+        quotient >>= 1;
+        exponent += 1;
+    }
+    (exponent << 112) | ((quotient - (1u128 << (precision - 1))) << (113 - precision))
+}
+
+/// Native GNU size callback, also callable directly before registering it.
+/// Registration and custom-conversion dispatch remain separate work.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn printf_size(
+    fp: *mut c_void,
+    info: *const c_void,
+    args: *const *const c_void,
+) -> c_int {
+    use frankenlibc_core::float128::RoundingMode;
+    use frankenlibc_core::stdio::printf::{
+        FormatFlags, FormatSpec, LengthMod, Precision, Width, format_float, take_render_failure,
+    };
+    if fp.is_null() || info.is_null() || args.is_null() {
+        // SAFETY: this only updates the calling thread's errno.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: GNU's callback ABI supplies one live printf_info and an array of
+    // addresses of arguments. No argument is read through a narrower type.
+    let info = unsafe { &*info.cast::<PrintfInfo>() };
+    // SAFETY: the callback ABI provides at least one argument-address slot.
+    let arg = unsafe { *args };
+    if arg.is_null() {
+        // SAFETY: this only updates the calling thread's errno.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let precision = if info.precision < 0 {
+        3
+    } else {
+        info.precision as usize
+    };
+    // Beyond this many fractional digits every supported binary float is
+    // exact. Render a bounded prefix and stream the remaining zeroes, rather
+    // than inheriting the f64 renderer's clamp or allocating precision bytes.
+    let extra_precision = precision.saturating_sub(65_535);
+    let binary128 = info.flags & (1 << 12) != 0;
+    let extended = binary128 || info.flags & 1 != 0;
+    let uppercase = (b'A' as libc::wchar_t..=b'Z' as libc::wchar_t).contains(&info.spec);
+    let units = if uppercase {
+        b" KMGTPEZY"
+    } else {
+        b" kmgtpezy"
+    };
+    let divisor = if uppercase { 1000.0 } else { 1024.0 };
+    let mut unit = 0;
+    let directed = RoundingMode::current() != RoundingMode::Nearest;
+    let spec = FormatSpec::new(
+        FormatFlags {
+            force_sign: info.flags & (1 << 6) != 0,
+            space_sign: info.flags & (1 << 4) != 0,
+            alt_form: info.flags & (1 << 3) != 0,
+            group: info.flags & (1 << 7) != 0,
+            ..FormatFlags::default()
+        },
+        Width::None,
+        Precision::Fixed(precision.min(65_535)),
+        if extended || directed {
+            LengthMod::BigL
+        } else {
+            LengthMod::None
+        },
+        b'f',
+        None,
+    );
+    let mut body = Vec::new();
+    let _ = take_render_failure();
+    let finite;
+    if extended {
+        let x87 = !binary128 && cfg!(target_arch = "x86_64");
+        let mut value = if x87 {
+            let mut bytes = [0u8; 10];
+            // SAFETY: an x87 argument has at least its ten significant bytes.
+            unsafe { std::ptr::copy_nonoverlapping(arg.cast::<u8>(), bytes.as_mut_ptr(), 10) };
+            f128::from_bits(frankenlibc_core::float128::x87_to_binary128(&bytes))
+        } else {
+            // SAFETY: IEEE binary128 arguments occupy sixteen bytes.
+            unsafe { std::ptr::read_unaligned(arg.cast::<f128>()) }
+        };
+        finite = (value.to_bits() >> 112) & 0x7fff != 0x7fff;
+        while finite && value >= divisor as f128 && unit + 1 < units.len() {
+            value = f128::from_bits(printf_size_divide(value.to_bits(), !uppercase, x87));
+            unit += 1;
+        }
+        spec.render_binary128_arg(value.to_bits(), &mut body);
+    } else {
+        // SAFETY: the ordinary callback argument is an address of a double.
+        let mut value = unsafe { std::ptr::read_unaligned(arg.cast::<f64>()) };
+        finite = value.is_finite();
+        while finite && value >= divisor && unit + 1 < units.len() {
+            value /= divisor;
+            unit += 1;
+        }
+        if directed {
+            spec.render_binary128_arg((value as f128).to_bits(), &mut body);
+        } else {
+            format_float(value, &spec, &mut body);
+        }
+    }
+    let failure = take_render_failure();
+    if failure != 0 {
+        // SAFETY: propagate the current thread's recorded render error.
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
+    let wide = info.flags & (1 << 10) != 0;
+    let body_len = if wide {
+        let Ok(text) = std::str::from_utf8(&body) else {
+            // SAFETY: this only updates the calling thread's errno.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return -1;
+        };
+        text.chars().count()
+    } else {
+        body.len()
+    };
+    let len = body_len + if finite { 1 + extra_precision } else { 0 };
+    // GNU's special-value path uses precision as a minimum field width.
+    let width = (info.width.max(0) as usize).max(if finite { 0 } else { precision });
+    let count = width.max(len);
+    if count > c_int::MAX as usize {
+        // SAFETY: this only updates the calling thread's errno, before writing.
+        unsafe { set_abi_errno(libc::EOVERFLOW) };
+        return -1;
+    }
+    let padding = width.saturating_sub(len);
+    let left = info.flags & (1 << 5) != 0;
+    let zero = finite && info.pad == b'0' as WcharT;
+    // Zeroes are always adjacent to the number and precede the suffix, even
+    // for left alignment. Space padding goes after the suffix when left.
+    let sign_len = usize::from(zero && body.first().is_some_and(|b| b"-+ ".contains(b)));
+    // SAFETY: all writes share the caller's live FILE and initialized slices.
+    let ok = unsafe {
+        (left || zero || printf_size_padding(fp, wide, b' ', padding))
+            && printf_size_write(fp, wide, &body[..sign_len])
+            && (!zero || left || printf_size_padding(fp, wide, b'0', padding))
+            && printf_size_write(fp, wide, &body[sign_len..])
+            && (!finite || printf_size_padding(fp, wide, b'0', extra_precision))
+            && (!zero || !left || printf_size_padding(fp, wide, b'0', padding))
+            && (!finite || printf_size_write(fp, wide, &units[unit..unit + 1]))
+            && (!left || zero || printf_size_padding(fp, wide, b' ', padding))
+    };
+    if ok { count as c_int } else { -1 }
+}
+
+// GNU's old-style arginfo callback returns int, not size_t.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn printf_size_info(
-    _info: *const c_void,
-    _n: SizeT,
-    _argtypes: *mut c_int,
-) -> SizeT {
-    0
+    info: *const c_void,
+    n: SizeT,
+    argtypes: *mut c_int,
+) -> c_int {
+    if n > 0 && !argtypes.is_null() && !info.is_null() {
+        // SAFETY: n promises slot zero is writable; info uses the GNU layout.
+        unsafe {
+            let info = &*info.cast::<PrintfInfo>();
+            *argtypes = PA_DOUBLE
+                | if info.flags & 1 != 0 {
+                    PA_FLAG_LONG_DOUBLE
+                } else {
+                    0
+                };
+        }
+    }
+    1
 }
 
 // nfsservctl: deprecated NFS server control
@@ -8838,41 +8998,30 @@ pub unsafe extern "C" fn __socket(domain: c_int, sock_type: c_int, protocol: c_i
     }
 }
 
-/// `__recv` — internal recv alias.
+/// `__recv` — internal recv alias; a cancellation point as `recv` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __recv(
+pub unsafe extern "C-unwind" fn __recv(
     sockfd: c_int,
     buf: *mut c_void,
     len: SizeT,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe {
-        raw_syscall::sys_recvfrom(
-            sockfd,
-            buf as *mut u8,
-            len,
-            flags,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::socket_abi::recv_cp(sockfd, buf, len, flags) }
 }
 
-/// `__sendmmsg` — internal sendmmsg alias.
+/// `__sendmmsg` — internal sendmmsg alias; a cancellation point as `sendmmsg` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sendmmsg(
+pub unsafe extern "C-unwind" fn __sendmmsg(
     sockfd: c_int,
     msgvec: *mut c_void,
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    match unsafe { raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
+        })
+    } {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -9008,23 +9157,15 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     template
 }
 
-/// `__sigtimedwait` — internal sigtimedwait alias.
+/// `__sigtimedwait` — internal sigtimedwait alias; a cancellation point as
+/// `sigtimedwait` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigtimedwait(
+pub unsafe extern "C-unwind" fn __sigtimedwait(
     set: *const c_void,
     info: *mut c_void,
     timeout: *const c_void,
 ) -> c_int {
-    // Kernel expects _NSIG/8 = 8 (NOT sizeof(sigset_t) which is 128 in glibc).
-    match unsafe {
-        raw_syscall::sys_rt_sigtimedwait(set as *const u8, info as *mut u8, timeout as *const u8, 8)
-    } {
-        Ok(sig) => sig,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::unistd_abi::sigtimedwait_cp(set, info, timeout.cast()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -10894,28 +11035,28 @@ pub unsafe extern "C" fn __libc_fork() -> i32 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_system(command: *const c_char) -> c_int {
-    unsafe { crate::stdlib_abi::system(command) }
+pub unsafe extern "C-unwind" fn __libc_system(command: *const c_char) -> c_int {
+    unsafe { crate::stdlib_abi::system_cp(command) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_pread(
+pub unsafe extern "C-unwind" fn __libc_pread(
     fd: c_int,
     buf: *mut c_void,
     count: usize,
     offset: i64,
 ) -> isize {
-    unsafe { crate::unistd_abi::pread64(fd, buf, count, offset) }
+    unsafe { crate::io_abi::pread_cp(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_pwrite(
+pub unsafe extern "C-unwind" fn __libc_pwrite(
     fd: c_int,
     buf: *const c_void,
     count: usize,
     offset: i64,
 ) -> isize {
-    unsafe { crate::unistd_abi::pwrite64(fd, buf, count, offset) }
+    unsafe { crate::io_abi::pwrite_cp(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -10933,15 +11074,18 @@ pub unsafe extern "C" fn __libc_secure_getenv(name: *const c_char) -> *mut c_cha
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_msgrcv(
+pub unsafe extern "C-unwind" fn __libc_msgrcv(
     msqid: c_int,
     msgp: *mut c_void,
     msgsz: usize,
     msgtyp: c_long,
     msgflg: c_int,
 ) -> isize {
-    match unsafe { raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) }
-    {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg)
+        })
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -10951,13 +11095,17 @@ pub unsafe extern "C" fn __libc_msgrcv(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_msgsnd(
+pub unsafe extern "C-unwind" fn __libc_msgsnd(
     msqid: c_int,
     msgp: *const c_void,
     msgsz: usize,
     msgflg: c_int,
 ) -> c_int {
-    match unsafe { raw_syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -11498,8 +11646,12 @@ pub static _itoa_lower_digits: [c_char; 17] = [
 /// `fd` must be a valid file descriptor for the requested `cmd`.
 /// `arg` must match the `cmd` contract per `fcntl(2)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_long) -> c_int {
-    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
+pub unsafe extern "C-unwind" fn __libc_fcntl64(
+    fd: c_int,
+    cmd: c_int,
+    arg: std::ffi::c_long,
+) -> c_int {
+    unsafe { crate::io_abi::fcntl_cp(fd, cmd, arg) }
 }
 
 /// `__libc_mallinfo() -> struct mallinfo` — GLIBC_2.2.5 alias for

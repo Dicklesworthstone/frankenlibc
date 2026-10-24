@@ -930,8 +930,13 @@ fn atanh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     res
 }
 
-/// Correctly rounded `atanh`.
-pub fn atanh(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `atanh`.
+    pub fn atanh(x: f64) -> f64 => atanh_body;
+}
+
+#[inline(always)]
+fn atanh_body(x: f64) -> f64 {
     let ax = x.abs();
     let aix = ax.to_bits();
     if aix >= 0x3ff0_0000_0000_0000 {
@@ -1526,8 +1531,13 @@ fn asinh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     res
 }
 
-/// Correctly rounded `asinh`.
-pub fn asinh(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `asinh`.
+    pub fn asinh(x: f64) -> f64 => asinh_body;
+}
+
+#[inline(always)]
+fn asinh_body(x: f64) -> f64 {
     let ax = x.abs();
     let u = ax.to_bits();
     if u < 0x3fbb_0000_0000_0000 {
@@ -1751,8 +1761,13 @@ fn acosh_refine(x: f64, a: f64) -> f64 {
     res
 }
 
-/// Correctly rounded `acosh`.
-pub fn acosh(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `acosh`.
+    pub fn acosh(x: f64) -> f64 => acosh_body;
+}
+
+#[inline(always)]
+fn acosh_body(x: f64) -> f64 {
     let ix = x.to_bits();
     if ix >= 0x7ff0_0000_0000_0000 {
         // x < 0 (sign bit set), +inf or NaN.
@@ -2079,8 +2094,13 @@ fn erf_accurate(z: f64) -> (f64, f64) {
     (h, l)
 }
 
-/// Correctly rounded `erf`.
-pub fn erf(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `erf`.
+    pub fn erf(x: f64) -> f64 => erf_body;
+}
+
+#[inline(always)]
+fn erf_body(x: f64) -> f64 {
     let z = x.abs();
     let ux = z.to_bits();
     if ux > 0x4017_afb4_8dc9_6626 {
@@ -2403,8 +2423,13 @@ fn erfc_accurate(x: f64) -> f64 {
     erfc_asympt_accurate(x)
 }
 
-/// Correctly rounded `erfc`.
-pub fn erfc(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `erfc`.
+    pub fn erfc(x: f64) -> f64 => erfc_body;
+}
+
+#[inline(always)]
+fn erfc_body(x: f64) -> f64 {
     let t = x.to_bits();
     let at = t & 0x7fff_ffff_ffff_ffff;
     if t >= 0x8000_0000_0000_0000 {
@@ -2770,8 +2795,14 @@ fn atan_refine2(x: f64, a: f64) -> f64 {
     v1 + v0
 }
 
-/// Correctly rounded `atan`.
-pub fn atan(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `atan`.
+    #[inline]
+    pub fn atan(x: f64) -> f64 => atan_body;
+}
+
+#[inline(always)]
+fn atan_body(x: f64) -> f64 {
     const CH: [f64; 4] = [
         hf!("0x1p+0"),
         hf!("-0x1.555555555552bp-2"),
@@ -3106,6 +3137,38 @@ fn sin_moderate(x: f64, sbit: usize) -> f64 {
     sin_large_accurate(x)
 }
 
+/// Fast cos for 0x1.6a09e667f3bccp-27 < |x| < 2^31: `sin_moderate`'s
+/// computation a quarter turn on. cos(|x|) = sin(|x| + pi/2), and pi/2 is
+/// exactly 2^13 steps of its pi/2^14 reduction grid, so only the table index
+/// moves: the reduction, the evaluation and the error bound behind the
+/// rounding test are sin's, whose analysis covers every index. `None` when
+/// the test cannot prove the rounding (the caller's accurate cos decides).
+#[inline(always)]
+fn cos_moderate(ax: f64) -> Option<f64> {
+    const PIH: f64 = hf!("-0x1.921fb54442d18p-13");
+    const PIL: f64 = hf!("-0x1.1a62633145c07p-67");
+    let k = (hf!("0x1.45f306dc9c883p+12") * ax).round_ties_even();
+    let rh = k.mul_add(PIH, ax); // exact
+    let rl = k * PIL;
+    let r = rh + rl;
+    let r2 = r * r;
+    let j = k as i64 + (1 << 13);
+    let sbit = ((j >> 14) & 1) as usize;
+    let (big_sh, big_sl, big_ch) = sin_table(j as u64);
+    let sh = r * (1.0 - hf!("0x1.55555553068fp-3") * r2);
+    let ch = r2 * (-0.5 + hf!("0x1.55555553bfd3p-5") * r2);
+    let fh = big_sh;
+    let fl = big_sl + big_sh * ch + big_ch * sh;
+    const SGN: [f64; 2] = [1.0, -1.0];
+    const EPS: f64 = hf!("0x1.dep-64");
+    const EPS2: f64 = hf!("0x1.dep-63");
+    let fh = SGN[sbit] * fh;
+    let fl = SGN[sbit] * fl - EPS;
+    let lb = fh + fl;
+    let ub = fh + (fl + EPS2);
+    (ub == lb).then_some(lb)
+}
+
 /// Fast sin for |x| >= 2^31.
 #[inline(never)]
 fn sin_large(x: f64) -> f64 {
@@ -3129,8 +3192,14 @@ fn sin_large(x: f64) -> f64 {
     sin_large_accurate(x)
 }
 
-/// Correctly rounded `sin`.
-pub fn sin(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `sin`.
+    #[inline]
+    pub fn sin(x: f64) -> f64 => sin_body;
+}
+
+#[inline(always)]
+fn sin_body(x: f64) -> f64 {
     let t = x.to_bits();
     let au = t << 1;
     if au <= 0x7cae_26e8_9224_7dec {
@@ -3146,7 +3215,10 @@ pub fn sin(x: f64) -> f64 {
     }
     if e == 0x7ff {
         // NaN propagates; ±inf gives the default NaN with FE_INVALID.
-        return x * 0.0;
+        // black_box: x is known to be inf or NaN here, so LLVM may fold a
+        // plain `x * 0.0` to a constant NaN -- no FE_INVALID for +-inf, NaN
+        // payload lost (tan(inf) returned a silent NaN).
+        return core::hint::black_box(x) * 0.0;
     }
     sin_large(x)
 }
@@ -3557,8 +3629,7 @@ fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
         let e = ((t >> 52) & 0x7ff) as i64; // 1025 <= e <= 2046
         let m = (1u64 << 52) | (t & MASK52);
         let mut c = [0u64; 3];
-        let shift;
-        if e <= 1074 {
+        let shift = if e <= 1074 {
             let u = u128::from(m) * u128::from(tt[1]);
             c[0] = u as u64;
             c[1] = (u >> 64) as u64;
@@ -3566,7 +3637,7 @@ fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
             let (s, carry) = add_carry(c[1], u as u64);
             c[1] = s;
             c[2] = ((u >> 64) as u64) + carry;
-            shift = 1075 - e; // 1 <= shift <= 50
+            1075 - e // 1 <= shift <= 50
         } else {
             let i = ((e - 1138 + 63) / 64) as usize;
             let u = u128::from(m) * u128::from(tt[i + 2]);
@@ -3578,8 +3649,8 @@ fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
             c[2] = ((u >> 64) as u64) + carry;
             let u = u128::from(m) * u128::from(tt[i]);
             c[2] = c[2].wrapping_add(u as u64);
-            shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
-        }
+            1139 + ((i as i64) << 6) - e // 1 <= shift <= 64
+        };
         if shift == 64 {
             c[0] = c[1];
             c[1] = c[2];
@@ -3786,19 +3857,39 @@ fn cos_accurate(x: f64) -> f64 {
     dint_tod(u)
 }
 
-/// Correctly rounded `cos`.
-pub fn cos(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `cos`.
+    #[inline]
+    pub fn cos(x: f64) -> f64 => cos_body;
+}
+
+#[inline(always)]
+fn cos_body(x: f64) -> f64 {
     let t = x.to_bits();
     let e = (t >> 52) & 0x7ff;
     if e == 0x7ff {
         // ±inf: the default NaN with FE_INVALID; NaN propagates.
-        return x * 0.0;
+        // black_box: x is known to be inf or NaN here, so LLVM may fold a
+        // plain `x * 0.0` to a constant NaN -- no FE_INVALID for +-inf, NaN
+        // payload lost (tan(inf) returned a silent NaN).
+        return core::hint::black_box(x) * 0.0;
     }
     let ax = x.abs();
     if ax.to_bits() <= 0x3e46_a09e_667f_3bcc {
         // |x| <= 0x1.6a09e667f3bccp-27: cos(x) rounds to 1.
         return ax.mul_add(hf!("-0x1p-28"), 1.0);
     }
+    if e < 1054
+        && let Some(r) = cos_moderate(ax)
+    {
+        return r;
+    }
+    cos_fallback(ax)
+}
+
+#[cold]
+#[inline(never)]
+fn cos_fallback(ax: f64) -> f64 {
     let (h, l, err) = cos_fast(ax);
     let left = h + (l - err);
     let right = h + (l + err);
@@ -3848,60 +3939,84 @@ fn div_dint(b: &Dint, a: &Dint) -> Dint {
     mul_dint(&r, b)
 }
 
-/// tan.c `reduce_fast`: `(i, h, l)` with i/2^11 + h + l ~ frac(x/(2 pi))
-/// to within 2^-104.815, for 0x1.d12ed0af1a27ep-27 < x.
-#[inline(always)]
-fn tan_reduce_fast(x: f64) -> (u64, f64, f64) {
-    let (h, l);
-    if x <= hf!("0x1.921fb54442d17p+2") {
-        const CH: f64 = hf!("0x1.45f306dc9c883p-3");
-        const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
-        let (hh, ll) = a_mul(CH, x);
-        h = hh;
-        l = CL.mul_add(x, ll);
+/// Cold Payne-Hanek reduction for `tan_reduce_fast` when `x > 2^20`.
+#[cold]
+#[inline(never)]
+fn tan_reduce_fast_large(x: f64) -> (u64, f64, f64) {
+    let tt = &TRIG_T;
+    let t = x.to_bits();
+    let e = ((t >> 52) & 0x7ff) as i64;
+    let m = u128::from((1u64 << 52) | (t & MASK52));
+    // m*(w0 + w1/2^64 + w2/2^128) as three words, keeping the carry of
+    // the top half of m*w2 into the bottom word.
+    let fold = |w0: u64, w1: u64, w2: u64| {
+        let v = m * u128::from(w2);
+        let u = m * u128::from(w1);
+        let c0 = u.wrapping_add(v >> 64) as u64;
+        let c1 = ((u >> 64) as u64) + u64::from(c0 < u as u64);
+        let u = m * u128::from(w0);
+        let (c1, carry) = add_carry(c1, u as u64);
+        (c0, c1, ((u >> 64) as u64).wrapping_add(carry))
+    };
+    let (mut c0, mut c1, mut c2);
+    let shift;
+    if e <= 1074 {
+        // 2^20 < x < 2^52
+        (c0, c1, c2) = fold(tt[0], tt[1], tt[2]);
+        shift = 1075 - e; // 1 <= shift <= 30
     } else {
-        let tt = &TRIG_T;
-        let t = x.to_bits();
-        let e = ((t >> 52) & 0x7ff) as i64;
-        let m = u128::from((1u64 << 52) | (t & MASK52));
-        // m*(w0 + w1/2^64 + w2/2^128) as three words, keeping the carry of
-        // the top half of m*w2 into the bottom word.
-        let fold = |w0: u64, w1: u64, w2: u64| {
-            let v = m * u128::from(w2);
-            let u = m * u128::from(w1);
-            let c0 = u.wrapping_add(v >> 64) as u64;
-            let c1 = ((u >> 64) as u64) + u64::from(c0 < u as u64);
-            let u = m * u128::from(w0);
-            let (c1, carry) = add_carry(c1, u as u64);
-            (c0, c1, ((u >> 64) as u64).wrapping_add(carry))
-        };
-        let (mut c0, mut c1, mut c2);
-        let shift;
-        if e <= 1074 {
-            // 2^2 <= x < 2^52
-            (c0, c1, c2) = fold(tt[0], tt[1], tt[2]);
-            shift = 1075 - e; // 1 <= shift <= 50
-        } else {
-            // 2^52 <= x: only the low word of m*T[i] reaches the fraction.
-            let i = ((e - 1138 + 63) / 64) as usize;
-            (c0, c1, c2) = fold(tt[i + 1], tt[i + 2], tt[i + 3]);
-            c2 = c2.wrapping_add((m * u128::from(tt[i])) as u64);
-            shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
-        }
-        if shift == 64 {
-            c0 = c1;
-            c1 = c2;
-        } else {
-            c0 = (c1 << (64 - shift)) | (c0 >> shift);
-            c1 = (c2 << (64 - shift)) | (c1 >> shift);
-        }
-        let (hh, ll) = trig_set_dd(c1, c0);
-        h = hh;
-        l = ll;
+        // 2^52 <= x: only the low word of m*T[i] reaches the fraction.
+        let i = ((e - 1138 + 63) / 64) as usize;
+        (c0, c1, c2) = fold(tt[i + 1], tt[i + 2], tt[i + 3]);
+        c2 = c2.wrapping_add((m * u128::from(tt[i])) as u64);
+        shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
     }
+    if shift == 64 {
+        c0 = c1;
+        c1 = c2;
+    } else {
+        c0 = (c1 << (64 - shift)) | (c0 >> shift);
+        c1 = (c2 << (64 - shift)) | (c1 >> shift);
+    }
+    let (h, l) = trig_set_dd(c1, c0);
     let i = (h * hf!("0x1p11")).floor();
     let h = i.mul_add(hf!("-0x1p-11"), h);
     (i as u64, h, l)
+}
+
+/// tan.c `reduce_fast`: `(i, h, l)` with i/2^11 + h + l ~ frac(x/(2 pi))
+/// to within 2^-87.6 for x <= 2^20 (and 2^-104.815 for x > 2^20).
+#[inline(always)]
+fn tan_reduce_fast(x: f64) -> (u64, f64, f64) {
+    if x <= hf!("0x1p+20") {
+        const CH: f64 = hf!("0x1.45f306dc9c883p-3");
+        const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
+        let (hh, ll) = a_mul(CH, x);
+        let l = CL.mul_add(x, ll);
+        let i = (hh * hf!("0x1p11")).floor();
+        let h = i.mul_add(hf!("-0x1p-11"), hh);
+        return (i as u64, h, l);
+    }
+    tan_reduce_fast_large(x)
+}
+
+/// tan2pi(xh + xl) for |xh + xl| < 2^-11 + 2^-24, given uh + ul ~ (xh + xl)^2;
+/// relative error < 2^-71.06, absolute error < 2^-79.41.
+#[inline(always)]
+fn trig_eval_pt_fast(xh: f64, xl: f64, uh: f64, ul: f64) -> (f64, f64) {
+    const P0H: f64 = hf!("0x1.921fb54442d18p+2");
+    const P0L: f64 = hf!("0x1.1a62633145c07p-52");
+    const C1H: f64 = hf!("0x1.4abbce625be53p+6");
+    const C2: f64 = hf!("0x1.466bc6775aae2p+10");
+    const C3: f64 = hf!("0x1.45fff9b48e95ep+14");
+    const C4: f64 = hf!("0x1.45f472e3af046p+18");
+    let mut h = C4.mul_add(uh, C3);
+    h = h.mul_add(uh, C2);
+    h = h.mul_add(uh, C1H);
+    let (h, mut l) = s_mul(h, uh, ul);
+    let (h, t) = fasttwosum(P0H, h);
+    l += P0L + t;
+    d_mul_trig(h, l, xh, xl)
 }
 
 /// (bh + bl)/(ah + al) by Karp-Markstein, relative error below 2^-96.99.
@@ -3912,6 +4027,61 @@ fn tan_fast_div(bh: f64, bl: f64, ah: f64, al: f64) -> (f64, f64) {
     let eh = ah.mul_add(-h, bh);
     let el = al.mul_add(-h, bl);
     (h, y * (eh + el))
+}
+
+/// Fast tan(x) for 0x1.d12ed0af1a27ep-27 < |x| <= 2^20 without any function
+/// calls or panic branches, so `tan::avx2_fma_twin` needs no stack frame or
+/// callee-saved register spills on the moderate-argument fast path.
+#[inline(always)]
+fn tan_moderate(x: f64) -> Option<f64> {
+    let mut neg = u64::from(x < 0.0);
+    let ax = x.abs();
+    const CH: f64 = hf!("0x1.45f306dc9c883p-3");
+    const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
+    let (hh, ll) = a_mul(CH, ax);
+    let mut l = CL.mul_add(ax, ll);
+    let i_f = (hh * hf!("0x1p11")).floor();
+    let mut h = i_f.mul_add(hf!("-0x1p-11"), hh);
+    // 0 < ax <= 2^20 => 0 <= i_f < 2^30, so f64 -> i64 is exact (`vcvttsd2si`).
+    let i = ((i_f as i64) as u64) & 0x3ff;
+    let mut is_tan = 1 ^ (i >> 9);
+    neg ^= i >> 9;
+    let mut i = (i & 0x1ff) as usize;
+    if i & 0x100 != 0 {
+        is_tan ^= 1;
+        i = 0x1ff - i;
+        h = hf!("0x1p-11") - h;
+        l = -l;
+    }
+    if i == 0 && h < hf!("0x1p-34") {
+        // Too close to a multiple of pi/2 for the fast path's error bound.
+        return None;
+    }
+    let sc = &TRIG_SC[i & 0xff];
+    h -= sc[0];
+    let (h, l) = fasttwosum(h, l);
+    let (uh, ul) = a_mul(h, h);
+    let ul = (h + h).mul_add(l, ul);
+    let (th, tl) = trig_eval_pt_fast(h, l, uh, ul);
+    let (sh0, sl0) = s_mul(sc[2], th, tl);
+    let (h1, mut l1) = fasttwosum(sc[1], sh0);
+    l1 += sl0;
+    let (sh, sl) = s_mul(sc[1], th, tl);
+    let (h2, mut l2) = fasttwosum(sc[2], -sh);
+    l2 -= sl;
+    let (h, l) = if is_tan != 0 {
+        tan_fast_div(h1, l1, h2, l2)
+    } else {
+        tan_fast_div(h2, l2, h1, l1)
+    };
+    const SGN: [f64; 2] = [1.0, -1.0];
+    let sgn = SGN[(neg & 1) as usize];
+    let h = h * sgn;
+    let l = l * sgn;
+    let err = h * hf!("0x1.1ap-66");
+    let left = h + (l - err);
+    let right = h + (l + err);
+    if left == right { Some(left) } else { None }
 }
 
 /// Fast tan(x) for |x| > 0x1.d12ed0af1a27ep-27: `(h, l, err)`.
@@ -3929,33 +4099,30 @@ fn tan_fast(x: f64) -> (f64, f64, f64) {
         h = hf!("0x1p-11") - h;
         l = -l;
     }
-    if i == 0 && h < hf!("0x1p-37") {
+    if i == 0 && h < hf!("0x1p-34") {
         // Too close to a multiple of pi/2 for the fast path's error bound.
         return (h, l, 1.0);
     }
-    let sc = &TRIG_SC[i];
+    let sc = &TRIG_SC[i & 0xff];
     h -= sc[0];
     let (h, l) = fasttwosum(h, l);
     let (uh, ul) = a_mul(h, h);
     let ul = (h + h).mul_add(l, ul);
-    let (sh, sl) = trig_eval_ps_fast(h, l, uh, ul);
-    let (ch, cl) = trig_eval_pc_fast(uh, ul);
-    let (sh0, sl0) = s_mul(sc[2], sh, sl);
-    let (ch0, cl0) = s_mul(sc[1], ch, cl);
-    let (h1, mut l1) = fasttwosum(ch0, sh0);
-    l1 += sl0 + cl0;
-    let (ch, cl) = s_mul(sc[2], ch, cl);
-    let (sh, sl) = s_mul(sc[1], sh, sl);
-    let (h2, mut l2) = fasttwosum(ch, -sh);
-    l2 += cl - sl;
+    let (th, tl) = trig_eval_pt_fast(h, l, uh, ul);
+    let (sh0, sl0) = s_mul(sc[2], th, tl);
+    let (h1, mut l1) = fasttwosum(sc[1], sh0);
+    l1 += sl0;
+    let (sh, sl) = s_mul(sc[1], th, tl);
+    let (h2, mut l2) = fasttwosum(sc[2], -sh);
+    l2 -= sl;
     let (h, l) = if is_tan != 0 {
         tan_fast_div(h1, l1, h2, l2)
     } else {
         tan_fast_div(h2, l2, h1, l1)
     };
     const SGN: [f64; 2] = [1.0, -1.0];
-    let h = h * SGN[neg as usize];
-    let l = l * SGN[neg as usize];
+    let h = h * SGN[(neg & 1) as usize];
+    let l = l * SGN[(neg & 1) as usize];
     (h, l, h * hf!("0x1.1ap-66"))
 }
 
@@ -4023,21 +4190,42 @@ fn tan_accurate(x: f64) -> f64 {
     dint_tod(q)
 }
 
-/// Correctly rounded `tan`.
-pub fn tan(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `tan`.
+    #[inline]
+    pub fn tan(x: f64) -> f64 => tan_body;
+}
+
+#[inline(always)]
+fn tan_body(x: f64) -> f64 {
     let t = x.to_bits();
     let e = (t >> 52) & 0x7ff;
     if e == 0x7ff {
         // ±inf: the default NaN with FE_INVALID; NaN propagates.
-        return x * 0.0;
+        // black_box: x is known to be inf or NaN here, so LLVM may fold a
+        // plain `x * 0.0` to a constant NaN -- no FE_INVALID for +-inf, NaN
+        // payload lost (tan(inf) returned a silent NaN).
+        return core::hint::black_box(x) * 0.0;
     }
-    if t & 0x7fff_ffff_ffff_ffff <= 0x3e4d_12ed_0af1_a27e {
+    let at = t & 0x7fff_ffff_ffff_ffff;
+    if at <= 0x3e4d_12ed_0af1_a27e {
         // |x| <= 0x1.d12ed0af1a27ep-27: tan(x) rounds to x.
         if x == 0.0 {
             return x;
         }
         return x.mul_add(hf!("0x1p-54"), x);
     }
+    if at <= 0x4130_0000_0000_0000
+        && let Some(r) = tan_moderate(x)
+    {
+        return r;
+    }
+    tan_fallback(x)
+}
+
+#[cold]
+#[inline(never)]
+fn tan_fallback(x: f64) -> f64 {
     let (h, l, err) = tan_fast(x);
     let left = h + (l - err);
     let right = h + (l + err);
@@ -4343,9 +4531,14 @@ fn tg_logd(x: f64) -> (f64, f64) {
     (lh, ll)
 }
 
-/// sin(pi x) as a double-double for 0 <= x < 1 (tgamma.c `as_sinpid`).
-#[inline(never)]
-fn tg_sinpid(x: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// sin(pi x) as a double-double for 0 <= x < 1 (tgamma.c `as_sinpid`).
+    #[inline(never)]
+    fn tg_sinpid(x: f64) -> (f64, f64) => tg_sinpid_body;
+}
+
+#[inline(always)]
+fn tg_sinpid_body(x: f64) -> (f64, f64) {
     let x = (x - 0.5).abs() * 128.0;
     let ix = x.round_ties_even();
     let d = ix - x;
@@ -4382,9 +4575,18 @@ fn tg_sinpid(x: f64) -> (f64, f64) {
     fastsum_dd(sh, sl, ch, cl)
 }
 
-/// exp(x + l) as `2^e * (h + l)` (tgamma.c `as_expd`).
-#[inline(never)]
-fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) {
+// The out-of-line tgamma/lgamma fast-path helpers (tg_sinpid above, this one,
+// tg_lgamma_asym, lg_logd and lg_sinpipid) stay out of line as upstream keeps
+// them, so they are not compiled into their callers' AVX2+FMA twins: each
+// gets its own (bd-rc0923-epic-eeuy4f.13).
+avx2_fma_dispatch! {
+    /// exp(x + l) as `2^e * (h + l)` (tgamma.c `as_expd`).
+    #[inline(never)]
+    fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) => tg_expd_body;
+}
+
+#[inline(always)]
+fn tg_expd_body(x: f64, l: f64) -> (f64, f64, i32) {
     const LN2H: f64 = hf!("0x1.71547652b82fep+10");
     const LN2L: f64 = hf!("0x1.777d0ffda0d24p-46");
     let (xh, xl) = muldd_sin(x, l, LN2H, LN2L);
@@ -4406,9 +4608,14 @@ fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) {
     (rh, rl, e)
 }
 
-/// log(Gamma(x)) by Stirling's series, for x > 3 (tgamma.c `as_lgamma_asym`).
-#[inline(never)]
-fn tg_lgamma_asym(xh: f64, xl: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// log(Gamma(x)) by Stirling's series, for x > 3 (tgamma.c `as_lgamma_asym`).
+    #[inline(never)]
+    fn tg_lgamma_asym(xh: f64, xl: f64) -> (f64, f64) => tg_lgamma_asym_body;
+}
+
+#[inline(always)]
+fn tg_lgamma_asym_body(xh: f64, xl: f64) -> (f64, f64) {
     let zh = 1.0 / xh;
     let dz = xl * zh;
     let zl = (zh.mul_add(-xh, 1.0) - dz) * zh;
@@ -4454,8 +4661,13 @@ fn tgamma_domain_nan(x: f64) -> f64 {
     f64::from_bits(n.to_bits() & !(1u64 << 63))
 }
 
-/// Correctly rounded `tgamma`.
-pub fn tgamma(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `tgamma`.
+    pub fn tgamma(x: f64) -> f64 => tgamma_body;
+}
+
+#[inline(always)]
+fn tgamma_body(x: f64) -> f64 {
     let t = x.to_bits();
     let ax = t << 1;
     if ax >= 0x7ffu64 << 53 {
@@ -4677,10 +4889,15 @@ fn lg_split(x: f64) -> (u64, i32) {
     (t & MASK52, ex - 0x3ff)
 }
 
-/// log(x) as a double-double for x > 0, subnormals included (lgamma.c
-/// `as_logd`; its tables are tgamma.c's).
-#[inline(never)]
-fn lg_logd(x: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// log(x) as a double-double for x > 0, subnormals included (lgamma.c
+    /// `as_logd`; its tables are tgamma.c's).
+    #[inline(never)]
+    fn lg_logd(x: f64) -> (f64, f64) => lg_logd_body;
+}
+
+#[inline(always)]
+fn lg_logd_body(x: f64) -> (f64, f64) {
     let (t, e) = lg_split(x);
     let ed = f64::from(e);
     let (i1, i2) = log_table_index(t);
@@ -4752,9 +4969,14 @@ const LG_SIN_S: [f64; 4] = [
     hf!("-0x1.32d26e446373ap-50"),
 ];
 
-/// sin(pi x)/pi as a double-double for 0 <= x < 1 (lgamma.c `as_sinpipid`).
-#[inline(never)]
-fn lg_sinpipid(x: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// sin(pi x)/pi as a double-double for 0 <= x < 1 (lgamma.c `as_sinpipid`).
+    #[inline(never)]
+    fn lg_sinpipid(x: f64) -> (f64, f64) => lg_sinpipid_body;
+}
+
+#[inline(always)]
+fn lg_sinpipid_body(x: f64) -> (f64, f64) {
     let x = x - 0.5;
     let ax = x.abs();
     let sx = ax * 128.0;
@@ -5086,8 +5308,13 @@ fn lg_piece(j: usize, z: f64) -> (f64, f64) {
     polydddfst(z, &LG_CH[j], fl)
 }
 
-/// Correctly rounded `lgamma_r`: `(log|Gamma(x)|, sign of Gamma(x))`.
-pub fn lgamma_r(x: f64) -> (f64, i32) {
+avx2_fma_dispatch! {
+    /// Correctly rounded `lgamma_r`: `(log|Gamma(x)|, sign of Gamma(x))`.
+    pub fn lgamma_r(x: f64) -> (f64, i32) => lgamma_r_body;
+}
+
+#[inline(always)]
+fn lgamma_r_body(x: f64) -> (f64, i32) {
     let t = x.to_bits();
     let nx = t << 1;
     if nx >= 0xfeae_a9b2_4f16_a34c {
@@ -5589,6 +5816,55 @@ mod tests {
     }
 
     #[test]
+    fn cos_moderate_agrees_with_the_dint_path_wherever_it_answers() {
+        // The quarter-turn fast path may only return a value its rounding
+        // test proves; it must then equal what the original cos_fast /
+        // cos_accurate chain returns. Random bit patterns over every exponent
+        // it serves (2^-27 .. 2^31), plus multiples of pi/2 neighbours.
+        let reference = |ax: f64| {
+            let (h, l, err) = cos_fast(ax);
+            let (left, right) = (h + (l - err), h + (l + err));
+            if left == right {
+                left
+            } else {
+                cos_accurate(ax)
+            }
+        };
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut answered = 0u32;
+        for i in 0..300_000u32 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let exp = 0x3e4 + u64::from(i % 59); // 2^-27 .. 2^31
+            let mut ax = f64::from_bits((exp << 52) | (state & MASK52));
+            if i % 7 == 0 {
+                // Next to k pi/2, where cos is small.
+                let k = (state >> 40) % 1_000_000;
+                ax = f64::from_bits(
+                    (k as f64 * core::f64::consts::FRAC_PI_2)
+                        .to_bits()
+                        .wrapping_add(state & 3)
+                        .wrapping_sub(1),
+                );
+            }
+            if ax.to_bits() <= 0x3e46_a09e_667f_3bcc || ax >= hf!("0x1p31") {
+                continue;
+            }
+            if let Some(fast) = cos_moderate(ax) {
+                answered += 1;
+                assert_eq!(
+                    fast.to_bits(),
+                    reference(ax).to_bits(),
+                    "cos({:#x})",
+                    ax.to_bits()
+                );
+            }
+        }
+        assert!(answered > 250_000, "fast path answered only {answered}");
+    }
+
+    #[test]
     fn cos_hard_and_special_cases() {
         // (input, CORE-MATH result): the near-1 cut-off, accurate-path
         // exceptions, the 2 pi and 2^52 reduction boundaries, huge arguments.
@@ -5786,5 +6062,98 @@ mod tests {
             );
         }
         assert!(lgamma_r(f64::NAN).0.is_nan());
+    }
+
+    #[test]
+    fn avx2_fma_twins_match_baseline_bodies() {
+        use crate::math::{assert_dispatch_matches_body, avx2_fma_dispatch_inputs};
+        // A band reaching past the fast reductions' range, plus the full range.
+        let inputs = avx2_fma_dispatch_inputs(-1.0e6, 1.0e6);
+        assert_dispatch_matches_body("sin", &inputs, sin, sin_body);
+        assert_dispatch_matches_body("cos", &inputs, cos, cos_body);
+        assert_dispatch_matches_body("tan", &inputs, tan, tan_body);
+        assert_dispatch_matches_body("atan", &inputs, atan, atan_body);
+        assert_dispatch_matches_body("asinh", &inputs, asinh, asinh_body);
+        let near_one = avx2_fma_dispatch_inputs(-1.5, 1.5);
+        assert_dispatch_matches_body("atanh", &near_one, atanh, atanh_body);
+        let above_one = avx2_fma_dispatch_inputs(1.0, 1.0e4);
+        assert_dispatch_matches_body("acosh", &above_one, acosh, acosh_body);
+        let special = avx2_fma_dispatch_inputs(-30.0, 30.0);
+        assert_dispatch_matches_body("erf", &special, erf, erf_body);
+        assert_dispatch_matches_body("erfc", &special, erfc, erfc_body);
+        assert_dispatch_matches_body("tgamma", &special, tgamma, tgamma_body);
+        assert_dispatch_matches_body(
+            "lgamma_r",
+            &special,
+            |x| lgamma_r(x).0,
+            |x| lgamma_r_body(x).0,
+        );
+        for &x in &special {
+            assert_eq!(lgamma_r(x).1, lgamma_r_body(x).1, "lgamma_r({x:e}) sign");
+        }
+        // The out-of-line gamma helpers have twins of their own, so the bodies
+        // above call them through their dispatchers: check them directly, over
+        // the domains their callers use.
+        let unit = avx2_fma_dispatch_inputs(0.0, 1.0)
+            .into_iter()
+            .filter(|x| (0.0..1.0).contains(x))
+            .collect::<Vec<_>>();
+        fn part(v: (f64, f64)) -> f64 {
+            v.0
+        }
+        fn tail(v: (f64, f64)) -> f64 {
+            v.1
+        }
+        let picks: [fn((f64, f64)) -> f64; 2] = [part, tail];
+        for pick in picks {
+            assert_dispatch_matches_body(
+                "tg_sinpid",
+                &unit,
+                |x| pick(tg_sinpid(x)),
+                |x| pick(tg_sinpid_body(x)),
+            );
+            assert_dispatch_matches_body(
+                "lg_sinpipid",
+                &unit,
+                |x| pick(lg_sinpipid(x)),
+                |x| pick(lg_sinpipid_body(x)),
+            );
+        }
+        let positive = avx2_fma_dispatch_inputs(f64::MIN_POSITIVE, 1.0e300)
+            .into_iter()
+            .filter(|&x| x > 0.0 && x.is_finite())
+            .collect::<Vec<_>>();
+        for pick in picks {
+            assert_dispatch_matches_body(
+                "lg_logd",
+                &positive,
+                |x| pick(lg_logd(x)),
+                |x| pick(lg_logd_body(x)),
+            );
+        }
+        let above_three = avx2_fma_dispatch_inputs(3.0, 170.0)
+            .into_iter()
+            .filter(|&x| (3.0..=171.0).contains(&x))
+            .collect::<Vec<_>>();
+        for pick in picks {
+            assert_dispatch_matches_body(
+                "tg_lgamma_asym",
+                &above_three,
+                |x| pick(tg_lgamma_asym(x, x * hf!("0x1p-60"))),
+                |x| pick(tg_lgamma_asym_body(x, x * hf!("0x1p-60"))),
+            );
+        }
+        let exponents = avx2_fma_dispatch_inputs(-700.0, 700.0)
+            .into_iter()
+            .filter(|&x| (-700.0..=700.0).contains(&x))
+            .collect::<Vec<_>>();
+        for &x in &exponents {
+            assert_eq!(
+                tg_expd(x, x * hf!("0x1p-60")),
+                tg_expd_body(x, x * hf!("0x1p-60")),
+                "tg_expd({x:e}) (twins active: {})",
+                crate::math::avx2_fma_twins_active()
+            );
+        }
     }
 }

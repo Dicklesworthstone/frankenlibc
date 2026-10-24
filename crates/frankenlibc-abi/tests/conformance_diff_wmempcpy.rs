@@ -18,7 +18,6 @@ mod dlsym_oracle;
 /// and leave BOTH arms as fl -- green while comparing nothing (bd-v0388t). That
 /// matters especially here: this gate covers a hand-written SIMD kernel, whose
 /// whole risk is diverging from the scalar contract at a vector boundary.
-
 type WmempcpyFn = unsafe extern "C" fn(*mut Wch, *const Wch, usize) -> *mut Wch;
 
 fn host_wmempcpy() -> WmempcpyFn {

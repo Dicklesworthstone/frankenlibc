@@ -38,6 +38,7 @@ static const char *name(int rc) {
   case ETIMEDOUT: return "ETIMEDOUT";
   case EOWNERDEAD: return "EOWNERDEAD";
   case ENOTRECOVERABLE: return "ENOTRECOVERABLE";
+  case ENOTSUP: return "ENOTSUP";
   default: return strerror(rc);
   }
 }
@@ -225,6 +226,21 @@ int main(void) {
   int e3 = pthread_mutex_trylock(&pi_err);
   printf("PI errorcheck lock/relock/trylock=%s,%s,%s\n", name(e1), name(e2), name(e3));
   pthread_mutex_unlock(&pi_err);
+
+  // Priority protection (PTHREAD_PRIO_PROTECT): ceiling get/set, SCHED_OTHER
+  // lock EINVAL, and ROBUST + PRIO_PROTECT ENOTSUP.
+  pthread_mutex_t pp_mutex, pp_robust;
+  int pp_init = init_mutex(&pp_mutex, PTHREAD_MUTEX_NORMAL, 0, 0, PTHREAD_PRIO_PROTECT);
+  int pp_rob_init = init_mutex(&pp_robust, PTHREAD_MUTEX_NORMAL, 0, 1, PTHREAD_PRIO_PROTECT);
+  int pp_ceil = -1, pp_old = -1;
+  pthread_mutex_getprioceiling(&pp_mutex, &pp_ceil);
+  int pp_set = pthread_mutex_setprioceiling(&pp_mutex, 15, &pp_old);
+  int pp_ceil2 = -1;
+  pthread_mutex_getprioceiling(&pp_mutex, &pp_ceil2);
+  int pp_lock = pthread_mutex_lock(&pp_mutex);
+  printf("PP init=%s rob_init=%s ceil=%d set=(%s,old=%d,new=%d) lock=%s\n",
+         name(pp_init), name(pp_rob_init), pp_ceil, name(pp_set), pp_old, pp_ceil2, name(pp_lock));
+  pthread_mutex_destroy(&pp_mutex);
 
   // Statically initialized and default-attribute rwlocks.
   int w1 = pthread_rwlock_rdlock(&static_rw);

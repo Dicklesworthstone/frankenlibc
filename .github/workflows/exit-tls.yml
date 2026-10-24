@@ -1,0 +1,67 @@
+name: Calling-thread exit destructors
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/exit_handlers.rs'
+      - 'crates/frankenlibc-abi/src/stdlib_abi.rs'
+      - 'crates/frankenlibc-abi/src/startup_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'tests/integration/fixture_exit_tls*'
+      - 'scripts/check_exit_tls.py'
+      - '.github/workflows/exit-tls.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  destructors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Build and execute unchanged release sources
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=artifacts/exit-tls
+          mkdir -p "$root"
+          git rev-parse HEAD > "$root/revision.txt"
+          rustc --version --verbose > "$root/rustc.txt"
+          for file in exit_handlers.rs stdlib_abi.rs startup_abi.rs; do
+            cp "crates/frankenlibc-abi/src/$file" "$root/$file"
+            git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
+          done
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
+          cp target/release/libfrankenlibc_abi.so "$root/"
+          python3 scripts/check_exit_tls.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/tls"
+          python3 scripts/check_exit_tickets.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/exit"
+          cargo test -p frankenlibc-abi --test dlfcn_native_cxa_test "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/cxa.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/cxa.log"
+          git diff --exit-code -- crates/frankenlibc-abi/src tests/integration/fixture_exit_tls* scripts/check_exit_tls.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exit-tls-${{ matrix.feature }}
+          path: artifacts/exit-tls/
+          if-no-files-found: error
+          retention-days: 7

@@ -5,7 +5,6 @@
 //! - ftw / nftw / nftw64
 //! - setmntent / getmntent / endmntent
 
-#![feature(c_variadic)]
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
@@ -23,6 +22,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[path = "common/fd_capture.rs"]
 mod fd_capture;
+
+#[path = "common/host_isolation.rs"]
+mod host_isolation;
 
 /// Serializes all gai_*/getaddrinfo_a tests in this binary.
 ///
@@ -199,6 +201,9 @@ use frankenlibc_abi::unistd_abi::{
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
+static FORK_SIGNAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+static FORK_SIGNAL_RESULT: AtomicI32 = AtomicI32::new(c_int::MIN);
+static FORK_SIGNAL_ERRNO: AtomicI32 = AtomicI32::new(0);
 const GAI_WAIT: c_int = 0;
 const GAI_NOWAIT: c_int = 1;
 const GAI_BADFLAGS_NEGATIVE_MODE: c_int = -1;
@@ -542,6 +547,71 @@ fn fts_children_before_first_read_matches_host_root_listing() {
 
     let _ = std::fs::remove_dir_all(&dir_root);
     let _ = std::fs::remove_file(&file_root);
+}
+
+#[test]
+fn fts_read_walk_matches_host_with_and_without_nostat() {
+    use std::os::unix::fs::PermissionsExt;
+    // Tcl's recursive `file delete`/`file copy` walk with FTS_PHYSICAL |
+    // FTS_NOCHDIR | FTS_NOSTAT. glibc stats the roots regardless, classifies
+    // child directories FTS_D (only non-directories become FTS_NSOK) and names
+    // a root returned by fts_read by its last component. fl answered FTS_NSOK
+    // for the root and never descended, so Tcl unlinked directories (EISDIR).
+    const TEST_FTS_NOCHDIR: c_int = 0x0004;
+    const TEST_FTS_NOSTAT: c_int = 0x0008;
+    let root = temp_path_buf("fts_walk");
+    std::fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    std::fs::write(root.join("file"), b"x").unwrap();
+    std::fs::write(root.join("sub/inner"), b"y").unwrap();
+    std::os::unix::fs::symlink("file", root.join("link")).unwrap();
+    // An unreadable directory: glibc reports FTS_DNR (with fts_errno) in place
+    // of its FTS_DP (as root it is simply readable, on both sides).
+    std::fs::create_dir_all(root.join("locked/hidden")).unwrap();
+    std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    let walk = |read: &dyn Fn() -> *mut AbiFtsEnt| {
+        let mut seen = Vec::new();
+        loop {
+            let e = read();
+            if e.is_null() {
+                break;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*e).fts_name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            seen.push((
+                unsafe { (*e).fts_info },
+                unsafe { (*e).fts_level },
+                unsafe { (*e).fts_errno },
+                name,
+                fts_path(e),
+            ));
+        }
+        seen.sort();
+        seen
+    };
+
+    // FTS_NOCHDIR in every case: without it glibc's walk chdir()s, and other
+    // tests in this binary change the process-wide cwd concurrently.
+    for options in [
+        TEST_FTS_PHYSICAL | TEST_FTS_NOCHDIR,
+        TEST_FTS_PHYSICAL | TEST_FTS_NOCHDIR | TEST_FTS_NOSTAT,
+    ] {
+        unsafe {
+            let host = fts_open(argv.as_ptr(), options, None);
+            let abi = abi_fts_open(argv.as_ptr() as *const *const c_char, options, None);
+            assert!(!host.is_null() && !abi.is_null());
+            let host_seen = walk(&|| fts_read(host));
+            let abi_seen = walk(&|| abi_fts_read(abi));
+            assert_eq!(abi_seen, host_seen, "fts walk with options {options:#x}");
+            assert!(host_seen.len() >= 7, "walk too short: {host_seen:?}");
+            assert_eq!(fts_close(host), 0);
+            assert_eq!(abi_fts_close(abi), 0);
+        }
+    }
+    let _ = std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o755));
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -3172,7 +3242,7 @@ fn abi_argp_parse_runs_the_parser_protocol_like_glibc() {
     ];
     let mut argp_struct = empty_argp_storage();
     argp_struct[0] = options.as_ptr() as usize;
-    argp_struct[1] = argp_recording_parser as usize;
+    argp_struct[1] = argp_recording_parser as *const () as usize;
     let args: Vec<CString> = ["getent", "-v", "passwd", "root"]
         .iter()
         .map(|s| CString::new(*s).unwrap())
@@ -4619,7 +4689,7 @@ fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() 
 }
 
 #[test]
-fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errno() {
+fn getaddrinfo_a_zeroed_gaicb_requests_finish_with_noname_and_preserve_errno() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut first: GaicbShape = unsafe { std::mem::zeroed() };
     let mut second: GaicbShape = unsafe { std::mem::zeroed() };
@@ -4641,6 +4711,9 @@ fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errn
     };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(unsafe { gai_error((&mut first as *mut GaicbShape).cast()) }, libc::EAI_NONAME);
+    assert_eq!(unsafe { gai_error((&mut second as *mut GaicbShape).cast()) }, libc::EAI_NONAME);
+    assert!(first.ar_result.is_null() && second.ar_result.is_null());
 
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -4659,6 +4732,19 @@ fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errn
     };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+    // NOWAIT retains the request until completion. Do not let stack storage
+    // expire while the new native resolver can still publish a result.
+    let first_ptr = (&mut first as *mut GaicbShape).cast::<c_void>();
+    let pending = [first_ptr.cast_const()];
+    let timeout = libc::timespec { tv_sec: 2, tv_nsec: 0 };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while unsafe { gai_error(first_ptr) } == -100 {
+        assert!(Instant::now() < deadline, "zeroed request must finish");
+        let rc = unsafe { gai_suspend(pending.as_ptr(), 1, &timeout) };
+        assert!(rc == 0 || rc == GAI_EAI_ALLDONE || rc == -104);
+    }
+    assert_eq!(unsafe { gai_error(first_ptr) }, libc::EAI_NONAME);
+    assert!(first.ar_result.is_null());
 }
 
 #[test]
@@ -4926,30 +5012,44 @@ fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
 }
 
 #[test]
-fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
+fn getaddrinfo_a_resolves_numeric_requests_instead_of_returning_enosys() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        *__errno_location() = 0;
-    }
+    let hints = libc::addrinfo {
+        ai_flags: libc::AI_NUMERICHOST | libc::AI_NUMERICSERV,
+        ai_family: libc::AF_INET,
+        ai_socktype: libc::SOCK_STREAM,
+        ai_protocol: 0,
+        ai_addrlen: 0,
+        ai_addr: std::ptr::null_mut(),
+        ai_canonname: std::ptr::null_mut(),
+        ai_next: std::ptr::null_mut(),
+    };
     let mut request = GaicbShape {
-        ar_name: c"opaque".as_ptr(),
-        ar_service: std::ptr::null(),
-        ar_request: std::ptr::null(),
+        ar_name: c"127.0.0.7".as_ptr(),
+        ar_service: c"43127".as_ptr(),
+        ar_request: (&hints as *const libc::addrinfo).cast(),
         ar_result: std::ptr::null_mut(),
         __return: 0,
         __unused: [0; 5],
     };
-    let mut requests = [(&mut request as *mut GaicbShape).cast::<c_void>()];
-    let rc = unsafe {
-        getaddrinfo_a(
-            GAI_WAIT,
-            requests.as_mut_ptr(),
-            requests.len() as c_int,
-            std::ptr::null_mut(),
-        )
-    };
-    assert_eq!(rc, libc::EAI_SYSTEM);
-    assert_eq!(errno_value(), libc::ENOSYS);
+    let cb = (&mut request as *mut GaicbShape).cast::<c_void>();
+    let mut requests = [cb];
+    unsafe { *__errno_location() = libc::E2BIG; }
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(unsafe { gai_error(cb) }, 0);
+    assert!(!request.ar_result.is_null());
+    unsafe {
+        let result = &*request.ar_result.cast::<libc::addrinfo>();
+        assert_eq!(result.ai_family, libc::AF_INET);
+        assert_eq!(result.ai_socktype, libc::SOCK_STREAM);
+        assert_eq!(result.ai_addrlen as usize, std::mem::size_of::<libc::sockaddr_in>());
+        let address = &*result.ai_addr.cast::<libc::sockaddr_in>();
+        assert_eq!(u16::from_be(address.sin_port), 43127);
+        assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 7]);
+        frankenlibc_abi::resolv_abi::freeaddrinfo(request.ar_result.cast());
+    }
 }
 
 #[test]
@@ -5018,30 +5118,20 @@ fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
 }
 
 #[test]
-fn gai_error_stub_family_still_sets_errno_for_eai_system() {
+fn gai_error_validates_storage_and_reports_the_actual_request_status() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        *__errno_location() = 0;
-    }
+    unsafe { *__errno_location() = 0; }
     assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::ENOSYS);
 
-    unsafe {
-        *__errno_location() = 0;
+    let mut request: GaicbShape = unsafe { std::mem::zeroed() };
+    request.ar_name = c"opaque".as_ptr();
+    for status in [0, libc::EAI_NONAME, libc::EAI_AGAIN, libc::EAI_SYSTEM, -100, -101] {
+        request.__return = status;
+        unsafe { *__errno_location() = libc::E2BIG; }
+        assert_eq!(unsafe { gai_error((&mut request as *mut GaicbShape).cast()) }, status);
+        assert_eq!(errno_value(), libc::E2BIG);
     }
-    let request = GaicbShape {
-        ar_name: c"opaque".as_ptr(),
-        ar_service: std::ptr::null(),
-        ar_request: std::ptr::null(),
-        ar_result: std::ptr::null_mut(),
-        __return: 0,
-        __unused: [0; 5],
-    };
-    assert_eq!(
-        unsafe { gai_error((&request as *const GaicbShape).cast_mut().cast::<c_void>()) },
-        libc::EAI_SYSTEM
-    );
-    assert_eq!(errno_value(), libc::ENOSYS);
 }
 
 #[test]
@@ -11437,32 +11527,38 @@ fn kexec_load_unprivileged_returns_known_errno() {
     // Rather than merely relax the assertion, compare against the host syscall —
     // this test had no oracle at all before, so it could only ever check fl
     // against a hardcoded guess about the environment.
-    unsafe { *libc::__errno_location() = 0 };
-    let host_rc = unsafe { libc::syscall(libc::SYS_kexec_load, 0_i64, 0_i64, 0_i64, 0_i64) };
-    let host_errno = unsafe { *libc::__errno_location() };
+    //
+    // Succeeding as root also really unloads the worker's staged kexec image.
+    // So both arms run on a thread with CAP_SYS_BOOT dropped and take the
+    // privilege-rejection path on every runner.
+    host_isolation::without_capability(host_isolation::CAP_SYS_BOOT, || {
+        unsafe { *libc::__errno_location() = 0 };
+        let host_rc = unsafe { libc::syscall(libc::SYS_kexec_load, 0_i64, 0_i64, 0_i64, 0_i64) };
+        let host_errno = unsafe { *libc::__errno_location() };
 
-    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
-    let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
-    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+        let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
 
-    assert_eq!(
-        i64::from(rc),
-        host_rc,
-        "kexec_load rc: fl={rc} host={host_rc}"
-    );
-    if host_rc == -1 {
         assert_eq!(
-            errno, host_errno,
-            "kexec_load errno: fl={errno} host={host_errno}"
+            rc,
+            host_rc,
+            "kexec_load rc: fl={rc} host={host_rc}"
         );
-        assert!(
-            errno == libc::EPERM
-                || errno == libc::ENOSYS
-                || errno == libc::EINVAL
-                || errno == libc::EBUSY,
-            "unexpected kexec_load errno: {errno}"
-        );
-    }
+        if host_rc == -1 {
+            assert_eq!(
+                errno, host_errno,
+                "kexec_load errno: fl={errno} host={host_errno}"
+            );
+            assert!(
+                errno == libc::EPERM
+                    || errno == libc::ENOSYS
+                    || errno == libc::EINVAL
+                    || errno == libc::EBUSY,
+                "unexpected kexec_load errno: {errno}"
+            );
+        }
+    });
 }
 
 #[test]
@@ -11688,6 +11784,247 @@ fn io_pgetevents_null_events_with_positive_nr_returns_efault() {
     assert_eq!(errno, libc::EFAULT);
 }
 
+#[repr(C)]
+struct CloneTailProbeContext {
+    write_fd: c_int,
+    require_child_tid: bool,
+    child_tid: c_int,
+}
+
+unsafe extern "C" fn clone_tail_probe_child(arg: *mut c_void) -> c_int {
+    let context = unsafe { &mut *arg.cast::<CloneTailProbeContext>() };
+    let child_tid_matches = if context.require_child_tid {
+        context.child_tid == unsafe { libc::syscall(libc::SYS_gettid) as c_int }
+    } else {
+        true
+    };
+    let marker = [u8::from(child_tid_matches)];
+    let _ = unsafe { libc::write(context.write_fd, marker.as_ptr().cast(), marker.len()) };
+    0
+}
+
+#[derive(Clone, Copy)]
+enum CloneEntry {
+    Public,
+    Internal,
+}
+
+#[derive(Clone, Copy)]
+enum CloneTailCase {
+    Omitted,
+    ParentTid,
+    ChildTid,
+}
+
+unsafe fn invoke_clone_tail_case(
+    entry: CloneEntry,
+    case: CloneTailCase,
+    stack_top: *mut c_void,
+    context: *mut CloneTailProbeContext,
+    parent_tid: *mut c_int,
+) -> c_int {
+    let flags = libc::SIGCHLD
+        | match case {
+            CloneTailCase::Omitted => 0,
+            CloneTailCase::ParentTid => libc::CLONE_PARENT_SETTID,
+            CloneTailCase::ChildTid => libc::CLONE_CHILD_SETTID,
+        };
+    let callback = Some(clone_tail_probe_child as unsafe extern "C" fn(*mut c_void) -> c_int);
+    match (entry, case) {
+        (CloneEntry::Public, CloneTailCase::Omitted) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(callback, stack_top, flags, context.cast())
+        },
+        (CloneEntry::Internal, CloneTailCase::Omitted) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(callback, stack_top, flags, context.cast())
+        },
+        (CloneEntry::Public, CloneTailCase::ParentTid) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                parent_tid.cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Internal, CloneTailCase::ParentTid) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                parent_tid.cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Public, CloneTailCase::ChildTid) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::addr_of_mut!((*context).child_tid).cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Internal, CloneTailCase::ChildTid) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::addr_of_mut!((*context).child_tid).cast::<c_void>(),
+            )
+        },
+    }
+}
+
+#[test]
+fn clone_exports_execute_four_arg_and_positional_tid_forms() {
+    for entry in [CloneEntry::Public, CloneEntry::Internal] {
+        for case in [
+            CloneTailCase::Omitted,
+            CloneTailCase::ParentTid,
+            CloneTailCase::ChildTid,
+        ] {
+            let mut pipe_fds = [-1; 2];
+            assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+            let mut stack = vec![0_u8; 1024 * 1024];
+            let stack_top = unsafe { stack.as_mut_ptr().add(stack.len()) }.cast::<c_void>();
+            let mut context = CloneTailProbeContext {
+                write_fd: pipe_fds[1],
+                require_child_tid: matches!(case, CloneTailCase::ChildTid),
+                child_tid: -1,
+            };
+            let mut parent_tid = -1;
+            let pid = unsafe {
+                invoke_clone_tail_case(entry, case, stack_top, &mut context, &mut parent_tid)
+            };
+            assert!(pid > 0, "clone entry returned {pid}");
+            if matches!(case, CloneTailCase::ParentTid) {
+                assert_eq!(parent_tid, pid, "parent_tid slot was not forwarded");
+            }
+            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+
+            let mut marker = [0_u8; 1];
+            assert_eq!(
+                unsafe { libc::read(pipe_fds[0], marker.as_mut_ptr().cast(), marker.len()) },
+                1
+            );
+            assert_eq!(marker[0], 1, "child_tid slot was not forwarded");
+            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+struct CloneTlsProbeContext {
+    write_fd: c_int,
+    _padding: c_int,
+    observed_fs: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "C" fn clone_tls_probe_child(_arg: *mut c_void) -> c_int {
+    std::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rdi",
+        // arch_prctl(ARCH_GET_FS, &context.observed_fs)
+        "mov eax, 158",
+        "mov edi, 0x1003",
+        "lea rsi, [rbx + 8]",
+        "syscall",
+        "test rax, rax",
+        "jnz 2f",
+        // write(context.write_fd, &context.observed_fs, 8)
+        "mov edi, [rbx]",
+        "lea rsi, [rbx + 8]",
+        "mov edx, 8",
+        "mov eax, 1",
+        "syscall",
+        "cmp rax, 8",
+        "jne 2f",
+        "xor eax, eax",
+        "pop rbx",
+        "ret",
+        "2:",
+        "mov eax, 1",
+        "pop rbx",
+        "ret",
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn clone_exports_preserve_the_positional_tls_slot() {
+    for entry in [CloneEntry::Public, CloneEntry::Internal] {
+        let mut pipe_fds = [-1; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+        let mut stack = vec![0_u8; 1024 * 1024];
+        let stack_top = unsafe { stack.as_mut_ptr().add(stack.len()) }.cast::<c_void>();
+        let mut tls_storage = Box::new([0_u8; 4096]);
+        let tls_base = tls_storage.as_mut_ptr().cast::<c_void>();
+        let mut context = CloneTlsProbeContext {
+            write_fd: pipe_fds[1],
+            _padding: 0,
+            observed_fs: 0,
+        };
+        let callback = Some(clone_tls_probe_child as unsafe extern "C" fn(*mut c_void) -> c_int);
+        let flags = libc::SIGCHLD | libc::CLONE_SETTLS;
+        let pid = match entry {
+            CloneEntry::Public => unsafe {
+                frankenlibc_abi::unistd_abi::clone(
+                    callback,
+                    stack_top,
+                    flags,
+                    std::ptr::addr_of_mut!(context).cast(),
+                    std::ptr::null_mut::<c_void>(),
+                    tls_base,
+                )
+            },
+            CloneEntry::Internal => unsafe {
+                frankenlibc_abi::glibc_internal_abi::__clone(
+                    callback,
+                    stack_top,
+                    flags,
+                    std::ptr::addr_of_mut!(context).cast(),
+                    std::ptr::null_mut::<c_void>(),
+                    tls_base,
+                )
+            },
+        };
+        assert!(pid > 0, "clone entry returned {pid}");
+        assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+
+        let mut observed_fs = 0_u64;
+        assert_eq!(
+            unsafe {
+                libc::read(
+                    pipe_fds[0],
+                    std::ptr::addr_of_mut!(observed_fs).cast(),
+                    std::mem::size_of::<u64>(),
+                )
+            },
+            std::mem::size_of::<u64>() as isize
+        );
+        assert_eq!(observed_fs, tls_base as u64, "TLS slot was not forwarded");
+        assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0);
+    }
+}
+
 #[test]
 fn clone3_null_args_returns_efault() {
     use frankenlibc_abi::unistd_abi::clone3;
@@ -11710,6 +12047,373 @@ fn clone3_zero_size_returns_einval() {
         errno == libc::EINVAL || errno == libc::ENOSYS,
         "unexpected clone3 errno: {errno}"
     );
+}
+
+unsafe extern "C" fn fork_signal_handler(_signal: c_int) {
+    let result = unsafe { frankenlibc_abi::unistd_abi::_Fork() };
+    if result == 0 {
+        // `_exit` is async-signal-safe and prevents the child from returning
+        // through the copied libtest signal frame.
+        unsafe { libc::_exit(0) };
+    }
+    let error = if result < 0 {
+        unsafe { std::ptr::read_volatile(__errno_location()) }
+    } else {
+        0
+    };
+    FORK_SIGNAL_ERRNO.store(error, Ordering::SeqCst);
+    FORK_SIGNAL_RESULT.store(result, Ordering::SeqCst);
+}
+
+struct ForkSignalHandlerRestore {
+    previous: libc::sigaction,
+}
+
+impl ForkSignalHandlerRestore {
+    fn install() -> Self {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = fork_signal_handler as *const () as usize;
+        action.sa_flags = 0;
+        assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+
+        let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::sigaction(libc::SIGUSR2, &action, &mut previous) },
+            0
+        );
+        Self { previous }
+    }
+}
+
+impl Drop for ForkSignalHandlerRestore {
+    fn drop(&mut self) {
+        let rc = unsafe { libc::sigaction(libc::SIGUSR2, &self.previous, std::ptr::null_mut()) };
+        assert_eq!(rc, 0, "failed to restore SIGUSR2 disposition");
+    }
+}
+
+#[test]
+fn fork_from_signal_handler_stress_executes_without_locks() {
+    const ITERATIONS: usize = 32;
+
+    let _lock = FORK_SIGNAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _restore = ForkSignalHandlerRestore::install();
+
+    for iteration in 0..ITERATIONS {
+        FORK_SIGNAL_RESULT.store(c_int::MIN, Ordering::SeqCst);
+        FORK_SIGNAL_ERRNO.store(0, Ordering::SeqCst);
+        assert_eq!(unsafe { libc::raise(libc::SIGUSR2) }, 0);
+
+        let pid = FORK_SIGNAL_RESULT.load(Ordering::SeqCst);
+        assert!(
+            pid > 0,
+            "signal iteration {iteration}: _Fork returned {pid}"
+        );
+        assert_eq!(
+            FORK_SIGNAL_ERRNO.load(Ordering::SeqCst),
+            0,
+            "signal iteration {iteration}: successful _Fork recorded errno"
+        );
+        let mut status = 0;
+        assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+    }
+}
+
+unsafe fn install_clone_eagain_seccomp_filter() -> c_int {
+    // `struct seccomp_data.nr` is the first 32-bit word. Load it, reject only
+    // clone(2) with EAGAIN, and allow every other syscall needed to return from
+    // the handler and report the result.
+    let mut filter = [
+        libc::sock_filter {
+            code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone as u32,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ERRNO | libc::EAGAIN as u32,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ALLOW,
+        },
+    ];
+    let mut program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+        return -1;
+    }
+    unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER,
+            std::ptr::addr_of_mut!(program),
+        )
+    }
+}
+
+#[test]
+fn fork_from_signal_handler_forced_error_sets_errno() {
+    let _lock = FORK_SIGNAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _restore = ForkSignalHandlerRestore::install();
+
+    let probe_pid = unsafe { libc::fork() };
+    assert!(probe_pid >= 0, "failed to fork seccomp probe process");
+    if probe_pid == 0 {
+        FORK_SIGNAL_RESULT.store(c_int::MIN, Ordering::SeqCst);
+        FORK_SIGNAL_ERRNO.store(0, Ordering::SeqCst);
+        if unsafe { install_clone_eagain_seccomp_filter() } != 0 {
+            unsafe { libc::_exit(2) };
+        }
+        if unsafe { libc::raise(libc::SIGUSR2) } != 0 {
+            unsafe { libc::_exit(3) };
+        }
+
+        let result = FORK_SIGNAL_RESULT.load(Ordering::SeqCst);
+        let handler_errno = FORK_SIGNAL_ERRNO.load(Ordering::SeqCst);
+        let caller_errno = unsafe { std::ptr::read_volatile(__errno_location()) };
+        let ok = result == -1 && handler_errno == libc::EAGAIN && caller_errno == libc::EAGAIN;
+        unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+    }
+
+    let mut status = 0;
+    assert_eq!(
+        unsafe { bounded_waitpid(probe_pid, &mut status) },
+        probe_pid
+    );
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(
+        libc::WEXITSTATUS(status),
+        0,
+        "seccomp-forced _Fork failure did not publish EAGAIN from the signal handler"
+    );
+}
+
+const PROCESS_LOG_BOUNDARY_MODE: &str = "FRANKENLIBC_PROCESS_LOG_BOUNDARY_MODE";
+
+#[repr(C)]
+#[derive(Default)]
+struct Clone3Args {
+    flags: u64,
+    pidfd: u64,
+    child_tid: u64,
+    parent_tid: u64,
+    exit_signal: u64,
+    stack: u64,
+    stack_size: u64,
+    tls: u64,
+    set_tid: u64,
+    set_tid_size: u64,
+    cgroup: u64,
+}
+
+fn monotonic_second_for_process_log_probe() -> i64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) },
+        0
+    );
+    now.tv_sec
+}
+
+fn run_process_log_boundary_driver() {
+    const RATE_LIMIT: usize = 1024;
+    const PARENT_ROW: &str = r#"{"probe":"parent-fill"}"#;
+    const CLONE3_ROW: &str = r#"{"probe":"clone3-child"}"#;
+    const PARENT_AFTER_SPAWN_ROW: &str = r#"{"probe":"parent-after-spawn"}"#;
+
+    let previous_second = monotonic_second_for_process_log_probe();
+    let start_second = loop {
+        let current = monotonic_second_for_process_log_probe();
+        if current != previous_second {
+            break current;
+        }
+        std::hint::spin_loop();
+    };
+
+    for _ in 0..RATE_LIMIT {
+        frankenlibc_membrane::heal::append_runtime_log_record(PARENT_ROW);
+    }
+    // Confirm the parent window is exhausted before exercising either child.
+    frankenlibc_membrane::heal::append_runtime_log_record(PARENT_AFTER_SPAWN_ROW);
+
+    let mut clone_args = Clone3Args {
+        exit_signal: libc::SIGCHLD as u64,
+        ..Clone3Args::default()
+    };
+    let clone_pid = unsafe {
+        frankenlibc_abi::unistd_abi::clone3(
+            std::ptr::addr_of_mut!(clone_args).cast(),
+            std::mem::size_of::<Clone3Args>(),
+        )
+    };
+    assert!(clone_pid >= 0, "clone3 stack=0 failed: {clone_pid}");
+    if clone_pid == 0 {
+        frankenlibc_membrane::heal::append_runtime_log_record(CLONE3_ROW);
+        unsafe { libc::_exit(0) };
+    }
+    let mut clone_status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(clone_pid, &mut clone_status, 0) },
+        clone_pid
+    );
+    assert!(libc::WIFEXITED(clone_status));
+    assert_eq!(libc::WEXITSTATUS(clone_status), 0);
+
+    let current_exe = std::env::current_exe().expect("current test executable");
+    let executable = CString::new(current_exe.as_os_str().as_bytes()).unwrap();
+    let argv_storage = [
+        executable.clone(),
+        CString::new("--exact").unwrap(),
+        CString::new("clone3_and_posix_spawn_keep_runtime_log_process_local").unwrap(),
+        CString::new("--nocapture").unwrap(),
+        CString::new("--test-threads=1").unwrap(),
+    ];
+    let mut argv: Vec<*mut c_char> = argv_storage
+        .iter()
+        .map(|value| value.as_ptr().cast_mut())
+        .collect();
+    argv.push(std::ptr::null_mut());
+
+    let mut env_storage: Vec<CString> = std::env::vars_os()
+        .filter(|(key, _)| key.as_os_str().as_bytes() != PROCESS_LOG_BOUNDARY_MODE.as_bytes())
+        .map(|(key, value)| {
+            let mut pair = key.as_os_str().as_bytes().to_vec();
+            pair.push(b'=');
+            pair.extend_from_slice(value.as_os_str().as_bytes());
+            CString::new(pair).expect("environment entry without NUL")
+        })
+        .collect();
+    env_storage.push(CString::new(format!("{PROCESS_LOG_BOUNDARY_MODE}=exec")).unwrap());
+    let mut envp: Vec<*mut c_char> = env_storage
+        .iter()
+        .map(|value| value.as_ptr().cast_mut())
+        .collect();
+    envp.push(std::ptr::null_mut());
+
+    let mut spawn_pid = -1;
+    let spawn_rc = unsafe {
+        frankenlibc_abi::process_abi::posix_spawn(
+            &mut spawn_pid,
+            executable.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    assert_eq!(spawn_rc, 0, "posix_spawn failed with errno {spawn_rc}");
+    let mut spawn_status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(spawn_pid, &mut spawn_status, 0) },
+        spawn_pid
+    );
+    assert!(libc::WIFEXITED(spawn_status));
+    assert_eq!(libc::WEXITSTATUS(spawn_status), 0);
+
+    // A pre-exec reset in the CLONE_VM child would clear this shared parent
+    // window and wrongly admit the row. The exec'd image, in contrast, has its
+    // own process state and must have admitted SPAWN_ROW above.
+    frankenlibc_membrane::heal::append_runtime_log_record(PARENT_AFTER_SPAWN_ROW);
+    assert_eq!(
+        monotonic_second_for_process_log_probe(),
+        start_second,
+        "process-log boundary probe crossed its one-second admission window"
+    );
+}
+
+#[test]
+fn clone3_and_posix_spawn_keep_runtime_log_process_local() {
+    match std::env::var(PROCESS_LOG_BOUNDARY_MODE).as_deref() {
+        Ok("driver") => run_process_log_boundary_driver(),
+        Ok("exec") => {
+            frankenlibc_membrane::heal::append_runtime_log_record(r#"{"probe":"spawn-exec"}"#);
+        }
+        _ => {
+            let name = c"frankenlibc-process-log-boundary";
+            let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) as c_int };
+            assert!(
+                fd >= 0,
+                "memfd_create failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut log = unsafe { std::fs::File::from_raw_fd(fd) };
+            let log_path = format!("/proc/self/fd/{fd}");
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("current test executable"),
+            )
+            .args([
+                "--exact",
+                "clone3_and_posix_spawn_keep_runtime_log_process_local",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PROCESS_LOG_BOUNDARY_MODE, "driver")
+            .env("FRANKENLIBC_LOG", log_path)
+            .output()
+            .expect("run process-log boundary driver");
+            assert!(
+                output.status.success(),
+                "driver failed: status={:?}\nstdout={}\nstderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let mut contents = String::new();
+            log.read_to_string(&mut contents).unwrap();
+            let rows: Vec<&str> = contents.lines().collect();
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"parent-fill"}"#)
+                    .count(),
+                1024
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"clone3-child"}"#)
+                    .count(),
+                1,
+                "stack=0 clone3 child did not receive a fresh PID-keyed budget"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"spawn-exec"}"#)
+                    .count(),
+                1,
+                "post-exec spawn image did not initialize its own log stream"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"parent-after-spawn"}"#)
+                    .count(),
+                0,
+                "CLONE_VM spawn child reset the parent's shared admission window"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -14565,59 +15269,102 @@ fn nss_parse_line_result_returns_zero_and_readline_returns_minus_one() {
 // __libc_early_init / nss_files_parse_spent / nss_netgroup_parseline
 // ---------------------------------------------------------------------------
 
+// These were always-fail stubs, so getent/gencat/pldd failed under preload;
+// they now implement glibc's contracts. glibc_private_helpers_test compares
+// them operation by operation with host glibc's own GLIBC_PRIVATE copies.
+
 #[test]
-fn libc_alloc_buffer_helpers_return_null_or_noop_safely() {
+fn libc_alloc_buffer_helpers_carve_copy_and_latch_failure() {
     use frankenlibc_abi::unistd_abi::{
         __libc_alloc_buffer_alloc_array, __libc_alloc_buffer_allocate,
         __libc_alloc_buffer_copy_bytes, __libc_alloc_buffer_copy_string,
         __libc_alloc_buffer_create_failure,
     };
-    let mut sink: *mut c_void = std::ptr::null_mut();
-    assert!(unsafe { __libc_alloc_buffer_alloc_array(std::ptr::null_mut(), 8, 8, 4) }.is_null());
-    assert!(unsafe { __libc_alloc_buffer_allocate(64, &mut sink) }.is_null());
+    let mut block: *mut c_void = std::ptr::null_mut();
+    let mut buf = unsafe { __libc_alloc_buffer_allocate(32, &mut block) };
+    assert!(!block.is_null());
+    assert_eq!((buf.current, buf.end - buf.current), (block as usize, 32));
+    let words = unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 8, 8, 2) };
+    assert_eq!(words as usize, block as usize);
     let src = b"hello";
-    assert!(
-        unsafe {
-            __libc_alloc_buffer_copy_bytes(
-                std::ptr::null_mut(),
-                src.as_ptr() as *const c_void,
-                src.len(),
-            )
-        }
-        .is_null()
-    );
-    let cs = CString::new("hello").unwrap();
-    assert!(
-        unsafe { __libc_alloc_buffer_copy_string(std::ptr::null_mut(), cs.as_ptr()) }.is_null()
-    );
-    unsafe { __libc_alloc_buffer_create_failure(std::ptr::null_mut(), 0) };
+    buf = unsafe { __libc_alloc_buffer_copy_bytes(buf, src.as_ptr() as *const c_void, src.len()) };
+    let cs = CString::new("xy").unwrap();
+    buf = unsafe { __libc_alloc_buffer_copy_string(buf, cs.as_ptr()) };
+    assert_eq!(buf.current - block as usize, 16 + 5 + 3);
+    let copied = unsafe { std::slice::from_raw_parts(block.cast::<u8>().add(16), 8) };
+    assert_eq!(copied, b"helloxy\0");
+    // 9 more bytes do not fit in the 8 left: the buffer latches failed.
+    assert!(unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 1, 1, 9) }.is_null());
+    assert_eq!((buf.current, buf.end), (0, 0));
+    buf = unsafe { __libc_alloc_buffer_copy_string(buf, cs.as_ptr()) };
+    assert_eq!((buf.current, buf.end), (0, 0));
+    let failed = unsafe { __libc_alloc_buffer_create_failure(block, 32) };
+    assert_eq!((failed.current, failed.end), (0, 0));
+    unsafe { frankenlibc_abi::malloc_abi::free(block) };
+}
+
+#[repr(C)]
+struct TestDynarray {
+    used: usize,
+    allocated: usize,
+    array: *mut c_void,
 }
 
 #[test]
-fn libc_dynarray_helpers_return_zero() {
+fn libc_dynarray_helpers_grow_resize_and_finalize() {
     use frankenlibc_abi::unistd_abi::{
         __libc_dynarray_emplace_enlarge, __libc_dynarray_finalize, __libc_dynarray_resize,
         __libc_dynarray_resize_clear,
     };
+    let mut scratch = [7u64; 2];
+    let scratch_ptr = scratch.as_mut_ptr().cast::<c_void>();
+    let mut list = TestDynarray {
+        used: 2,
+        allocated: 2,
+        array: scratch_ptr,
+    };
+    let l = (&mut list as *mut TestDynarray).cast::<c_void>();
     assert_eq!(
-        unsafe { __libc_dynarray_emplace_enlarge(std::ptr::null_mut(), std::ptr::null_mut(), 8) },
-        0
+        unsafe { __libc_dynarray_emplace_enlarge(l, scratch_ptr, 8) },
+        1
     );
+    assert_ne!(list.array, scratch_ptr, "growth leaves the scratch array");
+    assert_eq!(list.allocated, 2 + 2 / 2 + 1);
+    assert_eq!(unsafe { *list.array.cast::<u64>().add(1) }, 7);
+    assert_eq!(unsafe { __libc_dynarray_resize(l, 10, scratch_ptr, 8) }, 1);
+    assert_eq!((list.used, list.allocated), (10, 10));
+    assert_eq!(unsafe { __libc_dynarray_resize(l, 3, scratch_ptr, 8) }, 1);
     assert_eq!(
-        unsafe { __libc_dynarray_resize(std::ptr::null_mut(), 4, std::ptr::null_mut(), 8) },
-        0
+        unsafe { __libc_dynarray_resize_clear(l, 12, scratch_ptr, 8) },
+        1
     );
+    assert!((3..12).all(|i| unsafe { *list.array.cast::<u64>().add(i) } == 0));
     assert_eq!(
-        unsafe { __libc_dynarray_resize_clear(std::ptr::null_mut(), 4, std::ptr::null_mut(), 8) },
-        0
+        unsafe { __libc_dynarray_resize(l, usize::MAX / 4, scratch_ptr, 8) },
+        0,
+        "size * element_size overflow"
     );
+    let mut result = [0usize; 2];
+    assert_eq!(
+        unsafe { __libc_dynarray_finalize(l, scratch_ptr, 8, result.as_mut_ptr().cast()) },
+        1
+    );
+    assert_eq!(result[1], 12);
+    assert_eq!(unsafe { *(result[0] as *const u64) }, 7);
+    unsafe { frankenlibc_abi::malloc_abi::free(result[0] as *mut c_void) };
+    // A list whose growth failed earlier (allocated == SIZE_MAX) does not finalize.
+    let mut failed = TestDynarray {
+        used: 0,
+        allocated: usize::MAX,
+        array: std::ptr::null_mut(),
+    };
     assert_eq!(
         unsafe {
             __libc_dynarray_finalize(
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
+                (&mut failed as *mut TestDynarray).cast(),
+                scratch_ptr,
                 8,
-                std::ptr::null_mut(),
+                result.as_mut_ptr().cast(),
             )
         },
         0
@@ -14642,24 +15389,54 @@ fn libc_dynarray_at_failure_aborts_child_process() {
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
 }
 
+#[repr(C)]
+struct TestScratchBuffer {
+    data: *mut c_void,
+    length: usize,
+    space: TestScratchSpace,
+}
+
+#[repr(C, align(16))]
+struct TestScratchSpace([u8; 1024]);
+
 #[test]
-fn libc_scratch_buffer_helpers_return_zero() {
+fn libc_scratch_buffer_helpers_grow_on_the_heap() {
     use frankenlibc_abi::unistd_abi::{
         __libc_scratch_buffer_grow, __libc_scratch_buffer_grow_preserve,
         __libc_scratch_buffer_set_array_size,
     };
+    let mut b = Box::new(TestScratchBuffer {
+        data: std::ptr::null_mut(),
+        length: 1024,
+        space: TestScratchSpace([0; 1024]),
+    });
+    b.data = b.space.0.as_mut_ptr().cast();
+    b.space.0[..3].copy_from_slice(b"abc");
+    let p = (&mut *b as *mut TestScratchBuffer).cast::<c_void>();
+    assert_eq!(unsafe { __libc_scratch_buffer_grow_preserve(p) }, 1);
+    assert_eq!(b.length, 2048);
     assert_eq!(
-        unsafe { __libc_scratch_buffer_grow(std::ptr::null_mut()) },
+        unsafe { std::slice::from_raw_parts(b.data.cast::<u8>(), 3) },
+        b"abc"
+    );
+    assert_eq!(unsafe { __libc_scratch_buffer_grow(p) }, 1);
+    assert_eq!(b.length, 4096);
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, 100, 8) },
+        1
+    );
+    assert_eq!(b.length, 4096, "already large enough");
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, 1000, 8) },
+        1
+    );
+    assert_eq!(b.length, 8000);
+    // Overflow fails and falls back to the inline space.
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, usize::MAX / 2, 4) },
         0
     );
-    assert_eq!(
-        unsafe { __libc_scratch_buffer_grow_preserve(std::ptr::null_mut()) },
-        0
-    );
-    assert_eq!(
-        unsafe { __libc_scratch_buffer_set_array_size(std::ptr::null_mut(), 4, 8) },
-        0
-    );
+    assert_eq!((b.data, b.length), (b.space.0.as_mut_ptr().cast(), 1024));
 }
 
 #[test]

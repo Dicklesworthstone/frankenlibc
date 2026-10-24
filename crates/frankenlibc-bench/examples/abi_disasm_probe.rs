@@ -167,7 +167,10 @@ fn section_of(sections: &[(String, u64, u64)], address: u64) -> String {
 }
 
 fn dynamic_symbols(object: &str) -> std::collections::BTreeSet<String> {
-    let Ok(out) = Command::new("nm").args(["-D", "--defined-only", object]).output() else {
+    let Ok(out) = Command::new("nm")
+        .args(["-D", "--defined-only", object])
+        .output()
+    else {
         return Default::default();
     };
     String::from_utf8_lossy(&out.stdout)
@@ -193,15 +196,16 @@ fn parse_nm_line(line: &str) -> Option<(u64, u64, String)> {
             u64::from_str_radix(size, 16).ok()?,
             (*name).to_owned(),
         )),
-        [value, _type, name] => {
-            Some((u64::from_str_radix(value, 16).ok()?, 0, (*name).to_owned()))
-        }
+        [value, _type, name] => Some((u64::from_str_radix(value, 16).ok()?, 0, (*name).to_owned())),
         _ => None,
     }
 }
 
 fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
-    let Ok(out) = Command::new("nm").args(["-S", "--defined-only", object]).output() else {
+    let Ok(out) = Command::new("nm")
+        .args(["-S", "--defined-only", object])
+        .output()
+    else {
         return Vec::new();
     };
     let mut table: Vec<(u64, u64, String)> = String::from_utf8_lossy(&out.stdout)
@@ -213,10 +217,10 @@ fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
     // Fill in unknown sizes from the distance to the next symbol, so a sizeless
     // definition still yields a disassemblable range instead of dropping out.
     for index in 0..table.len() {
-        if table[index].1 == 0 {
-            if let Some((next, _, _)) = table.get(index + 1) {
-                table[index].1 = next.saturating_sub(table[index].0);
-            }
+        if table[index].1 == 0
+            && let Some((next, _, _)) = table.get(index + 1)
+        {
+            table[index].1 = next.saturating_sub(table[index].0);
         }
     }
     table
@@ -281,8 +285,9 @@ fn main() {
     //
     // Note this forces a full rebuild: RUSTFLAGS is part of cargo's fingerprint.
     // The flags from .cargo/config.toml are repeated here because setting the
-    // RUSTFLAGS env var REPLACES them rather than appending, and dropping
-    // +avx2,+fma would silently change the codegen under test.
+    // RUSTFLAGS env var REPLACES them rather than appending. They are baseline
+    // x86-64 (bd-rc0923-epic-eeuy4f.13); adding target features here would
+    // silently change the codegen under test.
     // `--rustflags=...` rebuilds the cdylib with extra flags before disassembling
     // it, which is how a CODEGEN question gets asked directly -- e.g. does
     // -Zdefault-visibility=protected turn the GOT-indirect abi->core calls into
@@ -294,9 +299,8 @@ fn main() {
     // cannot link against a version script naming symbols it does not define.
     // Scoping a link arg to just the cdylib needs --target plumbing (which also
     // moves the artifact path) or build.rs's cargo:rustc-cdylib-link-arg.
-    let extra_rustflags: Option<&str> = args
-        .iter()
-        .find_map(|arg| arg.strip_prefix("--rustflags="));
+    let extra_rustflags: Option<&str> =
+        args.iter().find_map(|arg| arg.strip_prefix("--rustflags="));
 
     // `--env=KEY=VALUE` (repeatable) sets an environment variable for the inner
     // cargo build. Needed because some questions cannot be asked through
@@ -330,14 +334,21 @@ fn main() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut command = Command::new(&cargo);
     command
-        .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        .args([
+            "build",
+            "--quiet",
+            "--profile",
+            "release",
+            "-p",
+            "frankenlibc-abi",
+        ])
         // Same directory this probe reads from — see `target_dir`.
         .env("CARGO_TARGET_DIR", target_dir());
     if let Some(extra) = extra_rustflags {
         // The flags from .cargo/config.toml are repeated because setting the
-        // RUSTFLAGS env var REPLACES them rather than appending, and silently
-        // dropping +avx2,+fma would change the codegen under test.
-        let flags = format!("-Z threads=4 -Ctarget-feature=+avx2,+fma {extra}");
+        // RUSTFLAGS env var REPLACES them rather than appending; keep the two in
+        // step or the probe disassembles a build nobody ships.
+        let flags = format!("-Z threads=4 -Cllvm-args=-enable-tlsdesc {extra}");
         println!("DISASM_RUSTFLAGS value={flags:?}");
         command.env("RUSTFLAGS", flags);
     }
@@ -377,7 +388,10 @@ fn main() {
     match Command::new("nm").arg("--version").output() {
         Ok(out) if out.status.success() => {
             let first = String::from_utf8_lossy(&out.stdout);
-            println!("DISASM_TOOL nm={}", first.lines().next().unwrap_or("unknown"));
+            println!(
+                "DISASM_TOOL nm={}",
+                first.lines().next().unwrap_or("unknown")
+            );
         }
         _ => {
             println!("DISASM_UNAVAILABLE reason=nm_not_runnable");

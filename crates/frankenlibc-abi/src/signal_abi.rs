@@ -13,7 +13,7 @@ use frankenlibc_core::signal as signal_core;
 use frankenlibc_core::syscall;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::hji_reachability::{HjiReachabilityController, ReachState};
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
@@ -84,7 +84,10 @@ fn sigabbrev_bytes(sig: c_int) -> Option<&'static [u8]> {
     SIGNAL_ABBREVS.get(sig as usize).copied()
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct KernelSigaction {
@@ -94,7 +97,10 @@ struct KernelSigaction {
     sa_mask: libc::c_ulong,
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 impl KernelSigaction {
     const fn zeroed() -> Self {
         Self {
@@ -142,13 +148,19 @@ fn signal_restorer_trampoline_addr() -> usize {
     frankenlibc_signal_restorer as *const () as usize
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn sigset_first_word(set: &libc::sigset_t) -> libc::c_ulong {
-    // SAFETY: x86_64 rt_sigaction consumes only the first kernel-sized word.
+    // SAFETY: rt_sigaction consumes only the first kernel-sized word.
     unsafe { *(set as *const libc::sigset_t).cast::<libc::c_ulong>() }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn write_sigset_first_word(set: &mut libc::sigset_t, value: libc::c_ulong) {
     // SAFETY: the caller zero-initializes the rest of the sigset_t storage.
     unsafe {
@@ -156,7 +168,10 @@ fn write_sigset_first_word(set: &mut libc::sigset_t, value: libc::c_ulong) {
     }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
     KernelSigaction {
         sa_handler: act.sa_sigaction,
@@ -166,7 +181,10 @@ fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
     }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn kernel_to_user_sigaction(act: &KernelSigaction) -> libc::sigaction {
     let mut user = unsafe { std::mem::zeroed::<libc::sigaction>() };
     user.sa_sigaction = act.sa_handler;
@@ -367,18 +385,32 @@ impl SignalHandlerSlot {
     }
 }
 
-struct DeferredSignalSlot {
-    count: AtomicU32,
-    has_siginfo: AtomicU8,
+const DEFERRED_SIGINFO_SLOTS: usize = 4;
+
+struct DeferredSiginfoSlot {
+    signum: AtomicU8,
     siginfo: UnsafeCell<MaybeUninit<libc::siginfo_t>>,
 }
 
-impl DeferredSignalSlot {
+impl DeferredSiginfoSlot {
     const fn new() -> Self {
         Self {
-            count: AtomicU32::new(0),
-            has_siginfo: AtomicU8::new(0),
+            signum: AtomicU8::new(0),
             siginfo: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+}
+
+struct DeferredSignalTable {
+    counts: [AtomicU32; MAX_TRACKED_SIGNAL + 1],
+    siginfos: [DeferredSiginfoSlot; DEFERRED_SIGINFO_SLOTS],
+}
+
+impl DeferredSignalTable {
+    const fn new() -> Self {
+        Self {
+            counts: [const { AtomicU32::new(0) }; MAX_TRACKED_SIGNAL + 1],
+            siginfos: [const { DeferredSiginfoSlot::new() }; DEFERRED_SIGINFO_SLOTS],
         }
     }
 }
@@ -396,7 +428,7 @@ static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
 struct SignalTls {
     critical_depth: AtomicU32,
     classification: AtomicU8,
-    deferred_signals: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1],
+    deferred_signals: DeferredSignalTable,
     deferred_pending: AtomicU64,
 }
 
@@ -411,7 +443,7 @@ fn new_signal_tls() -> SignalTls {
     SignalTls {
         critical_depth: AtomicU32::new(0),
         classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
-        deferred_signals: [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1],
+        deferred_signals: DeferredSignalTable::new(),
         deferred_pending: AtomicU64::new(0),
     }
 }
@@ -425,8 +457,7 @@ thread_local! {
     static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
     static SIGNAL_CLASSIFICATION: AtomicU8 =
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
-    static DEFERRED_SIGNALS: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1] =
-        const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
+    static DEFERRED_SIGNALS: DeferredSignalTable = const { DeferredSignalTable::new() };
     static DEFERRED_PENDING: AtomicU64 = const { AtomicU64::new(0) };
 }
 
@@ -452,9 +483,7 @@ fn with_signal_classification<R>(f: impl FnOnce(&AtomicU8) -> R) -> R {
     }
 }
 
-fn with_deferred_signals<R>(
-    f: impl FnOnce(&[DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1]) -> R,
-) -> R {
+fn with_deferred_signals<R>(f: impl FnOnce(&DeferredSignalTable) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
         SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_signals))
@@ -498,17 +527,26 @@ fn is_default_or_ignore_handler(handler: usize) -> bool {
     handler == libc::SIG_DFL || handler == libc::SIG_IGN
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn signal_handler_trampoline_addr() -> usize {
     signal_handler_trampoline as *const () as usize
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn signal_siginfo_trampoline_addr() -> usize {
     signal_siginfo_trampoline as *const () as usize
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
@@ -591,9 +629,22 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
     if !(1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
         return;
     }
+    let sig_u8 = signum as u8;
     with_deferred_signals(|pending| {
-        let slot = &pending[signum as usize];
         if !info.is_null() {
+            let slot_idx = pending
+                .siginfos
+                .iter()
+                .position(|s| s.signum.load(Ordering::Relaxed) == sig_u8)
+                .or_else(|| {
+                    pending
+                        .siginfos
+                        .iter()
+                        .position(|s| s.signum.load(Ordering::Relaxed) == 0)
+                })
+                .unwrap_or((signum as usize) % DEFERRED_SIGINFO_SLOTS);
+            let slot = &pending.siginfos[slot_idx];
+            slot.signum.store(0, Ordering::Relaxed);
             // SAFETY: the kernel owns `info` for the duration of the signal
             // trampoline. We snapshot it into thread-local storage before
             // returning so deferred replay can hand the user handler the
@@ -601,9 +652,13 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
             unsafe {
                 std::ptr::copy_nonoverlapping(info, (*slot.siginfo.get()).as_mut_ptr(), 1);
             }
-            slot.has_siginfo.store(1, Ordering::Relaxed);
+            slot.signum.store(sig_u8, Ordering::Release);
         } else {
-            slot.has_siginfo.store(0, Ordering::Relaxed);
+            for slot in &pending.siginfos {
+                if slot.signum.load(Ordering::Relaxed) == sig_u8 {
+                    slot.signum.store(0, Ordering::Relaxed);
+                }
+            }
         }
         // The interrupted frame's `ucontext_t` is deliberately NOT stored: a
         // deferred replay runs later, outside that frame, so a handler that
@@ -614,7 +669,7 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
         // thread stack; node/libuv 32-64 KiB stacks failed under preload —
         // bd-rc0923-epic-eeuy4f.9). Replay passes a fresh context instead.
         let _ = context;
-        slot.count.fetch_add(1, Ordering::Relaxed);
+        pending.counts[signum as usize].fetch_add(1, Ordering::Relaxed);
     });
     // After the count: a flush that sees this bit is guaranteed to see the
     // count; one that cleared the mask earlier leaves the bit for the next.
@@ -642,17 +697,23 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
         while bits != 0 {
             let signum = bits.trailing_zeros() as c_int + 1;
             bits &= bits - 1;
-            let slot = &pending[signum as usize];
-            let count = slot.count.swap(0, Ordering::Relaxed);
+            let count = pending.counts[signum as usize].swap(0, Ordering::Relaxed);
             if count != 0 {
-                let siginfo = if slot.has_siginfo.swap(0, Ordering::Relaxed) != 0 {
-                    // SAFETY: the slot was populated before `has_siginfo` was
-                    // set, and swapping the flag back to zero gives the caller
-                    // exclusive ownership of this snapshot.
-                    Some(unsafe { (*slot.siginfo.get()).assume_init_read() })
-                } else {
-                    None
-                };
+                let sig_u8 = signum as u8;
+                let mut siginfo = None;
+                for slot in &pending.siginfos {
+                    if slot
+                        .signum
+                        .compare_exchange(sig_u8, 0, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        // SAFETY: the slot was populated before `signum` was
+                        // published, and clearing `signum` gives the caller
+                        // exclusive ownership of this snapshot.
+                        siginfo = Some(unsafe { (*slot.siginfo.get()).assume_init_read() });
+                        break;
+                    }
+                }
                 out.push(DeferredSignalReplay {
                     signum,
                     count,
@@ -690,6 +751,10 @@ unsafe fn dispatch_registered_handler(
 }
 
 unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
+    // This must be the first operation: the classification/depth reads below
+    // resolve Rust TLS and that resolution may allocate on a thread's first
+    // signal. Mark signal context before any such allocation can occur.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     let classification = with_signal_classification(|value| {
         SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
     });
@@ -700,9 +765,6 @@ unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
-    // The handler may allocate while its thread was interrupted holding an
-    // allocator lock: keep its allocations off every lock (bd-na6ede).
-    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
 }
@@ -712,6 +774,9 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     info: *mut libc::siginfo_t,
     context: *mut c_void,
 ) {
+    // Keep marker installation ahead of every TLS access, matching the simple
+    // trampoline above.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     let classification = with_signal_classification(|value| {
         SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
     });
@@ -722,18 +787,26 @@ unsafe extern "C" fn signal_siginfo_trampoline(
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
-    // See `signal_handler_trampoline`.
-    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, info, context) };
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn rewrite_old_sigaction(oldact_ref: &mut libc::sigaction, prev_handler: usize, prev_flags: usize) {
     if is_signal_trampoline(oldact_ref.sa_sigaction) && prev_handler != 0 {
-        let kernel_flags = oldact_ref.sa_flags;
         oldact_ref.sa_sigaction = prev_handler;
-        oldact_ref.sa_flags = (prev_flags as c_int) | (kernel_flags & SA_RESTORER_FLAG);
+        #[cfg(target_arch = "x86_64")]
+        {
+            let kernel_flags = oldact_ref.sa_flags;
+            oldact_ref.sa_flags = (prev_flags as c_int) | (kernel_flags & SA_RESTORER_FLAG);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            oldact_ref.sa_flags = prev_flags as c_int;
+        }
     }
 }
 
@@ -778,6 +851,24 @@ pub fn exit_signal_critical_section() {
     with_signal_classification(|value| {
         value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed)
     });
+    let has_pending = with_deferred_pending(|mask| mask.load(Ordering::Relaxed) != 0);
+    if has_pending {
+        flush_deferred_signals_slow();
+    }
+}
+
+/// Replay signals deferred while this thread was inside a signal-critical
+/// section.
+///
+/// Kept `#[cold]` and `#[inline(never)]`: `replay_context` (`ucontext_t`,
+/// 968 bytes) + `siginfo_t` (128 bytes) live on this frame. When inlined into
+/// [`exit_signal_critical_section`], LLVM hoisted a 2,280-byte (`0x8e8`) stack
+/// allocation into `exit_signal_critical_section`'s prologue — paid on every
+/// hardened `malloc`/`calloc`/`free`, and enough to push a 32 KiB-stack thread
+/// (node/libuv) across its guard page during TLS setup.
+#[cold]
+#[inline(never)]
+fn flush_deferred_signals_slow() {
     for deferred in take_deferred_signals() {
         for _ in 0..deferred.count {
             SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -801,7 +892,11 @@ pub fn exit_signal_critical_section() {
                     8,
                 )
             };
-            let mut ucontext = Some(replay_context);
+            // Replayed callbacks are user signal handlers too. They can call
+            // allocator and evidence entrypoints while the flush originates
+            // from a critical-section exit, so give them the same lock-free
+            // allocation/signal marker as immediate trampoline delivery.
+            let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
             // SAFETY: deferred delivery replays the previously registered handler on the same thread.
             unsafe {
                 dispatch_registered_handler(
@@ -809,9 +904,7 @@ pub fn exit_signal_critical_section() {
                     siginfo
                         .as_mut()
                         .map_or(std::ptr::null_mut(), |info| info as *mut libc::siginfo_t),
-                    ucontext.as_mut().map_or(std::ptr::null_mut(), |context| {
-                        context as *mut libc::ucontext_t as *mut c_void
-                    }),
+                    (&raw mut replay_context).cast::<c_void>(),
                 )
             };
         }
@@ -943,16 +1036,27 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
+    if !signal_core::valid_signal(signum) && signum != 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::record_semantic_deny(
+            "kill",
+            ApiFamily::Signal,
+            0,
+            0,
+            false,
+            errno::EINVAL,
+            "invalid_signal_number",
+        );
+        if !frankenlibc_membrane::heal::runtime_log_signal_context().requires_signal_safe_path() {
+            runtime_policy::observe(ApiFamily::Signal, ValidationProfile::Fast, 5, true);
+        }
+        return -1;
+    }
+
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
-        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
-        return -1;
-    }
-
-    if !signal_core::valid_signal(signum) && signum != 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -1040,7 +1144,7 @@ pub unsafe extern "C" fn sigprocmask(
     // Only word 0 matters — `kernel_sigset_size` is 8, so that is all the kernel
     // reads, and both reserved bits (31 and 32) live in it.
     let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
-    let mut filtered: libc::c_ulong = 0;
+    let filtered: libc::c_ulong;
     let mut effective_set = set as *const u8;
     if !set.is_null() {
         // SAFETY: a non-null `sigset_t` is at least one `c_ulong` wide, and
@@ -1340,6 +1444,15 @@ pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pause() -> c_int {
+    unsafe { pause_cp() }
+}
+
+/// Body of [`pause`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn pause_cp() -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1348,7 +1461,7 @@ pub unsafe extern "C-unwind" fn pause() -> c_int {
     }
 
     // pause always returns -1 with EINTR when interrupted.
-    let _ = crate::pthread_abi::at_cancellation_point(|| raw_syscall::sys_pause());
+    let _ = unsafe { crate::pthread_abi::at_cancellation_point(raw_syscall::sys_pause) };
     unsafe { set_abi_errno(errno::EINTR) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
     -1
@@ -1360,6 +1473,12 @@ pub unsafe extern "C-unwind" fn pause() -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
+    unsafe { sigsuspend_cp(mask) }
+}
+
+/// Body of [`sigsuspend`] and its aliases (see [`pause_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigsuspend_cp(mask: *const libc::sigset_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, mask as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1472,7 +1591,10 @@ pub unsafe extern "C" fn sigaction(
         return -1;
     }
 
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
     {
         let _ = (act, oldact);
         unsafe { set_abi_errno(errno::ENOSYS) };
@@ -1480,7 +1602,10 @@ pub unsafe extern "C" fn sigaction(
         -1
     }
 
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     {
         // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
         // not libc's userspace `sigset_t` size.
@@ -1499,6 +1624,7 @@ pub unsafe extern "C" fn sigaction(
                 } else {
                     kernel_act.sa_handler = signal_handler_trampoline_addr();
                 }
+                #[cfg(target_arch = "x86_64")]
                 if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0
                     || kernel_act.sa_restorer == 0
                 {
@@ -1602,9 +1728,16 @@ pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
 }
 
 /// `sigwait` — wait for a signal from `set` via `rt_sigtimedwait` syscall.
-/// Returns 0 on success with the signal number stored in `*sig`.
+/// Returns 0 on success with the signal number stored in `*sig`. A POSIX
+/// cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait_cp(set, sig) }
+}
+
+/// Body of [`sigwait`] and its aliases (see [`pause_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigwait_cp(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
     if set.is_null() || sig.is_null() {
         return libc::EINVAL;
     }
@@ -1619,12 +1752,14 @@ pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) ->
     // SA_RESTART is set, so this loop is required for parity.)
     loop {
         match unsafe {
-            raw_syscall::sys_rt_sigtimedwait(
-                set as *const u8,
-                std::ptr::null_mut(),
-                std::ptr::null(),
-                kernel_sigset_size,
-            )
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_rt_sigtimedwait(
+                    set as *const u8,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    kernel_sigset_size,
+                )
+            })
         } {
             Ok(signo) if signo > 0 => {
                 // SAFETY: sig is non-null; we checked above.
@@ -1839,8 +1974,8 @@ fn format_psiginfo_body(info: *const libc::siginfo_t) -> String {
             unsafe { std::ffi::CStr::from_ptr(p) }.to_str().ok()
         }
     };
-    let rtmin = unsafe { libc::SIGRTMIN() };
-    let rtmax = unsafe { libc::SIGRTMAX() };
+    let rtmin = libc::SIGRTMIN();
+    let rtmax = libc::SIGRTMAX();
     // glibc's RT range is half-open: [SIGRTMIN, SIGRTMAX). SIGRTMAX itself
     // prints as "Unknown signal N".
     let is_rt = signo >= rtmin && signo < rtmax;
@@ -2274,8 +2409,8 @@ pub unsafe extern "C" fn __sigprocmask(
 ///
 /// Same as [`sigwait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
-    unsafe { sigwait(set, sig) }
+pub unsafe extern "C-unwind" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait_cp(set, sig) }
 }
 
 /// glibc reserved-namespace alias for [`pause`].
@@ -2284,8 +2419,8 @@ pub unsafe extern "C" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) 
 ///
 /// Same as [`pause`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pause() -> c_int {
-    unsafe { pause() }
+pub unsafe extern "C-unwind" fn __pause() -> c_int {
+    unsafe { pause_cp() }
 }
 
 /// glibc reserved-namespace alias for [`raise`].

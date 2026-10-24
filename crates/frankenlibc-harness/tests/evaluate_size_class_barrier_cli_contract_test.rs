@@ -71,15 +71,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -213,10 +219,7 @@ fn read_record(out_path: &Path) -> TestResult<Value> {
 
 #[test]
 fn cli_exact_size_with_valid_membership_certified_safe() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("safe")?;
     let out = run_cli(&bin, 64, 64, true, &output)?;
     if !out.status.success() {
@@ -239,10 +242,7 @@ fn cli_exact_size_with_valid_membership_certified_safe() -> TestResult {
 
 #[test]
 fn cli_invalid_class_membership_violates() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("invalid_mem")?;
     // Exact size match but invalid membership → violation via the
     // membership_violation_ppm penalty.
@@ -263,10 +263,7 @@ fn cli_invalid_class_membership_violates() -> TestResult {
 
 #[test]
 fn cli_underflow_mapped_smaller_than_requested_violates() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("underflow")?;
     // Requested 64 but mapped only 8 → underflow_violation_ppm fires.
     let out = run_cli(&bin, 64, 8, true, &output)?;
@@ -286,10 +283,7 @@ fn cli_underflow_mapped_smaller_than_requested_violates() -> TestResult {
 
 #[test]
 fn cli_safe_flag_matches_headroom_sign() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     for (label, requested, mapped, valid) in [
         ("sign_exact_valid", 16usize, 16usize, true),
         ("sign_waste_valid", 32, 64, true),
@@ -315,10 +309,7 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = unique_tmp("det_a")?;
     let b = unique_tmp("det_b")?;
     let out_a = run_cli(&bin, 100, 128, true, &a)?;
@@ -334,10 +325,7 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
 
 #[test]
 fn cli_echoes_inputs_into_record() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("echo")?;
     let out = run_cli(&bin, 256, 512, true, &output)?;
     require(

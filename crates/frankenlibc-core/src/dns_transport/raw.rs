@@ -128,7 +128,9 @@ pub fn send_for_query(query: &[u8], config: &Config) -> Result<Reply, QueryError
     static NEXT_SERVER: AtomicUsize = AtomicUsize::new(0);
     let start = if config.rotate && !config.nameservers.is_empty() {
         NEXT_SERVER.fetch_add(1, Ordering::Relaxed) % config.nameservers.len()
-    } else { 0 };
+    } else {
+        0
+    };
     send_inner(query, config, start, exchange, true)
 }
 
@@ -145,7 +147,11 @@ where
 }
 
 fn send_inner<F>(
-    query: &[u8], config: &Config, start: usize, mut exchange: F, retain_rejection: bool,
+    query: &[u8],
+    config: &Config,
+    start: usize,
+    mut exchange: F,
+    retain_rejection: bool,
 ) -> Result<Reply, QueryError>
 where
     F: FnMut(SocketAddr, &[u8], Duration, bool, bool) -> Result<Reply, QueryError>,
@@ -184,7 +190,9 @@ where
                         DnsMessage::decode(&reply.packet).ok_or(QueryError::InvalidResponse)?;
                         last_error = QueryError::Io(io::ErrorKind::TimedOut.into());
                         if retain_rejection {
-                            if !config.trust_ad { reply.packet[3] &= !0x20; }
+                            if !config.trust_ad {
+                                reply.packet[3] &= !0x20;
+                            }
                             last_rejection = Some(reply);
                         }
                         continue;
@@ -253,7 +261,11 @@ mod tests {
                 let copied = capacity.min(r.packet.len());
                 assert_eq!(
                     reported,
-                    if transport == Transport::Tcp { r.packet.len() } else { copied }
+                    if transport == Transport::Tcp {
+                        r.packet.len()
+                    } else {
+                        copied
+                    }
                 );
                 assert_eq!(buffer[0], 0xcc);
                 assert_eq!(buffer[capacity + 1], 0xcc);
@@ -272,7 +284,10 @@ mod tests {
         let r = reply(0, Transport::Tcp);
         for capacity in 0..DNS_HEADER_SIZE {
             let mut buffer = vec![0xa5; capacity];
-            assert!(matches!(r.copy_answer(&mut buffer), Err(QueryError::InvalidQuery)));
+            assert!(matches!(
+                r.copy_answer(&mut buffer),
+                Err(QueryError::InvalidQuery)
+            ));
             assert!(buffer.iter().all(|&byte| byte == 0xa5));
         }
     }
@@ -284,15 +299,24 @@ mod tests {
             let mut calls = Vec::new();
             let r = send_with(&[], &cfg, 0, |server, _, _, _, _| {
                 calls.push(server);
-                Ok(reply(if calls.len() == 1 { code } else { rcode::NXDOMAIN }, Transport::Udp))
-            }).unwrap();
+                Ok(reply(
+                    if calls.len() == 1 {
+                        code
+                    } else {
+                        rcode::NXDOMAIN
+                    },
+                    Transport::Udp,
+                ))
+            })
+            .unwrap();
             assert_eq!(calls, cfg.nameservers);
             assert_eq!(r.packet[3] & 15, rcode::NXDOMAIN);
             let mut calls = 0;
             let r = send_with(&[], &cfg, 0, |_, _, _, _, _| {
                 calls += 1;
                 Ok(reply(code, Transport::Tcp))
-            }).unwrap();
+            })
+            .unwrap();
             assert_eq!(calls, 1);
             assert_eq!(r.packet[3] & 15, code);
         }
@@ -327,9 +351,13 @@ mod tests {
             } else {
                 Ok(reply(0, Transport::Udp))
             }
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(result.transport, Transport::Udp);
-        assert_eq!(calls, [cfg.nameservers[0], cfg.nameservers[1], cfg.nameservers[1]]);
+        assert_eq!(
+            calls,
+            [cfg.nameservers[0], cfg.nameservers[1], cfg.nameservers[1]]
+        );
     }
 
     #[test]
@@ -345,7 +373,8 @@ mod tests {
                 assert_eq!(timeout, cfg.timeout);
                 assert!(vc && igntc);
                 Ok(reply(0, Transport::Tcp))
-            }).unwrap();
+            })
+            .unwrap();
             assert_eq!(r.packet[3] & 0x20 != 0, trust_ad);
         }
     }
@@ -369,29 +398,57 @@ mod tests {
     fn query_rejections_remain_distinct_from_raw_send_and_transport_failure() {
         let mut config = config();
         config.attempts = 1;
-        let result = send_inner(&[], &config, 0, |_, _, _, _, _| {
-            Ok(reply(rcode::SERVFAIL, Transport::Udp))
-        }, true).unwrap();
+        let result = send_inner(
+            &[],
+            &config,
+            0,
+            |_, _, _, _, _| Ok(reply(rcode::SERVFAIL, Transport::Udp)),
+            true,
+        )
+        .unwrap();
         assert_eq!(result.packet[3] & 15, rcode::SERVFAIL);
         assert_eq!(result.packet[3] & 0x20, 0);
-        assert!(matches!(send_inner(&[], &config, 0, |_, _, _, _, _| {
-            Err(QueryError::Io(io::ErrorKind::TimedOut.into()))
-        }, true), Err(QueryError::Io(_))));
-        assert!(matches!(send_with(&[], &config, 0, |_, _, _, _, _| {
-            Ok(reply(rcode::SERVFAIL, Transport::Udp))
-        }), Err(QueryError::Io(_))));
+        assert!(matches!(
+            send_inner(
+                &[],
+                &config,
+                0,
+                |_, _, _, _, _| { Err(QueryError::Io(io::ErrorKind::TimedOut.into())) },
+                true
+            ),
+            Err(QueryError::Io(_))
+        ));
+        assert!(matches!(
+            send_with(&[], &config, 0, |_, _, _, _, _| {
+                Ok(reply(rcode::SERVFAIL, Transport::Udp))
+            }),
+            Err(QueryError::Io(_))
+        ));
     }
 
     #[test]
     fn query_success_supersedes_an_earlier_server_rejection() {
         let config = config();
         let mut calls = 0;
-        let result = send_inner(&[], &config, 0, |_, _, _, _, _| {
-            calls += 1;
-            Ok(reply(if calls == 1 { rcode::SERVFAIL } else { rcode::NXDOMAIN }, Transport::Udp))
-        }, true).unwrap();
+        let result = send_inner(
+            &[],
+            &config,
+            0,
+            |_, _, _, _, _| {
+                calls += 1;
+                Ok(reply(
+                    if calls == 1 {
+                        rcode::SERVFAIL
+                    } else {
+                        rcode::NXDOMAIN
+                    },
+                    Transport::Udp,
+                ))
+            },
+            true,
+        )
+        .unwrap();
         assert_eq!(calls, 2);
         assert_eq!(result.packet[3] & 15, rcode::NXDOMAIN);
     }
-
 }

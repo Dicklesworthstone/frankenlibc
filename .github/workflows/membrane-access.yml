@@ -1,0 +1,109 @@
+name: Membrane access safety
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-membrane/**'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/src/string_abi.rs'
+      - 'crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs'
+      - 'scripts/check_membrane_access.py'
+      - 'tests/integration/fixture_membrane_access.c'
+      - '.github/workflows/membrane-access.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  access:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: membrane-access
+          cache-on-failure: true
+      - name: Record committed source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/access
+          git rev-parse HEAD | tee artifacts/access/source-commit.txt
+          sha256sum crates/frankenlibc-membrane/src/ptr_validator.rs crates/frankenlibc-abi/src/malloc_abi.rs crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs | tee artifacts/access/source-sha256.txt
+          git diff --exit-code
+      - name: Execute access verdict and lifetime regressions in both modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose | tee artifacts/access/rustc.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ptr_validator::access_tests:: -- --test-threads=1 2>&1 | tee "artifacts/access/slots-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/access/slots-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --test validation_outcome_access_test -- --test-threads=1 2>&1 | tee "artifacts/access/outcomes-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/access/outcomes-$mode.log"
+          done
+      - name: Execute actual ABI accesses in isolated mode and math combinations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --test hardened_integrity_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/abi.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/abi.log
+      - name: Reject a lost-verdict mutation on an actual ABI write
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess
+          source = Path('crates/frankenlibc-abi/src/malloc_abi.rs')
+          original = source.read_bytes()
+          good = b'pipeline.validate(addr).access_abstraction()'
+          bad = b'pipeline.validate(addr).abstraction()'
+          assert original.count(good) == 1
+          try:
+              source.write_bytes(original.replace(good, bad, 1))
+              env = dict(os.environ, FRANKENLIBC_MODE='hardened', FRANKENLIBC_RUNTIME_MATH='off', FRANKENLIBC_INTEGRITY_BOUNDS_CHILD='canary-dst')
+              result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'hardened_integrity_bounds_test', '--', '--exact', 'integrity_bounds_matrix', '--nocapture', '--test-threads=1'], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
+              Path('artifacts/access/mutation.log').write_bytes(result.stdout)
+              print(result.stdout.decode(errors='replace'))
+              assert result.returncode != 0, 'lost-verdict mutation incorrectly passed'
+              assert b'0 passed; 1 failed;' in result.stdout, 'mutation must compile and execute, not merely fail compilation'
+              assert b'integrity denial lost at the ABI projection' in result.stdout, 'failure must be the rejected-access assertion'
+          finally:
+              source.write_bytes(original)
+          PY
+          cargo test -p frankenlibc-abi --test hardened_integrity_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/abi-restored.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/abi-restored.log
+      - name: Check existing allocator and pointer-validation behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --test malloc_abi_test -- --test-threads=1 2>&1 | tee artifacts/access/malloc.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/malloc.log
+          cargo test -p frankenlibc-membrane --lib ptr_validator::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/pipeline.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/pipeline.log
+      - name: Execute deployed memory and string access matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/access/release-build.log
+          python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --output artifacts/access/preload 2>&1 | tee artifacts/access/preload.log
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: membrane-access-results
+          path: artifacts/access/**
+          if-no-files-found: error

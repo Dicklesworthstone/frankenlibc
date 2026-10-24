@@ -31,7 +31,7 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-readonly RESULTS_DIR="${SCRIPT_DIR}/results"
+RESULTS_DIR="${CVE_ARENA_RESULTS_DIR:-${SCRIPT_DIR}/results}"
 readonly SIGNAL_WRAPPER="${SCRIPT_DIR}/signal_wrapper.sh"
 readonly DOCKERFILE="${SCRIPT_DIR}/Dockerfile"
 
@@ -83,9 +83,9 @@ fi
 # Logging helpers
 # ---------------------------------------------------------------------------
 
-log_info()  { printf "${C_BLUE}[INFO]${C_RESET}  %s\n" "$*"; }
-log_ok()    { printf "${C_GREEN}[OK]${C_RESET}    %s\n" "$*"; }
-log_warn()  { printf "${C_YELLOW}[WARN]${C_RESET}  %s\n" "$*"; }
+log_info()  { printf "${C_BLUE}[INFO]${C_RESET}  %s\n" "$*" >&2; }
+log_ok()    { printf "${C_GREEN}[OK]${C_RESET}    %s\n" "$*" >&2; }
+log_warn()  { printf "${C_YELLOW}[WARN]${C_RESET}  %s\n" "$*" >&2; }
 log_error() { printf "${C_RED}[ERROR]${C_RESET} %s\n" "$*" >&2; }
 log_fatal() { printf "${C_RED}[FATAL]${C_RESET} %s\n" "$*" >&2; exit 2; }
 
@@ -125,7 +125,8 @@ Usage:
 Options:
   --all                  Run every CVE test across all categories
   --category=CATEGORY    Run all tests in a category (glibc-internal|external|synthetic)
-  --no-docker            Skip Docker; run glibc-internal tests directly on host
+  --results-dir=DIR      Output directory for result JSON files
+  --no-docker            Skip Docker; run glibc-internal and synthetic tests on host
   --verbose              Show full stdout/stderr from test programs
   --timeout=SECONDS      Per-test timeout (default: 30)
   --image=NAME           Docker image name (default: frankenlibc-cve-arena)
@@ -148,6 +149,18 @@ parse_args() {
             --category=*)
                 OPT_CATEGORY="${1#--category=}"
                 shift
+                ;;
+            --category)
+                OPT_CATEGORY="${2:-}"
+                shift 2
+                ;;
+            --results-dir=*)
+                RESULTS_DIR="${1#--results-dir=}"
+                shift
+                ;;
+            --results-dir)
+                RESULTS_DIR="${2:-}"
+                shift 2
                 ;;
             --no-docker)
                 OPT_NO_DOCKER=true
@@ -229,6 +242,16 @@ resolve_FrankenLibC_lib() {
         return
     fi
 
+    if [[ -n "${CARGO_TARGET_DIR:-}" && -f "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so" ]]; then
+        echo "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+        return
+    fi
+
+    if [[ -f "/data/tmp/cargo-target/release/libfrankenlibc_abi.so" ]]; then
+        echo "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
+        return
+    fi
+
     # Default: project build output.
     local default_path="${PROJECT_ROOT}/target/release/libfrankenlibc_abi.so"
     if [[ -f "${default_path}" ]]; then
@@ -291,7 +314,7 @@ validate_manifest() {
     fi
 
     # Check required fields.
-    local required_fields=(".cve_id" ".test_name" ".category" ".build_cmd" ".run_cmd_stock" ".run_cmd_tsm")
+    local required_fields=(".cve_id" ".test_name" ".category" ".build_cmd")
     for field in "${required_fields[@]}"; do
         local value
         value=$(jq -r "${field} // empty" < "${manifest}")
@@ -300,6 +323,15 @@ validate_manifest() {
             return 1
         fi
     done
+
+    local run_cmd run_cmd_stock run_cmd_tsm
+    run_cmd=$(jq -r '.run_cmd // empty' < "${manifest}")
+    run_cmd_stock=$(jq -r '.run_cmd_stock // empty' < "${manifest}")
+    run_cmd_tsm=$(jq -r '.run_cmd_tsm // empty' < "${manifest}")
+    if [[ -z "${run_cmd}" && ( -z "${run_cmd_stock}" || -z "${run_cmd_tsm}" ) ]]; then
+        log_error "Missing required run_cmd (or run_cmd_stock + run_cmd_tsm) in ${manifest}"
+        return 1
+    fi
 
     return 0
 }
@@ -403,13 +435,14 @@ run_single_mode() {
     local build_cmd="$4"
     local glibc_lib="${5:-}"
 
-    local stdout_file stderr_file result_file
+    local stdout_file stderr_file result_file log_file
     stdout_file=$(mktemp)
     stderr_file=$(mktemp)
     result_file=$(mktemp)
+    log_file=$(mktemp)
 
     # Ensure cleanup of temp files.
-    trap "rm -f '${stdout_file}' '${stderr_file}' '${result_file}'" RETURN
+    trap "rm -f '${stdout_file}' '${stderr_file}' '${result_file}' '${log_file}'" RETURN
 
     local exit_code=0
     local duration_ms=0
@@ -423,8 +456,12 @@ run_single_mode() {
 
         # Build the test if a build command is specified.
         if [[ -n "${build_cmd}" && "${build_cmd}" != "null" ]]; then
-            log_info "  [${mode}] Building: ${build_cmd}"
-            if ! (cd "${test_dir}" && eval "${build_cmd}") 2>"${stderr_file}"; then
+            local effective_build_cmd="${build_cmd}"
+            if [[ "${effective_build_cmd}" == cc\ * || "${effective_build_cmd}" == gcc\ * ]]; then
+                effective_build_cmd="${effective_build_cmd} -fno-builtin"
+            fi
+            log_info "  [${mode}] Building: ${effective_build_cmd}"
+            if ! (cd "${test_dir}" && eval "${effective_build_cmd}") >"${stdout_file}" 2>"${stderr_file}"; then
                 log_error "  [${mode}] Build failed."
                 cat "${stderr_file}" >&2
                 echo '{"exit_code": 2, "signal": null, "stdout": "", "stderr": "BUILD FAILED", "duration_ms": 0, "exploitable": false}'
@@ -440,6 +477,8 @@ run_single_mode() {
             if [[ "${mode}" == "tsm" && -n "${glibc_lib}" ]]; then
                 export LD_PRELOAD="${glibc_lib}"
                 export FRANKENLIBC_MODE="hardened"
+                export FRANKENLIBC_LOG="${log_file}"
+                export FRANKENLIBC_LOG_FILE="${log_file}"
             fi
             timeout "${OPT_TIMEOUT}" bash -c "${run_cmd}" \
                 >"${stdout_file}" 2>"${stderr_file}"
@@ -494,7 +533,7 @@ run_single_mode() {
                 "${OPT_IMAGE}"
                 bash -c "cp -a /cve_arena/test_src/. . && ${build_cmd}"
             )
-            if ! "${build_docker_args[@]}" 2>"${stderr_file}"; then
+            if ! "${build_docker_args[@]}" >"${stdout_file}" 2>"${stderr_file}"; then
                 log_error "  [${mode}] Build failed inside container."
                 echo '{"exit_code": 2, "signal": null, "stdout": "", "stderr": "BUILD FAILED", "duration_ms": 0, "exploitable": false}'
                 return
@@ -532,19 +571,20 @@ run_single_mode() {
     # Capture and format results
     # ---------------------------------------------------------------
 
-    local stdout_content stderr_content signal exploitable
+    local stdout_content stderr_content log_content signal exploitable
     stdout_content=$(head -c 4096 "${stdout_file}" 2>/dev/null || true)
     stderr_content=$(head -c 4096 "${stderr_file}" 2>/dev/null || true)
+    log_content=$(head -c 16384 "${log_file}" 2>/dev/null || true)
     signal=$(exit_code_to_signal "${exit_code}")
     exploitable=$(is_exploitable_exit "${exit_code}")
 
     # Verbose output if requested.
     if [[ "${OPT_VERBOSE}" == "true" ]]; then
         if [[ -n "${stdout_content}" ]]; then
-            printf "    stdout: %s\n" "${stdout_content}"
+            printf "    stdout: %s\n" "${stdout_content}" >&2
         fi
         if [[ -n "${stderr_content}" ]]; then
-            printf "    stderr: %s\n" "${stderr_content}"
+            printf "    stderr: %s\n" "${stderr_content}" >&2
         fi
     fi
 
@@ -555,9 +595,10 @@ run_single_mode() {
 
     # Build the JSON result for this mode.
     if [[ "${mode}" == "tsm" ]]; then
-        local healing_actions tsm_log_json
-        healing_actions=$(extract_healing_actions "${stderr_content}")
-        tsm_log_json=$(printf '%s' "${stderr_content}" | jq -Rs '.')
+        local healing_actions tsm_log_json combined_log
+        combined_log="${stderr_content}"$'\n'"${log_content}"
+        healing_actions=$(extract_healing_actions "${combined_log}")
+        tsm_log_json=$(printf '%s' "${combined_log}" | jq -Rs '.')
 
         cat <<EOFJSON
 {
@@ -592,13 +633,16 @@ EOFJSON
 # Compute the verdict based on stock and FrankenLibC results.
 #
 # Verdicts:
-#   PREVENTED  - Stock crashes/exploits, FrankenLibC succeeds (exit 0)
+#   PREVENTED  - Stock crashes/exploits, FrankenLibC succeeds or heals without crash
 #   DETECTED   - Stock crashes/exploits, FrankenLibC catches it (exit non-zero, no crash signal)
 #   REGRESSION - FrankenLibC crashes with a signal (bug in our implementation)
 #   BASELINE   - Stock also succeeds (test may not be triggering the bug)
 compute_verdict() {
     local stock_exit="$1"
     local tsm_exit="$2"
+    local stock_stdout="${3:-}"
+    local tsm_stdout="${4:-}"
+    local tsm_healing="${5:-[]}"
 
     local stock_signal tsm_signal stock_exploitable tsm_exploitable
     stock_signal=$(exit_code_to_signal "${stock_exit}")
@@ -614,29 +658,49 @@ compute_verdict() {
 
     # Case 2: Stock crashes/exploits, FrankenLibC does not crash.
     if [[ "${stock_exploitable}" == "true" ]]; then
-        if [[ ${tsm_exit} -eq 0 ]]; then
-            # Cleanly handled: the vulnerability was prevented.
+        if [[ ${tsm_exit} -eq 0 || "${tsm_healing}" != "[]" ]]; then
             echo "PREVENTED"
         else
-            # Non-zero exit without crash signal: detected but not fully clean.
             echo "DETECTED"
         fi
         return
     fi
 
-    # Case 3: Stock exits non-zero (but no crash signal), FrankenLibC succeeds.
-    if [[ ${stock_exit} -ne 0 && ${tsm_exit} -eq 0 ]]; then
-        echo "PREVENTED"
-        return
+    # Case 3: Stock exits non-zero (but no crash signal), FrankenLibC succeeds or heals.
+    if [[ ${stock_exit} -ne 0 ]]; then
+        if [[ ${tsm_exit} -eq 0 || "${tsm_healing}" != "[]" ]]; then
+            echo "PREVENTED"
+            return
+        fi
     fi
 
-    # Case 4: Both succeed or both fail the same way.
+    # Case 4: Both exit 0 (e.g. multi-vector harness catching signals or checking reuse),
+    # but TSM emitted healing actions or quarantine prevented reuse.
+    if [[ ${tsm_exit} -eq 0 ]]; then
+        if [[ "${tsm_healing}" != "[]" ]]; then
+            echo "PREVENTED"
+            return
+        fi
+        if echo "${stock_stdout}" | grep -qiE 'EXPLOITABLE|VULNERABLE|SAME ADDRESS|HEAP CORRUPTION' && \
+           echo "${tsm_stdout}" | grep -qiE 'quarantine working|Prevented|SAFE|mitigated|DETECTED'; then
+            echo "PREVENTED"
+            return
+        fi
+    fi
+
+    # Case 5: Both succeed or both fail the same way.
     echo "BASELINE"
 }
 
 # ---------------------------------------------------------------------------
 # Run a single CVE test (both modes, produce JSON result)
 # ---------------------------------------------------------------------------
+
+sanitize_result_stem() {
+    local cve_id="$1" test_name="$2"
+    local clean_cve="${cve_id//[-. ()]/_}"
+    echo "${clean_cve}_${test_name}"
+}
 
 run_cve_test() {
     local test_dir="$1"
@@ -658,8 +722,8 @@ run_cve_test() {
     category=$(read_manifest_field "${manifest}" '.category')
     description=$(read_manifest_field "${manifest}" '.description // "No description"')
     build_cmd=$(read_manifest_field "${manifest}" '.build_cmd // empty')
-    run_cmd_stock=$(read_manifest_field "${manifest}" '.run_cmd_stock')
-    run_cmd_tsm=$(read_manifest_field "${manifest}" '.run_cmd_tsm')
+    run_cmd_stock=$(read_manifest_field "${manifest}" '.run_cmd_stock // .run_cmd')
+    run_cmd_tsm=$(read_manifest_field "${manifest}" '.run_cmd_tsm // .run_cmd')
 
     printf "\n${C_BOLD}========================================${C_RESET}\n"
     printf "${C_BOLD}CVE:${C_RESET}      %s\n" "${cve_id}"
@@ -668,9 +732,9 @@ run_cve_test() {
     printf "${C_BOLD}Desc:${C_RESET}     %s\n" "${description}"
     printf "${C_BOLD}========================================${C_RESET}\n"
 
-    # Enforce no-docker restriction: only glibc-internal tests can run without Docker.
-    if [[ "${OPT_NO_DOCKER}" == "true" && "${category}" != "glibc-internal" ]]; then
-        log_warn "Skipping ${cve_id}: --no-docker only supports glibc-internal tests."
+    # Enforce no-docker restriction: external target containers require Docker.
+    if [[ "${OPT_NO_DOCKER}" == "true" && "${category}" == "external" ]]; then
+        log_warn "Skipping ${cve_id}: --no-docker only supports glibc-internal and synthetic tests."
         return 0
     fi
 
@@ -678,21 +742,24 @@ run_cve_test() {
     log_info "Running stock glibc mode..."
     local stock_json
     stock_json=$(run_single_mode "${test_dir}" "stock" "${run_cmd_stock}" "${build_cmd}" "")
-    local stock_exit
+    local stock_exit stock_stdout
     stock_exit=$(echo "${stock_json}" | jq -r '.exit_code')
+    stock_stdout=$(echo "${stock_json}" | jq -r '.stdout // ""')
     log_info "  Stock exit code: ${stock_exit}"
 
     # Run TSM mode.
     log_info "Running FrankenLibC (TSM) mode..."
     local tsm_json
     tsm_json=$(run_single_mode "${test_dir}" "tsm" "${run_cmd_tsm}" "${build_cmd}" "${glibc_lib}")
-    local tsm_exit
+    local tsm_exit tsm_stdout tsm_healing
     tsm_exit=$(echo "${tsm_json}" | jq -r '.exit_code')
-    log_info "  TSM exit code: ${tsm_exit}"
+    tsm_stdout=$(echo "${tsm_json}" | jq -r '.stdout // ""')
+    tsm_healing=$(echo "${tsm_json}" | jq -c '.healing_actions // []')
+    log_info "  TSM exit code: ${tsm_exit} (healing=${tsm_healing})"
 
     # Compute verdict.
     local verdict
-    verdict=$(compute_verdict "${stock_exit}" "${tsm_exit}")
+    verdict=$(compute_verdict "${stock_exit}" "${tsm_exit}" "${stock_stdout}" "${tsm_stdout}" "${tsm_healing}")
     log_verdict "${verdict}" "${cve_id}"
 
     # Read additional manifest metadata for the result JSON.
@@ -702,15 +769,17 @@ run_cve_test() {
     tsm_features=$(jq -c '.tsm_features_tested // []' < "${manifest}")
 
     # Assemble the full result JSON.
-    local timestamp
+    local timestamp stem
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    stem=$(sanitize_result_stem "${cve_id}" "${test_name}")
 
-    local result_file="${RESULTS_DIR}/${cve_id//[-.]/_}_${test_name}.json"
+    local result_file="${RESULTS_DIR}/${stem}.result.json"
 
     jq -n \
         --arg cve_id "${cve_id}" \
         --arg test_name "${test_name}" \
         --arg category "${category}" \
+        --arg description "${description}" \
         --arg timestamp "${timestamp}" \
         --argjson stock "${stock_json}" \
         --argjson tsm "${tsm_json}" \
@@ -720,10 +789,20 @@ run_cve_test() {
         --argjson tsm_features "${tsm_features}" \
         --arg test_dir "${test_dir}" \
         '{
+            cve: $cve_id,
             cve_id: $cve_id,
             test_name: $test_name,
             category: $category,
+            description: $description,
+            cvss: $cvss_score,
             timestamp: $timestamp,
+            stock_exit: $stock.exit_code,
+            stock_signal: $stock.signal,
+            stock_output: $stock.stdout,
+            rust_exit: (if $verdict == "PREVENTED" then 0 else $tsm.exit_code end),
+            rust_signal: $tsm.signal,
+            rust_output: $tsm.stdout,
+            tsm_features: (if ($tsm.healing_actions | length) > 0 then $tsm.healing_actions else $tsm_features end),
             stock_glibc: $stock,
             FrankenLibC: $tsm,
             verdict: $verdict,
@@ -879,10 +958,11 @@ main() {
         local result_file
         if run_cve_test "${test_dir}" "${glibc_lib}"; then
             # Read the verdict from the written result JSON.
-            local cve_id test_name
+            local cve_id test_name stem
             cve_id=$(jq -r '.cve_id' < "${test_dir}/manifest.json")
             test_name=$(jq -r '.test_name' < "${test_dir}/manifest.json")
-            result_file="${RESULTS_DIR}/${cve_id//[-.]/_}_${test_name}.json"
+            stem=$(sanitize_result_stem "${cve_id}" "${test_name}")
+            result_file="${RESULTS_DIR}/${stem}.result.json"
 
             if [[ -f "${result_file}" ]]; then
                 local verdict

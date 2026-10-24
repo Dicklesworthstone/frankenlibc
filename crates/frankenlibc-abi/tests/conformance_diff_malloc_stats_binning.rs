@@ -101,7 +101,7 @@ fn every_size_class_allocates_and_frees_with_a_consistent_bin() {
     // actually reached — all NUM_SIZE_CLASSES small classes AND the large bin,
     // which is the one the fold does NOT apply to and must therefore still work.
     use frankenlibc_core::malloc::size_class::{NUM_SIZE_CLASSES, small_bin_index};
-    let mut seen = vec![false; NUM_SIZE_CLASSES + 1];
+    let mut seen = [false; NUM_SIZE_CLASSES + 1];
     for &size in &sizes {
         let bin = small_bin_index(size).map_or(NUM_SIZE_CLASSES, |c| c.get());
         seen[bin] = true;

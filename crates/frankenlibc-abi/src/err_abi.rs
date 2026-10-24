@@ -137,7 +137,13 @@ fn proc_comm_progname() -> Option<Vec<u8>> {
 /// layer remains responsible for: rendering the printf template +
 /// args, looking up the errno string, and atomically writing the
 /// result to fd 2.
-fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_errno: bool) {
+fn write_err_message(
+    symbol: &'static str,
+    fmt_bytes: &[u8],
+    arg_buf: &[u64],
+    arg_count: usize,
+    with_errno: bool,
+) {
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     let progname = get_progname();
 
@@ -145,7 +151,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
     let message: Vec<u8> = if fmt_bytes.is_empty() {
         Vec::new()
     } else {
-        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), arg_count) }
+        unsafe { super::stdio_abi::render_printf(symbol, fmt_bytes, arg_buf.as_ptr(), arg_count) }
     };
 
     // Resolve errno → byte string (lifetime is &'static so we can pass
@@ -158,8 +164,10 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
 
     let out = frankenlibc_core::err::format_err_message(&progname, &message, errno_msg_opt);
 
+    // Not a cancellation point: a forced unwind must not start inside these
+    // "C" frames holding `out` (glibc may act here; POSIX lets it not).
     unsafe {
-        crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
+        crate::unistd_abi::sys_write_fd(2, out.as_ptr() as *const c_void, out.len());
         crate::errno_abi::set_abi_errno(saved_errno);
     }
 }
@@ -167,31 +175,43 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
 /// Variant of `write_err_message` for the BSD `*c` family (`warnc`,
 /// `errc`, etc.) that appends the strerror of an explicitly-supplied
 /// error code instead of consulting the global errno.
-fn write_err_message_with_code(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, code: c_int) {
+fn write_err_message_with_code(
+    symbol: &'static str,
+    fmt_bytes: &[u8],
+    arg_buf: &[u64],
+    arg_count: usize,
+    code: c_int,
+) {
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     let progname = get_progname();
 
     let message: Vec<u8> = if fmt_bytes.is_empty() {
         Vec::new()
     } else {
-        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), arg_count) }
+        unsafe { super::stdio_abi::render_printf(symbol, fmt_bytes, arg_buf.as_ptr(), arg_count) }
     };
 
     let errno_msg = strerror_bytes(code);
 
     let out = frankenlibc_core::err::format_err_message(&progname, &message, Some(errno_msg));
 
+    // Not a cancellation point, as in write_err_message.
     unsafe {
-        crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
+        crate::unistd_abi::sys_write_fd(2, out.as_ptr() as *const c_void, out.len());
         crate::errno_abi::set_abi_errno(saved_errno);
     }
 }
 
 /// va_list variant: parse + extract args from `ap`, then write with
 /// the explicit code.
-fn vformat_and_write_with_code(fmt: *const c_char, ap: *mut c_void, code: c_int) {
+fn vformat_and_write_with_code(
+    symbol: &'static str,
+    fmt: *const c_char,
+    ap: *mut c_void,
+    code: c_int,
+) {
     let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
-        write_err_message_with_code(&[], &[], 0, code);
+        write_err_message_with_code(symbol, &[], &[], 0, code);
         return;
     };
     use frankenlibc_core::stdio::printf::parse_format_string;
@@ -201,7 +221,7 @@ fn vformat_and_write_with_code(fmt: *const c_char, ap: *mut c_void, code: c_int)
     unsafe {
         super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count);
     }
-    write_err_message_with_code(&fmt_bytes, &arg_buf, extract_count, code);
+    write_err_message_with_code(symbol, &fmt_bytes, &arg_buf, extract_count, code);
 }
 
 /// Convert errno to a human-readable byte string.
@@ -324,9 +344,9 @@ macro_rules! extract_err_args_registers {
 
 /// Parse format string and extract args from a va_list pointer into a buffer,
 /// then call `write_err_message`.
-fn vformat_and_write(fmt: *const c_char, ap: *mut c_void, with_errno: bool) {
+fn vformat_and_write(symbol: &'static str, fmt: *const c_char, ap: *mut c_void, with_errno: bool) {
     let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
-        write_err_message(&[], &[], 0, with_errno);
+        write_err_message(symbol, &[], &[], 0, with_errno);
         return;
     };
     use frankenlibc_core::stdio::printf::parse_format_string;
@@ -336,7 +356,7 @@ fn vformat_and_write(fmt: *const c_char, ap: *mut c_void, with_errno: bool) {
     unsafe {
         super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count);
     }
-    write_err_message(&fmt_bytes, &arg_buf, extract_count, with_errno);
+    write_err_message(symbol, &fmt_bytes, &arg_buf, extract_count, with_errno);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,11 +367,11 @@ fn vformat_and_write(fmt: *const c_char, ap: *mut c_void, with_errno: bool) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn warn(fmt: *const c_char, mut args: ...) {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, true);
+        write_err_message("warn", &[], &[], 0, true);
         return;
     }
     let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
-        write_err_message(&[], &[], 0, true);
+        write_err_message("warn", &[], &[], 0, true);
         return;
     };
     use frankenlibc_core::stdio::printf::parse_format_string;
@@ -359,17 +379,17 @@ pub unsafe extern "C" fn warn(fmt: *const c_char, mut args: ...) {
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    write_err_message(&fmt_bytes, &arg_buf, extract_count, true);
+    write_err_message("warn", &fmt_bytes, &arg_buf, extract_count, true);
 }
 
 /// BSD `vwarn` — va_list version of `warn`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vwarn(fmt: *const c_char, ap: *mut c_void) {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, true);
+        write_err_message("vwarn", &[], &[], 0, true);
         return;
     }
-    vformat_and_write(fmt, ap, true);
+    vformat_and_write("vwarn", fmt, ap, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -380,11 +400,11 @@ pub unsafe extern "C" fn vwarn(fmt: *const c_char, ap: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn warnx(fmt: *const c_char, mut args: ...) {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, false);
+        write_err_message("warnx", &[], &[], 0, false);
         return;
     }
     let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
-        write_err_message(&[], &[], 0, false);
+        write_err_message("warnx", &[], &[], 0, false);
         return;
     };
     use frankenlibc_core::stdio::printf::parse_format_string;
@@ -392,17 +412,17 @@ pub unsafe extern "C" fn warnx(fmt: *const c_char, mut args: ...) {
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    write_err_message(&fmt_bytes, &arg_buf, extract_count, false);
+    write_err_message("warnx", &fmt_bytes, &arg_buf, extract_count, false);
 }
 
 /// BSD `vwarnx` — va_list version of `warnx`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vwarnx(fmt: *const c_char, ap: *mut c_void) {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, false);
+        write_err_message("vwarnx", &[], &[], 0, false);
         return;
     }
-    vformat_and_write(fmt, ap, false);
+    vformat_and_write("vwarnx", fmt, ap, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +433,7 @@ pub unsafe extern "C" fn vwarnx(fmt: *const c_char, ap: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> ! {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, true);
+        write_err_message("err", &[], &[], 0, true);
     } else {
         if let Some(fmt_bytes) = unsafe { read_format_bytes(fmt) } {
             use frankenlibc_core::stdio::printf::parse_format_string;
@@ -421,9 +441,9 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> 
             let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
             let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
             extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-            write_err_message(&fmt_bytes, &arg_buf, extract_count, true);
+            write_err_message("err", &fmt_bytes, &arg_buf, extract_count, true);
         } else {
-            write_err_message(&[], &[], 0, true);
+            write_err_message("err", &[], &[], 0, true);
         }
     }
     invoke_exit_hook(eval);
@@ -434,9 +454,9 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) -> ! {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, true);
+        write_err_message("verr", &[], &[], 0, true);
     } else {
-        vformat_and_write(fmt, ap, true);
+        vformat_and_write("verr", fmt, ap, true);
     }
     invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
@@ -450,7 +470,7 @@ pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) -> ! {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, false);
+        write_err_message("errx", &[], &[], 0, false);
     } else {
         if let Some(fmt_bytes) = unsafe { read_format_bytes(fmt) } {
             use frankenlibc_core::stdio::printf::parse_format_string;
@@ -458,9 +478,9 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) ->
             let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
             let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
             extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-            write_err_message(&fmt_bytes, &arg_buf, extract_count, false);
+            write_err_message("errx", &fmt_bytes, &arg_buf, extract_count, false);
         } else {
-            write_err_message(&[], &[], 0, false);
+            write_err_message("errx", &[], &[], 0, false);
         }
     }
     invoke_exit_hook(eval);
@@ -471,9 +491,9 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) ->
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void) -> ! {
     if fmt.is_null() {
-        write_err_message(&[], &[], 0, false);
+        write_err_message("verrx", &[], &[], 0, false);
     } else {
-        vformat_and_write(fmt, ap, false);
+        vformat_and_write("verrx", fmt, ap, false);
     }
     invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
@@ -490,11 +510,11 @@ pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn warnc(code: c_int, fmt: *const c_char, mut args: ...) {
     if fmt.is_null() {
-        write_err_message_with_code(&[], &[], 0, code);
+        write_err_message_with_code("warnc", &[], &[], 0, code);
         return;
     }
     let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
-        write_err_message_with_code(&[], &[], 0, code);
+        write_err_message_with_code("warnc", &[], &[], 0, code);
         return;
     };
     use frankenlibc_core::stdio::printf::parse_format_string;
@@ -502,17 +522,17 @@ pub unsafe extern "C" fn warnc(code: c_int, fmt: *const c_char, mut args: ...) {
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    write_err_message_with_code(&fmt_bytes, &arg_buf, extract_count, code);
+    write_err_message_with_code("warnc", &fmt_bytes, &arg_buf, extract_count, code);
 }
 
 /// BSD `vwarnc` — va_list version of `warnc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vwarnc(code: c_int, fmt: *const c_char, ap: *mut c_void) {
     if fmt.is_null() {
-        write_err_message_with_code(&[], &[], 0, code);
+        write_err_message_with_code("vwarnc", &[], &[], 0, code);
         return;
     }
-    vformat_and_write_with_code(fmt, ap, code);
+    vformat_and_write_with_code("vwarnc", fmt, ap, code);
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +545,7 @@ pub unsafe extern "C" fn vwarnc(code: c_int, fmt: *const c_char, ap: *mut c_void
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn errc(eval: c_int, code: c_int, fmt: *const c_char, mut args: ...) -> ! {
     if fmt.is_null() {
-        write_err_message_with_code(&[], &[], 0, code);
+        write_err_message_with_code("errc", &[], &[], 0, code);
     } else {
         if let Some(fmt_bytes) = unsafe { read_format_bytes(fmt) } {
             use frankenlibc_core::stdio::printf::parse_format_string;
@@ -533,9 +553,9 @@ pub unsafe extern "C" fn errc(eval: c_int, code: c_int, fmt: *const c_char, mut 
             let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
             let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
             extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-            write_err_message_with_code(&fmt_bytes, &arg_buf, extract_count, code);
+            write_err_message_with_code("errc", &fmt_bytes, &arg_buf, extract_count, code);
         } else {
-            write_err_message_with_code(&[], &[], 0, code);
+            write_err_message_with_code("errc", &[], &[], 0, code);
         }
     }
     invoke_exit_hook(eval);
@@ -546,9 +566,9 @@ pub unsafe extern "C" fn errc(eval: c_int, code: c_int, fmt: *const c_char, mut 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn verrc(eval: c_int, code: c_int, fmt: *const c_char, ap: *mut c_void) -> ! {
     if fmt.is_null() {
-        write_err_message_with_code(&[], &[], 0, code);
+        write_err_message_with_code("verrc", &[], &[], 0, code);
     } else {
-        vformat_and_write_with_code(fmt, ap, code);
+        vformat_and_write_with_code("verrc", fmt, ap, code);
     }
     invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)

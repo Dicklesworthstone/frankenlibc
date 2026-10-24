@@ -5,8 +5,13 @@
 # any non-zero/timeout outcome.
 set -euo pipefail
 
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" ) ]]; then
+  echo "usage: $0 [--performance-only]" >&2
+  exit 2
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_ROOT="${ROOT}/target/ld_preload_smoke"
+OUT_ROOT="${FRANKENLIBC_SMOKE_OUT_ROOT:-${ROOT}/target/ld_preload_smoke}"
 RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 case "${RUN_ID}" in
   ""|*[!A-Za-z0-9._-]*)
@@ -81,7 +86,12 @@ for candidate in "${LIB_CANDIDATES[@]}"; do
   fi
 done
 
-mkdir -p "${RUN_DIR}" "${BIN_DIR}"
+mkdir -p "${OUT_ROOT}"
+if ! mkdir "${RUN_DIR}"; then
+  echo "ld_preload_smoke: a fresh run directory is required: ${RUN_DIR}" >&2
+  exit 2
+fi
+mkdir -p "${BIN_DIR}"
 : > "${TRACE_FILE}"
 printf 'mode\tlabel\tstatus\tworkload\tstartup_path\tfailure_signature\tsignature_guard_triggered\tparity_required\tparity_pass\tperf_required\tperf_pass\tlatency_ratio_ppm\tbaseline_rc\tpreload_rc\tstdout_match\tstderr_match\tbaseline_latency_ns\tpreload_latency_ns\tvalgrind_checked\tvalgrind_pass\n' > "${CASE_TSV}"
 
@@ -103,6 +113,20 @@ fi
 if [[ -z "${LIB_PATH}" ]]; then
   echo "ld_preload_smoke: could not locate libfrankenlibc_abi.so" >&2
   exit 2
+fi
+
+run_deployed_overhead() {
+  # The same provider-pinned deployed runner is used by the bench crate.
+  # These hardened budgets are mandatory, independent of ENFORCE_PERF_MODES
+  # (which controls the older per-command startup timings below).
+  python3 "${ROOT}/scripts/check_membrane_access.py" "${LIB_PATH}" \
+    --benchmark --output "${RUN_DIR}/deployed-overhead"
+}
+
+if [[ "${1:-}" == "--performance-only" ]]; then
+  # Scoped invocation: never label it a pass of the whole functional corpus.
+  run_deployed_overhead
+  exit 0
 fi
 
 if ! command -v cc >/dev/null 2>&1; then
@@ -290,6 +314,14 @@ DLOPEN_CTOR_THREADS_BIN="${BIN_DIR}/fixture_dlopen_ctor_threads"
 DLOPEN_CTOR_THREADS_LIB="${BIN_DIR}/libfixture_dlopen_ctor_threads.so"
 cc -O1 -fPIC -shared -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads_lib.c" -o "${DLOPEN_CTOR_THREADS_LIB}"
 cc -O1 -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads.c" -o "${DLOPEN_CTOR_THREADS_BIN}" -ldl
+DLCLOSE_TLS_SLOT_FREE_BIN="${BIN_DIR}/fixture_dlclose_tls_slot_free"
+DLCLOSE_TLS_SLOT_FREE_LIB="${BIN_DIR}/libfixture_dlclose_tls_slot_free.so"
+cc -O1 -fPIC -shared "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free_lib.c" -o "${DLCLOSE_TLS_SLOT_FREE_LIB}" -lm
+cc -O1 "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free.c" -o "${DLCLOSE_TLS_SLOT_FREE_BIN}" -ldl
+LIBM_SPECIAL_VALUES_BIN="${BIN_DIR}/fixture_libm_special_values"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_libm_special_values.c" -o "${LIBM_SPECIAL_VALUES_BIN}" -lm -ldl
+LIBM_F32_SAMPLE_BIN="${BIN_DIR}/fixture_libm_f32_sample"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_libm_f32_sample.c" -o "${LIBM_F32_SAMPLE_BIN}" -lm -ldl
 GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
 cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
 RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
@@ -298,6 +330,8 @@ FLOCKFILE_THREADS_BIN="${BIN_DIR}/fixture_flockfile_threads"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_flockfile_threads.c" -o "${FLOCKFILE_THREADS_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
+PTHREAD_MAIN_HANDLE_BIN="${BIN_DIR}/fixture_pthread_main_handle"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_main_handle.c" -o "${PTHREAD_MAIN_HANDLE_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
 cc -O2 -D_FORTIFY_SOURCE=2 "${ROOT}/tests/integration/fixture_setjmp_guard.c" -o "${SETJMP_GUARD_BIN}"
 ARGP_BIN="${BIN_DIR}/fixture_argp"
@@ -603,7 +637,7 @@ run_case() {
   local baseline_start_ns
   baseline_start_ns="$(date +%s%N)"
   set +e
-  timeout "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
   local baseline_rc=$?
   set -e
   local baseline_end_ns
@@ -613,7 +647,7 @@ run_case() {
   local preload_start_ns
   preload_start_ns="$(date +%s%N)"
   set +e
-  timeout "${TIMEOUT_SECONDS}" \
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
     env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
     > "${preload_stdout}" 2> "${preload_stderr}"
   local preload_rc=$?
@@ -682,7 +716,7 @@ run_case() {
           # execve()s the real target. With the default --trace-children=no valgrind
           # does not follow that exec, so the preloaded target would run
           # un-instrumented and this gate would inspect only `env` (always clean).
-          timeout "${TIMEOUT_SECONDS}" \
+          timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
             valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet \
             --trace-children=yes \
             env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
@@ -905,6 +939,15 @@ EOF
 
   run_optional_case "busybox" "${mode}" "busybox_help" busybox --help || mode_failed=1
   run_optional_case "sqlite3" "${mode}" "sqlite_memory_select" sqlite3 :memory: "select 41 + 1;" || mode_failed=1
+  # rustc statically links jemalloc, which calls readlink("/etc/malloc.conf")
+  # while holding its init lock; fl's post-op telemetry built the runtime
+  # kernel there, allocating through jemalloc's malloc: deadlock.
+  # Hardened still deadlocks: the membrane's per-thread validation cache is
+  # created lazily through the process calloc from inside jemalloc's
+  # memset callers.
+  if [[ "${mode}" == "strict" ]]; then
+    run_optional_case "rustc" "${mode}" "rustc_version_static_jemalloc" rustc --version || mode_failed=1
+  fi
   run_optional_case "redis-cli" "${mode}" "redis_cli_version" redis-cli --version || mode_failed=1
   run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
   # Its getopt_long table lacks the NULL terminator: works only if main's
@@ -1057,6 +1100,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   # Thread cancellation at blocking points + cleanup handlers, static condvars
   # (bd-rc0923-epic-eeuy4f.24).
   run_corpus_case "${mode}" "pthread_cancel" "${PTHREAD_CANCEL_BIN}" || mode_failed=1
+  # Another thread's calls on the main thread's pthread_t (bd-5aw3u6).
+  run_corpus_case "${mode}" "pthread_main_handle" "${PTHREAD_MAIN_HANDLE_BIN}" || mode_failed=1
   # Cancellation as a C++ forced unwind: destructors, abi::__forced_unwind.
   if [[ -n "${CANCEL_UNWIND_BIN}" ]]; then
     run_corpus_case "${mode}" "cxx_cancel_forced_unwind" "${CANCEL_UNWIND_BIN}" || mode_failed=1
@@ -1067,10 +1112,15 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "pthread_pshared_ipc" "${PTHREAD_PSHARED_IPC_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "dlopen_ctor_threads" "${DLOPEN_CTOR_THREADS_BIN}" "${DLOPEN_CTOR_THREADS_LIB}" || mode_failed=1
+  run_corpus_case "${mode}" "dlclose_tls_slot_free" "${DLCLOSE_TLS_SLOT_FREE_BIN}" "${DLCLOSE_TLS_SLOT_FREE_LIB}" || mode_failed=1
   # strncpy guard page, fstatat NULL, popen with stdio closed, glob slash
   # runs, UTF-8 fnmatch, huge printf fields, printf EINVAL/ENOMEM (found by
   # a gnulib testdir).
   run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
+  # libm NaN/inf/domain-error results and FE_INVALID, double and float.
+  run_corpus_case "${mode}" "libm_special_values" "${LIBM_SPECIAL_VALUES_BIN}" || mode_failed=1
+  # Float libm results vs glibc's correctly rounded f32 functions (bd-li7fb3).
+  run_corpus_case "${mode}" "libm_f32_sample" "${LIBM_F32_SAMPLE_BIN}" || mode_failed=1
   # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
   run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
   # flockfile(stdout) + putc from several threads: flockfile held the stream
@@ -1098,13 +1148,23 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1
+  # getent initgroups sizes its list through glibc's private
+  # __libc_dynarray_resize and the getgrouplist(user, g, NULL, &n) size query;
+  # both failed under fl ("Could not allocate group list").
+  run_corpus_case "${mode}" "getent_initgroups" bash -c 'LC_ALL=C getent initgroups root daemon nobody 2>&1; echo "rc=$?"' || mode_failed=1
+  # gencat creates, then merges into, a catalog through glibc's private
+  # __open_catalog and __libc_scratch_buffer_set_array_size.
+  # Keep both catalogs and inputs beside the captured case output.
+  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d "$1/gencat.XXXXXX") && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat' smoke-gencat "${RUN_DIR}/${mode}/gencat_create_merge" || mode_failed=1
   # /etc/hosts semantics: every address of the family, aliases merged across
   # lines (bd-rc0923-epic-eeuy4f.21).
   run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1
   run_corpus_case "${mode}" "getent_ahosts_localhost" /usr/bin/env LC_ALL=C getent ahosts localhost || mode_failed=1
-  # Reverse and own-hostname lookups through nsswitch hosts: (bd-rc0923-epic-eeuy4f.19).
+  # Reverse, own-hostname, curl and ssh lookups through nsswitch hosts: (bd-rc0923-epic-eeuy4f.19).
   run_corpus_case "${mode}" "getent_hosts_reverse_loopback" /usr/bin/env LC_ALL=C getent hosts 127.0.0.1 || mode_failed=1
   run_corpus_case "${mode}" "getent_ahostsv4_hostname" /usr/bin/env LC_ALL=C getent ahostsv4 "$(hostname)" || mode_failed=1
+  run_optional_case "curl" "${mode}" "curl_file_localhost" curl -fsS "file://localhost${tree}/a.txt" || mode_failed=1
+  run_optional_case "ssh" "${mode}" "ssh_canonicalize_localhost" bash -c "LC_ALL=C ssh -G -o CanonicalizeHostname=always localhost | grep -E '^(hostname|port) '" || mode_failed=1
   run_corpus_case "${mode}" "getent_help" /usr/bin/env LC_ALL=C getent --help || mode_failed=1
   # Exits 64 (EX_USAGE); the status is part of the compared output.
   run_corpus_case "${mode}" "getent_usage_error" bash -c 'LC_ALL=C getent -z passwd 2>&1; echo "rc=$?"' || mode_failed=1
@@ -1138,7 +1198,7 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
     run_corpus_case "${mode}" "cxx_callback_unwind" "${CALLBACK_UNWIND_BIN}" || mode_failed=1
   fi
   if [[ "${NONTRIVIAL_BIN}" == "python3" ]]; then
-    run_corpus_case "${mode}" "python3_c_extensions" python3 -c "import sqlite3, ssl, ctypes, decimal, json, hashlib, zlib; print(sqlite3.connect(':memory:').execute('select 6*7').fetchone()[0], hashlib.sha256(b'x').hexdigest()[:8], decimal.Decimal('1.1') + decimal.Decimal('2.2'))" || mode_failed=1
+    run_corpus_case "${mode}" "python3_c_extensions" python3 -c "import sqlite3, ssl, ctypes, decimal, json, hashlib, readline, zlib; print(sqlite3.connect(':memory:').execute('select 6*7').fetchone()[0], hashlib.sha256(b'x').hexdigest()[:8], decimal.Decimal('1.1') + decimal.Decimal('2.2'))" || mode_failed=1
     run_corpus_case "${mode}" "python3_subprocess" python3 -c "import subprocess; print(subprocess.run(['echo', 'sub'], capture_output=True, text=True).stdout.strip())" || mode_failed=1
   fi
 
@@ -1170,10 +1230,17 @@ emit_trace "info" "suite_start" "all" "all" "running" \
 overall_failed=0
 run_suite_for_mode strict || overall_failed=1
 run_suite_for_mode hardened || overall_failed=1
+deployed_overhead_exit=0
+run_deployed_overhead || deployed_overhead_exit=$?
+if [[ "${deployed_overhead_exit}" -ne 0 ]]; then
+  overall_failed=1
+fi
 emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && echo "pass" || echo "fail")" \
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 
 export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT="${deployed_overhead_exit}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT="${RUN_DIR}/deployed-overhead/benchmark.json"
 export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
 export LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES}"
 export LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES}"
@@ -1288,6 +1355,13 @@ payload = {
         if m.strip()
     ],
     "perf_ratio_max_ppm": int(env["LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM"]),
+    "deployed_overhead": {
+        "required": True,
+        "modes": ["strict", "hardened"],
+        "exit_code": int(env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"]),
+        "passed": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"] == "0",
+        "report": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT"],
+    },
     "valgrind_policy": env["LD_PRELOAD_SMOKE_VALGRIND_POLICY"],
     "summary": {
         "total_cases": len(cases),

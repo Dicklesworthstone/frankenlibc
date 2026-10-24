@@ -24,8 +24,22 @@ ARTIFACT_INDEX="${RUN_DIR}/artifact_index.json"
 TRACE_SEQ=0
 FIXTURE_FILTER="${FIXTURE_FILTER:-fixture_*.c}"
 SPEC="${ROOT}/tests/conformance/c_fixture_spec.json"
+# Optional command prefix for each fixture run, e.g. "qemu-x86_64 -cpu Nehalem"
+# to run the suite on an emulated CPU without AVX (bd-rc0923-epic-eeuy4f.13).
+# The emulator must be statically linked: LD_PRELOAD is set for the whole
+# command and has to reach the guest, not the emulator.
+FIXTURE_RUNNER="${FIXTURE_RUNNER:-}"
+read -r -a RUNNER_ARGV <<< "${FIXTURE_RUNNER}"
 
 LIB_CANDIDATES=()
+# An explicit library wins (scripts/check_baseline_isa.sh runs a given artifact).
+if [[ -n "${FRANKENLIBC_LIB:-}" ]]; then
+  if [[ ! -f "${FRANKENLIBC_LIB}" ]]; then
+    echo "c_fixture_suite: FRANKENLIBC_LIB=${FRANKENLIBC_LIB} does not exist" >&2
+    exit 2
+  fi
+  LIB_CANDIDATES+=("${FRANKENLIBC_LIB}")
+fi
 # Honour caller-supplied CARGO_TARGET_DIR (bd-gilq3).
 if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
   LIB_CANDIDATES+=(
@@ -116,6 +130,7 @@ echo "lib=${LIB_PATH}"
 echo "timeout=${TIMEOUT_SECONDS}s"
 echo "bead_id=${BEAD_ID}"
 echo "fixture_filter=${FIXTURE_FILTER}"
+echo "fixture_runner=${FIXTURE_RUNNER:-native}"
 echo ""
 
 # Compile all fixtures
@@ -146,6 +161,66 @@ if [[ "${#matched_sources[@]}" -eq 0 ]]; then
 fi
 
 for src in "${matched_sources[@]}"; do
+  if [[ "$(basename "${src}")" != "fixture_hardened_first_heal.c" ]]; then
+    continue
+  fi
+  if ! command -v objdump >/dev/null 2>&1; then
+    echo "c_fixture_suite: objdump is required for the signal-trampoline ordering gate" >&2
+    exit 2
+  fi
+  python3 - "${LIB_PATH}" "${RUN_DIR}/signal_trampoline_order.txt" <<'PY'
+import pathlib
+import re
+import subprocess
+import sys
+
+library = pathlib.Path(sys.argv[1])
+report_path = pathlib.Path(sys.argv[2])
+result = subprocess.run(
+    ["objdump", "-d", "-C", "--no-show-raw-insn", str(library)],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+if result.returncode != 0:
+    raise SystemExit(f"objdump failed for {library}: {result.stderr.strip()}")
+
+required = (
+    "frankenlibc_abi::signal_abi::signal_handler_trampoline",
+    "frankenlibc_abi::signal_abi::signal_siginfo_trampoline",
+)
+first_calls = {}
+current = None
+for line in result.stdout.splitlines():
+    header = re.match(r"^[0-9a-fA-F]+ <(.+)>:$", line)
+    if header:
+        symbol = header.group(1)
+        current = next((name for name in required if symbol.startswith(name)), None)
+        continue
+    if current is not None and re.search(r"\b(?:callq?|bl)\b", line):
+        first_calls.setdefault(current, line.strip())
+        current = None
+
+errors = []
+for symbol in required:
+    call = first_calls.get(symbol)
+    if call is None:
+        errors.append(f"{symbol}: no call instruction found")
+    elif "malloc_abi::enter_signal_handler_alloc_scope" not in call:
+        errors.append(f"{symbol}: first call does not install signal marker: {call}")
+
+report_lines = [
+    f"library={library}",
+    *(f"{symbol}: {first_calls.get(symbol, 'MISSING')}" for symbol in required),
+]
+report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+if errors:
+    raise SystemExit("; ".join(errors))
+print("[OK] signal trampolines install allocator marker before TLS-resolving calls")
+PY
+done
+
+for src in "${matched_sources[@]}"; do
   name="$(basename "${src}" .c)"
   name="${name%.cpp}"
   bin="${BIN_DIR}/${name}"
@@ -161,6 +236,10 @@ for src in "${matched_sources[@]}"; do
   elif [[ "${name}" == "fixture_math" ]]; then
     ldflags="-lm"
   fi
+  if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
+    cflags+=" -fno-builtin-strlen"
+    ldflags+=" -Wl,-z,now"
+  fi
 
   if "${compiler}" ${cflags} "${src}" -o "${bin}" ${ldflags} 2>"${RUN_DIR}/${name}_compile.log"; then
     echo "[OK] ${name}"
@@ -168,6 +247,17 @@ for src in "${matched_sources[@]}"; do
   else
     echo "[FAIL] ${name} (compile error)"
     compile_fails=$((compile_fails + 1))
+  fi
+  if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
+    injector="${BIN_DIR}/${name}_fork_signal_injector.so"
+    if cc -O2 -Wall -Wextra -fPIC -shared -DFRANKENLIBC_FORK_SIGNAL_INJECTOR \
+      "${src}" -o "${injector}" -ldl -pthread \
+      2>"${RUN_DIR}/${name}_fork_signal_injector_compile.log"; then
+      echo "[OK] ${name}_fork_signal_injector"
+    else
+      echo "[FAIL] ${name}_fork_signal_injector (compile error)"
+      compile_fails=$((compile_fails + 1))
+    fi
   fi
 done
 
@@ -183,13 +273,245 @@ passes=0
 fails=0
 total=0
 
+validate_runtime_log() {
+  local log_path="$1"
+  local fixture_name="$2"
+  local mode="$3"
+
+  python3 - "${ROOT}" "${log_path}" "${fixture_name}" "${mode}" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+log_path = pathlib.Path(sys.argv[2])
+fixture_name = sys.argv[3]
+mode = sys.argv[4]
+sys.path.insert(0, str(root / "scripts/gentoo"))
+
+from log_parser import LogParser  # noqa: E402
+from log_validator import LogValidator  # noqa: E402
+
+entries = list(LogParser(strict=True).parse_file(log_path))
+if not entries:
+    raise SystemExit("runtime log is empty")
+issues = LogValidator().validate(entries)
+if issues:
+    rendered = "; ".join(f"line {issue.line}: {issue.message}" for issue in issues)
+    raise SystemExit(f"runtime log validation failed: {rendered}")
+if not any(entry.event == "exit_summary" for entry in entries):
+    raise SystemExit("runtime log is missing exit_summary")
+if fixture_name == "fixture_hardened_first_heal":
+    before_path = pathlib.Path(f"{log_path}.pre_fork")
+    if not before_path.is_file():
+        raise SystemExit("runtime log fork probe is missing the pre-fork inode")
+    before_entries = list(LogParser(strict=True).parse_file(before_path))
+    before_issues = LogValidator().validate(before_entries)
+    if before_issues:
+        rendered = "; ".join(
+            f"line {issue.line}: {issue.message}" for issue in before_issues
+        )
+        raise SystemExit(f"pre-fork runtime log validation failed: {rendered}")
+    child_pids = {entry.pid for entry in entries if entry.pid is not None}
+    parent_pids = {entry.pid for entry in before_entries if entry.pid is not None}
+    if len(child_pids) != 1 or len(parent_pids) != 1:
+        raise SystemExit(
+            f"fork probe expected one child pid and one parent pid; "
+            f"child={sorted(child_pids)} parent={sorted(parent_pids)}"
+        )
+    if not child_pids.isdisjoint(parent_pids):
+        raise SystemExit(
+            "fork child kept the parent's inherited runtime-log descriptor "
+            "instead of reopening the rotated path"
+        )
+    all_entries = entries + before_entries
+    for label, stream_entries in (("child", entries), ("parent", before_entries)):
+        sequences = [entry.raw.get("seq") for entry in stream_entries]
+        if any(type(seq) is not int or seq <= 0 for seq in sequences):
+            raise SystemExit(
+                f"{mode} {label} runtime log has invalid sequence values: {sequences!r}"
+            )
+        if len(sequences) != len(set(sequences)):
+            raise SystemExit(
+                f"{mode} {label} runtime log has duplicate sequence values: "
+                f"{sequences!r}"
+            )
+    invalid_repair_symbols = [
+        entry
+        for entry in all_entries
+        if entry.event == "repair"
+        and (
+            not isinstance(entry.raw.get("symbol"), str)
+            or not entry.raw["symbol"].strip()
+            or entry.raw["symbol"].strip().casefold() == "unknown"
+        )
+    ]
+    if invalid_repair_symbols:
+        rendered = ", ".join(
+            f"line {entry.source_line}: {entry.raw.get('symbol')!r}"
+            for entry in invalid_repair_symbols
+        )
+        raise SystemExit(f"runtime logs contain invalid repair symbols: {rendered}")
+    repair_rows = [entry.raw for entry in all_entries if entry.event == "repair"]
+    invalid_repair_errnos = [
+        row.get("errno")
+        for row in repair_rows
+        if type(row.get("errno")) is not int
+        or not -(2**31) <= row["errno"] < 2**31
+    ]
+    if invalid_repair_errnos:
+        raise SystemExit(
+            f"runtime repair rows have invalid decision-owned errno values: "
+            f"{invalid_repair_errnos!r}"
+        )
+    denial_rows = [entry.raw for entry in all_entries if entry.event == "deny"]
+    if mode == "hardened":
+        invalid_repair_addresses = [
+            row.get("address")
+            for row in repair_rows
+            if not isinstance(row.get("address"), str)
+            or re.fullmatch(r"0x[0-9a-fA-F]+", row["address"]) is None
+        ]
+        if invalid_repair_addresses:
+            raise SystemExit(
+                "hardened fixture repair rows have invalid primary addresses: "
+                f"{invalid_repair_addresses!r}"
+            )
+        invalid_hints = [
+            row.get("addr_hint")
+            for row in denial_rows
+            if not isinstance(row.get("addr_hint"), str)
+            or re.fullmatch(r"0x[0-9a-fA-F]+", row["addr_hint"]) is None
+        ]
+        if invalid_hints:
+            raise SystemExit(
+                f"hardened denial rows have invalid addr_hint values: {invalid_hints!r}"
+            )
+    else:
+        disclosed_addresses = [row["address"] for row in repair_rows if "address" in row]
+        if disclosed_addresses:
+            raise SystemExit(
+                f"{mode} repair rows disclosed hardened-only address values: "
+                f"{disclosed_addresses!r}"
+            )
+        disclosed_hints = [row["addr_hint"] for row in denial_rows if "addr_hint" in row]
+        if disclosed_hints:
+            raise SystemExit(
+                f"{mode} denial rows disclosed hardened-only addr_hint values: "
+                f"{disclosed_hints!r}"
+            )
+    def event_signature(entry):
+        if entry.event == "repair":
+            return (
+                "repair",
+                entry.raw.get("api_family"),
+                entry.call,
+                entry.action,
+                entry.raw.get("signal_context"),
+                entry.raw.get("signal_context_known"),
+            )
+        if entry.event == "deny":
+            return (
+                "deny",
+                entry.raw.get("api_family"),
+                entry.call,
+                entry.raw.get("reason"),
+                entry.raw.get("errno"),
+                entry.raw.get("signal_context"),
+                entry.raw.get("signal_context_known"),
+            )
+        return (entry.event,)
+
+    normal_deny = ("deny", "Signal", "kill", "invalid_signal_number", 22, False, True)
+    signal_deny = ("deny", "Signal", "pthread_kill", "invalid_signal_number", 22, True, True)
+    child_expected = [signal_deny, normal_deny, ("exit_summary",)]
+    parent_expected = [signal_deny, normal_deny, normal_deny]
+    if mode == "hardened":
+        signal_repair = ("repair", "string_memory", "strlen", "ReturnSafeDefault", True, True)
+        normal_repair = ("repair", "string_memory", "memcpy", "ClampSize", False, True)
+        parent_expected = [
+            signal_repair,
+            signal_deny,
+            normal_repair,
+            normal_deny,
+            normal_deny,
+        ]
+        child_expected = [
+            signal_repair,
+            signal_deny,
+            normal_repair,
+            normal_deny,
+            ("exit_summary",),
+        ]
+
+    rate_limit = 1024
+    rate_limit_attempts = 1100
+    rate_limited = rate_limit_attempts - rate_limit
+    parent_expected.extend([normal_deny] * rate_limit)
+    parent_expected.append(("exit_summary",))
+
+    parent_actual = [event_signature(entry) for entry in before_entries]
+    child_actual = [event_signature(entry) for entry in entries]
+    if parent_actual != parent_expected:
+        raise SystemExit(
+            f"{mode} parent runtime event sequence mismatch: "
+            f"expected={parent_expected!r} actual={parent_actual!r}"
+        )
+    if child_actual != child_expected:
+        raise SystemExit(
+            f"{mode} child runtime event sequence mismatch: "
+            f"expected={child_expected!r} actual={child_actual!r}"
+        )
+
+    parent_summary = before_entries[-1].raw
+    child_summary = entries[-1].raw
+    expected_parent_counters = {
+        "total_heals": 2 if mode == "hardened" else 0,
+        "size_clamps": 1 if mode == "hardened" else 0,
+        "safe_defaults": 1 if mode == "hardened" else 0,
+        "denials": 3 + rate_limit_attempts,
+        "runtime_log_dropped_records": rate_limited,
+        "runtime_log_rate_limited_records": rate_limited,
+        "runtime_log_admission_clock_failures": 0,
+    }
+    expected_child_counters = {
+        "total_heals": 4 if mode == "hardened" else 0,
+        "size_clamps": 2 if mode == "hardened" else 0,
+        "safe_defaults": 2 if mode == "hardened" else 0,
+        "denials": 4,
+        "runtime_log_dropped_records": 0,
+        "runtime_log_rate_limited_records": 0,
+        "runtime_log_admission_clock_failures": 0,
+    }
+    for field, expected in expected_parent_counters.items():
+        if parent_summary.get(field) != expected:
+            raise SystemExit(
+                f"{mode} parent summary {field} expected {expected}, "
+                f"got {parent_summary.get(field)!r}"
+            )
+    for field, expected in expected_child_counters.items():
+        if child_summary.get(field) != expected:
+            raise SystemExit(
+                f"{mode} child summary {field} expected {expected}, "
+                f"got {child_summary.get(field)!r}"
+            )
+PY
+}
+
 run_fixture() {
   local mode="$1"
   local bin="$2"
   local name
   name="$(basename "${bin}")"
   local case_dir="${RUN_DIR}/${mode}/${name}"
+  local runtime_log="${case_dir}/runtime.jsonl"
+  local preload="${LIB_PATH}"
+  if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
+    preload="${LIB_PATH}:${BIN_DIR}/${name}_fork_signal_injector.so"
+  fi
   mkdir -p "${case_dir}"
+  : > "${runtime_log}"
+  : > "${case_dir}/runtime_log_validation.txt"
 
   total=$((total + 1))
   local start_ns
@@ -197,10 +519,22 @@ run_fixture() {
 
   set +e
   timeout "${TIMEOUT_SECONDS}" \
-    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "${bin}" \
+    env FRANKENLIBC_MODE="${mode}" FRANKENLIBC_LOG="${runtime_log}" \
+      LD_PRELOAD="${preload}" "${RUNNER_ARGV[@]}" "${bin}" \
     > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
   local rc=$?
   set -e
+
+  if [[ "${rc}" -eq 0 ]]; then
+    set +e
+    validate_runtime_log "${runtime_log}" "${name}" "${mode}" \
+      > "${case_dir}/runtime_log_validation.txt" 2>&1
+    local validation_rc=$?
+    set -e
+    if [[ "${validation_rc}" -ne 0 ]]; then
+      rc=86
+    fi
+  fi
 
   local end_ns
   end_ns="$(date +%s%N)"
@@ -209,7 +543,11 @@ run_fixture() {
   echo "${rc}" > "${case_dir}/exit_code"
 
   local refs_json
-  refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  if [[ -f "${runtime_log}.pre_fork" ]]; then
+    refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code","%s/%s/runtime.jsonl","%s/%s/runtime.jsonl.pre_fork","%s/%s/runtime_log_validation.txt"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  else
+    refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code","%s/%s/runtime.jsonl","%s/%s/runtime_log_validation.txt"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  fi
 
   if [[ "${rc}" -eq 0 ]]; then
     passes=$((passes + 1))
@@ -307,12 +645,19 @@ for rel in ("results.json", "trace.jsonl"):
         paths.append(p)
 
 for pattern in (
+    "signal_trampoline_order.txt",
     "strict/fixture_*/stdout.txt",
     "strict/fixture_*/stderr.txt",
     "strict/fixture_*/exit_code",
+    "strict/fixture_*/runtime.jsonl",
+    "strict/fixture_*/runtime.jsonl.pre_fork",
+    "strict/fixture_*/runtime_log_validation.txt",
     "hardened/fixture_*/stdout.txt",
     "hardened/fixture_*/stderr.txt",
     "hardened/fixture_*/exit_code",
+    "hardened/fixture_*/runtime.jsonl",
+    "hardened/fixture_*/runtime.jsonl.pre_fork",
+    "hardened/fixture_*/runtime_log_validation.txt",
     "*_compile.log",
 ):
     paths.extend(sorted(run_dir.glob(pattern)))
@@ -320,7 +665,7 @@ for pattern in (
 artifacts = []
 for path in paths:
     rel = path.relative_to(root).as_posix()
-    if rel.endswith(".jsonl"):
+    if rel.endswith(".jsonl") or rel.endswith(".jsonl.pre_fork"):
         kind = "log"
     elif rel.endswith("results.json"):
         kind = "report"
@@ -330,6 +675,8 @@ for path in paths:
         kind = "stdout"
     elif rel.endswith("stderr.txt"):
         kind = "stderr"
+    elif rel.endswith("runtime_log_validation.txt"):
+        kind = "validation"
     elif rel.endswith("exit_code"):
         kind = "status"
     else:

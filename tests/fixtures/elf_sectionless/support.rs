@@ -15,8 +15,8 @@ pub fn build(style: &str, packing: &str) -> PathBuf {
     ));
     // Do not silently reuse a fixture from another run or skip missing tools.
     std::fs::create_dir(&directory).expect("create isolated sectionless fixture directory");
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/elf_sectionless/build.sh");
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/elf_sectionless/build.sh");
     let output = Command::new("bash")
         .arg(script)
         .arg(&directory)

@@ -485,3 +485,20 @@ print(
     f"residual={residual_summary['residual_forbidden_count']}"
 )
 PY
+
+# completion-contract-class: executes
+ABI_SO="$ROOT/target/release/libfrankenlibc_abi.so"
+if [[ ! -f "$ABI_SO" ]] && [[ -n "${CARGO_TARGET_DIR:-}" ]] && [[ -f "$CARGO_TARGET_DIR/release/libfrankenlibc_abi.so" ]]; then
+  ABI_SO="$CARGO_TARGET_DIR/release/libfrankenlibc_abi.so"
+fi
+if [[ ! -f "$ABI_SO" ]] && [[ -f "/data/tmp/cargo-target/release/libfrankenlibc_abi.so" ]]; then
+  ABI_SO="/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
+fi
+if [[ ! -f "$ABI_SO" ]]; then
+  echo "FAIL: libfrankenlibc_abi.so not found; executing completion contract requires deployed ABI" >&2
+  exit 1
+fi
+EXEC_TMP_BIN="$(mktemp)"
+trap 'rm -f "$EXEC_TMP_BIN"' EXIT
+gcc -O2 "$ROOT/tests/integration/fixture_pthread_mutex_adversarial.c" -o "$EXEC_TMP_BIN" -lpthread -lm
+LD_PRELOAD="$ABI_SO" FRANKENLIBC_MODE=strict "$EXEC_TMP_BIN" >/dev/null

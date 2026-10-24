@@ -173,6 +173,12 @@ for json_key, actual in [('implemented', implemented_count), ('raw_syscall', raw
 
 # Check host-backed callthrough breakdowns
 ct_breakdown = assessment.get('callthrough_breakdown', {})
+expected_ct_breakdown = {}
+for (status, module), count in module_counts.items():
+    if status in {'WrapsHostLibc', 'GlibcCallThrough'} and count:
+        expected_ct_breakdown[module] = expected_ct_breakdown.get(module, 0) + count
+if ct_breakdown != expected_ct_breakdown:
+    errors.append('callthrough_breakdown does not exactly match matrix module counts')
 for module, claimed_count in ct_breakdown.items():
     actual_count = (
         module_counts.get(('WrapsHostLibc', module), 0)
@@ -182,12 +188,26 @@ for module, claimed_count in ct_breakdown.items():
         errors.append(f'callthrough_breakdown.{module}: claimed={claimed_count} matrix={actual_count}')
 
 wrap_breakdown = assessment.get('wraps_host_libc_breakdown', {})
+expected_wrap_breakdown = {
+    module: count
+    for (status, module), count in module_counts.items()
+    if status == 'WrapsHostLibc' and count
+}
+if wrap_breakdown != expected_wrap_breakdown:
+    errors.append('wraps_host_libc_breakdown does not exactly match matrix module counts')
 for module, claimed_count in wrap_breakdown.items():
     actual_count = module_counts.get(('WrapsHostLibc', module), 0)
     if claimed_count != actual_count:
         errors.append(f'wraps_host_libc_breakdown.{module}: claimed={claimed_count} matrix={actual_count}')
 
 glibc_breakdown = assessment.get('glibc_callthrough_breakdown', {})
+expected_glibc_breakdown = {
+    module: count
+    for (status, module), count in module_counts.items()
+    if status == 'GlibcCallThrough' and count
+}
+if glibc_breakdown != expected_glibc_breakdown:
+    errors.append('glibc_callthrough_breakdown does not exactly match matrix module counts')
 for module, claimed_count in glibc_breakdown.items():
     actual_count = module_counts.get(('GlibcCallThrough', module), 0)
     if claimed_count != actual_count:
@@ -195,6 +215,13 @@ for module, claimed_count in glibc_breakdown.items():
 
 # Check stub breakdown
 stub_breakdown = assessment.get('stub_breakdown', {})
+expected_stub_breakdown = {
+    module: count
+    for (status, module), count in module_counts.items()
+    if status == 'Stub' and count
+}
+if stub_breakdown != expected_stub_breakdown:
+    errors.append('stub_breakdown does not exactly match matrix module counts')
 for module, claimed_count in stub_breakdown.items():
     actual_count = module_counts.get(('Stub', module), 0)
     if claimed_count != actual_count:
@@ -934,6 +961,25 @@ def validate_l1_objective_gate_consistency(
                 "hardened_smoke_battery.outcome must be blocked exactly when the current smoke artifact misses the green L1 criteria"
             )
 
+    stub_obligation = find_obligation(objective_gate, "stub_free_taxonomy")
+    stub_count = int(levels.get("current_assessment", {}).get("stub", -1))
+    stub_expected_outcome = "pass" if stub_count == 0 else "blocked"
+    if not stub_obligation:
+        failures.append("objective_gate missing stub_free_taxonomy obligation")
+    else:
+        expected = stub_obligation.get("expected", {})
+        actual = stub_obligation.get("actual", {})
+        if int(expected.get("stub", -1)) != 0:
+            failures.append("stub_free_taxonomy.expected.stub must be 0")
+        if int(actual.get("stub", -1)) != stub_count:
+            failures.append(
+                "stub_free_taxonomy.actual.stub must match current_assessment.stub"
+            )
+        if stub_obligation.get("outcome") != stub_expected_outcome:
+            failures.append(
+                "stub_free_taxonomy.outcome must be blocked exactly when stubs remain"
+            )
+
     promotion = find_obligation(objective_gate, "promotion_claim_control")
     release_policy = levels.get("release_tag_policy", {})
     current_level = levels.get("current_level")
@@ -961,6 +1007,8 @@ def validate_l1_objective_gate_consistency(
         if isinstance(obligation, dict) and obligation.get("outcome") == "blocked"
     ]
     expected_blocked = []
+    if stub_expected_outcome == "blocked":
+        expected_blocked.append("stub_free_taxonomy")
     if expected_outcome == "blocked":
         expected_blocked.append("crt_startup_tls_proof_matrix")
     if smoke_expected_outcome == "blocked":

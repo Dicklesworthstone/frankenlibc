@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate or regenerate the support_matrix.json and reality_report.v1.json paired contract.
+# Validate the reviewed support matrix and regenerate only its derived reality report.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,16 +40,22 @@ fi
 mkdir -p "${OUT_DIR}"
 
 if [[ "${MODE}" == "regenerate" ]]; then
-  bash "${ROOT}/scripts/abi_audit.sh" --json-only --deterministic >/dev/null
-  cargo run --quiet -p frankenlibc-harness --bin harness -- \
-    reality-report \
-    --support-matrix "${SUPPORT_MATRIX}" \
-    --output "${REALITY_REPORT}"
+  if [[ -n "${SUPPORT_REALITY_GENERATOR_BIN:-}" ]]; then
+    "${SUPPORT_REALITY_GENERATOR_BIN}" reality-report \
+      --support-matrix "${SUPPORT_MATRIX}" \
+      --output "${REALITY_REPORT}"
+  else
+    cargo run -j2 --quiet -p frankenlibc-harness --bin harness -- \
+      reality-report \
+      --support-matrix "${SUPPORT_MATRIX}" \
+      --output "${REALITY_REPORT}"
+  fi
 fi
 
 python3 - "${ROOT}" "${CONTRACT}" "${SUPPORT_MATRIX}" "${REALITY_REPORT}" "${REPORT}" "${LOG}" "${TRACE_ID}" "${MODE}" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -80,7 +86,26 @@ def load_json(path: pathlib.Path):
 
 
 def git_head() -> str:
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+
+    # RCH transfers the source tree without .git and injects the exact build
+    # provenance through Cargo's environment. Preserve that evidence instead
+    # of making remote gate execution depend on repository metadata.
+    rch_source = os.environ.get("RCH_BUILD_SOURCE", "")
+    candidate = rch_source.split("-", 1)[0]
+    if len(candidate) in {40, 64} and all(char in "0123456789abcdef" for char in candidate):
+        return candidate
+    raise RuntimeError(
+        "cannot resolve source commit from Git or a full RCH_BUILD_SOURCE object ID"
+    )
 
 
 def now_utc() -> str:
@@ -151,6 +176,13 @@ if contract.get("generated_by_bead") != "bd-0agsk.3":
     fail("contract_bead", "contract generated_by_bead must be bd-0agsk.3")
 if contract.get("mode") != "validate_only":
     fail("contract_mode", "contract mode must be validate_only")
+contract_source_commit = contract.get("source_commit")
+if not isinstance(contract_source_commit, str) or len(contract_source_commit) not in {40, 64} \
+        or any(char not in "0123456789abcdef" for char in contract_source_commit):
+    fail(
+        "contract_source_commit_invalid",
+        "contract source_commit must be a full lowercase Git object ID",
+    )
 
 paired_policy = contract.get("paired_update_policy", {})
 if paired_policy.get("single_artifact_update") != "forbidden":
@@ -194,19 +226,29 @@ for artifact_id, current_sha in expected_hashes.items():
             current_sha256=current_sha,
         )
 
-generator_cmd = [
-    "cargo",
-    "run",
-    "--quiet",
-    "-p",
-    "frankenlibc-harness",
-    "--bin",
-    "harness",
-    "--",
-    "reality-report",
-    "--support-matrix",
-    str(support_path),
-]
+generator_bin = os.environ.get("SUPPORT_REALITY_GENERATOR_BIN")
+if generator_bin:
+    generator_cmd = [
+        generator_bin,
+        "reality-report",
+        "--support-matrix",
+        str(support_path),
+    ]
+else:
+    generator_cmd = [
+        "cargo",
+        "run",
+        "-j2",
+        "--quiet",
+        "-p",
+        "frankenlibc-harness",
+        "--bin",
+        "harness",
+        "--",
+        "reality-report",
+        "--support-matrix",
+        str(support_path),
+    ]
 generated = subprocess.run(
     generator_cmd,
     cwd=root,
@@ -233,6 +275,19 @@ except json.JSONDecodeError as err:
 
 support = load_json(support_path)
 reality = load_json(reality_path)
+support_source_commit = support.get("source_commit")
+reality_source_commit = reality.get("source_commit")
+if not (
+    support_source_commit == reality_source_commit == contract_source_commit
+):
+    fail(
+        "paired_source_commit_mismatch",
+        "contract, support matrix, and reality report source commits must match",
+        source_commit=source_commit,
+        contract_source_commit=contract_source_commit,
+        support_source_commit=support_source_commit,
+        reality_source_commit=reality_source_commit,
+    )
 if generated_reality != reality:
     fail(
         "reality_report_drift",
@@ -286,6 +341,7 @@ checks = {
     "contract_schema_valid": "pass",
     "paired_artifacts_present": "pass",
     "artifact_sha256s_current": "pass",
+    "paired_source_commit_matches": "pass",
     "reality_report_matches_harness_generation": "pass",
     "support_reality_counts_match": "pass",
     "regeneration_mode_refreshes_paired_hashes": "pass" if mode == "regenerate" else "not_applicable",

@@ -1,9 +1,10 @@
 //! Same-process A/B to test the ledger's claim that fl qsort's string-sort loss
 //! is "pdqsort slower than glibc merge for an expensive comparator". Compares,
 //! on the SAME 16-byte string records with the SAME lexicographic comparator:
-//!   - pdqsort   : std `sort_unstable_by` (same algorithm class as fl's fallback)
-//!   - merge     : std `sort_by` (timsort/merge — what a merge fallback would be)
-//!   - glibc     : host `qsort` (glibc mergesort)
+//! - pdqsort   : std `sort_unstable_by` (same algorithm class as fl's fallback)
+//! - merge     : std `sort_by` (timsort/merge — what a merge fallback would be)
+//! - glibc     : host `qsort` (glibc mergesort)
+//!
 //! Clone is excluded from timing via `iter_batched`. If merge << pdqsort here,
 //! switching fl's non-radix fallback to a merge sort is a real lever on the
 //! biggest measured qsort gap.
@@ -96,7 +97,7 @@ fn bench(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut v| {
-                    v.sort_unstable_by(|a, b| cmp_rs(a, b));
+                    v.sort_unstable_by(cmp_rs);
                     black_box(v.len())
                 },
                 BatchSize::LargeInput,
@@ -106,7 +107,7 @@ fn bench(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut v| {
-                    v.sort_by(|a, b| cmp_rs(a, b));
+                    v.sort_by(cmp_rs);
                     black_box(v.len())
                 },
                 BatchSize::LargeInput,

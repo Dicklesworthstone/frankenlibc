@@ -83,7 +83,7 @@ fn bench(c: &mut Criterion) {
     let inp: Vec<f32> = (0..64).map(|k| 13.0 + k as f32 * (200.0 / 64.0)).collect();
     let mut g = c.benchmark_group("lgammaf_tail");
     g.sample_size(40);
-    run(&mut g, "old_libm", &inp, |x| libm::lgammaf(x));
+    run(&mut g, "old_libm", &inp, libm::lgammaf);
     run(&mut g, "candidate", &inp, candidate);
     run(&mut g, "glibc", &inp, |x| unsafe { host_lgammaf(x) });
     g.finish();

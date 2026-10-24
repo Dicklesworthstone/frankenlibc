@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -40,6 +41,364 @@ class LogParserTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].call, "__hook_event__")
         self.assertEqual(entries[0].action, "hook_enable")
+
+    def test_parse_deployed_runtime_sink_rows(self) -> None:
+        rows = [
+            {
+                "schema_version": "1.0",
+                "event": "repair",
+                "seq": 1,
+                "trace_id": "membrane::heal::0000000000000001",
+                "decision_id": 1,
+                "pid": 12345,
+                "runtime_mode": "hardened",
+                "api_family": "string_memory",
+                "symbol": "memcpy",
+                "action": "Repair",
+                "outcome": "repair",
+                "healing_action": "ClampSize",
+                "errno": 0,
+                "address": "0x1234",
+                "signal_context": False,
+                "signal_context_known": True,
+                "details": {"requested": 32, "clamped": 8},
+            },
+            {
+                "schema_version": "1.0",
+                "event": "deny",
+                "seq": 2,
+                "pid": 12345,
+                "runtime_mode": "hardened",
+                "api_family": "Signal",
+                "symbol": "kill",
+                "action": "Deny",
+                "outcome": "deny",
+                "reason": "invalid_signal_number",
+                "errno": 22,
+                "policy_id": 0,
+                "risk_upper_bound_ppm": 0,
+                "evidence_seqno": 0,
+                "addr_hint": "0xffffffffffffffff",
+                "requested_bytes": 0,
+                "is_write": False,
+                "signal_context": False,
+                "signal_context_known": True,
+            },
+            {
+                "schema_version": "1.0",
+                "event": "exit_summary",
+                "seq": 3,
+                "pid": 12345,
+                "runtime_mode": "hardened",
+                "symbol": "process",
+                "denials": 1,
+                "total_heals": 1,
+                "runtime_log_written_records": 2,
+                "runtime_log_dropped_records": 0,
+                "runtime_log_rate_limited_records": 0,
+                "runtime_log_admission_clock_failures": 0,
+                "runtime_log_short_writes": 0,
+                "runtime_log_open_failures": 0,
+            },
+        ]
+        parser = self.log_parser.LogParser(strict=True)
+        entries = [
+            parser.parse_line(json.dumps(row), index)
+            for index, row in enumerate(rows, 1)
+        ]
+
+        self.assertEqual(
+            [entry.event for entry in entries], ["repair", "deny", "exit_summary"]
+        )
+        self.assertEqual(
+            [entry.call for entry in entries],
+            ["memcpy", "kill", "__exit_summary__"],
+        )
+        self.assertEqual([entry.action for entry in entries], ["ClampSize", "Deny", None])
+        self.assertEqual(entries[0].raw["errno"], 0)
+        self.assertEqual(entries[0].raw["address"], "0x1234")
+        self.assertTrue(all(entry.timestamp is None for entry in entries))
+        self.assertEqual(self.log_validator.LogValidator().validate(entries), [])
+
+        stats = self.log_stats.LogStats()
+        stats.extend(entries)
+        snapshot = stats.to_dict()
+        self.assertEqual(
+            snapshot["by_event"], {"repair": 1, "deny": 1, "exit_summary": 1}
+        )
+        self.assertEqual(snapshot["by_mode"], {"hardened": 3})
+
+    def test_deployed_runtime_sink_rejects_missing_deny_symbol(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "deny",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "Signal",
+            "reason": "invalid_signal_number",
+            "errno": 22,
+            "policy_id": 0,
+            "signal_context": False,
+            "signal_context_known": True,
+        }
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(json.dumps(row))
+        self.assertIn("deny row missing required field(s): symbol", str(error.exception))
+
+    def test_deployed_runtime_sink_rejects_missing_repair_symbol(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "repair",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "string_memory",
+            "healing_action": "ClampSize",
+            "errno": 0,
+            "signal_context": False,
+            "signal_context_known": True,
+            "details": {"requested": 32, "clamped": 8},
+        }
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(json.dumps(row))
+        self.assertIn("repair row missing required field(s): symbol", str(error.exception))
+
+    def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "repair",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "string_memory",
+            "healing_action": "ClampSize",
+            "errno": 0,
+            "signal_context": False,
+            "signal_context_known": True,
+            "details": {"requested": 32, "clamped": 8},
+        }
+        for symbol in ("", "   ", "unknown", "UNKNOWN", "UnKnOwN"):
+            with self.subTest(symbol=symbol):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "symbol": symbol}))
+
+    def test_deployed_runtime_sink_rejects_missing_or_invalid_repair_errno(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "repair",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "string_memory",
+            "symbol": "memcpy",
+            "healing_action": "ClampSize",
+            "signal_context": False,
+            "signal_context_known": True,
+            "details": {"requested": 32, "clamped": 8},
+        }
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(json.dumps(row))
+        self.assertIn("repair row missing required field(s): errno", str(error.exception))
+        for value in (False, True, 1.5, "0", -(2**31) - 1, 2**31, None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "errno": value}))
+        entry = parser.parse_line(json.dumps({**row, "errno": 0}))
+        self.assertEqual(entry.raw["errno"], 0)
+
+    def test_deployed_runtime_sink_validates_signal_context_certainty(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "deny",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "Signal",
+            "symbol": "kill",
+            "reason": "invalid_signal_number",
+            "errno": 22,
+            "policy_id": 0,
+        }
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(json.dumps(row))
+        for field in ("signal_context", "signal_context_known"):
+            for value in (0, 1, "false", None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(self.log_parser.ParseError):
+                        parser.parse_line(
+                            json.dumps(
+                                {
+                                    **row,
+                                    "signal_context": False,
+                                    "signal_context_known": True,
+                                    field: value,
+                                }
+                            )
+                        )
+        for field in ("signal_context", "signal_context_known"):
+            with self.subTest(missing=field):
+                candidate = {
+                    **row,
+                    "signal_context": False,
+                    "signal_context_known": True,
+                }
+                del candidate[field]
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps(candidate))
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(
+                json.dumps(
+                    {
+                        **row,
+                        "signal_context": True,
+                        "signal_context_known": False,
+                    }
+                )
+            )
+        self.assertIn(
+            "signal_context=true requires signal_context_known=true",
+            str(error.exception),
+        )
+        unknown = parser.parse_line(
+            json.dumps(
+                {
+                    **row,
+                    "signal_context": False,
+                    "signal_context_known": False,
+                }
+            )
+        )
+        self.assertFalse(unknown.raw["signal_context_known"])
+
+    def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "exit_summary",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "symbol": "process",
+            "denials": 0,
+            "runtime_log_written_records": 0,
+            "runtime_log_dropped_records": 0,
+            "runtime_log_rate_limited_records": 0,
+            "runtime_log_admission_clock_failures": 0,
+        }
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(json.dumps(row))
+        for value in (0, -1, True, 1.5, "1", None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "seq": value}))
+
+    def test_deployed_runtime_sink_accepts_out_of_append_order_sequences(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "exit_summary",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "symbol": "process",
+            "denials": 0,
+            "runtime_log_written_records": 0,
+            "runtime_log_dropped_records": 0,
+            "runtime_log_rate_limited_records": 0,
+            "runtime_log_admission_clock_failures": 0,
+        }
+        entries = [
+            parser.parse_line(json.dumps({**row, "seq": seq}), line)
+            for line, seq in enumerate((2, 1), 1)
+        ]
+        self.assertEqual([entry.raw["seq"] for entry in entries], [2, 1])
+
+    def test_deployed_runtime_sink_validates_rate_limit_summary_counters(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "exit_summary",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "symbol": "process",
+            "denials": 0,
+            "runtime_log_written_records": 1024,
+            "runtime_log_dropped_records": 3,
+            "runtime_log_rate_limited_records": 3,
+            "runtime_log_admission_clock_failures": 0,
+        }
+        entry = parser.parse_line(json.dumps(row))
+        self.assertEqual(entry.raw["runtime_log_rate_limited_records"], 3)
+        for field in (
+            "runtime_log_dropped_records",
+            "runtime_log_rate_limited_records",
+            "runtime_log_admission_clock_failures",
+        ):
+            with self.subTest(field=field):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, field: True}))
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, field: -1}))
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(
+                json.dumps(
+                    {
+                        **row,
+                        "runtime_log_dropped_records": 2,
+                        "runtime_log_rate_limited_records": 3,
+                    }
+                )
+            )
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(
+                json.dumps(
+                    {
+                        **row,
+                        "runtime_log_dropped_records": 3,
+                        "runtime_log_rate_limited_records": 2,
+                        "runtime_log_admission_clock_failures": 2,
+                    }
+                )
+            )
+
+    def test_deployed_runtime_sink_restricts_address_fields_to_hardened(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "deny",
+            "seq": 1,
+            "pid": 12345,
+            "api_family": "Signal",
+            "symbol": "kill",
+            "reason": "invalid_signal_number",
+            "errno": 22,
+            "policy_id": 0,
+            "signal_context": False,
+            "signal_context_known": True,
+        }
+        for mode in ("strict", "off"):
+            with self.subTest(mode=mode):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(
+                        json.dumps({**row, "runtime_mode": mode, "addr_hint": "0x0"})
+                    )
+        for value in (0, "0", "0x", "0xgg", None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(
+                        json.dumps(
+                            {**row, "runtime_mode": "hardened", "addr_hint": value}
+                        )
+                    )
+        entry = parser.parse_line(
+            json.dumps({**row, "runtime_mode": "hardened", "addr_hint": "0xdeadBEEF"})
+        )
+        self.assertEqual(entry.raw["addr_hint"], "0xdeadBEEF")
 
     def test_invalid_json_raises_in_strict_mode(self) -> None:
         parser = self.log_parser.LogParser(strict=True)

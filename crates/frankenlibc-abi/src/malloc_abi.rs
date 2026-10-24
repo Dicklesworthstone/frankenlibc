@@ -26,7 +26,7 @@ use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use frankenlibc_membrane::galois::PointerAbstraction;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::lattice::SafetyState;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use frankenlibc_membrane::util::now_utc_iso_like;
@@ -36,6 +36,12 @@ use crate::htm_fast_path::HtmSite;
 use crate::runtime_policy;
 use crate::signal_abi::{SignalCriticalSectionKind, enter_signal_critical_section};
 use frankenlibc_core::syscall as raw_syscall;
+
+#[path = "segment_mapping.rs"]
+mod segment_mapping;
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub use segment_mapping::tests as segment_mapping_tests;
 
 type HostMallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type HostCallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
@@ -135,7 +141,10 @@ impl AllocatorReentrySlot {
             thread_key: AtomicUsize::new(0),
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
-            fallback_cache_index: AtomicUsize::new(usize::MAX),
+            // Stored as `index + 1` so `0` means "empty" and the entire
+            // 14.75 MiB `ALLOCATOR_REENTRY_SLOTS` table is zero-initialized in `.bss`
+            // (bd-rc0923-epic-eeuy4f.25).
+            fallback_cache_index: AtomicUsize::new(0),
             segment_local: UnsafeCell::new(SegmentLocalState::new()),
             mt_counts: SlotMtCounters::new(),
             mt_folded: UnsafeCell::new(MallocStatsState::new()),
@@ -165,9 +174,11 @@ fn in_signal_handler(slot: &AllocatorReentrySlot) -> bool {
     handler_sp != 0 && current_stack_address() <= handler_sp
 }
 
-/// `in_signal_handler` for the calling thread (false when it has no slot).
-pub(crate) fn in_signal_handler_now() -> bool {
-    current_allocator_reentry_slot().is_some_and(in_signal_handler)
+/// `in_signal_handler` for the calling thread. `None` means the bounded slot
+/// lookup could not identify this thread, not that it is known to be outside a
+/// handler; evidence callers must select their signal-safe path in that case.
+pub(crate) fn signal_handler_context_now() -> Option<bool> {
+    current_allocator_reentry_slot().map(in_signal_handler)
 }
 
 /// Marks a user signal handler running on this thread (bd-na6ede). While it
@@ -184,11 +195,15 @@ impl Drop for SignalHandlerAllocScope {
     fn drop(&mut self) {
         if let Some(slot) = self.slot {
             core::sync::atomic::compiler_fence(Ordering::SeqCst);
-            slot.signal_handler_sp.store(self.previous, Ordering::Relaxed);
+            slot.signal_handler_sp
+                .store(self.previous, Ordering::Relaxed);
         }
     }
 }
 
+/// Kept out of line so the release-artifact signal gate can prove both kernel
+/// trampolines establish this marker before their first TLS-resolving call.
+#[inline(never)]
 pub(crate) fn enter_signal_handler_alloc_scope() -> SignalHandlerAllocScope {
     let slot = current_allocator_reentry_slot();
     let mut previous = 0;
@@ -418,8 +433,7 @@ fn bind_slot_to_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize
     if previous != 0 && previous != thread_key {
         slot.native_guard_bits.store(0, Ordering::Release);
         slot.allocator_depth.store(0, Ordering::Release);
-        slot.fallback_cache_index
-            .store(usize::MAX, Ordering::Release);
+        slot.fallback_cache_index.store(0, Ordering::Release);
     }
 }
 
@@ -472,21 +486,57 @@ fn allocator_reentry_slot_for_tid(
 /// is keyed by kernel tid (one syscall). The single-threaded cache still applies, and is
 /// bypassed once `MULTI_THREADED` latches, since a recycled TCB can then give a new
 /// thread an exited thread's key (bd-35hjg.3.1).
-#[inline]
+#[inline(always)]
 fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
     let keyed = thread_key.is_some() && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
 
-    let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
-    if cached != 0 {
-        let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
-        if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
-            let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
-            if slot_matches_thread_key(slot, thread_key)
-                && (!MULTI_THREADED.load(Ordering::Relaxed)
-                    || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
-            {
-                return Some(slot);
+    // Once multi-threading has latched, the normal glibc-backed thread path is
+    // a stable TCB-key lookup. The first probe is overwhelmingly the hit, but
+    // keeping it behind this out-of-line function made every hardened string
+    // call pay several calls plus the generic claim/collision machinery. Inline
+    // only that already-claimed first probe; every mismatch retains the exact
+    // existing path below (including native threads and recycled-key handling).
+    if keyed
+        && MULTI_THREADED.load(Ordering::Relaxed)
+        && let Some(key) = thread_key
+    {
+        let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
+        let slot = &ALLOCATOR_REENTRY_SLOTS[start & ALLOCATOR_REENTRY_SLOT_MASK];
+        if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+            && slot.thread_key.load(Ordering::Acquire) == key
+        {
+            return Some(slot);
+        }
+    }
+
+    current_allocator_reentry_slot_slow(thread_key, keyed)
+}
+
+#[inline(never)]
+fn current_allocator_reentry_slot_slow(
+    thread_key: Option<usize>,
+    keyed: bool,
+) -> Option<&'static AllocatorReentrySlot> {
+    // The global cache is written only before multi-threading latches. After
+    // that point it names at most one historical thread, so nearly every
+    // allocator call from every other worker paid a doomed large-slot probe
+    // before doing the keyed lookup below. Keep the race-safe validation for a
+    // call that observed the old single-threaded state while another thread was
+    // latching it, but skip the cache entirely in the steady multi-threaded
+    // state.
+    if !MULTI_THREADED.load(Ordering::Relaxed) {
+        let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
+        if cached != 0 {
+            let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
+            if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
+                let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
+                if slot_matches_thread_key(slot, thread_key)
+                    && (!MULTI_THREADED.load(Ordering::Relaxed)
+                        || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
+                {
+                    return Some(slot);
+                }
             }
         }
     }
@@ -682,12 +732,14 @@ static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
 
 const SEGMENT_MAGAZINE_CAPACITY: usize = 8;
 const SEGMENT_BUMP_CHUNK: u32 = 64;
-const SEGMENT_NO_ACTIVE: u16 = u16::MAX;
+const SEGMENT_NO_ACTIVE: u16 = 0;
 const SEGMENT_SLOT_FREE: u16 = u16::MAX;
-const SEGMENT_SLOT_INDEX_BITS: u32 = 18;
-const SEGMENT_SLOT_INDEX_MASK: u32 = (1 << SEGMENT_SLOT_INDEX_BITS) - 1;
 const SEGMENT_MAX_SLOT_COUNT: usize = (SEGMENT_SIZE - SEGMENT_HEADER_BYTES) / BUMP_ALIGN;
 const SEGMENT_SPILL_WORDS: usize = SEGMENT_MAX_SLOT_COUNT.div_ceil(64);
+const _: () = assert!(
+    SEGMENT_RESERVE_SIZE < u32::MAX as usize,
+    "segment magazine offsets no longer fit in their packed representation"
+);
 
 /// A segment's size-class header, as read by the allocator paths.
 #[derive(Clone, Copy)]
@@ -750,6 +802,7 @@ struct SegmentSlotMeta {
 }
 
 impl SegmentSlotMeta {
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             requested_size: AtomicU16::new(0),
@@ -758,6 +811,8 @@ impl SegmentSlotMeta {
 }
 
 struct SegmentDescriptor {
+    // Only chunk refills consult this permission bitmap.
+    writable: segment_mapping::WritablePages,
     meta_base: AtomicUsize,
     // Threads claim disjoint fixed-size ranges only when their private cursor
     // empties.  The atomic never participates in the warmed depth-one cycle.
@@ -771,6 +826,7 @@ struct SegmentDescriptor {
 impl SegmentDescriptor {
     const fn new() -> Self {
         Self {
+            writable: segment_mapping::WritablePages::new(),
             meta_base: AtomicUsize::new(0),
             next_unused_slot: AtomicU32::new(0),
             spill: [const { AtomicU64::new(0) }; SEGMENT_SPILL_WORDS],
@@ -781,36 +837,80 @@ impl SegmentDescriptor {
 static SEGMENT_DESCRIPTORS: [SegmentDescriptor; SEGMENT_COUNT] =
     [const { SegmentDescriptor::new() }; SEGMENT_COUNT];
 
+/// A retired slot cached by one thread for its next allocation in this class.
+///
+/// Both addresses lie in the allocator's one immortal segment reservation, so
+/// storing their 32-bit offsets from `SEGMENT_ARENA_BASE` preserves the direct
+/// payload/sidecar lookup in one word.  The previous magazine stored only an
+/// encoded segment/slot pair; every pop then rebuilt a [`SegmentSlotView`] by
+/// reloading the segment header, descriptor and sidecar base.  That repeated
+/// immutable address derivation on every warmed allocation.
+#[derive(Clone, Copy)]
+struct SegmentMagazineEntry(u64);
+
+impl SegmentMagazineEntry {
+    // Zero is never a valid packed entry because `user_offset >= SEGMENT_HEADER_BYTES`
+    // (64 KiB) and `meta_offset >= SEGMENT_ARENA_SIZE` (256 MiB). Using 0 as EMPTY
+    // makes `SegmentMagazine::new()` all-zero for `.bss` placement (bd-rc0923-epic-eeuy4f.25).
+    const EMPTY: Self = Self(0);
+
+    #[inline(always)]
+    fn from_view(view: SegmentSlotView, arena_base: usize) -> Self {
+        let meta_addr = view.meta as *const SegmentSlotMeta as usize;
+        debug_assert!(view.user_base >= arena_base);
+        debug_assert!(meta_addr >= arena_base);
+        let user_offset = view.user_base - arena_base;
+        let meta_offset = meta_addr - arena_base;
+        debug_assert!(user_offset < SEGMENT_RESERVE_SIZE);
+        debug_assert!(meta_offset < SEGMENT_RESERVE_SIZE);
+        let packed = user_offset as u64 | ((meta_offset as u64) << 32);
+        debug_assert_ne!(packed, Self::EMPTY.0);
+        Self(packed)
+    }
+
+    #[inline(always)]
+    fn decode(self, arena_base: usize) -> (usize, &'static SegmentSlotMeta) {
+        debug_assert_ne!(self.0, Self::EMPTY.0);
+        let user_base = arena_base + (self.0 as u32) as usize;
+        let meta_addr = arena_base + (self.0 >> 32) as usize;
+        // SAFETY: entries are constructed only from a published SegmentSlotView.
+        // The sidecar is allocator-private and the encompassing reservation is
+        // immortal, so the recorded metadata address remains valid forever.
+        let meta = unsafe { &*(meta_addr as *const SegmentSlotMeta) };
+        (user_base, meta)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SegmentMagazine {
     len: u8,
-    entries: [u32; SEGMENT_MAGAZINE_CAPACITY],
+    entries: [SegmentMagazineEntry; SEGMENT_MAGAZINE_CAPACITY],
 }
 
 impl SegmentMagazine {
     const fn new() -> Self {
         Self {
             len: 0,
-            entries: [u32::MAX; SEGMENT_MAGAZINE_CAPACITY],
+            entries: [SegmentMagazineEntry::EMPTY; SEGMENT_MAGAZINE_CAPACITY],
         }
     }
 
     #[inline]
-    fn pop(&mut self) -> Option<u32> {
+    fn pop(&mut self) -> Option<SegmentMagazineEntry> {
         let next_len = self.len.checked_sub(1)?;
         self.len = next_len;
         let entry = self.entries[next_len as usize];
-        self.entries[next_len as usize] = u32::MAX;
+        self.entries[next_len as usize] = SegmentMagazineEntry::EMPTY;
         // Plain branch rather than `.then_some`, for the reason documented on
         // `segment_arena_base_if_ready`.
-        if entry == u32::MAX {
+        if entry.0 == SegmentMagazineEntry::EMPTY.0 {
             return None;
         }
         Some(entry)
     }
 
     #[inline]
-    fn push(&mut self, entry: u32) -> bool {
+    fn push(&mut self, entry: SegmentMagazineEntry) -> bool {
         let index = self.len as usize;
         if index >= SEGMENT_MAGAZINE_CAPACITY {
             return false;
@@ -885,7 +985,7 @@ enum SegmentSlotOrigin {
 #[derive(Clone, Copy)]
 enum InvalidFree {
     /// The slot is already free. Carries its class size for glibc's wording.
-    DoubleFree { class_size: usize },
+    DoubleFree { class_size: u16 },
     /// Not the start of a live block: interior, never-allocated slot.
     InvalidPointer,
     /// The slot's recorded size exceeds its class: corrupted metadata.
@@ -900,10 +1000,15 @@ enum SegmentFreeResult {
     /// have to recompute from `size` what the segment already knows (see
     /// [`StatsBin`]).
     Freed {
-        size: usize,
-        bin: usize,
+        size: u16,
+        bin: u8,
     },
 }
+
+// A register-sized result avoids the hidden return pointer and stack-backed
+// 24-byte enum that the warmed free path previously paid for. Segment requests
+// are already restricted to `u16`, and there are only 32 size classes.
+const _: () = assert!(std::mem::size_of::<SegmentFreeResult>() <= 8);
 
 #[inline]
 fn segment_arena_base_if_ready() -> Option<usize> {
@@ -964,12 +1069,15 @@ fn initialize_segment_arena() -> Option<usize> {
                 // SAFETY: this is a direct raw Linux mmap syscall.  It cannot
                 // recurse through the exported mmap/malloc ABI.  The oversized
                 // immortal reservation contains one 4 MiB-aligned 256 MiB
-                // arena; untouched pages remain demand-zero and uncommitted.
+                // arena. Reserve it inaccessible: MAP_NORESERVE alone does
+                // not stop writable mappings from counting against RLIMIT_DATA.
+                // Sidecars become readable before ownership publication, and
+                // payload granules become writable before chunk publication.
                 let mapping = unsafe {
                     raw_syscall::sys_mmap(
                         std::ptr::null_mut(),
                         SEGMENT_RESERVE_SIZE,
-                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::PROT_NONE,
                         libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                         -1,
                         0,
@@ -1216,6 +1324,23 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     // themselves: private to the allocator and, like the reservation,
     // immortal.
     let meta_base = arena_base + SEGMENT_ARENA_SIZE + raw_index * SEGMENT_SIDECAR_STRIDE;
+    // Every slot lookup in an owned segment may read its metadata, even
+    // when that slot has never been allocated. Enable the complete sidecar
+    // before publishing ownership, but leave unused payload inaccessible.
+    let meta_writable = meta_bytes.checked_next_multiple_of(segment_mapping::GRANULE)?;
+    // SAFETY: this uniquely claimed, unpublished sidecar lies wholly inside
+    // our immortal reservation. No libc trampoline or allocator is entered.
+    if unsafe {
+        raw_syscall::sys_mprotect(
+            meta_base as *mut u8,
+            meta_writable,
+            libc::PROT_READ | libc::PROT_WRITE,
+        )
+    }
+    .is_err()
+    {
+        return None;
+    }
     // The reservation is demand-zero, and an all-zero word IS
     // `SegmentSlotMeta::new()` (`requested_size` 0 = never used), so every slot
     // is already initialized. Writing them anyway committed the whole sidecar
@@ -1262,6 +1387,20 @@ fn claim_segment_bump_chunk(segment_index: usize, class_index: usize) -> Option<
         let end = start
             .saturating_add(SEGMENT_BUMP_CHUNK)
             .min(header.slot_count);
+        let base = segment_base(segment_index)?;
+        let first_byte = SEGMENT_HEADER_BYTES + start as usize * header.class_size as usize;
+        let end_byte = SEGMENT_HEADER_BYTES + end as usize * header.class_size as usize;
+        // Upgrade before claiming: failure leaves the cursor untouched, so
+        // resource pressure cannot consume chunks or expose inaccessible slots.
+        // SAFETY: the descriptor uniquely identifies this immortal segment;
+        // permissions only increase, including across concurrent refills/fork.
+        if !unsafe {
+            descriptor
+                .writable
+                .enable(base, SEGMENT_SIZE, first_byte, end_byte)
+        } {
+            return None;
+        }
         if descriptor
             .next_unused_slot
             .compare_exchange_weak(start, end, Ordering::AcqRel, Ordering::Acquire)
@@ -1282,7 +1421,7 @@ fn claim_existing_class_chunk(local: &mut SegmentLocalClass, class_index: usize)
         let Some((start, end)) = claim_segment_bump_chunk(segment_index, class_index) else {
             continue;
         };
-        local.active_segment = segment_index as u16;
+        local.active_segment = (segment_index as u16) + 1;
         local.next_unused_slot = start;
         local.bump_end = end;
         return true;
@@ -1297,12 +1436,31 @@ fn activate_segment_slot(
     zeroed: bool,
     origin: SegmentSlotOrigin,
 ) -> Option<*mut c_void> {
-    if requested == 0 || requested > view.class_size || requested > u16::MAX as usize {
+    activate_segment_slot_parts(
+        view.user_base,
+        view.meta,
+        view.class_size,
+        requested,
+        zeroed,
+        origin,
+    )
+}
+
+#[inline(always)]
+fn activate_segment_slot_parts(
+    user_base: usize,
+    meta: &'static SegmentSlotMeta,
+    class_size: usize,
+    requested: usize,
+    zeroed: bool,
+    origin: SegmentSlotOrigin,
+) -> Option<*mut c_void> {
+    if requested == 0 || requested > class_size || requested > u16::MAX as usize {
         return None;
     }
     let requested = requested as u16;
     debug_assert!(matches!(
-        (origin, view.meta.requested_size.load(Ordering::Relaxed)),
+        (origin, meta.requested_size.load(Ordering::Relaxed)),
         (SegmentSlotOrigin::Fresh, 0) | (SegmentSlotOrigin::Recycled, SEGMENT_SLOT_FREE)
     ));
     if zeroed && matches!(origin, SegmentSlotOrigin::Recycled) {
@@ -1332,14 +1490,14 @@ fn activate_segment_slot(
         // magazine/spill bitmap. The pointer is not externally observable until
         // this function returns.
         unsafe {
-            std::ptr::write_bytes(view.user_base as *mut u8, 0, requested as usize);
+            std::ptr::write_bytes(user_base as *mut u8, 0, requested as usize);
         }
     }
     // Magazine pop, spill-bit CAS, and the owner-only bump cursor are three
     // disjoint proofs of exclusive slot ownership.  Publish with one store;
     // the warmed malloc path therefore performs no shared metadata RMW.
-    view.meta.requested_size.store(requested, Ordering::Release);
-    Some(view.user_base as *mut c_void)
+    meta.requested_size.store(requested, Ordering::Release);
+    Some(user_base as *mut c_void)
 }
 
 #[inline]
@@ -1361,29 +1519,6 @@ fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<Segment
         user_base: base + SEGMENT_HEADER_BYTES + slot_index as usize * header.class_size as usize,
         meta,
     })
-}
-
-#[inline]
-fn encode_segment_slot(segment_index: usize, slot_index: u32) -> Option<u32> {
-    if segment_index >= SEGMENT_COUNT || slot_index > SEGMENT_SLOT_INDEX_MASK {
-        return None;
-    }
-    Some(((segment_index as u32) << SEGMENT_SLOT_INDEX_BITS) | slot_index)
-}
-
-#[inline]
-fn decode_segment_slot(encoded: u32) -> Option<(usize, u32)> {
-    if encoded == u32::MAX {
-        return None;
-    }
-    let segment_index = (encoded >> SEGMENT_SLOT_INDEX_BITS) as usize;
-    let slot_index = encoded & SEGMENT_SLOT_INDEX_MASK;
-    // Plain branch: `.then_some` on a TUPLE has to materialise the pair before
-    // discarding it on the false edge.
-    if segment_index >= SEGMENT_COUNT {
-        return None;
-    }
-    Some((segment_index, slot_index))
 }
 
 #[cold]
@@ -1458,45 +1593,28 @@ fn allocate_from_local_class(
     requested: usize,
     zeroed: bool,
 ) -> Option<*mut c_void> {
-    while let Some(encoded) = local.magazine.pop() {
-        let Some((segment_index, slot_index)) = decode_segment_slot(encoded) else {
-            continue;
-        };
-        let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
-            continue;
-        };
-        // KEEP THIS RELEASE-TIME CHECK. It looks redundant — a magazine holds only
-        // its own class by construction, since `segment_free` pushes into
-        // `classes[view.class_index].magazine` — and converting it to a
-        // `debug_assert_eq!` did save 2.0 instructions per pair, measured. IT WAS
-        // REVERTED ANYWAY, because instructions were the wrong thing to count.
-        //
-        // Callgrind with `--branch-sim=yes`, three arms built and verified distinct
-        // before measuring: removing this branch took conditional mispredicts from
-        // 50,227 to 90,148 over 20,000 pairs — +78% — while instructions fell by
-        // only 310 and total branches by 20,031. Restoring it alone brings
-        // mispredicts back to 50,227. At roughly 15-20 cycles per mispredict that
-        // is ~2 mispredicts per pair, or 30-40 cycles, traded for 2 instructions.
-        //
-        // The branch itself is perfectly predicted (always not-taken); removing it
-        // shifted the history and alignment of its neighbours so they alias worse
-        // in the predictor. AN INSTRUCTION-COUNT WIN CAN BE A WALL-CLOCK LOSS, and
-        // this is the counterexample: see docs/NEGATIVE_EVIDENCE.md.
-        if view.class_index != class_index {
-            continue;
-        }
-        if let Some(ptr) =
-            activate_segment_slot(view, requested, zeroed, SegmentSlotOrigin::Recycled)
-        {
+    while let Some(entry) = local.magazine.pop() {
+        let arena_base = segment_arena_base_if_ready()?;
+        let (user_base, meta) = entry.decode(arena_base);
+        // This is not the previously rejected removal of the redundant class
+        // check from the encoded-slot path: that path still rebuilt the whole
+        // view and regressed branch prediction. The cached entry removes those
+        // dependent header/descriptor loads as one indivisible rewrite, whose
+        // wall-clock result is gated by the live allocator A/B.
+        if let Some(ptr) = activate_segment_slot_parts(
+            user_base,
+            meta,
+            bin_size(class_index),
+            requested,
+            zeroed,
+            SegmentSlotOrigin::Recycled,
+        ) {
             return Some(ptr);
         }
     }
 
     loop {
-        if local.active_segment == SEGMENT_NO_ACTIVE {
-            return None;
-        }
-        let segment_index = local.active_segment as usize;
+        let segment_index = local.active_segment.checked_sub(1)? as usize;
         let Some(header) = segment_header(segment_index) else {
             local.active_segment = SEGMENT_NO_ACTIVE;
             return None;
@@ -1521,7 +1639,6 @@ fn allocate_from_local_class(
     }
 }
 
-#[inline]
 /// Allocate from the segment arena, returning the pointer AND the size class it
 /// came from.
 ///
@@ -1559,7 +1676,7 @@ fn segment_allocate(
 
     let segment_index = initialize_segment(class_index)?;
     let (start, end) = claim_segment_bump_chunk(segment_index, class_index)?;
-    local.active_segment = segment_index as u16;
+    local.active_segment = (segment_index as u16) + 1;
     local.next_unused_slot = start;
     local.bump_end = end;
     allocate_from_local_class(local, class_index, requested, zeroed).map(|ptr| (ptr, class_index))
@@ -1604,7 +1721,7 @@ fn segment_free(
         }
         return SegmentFreeResult::OwnedInvalid(if previous == SEGMENT_SLOT_FREE {
             InvalidFree::DoubleFree {
-                class_size: view.class_size,
+                class_size: view.class_size as u16,
             }
         } else if previous == 0 {
             InvalidFree::InvalidPointer
@@ -1647,16 +1764,20 @@ fn segment_free(
         requested,
     );
 
-    let encoded = encode_segment_slot(view.segment_index, view.slot_index);
-    if let (Some(slot), Some(encoded)) = (slot, encoded) {
+    if let Some(slot) = slot {
         // SAFETY: the public free path holds this slot's successful outer guard.
         let local_state = unsafe { &mut *slot.segment_local.get() };
+        // `segment_owned_location` already returned this segment's base after
+        // proving it belongs to the immortal arena. Recover the arena base from
+        // that value without another global load or a slot-geometry rebuild.
+        let arena_base = base - (segment_index << SEGMENT_SHIFT);
+        let entry = SegmentMagazineEntry::from_view(view, arena_base);
         if let Some(local) = local_state.classes.get_mut(view.class_index)
-            && local.magazine.push(encoded)
+            && local.magazine.push(entry)
         {
             return SegmentFreeResult::Freed {
-                size: requested,
-                bin: view.class_index,
+                size: previous,
+                bin: view.class_index as u8,
             };
         }
     }
@@ -1664,8 +1785,8 @@ fn segment_free(
     let bin = view.class_index;
     spill_segment_slot(view);
     SegmentFreeResult::Freed {
-        size: requested,
-        bin,
+        size: previous,
+        bin: bin as u8,
     }
 }
 
@@ -2676,10 +2797,7 @@ unsafe fn native_libc_malloc_usable_size(ptr: *mut c_void) -> Option<usize> {
     }
     #[cfg(not(feature = "standalone"))]
     {
-        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC_USABLE_SIZE)
-        else {
-            return None;
-        };
+        let _reentry_guard = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC_USABLE_SIZE)?;
         let host_ptr = if let Some(&host_ptr) = HOST_MALLOC_USABLE_SIZE_FN.get() {
             host_ptr
         } else {
@@ -2884,6 +3002,21 @@ pub(crate) fn install_arena_block_allocator() {
     let _ = frankenlibc_membrane::arena::install_raw_block_allocator(
         frankenlibc_membrane::arena::RawBlockAllocator { alloc, dealloc },
     );
+}
+
+/// Reserve and immediately release a 96 KiB block in the host `main_arena`
+/// (`< M_MMAP_THRESHOLD = 128 KiB` and `< M_TRIM_THRESHOLD = 128 KiB`) so the
+/// `sbrk` heap retains enough free top-chunk space after `ValidationPipeline`
+/// construction for programs that immediately cap `RLIMIT_AS` in `main`.
+pub(crate) fn prewarm_host_heap_headroom() {
+    const HEADROOM_BYTES: usize = 96 * 1024;
+    // SAFETY: transient host allocation + immediate release.
+    unsafe {
+        let ptr = native_libc_malloc(HEADROOM_BYTES);
+        if !ptr.is_null() {
+            native_libc_free(ptr);
+        }
+    }
 }
 
 #[inline]
@@ -3156,11 +3289,15 @@ impl FlatCombiningStats {
         s.allocation_events = s
             .allocation_events
             .saturating_add(take(&c.allocation_events, &mut f.allocation_events));
-        s.free_events = s.free_events.saturating_add(take(&c.free_events, &mut f.free_events));
+        s.free_events = s
+            .free_events
+            .saturating_add(take(&c.free_events, &mut f.free_events));
         s.total_allocated = s
             .total_allocated
             .saturating_add(take(&c.total_allocated, &mut f.total_allocated));
-        s.total_freed = s.total_freed.saturating_add(take(&c.total_freed, &mut f.total_freed));
+        s.total_freed = s
+            .total_freed
+            .saturating_add(take(&c.total_freed, &mut f.total_freed));
         s.active_allocations = add_signed(
             s.active_allocations,
             take(&c.active_allocations, &mut f.active_allocations),
@@ -3414,7 +3551,6 @@ fn same_small_malloc_size_class(a: usize, b: usize) -> bool {
     a_bin < frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES && a_bin == b_bin
 }
 
-
 /// Per-slot multi-threaded stats counters (see [`record_slot_mt_stats`]).
 struct SlotMtCounters {
     allocation_events: AtomicUsize,
@@ -3472,7 +3608,10 @@ fn record_slot_mt_stats(
     // lock and tolerates a moment's skew between fields.
     #[inline(always)]
     fn add(counter: &AtomicUsize, delta: usize) {
-        counter.store(counter.load(Ordering::Relaxed).wrapping_add(delta), Ordering::Relaxed);
+        counter.store(
+            counter.load(Ordering::Relaxed).wrapping_add(delta),
+            Ordering::Relaxed,
+        );
     }
     let c = &slot.mt_counts;
     match op {
@@ -4038,9 +4177,7 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
     if ptr.is_null() {
         return None;
     }
-    let Some(key) = fallback_key(ptr) else {
-        return None;
-    };
+    let key = fallback_key(ptr)?;
     let _guard = lock_fallback_alloc_table();
     // SAFETY-OF-EXCLUSION: the table lock is held for the whole probe below.
     unsafe { fallback_insert_sized_index_unlocked(key, size) }
@@ -4131,13 +4268,13 @@ fn remember_fallback_cache(slot: &'static AllocatorReentrySlot, ptr: *mut c_void
     if fallback_key(ptr).is_none() {
         return;
     }
-    slot.fallback_cache_index.store(idx, Ordering::Release);
+    slot.fallback_cache_index
+        .store(idx.saturating_add(1), Ordering::Release);
 }
 
 #[inline]
 fn clear_fallback_cache(slot: &'static AllocatorReentrySlot) {
-    slot.fallback_cache_index
-        .store(usize::MAX, Ordering::Release);
+    slot.fallback_cache_index.store(0, Ordering::Release);
 }
 
 fn fallback_insert_sized_for_slot(
@@ -4186,19 +4323,21 @@ fn fallback_remove_sized_for_slot(
 ) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {
-        let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
-        if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
-            let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
-            if slot_key == key {
-                let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
-                clear_fallback_cache(slot);
-                if size != 0 {
-                    // Keep the key as an inactive marker. The next host tcache
-                    // reuse can reactivate it without probing past a tombstone.
-                    FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
-                    return Some(size);
+        let cached = slot.fallback_cache_index.load(Ordering::Acquire);
+        if let Some(cached_idx) = cached.checked_sub(1) {
+            if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
+                let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+                if slot_key == key {
+                    let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
+                    clear_fallback_cache(slot);
+                    if size != 0 {
+                        // Keep the key as an inactive marker. The next host tcache
+                        // reuse can reactivate it without probing past a tombstone.
+                        FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
+                        return Some(size);
+                    }
+                    return None;
                 }
-                return None;
             }
             clear_fallback_cache(slot);
         }
@@ -4668,7 +4807,7 @@ pub(crate) fn in_allocator_reentry_context() -> bool {
         .unwrap_or(true)
 }
 
-/// `(in_allocator_reentry_context(), in_signal_handler_now())` from ONE slot
+/// `(in_allocator_reentry_context(), signal_handler_context_now())` from ONE slot
 /// lookup. Under multi-threading the lookup is a keyed table probe, and the
 /// hardened string entry guard asked both questions on every call.
 pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {
@@ -5031,7 +5170,7 @@ unsafe fn realloc_segment_owned(
         fallback_insert_sized(out, requested);
     }
     if let SegmentFreeResult::Freed { size, bin } = segment_free(slot, ptr) {
-        record_free_stats_binned(slot, size, bin);
+        record_free_stats_binned(slot, size as usize, bin as usize);
     }
     match segment_class {
         Some(class_index) => record_alloc_stats_binned(slot, requested, class_index),
@@ -5101,7 +5240,13 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         let out = unsafe { bump_alloc(size) };
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
-            unsafe { std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size)) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                )
+            };
             if bump_size.is_some() {
                 let _ = unsafe { bump_mmap_release(ptr) };
             }
@@ -5121,7 +5266,11 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
             unsafe {
-                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                );
                 let _ = bump_mmap_release(ptr);
             }
         }
@@ -5137,7 +5286,11 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
             unsafe {
-                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                );
             }
         }
         return out;
@@ -5165,7 +5318,7 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
 fn arena_block_size_lockfree(ptr: *mut c_void) -> Option<usize> {
     use frankenlibc_membrane::fingerprint::{AllocationFingerprint, FINGERPRINT_SIZE};
     let addr = ptr as usize;
-    if addr % 16 != 0 || addr & 0xfff < FINGERPRINT_SIZE {
+    if !addr.is_multiple_of(16) || addr & 0xfff < FINGERPRINT_SIZE {
         return None;
     }
     let mut header = [0u8; FINGERPRINT_SIZE];
@@ -5188,7 +5341,7 @@ fn arena_block_size_lockfree(ptr: *mut c_void) -> Option<usize> {
 unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
     match segment_free(None, ptr) {
         SegmentFreeResult::Freed { size, bin } => {
-            record_free_stats_binned(None, size, bin);
+            record_free_stats_binned(None, size as usize, bin as usize);
             return;
         }
         SegmentFreeResult::OwnedInvalid(_) => return,
@@ -5248,6 +5401,7 @@ fn record_allocator_stage_outcome(
 /// Returns the full safety abstraction for a pointer at `addr`.
 ///
 /// Returns `None` if the pipeline is not yet initialized.
+#[allow(dead_code)]
 #[must_use]
 pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
     validate_ptr_in_slot(addr, current_allocator_reentry_slot())
@@ -5273,7 +5427,7 @@ fn validate_ptr_in_slot(
         return Some(PointerAbstraction::unknown(addr));
     }
     let pipeline = crate::membrane_state::ready_pipeline()?;
-    pipeline.validate(addr).abstraction()
+    pipeline.validate(addr).access_abstraction()
 }
 
 /// Cheaply check if an address is likely owned by the membrane.
@@ -5303,6 +5457,63 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
 #[doc(hidden)]
 pub fn known_remaining_for_tests(addr: usize) -> Option<usize> {
     known_remaining(addr)
+}
+
+/// Remaining bytes for an entrypoint whose verified PCC explicitly skips
+/// pointer validation.
+///
+/// This is the exact branch [`known_remaining`] reaches after
+/// `validate_ptr_in_slot` observes such a certificate: bump and segment
+/// ownership are still authoritative, while the membrane abstraction is
+/// `Unknown` and therefore falls through to fallback tracking. Callers must
+/// establish `proof_carried_pointer_validation_active()` in the current
+/// entrypoint scope before using this projection.
+#[inline]
+pub(crate) fn known_remaining_for_certified_read(addr: usize) -> Option<usize> {
+    bump_mmap_remaining(addr)
+        .or_else(|| segment_remaining(addr))
+        .or_else(|| fallback_remaining(addr))
+}
+
+/// Fast remaining-bytes lookup for a caller that has already entered
+/// `enter_string_membrane_guard` (which guarantees no bootstrap/policy/allocator/
+/// validation reentry and no signal handler).
+#[inline(always)]
+pub(crate) fn known_remaining_in_guarded_string(addr: usize) -> Option<usize> {
+    if !runtime_policy::strict_passthrough_active()
+        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+        && let Some(rem) = pipeline.try_validate_cached_remaining(addr)
+    {
+        return rem.or_else(|| fallback_remaining(addr));
+    }
+    known_remaining(addr)
+}
+
+/// Fast remaining-bytes lookup for two pointers in a caller that has already
+/// entered `enter_string_membrane_guard`, resolving both pointers in a single
+/// `TLS_CACHE` borrow.
+#[inline(always)]
+pub(crate) fn known_remaining_pair_in_guarded_string(
+    lhs: usize,
+    rhs: usize,
+) -> (Option<usize>, Option<usize>) {
+    if !runtime_policy::strict_passthrough_active()
+        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+    {
+        let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
+        let lhs_rem = match lhs_cached.decode() {
+            Some(rem) => rem.or_else(|| fallback_remaining(lhs)),
+            None => known_remaining(lhs),
+        };
+        let rhs_rem = match rhs_cached.decode() {
+            Some(rem) => rem.or_else(|| fallback_remaining(rhs)),
+            None => known_remaining(rhs),
+        };
+        return (lhs_rem, rhs_rem);
+    }
+    (known_remaining(lhs), known_remaining(rhs))
 }
 
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
@@ -5336,6 +5547,14 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
             .or_else(|| fallback_remaining(addr));
     }
 
+    if !runtime_policy::proof_carried_pointer_validation_active()
+        && !slot.is_some_and(in_signal_handler)
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+        && let Some(rem) = pipeline.try_validate_cached_remaining(addr)
+    {
+        return rem.or_else(|| fallback_remaining(addr));
+    }
+
     bump_mmap_remaining(addr)
         .or_else(|| segment_remaining(addr))
         .or_else(|| {
@@ -5359,7 +5578,9 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
                     // design promises; before, these fell through to the
                     // fallback table, which still described the host block,
                     // and the access went ahead.
-                    SafetyState::Quarantined => Some(0),
+                    // An explicit integrity/bounds/security rejection must
+                    // not fall through to host-allocation fallback bounds.
+                    SafetyState::Quarantined | SafetyState::Invalid => Some(0),
                     _ => None,
                 })
                 .or_else(|| fallback_remaining(addr))
@@ -5563,7 +5784,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 
     match segment_free(Some(reentry_guard.slot), ptr) {
         SegmentFreeResult::Freed { size, bin } => {
-            record_free_stats_binned(Some(reentry_guard.slot), size, bin);
+            record_free_stats_binned(Some(reentry_guard.slot), size as usize, bin as usize);
             return;
         }
         SegmentFreeResult::OwnedInvalid(reason) => {
@@ -5631,7 +5852,12 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // ARENA blocks (the log ring's buffer, made by an earlier hardened
         // call) to host realloc/free -- "corrupted size vs. prev_size".
         drop(reentry_guard);
-        global_healing_policy().record(&action);
+        global_healing_policy().record(
+            "allocator",
+            "free",
+            &action,
+            RepairLogContext::new(0, Some(ptr as usize)),
+        );
     }
 }
 
@@ -6056,7 +6282,12 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             }
             // Outside the guard: the healing log allocates (see `free`).
             drop(reentry_guard);
-            global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
+            global_healing_policy().record(
+                "allocator",
+                "realloc",
+                &HealingAction::ReallocAsMalloc { size },
+                RepairLogContext::new(0, Some(ptr as usize)),
+            );
             return out;
         }
         Some(slot) if slot.user_base == old_addr => slot.user_size,
@@ -6121,7 +6352,12 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 // This repair is a new allocation, not allocator recursion.
                 // Let malloc retain its normal membrane ownership and policy.
                 drop(reentry_guard);
-                global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
+                global_healing_policy().record(
+                    "allocator",
+                    "realloc",
+                    &HealingAction::ReallocAsMalloc { size },
+                    RepairLogContext::new(0, Some(ptr as usize)),
+                );
                 return unsafe { malloc(size) };
             }
             // Strict mode: cannot determine old size; treat as malloc
@@ -6247,7 +6483,7 @@ pub unsafe extern "C" fn posix_memalign(
             // Host allocator off-limits here (signal handler / table holder).
             if memptr.is_null()
                 || !alignment.is_power_of_two()
-                || alignment % core::mem::size_of::<*mut c_void>() != 0
+                || !alignment.is_multiple_of(core::mem::size_of::<*mut c_void>())
             {
                 return libc::EINVAL;
             }
@@ -6837,9 +7073,10 @@ pub unsafe extern "C" fn malloc_stats() {
         "Arena 0:\nsystem bytes     = {}\nin use bytes     = {}\nTotal (incl. mmap):\nsystem bytes     = {}\nin use bytes     = {}\nmax mmap regions = {}\nmax mmap bytes   = {}\n",
         info.arena, info.uordblks, info.arena, info.uordblks, info.hblks, info.hblkhd,
     );
-    // SAFETY: write(2, buf, len) - writing to stderr fd.
+    // SAFETY: write(2, buf, len) - writing to stderr fd. Raw: a statistics
+    // report is not a cancellation point here (`msg` would leak in the unwind).
     unsafe {
-        crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len());
+        crate::unistd_abi::sys_write_fd(2, msg.as_ptr().cast(), msg.len());
     }
 }
 

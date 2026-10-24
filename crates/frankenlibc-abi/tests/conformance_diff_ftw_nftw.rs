@@ -25,7 +25,12 @@ unsafe extern "C-unwind" {
     fn nftw(
         dirpath: *const c_char,
         cb: Option<
-            unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+            unsafe extern "C-unwind" fn(
+                *const c_char,
+                *const libc::stat,
+                c_int,
+                *mut c_void,
+            ) -> c_int,
         >,
         nopenfd: c_int,
         flags: c_int,
@@ -38,7 +43,12 @@ unsafe extern "C-unwind" {
     fn nftw64(
         dirpath: *const c_char,
         cb: Option<
-            unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+            unsafe extern "C-unwind" fn(
+                *const c_char,
+                *const libc::stat,
+                c_int,
+                *mut c_void,
+            ) -> c_int,
         >,
         nopenfd: c_int,
         flags: c_int,

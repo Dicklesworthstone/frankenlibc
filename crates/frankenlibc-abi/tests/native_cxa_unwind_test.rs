@@ -208,10 +208,8 @@ fn native_finalize_unwind_worker() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
-        "franken-cxa-unwind-{}-{stamp}",
-        std::process::id()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("franken-cxa-unwind-{}-{stamp}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let provider_path = compile(&directory, NATIVE, false, "provider");
     let owner_path = directory.join("libowner.so");

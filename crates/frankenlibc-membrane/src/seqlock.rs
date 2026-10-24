@@ -261,11 +261,7 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
         let mut guard = self.data.lock();
         *guard = Arc::new(new_value);
         let new_version = self.version.fetch_add(1, Ordering::Release) + 1;
-        let new_writes = self
-            .diag
-            .writes
-            .load(Ordering::Relaxed)
-            .wrapping_add(1);
+        let new_writes = self.diag.writes.load(Ordering::Relaxed).wrapping_add(1);
         self.diag.writes.store(new_writes, Ordering::Relaxed);
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::SeqLockWriteCommit,

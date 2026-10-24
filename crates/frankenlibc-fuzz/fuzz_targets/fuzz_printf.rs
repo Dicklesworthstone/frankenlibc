@@ -77,6 +77,7 @@ fn make_spec(input: &PrintfFuzzInput) -> FormatSpec {
         alt_form: input.flags & 8 != 0,
         zero_pad: input.flags & 16 != 0,
         group: input.flags & 32 != 0,
+        i18n: input.flags & 64 != 0,
     };
 
     let width = match input.width % 3 {

@@ -255,9 +255,9 @@ fn encode_state(state: &RandomState, buf: &mut [u8]) -> bool {
     let rear = if state.rand_type == 0 { 0 } else { state.rptr };
     let encoded = MAX_TYPES * rear as i32 + i32::from(state.rand_type);
     buf[..4].copy_from_slice(&encoded.to_ne_bytes());
-    for i in 0..words {
+    for (i, &entry) in state.table.iter().enumerate().take(words) {
         let off = (i + 1) * 4;
-        buf[off..off + 4].copy_from_slice(&state.table[i].to_ne_bytes());
+        buf[off..off + 4].copy_from_slice(&entry.to_ne_bytes());
     }
     true
 }

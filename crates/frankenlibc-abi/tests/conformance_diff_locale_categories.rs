@@ -21,7 +21,7 @@
 //! Every arm below moves BOTH libraries and restores the startup locale, since
 //! `setlocale` is process-global in each.
 
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, c_char, c_int};
 use std::sync::{Mutex, OnceLock};
 
 #[path = "common/dlsym_oracle.rs"]

@@ -16,6 +16,7 @@
 //!   * `fallback_remaining` early-outs when the address is outside
 //!     [`FALLBACK_ALLOC_MIN_ADDR`, `FALLBACK_ALLOC_MAX_ADDR`], but when the
 //!     address IS in range it takes a LOCK and probes up to 1024 slots.
+//!
 //! So if that chain is the floor, the SAME function on the SAME bytes must cost
 //! different amounts depending only on where the buffer came from. If it is not
 //! the floor, provenance cannot matter.
@@ -26,6 +27,7 @@
 //!     `known_remaining` unconditionally. => PREDICT provenance-SENSITIVE.
 //!   * `strtol` carries the deployed `stdlib_membrane_fastpath` bypass, which
 //!     skips `decide`/`known_remaining` entirely. => PREDICT provenance-INSENSITIVE.
+//!
 //! Opposite predictions for two symbols in one invocation, so "provenance
 //! matters" cannot be a property of the harness.
 //!
@@ -275,7 +277,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]
@@ -543,7 +545,10 @@ fn main() {
         "incumbent resolved to {}, not host libc",
         host_identity.path.display()
     );
-    assert_eq!(fl_identity.sha256, supplied.sha256, "loaded SO hash differs");
+    assert_eq!(
+        fl_identity.sha256, supplied.sha256,
+        "loaded SO hash differs"
+    );
     assert_ne!(
         host_identity.sha256, fl_identity.sha256,
         "both arms are the same object"
@@ -584,8 +589,8 @@ fn main() {
         "FrankenLibC malloc returned NULL; the fl-heap provenance arm cannot be built"
     );
     unsafe {
-        std::ptr::copy_nonoverlapping(b"alnum\0".as_ptr(), fl_wctype_buf, 6);
-        std::ptr::copy_nonoverlapping(b"12345\0".as_ptr(), fl_strtol_buf, 6);
+        std::ptr::copy_nonoverlapping(c"alnum".as_ptr().cast(), fl_wctype_buf, 6);
+        std::ptr::copy_nonoverlapping(c"12345".as_ptr().cast(), fl_strtol_buf, 6);
     }
     let static_wctype = &raw mut STATIC_WCTYPE_BUF as *mut u8;
     let static_strtol = &raw mut STATIC_STRTOL_BUF as *mut u8;
@@ -603,7 +608,10 @@ fn main() {
         ("fl_heap", fl_strtol_buf.cast()),
     ];
     for (label, pointer) in wctype_bufs.iter().chain(&strtol_bufs) {
-        println!("BUFFER_PROVENANCE label={label} address={:#x}", *pointer as usize);
+        println!(
+            "BUFFER_PROVENANCE label={label} address={:#x}",
+            *pointer as usize
+        );
     }
 
     // ---- conformance precedes timing --------------------------------------
@@ -633,8 +641,21 @@ fn main() {
     }
     // Broader strtol agreement so the timed input is not a lucky special case.
     for value in [
-        "0", "-1", "42", "12345", "  77", "+9", "0x1f", "999999999", "-2147483648",
-        "9223372036854775807", "abc", "", "  ", "12abc", "-0",
+        "0",
+        "-1",
+        "42",
+        "12345",
+        "  77",
+        "+9",
+        "0x1f",
+        "999999999",
+        "-2147483648",
+        "9223372036854775807",
+        "abc",
+        "",
+        "  ",
+        "12abc",
+        "-0",
     ] {
         for base in [0, 8, 10, 16] {
             let input = CString::new(value).unwrap();

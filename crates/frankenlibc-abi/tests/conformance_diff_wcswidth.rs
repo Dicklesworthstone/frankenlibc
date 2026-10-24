@@ -89,10 +89,10 @@ fn wcswidth_matches_glibc() {
     };
     for _ in 0..200_000 {
         let len = (next() % 8) as usize;
-        let mut buf: Vec<i32> = (0..len)
+        let buf: Vec<i32> = (0..len)
             .map(|_| alphabet[(next() as usize) % alphabet.len()])
+            .chain(std::iter::once(0)) // guarantee NUL termination for the oracle's safety
             .collect();
-        buf.push(0); // guarantee NUL termination for the oracle's safety
         let n = (next() % 10) as usize;
         let (fl, gl) = both(&buf, n);
         assert_eq!(fl, gl, "wcswidth fuzz {buf:x?} n={n}: fl={fl} glibc={gl}");

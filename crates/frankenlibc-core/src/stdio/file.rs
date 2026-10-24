@@ -379,6 +379,13 @@ pub struct StdioStream {
     read_pushback: VecDeque<u8>,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
+    /// Bytes accepted into the modelled `BUFSIZ` stdio buffer since the last
+    /// flush on a `MemBacking::Fixed` (`fmemopen`) stream (bd-lamxlj).
+    mem_pending_write: usize,
+    /// Bytes accepted into the modelled `BUFSIZ` stdio buffer beyond the fixed
+    /// backing capacity since the last flush on a `MemBacking::Fixed` stream.
+    /// Reported as a flush error (`EOF`, `ferror`) on `fflush`/`fseek`/`fclose`.
+    mem_pending_overflow: usize,
     /// Opaque token naming the C `FILE` this stream is published through
     /// (0: none). The ABI layer uses it to find the handle whose glibc read
     /// window mirrors [`read_window`](Self::read_window).
@@ -417,6 +424,8 @@ impl StdioStream {
             read_pushback: VecDeque::new(),
             c_handle: 0,
             mem_backing: None,
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -432,6 +441,8 @@ impl StdioStream {
             read_pushback: VecDeque::new(),
             c_handle: 0,
             mem_backing: None,
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -458,6 +469,8 @@ impl StdioStream {
                 pos,
                 content_end: cl,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -488,6 +501,8 @@ impl StdioStream {
                 pos,
                 content_end: content_len,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -540,6 +555,8 @@ impl StdioStream {
                 data: Vec::new(),
                 pos: 0,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -559,6 +576,8 @@ impl StdioStream {
                 data: Vec::new(),
                 pos: 0,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -795,6 +814,23 @@ impl StdioStream {
         }
     }
 
+    /// Like `fast_write`, but also buffers non-newline bytes on `BufMode::Line` streams.
+    #[inline]
+    pub fn fast_write_line_or_full(&mut self, data: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write_line_or_full(data) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(data.len() as i64);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Fast single-byte buffered read for the common case: returns `Some(byte)` iff a byte
     /// is already in the read buffer for a clean readable fd stream — reusing
     /// `buffered_read_into` (which advances the cursor/offset and clears `last_write`).
@@ -857,6 +893,7 @@ impl StdioStream {
         if !self.open_flags.readable
             || self.is_mem_backed()
             || self.flags.last_write
+            || self.flags.orientation > 0
             || self.ungetc_byte.is_some()
             || !self.read_pushback.is_empty()
         {
@@ -879,7 +916,7 @@ impl StdioStream {
     /// Whether this stream can ever publish a [`write_window`](Self::write_window):
     /// a writable stream [reported as buffered](Self::reports_buffered).
     pub fn write_window_capable(&self) -> bool {
-        self.open_flags.writable && self.reports_buffered()
+        self.open_flags.writable && self.reports_buffered() && self.flags.orientation <= 0
     }
 
     /// The write buffer a caller may fill in place, as `(base address, bytes
@@ -908,6 +945,7 @@ impl StdioStream {
         self.flags.io_started = true;
         self.flags.last_write = true;
         self.flags.eof = false;
+        let _ = self.set_orientation(-1);
         self.offset = self.offset.saturating_add(added as i64);
     }
 
@@ -932,6 +970,7 @@ impl StdioStream {
         self.buffer.consume(n);
         self.flags.io_started = true;
         self.flags.last_write = false;
+        let _ = self.set_orientation(-1);
         self.advance_offset(n);
     }
 
@@ -1151,6 +1190,7 @@ impl StdioStream {
         if let Some(backing) = self.mem_backing.as_mut() {
             let rem = backing.peek();
             if rem.is_empty() {
+                self.flags.eof = true;
                 return ReadUntil::Eof;
             }
             let outcome = match crate::string::mem::memchr(rem, delim, rem.len()) {
@@ -1163,6 +1203,10 @@ impl StdioStream {
                     let n = rem.len();
                     out.extend_from_slice(rem);
                     backing.consume(n);
+                    // Unlike a bounded read, getdelim keeps looking until
+                    // the delimiter or an attempted read past the end. The
+                    // final unterminated line therefore sets EOF immediately.
+                    self.flags.eof = true;
                     ReadUntil::Eof
                 }
             };
@@ -1253,6 +1297,7 @@ impl StdioStream {
             let rem = backing.peek();
             let rem_len = rem.len();
             if rem_len == 0 {
+                self.flags.eof = true;
                 return (written, ReadUntil::Eof);
             }
             let scan_len = rem_len.min(limit);
@@ -1266,10 +1311,12 @@ impl StdioStream {
             written += n;
             let outcome = if found {
                 ReadUntil::Found
-            } else if n < rem_len {
-                // Stopped at the destination limit; bytes remain in the backing.
+            } else if written == dst.len() {
+                // Filling the caller's request is not an attempt past EOF,
+                // even when its last byte is the last byte of the backing.
                 ReadUntil::NeedRefill
             } else {
+                self.flags.eof = true;
                 ReadUntil::Eof
             };
             (written, outcome)
@@ -1390,6 +1437,7 @@ impl StdioStream {
         };
 
         if pushed {
+            self.flags.io_started = true;
             self.flags.eof = false; // POSIX: ungetc clears EOF
             self.rewind_offset_one();
         }
@@ -1458,10 +1506,52 @@ impl StdioStream {
                 let last = data.len() - 1;
                 data[last] = 0;
             }
+            if matches!(backing, MemBacking::Fixed { .. }) {
+                let next_pending = self.mem_pending_write.saturating_add(data.len());
+                if n == data.len() && self.mem_pending_overflow == 0 {
+                    self.mem_pending_write = next_pending % BUFSIZ;
+                    self.offset = backing.position() as i64;
+                    return data.len();
+                }
+                if next_pending <= BUFSIZ {
+                    self.mem_pending_write = next_pending;
+                    self.mem_pending_overflow =
+                        self.mem_pending_overflow.saturating_add(data.len() - n);
+                    self.offset =
+                        backing.position().saturating_add(self.mem_pending_overflow) as i64;
+                    return data.len();
+                }
+                // Write exceeds glibc's 8192-byte (`BUFSIZ`) FILE buffer: flush
+                // immediately and report the short write / overflow at write time.
+                self.mem_pending_write = 0;
+                self.mem_pending_overflow = 0;
+                self.flags.error = true;
+                self.offset = backing.position() as i64;
+                return n;
+            }
             self.offset = backing.position() as i64;
             n
         } else {
             0
+        }
+    }
+
+    /// Flush staged writes on a memory-backed stream (`bd-lamxlj`).
+    ///
+    /// Returns `false` (and sets `error` + clamps `offset` to the backing
+    /// position) if bytes buffered in the modelled `BUFSIZ` window overflowed a
+    /// `MemBacking::Fixed` (`fmemopen`) stream since the last flush.
+    pub fn mem_flush(&mut self) -> bool {
+        self.mem_pending_write = 0;
+        if self.mem_pending_overflow > 0 {
+            self.mem_pending_overflow = 0;
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            }
+            self.flags.error = true;
+            false
+        } else {
+            true
         }
     }
 
@@ -1489,7 +1579,7 @@ impl StdioStream {
                 if let Some(ref backing) = self.mem_backing {
                     self.offset = backing.position() as i64;
                 } else {
-                    self.advance_offset(1);
+                    self.advance_offset(result.len());
                 }
                 return result;
             }
@@ -1530,7 +1620,7 @@ impl StdioStream {
                 if let Some(ref backing) = self.mem_backing {
                     self.offset = backing.position() as i64;
                 } else {
-                    self.advance_offset(1);
+                    self.advance_offset(w);
                 }
                 return w;
             }
@@ -1558,6 +1648,9 @@ impl StdioStream {
     /// Seek within a memory-backed stream.
     /// Returns the new position on success, or -1 on failure.
     pub fn mem_seek(&mut self, offset: i64, whence: i32) -> i64 {
+        if !self.mem_flush() {
+            return -1;
+        }
         if let Some(ref mut backing) = self.mem_backing {
             if let Some(new_pos) = backing.seek(offset, whence) {
                 self.ungetc_byte = None;
@@ -1591,6 +1684,68 @@ impl StdioStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn committed_read_window_sets_sticky_byte_orientation() {
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                readable: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+        stream.consume_window(0);
+        assert_eq!(stream.set_orientation(0), 0);
+        stream.consume_window(2);
+        assert_eq!(stream.flags.orientation, -1);
+        assert_eq!(stream.set_orientation(1), -1);
+        assert_eq!(stream.offset(), 2);
+        assert_eq!(stream.read_window(), Some(b"c".as_slice()));
+    }
+
+    #[test]
+    fn committed_write_window_sets_sticky_byte_orientation() {
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                writable: true,
+                ..Default::default()
+            },
+        );
+        assert!(stream.buffer_write(b"a").is_some());
+        stream.set_offset(1);
+        let (_, used, capacity) = stream.write_window().unwrap();
+        assert_eq!(used, 1);
+        assert!(capacity > used);
+        stream.commit_write_window(used + 1);
+        assert_eq!(stream.flags.orientation, -1);
+        assert_eq!(stream.set_orientation(1), -1);
+        assert_eq!(stream.offset(), 2);
+        stream.commit_write_window(used + 1);
+        assert_eq!(
+            stream.offset(),
+            2,
+            "repeated absorption must not double count"
+        );
+    }
+
+    #[test]
+    fn wide_streams_do_not_publish_byte_windows() {
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                readable: true,
+                writable: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stream.set_orientation(1), 1);
+        assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+        assert!(stream.read_window().is_none());
+        assert!(!stream.write_window_capable());
+        assert_eq!(stream.set_orientation(-1), 1);
+    }
 
     #[test]
     fn test_parse_mode_read() {

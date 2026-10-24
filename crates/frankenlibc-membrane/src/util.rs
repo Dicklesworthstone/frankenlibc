@@ -1,6 +1,5 @@
 //! Shared utilities for the membrane crate.
 
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
@@ -111,129 +110,8 @@ pub fn note_fork_child() {
     FORK_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
-/// The membrane's mutex: never poisons, and survives `fork` from a
-/// multithreaded parent (a lock held by a parent thread at the clone is taken
-/// over in the child rather than waited on forever). A futex word: 0 free,
-/// 1 held, 2 held with waiters; `holder_generation` is the fork generation the
-/// current holder locked it in.
-pub(crate) struct NoPoisonMutex<T> {
-    state: AtomicU32,
-    holder_generation: AtomicU32,
-    value: UnsafeCell<T>,
-}
-
-// SAFETY: access to `value` is serialized by `state` (a guard exists only
-// while the lock is held), exactly as for `std::sync::Mutex`.
-#[allow(unsafe_code)]
-unsafe impl<T: Send> Sync for NoPoisonMutex<T> {}
-// SAFETY: as above.
-#[allow(unsafe_code)]
-unsafe impl<T: Send> Send for NoPoisonMutex<T> {}
-
-impl<T> std::fmt::Debug for NoPoisonMutex<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NoPoisonMutex").finish_non_exhaustive()
-    }
-}
-
-/// Guard of a [`NoPoisonMutex`]; unlocks on drop.
-pub(crate) struct NoPoisonMutexGuard<'a, T> {
-    lock: &'a NoPoisonMutex<T>,
-    /// Guards are not `Send`, like `std::sync::MutexGuard`.
-    _not_send: std::marker::PhantomData<*const ()>,
-}
-
-impl<T> NoPoisonMutex<T> {
-    pub(crate) const fn new(value: T) -> Self {
-        Self {
-            state: AtomicU32::new(0),
-            holder_generation: AtomicU32::new(0),
-            value: UnsafeCell::new(value),
-        }
-    }
-
-    fn guard(&self) -> NoPoisonMutexGuard<'_, T> {
-        self.holder_generation
-            .store(FORK_GENERATION.load(Ordering::Acquire), Ordering::Release);
-        NoPoisonMutexGuard {
-            lock: self,
-            _not_send: std::marker::PhantomData,
-        }
-    }
-
-    /// Take over a lock whose holder belongs to an earlier fork generation.
-    fn try_take_orphan(&self) -> bool {
-        let generation = FORK_GENERATION.load(Ordering::Acquire);
-        let holder = self.holder_generation.load(Ordering::Acquire);
-        holder != generation
-            && self.state.load(Ordering::Acquire) != 0
-            && self
-                .holder_generation
-                .compare_exchange(holder, generation, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-    }
-
-    pub(crate) fn lock(&self) -> NoPoisonMutexGuard<'_, T> {
-        if self
-            .state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            return self.guard();
-        }
-        loop {
-            if self.try_take_orphan() {
-                return self.guard();
-            }
-            if self.state.swap(2, Ordering::Acquire) == 0 {
-                return self.guard();
-            }
-            futex_wait(&self.state, 2);
-        }
-    }
-
-    pub(crate) fn try_lock(&self) -> Option<NoPoisonMutexGuard<'_, T>> {
-        if self
-            .state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-            || self.try_take_orphan()
-        {
-            Some(self.guard())
-        } else {
-            None
-        }
-    }
-}
-
-impl<T> std::ops::Deref for NoPoisonMutexGuard<'_, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        // SAFETY: the guard proves the lock is held by this thread.
-        #[allow(unsafe_code)]
-        unsafe {
-            &*self.lock.value.get()
-        }
-    }
-}
-
-impl<T> std::ops::DerefMut for NoPoisonMutexGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: the guard proves exclusive access.
-        #[allow(unsafe_code)]
-        unsafe {
-            &mut *self.lock.value.get()
-        }
-    }
-}
-
-impl<T> Drop for NoPoisonMutexGuard<'_, T> {
-    fn drop(&mut self) {
-        if self.lock.state.swap(0, Ordering::Release) == 2 {
-            futex_wake_one(&self.lock.state);
-        }
-    }
-}
+mod fork_mutex;
+pub(crate) use fork_mutex::{NoPoisonMutex, NoPoisonMutexGuard};
 
 /// Private FUTEX_WAIT on `word` while it equals `expected`. The membrane has
 /// no libc or core dependency, so the syscall is issued directly.
@@ -402,7 +280,8 @@ impl<T> LazyBox<T> {
     pub fn get(&self) -> Option<&T> {
         let ptr = self.ptr.load(Ordering::Acquire);
         // SAFETY: a non-null pointer came from `Box::into_raw` in
-        // `get_or_init`, is never replaced, and is freed only by `drop`.
+        // `get_or_init`; normal execution keeps it installed until `drop`.
+        // The child-only replacement contract separately excludes live refs.
         (!ptr.is_null()).then(|| unsafe { &*ptr })
     }
 
@@ -418,7 +297,8 @@ impl<T> LazyBox<T> {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            // SAFETY: `fresh` is now the installed, never-replaced pointer.
+            // SAFETY: `fresh` is now installed and remains live during normal
+            // execution; the child-only replacement contract excludes refs.
             Ok(_) => unsafe { &*fresh },
             Err(installed) => {
                 // SAFETY: `fresh` lost the race and was never shared.
@@ -426,6 +306,28 @@ impl<T> LazyBox<T> {
                 // SAFETY: as in `get`.
                 unsafe { &*installed }
             }
+        }
+    }
+
+    /// Replace an initialized value in the single-threaded child immediately
+    /// after `fork`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must be executing in the freshly forked child before it has
+    /// created any threads, and the surviving thread must not hold a reference
+    /// returned by this `LazyBox`. References held by vanished parent threads
+    /// do not exist in the child's address space execution state. These
+    /// conditions make it safe to reclaim the inherited value after the atomic
+    /// replacement.
+    #[allow(unsafe_code)]
+    pub unsafe fn replace_in_fork_child(&self, value: T) {
+        let fresh = Box::into_raw(Box::new(value));
+        let inherited = self.ptr.swap(fresh, Ordering::AcqRel);
+        if !inherited.is_null() {
+            // SAFETY: the child-only contract above excludes live references
+            // in the surviving thread; `inherited` came from `Box::into_raw`.
+            drop(unsafe { Box::from_raw(inherited) });
         }
     }
 }
@@ -491,9 +393,71 @@ pub fn now_utc_iso_like() -> String {
     )
 }
 
+/// Bitwise IEEE-754 truncation toward zero without emitting a `trunc@PLT` call
+/// on baseline x86-64 (which lacks SSE4.1 `roundsd`; bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub fn trunc_f64(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let exp = ((bits >> 52) & 0x7ff) as i32 - 1023;
+    if exp < 0 {
+        return f64::from_bits(bits & (1u64 << 63));
+    }
+    if exp >= 52 {
+        return x;
+    }
+    let mask = (1u64 << (52 - exp)) - 1;
+    f64::from_bits(bits & !mask)
+}
+
+/// Bitwise IEEE-754 floor toward `-inf` without emitting a `floor@PLT` call on
+/// baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub fn floor_f64(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let t = trunc_f64(x);
+    if x < t { t - 1.0 } else { t }
+}
+
+/// Bitwise IEEE-754 ceil toward `+inf` without emitting a `ceil@PLT` call on
+/// baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub fn ceil_f64(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let t = trunc_f64(x);
+    if x > t { t + 1.0 } else { t }
+}
+
+/// Bitwise IEEE-754 round-half-away-from-zero without emitting a `round@PLT`
+/// call on baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub fn round_f64(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let t = trunc_f64(x);
+    let rem = (x - t).abs();
+    if rem >= 0.5 {
+        if x.is_sign_negative() {
+            t - 1.0
+        } else {
+            t + 1.0
+        }
+    } else {
+        t
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::LazyBox;
+    use super::{LazyBox, ceil_f64, floor_f64, round_f64, trunc_f64};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -549,5 +513,57 @@ mod tests {
 
         drop(Arc::try_unwrap(lazy).ok().expect("sole owner"));
         assert_eq!(drops.load(Ordering::SeqCst), built, "winner freed on drop");
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn lazy_box_fork_child_replacement_drops_inherited_value() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let lazy = LazyBox::new_with(Counted(drops.clone()));
+
+        // SAFETY: this single-threaded test models the freshly forked child;
+        // it holds no reference returned by `lazy` across the replacement.
+        unsafe { lazy.replace_in_fork_child(Counted(drops.clone())) };
+        assert_eq!(drops.load(Ordering::SeqCst), 1, "inherited value dropped");
+
+        drop(lazy);
+        assert_eq!(drops.load(Ordering::SeqCst), 2, "replacement dropped");
+    }
+
+    #[test]
+    fn bitwise_f64_rounding_helpers_match_ieee754() {
+        let samples = [
+            0.0,
+            -0.0,
+            0.25,
+            -0.25,
+            0.5,
+            -0.5,
+            0.499_999_999_999_999_94,
+            -0.499_999_999_999_999_94,
+            1.0,
+            -1.0,
+            1.5,
+            -1.5,
+            2.5,
+            -2.5,
+            12.8,
+            -12.8,
+            4_503_599_627_370_495.5,
+            -4_503_599_627_370_495.5,
+            4_503_599_627_370_496.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for x in samples {
+            assert_eq!(trunc_f64(x).to_bits(), x.trunc().to_bits(), "trunc({x})");
+            assert_eq!(floor_f64(x).to_bits(), x.floor().to_bits(), "floor({x})");
+            assert_eq!(ceil_f64(x).to_bits(), x.ceil().to_bits(), "ceil({x})");
+            assert_eq!(round_f64(x).to_bits(), x.round().to_bits(), "round({x})");
+        }
+        assert!(trunc_f64(f64::NAN).is_nan());
+        assert!(floor_f64(f64::NAN).is_nan());
+        assert!(ceil_f64(f64::NAN).is_nan());
+        assert!(round_f64(f64::NAN).is_nan());
     }
 }

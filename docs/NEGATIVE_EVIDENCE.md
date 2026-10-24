@@ -41203,3 +41203,1027 @@ ones that would notice a threading-policy depth counter behaving differently.
   - thrd_current DECIDABLE **2.278 FL_SLOWER.** NOT a falsification: the 2026-07-15 force-inline row is a self-speedup (3.289 -> 2.509 ns fl-vs-fl) and never claimed glibc parity. This is the first COMPETITIVE receipt for the family: fl identity-cache cost ~5-6 ns vs glibc direct-TLS ~2.5 ns. The residual is the membrane identity-cache contract, not the removed wrapper call.
   - malloc_free DECIDABLE **5.644 FL_SLOWER** small_64 — improved from the 6.87x load-qualified headline (2026-08-17), consistent with intervening allocator work, still the largest certified family loss.
 - **NO WIN/LOSS CLAIM CHANGED.** This receipt refreshes the frontier; it files no retraction (all rows checked for class: thrd_current/mtx_trylock are self-speedup rows and say so inline).
+
+## 2026-10-06 (salvage/junk-review-old) — CAMPAIGN WIN (RESTORED): the C-locale `strfmon` fast paths that merge `0be7b9dafe87` silently dropped measure 0.250-0.307x vs live glibc; main measures 1.776-2.590x
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.307375` (headline `national`, `%n`);
+  `incumbent_bootstrap_median_ci=[0.306321,0.308299]`;
+  `null_bootstrap_median_ci=[0.997949,1.001534]` (FL/FL; glibc/glibc `[0.995204,1.000866]`);
+  same-invocation FL/FL null median 0.999701, bootstrap median CI [0.997949,1.001534];
+  `bench_elf_sha256=486c7b102d2b439463d980fc6ec0016e41899ac0b6747556b1981e66a92524eb`
+  (in-process self-report); `cv_used=false`.
+- **WHAT THIS IS.** `22595833b` (strfmon half), `cb1f46f8b`, `e25f441c6` (2026-07-31) added a closed
+  C-locale `strfmon` path: single `%n`/`%i`, the identity flags `^ ! +`, `(` and `-`, field width,
+  `.2`, and literal-separated sequences such as `%n %n`, rendered straight into the caller buffer via
+  `locale::strfmon::strfmon_c_default_into` with no heap. Merge `0be7b9dafe87` (2026-08-03) took the
+  replayed June `unistd_abi.rs` (`e634aff2a`) and dropped the ABI wiring. The core helper and
+  `strfmon_ab.rs` survived, so the helper had no ABI caller. Restored by the commit "perf(locale):
+  restore the C-locale strfmon fast paths lost in 0be7b9daf" (three-way merge: base `22595833b^`,
+  theirs `e25f441c6`, ours `258ff4e7d`). It re-opens the 2026-07-30 strfmon REJECT row under that
+  row's retry predicate ("Re-open `strfmon` only as a SELF-speedup targeting fixed per-call
+  overhead"): the lever deletes the general parser and its heap allocations, not digit conversion.
+  The predicate also asks for a profile naming such a frame first. None was taken; the
+  same-invocation A/B below is the evidence instead. The row makes no generality-tax claim, so it
+  does not contradict the 2026-07-30 row.
+- **SAME-INVOCATION A/A AND EFFECT, host hz4 (64 logical CPUs), 33 retained samples x 100,000 calls
+  per arm, alternating pair order, both arms pinned to `LC_ALL=C` in their own namespace,
+  `FL_OBJECT` inside the executable, `INCUMBENT_OBJECT /usr/lib/x86_64-linux-gnu/libc.so.6`.**
+  The candidate was a local salvage build, never pushed: origin/main `258ff4e7d` plus this
+  restoration, the strftime dispatcher restoration, the scanf restoration rejected in the next row,
+  and harness-only commits. Its `strfmon` code is the pushed code; the pre-push review added only
+  `// SAFETY:` comments.
+
+  | case | FL/glibc | CI95 | FL/FL A/A | glibc/glibc A/A | verdict | main (base) FL/glibc |
+  |---|---:|---|---|---|---|---:|
+  | `national` `%n` | 0.307375 | [0.306321,0.308299] | 0.999701 [0.997949,1.001534] | 0.998598 [0.995204,1.000866] | FL_FASTER | 1.841725 |
+  | `international` `%i` | 0.303519 | [0.301691,0.304045] | 1.000674 [0.999578,1.002445] | 0.998819 [0.994345,1.002765] | FL_FASTER | 1.778293 |
+  | `precision_2` `%.2n` | 0.270171 | [0.269366,0.272781] | 1.001575 [1.000247,1.003905] | 0.998056 [0.994921,0.999603] | FL_FASTER | 2.511036 |
+  | `width_16` `%16n` | 0.249702 | [0.247951,0.250456] | 1.000161 [0.998979,1.001315] | 1.000298 [0.996473,1.002468] | FL_FASTER | 2.589888 |
+  | `no_grouping` `%^n` | 0.302906 | [0.301704,0.303815] | 0.999126 [0.997096,1.002387] | 1.000380 [0.997066,1.003602] | FL_FASTER | 1.802988 |
+  | `paren_negative` `%(n` | 0.286343 | [0.283915,0.287592] | 1.001081 [0.997393,1.005697] | 0.996855 [0.992862,0.999318] | FL_FASTER | 2.002643 |
+  | `two_values` `%n %n` | 0.287591 | [0.286575,0.288687] | 0.998672 [0.997058,1.000700] | 0.999928 [0.995279,1.001925] | FL_FASTER | 1.776019 |
+
+  All 14 A/A medians are within 0.4% of 1.0. Every effect clears twice the wider null half-width,
+  and every CI excludes 1.0.
+- **BASELINE SHAPE, maintenance evidence only.** Same worker and harness, base = origin/main
+  `258ff4e7d` plus this series' first two harness-only commits (`strftime_litrun_ab` decline-path
+  controls and `--case` lists), `bench_elf_sha256=fec5dcdac97d579dd2302a04871174b7729ea580e43e086dce904412934d4431`.
+  All 7 cases measured FL_SLOWER at 1.776-2.590x with all nulls holding. That is the standing loss
+  the 2026-07-30 row recorded (2.12-3.87x on another host). The fl-over-fl self ratio is 0.094-0.168.
+- **BEHAVIOUR PROOF.** In the same binary before timing: `verify: OK (7 cases byte-identical to host
+  glibc, plus truncation caps 1..=24)`. Debug ABI gates on the pushed head (rch, 2026-10-06), each
+  with a non-zero passed count: `conformance_diff_strfmon_format` 2 (including
+  `strfmon_sequences_and_capacity_boundaries_match_glibc`, added with this row: 14 fast-path
+  formats x 12 value pairs at every capacity, plus 6 declined shapes), `conformance_diff_strfmon_l`
+  1, `conformance_diff_strfmon_nan_flags` 1, `conformance_diff_strfmon_negzero` 1,
+  `strfmon_differential_fuzz` 2 (curated battery plus randomized directives vs host glibc),
+  `unistd_abi_test` filtered to `strfmon` 2.
+- **DISPOSITION / RETRY PREDICATE.** KEEP. Reopen if a live-glibc repeat's FL/glibc CI no longer
+  lies below 1.0 by more than twice the wider A/A half-width, if `strfmon`/`strfmon_l` gain a named
+  LC_MONETARY (the fast path assumes the C locale's empty currency and grouping tables), or if a
+  strfmon differential gate diverges.
+
+## 2026-10-06 (salvage/junk-review-old) — the restored scanf narrow-whitespace inline (`baf79327b`) moves the sscanf family both ways by 2-9%, inside this instrument's between-build band
+
+- **RESULT CLASS:** comparison of two fl builds, each against live glibc;
+  verdict REJECT. No campaign claim.
+- **WHAT WAS TESTED.** `baf79327b` (2026-07-31) moved `ws_seq_len`'s Unicode arm out of line, gave
+  `skip_ws` a narrow byte loop, and specialised narrow `%s`. Merge `0be7b9dafe87` took the replayed
+  `scanf.rs` (`73c8da5cd`) and dropped it. The salvage branch restored it on main's `scanf.rs`,
+  moving the narrow-`%s` hunk from the 2026-07-31 engine's `scan_string_extent` (which main does not
+  have) into main's `scan_string`, measured it, and reverted it. The pre-push review squashed that
+  restore/revert pair out, so neither commit is in history; `baf79327b` is the lever.
+- **MEASURED.** `incumbent_coverage_ab --family sscanf --fl-deepbind --pin-quietest 2`, hz4, 36
+  samples x 600,000 reps per arm, host-wide guard clear pre and post, every FL/FL and glibc/glibc
+  A/A median within 2%. Base fl object sha256 `7197dca3983a50890eed034c1b06a902af5a13e2b12b55b637316320c01ac699`
+  (origin/main `258ff4e7d` plus harness-only commits); candidate
+  `2677d36aad53060a56374cf71548e62b23845a2b1987120afe09e794bddb9cb9` (the same local build as the
+  strfmon row above, which carried this restoration). FL/glibc base -> candidate:
+  `key_value` 0.2832 -> 0.2664, `scanset_only` 0.2371 -> 0.2204, `string_then_int` 0.2775 -> 0.2703
+  (better); `dotted_quad` 0.2007 -> 0.2186, `mixed_record` 0.3734 -> 0.3915, `long_string`
+  0.3754 -> 0.3892, `two_ints` 0.2414 -> 0.2471, `long_hex` 1.2022 -> 1.2259 (worse); `single_int`,
+  `string_token`, `two_strings` and `float_only` overlap.
+- **WHY IT IS NOT A WIN.** Cases the change cannot reach (the `%d` fast paths `dotted_quad` and
+  `two_ints`) moved as much as cases it can. That is the build-to-build shift the 2026-08-16 rows
+  document for this family. The two cases that still run the engine path the change touches
+  (`float_only`, `long_hex`) did not improve. Its original target, `%s` on the engine, has been
+  served by the August fast paths since 2026-08-17.
+- **DISPOSITION.** Not landed. Do not retry it as a sscanf lever while
+  the fast paths serve `%s`. Reopen only for a stream (`fscanf`) or wide (`swscanf`) shape that
+  provably runs `skip_ws`/`ws_seq_len` per byte, with a same-invocation self-A/B
+  (`--fl-so-b`).
+
+## 2026-10-06 (salvage/junk-review-old) — CAMPAIGN WIN (RESTORED, TRIMMED): the strict `strftime` exact-format dispatcher that merge `0be7b9dafe87` silently dropped measures 0.10-0.61x vs live glibc on 21 cases; the fused single-name path is removed
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.1430` (headline `alias_D`, `%D`, which main runs at 6.33x);
+  `incumbent_bootstrap_median_ci=[0.1413,0.1451]`;
+  `null_bootstrap_median_ci=[0.9818,1.0013]`;
+  `bench_elf_sha256=dff8a95b6e6ef37b40811eefac4f414047ee757c923a179184bb5767d7e7ccbb`
+  (in-process self-report of the "final" arm below, a local build); `cv_used=false`.
+- **WHAT THIS IS.** The 18 ABI commits `adaecb653`..`9e0265c4f` (2026-07-31..08-02) compiled exact
+  C-locale formats ahead of the generic scan. They were in neither parent of merge `0be7b9dafe87`:
+  the local side predated them, and the replayed June commit `325855a09` had overwritten
+  `time_abi.rs` on the remote. Their core halves survived, and some `format_strftime_*` helpers had
+  no non-test caller. A three-way merge of `98321eb8a^` / `9cf2b52f2` / `258ff4e7d` restored the
+  series on a salvage branch, and this A/B trimmed it. The pre-push review squashed the restore and
+  the trim arms into one commit, "perf(time): restore the strict strftime exact-format dispatcher
+  lost in 0be7b9daf", so the arms below exist only as local builds. What stays:
+  - the page-safe SIMD pure-literal copy
+  - exact `%R %T %X %r %F %D %x %c`
+  - bare `%a`/`%h`
+  - `%Y-%m-%d`, `%m/%d/%Y`, `%m/%d/%y`, `%d/%m/%Y`
+  - `%H:%M`, `%H:%M:%S`, `%I:%M:%S %p`
+  - `%Y-%m-%d %H:%M:%S`, `%Y%m%d%H%M%S`
+
+  All of it is inline in the strict block, AFTER main's banked HTTP-date, RFC3164, `%A`, `%b`, `%B`
+  and `%j` leaves, and after the named-LC_TIME early return, so it is C-locale only.
+- **INSTRUMENT.** `strftime_litrun_ab` (FL/glibc effect plus a source-identical FL/FL null per case,
+  pair order alternating, 33 retained samples after 4 warmups, 150,000 calls per arm, bootstrap
+  median CIs, 2x null-half-width rule). Run on hz4 (2x16-core, 64 threads) with the
+  `--pin-quietest 2` option added in this series ("bench(time): strftime_litrun_ab --pin-quietest
+  N", same contract as `incumbent_coverage_ab`). The host-wide guard was clear at startup and before
+  and after every case (e.g. `allowed_cpus=8:9 observed_maximum_busy_fraction=0.020
+  cpu_mhz_median=3194.0`). Base arm: origin/main `258ff4e7d` plus this series' three harness-only
+  commits,
+  `bench_elf_sha256=649ab54f3befec7c605396316eb1d22762ce570b000740a9db6197e77131d8f3`, run on the same
+  worker and instrument, the same day. The base column is maintenance context; the campaign claim is
+  the final column's same-invocation ratio.
+- **BEHAVIOUR PROOF.** Each binary ran `verify: OK` over capacities 1..=128 against live glibc for
+  every measured case before timing. Debug gates on the pushed head (rch, 2026-10-06), each with a
+  non-zero passed count:
+  - the new `conformance_diff_strftime_exact_dispatch`, 2 tests: ~129k comparisons over every
+    restored format, near misses, malformed fields and every buffer size with a canary; and, for
+    the bare names and whole-format aliases, the whole destination on overflow (glibc writes
+    nothing there)
+  - `strftime_specifier_differential_fuzz` 1 (200k iterations)
+  - `conformance_diff_strftime_{oor_names,l,zone,gmtoff,eo_modifier}` 1/4/1/1/1
+  - `strftime_buffer_wide_year_differential_fuzz` 1
+  - `time_abi_test` 61
+  - `conformance_diff_wcsftime{,_l}` 11/3, `wcsftime_differential_fuzz` 1
+
+  The new gate reports the same 64 malformed-input divergences with and without the dispatcher:
+  they are pre-existing general-formatter behaviour, and the gate excludes those inputs.
+- **ONE CHANGE AFTER MEASUREMENT.** The pre-push review made the bare `%a`/`%h` leaf return 0 on
+  overflow before writing anything, as glibc does and as main's `%A`/`%b`/`%B` leaves do; the
+  measured build wrote a truncated name prefix first. The success path is unchanged. Re-measured on
+  the pushed code (rebased on origin/main `50fcb5e70`), same instrument, hz4, `--pin-quietest 2`,
+  `bench_elf_sha256=9ebadc46da2c321c14bafa6d0be649fa343f42638d7c49be0d6f650d3e1bc9fd`,
+  `verify: OK`, no guard block: `weekday_abbrev` 0.5863 [0.5832,0.5875] (10.4 ns, FL/FL null
+  0.9993), `month_alias_h` 0.5963 [0.5949,0.5987] (10.5 ns, null 1.0061 [0.9990,1.0081]); the
+  banked leaves `%A` 0.7413 (12.9 ns), `%b` 0.7969, `%B` 0.7646 (13.6 ns), `%j` 0.5148 (9.5 ns),
+  RFC3164 0.2206 and HTTP-date 0.2023 (21.7 ns) all stay FL_FASTER and clear 2x their nulls, in line
+  with the final arm below.
+- **FINAL ARM vs base, pinned hz4:**
+
+  | case | final FL/glibc | CI95 | FL/FL A/A [CI] | verdict | final fl ns | base FL/glibc | base fl ns |
+  |---|---:|---|---|---|---:|---:|---:|
+  | `literal_short` | 0.5570 | [0.5558,0.5574] | 1.0002 [0.9968,1.0015] | FL_FASTER | 15.5 | 0.9321 | 25.9 |
+  | `literal_long` | 0.2271 | [0.2261,0.2291] | 0.9949 [0.9842,1.0004] | FL_FASTER | 16.5 | 0.3969 | 28.8 |
+  | `mixed_general` | 13.1185 | [13.0201,13.2076] | 1.0008 [0.9988,1.0046] | FL_SLOWER | 427.2 | 13.0002 | 420.1 |
+  | `mixed_month_general` | 13.1456 | [12.9692,13.2236] | 0.9998 [0.9981,1.0007] | FL_SLOWER | 424.8 | 13.2293 | 425.9 |
+  | `yday_general` | 12.5720 | [12.4348,12.7118] | 1.0000 [0.9994,1.0004] | FL_SLOWER | 416.9 | 12.8168 | 419.9 |
+  | `bracket_numeric_general` | 1.9323 | [1.9101,1.9623] | 0.9966 [0.9947,1.0001] | FL_SLOWER | 178.4 | 1.9410 | 183.8 |
+  | `two_names_general` | 11.1235 | [11.0903,11.1554] | 0.9992 [0.9978,1.0003] | FL_SLOWER | 387.9 | 11.0028 | 386.8 |
+  | `alias_F` | 0.1494 | [0.1488,0.1511] | 1.0025 [0.9917,1.0086] | FL_FASTER | 14.2 | 0.4413 | 42.6 |
+  | `alias_D` | 0.1430 | [0.1413,0.1451] | 0.9943 [0.9818,1.0013] | FL_FASTER | 14.4 | 6.3325 | 671.6 |
+  | `alias_x` | 0.1424 | [0.1412,0.1432] | 1.0005 [0.9982,1.0037] | FL_FASTER | 14.2 | 6.4870 | 677.2 |
+  | `alias_T` | 0.1580 | [0.1558,0.1628] | 0.9844 [0.9526,0.9924] | FL_FASTER | 15.4 | 0.4095 | 39.4 |
+  | `alias_X` | 0.1593 | [0.1565,0.1626] | 1.0199 [0.9990,1.0495] | FL_FASTER | 15.5 | 3.4711 | 339.0 |
+  | `alias_R` | 0.1506 | [0.1497,0.1510] | 0.9985 [0.9939,1.0017] | FL_FASTER | 10.7 | 0.5192 | 36.3 |
+  | `alias_r` | 0.1273 | [0.1265,0.1280] | 0.9990 [0.9958,1.0046] | FL_FASTER | 15.5 | 5.5337 | 682.0 |
+  | `locale_datetime` | 0.1018 | [0.1013,0.1021] | 1.0001 [0.9999,1.0013] | FL_FASTER | 20.4 | 0.2314 | 45.9 |
+  | `hm_exact` | 0.3375 | [0.3368,0.3378] | 1.0011 [0.9958,1.0048] | FL_FASTER | 11.2 | 1.3794 | 74.5 |
+  | `hms_exact` | 0.3064 | [0.3025,0.3077] | 1.0007 [0.9883,1.0040] | FL_FASTER | 14.6 | 1.2721 | 60.8 |
+  | `hms_12_exact` | 0.2466 | [0.2454,0.2477] | 0.9955 [0.9914,0.9997] | FL_FASTER | 15.2 | 6.1087 | 647.6 |
+  | `numeric_19` | 0.2829 | [0.2817,0.2855] | 0.9981 [0.9969,1.0020] | FL_FASTER | 26.0 | 1.3338 | 123.4 |
+  | `date_iso` | 0.2952 | [0.2928,0.2972] | 0.9982 [0.9914,1.0010] | FL_FASTER | 14.5 | 1.2881 | 64.1 |
+  | `date_slash_dmy` | 0.3184 | [0.3168,0.3219] | 1.0003 [0.9968,1.0055] | FL_FASTER | 15.7 | 1.6892 | 81.5 |
+  | `date_slash_mdy` | 0.3244 | [0.3238,0.3254] | 0.9994 [0.9984,1.0010] | FL_FASTER | 15.4 | 1.4758 | 72.1 |
+  | `date_slash_mdy_short` | 0.3179 | [0.3143,0.3194] | 0.9982 [0.9921,1.0030] | FL_FASTER | 15.9 | 7.9364 | 411.9 |
+  | `compact_14` | 0.2419 | [0.2408,0.2423] | 1.0003 [0.9990,1.0014] | FL_FASTER | 21.2 | 0.9299 | 82.0 |
+  | `weekday_abbrev` | 0.5900 | [0.5874,0.5965] | 1.0036 [1.0016,1.0056] | FL_FASTER | 10.8 | 18.7994 | 332.3 |
+  | `weekday_full` | 0.7344 | [0.7334,0.7364] | 1.0002 [0.9992,1.0011] | FL_FASTER | 12.9 | 0.7036 | 12.3 |
+  | `month_abbrev` | 0.8004 | [0.7993,0.8021] | 1.0008 [0.9986,1.0027] | FL_FASTER | 14.2 | 0.7649 | 13.6 |
+  | `month_full` | 0.7605 | [0.7593,0.7630] | 1.0002 [0.9990,1.0020] | FL_FASTER | 13.6 | 0.6915 | 12.3 |
+  | `month_alias_h` | 0.6058 | [0.6040,0.6073] | 0.9955 [0.9935,0.9980] | FL_FASTER | 10.8 | 18.9781 | 335.8 |
+  | `yday_exact` | 0.5192 | [0.5187,0.5207] | 1.0029 [1.0008,1.0058] | FL_FASTER | 10.1 | 0.4466 | 9.2 |
+  | `syslog_ts` | 0.2223 | [0.2203,0.2237] | 0.9965 [0.9938,1.0034] | FL_FASTER | 17.0 | 0.2141 | 16.4 |
+  | `http_date` | 0.1983 | [0.1970,0.2006] | 1.0025 [0.9951,1.0079] | FL_FASTER | 22.2 | 0.1876 | 20.7 |
+
+  Every restored leaf clears twice its null and its CI excludes 1.0. `alias_X` has the widest
+  null (FL/FL 1.0199, bootstrap median CI [0.9990,1.0495]); its effect, 0.159 against a 1.0 boundary, is still far
+  outside 2x that half-width.
+- **THE RESIDUAL COST, recorded and not hidden.** With the dispatcher inline, main's banked leaves
+  still run first and stay campaign wins, but this build measured them 0.6-1.5 ns slower:
+  - `%A`: 12.9 vs 12.3 ns
+  - `%b`: 14.2 vs 13.6 ns
+  - `%B`: 13.6 vs 12.3 ns
+  - `%j`: 10.1 vs 9.2 ns
+  - RFC3164: 17.0 vs 16.4 ns
+  - HTTP-date: 22.2 vs 20.7 ns
+
+  The general-path controls stayed at base:
+  - `prefix %A suffix`: 427.2 vs 420.1 ns
+  - `prefix %B suffix`: 424.8 vs 425.9 ns
+  - `prefix %j suffix`: 416.9 vs 419.9 ns
+  - `[%Y-%m-%d %H:%M:%S]`: 178.4 vs 183.8 ns
+  - `on %a, %b`: 387.9 vs 386.8 ns
+
+  That leaf cost is a property of `strftime`'s size, not of any one lever. Two arms with identical
+  leaf code differed by 1.3 ns on `%A` (12.3 vs 13.6 ns). The out-of-line arm brought the
+  leaves back to base (`%A` 12.3, `%B` 12.3, `%j` 9.3 ns) but cost every general-path control about
+  100 ns (`prefix %A suffix` 519.1 ns, `on %a, %b` 492.4 ns), so it was rejected. No measured
+  arrangement had both. The 2026-10-06 pre-push review accepted the ~1 ns banked-leaf residual in
+  exchange for these wins.
+- **ARMS THAT DECIDED THE TRIM** (same instrument, pinned, hz4; fl ns):
+
+  | arm | `%A` | `%B` | `%j` | HTTP-date | `prefix %A suffix` | `[%Y-...%S]` | `on %a, %b` | `just text` |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | base | 12.4 | 12.3 | 9.1 | 20.6 | 421.0 | 180.9 | 396.1 | 27.1 |
+  | as restored (dispatcher ahead of the leaves, fused) | 14.5 | 14.5 | 11.4 | 24.3 | 25.3 | 201.1 | 435.3 | 18.0 |
+  | R: leaves first, fused | 12.3 | 12.6 | 9.8 | 21.9 | 24.2 | 192.3 | 402.3 | 15.8 |
+  | R without fused | 13.6 | 13.0 | 9.8 | 21.8 | 419.2 | 174.5 | 389.3 | 16.5 |
+  | R without fused or literal copy | 12.6 | 12.6 | 9.7 | 21.6 | 411.2 | 177.8 | 384.0 | 29.0 |
+  | out-of-line (`#[inline(never)]` dispatcher), no fused | 12.3 | 12.3 | 9.3 | 20.9 | 519.1 | 198.2 | 492.4 | 18.0 |
+  | final (= R without fused, as pushed) | 12.9 | 13.6 | 10.1 | 22.2 | 427.2 | 178.4 | 387.9 | 15.5 |
+
+- **REJECT: the fused single-name path (`47668eeed`).** It turns one name inside literals into a win
+  (`prefix %A suffix` 12.90x -> 0.757x, 421 -> 24 ns). On formats it declines, though, it writes the
+  literal prefix speculatively before giving up, and general formats pay for that (`[%Y-%m-%d
+  %H:%M:%S]` 192.3 ns with it vs 174.5 without; `on %a, %b` 402.3 vs 389.3). It is removed. Retry only
+  with a decline path that does no speculative work: validate the whole format before writing, and
+  show the general controls unchanged in the same harness.
+- **KEPT AT NEAR-ZERO DECLINE COST: the SIMD pure-literal copy (`d225aa099`).** `just text`:
+  0.9321x -> 0.5570x (25.9 -> 15.5 ns). Literal-led general formats measured the same with and
+  without it (174.5 vs 177.8 ns, 389.3 vs 384.0 ns), within cross-run noise.
+- **DISPOSITION / RETRY PREDICATE.** KEEP the exact leaves and the literal copy as class-2
+  generality-tax wins. Reopen if:
+  - a live-glibc repeat of any row stops clearing 2x its A/A half-width below 1.0;
+  - named LC_TIME support changes, since every member assumes the C locale's names, `%c`, `%x`,
+    `%X` and `%r`;
+  - the exact recognizers broaden;
+  - `conformance_diff_strftime_exact_dispatch` diverges.
+
+  The banked-leaf residual above is the first thing a follow-up should attack.
+
+## 2026-10-07 (claude-opus-salvage) — MAINTENANCE / PORTABILITY COST: the baseline x86-64 release build with AVX2(+FMA) twins against the old x86-64-v3 build (`bd-rc0923-epic-eeuy4f.13`) — big losses recovered, residual 2-53% losses remain on twinned kernels, short string scans at or below the v3 build
+
+- **RESULT CLASS:** `result_class=self-speedup` (FrankenLibC against FrankenLibC; MAINTENANCE, no
+  competitive claim). Live glibc was also timed in separate same-host invocations (tables 2, 3).
+  `same_invocation=true` for every self-A/B row (`--fl-so-b`, both objects dlopen'd into one
+  process); `cv_used=false`.
+- **WHAT CHANGED.** The release `.so` is no longer compiled with `-Ctarget-feature=+avx2,+fma`, so it
+  runs on every x86_64 CPU. Hot kernels whose baseline codegen lost were given twins compiled with
+  `#[target_feature(enable = "avx2,fma")]` / `"avx2"`, chosen per call from std's cached CPUID bits
+  (`avx2_fma_dispatch!` in core math, `avx2_dispatch!` in string_abi): sin cos tan atan asinh acosh
+  atanh erf erfc tgamma lgamma_r (+ their out-of-line helpers), exp log log2 pow_fused, sinf cosf
+  sinhf coshf erff, scan_c_string, scan_strcmp, the core memchr, and the core wcsnlen. Short string
+  scans stay off the dispatch: a bounded NUL scan (strnlen, wcsnlen) under 256 bytes/elements that
+  stays in its page runs the baseline code inline and call-free, and an unbounded one (strlen and the
+  other ~36 `scan_c_string(p, None)` callers) checks its first two aligned 64-byte blocks inline with
+  16-lane SSE2 probes and dispatches only the rest (`a39d35afc`, `d22fa733a`, `357615dc8`).
+  `release-x86-64-v3` is the labelled v3 build for this kind of A/B.
+- **INSTRUMENT.** `incumbent_coverage_ab --families isa_kernels` (new family: 21 cases since
+  `eeb376950` added `strlen_16`/`strlen_64`; `exp2`, `sqrt` and `memchr_16` are no-twin controls) and
+  `--families bounded_len`, `--pin-quietest 2 --fl-deepbind`, hz4, 36 retained samples, six-cell
+  rotation, same-invocation FL/FL and comparison A/A nulls on every case (self-A/B runs: A/A null
+  medians 0.988-1.006, null bootstrap median 95% CI inside [0.978, 1.023]; the glibc runs: A/A null
+  medians 0.980-1.017, bootstrap median 95% CI inside [0.961, 1.047]). Effects are candidate/base
+  (self-A/B) or FL/glibc medians, each with its bootstrap median 95% CI (table 1 prints the head's).
+  Executing ELF, as the harness self-reports it in-process (`BENCH_ELF_OBJECT`):
+  bench_elf_sha256=`06b9b1c27f782e638982988127ee9ad4fb98bb18ed802c946914acf28bb4db93` (first cut,
+  v3 vs glibc), bench_elf_sha256=`02d674a6e008bb4445a097c6f27a256b2d56d4e35e68845278c15bf6189e7f2b`
+  (`403a7cf73` rows, raw and every-span bounded_len) and
+  bench_elf_sha256=`8a65ee8ab5aeed0b7deeceb31c0487a18400d2bccb5265f5f836653ee375f5a0` (21-case rows,
+  head bounded_len, v3 bounded_len re-run). Before timing, both FrankenLibC objects agreed bit for
+  bit on every conformance comparison (2826 in the 21-case runs).
+- **OBJECTS.** base = main@0dfdfce4d as shipped (x86-64-v3), SHA-256
+  `7fb89d614902fadeba85ecaffe0fd7581997352385fd762f43409b03b4ab7af8`; raw = the same source built
+  baseline, no dispatch, `a9c8e5fb73f6e6daf8d067e00d786c8a0d0f6781b204b5ae36d3f13ec9df0cf4`; first cut
+  = twins with the baseline body inlined into the dispatcher, `7dc318f4af8bf6fe478c9eafdbbf3cbc6d6b1afe2179889c9cc60fd2df33e2a2`;
+  `403a7cf73` = every scan dispatched, `ca730d3da385fa5a0f6567f2ed32fb04960aa93d798aa1dbfd33fa1cf93b3c8a`;
+  `d22fa733a` = short bounded scans inline, `afad673e09879b318b9170bf0aa5357a9e858861d1c3ff044fd83d4f9c97b2aa`;
+  head = `357615dc8` (adds the inline unbounded head check),
+  `c863c417ee6776aec0c4c58b14b1aff5c9db6d665a9ad8af5282e1418a4acadc`.
+- **TABLE 1 — candidate / x86-64-v3 base, same invocation** (ratio median; head with its 95% CI):
+
+  | case | raw baseline | first cut | `403a7cf73` | `d22fa733a` | head [95% CI] |
+  |---|---:|---:|---:|---:|---|
+  | sin | 2.500 | 1.221 | 1.164 | 1.154 | 1.161 [1.158,1.163] |
+  | cos | 4.173 | 1.127 | 1.090 | 1.133 | 1.095 [1.093,1.095] |
+  | tan | 4.601 | 1.088 | 1.046 | 1.040 | 1.046 [1.045,1.046] |
+  | atan | 1.318 | 1.171 | 1.167 | 1.166 | 1.166 [1.165,1.166] |
+  | exp | 3.652 | 1.308 | 1.211 | 1.204 | 1.202 [1.197,1.210] |
+  | exp2 (control) | 1.008 | 1.000 | 1.005 | 1.004 | 1.063 [1.054,1.072] |
+  | log | 3.815 | 1.253 | 1.276 | 1.280 | 1.282 [1.279,1.290] |
+  | log2 | 4.146 | 1.183 | 1.229 | 1.227 | 1.230 [1.226,1.233] |
+  | pow | 3.623 | 1.522 | 1.532 | 1.528 | 1.529 [1.525,1.534] |
+  | sinf | 1.302 | 1.042 | 1.081 | 1.038 | 1.088 [1.079,1.096] |
+  | sqrt (control) | 1.000 | 0.997 | 1.020 | 0.986 | 1.004 [0.971,1.025] |
+  | strcmp 16 | 6.399 | 1.186 | 1.112 | 1.148 | 1.147 [1.138,1.152] |
+  | strcmp 256 | 7.437 | 1.067 | 1.068 | 1.073 | 1.069 [1.059,1.076] |
+  | strcmp 4096 | 13.888 | 1.019 | 1.007 | 1.018 | 1.012 [1.005,1.028] |
+  | memchr 16 (control) | 0.788 | 0.844 | 0.859 | 0.858 | 0.860 [0.855,0.865] |
+  | memchr 4096 | 1.905 | 1.100 | 1.024 | 1.023 | 1.035 [1.025,1.039] |
+  | strlen 16 | 0.925 | — | — | 1.095 | 1.002 [0.987,1.009] |
+  | strlen 64 | 0.937 | — | — | 1.091 | 0.960 [0.956,0.961] |
+  | strlen 4096 | 1.924 | 0.987 | 1.024 | 1.034 | 1.124 [1.120,1.130] |
+  | strchr 4096 (pre-existing AVX2 kernel) | 1.133 | 1.153 | 1.144 | 1.126 | 1.122 [1.119,1.126] |
+  | memcmp 256 (pre-existing AVX2 kernel) | 1.236 | 1.199 | 1.152 | 1.204 | 1.137 [1.134,1.142] |
+
+  The raw column is the 21-case re-run. An earlier 19-case run of the same object agreed within
+  0.03 on every math row; its string rows differed more (strcmp 256 5.682, strcmp 4096 13.363,
+  memchr 4096 1.769, memcmp 256 1.171, memchr 16 0.826). Kernels whose code did not change between
+  builds move by up to 0.06 from build to build (exp2 control 1.004 -> 1.063, sinf, cos, memcmp):
+  read differences smaller than that between columns as layout, not as an effect.
+
+- **TABLE 2 — against live glibc** (`legacy_incumbent=host-glibc`, `incumbent_provenance` = the
+  harness's dlopen of libm.so.6/libc.so.6 with identity checks; `403a7cf73` (`ca730d3d…`) and base
+  each in its own invocation, so the last column is a cross-invocation ratio of ratios; not re-run
+  for the head):
+
+  | case | `403a7cf73` / glibc | v3 base / glibc | `403a7cf73` / base |
+  |---|---:|---:|---:|
+  | sin | 1.222 | 1.050 | 1.164 |
+  | exp | 1.799 | 1.441 | 1.249 |
+  | log | 2.011 | 1.570 | 1.281 |
+  | pow | 2.330 | 1.525 | 1.528 |
+  | strcmp 16 | 1.875 | 1.691 | 1.108 |
+  | memchr 4096 | 1.864 | 1.847 | 1.009 |
+  | strlen 4096 | 1.300 | 1.297 | 1.002 |
+  | malloc_free small_64 | 9.623 | 9.968 | 0.965 |
+  | memcpy 64k | 0.969 | 0.970 | 0.999 |
+  | strlen 256k | 1.006 | 1.002 | 1.004 |
+  | sinhf / coshf mid sweep | 1.503 / 1.468 | 1.105 / 1.118 | 1.36 / 1.31 |
+
+- **TABLE 3 — bounded length against live glibc** (`--families bounded_len`; each object in its own
+  invocation, fl/glibc median; the last two columns are cross-invocation ratios to the v3 re-run,
+  which reproduced an earlier v3 run within 0.02 on every row but wcsnlen 128, 1.055 vs 1.000):
+
+  | case | v3 base | raw | `403a7cf73` (every span dispatched) | head | head / v3 | raw / v3 |
+  |---|---:|---:|---:|---:|---:|---:|
+  | strnlen 4 | 1.495 | 1.249 | 1.744 | 1.129 | 0.755 | 0.836 |
+  | strnlen 8 | 1.495 | 1.126 | 1.659 | 1.004 | 0.672 | 0.753 |
+  | strnlen 16 | 1.334 | 1.085 | 1.580 | 1.000 | 0.750 | 0.813 |
+  | strnlen 31 | 1.508 | 1.263 | 2.186 | 1.081 | 0.717 | 0.838 |
+  | strnlen 32 | 1.433 | 1.251 | 2.008 | 1.100 | 0.767 | 0.873 |
+  | strnlen 63 | 1.286 | 1.286 | 1.877 | 1.036 | 0.806 | 1.000 |
+  | strnlen 128 | 1.562 | 1.500 | 1.875 | 1.312 | 0.840 | 0.960 |
+  | strnlen 4096 | 1.293 | 2.105 | 1.433 | 1.240 | 0.959 | 1.628 |
+  | wcsnlen 4 | 1.381 | 1.078 | 2.076 | 1.153 | 0.835 | 0.780 |
+  | wcsnlen 8 | 1.152 | 0.999 | 1.768 | 0.999 | 0.867 | 0.867 |
+  | wcsnlen 16 | 1.001 | 0.933 | 1.632 | 0.967 | 0.966 | 0.933 |
+  | wcsnlen 31 | 1.062 | 1.189 | 1.620 | 1.188 | 1.118 | 1.119 |
+  | wcsnlen 32 | 1.059 | 1.133 | 1.683 | 1.186 | 1.120 | 1.070 |
+  | wcsnlen 63 | 0.962 | 1.087 | 1.334 | 1.136 | 1.181 | 1.130 |
+  | wcsnlen 128 | 1.055 | 1.287 | 1.354 | 1.266 | 1.200 | 1.220 |
+  | wcsnlen 4096 | 1.920 | 5.808 | 1.369 | 1.884 | 0.981 | 3.025 |
+
+  Null medians of the head and v3 re-run: 0.985-1.013, CIs inside [0.980, 1.021]. wcsnlen 31..128
+  stays 1.12-1.20x the v3 build at the head, the same as the raw build: the baseline inline scan,
+  not the dispatch, is what costs there.
+
+- **WHERE THE RESIDUAL IS.** objdump: each twin is the v3 kernel instruction for instruction
+  (`pow_fused` twin vs v3 `pow_fused`: the same 382/373 instructions, 20 vfmadd, no calls), and the
+  dispatcher is a CPUID-cache test plus a tail jump (`89b771a4b` moved the baseline copy out of line;
+  before that every call paid the baseline body's six pushes and 136-byte frame — strcmp 16 went
+  1.186 -> 1.112, memchr 4096 1.100 -> 1.024, exp 1.308 -> 1.211). What is left is the extra call per
+  kernel and the baseline (SSE, non-VEX) code around it in the export wrappers; it is not attributed
+  further here. `pow` (1.53x) is the worst and not understood. strchr/memcmp already used explicit
+  AVX2 kernels and cost the same with and without this change.
+- **SHORT SCANS: THE DISPATCH ITSELF WAS THE COST.** Dispatching every string scan made short ones
+  slower than the raw baseline build that has no AVX2 at all: strlen 16/64 1.09x the v3 build
+  against raw 0.93x; strnlen bounds 4..128 1.11-1.46x against raw 0.75-1.00x; wcsnlen 4..128
+  1.35-1.63x against raw 0.78-1.29x (the twin's call, inlined into the export, made `wcsnlen` save
+  seven callee-saved registers on every call). With the short paths inline (table 1 head column,
+  table 3) they are at or below the v3 build. Price: strlen 4096 went 1.034 -> 1.124, the inline
+  128-byte SSE2 head check in front of the twin, beyond the 0.06 layout spread above; kept because
+  short strings are the common strlen call.
+- **WCSNLEN 4096 IS LAYOUT-SENSITIVE.** Four builds with the same twin source measured wcsnlen at a
+  4096 bound at 1.369 / 2.592 / 1.333 / 1.884 x glibc (`403a7cf73` / `37acd65c9` / `d22fa733a` /
+  head) — 0.69-1.35x the v3 build's 1.922, against 3.02x for the raw build. The twin's 737-byte main
+  loop is the same in all four, and its alignment does not order them (`403a7cf73` and head have the
+  same loop placement). Not attributed.
+- **NOT COVERED.** Pre-AVX2 CPUs run the baseline copies: they were unable to run the library at all
+  before, and the portable-SIMD string kernels are slow there (strcmp spills 32-lane masks). No twin
+  exists yet for the rest of the wide-char family, the remaining f32 kernels, or the ABI-level math
+  wrappers; none of those were measured here beyond the rows above. strnlen bounds 129..4095 and
+  strlen lengths 65..4095 are unmeasured (the 256-byte bounded cut is between measured points).
+- **DISPOSITION.** KEEP — running on every x86_64 CPU is a correctness requirement, and the raw
+  baseline costs (2.5-13x on the twinned rows) are recovered to the figures above. Reopen (as
+  follow-up perf work, not a revert) with: IFUNC-resolved exports so AVX2 CPUs run whole v3 export
+  bodies with no per-call dispatch; twins of the ABI math wrappers; 16-lane kernels for the SSE2 path.
+  Each needs the same same-invocation `--fl-so-b` self-A/B against a `release-x86-64-v3` build.
+
+## 2026-10-07 (claude-opus-review) — MAINTENANCE: `pow`'s integer test without a `trunc` libcall in the baseline build, and the rebased baseline build re-measured against main's x86-64-v3 build (`bd-rc0923-epic-eeuy4f.13`) — `pow` back to parity; exp/log/log2/sinf/atan still 1.17-1.30x, strlen 4096 1.25x
+
+- **RESULT CLASS:** `result_class=self-speedup` (FrankenLibC against FrankenLibC; MAINTENANCE, no
+  competitive claim). `same_invocation=true` for every row (`--fl-so-b`, both objects dlopen'd into
+  one process); `cv_used=false`. The class names the comparison, not its direction: table 2 is a
+  net LOSS against the x86-64-v3 build on most twinned kernels, recorded as such.
+- **WHAT CHANGED (`6f9cdfeb9`).** `is_integral_f64` (pow, tgamma, lgamma, gamma) and powf's domain
+  check read the exponent and fraction bits instead of `x.fract() == 0.0`. Baseline x86-64 has no
+  `roundsd` (SSE4.1), so `fract` was a call of this library's own exported `trunc` (a full ABI entry
+  point), and LLVM hoisted it above `x < 0.0`: objdump of the previous build's `pow` export shows
+  `call *GOT -> trunc` on the path of every call with finite arguments; it is gone after the change.
+  Same predicate: `is_integral_bit_tests_match_fract` (specials, zeros, subnormals, every exponent
+  edge, near-integers, 200k random bit patterns, both widths); and pow/powf/tgamma/lgamma (result,
+  errno) over 220,000 calls (49,469 EDOM, 76,615 ERANGE) hash identically before and after, natively
+  and under `qemu-x86_64 -cpu Nehalem`, and identically to origin/main's v3 build.
+- **WHERE THE REST OF THE RESIDUAL IS (attribution, not a timed claim).** `pow_fused`'s
+  `avx2_fma_twin` is main's v3 `pow_fused` instruction for instruction (374/374, zero diff). In a
+  local dlopen probe of the previous head's objects the twins ran at the v3 kernels' speed and the
+  out-of-line dispatcher (two GOT-indirect std_detect loads, three branches, a frame, a tail jump)
+  added about 1 ns per call. exp/log, whose dispatch test is already inlined into the export, lose
+  more than sin, whose dispatcher is out of line: what costs is that the kernel can no longer be
+  inlined into the baseline-compiled ABI wrapper, not the CPUID test. 144 call sites in the baseline
+  `.so` still call the library's own exported `fma`/`trunc`/`floor`/`ceil`/`round`/`rint`
+  (membrane runtime_math, printf float formatting, ecvt/fcvt, fromfp, exp10, sinpi/cospi/tanpi, the
+  f32x aliases); none was measured here.
+- **REBASE NOTE.** The 2026-10-07 MAINTENANCE / PORTABILITY COST row above names commits of the
+  branch as it stood on `0dfdfce4d`; its measured objects keep their SHA-256s. Rebased onto
+  `15cecfdfa` they are `a1b1445f2`->`edd32401a`, `48e2f7e78`->`ad4886e56`, `d40f8e687`->`662d5c591`,
+  `bd2fe8884`->`59894fba9`, `23580f904`->`1722c6b9b`, `43a078599`->`69e4e1abe`,
+  `c5e94c926`->`b2fe52a14`, `89b771a4b`->`cc33b727b`, `403a7cf73`->`02ac618a1`,
+  `37acd65c9`->`929e68fcc`, `8f48cafeb`->`4f1badb77`, `a39d35afc`->`2f2d57871`,
+  `d22fa733a`->`cf4747377`, `eeb376950`->`6353dd170`, `357615dc8`->`bbe5f9666`,
+  `d4ebbdf63`->`6fec8e2c7`.
+- **INSTRUMENT.** `incumbent_coverage_ab --families isa_kernels --pin-quietest 2 --fl-deepbind`
+  with `--fl-so CANDIDATE --fl-so-b BASE`, worker hz3 (`isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`,
+  two quiet pinned CPUs on distinct cores), 36 retained samples, six-cell rotation, same-invocation
+  FL/FL A/A nulls on both arms of every case. Executing ELF, as the harness self-reports it
+  in-process: bench_elf_sha256=`945b8d7b628ea055590c10d719cd75edd8fcc3cbb10ce864c74b5578dc7eb9fa`
+  (all three tables). Before timing, the two objects agreed bit for bit on all 2826 conformance
+  comparisons in each run.
+- **OBJECTS** (each built from a commit whose tree differs from the one named only in
+  `.beads/issues.jsonl`). pre = `be478cbf0` (the author's rebased head), baseline build,
+  `662faf97bca2f5325651dd918554bc11101a293fc6cb09fc3ce6df65df76f876`; post = `6f9cdfeb9`, baseline
+  build, `60b92faec1139be511511dcd929c6e3dd9788e2320bd961f2c397d83002f391b`; post-v3 = the same
+  source as `--profile release-x86-64-v3`,
+  `0cd0279a9d9f89e8ffa4ecbd70088c2eef54fab4cd1f968f4d6efa68e3e8fa33`; main-v3 = origin/main
+  `15cecfdfa` as shipped (x86-64-v3), `853380017efd051758dc6c161d501e0db6f566b5c68fc0b84104bbad565f11dd`.
+- **TABLES** (candidate/base ratio median with its bootstrap median 95% CI; A/A null medians of the
+  two arms with their bootstrap median 95% CIs):
+
+  | case | 1: post / pre | 2: post / main-v3 | 3: post-v3 / main-v3 |
+  |---|---|---|---|
+  | pow | 0.650 [0.649,0.650] | 0.996 [0.995,1.002] | 0.999 [0.996,1.001] |
+  | sin | 1.003 [0.999,1.008] | 1.109 [1.099,1.118] | 1.000 [0.998,1.003] |
+  | cos | 1.000 [1.000,1.003] | 1.079 [1.076,1.088] | 1.003 [1.001,1.004] |
+  | tan | 1.002 [1.001,1.004] | 1.045 [1.038,1.047] | 0.998 [0.995,1.001] |
+  | atan | 1.001 [0.999,1.003] | 1.167 [1.161,1.172] | 0.969 [0.967,0.971] |
+  | exp | 0.997 [0.996,1.000] | 1.220 [1.210,1.224] | 1.002 [0.994,1.011] |
+  | exp2 (control) | 0.999 [0.997,1.000] | 1.024 [1.020,1.030] | 1.005 [1.000,1.008] |
+  | log | 1.003 [1.001,1.005] | 1.304 [1.292,1.312] | 0.997 [0.993,1.002] |
+  | log2 | 1.006 [1.004,1.008] | 1.270 [1.263,1.273] | 0.995 [0.992,0.998] |
+  | sinf | 1.026 [1.024,1.028] | 1.200 [1.198,1.203] | 0.937 [0.931,0.943] |
+  | sqrt (control) | 1.037 [1.016,1.046] | 1.025 [0.981,1.044] | 1.027 [0.995,1.041] |
+  | strcmp 16 / 256 / 4096 | 1.000 / 0.997 / 1.004 | 1.112 / 1.081 / 1.013 | 1.001 / 1.005 / 0.997 |
+  | memchr 16 (control) / 4096 | 0.953 / 0.997 | 0.830 / 1.040 | 1.034 / 1.002 |
+  | strlen 16 / 64 / 4096 | 0.998 / 1.000 / 1.001 | 1.001 / 0.955 / 1.252 | 0.951 / 0.955 / 0.984 |
+  | strchr 4096 / memcmp 256 | 0.999 / 1.004 | 1.130 / 1.160 | 0.982 / 0.975 |
+
+  Same-invocation A/A null medians: table 1 0.994-1.003, each null bootstrap median 95% CI inside
+  [0.986, 1.008]; table 2 0.997-1.006, each CI inside [0.985, 1.021]; table 3 0.994-1.005, each CI
+  inside [0.985, 1.023]. Headline effect, candidate/base: pow 0.650 in table 1, bootstrap median 95%
+  CI [0.649, 0.650], and 0.996 against the v3 build in table 2, CI [0.995, 1.002]. Unchanged code
+  moves up to about 0.06 between objects (table 1's sinf, sqrt and memchr 16 rows, whose code the
+  change does not touch): read smaller differences as layout. Table 2 runs on hz3; the row above ran
+  on hz4, so its numbers are not interchangeable with these (strlen 4096 there 1.124, here 1.252;
+  sinf 1.088 / 1.200).
+- **WHAT TABLE 3 ANSWERS.** The labelled `release-x86-64-v3` build of this branch does not regress
+  against main's shipped v3 build (every row inside the layout band, none worse than 1.034), which is
+  the "math perf A/B on the v3 build to show no regression there" check the bead's 2026-09-24
+  analysis asked for.
+- **DISPOSITION.** KEEP `6f9cdfeb9`: pow 0.650x of the previous head, at parity with the v3 build.
+  The branch as a whole stays MAINTENANCE with the table-2 losses open on the bead: the next lever is
+  dispatch at the export (twins of whole ABI wrappers, or IFUNC-resolved exports with an
+  asm resolver like `cpu_guard`), measured the same way against a `release-x86-64-v3` build.
+
+## 2026-10-07 (claude-opus-salvage) — MAINTENANCE / CORRECTNESS COST: read/write cancellation window gated on the caller being outside fl (`bd-rc0923-epic-eeuy4f.24`) — KEEP: no detectable cost against main single- or multi-threaded; the window itself costs 10-17 ns per call multi-threaded, about what glibc 2.43's own cancellable syscall costs
+
+- **RESULT CLASS:** `result_class=self-speedup` (FrankenLibC against FrankenLibC; MAINTENANCE, a
+  correctness change measured for cost, no competitive claim). `same_invocation=true` for every row
+  (both objects dlopen'd into one process); `cv_used=false`.
+- **WHAT CHANGED.** fl's `read`/`write` (and every other cancellation point) already ran their
+  syscall inside an asynchronous-cancel window (two host `pthread_setcanceltype` calls) in a
+  multi-threaded process. The window now also requires the exported entry point's return address
+  (`core::intrinsics::return_address`) to lie outside fl's image, so fl's own I/O (Rust std inside
+  getpwnam/getaddrinfo/...) is never a cancellation point; bodies shared with aliases moved to
+  always-inlined `*_cp` functions.
+- **INSTRUMENT.** `incumbent_coverage_ab --families io_cancel_points` (new family), hz4,
+  `--pin-quietest 2 --fl-deepbind`, 36 retained samples, six-cell rotation, 20000 calls per batch.
+  1-byte write to /dev/null, 1-byte read from /dev/zero, and `lseek(SEEK_CUR)` as the no-window
+  layout control, each single-threaded (`_st`) and after a thread was created and joined through
+  each object's own `pthread_create` (`_mt`, `__libc_single_threaded` asserted 0). Executing ELF as
+  the harness self-reports it in-process: bench_elf_sha256=`a5cfa31be199ef01e95691fd886df4dc095e96f82dbd04f41de1dbf858831b6d`
+  (tables 1 and 2); bench_elf_sha256=`24c100a79d4ec09af320d532fa18c61999e3d7615837c99fcb7923ca4ca08654`
+  (table 3).
+- **OBJECTS.** base = main@`a1024c75a`, SHA-256
+  `a2cfde273de26dfec1fd2c65f776ee746dc6c0832e41c1cff54ba9a93c07c169`; candidate = this branch's
+  product source (`81a9b40a4`; built from the pre-squash commit `8946744f3`, whose `crates/` tree
+  is identical), `a11e36bd3335f99c188fdb9b1ee9e593700ebfcd22eae655cc3b57dac5a64fef`.
+- **TABLE 1 — candidate / base, same invocation** (ratio median [bootstrap median 95% CI]; A/A null
+  medians FL/FL and base/base with their CIs):
+
+  | case | candidate/base | FL/FL null | base/base null | verdict |
+  |---|---|---|---|---|
+  | write 1 st | 0.999735 [0.998601,1.001419] | 1.000481 [0.999226,1.001335] | 1.000384 [0.999390,1.001342] | UNDECIDABLE |
+  | read 1 st | 0.988555 [0.987585,0.989753] | 1.000368 [0.999652,1.001072] | 1.000399 [0.998913,1.001318] | faster |
+  | lseek st (control) | 1.001439 [0.998312,1.003506] | 0.999820 [0.999262,1.001024] | 1.000114 [0.998744,1.000948] | UNDECIDABLE |
+  | write 1 mt | 1.002051 [0.999560,1.004259] | 1.001518 [0.998572,1.002317] | 1.000201 [0.999861,1.000872] | UNDECIDABLE |
+  | read 1 mt | 1.003764 [1.002269,1.005773] | 0.999482 [0.998262,1.001211] | 1.000750 [0.999760,1.001905] | UNDECIDABLE |
+  | lseek mt (control) | 1.000465 [0.998274,1.002131] | 1.000373 [0.999575,1.001095] | 1.000587 [0.999316,1.002085] | UNDECIDABLE |
+
+  The read_st "faster" (1.1%) is not attributed: its code differs from the base only by one stack
+  load and a register argument; read it as layout. Medians (ns): write st 348.959 / 348.840, read st
+  376.361 / 380.432, write mt 363.875 / 363.907, read mt 393.152 / 391.521, lseek 198.7 / 198.4.
+- **TABLE 2 — the window's own cost and glibc's** (multi- minus single-threaded median, same
+  object, same invocation; cross-row, so outside the A/A-gated ratios). Self-A/B run: write
+  candidate +14.916 ns, base +15.067 ns; read candidate +16.791 ns, base +11.088 ns; lseek control
+  -0.218 / -0.133 ns. Incumbent run (candidate against live glibc 2.43, `legacy_incumbent=host-glibc`
+  via the harness's dlopen of libc.so.6 with identity checks): fl write +9.697 ns, glibc +9.376 ns;
+  fl read +13.629 ns, glibc +11.506 ns; lseek -0.271 / -0.192 ns. fl/glibc in that run, ratio median
+  [95% CI]: write st 1.066500 [1.064883,1.068568], write mt 1.062682 [1.060885,1.064947], read st
+  1.054374 [1.053076,1.055652], read mt 1.058573 [1.056972,1.061655], lseek control 1.034275 /
+  1.034011; A/A null medians 0.998396-1.001705, every null bootstrap median 95% CI inside
+  [0.997434, 1.003105]. fl's window costs about what glibc's own cancellable syscall costs; fl's
+  remaining 5-7% against glibc on these calls is the pre-existing gap (the no-window lseek shows 3.4%).
+- **TABLE 3 — REJECTED variant: the hook out of line** (`cancellation_window_hook` not inlined into
+  the window, so every call paid a call before the single-threaded test), candidate
+  `e46c44def53fa6042aa3de234d2d9a1bb24620a1a54d27e6847b688096ace555` against main@`0246fcfdb`
+  `f08ee31ffde06783ef641affbd59aec7366dacb51318fe0aea9b276dda412a70`, no lseek control: write st
+  1.029732 [1.023547,1.031813], read st 1.012255 [1.009432,1.014012], write mt 1.031472
+  [1.027206,1.040908], read mt 1.021084 [1.016546,1.026003], all FL_SLOWER; A/A null medians
+  0.997897-1.001840, every null CI inside [0.995371, 1.004808]. Fixed by `#[inline(always)]` on the
+  hook (table 1).
+- **DISPOSITION.** KEEP `81a9b40a4`. Not a speedup and not presented as one: the caller gate costs
+  nothing measurable on the hottest cancellation points.
+- **CORRECTION 2026-10-07 (independent review): a ~1% cost on a multi-threaded `read` IS
+  detectable.** The product commit is now `55f697178` (= `81a9b40a4` plus two test-only
+  `#[doc(hidden)]` hooks that the cdylib drops), on main@`833ce3f58`; the candidate below was
+  built from the same branch rebased on main@`8ddf79c99`:
+  `f338a3765da03507feb6e36f3a6ea3456e7391c274912c3c851e516e7a0108f2`, base main@`8ddf79c99`
+  `19579c9b0c277e08c70403c5f497dd41dd7414fd94263fd8ea4f635a8d39279c`. Two same-invocation self-A/B
+  runs on hz4 (`--pin-quietest 2 --fl-deepbind`, bench ELF `a5cfa31b…` then `51cb05d8…`, the
+  latter with the harness fix `39784f959`), A/A null medians 0.999209-1.000591, every null CI
+  inside [0.996883, 1.001724]: read mt **1.010385 [1.007942,1.012534]** and **1.012587
+  [1.010903,1.015277] FL_SLOWER** (window delta, MT minus ST: candidate +13.6 / +16.6 ns, base
+  +9.2 / +10.5 ns); write mt 0.996743 / 1.000081, write st 0.996870 / 0.998354, read st 0.999315 /
+  0.996744, all UNDECIDABLE; lseek controls st 0.997981 / 1.002213, mt 0.995278 (FL_FASTER) /
+  1.000011. The author's read-mt 1.0038 [1.0023,1.0058] sat just under its 2x-null bar; these two
+  clear it. Incumbent run (bench ELF `51cb05d8…`, candidate against live glibc 2.43): fl/glibc
+  write st 1.062358, read st 1.062680, write mt 1.060183, read mt 1.067196, lseek control
+  1.032393 / 1.034268, all FL_SLOWER, A/A null medians 0.999030-1.001859; window cost fl write
+  +11.690 / glibc +11.902 ns, fl read +14.572 / glibc +11.485 ns. DISPOSITION unchanged (KEEP, a
+  correctness fix: without the caller gate a pending cancel aborts the process in 11 of 25 libc
+  calls fl serves with its own I/O), but the headline above is wrong for `read`: the gated window
+  costs a multi-threaded 1-byte read about 4-6 ns (1.0-1.3%). Next lever: find where those ns go
+  (the read path pays them, write does not) before adding more work to the hook.
+
+## 2026-10-19 — `bd-rc0923-epic-eeuy4f.9`: Hardened Mode Hot-Path String/Memory PCC + TLS Cache Fast Paths (`3.552x` on `sort120k`, `9.136x -> 2.572x` vs glibc)
+
+- **LEVER (`bd-rc0923-epic-eeuy4f.9`).** Eliminated per-call hardened-mode overhead in hot string/memory entrypoints (`memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`) while preserving 100% of PCC explainability, arena/quarantine UAF detection, bounds clamping, and atomic metrics contracts:
+  1. **Direct TLS Cache Hit Lookup & Inline Range First (`tls_cache.rs`, `ptr_validator.rs`, `malloc_abi.rs`):** Added single-register `CachedRemaining(usize)` (`UNKNOWN`/`KNOWN_UNBOUNDED`/exact remaining bytes) and `try_with_tls_cache_hit` (eliminating the 240-byte `TlsValidationCache::unbacked()` fallback frame and 40-byte nested `Option<Option<Option<usize>>>` `sret` stack spill), reordered `lookup_hit_only` / `lookup_hit_remaining` to check the 4-entry inline `ranges` cache before the 48 KiB heap `entries` table, masked `current_shard_epoch` with `& (NUM_TLS_CACHE_SHARDS - 1)` to eliminate panic bounds checks, and wired `known_remaining_in_guarded_string` / `known_remaining_pair_in_guarded_string` directly into the hardened string/memory entrypoints.
+  2. **Batched Thread-Local Hit Metrics (`tls_cache.rs`, `metrics.rs`):** Batched `GLOBAL_METRICS.validations` and `GLOBAL_METRICS.tls_cache_hits` updates per thread (`HIT_METRICS_FLUSH_BATCH = 4096`) and flushed pending thread-local hit counts inside `MembraneMetrics::get` before reading `validations` or `tls_cache_hits`, eliminating global cache-line `lock xadd` contention on every cached string operation while keeping `MembraneMetrics::snapshot()` exact.
+  3. **Consolidated `RUNTIME_POLICY_TLS` & Certified String PCC Fast Path (`runtime_policy.rs`, `string_abi.rs`):** Consolidated the 8 separate `thread_local!` variables in `runtime_policy.rs` into a single `RUNTIME_POLICY_TLS: RuntimePolicyCells` struct (putting `trace_active: Cell<bool>` ahead of the 88-byte `TraceContext` and combining `mode_cache` + `mode_switch_counter` into one TLS access), and added `try_decide_certified_string_pcc` + 48-byte `RecordedPccExplainability` so `StringMemory` / `Memory` hardened paths with a live `PccTableState` record exact PCC explainability and return `Allow` without routing through the full general `decide()` / `KernelContext` / 248-byte `DecisionExplainability` stack copy when `RuntimeMathKernel` falls back only after `PccTableState` is uninitialized.
+- **OBJECTS.**
+  - `incumbent`: `main@d41a6e312` (`/data/tmp/libfrankenlibc_abi.incumbent.so`), SHA-256 `9b607006e621b92cee472466513cfea2dfd200bad269969764bfede65cad73b6`
+  - `candidate`: `/data/tmp/cargo-target/release/libfrankenlibc_abi.so`, SHA-256 `13428527d93a78a110fd072840fcbc53f5d1ac59b7bd9d1ff5af89b00729c4e7`
+  - `glibc`: host glibc 2.43 (`/usr/bin/sort` with `LC_ALL=C` on `/data/tmp/sort120k_bench.txt`, 120,000 pseudorandom lines)
+- **SAME-INVOCATION INTERLEAVED BENCHMARK (9 rounds, `LC_ALL=C /usr/bin/sort /data/tmp/sort120k_bench.txt > /dev/null`):**
+
+  | variant | median (ms) | min (ms) | ratio vs glibc | ratio incumbent/candidate |
+  |---|---|---|---|---|
+  | `glibc` (no `LD_PRELOAD`) | `27.63` | `19.72` | `1.000x` | — |
+  | `hardened-incumbent` (`d41a6e312`) | `252.42` | `205.49` | `9.136x` | `1.000x` |
+  | `hardened-candidate` | `71.07` | `61.40` | `2.572x` | **`3.552x` (`-71.8%`)** |
+  | `strict-candidate` | `28.52` | `22.59` | `1.032x` | — |
+
+- **DISPOSITION.** KEEP. Hardened `sort120k` drops from `252.42ms` (`9.136x` glibc) to `71.07ms` (`2.572x` glibc), a **`3.552x` speedup** (`71.8%` wall-time reduction) that clears the `<=3x` target on `sort120k`.
+
+## 2026-10-22 — `bd-rc0923-epic-eeuy4f.9`: bounded `%g` allocation removal and certificate memo repair (MAINTENANCE; throughput task remains open)
+
+- **CHANGE.** Source `2258bb1d4d256458cfefebb55d0e541629ff94b3` keeps common
+  at-most-17-digit `%g` rendering in stack scratch, sharing the existing rounding
+  guards with the allocating formatter. Complete output is trimmed before copying
+  a bounded prefix; a new tiny-buffer test exposed the previous trim-after-truncate
+  defect. The existing 16-entry Clifford memo now absorbs primary-bucket collisions
+  and retires startup entries in insertion order. Its key includes the overlap
+  contract, which affects compatibility even for disjoint addresses. Entries remain
+  32 bytes, with no new TLS cell, allocation, global lock, or controller-law change.
+- **OBJECTS.** Both release artifacts were built remotely from base
+  `86fb3ed9b49a4244e19e300bd0c789ea8915e20d` plus clean overlay
+  `62f5ddf6c58d8a0e6dd968a870a6d1b1f9837a82226eee6e9ec9846cd407415a`;
+  the three modified source files equal commit `2258bb1d4`. The receipt's base tree
+  is not the modified tree. SHA-256, checked on worker, retrieved file, and frozen copy:
+  default `986da6a14fd4f3e59997920f42550c0488bd451e9f1f8401b1b9955804d14e15`;
+  `owned-tls-cache` `cc5a62c79228c5f8fc9d6dbe645a0abf45d211a65b838631427d82bb1947fdd8`.
+  Incumbent default SHA-256
+  `b79e9a16e488c61d5729398f8c6af5edc7303b7b269b3001e6d7aedd45fcb38d`.
+  Timing below is default TLS only; owned TLS receives functional coverage only.
+- **LIVE REFERENCE / DENOMINATOR.** ovh-b, Xeon E3-1245 V2, CPU 0 affinity,
+  GNU libc 2.43 live in the same invocation as incumbent and candidate. Nine
+  measured rounds and two warmups, rotating order, 200,000 calls per format/string
+  sample. All 15 format cases, both modes, heap/stack short strings, and macro
+  controls are retained, including losses. `/usr/bin/sort` is uutils 0.10.0 linked
+  to GNU libc; this is the same deployed executable for all configurations.
+- **FORWARD RESULTS (ns/call).** These are scoped maintenance measurements, not a
+  banked claim that FrankenLibC beats GNU libc:
+
+  | case | mode | GNU libc | incumbent | candidate |
+  |---|---|---:|---:|---:|
+  | `%.6g` | strict | 246.60 | 392.77 | 311.42 |
+  | `%.6g` | hardened | 241.16 | 7,233.09 | 1,534.32 |
+  | `%.17g` | hardened | 300.67 | 7,865.67 | 2,281.69 |
+  | `%+400.2f` | hardened | 273.15 | 2,535.11 | 1,160.57 |
+  | `[%+020.6G]` | hardened | 305.51 | 3,946.42 | 4,044.65 |
+  | heap `strlen`, lengths 0/7/15/31 | hardened | 2.66 | 924.70 | 95.25 |
+  | stack `strlen`, same lengths | hardened | 2.71 | 129.40 | 132.87 |
+  | stack `memcmp`, same lengths | hardened | 3.57 | 196.55 | 197.39 |
+  | heap `memcmp`, same lengths | hardened | 3.23 | 67.18 | 68.58 |
+
+- **NUMERIC MACRO LIMIT (`sort -g`).** Genuine 100,000-line seeded input SHA-256
+  `6e584c8b4674544d18369ff7b00768739d56f190935eb56c4848dbf42c4b2704`:
+  GNU libc 131.21 ms; incumbent strict/hardened 140.09/304.46 ms; candidate
+  147.01/314.19 ms. Candidate hardened is 2.394x GNU libc but **2.137x strict**,
+  failing the original 2x target. The numeric 120k control is also slower: incumbent
+  hardened 366.12 ms, candidate 373.38 ms, candidate strict 167.78 ms (2.225x).
+  All sorted outputs match. No macro speedup or task closure is claimed.
+- **LEXICAL MACRO LIMIT (plain `sort`).** The historical bead does not specify a
+  sort flag; the numeric probe cannot silently stand in for every sort workload.
+  A separate lexical run on the same input and libraries gives GNU 31.70 ms,
+  incumbent strict/hardened 39.89/164.70 ms, candidate 39.43/159.78 ms:
+  **4.052x strict and 5.040x GNU**, missing both original milestones. The numeric
+  3x-GNU observation therefore does **not** establish the general first milestone.
+  This is a new retained seeded corpus, not a reconstruction of the unretained
+  historical input. `sort100k-lexical/report.json` SHA-256
+  `5beff1e9060456d8b09eccf82ee703ac1b11d21d86b09489799560f90027deed`.
+  Reversed order confirms the miss: GNU 31.59 ms, candidate strict/hardened
+  39.53/154.50 ms, **3.909x strict / 4.891x GNU**; incumbent hardened 160.21 ms.
+  Reverse report SHA-256
+  `e6767e4dd3467a876e8b1d2be3fd4bea1b7818d94faba6733cec8c0470b4474b`.
+  The corresponding five-child Callgrind job records total instructions GNU
+  221,501,170; incumbent/candidate strict 292,175,441/292,177,803; hardened
+  1,260,703,795/1,260,662,512, effectively unchanged. Candidate exclusive costs:
+  `memcmp_validating` 313.99M; membrane guard 122.30M; TLS remaining lookup 117.13M;
+  PCC TLS closure 116.27M; safety-level lookup 46.37M. **The next lexical-sort
+  lever is redundant memcmp guard/TLS/policy work**, preserving tracked-pointer
+  bounds, quarantine, repair logging and PCC explainability. This differs from
+  numeric-sort attribution; the workload split matters. Lexical profile report
+  SHA-256 `eb6a9f92203e8b7cf3b8c5b8fb5703af11bb0bca6fdfc9b424e681bafc765478`.
+- **LOSSES THAT CHANGED THE IMPLEMENTATION.** The first stack-render candidate
+  repeatedly regressed hardened width-400 padding by about 2.1x and padded `%G`
+  by about 1.64x, including reversed order. Callgrind exposed an added interposed
+  slice-to-String copy and mixed-length certificate recomputation. Bounded ASCII
+  pushes plus the memo repair removed that extra work. The initial sign-insertion
+  explanation was wrong. Incumbent width-400 timings themselves varied roughly
+  1.2–2.54 microseconds across batches/path/layout, so every elapsed delta cannot
+  be attributed solely to source. A pre-format build of the same algorithm had
+  stack `memcmp` at 206.90 ns: one favorable sub-200 ns batch does not establish
+  the general short-call target. Earlier artifacts remain separate from final ones.
+- **EXECUTED FUNCTIONAL EVIDENCE.** Original memo with the new regression tests:
+  `13 passed; 2 failed; 0 ignored` (mixed-length retention and opposite overlap
+  contracts). Final complete membrane suite:
+  `1466 passed; 0 failed; 0 ignored; 0 filtered out`. Fresh committed-input C replay
+  against both final artifacts, strict and hardened: **628,808 configured GNU
+  differential rows plus 40 original cases**, with all 20 wrong-provider negatives
+  rejected. The full stdio gate remains red before execution: missing
+  `stdin/_IO_2_1_stdin_` symbols, **zero cases**, for both artifacts.
+  The unchanged deployed `fixture_membrane_access.c` (source SHA-256
+  `71d11cf2d21942bb5d3ad9babe120f3fb5ac2cd8aa66aa1a5ec2a9af519f577a`)
+  additionally executed **74/74 cases** on both final TLS artifacts: valid calls
+  in both modes and hardened header/canary corruption, end-of-allocation and
+  quarantine cases. Its provider-pinned `malloc`, `free`, copy/fill and string
+  entrypoints all came from the selected library. This is bounded repair/deny
+  evidence, not universal safety. `membrane-safety-final/report.json` SHA-256
+  `277ef205954280bf4b760bfd9a656393964814aa0e706fe3b2cfbeab836c5424`.
+- **STATIC LIMITS.** Final runtime-source workspace Clippy exits 101 with the same
+  27 diagnostic occurrences (17 distinct title/file pairs) as the retained baseline.
+  A newly introduced
+  identical-branch lint was fixed and both artifacts rebuilt; no suppression was
+  added. Final `cargo fmt --check` has exactly the baseline's 583 diff bodies,
+  zero added or removed. Neither check is green. UBS was not executed because
+  its installed wrapper deletes temporary files and no preserve mode was found.
+- **FINAL FOLLOW-UP.** Final-source `cargo check --workspace --all-targets
+  --keep-going` executed remotely and exited 0 (15m49s compiler run; existing
+  warnings retained). `printf_float_differential_fuzz` compiled and executed:
+  `1 passed; 0 failed; 0 ignored; 0 filtered out`, **300,000 comparisons, zero
+  divergences vs host glibc**. Earlier pinned-worker queue timeouts executed zero
+  tests. An obsolete, separately bound release build hit its 3600-second deadline
+  with exit 137; neither its source nor output is the qualified artifact above.
+  Final-source `hardened_mode_safety_test` then compiled and executed on the same
+  clean overlay: **`17 passed; 0 failed; 0 ignored; 0 filtered out`**, exit 0.
+  The final focused conversion replay also compiled and executed:
+  **`12 passed; 0 failed; 0 ignored; 3664 filtered out`**, including the tiny-buffer
+  prefix and precision-boundary gates. This is a focused result, not a full core pass.
+- **MEMCMP GATE CONNECTED.** The lexical profile exposed a coverage gap: the
+  deployed fault fixture did not exercise either `memcmp` operand. Test-only
+  source `0922448c3` adds valid nonzero comparisons and header/canary/end/quarantine
+  cases for both sides in the existing C fixture and existing gate runner. All
+  original 74 cases per library remain; 24 new comparison cases make **98 per
+  library**, covering runtime math on/off. The existing runner compiled with
+  `-Wall -Wextra -Werror`, executed **196/196 positive cases** across the two frozen
+  release artifacts, and rejected both unpreloaded provider controls before fault
+  injection. Both compile logs are empty. Runtime-library source remains `2258bb1d4`;
+  these tests do not imply a newly rebuilt library from the test-only commit.
+  Fixture SHA-256 `6ce9105ac5557a50c98e8b6e3fe5615e392b1134d36d29fc9f85541cb7d3e9f6`;
+  runner `e658c3890257db98b711f65581b7a9733653272bff3c5eb3d3fb069685fb430e`.
+  Reports `membrane-access-default-ts1/results.json` SHA-256
+  `99652c73f6e020c1f071c825f1c5daa5dcdc0cfe35f7f5695cbe5306e4fa7302`;
+  `membrane-access-owned-ts1/results.json`
+  `184e72bf511bf344c250822857a0c0cba1cf6583f10d727971a05b8d3f79ca61`.
+  After this extension, the six-file clean overlay
+  `0f05ec759faed52893729f43ed2ec8a23306199e8dbc6041af845501c8d09144`
+  passed `cargo check --workspace --all-targets --keep-going` again (exit 0,
+  16m27s compiler run). The repeated formatting check executed and retained exactly
+  583 baseline diff bodies, zero added/removed; exit 1 remains red. A prior fmt
+  attempt lost SSH completion, was recovered as exit 255 with terminal acknowledgement,
+  and supplies no formatting proof. Its subsequent worker-admission failure also
+  executed zero formatting cases. Post-extension Clippy reached its configured
+  3600-second deadline, exit 137 after 3607.958 seconds, while compiling test
+  dependencies. Its partial output contains 14 baseline diagnostic occurrences
+  (9 distinct title/file pairs), zero new pairs, with 13 baseline occurrences not
+  observed. It did not finish all targets: this is **incomplete**, not a second
+  full baseline-equivalence result. The earlier completed runtime-source Clippy
+  comparison above remains separate. Log `clippy-native-final.log`, exact wrapper
+  `rchw-20467d77-6dc8-4826-af5c-1677a892e720`; no automatic replay or local fallback.
+- **REVERSED ORDER.** Same cases and frozen default artifact, separate outputs:
+  hardened `%.6g` 7,228.94 -> 1,531.44 ns; `%.17g` 7,840.41 -> 2,276.11 ns;
+  padded `%G` 3,957.63 -> 4,100.23 ns (3.6% slower); heap `strlen`
+  917.88 -> 97.64 ns; stack `memcmp` 193.79 -> 197.11 ns. Width-400 incumbent
+  returned to 1,166.21 ns, candidate 1,159.63 ns: its large forward-only delta is
+  **not a repeatable improvement**. No format median exceeded 1.1x incumbent in
+  either final order. Sort100k GNU/strict/hardened candidate medians were
+  133.64/143.72/311.56 ms: **2.168x strict, 2.331x GNU**, still failing 2x.
+  Sort120k candidate hardened was 376.86 ms versus incumbent 361.20 ms (4.3%
+  slower), candidate strict 175.42 ms. These controls do not establish a macro win.
+  Reverse reports SHA-256: `short-strings-final-reverse/report.json`
+  `9ee674b6e76428778dc4d3606641bc79614eb8028e3fef15a37d6e1dc2f5e93d`;
+  `timing-reverse-final/report.json`
+  `3dcdec5a61bd049f024e4d132994037d595d9050333a80a4500088df3c6ec5e3`;
+  `sort100k-reverse/report.json`
+  `b805da32dae49560f772624b42f7d1e011bcebf6608bc14b487d2d1bbb024650`.
+- **ACTUAL 100K PROFILE.** One profile job runs five Callgrind children: live GNU
+  libc, incumbent strict/hardened, and final candidate strict/hardened on that same
+  input, with identical output SHA-256
+  `54f31903923d9bdf8dad573b725402e6beb926d7d59c7446c390c89981a36e4e`.
+  Total instructions: GNU 1,006,442,145; incumbent strict 1,057,834,511;
+  candidate strict 1,057,836,733; incumbent hardened 1,632,630,601;
+  candidate hardened 1,633,201,691. **No macro instruction reduction.** Candidate
+  inclusive costs include malloc 260.40M, free 157.27M, and memcpy validation
+  196.23M instructions (nested counts must not be summed). Exclusive costs include
+  arena free 47.40M, memcpy validation 38.42M, SipHash 33.81M, index
+  insertion 29.64M, bloom insertion 29.52M, SIMD selection 22.08M, policy decide
+  21.24M, and attempted HTM 19.06M. Allocator bookkeeping and the remaining copy
+  path are the next measured levers; Clifford recomputation is no longer a major
+  named row here. These instruction counts are not hardware-counter or latency
+  proof. `sort100k-profile/report.json` SHA-256
+  `3b62491fc83072f1d174eaaf4e0b54ea53ff5fd3138e9f85cbedb55d9e5e5f6f`;
+  both inclusive and exclusive annotations and all five raw profiles are retained.
+- **RECEIPTS.** Frozen root
+  `/Users/jemanuel/projects/.frankenlibc-g-format-final-job-20261022/artifacts/`:
+  `replay/report.json` SHA-256
+  `ec1bccb75fc60ad28c8ef6772784c02441ccf8bee58c6aac4e926b4f566bb768`;
+  `timing-qualified-final/report.json`
+  `db505b5254807baea747d65025d9cf3fede51a9cd74a77f79bcae60384188fed`;
+  `short-strings-final/report.json`
+  `4c79fe00768ddab7fa10fa47843cf6d538f6d372ad5af0e79fb024180bf0df60`;
+  `sort100k/report.json`
+  `eb8e2efb2ca36c3071ce239a18313f03fd13d652311e9a9dcbc6bf7a48146efc`.
+  Raw output, provider checks, compiler failures and prior candidates are retained.
+- **DISPOSITION.** KEEP the bounded implementation and correctness repair;
+  **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
+  acceptance: stable short-call bounds, <=3x GNU and <=2x strict macro throughput,
+  durable deployed-path bench group, and corpus performance enforcement remain required.
+  Final-source ABI safety, conversion, compiler, fuzz, reverse-order timing and
+  actual 100k profiles have executed. Post-extension compiler and formatting
+  checks finished; the Clippy recheck timed out as recorded above. The original
+  throughput acceptance remains unmet.
+  This entry serves that named bead's review; it retires as active evidence when
+  superseded by its next bound qualification, while preserving the history.
+
+## 2026-10-22 — Connect deployed overhead enforcement; retain the failures (.9)
+
+`bd-rc0923-epic-eeuy4f.9` remains **in progress**. This continuation supplies
+the missing deployed benchmark consumer and corpus enforcement. It does not
+establish the original throughput targets or integrated L1 readiness.
+
+- **CONNECTED CODE.** Existing `fixture_membrane_access.c` now times valid,
+  warmed, provider-pinned `strlen`/`memcmp` calls through function pointers with
+  `-fno-builtin`. Stack and heap lengths 0, 1, 7, 15, 31 and 63 are separate
+  cases; alternating unequal operands and checked checksums prevent a constant
+  zero comparison from masquerading as work. All original 98 fault/valid cases
+  remain. The existing Python runner adds `--benchmark`, with live GNU libc,
+  strict and hardened children in one invocation, optional incumbent arms,
+  two retained warmups, nine measured rounds, rotated arm order, CPU affinity,
+  provider and sort-binding checks, exact sort-output parity, source/library/
+  corpus hashes, and retained raw rows. The existing Cargo bench accepts
+  `--deployed LIBRARY`; the corpus script consumes the same runner. Its scoped
+  `--performance-only` invocation propagates failure without claiming the full
+  functional corpus. The full corpus path also requires this benchmark after
+  its two mode suites. Original limits stay fixed: each hardened short-case
+  maximum batch mean <=200 ns, sort100k median <=3x GNU and <=2x strict.
+  Batch means are not individual-call tail latencies. Both lexical and numeric
+  sort are mandatory; the favorable numeric denominator cannot hide lexical.
+- **ACTUAL FAILURES.** Runtime artifacts in these first wiring executions are
+  the previously qualified `2258bb1d4` libraries: default SHA-256
+  `986da6a14fd4f3e59997920f42550c0488bd451e9f1f8401b1b9955804d14e15`,
+  owned-TLS `cc5a62c79228c5f8fc9d6dbe645a0abf45d211a65b838631427d82bb1947fdd8`.
+  The default invocation retained **1,430 child rows: 1,170 measured and 260
+  warmup**, with five live arms, 24 short-case groups and two sort workloads.
+  Wrong-provider and all three malformed-argument controls rejected. All
+  measured checksums, provider checks and sort-output comparisons passed;
+  throughput gate **exit 1**: lexical hardened was **3.002x strict / 3.515x
+  GNU**, and stack memcmp maxima at 7/63 bytes were **202.25/202.92 ns**.
+  Numeric was 1.718x strict / 1.917x GNU on this host and input, not a general
+  acceptance result. Actual Cargo caller compilation and execution retained
+  **858 rows** and propagated exit 1 (lexical 3.040x strict / 3.375x GNU).
+  Actual corpus performance-only caller retained **858 rows**, exit 1
+  (lexical 3.154x strict / 3.764x GNU; several short stack memcmp cases also
+  exceeded 200 ns). These are distinct invocations, not independent reviewers.
+  The unpreloaded host reports GNU **2.43**; Franken's compatibility version
+  string is **2.38**, which must not be called the worker's host version.
+- **SAFETY AND OWNED-TLS LIMIT.** The revised existing fixture compiled with
+  `-Wall -Wextra -Werror` and executed **98/98 cases on each frozen library**,
+  including runtime math on/off; both wrong-provider controls rejected before
+  fault injection. The owned-TLS benchmark nevertheless terminated with a
+  **30-second lexical-sort timeout, exit 2**. It has partial raw rows, not a
+  completed `benchmark.json` or a nine-sample pass. Its retained hardened heap
+  memcmp 63-byte batch measured **13,633.42 ns/call**, with the correct checksum.
+  Source diagnosis: `tls_cache.rs` intentionally uses a fresh unbacked cache
+  under `owned-tls-cache`, and `try_with_tls_cache_hit` always misses there.
+  Its short-lived EBR handles and process-global validation-depth storage need
+  owner-safe lifecycle integration. Re-enabling host TLS or substituting a
+  global locked cache would not qualify that work. Existing .9/standalone/L1
+  blockers retain it; no new follow-up is used to close the original.
+- **BOUNDED EXECUTION.** The full corpus was **not executed**: its existing
+  gencat case contains `rm -r`, and `fixture_remove_dir_ftell_ebadf` exercises
+  deletion. No-deletion instructions remain binding. The full aggregation
+  branch was source-reviewed; only its real performance-only branch executed.
+  UBS remains unrun because its installed wrapper deletes temporary files
+  and no preserve mode was found. Neither omission is a pass.
+- **FROZEN EVIDENCE.** Root:
+  `/Users/jemanuel/projects/.frankenlibc-deployed-bench-job-20261022/`.
+  SHA-256: `artifacts/default/benchmark.json`
+  `39f62d32dfc41f8ef7b2676ca84b792e78a686c6a93fef8efd3a26b4d784583a`;
+  `artifacts/bench-caller/deployed/benchmark.json`
+  `d264f74e53a55e4c132665f6335366207200902ea3514ad50f238c83b46efacd`;
+  `input/target/ld_preload_smoke/deployed-bound/deployed-overhead/benchmark.json`
+  `b4dc53d08e0514fb0ebc11b4ba9e2dfde18fe83656cf7955c04636ec11c54567`;
+  `artifacts/safety-default/results.json`
+  `a9e5ce94ceaf314fe334129e5c48093da7ef71a8e189ac8c6969ff3c8345e948`;
+  `artifacts/safety-owned/results.json`
+  `8c47eee258514a874808798500ff60cc0a30374e57a24d4eba3c1fa79ea14c11`.
+  Frozen fixture SHA-256 `bf6bccd38cd283fda3dd02c7554814aa27658fbdbb9bd750c09bc86011c425e1`;
+  runner `c3d64ad244f0bd74f9bf5e766e0c12ed96d74a47c1915b10f663a4cd5b165f27`;
+  corpus script `173077e6561d4d49658611b73aca603c734378673ff169c8b38b79c5c13da494`.
+  This entry serves .9's unchanged acceptance review and retires as active
+  evidence when its next bound qualification supersedes it; history remains.
+- **INLINE EXPERIMENT: DISCARD.** Four experimental lines added cross-crate
+  inline hints to the unchanged bounds-healing decision and global-policy
+  accessor. A fresh explicit Linux release artifact was actually compiled:
+  SHA-256 `a57bc2d79097c2c1c4594e9967da1625acdec1e75e0d945ea39d8acfa016ad9a`,
+  bound to base `4ed4f55dac1ad8adb9c3c3c813f1bf64811af570` plus six-file overlay
+  `1a8ce601c5e87694c01da36f5e2d6e71335347a20677db2e7bd126eab81da860`.
+  Both incumbent and candidate ELF compiler comments identify Rust
+  `1.100.0-nightly (908501772 2026-08-30)`; no compiler mismatch is inferred
+  from a worker's ambient toolchain listing. The actual existing Cargo caller
+  then compiled for 13m46s and executed **1,430 rows**, five live arms,
+  nine measured rounds and both warmups. It propagated failure, exit 1.
+  Against live default986 incumbent, hardened lexical was 292.393/298.058 ms
+  (-1.90%); numeric was 674.823/629.296 ms (**+7.23%**). Several other case
+  medians regressed >5%. High host load and dispersion prevent a general or
+  causal performance claim; this mixed result fails the predeclared keep
+  criterion. Original limits also still fail: lexical **3.397x GNU / 3.127x
+  strict**, numeric **2.189x strict**, and multiple short-call maxima >200 ns.
+  The four experimental lines were manually removed, preserving commit
+  `50589d03c`, the artifact and every raw row. `heal.rs` is again byte-identical
+  to base4ed (SHA-256 `5908b4b4e602c83d23c21e1c1d837964e8a840c7858db87e7066a384cb0289d7`).
+  No runtime performance improvement from this continuation is retained.
+  Report `artifacts/inline-ab/benchmark.json` SHA-256
+  `2d84dad1677834a415f56ad0fddad53009d24d8d017a319c643142f5eb8ab0a1`.
+  The new artifact separately passed **98/98 actual deployed fault cases**
+  with provider rejection, report `artifacts/inline-safety/results.json`
+  SHA-256 `9666aa731603d7379c7c1de66067c623199cf21300f83847253e3adcece2e511`.
+  Its complete membrane unit suite compiled and ran **1,466 passed, 0 failed,
+  0 ignored, 0 filtered out**. Those facts do not turn the losing timing result
+  into a win or identify that rejected artifact as the retained runtime.
+- **STATIC SCOPE.** Hint-source six-file overlay1a8 passed workspace
+  `cargo check --workspace --all-targets --keep-going`, exit 0. After the
+  bench's one-line working-directory correction, six-file overlay
+  `dbb90516c41b215bdceffcdd389da212ea3eac9636ba2ebe01bbc62bbbbe1a02`
+  completed workspace Clippy with `--all-targets --keep-going -- -D warnings`,
+  exit 101: exactly **27 baseline diagnostic occurrences / 17 distinct
+  title-file pairs**, zero added/removed. Formatting actually executed,
+  exit 1: exactly **583 baseline diff bodies**, zero added/removed. These
+  remain red. Current bench SHA-256
+  `680cb2e943e3a64bd62a01c568b84bbe281a338541f629bd9bce76fe75056ec2`;
+  actual relative-path Cargo invocation, including its two frozen ELF data
+  overlays, was bound to overlay
+  `1bf30467cb500901cb784bf6b430740c49390f434795126d4e87682f98b40175`.
+  The hint removal restores previously checked baseline runtime bytes; it
+  does not produce a new qualified release artifact. README documents the
+  exercised commands and uses `--keep-going` for workspace compile/lint checks.
+  The cwd-corrected overlaydbb workspace check subsequently completed **exit 0**
+  on vmi1167313 (1,744.0 seconds overall). It compiled the source cut with the
+  experimental hints; the later four-line removal restores base4ed's exact
+  runtime bytes and is not presented as a second full workspace execution.
+  CI already used `--keep-going` for compiler checks but omitted it for Clippy;
+  that two-line command/label omission is now corrected without changing failure
+  handling. `bash -n scripts/ci.sh scripts/ld_preload_smoke.sh` passed syntax
+  inspection; the full CI script itself was not executed. The completed
+  workspace Clippy command above actually exercised the stronger target-wide
+  flag and still failed on the unchanged baseline diagnostics.
+- **FAILED ATTEMPTS AND COST.** Avoidable qualification churn consumed too much
+  time: incompatible RCH flags, omitted ignored lockfile, initial oversized
+  arbitrary-job core estimates, implicit Apple target for a Linux artifact,
+  and my absent USB output destination. The corrected explicit Linux compile
+  exited 0, but its overall delivery exited **102**. Frozen artifact bytes
+  were independently copied and hashed; this is not a green delivery pipeline.
+  Exact retrieval receipt `rchw-c5265ef8-42f6-48c8-9337-9aa52a018005` remains
+  unacknowledged after supported recovery failed on that destination. No
+  daemon restart, journal rewrite, lock clearing, pressure override or foreign
+  artifact bypass was used. Source-ownership refusals executed zero tests;
+  private clean-snapshot Cargo execution supplied the actual A/B instead.
+  The queued hz2 safety request `rchw-aa9eedd5-bac2-4a66-9d56-472f3b90f867`
+  was cancelled **before start**, exit 130, zero slots, terminal acknowledged;
+  only then did the freed vmi1156319 execute the native gate successfully.
+  No started test or healthy compile was cancelled. A formatting admission
+  timeout also executed zero cases; the later executed result above is separate.
+  Full real-work and twenty-point honesty worksheets are filled in .9's
+  comments. Verdict **DRIFTING**: connected enforcement is an exercised enabler,
+  while retry churn and audit prose earn no runtime capability credit. Work
+  was solo; no independent verifier or broad performance/safety/release win
+  is claimed. Original .9 acceptance and the owned-TLS performance gap stay open.
+
+## 2026-10-22 — Discard HTM bookkeeping experiment; repair its isolated test setup (.9)
+
+- **DISCARD.** Two guards avoided the cooldown clock for an unset deadline and
+  summary bookkeeping without `runtime-tracing`. Both new cost regressions
+  compiled and failed separately on old source `ed44d7b31`; the candidate passed
+  all six HTM units in default and tracing builds. Nevertheless, the actual
+  five-arm deployed invocation rejected it: hardened numeric sort was
+  **1,192.880 ms versus 1,007.463 ms incumbent (+18.40%)**; lexical was
+  480.665/486.449 ms (-1.19%). No favorable rerun or causal/general loss claim.
+  Both guards and their two optimization-specific tests were manually rolled
+  back together. Commits `ed44d7b31` and `1c2ca7c9b` and all evidence remain.
+  The HTM file again exactly matches pre-experiment `2624ba6cc`, SHA-256
+  `1d7a689c02e9f8e0e47c560260f00b6894a2bf35e8e25c52c14673674029565e`;
+  its original four tests actually execute **4 passed / 0 failed / 229 filtered**.
+  Automatic save had already published `1c2ca7c9b`; rollback `0c0e5ce44` was
+  pushed to main and the required legacy mirror, with both remote refs verified.
+- **ORIGINAL LIMITS STILL FAIL.** The rejected candidate's same-invocation GNU
+  ratios were lexical 2.694x and numeric 2.367x, but strict ratios were
+  **4.509x and 2.411x**. Twenty-two of 24 short groups exceeded the original
+  maximum batch mean of 200 ns; the worst was 1,375.99 ns. This invocation
+  retained **1,430 rows: 1,170 measured and 260 warmup**, 130 nine-sample
+  summaries and ten sort-binding records. Provider rejection, three malformed
+  controls, checksums and sort-output parity all held. GNU 2.43 was live in the
+  same invocation; the compatibility strings were 2.38. Host load changed from
+  6.00/11.22/14.81 to 14.20/12.56/14.88. All raw samples remain; neither an
+  improved lexical median nor the GNU-only limits qualify the failed targets.
+- **REJECTED ARTIFACT SCOPE.** Explicit Linux default and owned-TLS release
+  builds and delivery both completed with exit 0, bound to `ed44d7b31` plus
+  overlay `32c51efc9c9ea4e0b76cb26329691363fb7569dc2b048e4b5e70418fd0ec7fe3`.
+  Default ELF SHA-256
+  `caadd42a3969e8cdd681c864747ac358e74aaa002c4c9f475df00e15ce2e1f5d`
+  passed **98/98 deployed safety cases** and wrong-provider rejection. Owned
+  SHA-256 `4fa0e39b9cb1be9bc78a6c70d75f26dbfbcdc0a89238d433f5ae7fbbbdef7157`
+  received no native/performance execution after discard. These are rejected
+  artifacts, not replacements for the retained runtime. The default candidate
+  and live incumbent both identify Rust 1.100.0-nightly (908501772 2026-08-30).
+  Workspace compilation passed on the candidate; its Clippy/fmt failures matched
+  the baseline. None of those receipts is a post-rollback execution.
+- **RETAINED TEST REPAIR.** Actual isolated malloc HTM integration failed in
+  strict and hardened modes: single-threaded slot-local statistics never enter
+  the global combiner, so counters remained zero. The first failure poisoned
+  the shared test mutex; the second was not an independent allocator failure.
+  An additional old-source commit test run alone failed directly, **0 passed /
+  1 failed / 88 filtered**, confirming the hidden ordering prerequisite.
+  Existing `malloc_abi_test.rs` now allocates/frees on the calling thread and a
+  real joined second thread, asserts the actual multi-threaded latch, then
+  resets the site before the original forced-mode allocation/free sequence.
+  All original commit/abort/fallback assertions remain. No production branch,
+  counter injection, mock, tolerance, skip or direct statistics hook was added.
+  With `--no-fail-fast`, all three binaries actually execute in **each** mode:
+  malloc **2 passed / 87 filtered**, mutex **2 passed / 18 filtered**, memcpy
+  **2 passed / 211 filtered**, with zero failures and both overall exits 0.
+  This exercises the intended global-combiner path without depending on another
+  test first creating a second allocating thread. It proves neither hardware
+  RTM execution nor full allocator conformance. Exact test SHA-256
+  `7e981d36c1ea962517794516f3cad48d30b6c071fd3b81e888dc350485491e68`;
+  source receipt `2624ba6cc` plus overlay
+  `6fcd240213b149a68294e1657888e3afe7082e690cd7e7defcae0541bd5cbf5b`.
+- **FINAL CHECKS AND LIMITS.** Helper-source full workspace Clippy with
+  `--all-targets --keep-going -- -D warnings` completed exit 101 with exactly
+  **27 baseline occurrences / 17 title-file pairs**, zero added/removed.
+  Formatting completed exit 1 with exactly **583 baseline diff bodies**, zero
+  added/removed. The final helper-source workspace compiler check with
+  `--all-targets --keep-going` completed **exit 0** (16m03s compiler time),
+  bound to the same `2624ba6cc` + overlay `6fcd2402` source as the repaired
+  integration tests. Full allocator-file/corpus
+  and UBS execution remain unrun. Original `.9` throughput and owned-TLS
+  lifecycle/cache work, `bd-dcrhgl` allocator acceptance, and L1 readiness stay
+  open. The retained change is a test enabler; **no runtime optimization is
+  retained**. Admission churn and reports earn no capability credit.
+- **RECEIPTS.** Existing root
+  `/Users/jemanuel/projects/.frankenlibc-deployed-bench-job-20261022/` retains
+  `artifacts/htm-ab/benchmark.json`, SHA-256
+  `fe8eae06c5dd15719bc1e1d14ba2f2880d4e661db2d03b2d4ea43867c49ec476`;
+  `benchmark.raw.jsonl`,
+  `b6c76f429714fc3e80f73fb4d5dac1ebad33f0a0ff28517e238949888ec48695`;
+  and `artifacts/htm-safety-default/results.json`,
+  `bd1c39d7790cad51585f0c83f39f1dd9f2444e30798264de419376da793bcdd5`.
+  Original isolated failures and all command logs remain. Detailed TODO and
+  gate-fix win/lose split are recorded on `.9` and `bd-dcrhgl`; this entry retires
+  as active evidence when the next exact-source qualification supersedes it.
+  Guarded tracker export preserved all 7,544 IDs, 4,693 dependencies, 13,232
+  labels and every prior comment, appending only nine comments on two tasks.
+  Tracker doctor still exits 1 for its existing inner-ignore-template warning
+  and preserved temporary/recovery artifacts; no cleanup or repair was applied.
+

@@ -68,7 +68,7 @@ fn div_matches_glibc() {
     ];
     for &(num, den) in cases {
         let g = unsafe { div(num, den) };
-        let f = unsafe { fl::div(num, den) };
+        let f = fl::div(num, den);
         assert_eq!(
             (f.quot, f.rem),
             (g.quot, g.rem),
@@ -103,14 +103,14 @@ fn ldiv_lldiv_match_glibc() {
     ];
     for &(num, den) in lcases {
         let g = unsafe { ldiv(num, den) };
-        let f = unsafe { fl::ldiv(num, den) };
+        let f = fl::ldiv(num, den);
         assert_eq!((f.quot, f.rem), (g.quot, g.rem), "ldiv({num},{den})");
     }
     for &(num, den) in lcases {
         let n = num as c_longlong;
         let d = den as c_longlong;
         let g = unsafe { lldiv(n, d) };
-        let f = unsafe { fl::lldiv(n, d) };
+        let f = fl::lldiv(n, d);
         assert_eq!((f.quot, f.rem), (g.quot, g.rem), "lldiv({n},{d})");
     }
 }
@@ -119,34 +119,34 @@ fn ldiv_lldiv_match_glibc() {
 fn abs_family_matches_glibc_including_int_min() {
     for &n in &[0, 1, -1, 5, -5, i32::MAX, i32::MIN, i32::MIN + 1] {
         let g = unsafe { abs(n) };
-        let f = unsafe { fl::abs(n) };
+        let f = fl::abs(n);
         assert_eq!(f, g, "abs({n}): fl={f} glibc={g}");
     }
     // INT_MIN wraps to INT_MIN in both (UB in C; glibc + fl both wrap).
     assert_eq!(
-        unsafe { fl::abs(i32::MIN) },
+        fl::abs(i32::MIN),
         i32::MIN,
         "abs(INT_MIN) must wrap, not panic"
     );
 
     for &n in &[0i64, 1, -1, i64::MAX, i64::MIN, i64::MIN + 1, -123456789] {
         let g = unsafe { labs(n) };
-        let f = unsafe { fl::labs(n) };
+        let f = fl::labs(n);
         assert_eq!(f, g, "labs({n})");
         let gll = unsafe { llabs(n) };
-        let fll = unsafe { fl::llabs(n) };
+        let fll = fl::llabs(n);
         assert_eq!(fll, gll, "llabs({n})");
         let gi = unsafe { imaxabs(n) };
-        let fi = unsafe { fl::imaxabs(n) };
+        let fi = fl::imaxabs(n);
         assert_eq!(fi, gi, "imaxabs({n})");
     }
     assert_eq!(
-        unsafe { fl::labs(i64::MIN) },
+        fl::labs(i64::MIN),
         i64::MIN,
         "labs(LONG_MIN) must wrap"
     );
     assert_eq!(
-        unsafe { fl::imaxabs(i64::MIN) },
+        fl::imaxabs(i64::MIN),
         i64::MIN,
         "imaxabs(INTMAX_MIN) must wrap"
     );

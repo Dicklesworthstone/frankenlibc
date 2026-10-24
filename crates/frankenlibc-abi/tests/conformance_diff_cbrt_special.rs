@@ -88,12 +88,6 @@ fn cbrt_special_cases_match_glibc() {
                 (f.to_bits() as i64 - g.to_bits() as i64),
             ));
         }
-        assert!(
-            true,
-            "cbrt({x:?}): fl={f:?} (bits {:#018x}) glibc={g:?} (bits {:#018x})",
-            f.to_bits(),
-            g.to_bits()
-        );
         // Odd-function identity (fl-internal): cbrt(-x) == -cbrt(x).
         if !x.is_nan() {
             let fneg = unsafe { frankenlibc_abi::math_abi::cbrt(-x) };

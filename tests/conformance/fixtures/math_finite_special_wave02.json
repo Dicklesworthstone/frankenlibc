@@ -35,10 +35,10 @@
       "inputs": {
         "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
       },
-      "expected_output": "LIB_VERSION_0",
+      "expected_output": "LIB_VERSION_2",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "Records FrankenLibC's data-symbol value without binding the host versioned libm data symbol."
+      "note": "glibc 2.43 libm _LIB_VERSION@GLIBC_2.2.5 is 2 (_POSIX_), read via dlvsym; fl exported 0 (_SVID_), which switched glibc's own libm wrappers to SVID stderr messages."
     },
     {
       "name": "lib_version_posix_hardened",
@@ -47,10 +47,10 @@
       "inputs": {
         "ambient_state_policy": "forbid_fenv_errno_host_long_double_or_f128_overclaim"
       },
-      "expected_output": "LIB_VERSION_0",
+      "expected_output": "LIB_VERSION_2",
       "expected_errno": 0,
       "mode": "hardened",
-      "note": "Records FrankenLibC's data-symbol value without binding the host versioned libm data symbol."
+      "note": "glibc 2.43 libm _LIB_VERSION@GLIBC_2.2.5 is 2 (_POSIX_), read via dlvsym; fl exported 0 (_SVID_), which switched glibc's own libm wrappers to SVID stderr messages."
     },
     {
       "name": "acos_finite_domain_strict",

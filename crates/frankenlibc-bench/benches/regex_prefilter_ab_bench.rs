@@ -45,7 +45,7 @@ fn bench(c: &mut Criterion) {
     //     the bitset is one lookup.
     const REG_ICASE: i32 = 2; // frankenlibc REG_ICASE bit
     let mut icase: Vec<u8> = vec![b'X'];
-    icase.extend(std::iter::repeat(b'a').take(4089));
+    icase.extend(std::iter::repeat_n(b'a', 4089));
     icase.push(b'9');
 
     // (4) MULTI-EXIT alternation follow: `X[a-z]+(99|88)` over "X"+4089'a'+"99".
@@ -53,7 +53,7 @@ fn bench(c: &mut Criterion) {
     //     two alternation first-bytes {9,8}, both disjoint — so it exercises the
     //     generalized (len>2) bulk-consume that the original len==2 path could not.
     let mut altexit: Vec<u8> = vec![b'X'];
-    altexit.extend(std::iter::repeat(b'a').take(4089));
+    altexit.extend(std::iter::repeat_n(b'a', 4089));
     altexit.extend_from_slice(b"99");
 
     // (5) NEGATED-class STAR run: `X[^"]*"` over "X" + 4090 letters + `"`. The `X`
@@ -61,7 +61,7 @@ fn bench(c: &mut Criterion) {
     //     and `[^"]*` (a STAR loop) greedily walks the run; `[^"]` is disjoint from
     //     the exit `"`, so it bulk-consumes — confirming `*` loops fire, not just `+`.
     let mut quoted: Vec<u8> = vec![b'X'];
-    quoted.extend(std::iter::repeat(b'a').take(4090));
+    quoted.extend(std::iter::repeat_n(b'a', 4090));
     quoted.push(b'"');
 
     // (6) NO-PREFILTER `[^"]*"` over 4090 letters + `"` — no determinate first byte,

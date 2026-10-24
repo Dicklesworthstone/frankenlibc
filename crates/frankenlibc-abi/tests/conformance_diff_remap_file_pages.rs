@@ -112,7 +112,7 @@ fn remap_file_pages_invalid_arguments_match_host_syscall() {
     let cases = [
         ("null zero size", ptr::null_mut(), 0, 0, 0, 0),
         ("null page size", ptr::null_mut(), 4096, 0, 0, 0),
-        ("unaligned address", 1usize as *mut c_void, 4096, 0, 0, 0),
+        ("unaligned address", ptr::dangling_mut(), 4096, 0, 0, 0),
         ("invalid flags", ptr::null_mut(), 0, 0, 0, 1),
     ];
 

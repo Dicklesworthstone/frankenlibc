@@ -403,6 +403,41 @@ pub fn compose_memory_pressure_ppm(
     depth_ppm.max(projected_ppm)
 }
 
+#[inline]
+fn evaluate_fragmentation_barrier_from_basis(basis: &[i64; FRAGMENTATION_CERT_DIM]) -> i64 {
+    if *basis == [0; FRAGMENTATION_CERT_DIM] {
+        return FRAGMENTATION_BARRIER_BUDGET_MILLI;
+    }
+
+    let q = &FRAGMENTATION_GRAM_MATRIX;
+    let b0 = i128::from(basis[0]);
+    let b1 = i128::from(basis[1]);
+    let b2 = i128::from(basis[2]);
+    let b3 = i128::from(basis[3]);
+
+    let mut acc: i128 = 0;
+    acc = acc.saturating_add(i128::from(q[0][0]).saturating_mul(b0).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[0][1]).saturating_mul(b0).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[0][2]).saturating_mul(b0).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[0][3]).saturating_mul(b0).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[1][0]).saturating_mul(b1).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[1][1]).saturating_mul(b1).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[1][2]).saturating_mul(b1).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[1][3]).saturating_mul(b1).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[2][0]).saturating_mul(b2).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[2][1]).saturating_mul(b2).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[2][2]).saturating_mul(b2).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[2][3]).saturating_mul(b2).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[3][0]).saturating_mul(b3).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[3][1]).saturating_mul(b3).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[3][2]).saturating_mul(b3).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[3][3]).saturating_mul(b3).saturating_mul(b3));
+
+    let score = (acc / i128::from(FRAGMENTATION_SCORE_SCALE))
+        .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+    FRAGMENTATION_BARRIER_BUDGET_MILLI.saturating_sub(score)
+}
+
 /// Evaluate allocator-fragmentation barrier certificate.
 ///
 /// Inputs:
@@ -441,7 +476,52 @@ pub fn evaluate_fragmentation_barrier(
         ppm_excess_to_score(churn_ppm, FRAGMENTATION_CHURN_BUDGET_PPM),
     ];
 
-    FRAGMENTATION_CERTIFICATE.evaluate_barrier(&basis, FRAGMENTATION_SCORE_SCALE)
+    evaluate_fragmentation_barrier_from_basis(&basis)
+}
+
+#[inline]
+fn evaluate_thread_safety_barrier_from_basis(basis: &[i64; THREAD_SAFETY_CERT_DIM]) -> i64 {
+    if *basis == [0; THREAD_SAFETY_CERT_DIM] {
+        return THREAD_SAFETY_BARRIER_BUDGET_MILLI;
+    }
+
+    let q = &THREAD_SAFETY_GRAM_MATRIX;
+    let b0 = i128::from(basis[0]);
+    let b1 = i128::from(basis[1]);
+    let b2 = i128::from(basis[2]);
+    let b3 = i128::from(basis[3]);
+    let b4 = i128::from(basis[4]);
+
+    let mut acc: i128 = 0;
+    acc = acc.saturating_add(i128::from(q[0][0]).saturating_mul(b0).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[0][1]).saturating_mul(b0).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[0][2]).saturating_mul(b0).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[0][3]).saturating_mul(b0).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[0][4]).saturating_mul(b0).saturating_mul(b4));
+    acc = acc.saturating_add(i128::from(q[1][0]).saturating_mul(b1).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[1][1]).saturating_mul(b1).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[1][2]).saturating_mul(b1).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[1][3]).saturating_mul(b1).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[1][4]).saturating_mul(b1).saturating_mul(b4));
+    acc = acc.saturating_add(i128::from(q[2][0]).saturating_mul(b2).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[2][1]).saturating_mul(b2).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[2][2]).saturating_mul(b2).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[2][3]).saturating_mul(b2).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[2][4]).saturating_mul(b2).saturating_mul(b4));
+    acc = acc.saturating_add(i128::from(q[3][0]).saturating_mul(b3).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[3][1]).saturating_mul(b3).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[3][2]).saturating_mul(b3).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[3][3]).saturating_mul(b3).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[3][4]).saturating_mul(b3).saturating_mul(b4));
+    acc = acc.saturating_add(i128::from(q[4][0]).saturating_mul(b4).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[4][1]).saturating_mul(b4).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[4][2]).saturating_mul(b4).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[4][3]).saturating_mul(b4).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[4][4]).saturating_mul(b4).saturating_mul(b4));
+
+    let score = (acc / i128::from(THREAD_SAFETY_SCORE_SCALE))
+        .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+    THREAD_SAFETY_BARRIER_BUDGET_MILLI.saturating_sub(score)
 }
 
 /// Evaluate thread-safety barrier certificate.
@@ -485,7 +565,7 @@ pub fn evaluate_thread_safety_barrier(
         ppm_excess_to_score(allocation_epoch_lag_ppm, THREAD_SAFETY_EPOCH_LAG_BUDGET_PPM),
     ];
 
-    THREAD_SAFETY_CERTIFICATE.evaluate_barrier(&basis, THREAD_SAFETY_SCORE_SCALE)
+    evaluate_thread_safety_barrier_from_basis(&basis)
 }
 
 #[inline]
@@ -2947,5 +3027,49 @@ mod tests {
                 prev = barrier;
             }
         }
+    }
+
+    #[test]
+    fn unrolled_barrier_evaluators_match_generic_certificates_and_snapshot_fields() {
+        use crate::config::SafetyLevel;
+        use crate::runtime_math::{
+            ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile,
+        };
+
+        for v in (0..=1000).step_by(125) {
+            let frag_basis = [v, v / 2, v / 3, v / 4];
+            assert_eq!(
+                evaluate_fragmentation_barrier_from_basis(&frag_basis),
+                FRAGMENTATION_CERTIFICATE.evaluate_barrier(&frag_basis, FRAGMENTATION_SCORE_SCALE)
+            );
+            let sc_basis = [v, v / 2, v / 3, v / 4];
+            assert_eq!(
+                evaluate_size_class_barrier_from_basis(&sc_basis),
+                SIZE_CLASS_CERTIFICATE.evaluate_barrier(&sc_basis, SIZE_CLASS_SCORE_SCALE)
+            );
+            let ts_basis = [v, v / 2, v / 3, v / 4, v / 5];
+            assert_eq!(
+                evaluate_thread_safety_barrier_from_basis(&ts_basis),
+                THREAD_SAFETY_CERTIFICATE.evaluate_barrier(&ts_basis, THREAD_SAFETY_SCORE_SCALE)
+            );
+        }
+
+        let kernel = RuntimeMathKernel::new();
+        let mode = SafetyLevel::Hardened;
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+        for _ in 0..256 {
+            let _ = kernel.decide(mode, ctx);
+            kernel.observe_validation_result(
+                mode,
+                ApiFamily::Allocator,
+                ValidationProfile::Full,
+                20,
+                false,
+            );
+        }
+        let snap = kernel.snapshot(mode);
+        assert!(snap.sos_barrier_fragmentation_value > 0);
+        assert!(snap.sos_barrier_thread_safety_value > 0);
+        assert!(snap.sos_barrier_size_class_value > 0);
     }
 }

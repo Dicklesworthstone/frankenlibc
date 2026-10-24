@@ -102,7 +102,7 @@ fn bench(c: &mut Criterion) {
     let inp: Vec<f32> = (0..64).map(|k| 1.01 + k as f32 * 0.5).collect();
     let mut g = c.benchmark_group("acoshf");
     g.sample_size(20);
-    run(&mut g, "fl_deployed", &inp, |x| math::acoshf(x));
+    run(&mut g, "fl_deployed", &inp, math::acoshf);
     run(&mut g, "candidate", &inp, candidate);
     run(&mut g, "glibc", &inp, |x| unsafe { host_acoshf(x) });
     g.finish();

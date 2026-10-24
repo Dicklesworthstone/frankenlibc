@@ -56,7 +56,7 @@ fn memrchr_old(hs: &[u8], needle: u8) -> Option<usize> {
             let mut pe = end;
             for chunk in block.rchunks_exact(LANES) {
                 let lanes = Simd::<u8, LANES>::from_slice(chunk);
-                let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+                let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask();
                 if bits != 0 {
                     let j = 63 - bits.leading_zeros() as usize;
                     return Some(pe - LANES + j);
@@ -70,7 +70,7 @@ fn memrchr_old(hs: &[u8], needle: u8) -> Option<usize> {
     let mut chunks = rem.rchunks_exact(LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u8, LANES>::from_slice(chunk);
-        let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask();
         if bits != 0 {
             let j = 63 - bits.leading_zeros() as usize;
             return Some(end - LANES + j);
@@ -80,10 +80,10 @@ fn memrchr_old(hs: &[u8], needle: u8) -> Option<usize> {
     let rem = chunks.remainder();
     let mut w = rem.rchunks_exact(WORD);
     for chunk in w.by_ref() {
-        if has_byte_u64(u64_from(chunk), needle) {
-            if let Some(j) = chunk.iter().rposition(|&b| b == needle) {
-                return Some(end - WORD + j);
-            }
+        if has_byte_u64(u64_from(chunk), needle)
+            && let Some(j) = chunk.iter().rposition(|&b| b == needle)
+        {
+            return Some(end - WORD + j);
         }
         end -= WORD;
     }
@@ -97,7 +97,7 @@ fn memrchr_new(hs: &[u8], needle: u8) -> Option<usize> {
     let mut chunks = hs.rchunks_exact(LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u8, LANES>::from_slice(chunk);
-        let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask();
         if bits != 0 {
             let j = 63 - bits.leading_zeros() as usize;
             return Some(end - LANES + j);
@@ -107,10 +107,10 @@ fn memrchr_new(hs: &[u8], needle: u8) -> Option<usize> {
     let rem = chunks.remainder();
     let mut w = rem.rchunks_exact(WORD);
     for chunk in w.by_ref() {
-        if has_byte_u64(u64_from(chunk), needle) {
-            if let Some(j) = chunk.iter().rposition(|&b| b == needle) {
-                return Some(end - WORD + j);
-            }
+        if has_byte_u64(u64_from(chunk), needle)
+            && let Some(j) = chunk.iter().rposition(|&b| b == needle)
+        {
+            return Some(end - WORD + j);
         }
         end -= WORD;
     }

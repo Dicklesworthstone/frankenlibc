@@ -62,6 +62,10 @@ fn run_checker(
     let script = root.join("scripts/check_support_reality_regeneration.sh");
     let mut command = Command::new(&script);
     command.current_dir(root);
+    command.env(
+        "SUPPORT_REALITY_GENERATOR_BIN",
+        env!("CARGO_BIN_EXE_harness"),
+    );
     if let Some(path) = contract_override {
         command.env("SUPPORT_REALITY_REGEN_CONTRACT", path);
     }
@@ -115,6 +119,12 @@ fn contract_has_required_pair_shape() {
     );
     assert_eq!(contract["generated_by_bead"].as_str(), Some("bd-0agsk.3"));
     assert_eq!(contract["mode"].as_str(), Some("validate_only"));
+    assert!(
+        contract["source_commit"].as_str().is_some_and(
+            |value| value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        ),
+        "source_commit must be a full Git object ID"
+    );
     assert_eq!(
         contract["canonical_command"].as_str(),
         Some("scripts/check_support_reality_regeneration.sh --validate-only")
@@ -133,7 +143,11 @@ fn contract_has_required_pair_shape() {
     assert!(modes.contains("regenerate"));
     assert_eq!(
         contract["generator_versions"]["support_matrix_source"].as_str(),
-        Some("bash scripts/abi_audit.sh --json-only --deterministic")
+        Some("reviewed source-derived support_matrix.json (preserved by paired regeneration)")
+    );
+    assert_eq!(
+        contract["paired_update_policy"]["support_matrix_write"].as_str(),
+        Some("preserve_verified_input")
     );
     assert_eq!(
         contract["paired_update_policy"]["single_artifact_update"].as_str(),

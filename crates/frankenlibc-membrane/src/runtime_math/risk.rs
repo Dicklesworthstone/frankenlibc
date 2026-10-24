@@ -77,7 +77,7 @@ impl ConformalRiskEngine {
         let p_hat = (adverse as f64 + 1.0) / (n + 2.0);
         let var = (p_hat * (1.0 - p_hat) / (n + 3.0)).max(0.0);
         let ub = (p_hat + self.z_score * var.sqrt()).clamp(0.0, 1.0);
-        (ub * 1_000_000.0).round() as u32
+        crate::util::round_f64(ub * 1_000_000.0) as u32
     }
 }
 

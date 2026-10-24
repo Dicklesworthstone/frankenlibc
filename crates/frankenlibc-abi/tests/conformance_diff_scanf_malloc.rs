@@ -21,7 +21,7 @@ unsafe extern "C" {
 
 /// Marks an out-pointer the call must leave alone, so that "stored NULL" and
 /// "untouched" are told apart.
-const UNTOUCHED: *mut c_char = 1 as *mut c_char;
+const UNTOUCHED: *mut c_char = std::ptr::without_provenance_mut(1);
 
 /// `%ms`/`%m[` (NUL-terminated alloc): compare (count, two strings).
 ///

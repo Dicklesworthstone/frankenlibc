@@ -81,18 +81,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_out_dir(root: &Path) -> TestResult<PathBuf> {
@@ -216,10 +219,7 @@ fn harness_source_registers_runtime_math_determinism_proofs_subcommand() -> Test
 
 #[test]
 fn cli_writes_structured_log_and_report_to_requested_paths() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("harness binary not built; gracefully skipping");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let root = workspace_root()?;
     let out_dir = unique_out_dir(&root)?;
     let log_path = out_dir.join("determinism.log.jsonl");

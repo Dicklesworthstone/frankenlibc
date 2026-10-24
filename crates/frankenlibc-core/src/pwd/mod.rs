@@ -199,6 +199,51 @@ pub fn lookup_by_uid(content: &[u8], uid: u32) -> Option<Passwd> {
     None
 }
 
+/// Split `content` into raw lines: each line's bytes (without its newline)
+/// and the number of bytes it occupies in the file (with its newline).
+pub(crate) fn raw_lines(content: &[u8]) -> impl Iterator<Item = (&[u8], usize)> {
+    let mut rest = content;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let (line, raw_len) = match rest.iter().position(|&b| b == b'\n') {
+            Some(newline) => (&rest[..newline], newline + 1),
+            None => (rest, rest.len()),
+        };
+        rest = &rest[raw_len..];
+        Some((line, raw_len))
+    })
+}
+
+/// Whether a reentrant files lookup (`getpwnam_r`/`getpwuid_r`) with a
+/// `buflen`-byte buffer fails with ERANGE, as glibc's files backend does.
+///
+/// Measured on glibc 2.39: the backend reads every line it examines -- each
+/// line up to and including the first match, or all lines on a miss, comment
+/// and blank lines included -- into the CALLER's buffer, and needs the line's
+/// bytes with its newline plus a NUL plus one spare byte. So a tiny buffer is
+/// ERANGE even when the name does not exist, and a buffer that would hold the
+/// matching entry's strings can still be too small for its raw line.
+pub fn files_lookup_exceeds_buffer(
+    content: &[u8],
+    buflen: usize,
+    mut is_match: impl FnMut(&Passwd) -> bool,
+) -> bool {
+    for (line, raw_len) in raw_lines(content) {
+        if raw_len.saturating_add(2) > buflen {
+            return true;
+        }
+        if let Some(entry) = parse_passwd_line(line)
+            && !is_nis_compat_name(&entry.pw_name)
+            && is_match(&entry)
+        {
+            return false;
+        }
+    }
+    false
+}
+
 /// Append a serialized passwd line to `out`.
 ///
 /// Produces `"name:passwd:uid:gid:gecos:dir:shell\n"` — the canonical
@@ -301,6 +346,24 @@ bin:x:2:2:bin:/bin:/usr/sbin/nologin
 nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
 ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
 ";
+
+    #[test]
+    fn files_lookup_buffer_threshold_matches_glibc() {
+        // glibc 2.39: "abc:x:7:7:G:/h:/s\n" (18 bytes) needs a 20-byte buffer,
+        // for a hit and for a miss alike; without the newline, 19.
+        let with_nl = b"abc:x:7:7:G:/h:/s\n";
+        assert!(files_lookup_exceeds_buffer(with_nl, 19, |e| e.pw_name == b"abc"));
+        assert!(!files_lookup_exceeds_buffer(with_nl, 20, |e| e.pw_name == b"abc"));
+        assert!(files_lookup_exceeds_buffer(with_nl, 19, |e| e.pw_name == b"zzz"));
+        assert!(!files_lookup_exceeds_buffer(with_nl, 20, |e| e.pw_name == b"zzz"));
+        let no_nl = b"abc:x:7:7:G:/h:/s";
+        assert!(files_lookup_exceeds_buffer(no_nl, 18, |e| e.pw_uid == 7));
+        assert!(!files_lookup_exceeds_buffer(no_nl, 19, |e| e.pw_uid == 7));
+        // Lines after the first match are never read.
+        let long_tail = b"abc:x:7:7:G:/h:/s\n# a much longer comment line after the match\n";
+        assert!(!files_lookup_exceeds_buffer(long_tail, 20, |e| e.pw_name == b"abc"));
+        assert!(files_lookup_exceeds_buffer(long_tail, 20, |e| e.pw_name == b"zzz"));
+    }
 
     #[test]
     fn parse_valid_line() {

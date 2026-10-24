@@ -12,6 +12,7 @@ fn pctl(s: &[f64], q: f64) -> f64 {
     v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
 }
 // OLD: 256B fold via Simd<u8,64> panels (4 per block) — mirrors has_byte_memchr_folded.
+#[allow(clippy::needless_range_loop)]
 fn scan64(hs: &[u8], needle: u8) -> Option<usize> {
     let n = hs.len();
     let nd = Simd::<u8, 64>::splat(needle);
@@ -36,6 +37,7 @@ fn scan64(hs: &[u8], needle: u8) -> Option<usize> {
         .map(|j| base + j)
 }
 // NEW: 256B fold via Simd<u8,32> panels (8 per block) — native AVX2 width.
+#[allow(clippy::needless_range_loop)]
 fn scan32(hs: &[u8], needle: u8) -> Option<usize> {
     let n = hs.len();
     let nd = Simd::<u8, 32>::splat(needle);

@@ -51,6 +51,7 @@ fn blob_magic(category: usize) -> u32 {
     }
 }
 
+#[inline]
 fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
     let b = bytes.get(at..at.checked_add(4)?)?;
     Some(u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
@@ -246,6 +247,7 @@ impl<'a> CtypeTables<'a> {
     }
 
     /// Whether `wc` is in class `class` (index into [`WIDE_CLASSES`]).
+    #[inline]
     pub fn is_class(&self, class: usize, wc: u32) -> bool {
         let Some(table) = self.classes.get(class) else {
             return false;
@@ -257,6 +259,7 @@ impl<'a> CtypeTables<'a> {
         }
     }
 
+    #[inline]
     fn map(table: &[u8], wc: u32) -> u32 {
         match leaf(table, wc, 0) {
             Some((leaf_off, index)) => {
@@ -266,15 +269,18 @@ impl<'a> CtypeTables<'a> {
         }
     }
 
+    #[inline]
     pub fn to_upper(&self, wc: u32) -> u32 {
         Self::map(self.toupper, wc)
     }
 
+    #[inline]
     pub fn to_lower(&self, wc: u32) -> u32 {
         Self::map(self.tolower, wc)
     }
 
     /// `wcwidth`: the table byte, 0xff (and absent) meaning -1.
+    #[inline]
     pub fn width(&self, wc: u32) -> i32 {
         match leaf(self.width, wc, 0) {
             Some((leaf_off, index)) => match self.width.get(leaf_off + index) {
@@ -288,7 +294,11 @@ impl<'a> CtypeTables<'a> {
 
 /// Walk levels 1 and 2 of a three-level table; returns the level-3 block
 /// offset and the index within it (`(wc >> shift3) & mask3`).
+#[inline]
 fn leaf(table: &[u8], wc: u32, shift3: u32) -> Option<(usize, usize)> {
+    if table.len() < 20 {
+        return None;
+    }
     let shift1 = read_u32(table, 0)?;
     let bound = read_u32(table, 4)?;
     let index1 = wc.checked_shr(shift1).unwrap_or(0);

@@ -40,12 +40,12 @@ fn glibc() -> Glibc {
         assert!(!h.is_null());
         let s = |n: &std::ffi::CStr| dlsym(h, n.as_ptr());
         Glibc {
-            space: std::mem::transmute(s(c"inet6_option_space")),
-            init: std::mem::transmute(s(c"inet6_option_init")),
-            append: std::mem::transmute(s(c"inet6_option_append")),
-            alloc: std::mem::transmute(s(c"inet6_option_alloc")),
-            next: std::mem::transmute(s(c"inet6_option_next")),
-            find: std::mem::transmute(s(c"inet6_option_find")),
+            space: std::mem::transmute::<*mut c_void, SpaceFn>(s(c"inet6_option_space")),
+            init: std::mem::transmute::<*mut c_void, InitFn>(s(c"inet6_option_init")),
+            append: std::mem::transmute::<*mut c_void, AppendFn>(s(c"inet6_option_append")),
+            alloc: std::mem::transmute::<*mut c_void, AllocFn>(s(c"inet6_option_alloc")),
+            next: std::mem::transmute::<*mut c_void, NextFn>(s(c"inet6_option_next")),
+            find: std::mem::transmute::<*mut c_void, FindFn>(s(c"inet6_option_find")),
         }
     }
 }

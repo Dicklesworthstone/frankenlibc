@@ -22,7 +22,7 @@
 //! then call a general integer parser — accepts signs and would diverge on
 //! input no test with well-formed data ever reaches.
 
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, c_char};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -71,6 +71,7 @@ fn run(f: StrptimeFn, input: &CStr, fmt: &CStr, field: fn(&libc::tm) -> c_int) -
 use std::ffi::c_int;
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn leading_whitespace_is_accepted_before_every_numeric_field() {
     let host = host_strptime();
     let cases: &[(&CStr, &CStr, fn(&libc::tm) -> c_int, c_int)] = &[

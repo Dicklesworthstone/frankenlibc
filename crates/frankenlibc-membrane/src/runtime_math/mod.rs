@@ -16,6 +16,31 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 /// Offered observations per change-point detector update.
 const CHANGEPOINT_CADENCE: u64 = 16;
 
+// Runtime controllers use baseline IEEE-754 SSE2 arithmetic (`x * y + z`) for
+// deterministic state updates across all x86-64 CPUs without emitting VEX FMA
+// instructions outside the baseline ISA allow-list or lowering `f64::mul_add`
+// through the public `fma` ABI symbol (bd-rc0923-epic-eeuy4f.29).
+mod internal_fma {
+    #[inline(always)]
+    pub(super) fn mul_add(x: f64, y: f64, z: f64) -> f64 {
+        x * y + z
+    }
+
+    #[inline(always)]
+    pub(super) fn ewma_repeated(state: &mut [f64], sample: &[f64], alpha: f64, repetitions: u64) {
+        debug_assert_eq!(state.len(), sample.len());
+        if repetitions == 0 {
+            return;
+        }
+        let decay = 1.0 - alpha;
+        for _ in 0..repetitions {
+            for (value, observation) in state.iter_mut().zip(sample) {
+                *value = *value * decay + alpha * observation;
+            }
+        }
+    }
+}
+
 // Hardware boundary: policy arithmetic must not alter the C caller's fenv.
 // Kept here (rather than only in the ABI guard) because pointer validation owns
 // a separate kernel. This implementation covers the supported x86_64 ABI.
@@ -820,6 +845,12 @@ pub struct RuntimeKernelSnapshot {
     pub sos_barrier_provenance_value: i64,
     /// SOS barrier quarantine certificate value (milli-units, negative = violation).
     pub sos_barrier_quarantine_value: i64,
+    /// SOS barrier fragmentation certificate value (milli-units, negative = violation).
+    pub sos_barrier_fragmentation_value: i64,
+    /// SOS barrier thread-safety certificate value (milli-units, negative = violation).
+    pub sos_barrier_thread_safety_value: i64,
+    /// SOS barrier size-class certificate value (milli-units, negative = violation).
+    pub sos_barrier_size_class_value: i64,
     /// SOS barrier total violation count.
     pub sos_barrier_violations: u64,
     /// ADMM primal-dual gap (0..∞, lower is better).
@@ -3316,19 +3347,20 @@ impl RuntimeMathKernel {
                     LossState::DenyBiased | LossState::CostExplosion
                 ));
                 self.cached_loss_posterior_ppm.store(
-                    (summary.posterior_adverse_prob.clamp(0.0, 1.0) * 1_000_000.0).round() as u64,
+                    crate::util::round_f64(summary.posterior_adverse_prob.clamp(0.0, 1.0) * 1_000_000.0)
+                        as u64,
                     Ordering::Relaxed,
                 );
                 self.cached_loss_selected_action
                     .store(summary.recommended_action, Ordering::Relaxed);
                 self.cached_loss_selected_cost_milli.store(
-                    (summary.selected_expected_loss.max(0.0) * 1_000.0).round() as u64,
+                    crate::util::round_f64(summary.selected_expected_loss.max(0.0) * 1_000.0) as u64,
                     Ordering::Relaxed,
                 );
                 self.cached_loss_competing_action
                     .store(summary.competing_action, Ordering::Relaxed);
                 self.cached_loss_competing_cost_milli.store(
-                    (summary.competing_expected_loss.max(0.0) * 1_000.0).round() as u64,
+                    crate::util::round_f64(summary.competing_expected_loss.max(0.0) * 1_000.0) as u64,
                     Ordering::Relaxed,
                 );
                 match state {
@@ -3924,7 +3956,9 @@ impl RuntimeMathKernel {
                     }
                     // Quarantine barrier: evaluate on cadence.
                     if barrier.is_quarantine_cadence() {
-                        barrier.evaluate_quarantine(depth, 0, risk_ppm, 0);
+                        let contention = crate::quarantine_controller::CONTENTION.current_peak();
+                        let lambda_latency = crate::quarantine_controller::current_lambda_latency();
+                        barrier.evaluate_quarantine(depth, contention, risk_ppm, lambda_latency);
                     }
                     // Fragmentation barrier: allocator-family cadence check.
                     if matches!(family, ApiFamily::Allocator) && barrier.is_fragmentation_cadence()
@@ -3940,9 +3974,12 @@ impl RuntimeMathKernel {
                         let mfg_state =
                             u32::from(self.cached_mfg_state.load(Ordering::Relaxed)).min(3);
                         let thread_count = 32u32.saturating_add(mfg_state.saturating_mul(128));
+                        let live_contention =
+                            crate::quarantine_controller::CONTENTION.current_peak();
                         let concurrent_writers = 1u32
                             .saturating_add(u32::from(adverse))
-                            .saturating_add(mfg_state / 2);
+                            .saturating_add(mfg_state / 2)
+                            .max(live_contention);
                         let owner_conflict =
                             adverse && !profile.requires_full() && risk_ppm > 300_000;
                         let free_list_skew_ppm =
@@ -4935,6 +4972,9 @@ impl RuntimeMathKernel {
             sos_violation_count: sos_summary.violation_event_count,
             sos_barrier_provenance_value: sos_barrier_summary.provenance_value,
             sos_barrier_quarantine_value: sos_barrier_summary.quarantine_value,
+            sos_barrier_fragmentation_value: sos_barrier_summary.fragmentation_value,
+            sos_barrier_thread_safety_value: sos_barrier_summary.thread_safety_value,
+            sos_barrier_size_class_value: sos_barrier_summary.size_class_value,
             sos_barrier_violations: sos_barrier_summary.provenance_violations
                 + sos_barrier_summary.quarantine_violations
                 + sos_barrier_summary.fragmentation_violations
@@ -5798,7 +5838,7 @@ fn score_to_milli(score: f64) -> u64 {
     if !score.is_finite() || score <= 0.0 {
         return 0;
     }
-    (score * 1000.0).round().clamp(0.0, u64::MAX as f64) as u64
+    crate::util::round_f64(score * 1000.0).clamp(0.0, u64::MAX as f64) as u64
 }
 
 fn pressure_signals_from_runtime(
@@ -9192,11 +9232,14 @@ mod tests {
             let _ = kernel.decide(SafetyLevel::Strict, ctx);
         }
         let elapsed = start.elapsed();
-        // 10k decisions should take < 50ms even on slow machines.
+        // 10k full kernel decisions should take < 50ms in release builds
+        // (and < 500ms in unoptimized debug builds on shared CI workers).
+        let max_ms = if cfg!(debug_assertions) { 500 } else { 50 };
         assert!(
-            elapsed.as_millis() < 50,
-            "10k decisions took {}ms — expected < 50ms",
-            elapsed.as_millis()
+            elapsed.as_millis() < max_ms,
+            "10k decisions took {}ms — expected < {}ms",
+            elapsed.as_millis(),
+            max_ms
         );
     }
 

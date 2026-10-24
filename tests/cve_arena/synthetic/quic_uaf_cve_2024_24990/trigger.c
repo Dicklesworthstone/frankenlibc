@@ -128,6 +128,11 @@ static void stream_cleanup(struct stream *s)
                s->stream_id, observed_magic);
         printf("    STATUS: USE-AFTER-FREE -- heap metadata or other data\n");
     }
+
+    if (s->stream_id == 3) {
+        /* Final stream teardown releases parent connection (dangling/double-free) */
+        free(s->conn);
+    }
 }
 
 /* ---------------------------------------------------------------------------

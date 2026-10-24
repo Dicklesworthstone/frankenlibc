@@ -69,9 +69,9 @@ fn rand_bits(r: &mut Lcg) -> u64 {
     match r.next() % 12 {
         0 => 0,
         1 => 1,
-        2 => u64::MAX,             // -1 signed / max unsigned
-        3 => i64::MIN as u64,      // 0x8000...0
-        4 => i64::MAX as u64,      // 0x7fff...f
+        2 => u64::MAX,        // -1 signed / max unsigned
+        3 => i64::MIN as u64, // 0x8000...0
+        4 => i64::MAX as u64, // 0x7fff...f
         5 => r.next() % 1000,
         6 => (r.next() % 1000).wrapping_neg(),
         7 => 1u64 << (r.next() % 64), // power of two
