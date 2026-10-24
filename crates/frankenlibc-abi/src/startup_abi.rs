@@ -678,16 +678,6 @@ unsafe fn delegate_to_host_libc_start_main(
     Some(unsafe { host_fn(wrapped_main, argc, ubp_av, init, fini, rtld_fini, stack_end) })
 }
 
-/// Complete the owned part of process termination when NPTL's last thread
-/// exits internally. This registration precedes executable constructors, so
-/// their exit callbacks run before the finalizers, just as on normal exit.
-/// The finalizer slots are shared with our `exit` and claimed exactly once.
-unsafe extern "C" fn owned_host_process_finalizers(_status: c_int, _arg: *mut c_void) {
-    crate::stdlib_abi::run_exit_finalizers();
-    // SAFETY: a null stream requests the ordinary flush of all open streams.
-    unsafe { crate::stdio_abi::fflush(std::ptr::null_mut()) };
-}
-
 /// Resolve the host-owned root-thread lifecycle without repeating owned CRT
 /// validation, initialization or executable constructors. Do not install it
 /// for native threads: those do not have independent host NPTL control blocks.
@@ -702,13 +692,13 @@ fn prepare_owned_host_main_runner() -> Option<HostStartMainFn> {
             return None;
         }
         let start = crate::host_resolve::resolve_host_symbol_raw("__libc_start_main")?;
-        let register = crate::host_resolve::resolve_host_symbol_raw("on_exit")?;
-        type HostOnExit =
-            unsafe extern "C" fn(unsafe extern "C" fn(c_int, *mut c_void), *mut c_void) -> c_int;
-        // SAFETY: raw lookup resolves the host's ABI, excluding our exports.
-        let register: HostOnExit = unsafe { std::mem::transmute(register) };
-        // SAFETY: the callback and its null opaque operand live for the process.
-        if unsafe { register(owned_host_process_finalizers, std::ptr::null_mut()) } != 0 {
+        crate::host_resolve::resolve_host_symbol_raw("on_exit")?;
+        // Use the same ordered ticket in native exit and host-internal exit.
+        // This places executable finalization after its own constructors'
+        // callbacks but before older DSO callbacks. Preparing the bridge also
+        // registers its final stream flush before this ticket, so buffered
+        // output is not flushed ahead of the executable's destructors.
+        if crate::stdlib_abi::register_exit_finalizers() != 0 {
             return None;
         }
         // SAFETY: __libc_start_main has the startup ABI declared above.
