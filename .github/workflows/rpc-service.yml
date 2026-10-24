@@ -38,7 +38,7 @@ jobs:
           mkdir -p artifacts/rpc-service
           git rev-parse HEAD > artifacts/rpc-service/revision.txt
           cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture 2>&1 | tee artifacts/rpc-service/protocol.log
-          grep -F 'test result: ok. 12 passed; 0 failed;' artifacts/rpc-service/protocol.log
+          grep -F 'test result: ok. 13 passed; 0 failed;' artifacts/rpc-service/protocol.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

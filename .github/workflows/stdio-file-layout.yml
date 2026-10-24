@@ -13,12 +13,15 @@ on:
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi/**'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-core/src/stdio/**'
       - 'tests/integration/fixture_stdio_file_layout.c'
       - 'tests/integration/fixture_stdio_lifetime.c'
       - 'tests/integration/fixture_callback_unwind.cpp'
       - 'tests/integration/fixture_stdio_printf.c'
+      - 'tests/integration/fixture_stdio_cancel.c'
       - 'scripts/check_stdio_native.sh'
+      - 'scripts/check_stdio_read_cancellation.sh'
       - '.github/workflows/stdio-file-layout.yml'
   workflow_dispatch:
 
@@ -74,6 +77,11 @@ jobs:
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Cancel native stdio reads and preserve C and C++ cleanup
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_STDIO_CANCEL_OUT_DIR="$PWD/artifacts/stdio-layout/read-cancellation" \
+            bash scripts/check_stdio_read_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
       - name: Preserve host stdio across local loading and native COPY relocations
         if: always()
         shell: bash

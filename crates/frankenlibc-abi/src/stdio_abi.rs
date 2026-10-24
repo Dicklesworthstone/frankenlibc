@@ -2160,28 +2160,32 @@ fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
 /// `Some((written, had_error))` when handled; `None` on a miss (not cached / mem) ⇒ caller
 /// falls through. Cached cells are non-cookie non-mem fd (both store sites), so the fill is
 /// byte-identical to the slow path over the same stream.
-fn try_fgets_fast_cell(stream: *mut c_void, dst: &mut [u8]) -> Option<(usize, bool)> {
+fn try_fgets_fast_cell(
+    stream: *mut c_void,
+    dst: &mut [u8],
+    caller: usize,
+) -> Option<(usize, bool)> {
     let cell = stream_cell_cache_lookup(stream)?;
     let mut s = cell.lock();
     if s.is_mem_backed() {
         return None;
     }
     // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
-    Some(unsafe { fgets_fill_stream(&mut s, dst) })
+    Some(unsafe { fgets_fill_stream(&mut s, dst, caller) })
 }
 
 /// MT-safe fd-stream `fread` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and
 /// bulk-read up to `dst.len()` bytes via the shared `fread_fill_stream`. `Some(bytes_read)`
 /// when handled; `None` on a miss (not cached / mem) ⇒ caller falls through. Byte-identical to
 /// the slow path (same fill fn).
-fn try_fread_fast_cell(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+fn try_fread_fast_cell(stream: *mut c_void, dst: &mut [u8], caller: usize) -> Option<usize> {
     let cell = stream_cell_cache_lookup(stream)?;
     let mut s = cell.lock();
     if s.is_mem_backed() {
         return None;
     }
     // SAFETY: the cell lock gives unique access to this stream for the read's duration.
-    Some(unsafe { fread_fill_stream(&mut s, dst) })
+    Some(unsafe { fread_fill_stream(&mut s, dst, caller) })
 }
 
 /// Monotonic generation bumped on every runtime registry insert/remove (via
@@ -2908,7 +2912,7 @@ pub unsafe fn bench_fgets_oldpath(
         sync_and_unregister_fast_fixed_mem_read(id, s);
     }
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
-    let (written, had_error) = unsafe { fgets_fill_stream(s, dst) };
+    let (written, had_error) = unsafe { fgets_fill_stream(s, dst, 0) };
     if (written == 0 && max > 0) || had_error {
         return std::ptr::null_mut();
     }
@@ -2926,7 +2930,7 @@ pub unsafe fn bench_fgets_newpath(
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         let max = (size - 1) as usize;
         let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
-        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst) };
+        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst, 0) };
         mirror_raw_cached(stream, p);
         if (written == 0 && max > 0) || had_error {
             return std::ptr::null_mut();
@@ -3637,7 +3641,7 @@ impl Drop for RefillTmpGuard {
 }
 
 /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
-unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
+unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
     let capacity = stream.buffer_capacity();
     if capacity == 0 {
         return 0; // Cannot buffer anything.
@@ -3653,7 +3657,9 @@ unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
     }
     let fd = stream.fd();
     loop {
-        let rc = unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), want) };
+        // The owned bounce buffer and the caller's StreamGuard remain outside
+        // the raw-syscall cancellation window and unwind normally on a cancel.
+        let rc = unsafe { stream_read_fd(caller, fd, tmp.as_mut_ptr().cast(), want) };
         let errno_val = if rc < 0 {
             std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {
@@ -3683,6 +3689,23 @@ unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
                 return 0;
             }
         }
+    }
+}
+
+/// Read for a public stdio entry, retaining that entry's cancellation admission
+/// through shared stream helpers. Internal and benchmark callers pass zero.
+/// Buffer-only reads never reach this function and do not acquire a new
+/// cancellation point. The stream lock is always owned by an outer Drop guard.
+unsafe fn stream_read_fd(caller: usize, fd: c_int, buf: *mut c_void, count: usize) -> isize {
+    // SAFETY: callers keep `buf` writable for `count` bytes and pass their
+    // captured public-entry caller (or zero). Only the read syscall is exposed
+    // to asynchronous cancellation; stream state updates happen after it.
+    unsafe {
+        crate::pthread_abi::cancellation_point_syscall_for_caller(
+            caller,
+            libc::SYS_read,
+            [fd as usize, buf as usize, count, 0, 0, 0],
+        )
     }
 }
 
@@ -4476,6 +4499,13 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
 /// POSIX `fgetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
+    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+/// Shared native reader for public entrypoints and their aliases. Keeping the
+/// original caller explicit prevents internal libc I/O from becoming a
+/// cancellation point just because it reuses this implementation.
+pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_int {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
         // Lock-free published read-window fast path: consumes directly from `_IO_read_ptr ..
         // _IO_read_end` without TLS or mutex overhead when single-threaded.
@@ -4627,7 +4657,7 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
     if s.buffer_capacity() == 0 {
         let mut b = [0u8; 1];
         let fd = s.fd();
-        let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+        let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
         if rc > 0 {
             s.set_offset(s.offset().saturating_add(1));
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
@@ -4644,7 +4674,7 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
         return libc::EOF;
     }
 
-    let rc = unsafe { refill_stream(s) };
+    let rc = unsafe { refill_stream(s, caller) };
     if rc <= 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;
@@ -4854,7 +4884,7 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
 ///
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
-unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool) {
+unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> (usize, bool) {
     let max = dst.len();
     let mut written = 0usize;
     let mut had_error = false;
@@ -4883,7 +4913,7 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool
                     // Unbuffered fd stream: read a byte directly.
                     let mut b = [0u8; 1];
                     let fd = s.fd();
-                    let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+                    let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
                     if rc > 0 {
                         s.set_offset(s.offset().saturating_add(1));
                         dst[written] = b[0];
@@ -4903,7 +4933,7 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool
                         }
                         break;
                     }
-                } else if unsafe { refill_stream(s) } <= 0 {
+                } else if unsafe { refill_stream(s, caller) } <= 0 {
                     if s.is_error() {
                         had_error = true;
                     }
@@ -4922,7 +4952,7 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool
 ///
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
-unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> usize {
+unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> usize {
     let total = dst.len();
     let mut read_total = 0usize;
     while read_total < total {
@@ -4939,7 +4969,7 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> usize {
         // read below (buffering would just add a copy).
         let cap = s.buffer_capacity();
         if cap > 0 && (total - read_total) < cap && !s.is_eof() {
-            let rc = unsafe { refill_stream(s) };
+            let rc = unsafe { refill_stream(s, caller) };
             if rc > 0 {
                 continue;
             }
@@ -4948,7 +4978,8 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> usize {
         // Direct fd read (avoids recursive memcpy interposition through buffered internals).
         let fd = s.fd();
         let to_read = total - read_total;
-        let rc = unsafe { sys_read_fd(fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
+        let rc =
+            unsafe { stream_read_fd(caller, fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
         let errno_val = if rc < 0 {
             std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {
@@ -5004,7 +5035,7 @@ unsafe fn read_cached_ascii_line_wide_inner(
             if s.buffer_capacity() == 0 {
                 return None;
             }
-            if unsafe { refill_stream(s) } <= 0 {
+            if unsafe { refill_stream(s, 0) } <= 0 {
                 return Some((0, s.is_error()));
             }
             match s.read_ascii_line_into_wide(dst) {
@@ -5025,6 +5056,22 @@ pub unsafe extern "C-unwind" fn fgets(
     size: c_int,
     stream: *mut c_void,
 ) -> *mut c_char {
+    unsafe {
+        fgets_for_caller(
+            buf,
+            size,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn fgets_for_caller(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> *mut c_char {
     if buf.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
@@ -5044,7 +5091,7 @@ pub unsafe extern "C-unwind" fn fgets(
         }
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut; `buf` valid for `size` bytes.
         let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
-        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst) };
+        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst, caller) };
         if (written == 0 && max > 0) || had_error {
             return std::ptr::null_mut();
         }
@@ -5071,7 +5118,7 @@ pub unsafe extern "C-unwind" fn fgets(
         // gated and the mem cursor only serves fmemopen — a THREADED fgets on an fd stream
         // otherwise pays canonical_stream_id + the registry map lock per line. Gen-valid hit
         // ⇒ fill under this stream's lock only. Byte-identical (same `fgets_fill_stream`).
-        if let Some((written, had_error)) = try_fgets_fast_cell(stream, dst) {
+        if let Some((written, had_error)) = try_fgets_fast_cell(stream, dst, caller) {
             if (written == 0 && max > 0) || had_error {
                 return std::ptr::null_mut();
             }
@@ -5228,7 +5275,7 @@ pub unsafe extern "C-unwind" fn fgets(
     // heap traffic); the ABI layer owns descriptor refill since the membrane
     // policy and sys_read_fd live here.
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
-    let (written, had_error) = unsafe { fgets_fill_stream(s, dst) };
+    let (written, had_error) = unsafe { fgets_fill_stream(s, dst, caller) };
 
     if (written == 0 && max > 0) || had_error {
         runtime_policy::observe(
@@ -5494,6 +5541,24 @@ pub unsafe extern "C-unwind" fn fread(
     nmemb: usize,
     stream: *mut c_void,
 ) -> usize {
+    unsafe {
+        fread_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn fread_for_caller(
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
     let Some(total) = size.checked_mul(nmemb) else {
         unsafe { set_abi_errno(errno::EOVERFLOW) };
         return 0;
@@ -5522,7 +5587,7 @@ pub unsafe extern "C-unwind" fn fread(
         // `__libc_single_threaded`-gated and the mem cursor only serves fmemopen — a THREADED
         // fread on an fd stream otherwise pays canonical_stream_id + the registry map lock per
         // call. Gen-valid hit ⇒ read under this stream's lock only. `total > 0` ⇒ `size >= 1`.
-        if let Some(n) = try_fread_fast_cell(stream, dst) {
+        if let Some(n) = try_fread_fast_cell(stream, dst, caller) {
             return n / size;
         }
     }
@@ -5680,7 +5745,7 @@ pub unsafe extern "C-unwind" fn fread(
     // MT-safe cell cache: a threaded fread loop warms this once then skips the map lock.
     stream_cell_cache_store(stream, &cell);
 
-    let read_total = unsafe { fread_fill_stream(s, &mut dst[..total]) };
+    let read_total = unsafe { fread_fill_stream(s, &mut dst[..total], caller) };
     read_total.checked_div(size).unwrap_or(0)
 }
 
@@ -6690,7 +6755,12 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
 /// POSIX `getchar`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getchar() -> c_int {
-    unsafe { fgetc(active_stdin_stream()) }
+    unsafe {
+        fgetc_for_caller(
+            active_stdin_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -14316,7 +14386,7 @@ pub(crate) unsafe fn vscanf_write_one(
 /// POSIX `getc` — identical to `fgetc` but as a function (not macro).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getc(stream: *mut c_void) -> c_int {
-    unsafe { fgetc(stream) }
+    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 /// POSIX `putc` — identical to `fputc` but as a function (not macro).
@@ -14864,7 +14934,12 @@ impl Drop for GetdelimScratchGuard {
 ///
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
-unsafe fn getdelim_fill_stream(s: &mut StdioStream, delim_byte: u8, buf: &mut Vec<u8>) {
+unsafe fn getdelim_fill_stream(
+    s: &mut StdioStream,
+    delim_byte: u8,
+    buf: &mut Vec<u8>,
+    caller: usize,
+) {
     loop {
         match s.read_until_delim(delim_byte, &mut *buf) {
             ReadUntil::Found | ReadUntil::Eof => break,
@@ -14876,7 +14951,7 @@ unsafe fn getdelim_fill_stream(s: &mut StdioStream, delim_byte: u8, buf: &mut Ve
                     // Unbuffered fd stream: read a byte directly.
                     let mut b = [0u8; 1];
                     let fd = s.fd();
-                    let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+                    let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
                     if rc > 0 {
                         s.set_offset(s.offset().saturating_add(1));
                         buf.push(b[0]);
@@ -14893,7 +14968,7 @@ unsafe fn getdelim_fill_stream(s: &mut StdioStream, delim_byte: u8, buf: &mut Ve
                         }
                         break;
                     }
-                } else if unsafe { refill_stream(s) } <= 0 {
+                } else if unsafe { refill_stream(s, caller) } <= 0 {
                     break;
                 }
             }
@@ -14944,6 +15019,24 @@ pub unsafe extern "C-unwind" fn getdelim(
     delim: c_int,
     stream: *mut c_void,
 ) -> isize {
+    unsafe {
+        getdelim_for_caller(
+            lineptr,
+            n,
+            delim,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn getdelim_for_caller(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    delim: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> isize {
     if lineptr.is_null() || n.is_null() || stream.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -14959,7 +15052,7 @@ pub unsafe extern "C-unwind" fn getdelim(
         let buf = &mut scratch.0;
         buf.clear();
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
-        unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf) };
+        unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf, caller) };
         mirror_raw_cached(stream, p);
         return unsafe { getdelim_finish(buf, lineptr, n) };
     }
@@ -14975,7 +15068,7 @@ pub unsafe extern "C-unwind" fn getdelim(
             let buf = &mut scratch.0;
             buf.clear();
             // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
-            unsafe { getdelim_fill_stream(&mut s, delim_byte, buf) };
+            unsafe { getdelim_fill_stream(&mut s, delim_byte, buf, caller) };
             return unsafe { getdelim_finish(buf, lineptr, n) };
         }
     }
@@ -15041,7 +15134,7 @@ pub unsafe extern "C-unwind" fn getdelim(
             stream_cell_cache_store(stream, &cell);
         }
         // SAFETY: `s` uniquely borrowed under the stream lock.
-        unsafe { getdelim_fill_stream(s, delim_byte, buf) };
+        unsafe { getdelim_fill_stream(s, delim_byte, buf, caller) };
     }
 
     let r = unsafe { getdelim_finish(buf, lineptr, n) };
@@ -15057,6 +15150,22 @@ pub unsafe extern "C-unwind" fn getline(
     lineptr: *mut *mut c_char,
     n: *mut usize,
     stream: *mut c_void,
+) -> isize {
+    unsafe {
+        getline_for_caller(
+            lineptr,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+unsafe fn getline_for_caller(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+    caller: usize,
 ) -> isize {
     if lineptr.is_null() || n.is_null() || stream.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
@@ -15085,7 +15194,7 @@ pub unsafe extern "C-unwind" fn getline(
         }
         return rc;
     }
-    unsafe { getdelim(lineptr, n, b'\n' as c_int, stream) }
+    unsafe { getdelim_for_caller(lineptr, n, b'\n' as c_int, stream, caller) }
 }
 
 /// glibc reserved-namespace alias for [`getline`]. Some headers
@@ -15101,7 +15210,14 @@ pub unsafe extern "C-unwind" fn __getline(
     n: *mut usize,
     stream: *mut c_void,
 ) -> isize {
-    unsafe { getline(lineptr, n, stream) }
+    unsafe {
+        getline_for_caller(
+            lineptr,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -16136,7 +16252,7 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getc_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { getc(stream) }
+    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16146,7 +16262,7 @@ pub unsafe extern "C-unwind" fn putc_unlocked(c: c_int, stream: *mut c_void) -> 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { fgetc(stream) }
+    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16752,7 +16868,12 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
 /// `getchar_unlocked` — read a character from stdin without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getchar_unlocked() -> c_int {
-    unsafe { getchar() }
+    unsafe {
+        fgetc_for_caller(
+            active_stdin_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `putchar_unlocked` — write a character to stdout without locking.
@@ -16769,7 +16890,15 @@ pub unsafe extern "C-unwind" fn fread_unlocked(
     nmemb: usize,
     stream: *mut c_void,
 ) -> usize {
-    unsafe { fread(ptr, size, nmemb, stream) }
+    unsafe {
+        fread_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fwrite_unlocked` — binary stream output without locking.
@@ -16790,7 +16919,14 @@ pub unsafe extern "C-unwind" fn fgets_unlocked(
     size: c_int,
     stream: *mut c_void,
 ) -> *mut c_char {
-    unsafe { fgets(buf, size, stream) }
+    unsafe {
+        fgets_for_caller(
+            buf,
+            size,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fputs_unlocked` — put a string to stream without locking.

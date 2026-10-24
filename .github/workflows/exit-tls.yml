@@ -8,7 +8,10 @@ on:
       - 'crates/frankenlibc-abi/src/startup_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'tests/integration/fixture_exit_tls*'
+      - 'tests/integration/fixture_startup_thread_exit.c'
+      - 'tests/integration/fixture_pthread_cancel.c'
       - 'scripts/check_exit_tls.py'
+      - 'scripts/check_startup_thread_exit.py'
       - '.github/workflows/exit-tls.yml'
   workflow_dispatch:
 permissions:
@@ -53,11 +56,20 @@ jobs:
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           cp target/release/libfrankenlibc_abi.so "$root/"
+          python3 scripts/check_startup_thread_exit.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/startup"
+          cc -O2 -pthread tests/integration/fixture_pthread_cancel.c -ldl -o "$root/pthread-cancel"
+          for mode in strict hardened; do
+            for scenario in self worker; do
+              timeout --kill-after=2s 10s env LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" \
+                FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=0 FRANKENLIBC_STARTUP_DELEGATE=0 \
+                "$root/pthread-cancel" main-thread "$scenario" > "$root/main-$mode-$scenario.log"
+            done
+          done
           python3 scripts/check_exit_tls.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/tls"
           python3 scripts/check_exit_tickets.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/exit"
           cargo test -p frankenlibc-abi --test dlfcn_native_cxa_test "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/cxa.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/cxa.log"
-          git diff --exit-code -- crates/frankenlibc-abi/src tests/integration/fixture_exit_tls* scripts/check_exit_tls.py
+          git diff --exit-code -- crates/frankenlibc-abi/src tests/integration/fixture_exit_tls* tests/integration/fixture_startup_thread_exit.c tests/integration/fixture_pthread_cancel.c scripts/check_exit_tls.py scripts/check_startup_thread_exit.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

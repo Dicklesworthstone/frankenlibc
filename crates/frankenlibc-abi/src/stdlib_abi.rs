@@ -2029,12 +2029,11 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     //    Reentrant registrations take precedence over older entries.
     run_exit_handlers(status);
 
-    // 2. Then the process finalizers saved at startup: the executable's fini
-    //    and the loader's _dl_fini, which runs every object's .fini_array and
-    //    destructors. glibc's __libc_start_main registers _dl_fini as the first
-    //    exit function, so it runs after every atexit/on_exit/__cxa_atexit
-    //    handler. fl used to run these only when main returned (and BEFORE the
-    //    handlers), and never on an explicit exit().
+    // 2. Finalize paths without an ordered startup ticket, including a failed
+    //    ticket registration. Owned host-backed startup places finalization
+    //    between DSO initialization callbacks and executable callbacks; its
+    //    ticket has already consumed these slots during run_exit_handlers.
+    //    Atomic claims make this fallback harmless after that ordered drain.
     run_exit_finalizers();
 
     // 3. Flush all open stdio streams.
@@ -4988,8 +4987,8 @@ use exit_handlers::{register_exit_handler, run_exit_handlers};
 pub(crate) use exit_handlers::{finalize_cxa_handlers, register_cxa_exit_handler};
 
 /// The executable's `fini` and the loader's `rtld_fini` (`_dl_fini`), handed
-/// over by the owned startup path so [`exit`] can run them after the
-/// exit-function list. Taken (swapped to 0) when run, so they run once.
+/// over by owned startup to its ordered exit ticket and the fallback in
+/// [`exit`]. Taken (swapped to 0) when run, so both paths run them once.
 static EXIT_FINI: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static EXIT_RTLD_FINI: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -5003,7 +5002,23 @@ pub(crate) fn set_exit_finalizers(
     EXIT_RTLD_FINI.store(rtld_fini.map_or(0, |f| f as usize), Ordering::Release);
 }
 
-fn run_exit_finalizers() {
+/// Put process finalizers at the boundary between DSO initialization and
+/// executable constructors. Both native exit and host-internal last-thread
+/// exit consume this same ticket. Older DSO callbacks may flush streams, so
+/// deferring finalizers until after the entire callback list loses GNU order.
+/// The host bridge prepares its final stream-flush callback before this entry;
+/// this callback itself must not flush ahead of remaining exit handlers.
+pub(crate) fn register_exit_finalizers() -> c_int {
+    unsafe extern "C" fn finalize(_status: c_int, _arg: *mut c_void) {
+        run_exit_finalizers();
+    }
+    register_exit_handler(ExitHandler::OnExit(OnExitEntry {
+        func: finalize,
+        arg: ptr::null_mut(),
+    }))
+}
+
+pub(crate) fn run_exit_finalizers() {
     use std::sync::atomic::Ordering;
     for slot in [&EXIT_FINI, &EXIT_RTLD_FINI] {
         let addr = slot.swap(0, Ordering::AcqRel);

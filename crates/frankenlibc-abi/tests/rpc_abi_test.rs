@@ -2,7 +2,7 @@
 
 //! Integration tests for RPC ABI entrypoints (nativized symbols).
 //!
-//! Tests cover: native DES crypto, thread-local RPC state, key server stubs,
+//! Tests cover: native DES crypto, thread-local RPC state, keyserver admission,
 //! netname conversion functions, RPC error strings, and utility functions.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
@@ -340,35 +340,90 @@ fn rpc_thread_tls_per_thread_isolation() {
 }
 
 // ===========================================================================
-// Key server stubs
+// Keyserver input admission (live daemon exchanges have an isolated runner)
 // ===========================================================================
 
 #[test]
-fn key_secretkey_is_set_returns_false() {
-    let rc = unsafe { key_secretkey_is_set() };
-    assert_eq!(rc, 0, "No keyserver, so secret key is never set");
+fn key_public_key_requests_reject_invalid_storage_without_publication() {
+    #[repr(C)]
+    struct NetObject {
+        length: u32,
+        bytes: *mut c_char,
+    }
+    type PublicKeyCall =
+        unsafe extern "C-unwind" fn(*const c_char, *mut c_void, *mut c_void) -> c_int;
+    let calls: [PublicKeyCall; 2] = [key_encryptsession_pk, key_decryptsession_pk];
+    let mut public = NetObject {
+        length: 0,
+        bytes: std::ptr::null_mut(),
+    };
+    for call in calls {
+        let mut guarded = [0xa5u8; 24];
+        let output = unsafe { guarded.as_mut_ptr().add(8).cast() };
+        assert_eq!(
+            unsafe { call(c"test".as_ptr(), std::ptr::null_mut(), output) },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                call(
+                    std::ptr::null(),
+                    (&mut public as *mut NetObject).cast(),
+                    output,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            unsafe {
+                call(
+                    c"test".as_ptr(),
+                    (&mut public as *mut NetObject).cast(),
+                    std::ptr::null_mut(),
+                )
+            },
+            -1
+        );
+        public.length = 1025;
+        assert_eq!(
+            unsafe {
+                call(
+                    c"test".as_ptr(),
+                    (&mut public as *mut NetObject).cast(),
+                    output,
+                )
+            },
+            -1
+        );
+        public.length = 0;
+        assert_eq!(
+            guarded, [0xa5; 24],
+            "rejected requests must preserve the key and its canaries"
+        );
+    }
 }
 
 #[test]
-fn key_functions_return_failure() {
-    let name = CString::new("test").unwrap();
-    let mut buf = [0u8; 64];
-
+fn key_functions_reject_null_storage_before_contacting_daemon() {
+    let mut guarded = [0xa5u8; 24];
+    let output = unsafe { guarded.as_mut_ptr().add(8).cast() };
+    for call in [key_decryptsession, key_encryptsession] {
+        assert_eq!(unsafe { call(std::ptr::null(), output) }, -1);
+        assert_eq!(unsafe { call(c"test".as_ptr(), std::ptr::null_mut()) }, -1);
+    }
+    let mut public = [b'0'; 48];
+    assert_eq!(unsafe { key_gendes(std::ptr::null_mut()) }, -1);
+    assert_eq!(unsafe { key_get_conv(std::ptr::null_mut(), output) }, -1);
     assert_eq!(
-        unsafe { key_decryptsession(name.as_ptr(), buf.as_mut_ptr().cast()) },
+        unsafe { key_get_conv(public.as_mut_ptr().cast(), std::ptr::null_mut()) },
         -1
     );
+    assert_eq!(unsafe { key_setnet(std::ptr::null_mut()) }, -1);
+    assert_eq!(unsafe { key_setsecret(std::ptr::null()) }, -1);
     assert_eq!(
-        unsafe { key_encryptsession(name.as_ptr(), buf.as_mut_ptr().cast()) },
-        -1
+        guarded, [0xa5; 24],
+        "rejected requests must preserve the key and its canaries"
     );
-    assert_eq!(unsafe { key_gendes(buf.as_mut_ptr().cast()) }, -1);
-    assert_eq!(
-        unsafe { key_get_conv(buf.as_mut_ptr().cast(), buf.as_mut_ptr().cast()) },
-        -1
-    );
-    assert_eq!(unsafe { key_setnet(buf.as_mut_ptr().cast()) }, -1);
-    assert_eq!(unsafe { key_setsecret(name.as_ptr()) }, -1);
 }
 
 // ===========================================================================
