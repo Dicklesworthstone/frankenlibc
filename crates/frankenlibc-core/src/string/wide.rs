@@ -2883,7 +2883,7 @@ mod tests {
                 let la = simple_towlower(a);
                 let lb = simple_towlower(b);
                 if la != lb {
-                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                    return la.wrapping_sub(lb) as i32;
                 }
                 if a == 0 {
                     return 0;
@@ -2901,7 +2901,7 @@ mod tests {
                 let la = simple_towlower(a);
                 let lb = simple_towlower(b);
                 if la != lb {
-                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                    return la.wrapping_sub(lb) as i32;
                 }
                 if a == 0 {
                     return 0;
@@ -3004,8 +3004,11 @@ mod tests {
             .iter()
             .map(|x| format!("{x:02x}"))
             .collect();
+        // Updated for glibc folded-difference return contract (`la.wrapping_sub(lb) as i32`,
+        // commit a375babc2); every case is first checked against `scalar_wcscasecmp` /
+        // `scalar_wcsncasecmp` above.
         assert_eq!(
-            digest, "e3cef37478ec7090a742821c4489a19cfba9e9d1f23b7237517847ad78b785ac",
+            digest, "f660faba1981f94c3fceb497d594dc1934255719102f356e0763379ce0aba5ac",
             "wide casefold compare golden corpus hash drifted"
         );
     }

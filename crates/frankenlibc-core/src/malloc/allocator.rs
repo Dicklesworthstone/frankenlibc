@@ -756,8 +756,9 @@ impl MallocState {
     }
 
     /// Drains allocator lifecycle log records.
+    #[allow(clippy::drain_collect)]
     pub fn drain_lifecycle_logs(&mut self) -> Vec<AllocatorLogRecord> {
-        std::mem::take(&mut self.lifecycle_logs)
+        self.lifecycle_logs.drain(..).collect()
     }
 
     #[cfg(test)]

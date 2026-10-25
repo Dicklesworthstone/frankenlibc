@@ -1337,8 +1337,10 @@ pub fn log10(x: f64) -> f64 {
     const TWO54: f64 = 1.801_439_850_948_198_4e16;
     // fdlibm's ivln10 literal rounds to exactly this double.
     const IVLN10: f64 = core::f64::consts::LOG10_E;
-    const LOG10_2HI: f64 = 3.010_299_956_636_118e-1;
-    const LOG10_2LO: f64 = 3.694_239_077_158_931e-13;
+    #[allow(clippy::excessive_precision)]
+    const LOG10_2HI: f64 = 3.010_299_956_636_117_713_06e-1;
+    #[allow(clippy::excessive_precision)]
+    const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
     if !(x > 0.0 && x.is_finite()) {
         return libm::log10(x);
     }

@@ -92,24 +92,6 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
-name = "hosts_lookup_ab"
-path = "examples/hosts_lookup_ab.rs"
-harness = false
-required-features = ["abi-bench"]
-
-[[bench]]
-name = "hosts_reverse_ab"
-path = "examples/hosts_reverse_ab.rs"
-harness = false
-required-features = ["abi-bench"]
-
-[[bench]]
-name = "hostent_iter_ab"
-path = "examples/hostent_iter_ab.rs"
-harness = false
-required-features = ["abi-bench"]
-
-[[bench]]
 name = "string_bench"
 harness = false
 
@@ -320,24 +302,6 @@ harness = false
 
 [[example]]
 name = "wcsftime_ab"
-harness = false
-required-features = ["abi-bench"]
-
-[[bench]]
-name = "wcsftime_ab"
-path = "examples/wcsftime_ab.rs"
-harness = false
-required-features = ["abi-bench"]
-
-[[bench]]
-name = "textdomain_ab"
-path = "examples/textdomain_ab.rs"
-harness = false
-required-features = ["abi-bench"]
-
-[[bench]]
-name = "strftime_exact_ab"
-path = "examples/wcsftime_survey.rs"
 harness = false
 required-features = ["abi-bench"]
 
