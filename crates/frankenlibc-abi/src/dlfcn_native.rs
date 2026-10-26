@@ -26,6 +26,9 @@ use frankenlibc_core::syscall as raw_syscall;
 #[path = "dlfcn_candidate.rs"]
 mod candidate;
 
+#[path = "dlfcn_map_layout.rs"]
+mod map_layout;
+
 #[path = "dlfcn_search.rs"]
 mod search;
 use search::{SearchContext, SearchPaths};
@@ -114,6 +117,49 @@ const DF_1_PIE: u64 = 0x0800_0000;
 struct Mapping {
     base: usize,
     len: usize,
+}
+
+impl Mapping {
+    fn allocate(object: &LoadedObject, image_len: usize) -> Option<Self> {
+        let layout = map_layout::Reservation::new(
+            image_len,
+            object.program_headers.iter().filter(|header| header.is_load())
+                .map(|header| (header.p_vaddr, header.p_offset, header.p_align)),
+        )?;
+        // Reserve inaccessible address space first. A larger PT_LOAD alignment
+        // is obtained entirely inside this fresh reservation, never by replacing
+        // another mapping. Excess prefix/suffix pages are returned to the OS.
+        let base = unsafe {
+            raw_syscall::sys_mmap(
+                std::ptr::null_mut(), layout.reserve_len, libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0,
+            )
+        }.ok()?;
+        let mut mapping = Self { base: base as usize, len: layout.reserve_len };
+        let placement = layout.place(mapping.base)?;
+        if placement.prefix != 0 {
+            // SAFETY: the checked placement partitions our owned reservation
+            // into page-aligned, non-overlapping ranges. After each successful
+            // unmap, update the guard BEFORE the next fallible operation.
+            unsafe { raw_syscall::sys_munmap(mapping.base as *mut u8, placement.prefix) }.ok()?;
+            mapping.base = placement.base;
+            mapping.len -= placement.prefix;
+        }
+        if placement.suffix != 0 {
+            let end = mapping.base.checked_add(layout.image_len)?;
+            unsafe { raw_syscall::sys_munmap(end as *mut u8, placement.suffix) }.ok()?;
+            mapping.len = layout.image_len;
+        }
+        // SAFETY: this guard now owns exactly the retained image. No executable
+        // permission is granted while copying/relocating; protect_object still
+        // installs segment permissions, inaccessible holes and final RELRO.
+        unsafe {
+            raw_syscall::sys_mprotect(
+                mapping.base as *mut u8, mapping.len, libc::PROT_READ | libc::PROT_WRITE,
+            )
+        }.ok()?;
+        Some(mapping)
+    }
 }
 
 impl Drop for Mapping {
@@ -609,22 +655,8 @@ fn map_object(
 ) -> Option<NativeDso> {
     let file = prepared.file.try_clone().ok()?;
     let len = prepared.image.memory.len();
-    // SAFETY: independent anonymous mapping, writable only while relocating.
-    let base = unsafe {
-        raw_syscall::sys_mmap(
-            std::ptr::null_mut(),
-            len,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-            -1,
-            0,
-        )
-    }
-    .ok()?;
-    let mapping = Mapping {
-        base: base as usize,
-        len,
-    };
+    let mapping = Mapping::allocate(&prepared.object, len)?;
+    let base = mapping.base as *mut u8;
     // SAFETY: the fresh mapping has exactly len writable bytes and is disjoint
     // from the immutable source Vec. The guard unmaps it on every error path.
     unsafe { core::slice::from_raw_parts_mut(base, len) }.copy_from_slice(&prepared.image.memory);
@@ -700,15 +732,12 @@ fn protect_object(dso: &NativeDso, image: &LoadImage, apply_relro: bool) -> Opti
         unsafe { raw_syscall::sys_mprotect(address, len, segment.prot) }.ok()?;
     }
     if apply_relro && let Some(range) = &image.relro_range {
-        let start = range.start & !0xfff;
-        let end = range.end.checked_add(0xfff)? & !0xfff;
-        if end > dso.mapping.len {
-            return None;
-        }
-        if end > start {
-            let address = dso.mapping.base.checked_add(start)? as *mut u8;
-            // SAFETY: page-rounded RELRO range checked against this mapping.
-            unsafe { raw_syscall::sys_mprotect(address, end - start, libc::PROT_READ) }.ok()?;
+        let pages = map_layout::relro_pages(range, dso.mapping.len)?;
+        if !pages.is_empty() {
+            let address = dso.mapping.base.checked_add(pages.start)? as *mut u8;
+            // SAFETY: the checked page interval excludes a partial trailing
+            // page, which can also contain the object's writable data.
+            unsafe { raw_syscall::sys_mprotect(address, pages.len(), libc::PROT_READ) }.ok()?;
         }
     }
     Some(())
