@@ -24,7 +24,7 @@ mod tcp;
 
 #[path = "rpc_portmap.rs"]
 mod portmap;
-pub(super) use portmap::{getmaps, remote_call};
+pub(super) use portmap::{broadcast, getmaps, remote_call};
 
 #[path = "rpc_keyserv.rs"]
 mod keyserv;

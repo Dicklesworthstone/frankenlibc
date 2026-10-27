@@ -15,6 +15,8 @@ import socket
 import struct
 import subprocess
 import threading
+import sys
+import time
 
 HOST = ('unknown-protocol', 'unregistered', 'portmapper-error', 'udp', 'tcp',
         'udp-name', 'tcp-name', 'udp-repeat', 'tcp-repeat', 'callrpc-udp',
@@ -36,6 +38,203 @@ DIAGNOSTIC_UNWIND = ('diag-geterr-throw', 'diag-geterr-exit', 'diag-print-throw'
 
 
 NETNAME_ROWS = {'netname-user': 76, 'netname-host': 152, 'netname-default': 7}
+
+BROADCAST = ('broadcast-udp', 'broadcast-multiple', 'broadcast-retry',
+             'broadcast-stale', 'broadcast-malformed', 'broadcast-advisory-length',
+             'broadcast-port-width', 'broadcast-verifier', 'broadcast-string',
+             'broadcast-decode-error', 'broadcast-send-only', 'broadcast-encode-error',
+             'broadcast-large-args', 'broadcast-high-ids', 'broadcast-reentry',
+             'broadcast-timeout')
+BROADCAST_UNWIND = ('broadcast-encode-throw', 'broadcast-decode-throw',
+                    'broadcast-result-throw', 'broadcast-encode-exit',
+                    'broadcast-decode-exit', 'broadcast-result-exit')
+BROADCAST_OWNED = ('broadcast-cancel',)
+
+
+class BroadcastPeer:
+    """Independent CALLIT responder, used only in a private network namespace."""
+    def __init__(self, case, acknowledgement=None):
+        self.case = case
+        self.acknowledgement = acknowledgement
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(('0.0.0.0', 111))
+        self.socket.settimeout(0.1)
+        self.stop = threading.Event()
+        self.errors = []
+        self.packets = []
+        self.started = time.monotonic()
+        self.worker = threading.Thread(target=self.serve)
+        self.worker.start()
+
+    def serve(self):
+        try:
+            while not self.stop.is_set():
+                try:
+                    packet, address = self.socket.recvfrom(65536)
+                except socket.timeout:
+                    continue
+                if len(packet) % 4:
+                    raise ValueError('unaligned CALLIT request')
+                words = struct.unpack('!' + 'I' * (len(packet) // 4), packet)
+                if words[1:6] != (0, 2, 100000, 2, 5):
+                    raise ValueError(f'wrong CALLIT envelope: {words[:6]}')
+                # AUTH_SYS must carry the caller identity, not AUTH_NONE. Walk
+                # its bounded envelope independently of candidate XDR code.
+                if words[6] != 1 or words[7] > 400:
+                    raise ValueError('missing bounded AUTH_SYS credential')
+                offset = 8 + (words[7] + 3) // 4
+                name_length = words[9]
+                identity = 10 + (name_length + 3) // 4
+                if (name_length > 255 or identity + 3 > offset
+                        or words[identity:identity + 2] != (os.geteuid(), os.getegid())
+                        or words[identity + 2] > 16
+                        or identity + 3 + words[identity + 2] != offset):
+                    raise ValueError('incorrect AUTH_SYS identity or group extent')
+                if words[offset:offset + 2] != (0, 0):
+                    raise ValueError('unexpected call verifier')
+                offset += 2
+                argument = words[offset:]
+                if argument[:4] != (PROGRAM, 1, 7, 4) or argument[4:] not in ((40,), (41,)):
+                    raise ValueError(f'wrong CALLIT arguments: {argument}')
+                self.packets.append((time.monotonic() - self.started, packet.hex(), argument[-1]))
+                if self.case == 'broadcast-cancel':
+                    if len(self.packets) == 1:
+                        os.write(self.acknowledgement, b'R')
+                    continue
+                if argument[-1] == 41 or self.case in ('broadcast-send-only', 'broadcast-timeout'):
+                    continue
+                if self.case == 'broadcast-retry' and len(self.packets) == 1:
+                    continue
+                if self.case == 'broadcast-stale':
+                    self.socket.sendto(struct.pack('!9I', words[0] ^ 0x100, 1, 0, 0, 0, 0, 33333, 4, 99), address)
+                if self.case == 'broadcast-malformed':
+                    self.socket.sendto(struct.pack('!2I', words[0], 1), address)
+                    self.socket.sendto(struct.pack('!6I', words[0], 1, 0, 0, 0, 3), address)
+                text = ('string' in self.case or 'decode-throw' in self.case or 'decode-exit' in self.case
+                        or 'result-throw' in self.case or 'result-exit' in self.case)
+                data = struct.pack('!I', 47)
+                if text:
+                    value = b'native-broadcast'
+                    data = struct.pack('!I', len(value)) + value + bytes(-len(value) % 4)
+                verifier = struct.pack('!2I', 99, 4) + b'auth' if self.case == 'broadcast-verifier' else bytes(8)
+                port = 0xffffffff if self.case == 'broadcast-port-width' else 33333
+                length = 0 if self.case == 'broadcast-advisory-length' else len(data)
+                header = struct.pack('!3I', words[0], 1, 0) + verifier + struct.pack('!3I', 0, port, length)
+                self.socket.sendto(header + data, address)
+                if self.case in ('broadcast-multiple', 'broadcast-decode-error'):
+                    second = 48 if self.case == 'broadcast-multiple' else 47
+                    self.socket.sendto(header + struct.pack('!I', second), address)
+        except BaseException as error:
+            self.errors.append(repr(error))
+
+    def close(self):
+        self.stop.set()
+        self.worker.join(timeout=2)
+        if self.worker.is_alive():
+            self.errors.append('broadcast peer did not stop')
+        self.socket.close()
+
+
+def broadcast_main(library, output, child):
+    """Network configuration is permitted only after a verified namespace hop."""
+    if not child:
+        environment = os.environ.copy()
+        environment['FRANKENLIBC_RPC_BROADCAST_PARENT_NS'] = str(os.stat('/proc/self/ns/net').st_ino)
+        command = ['unshare', '--user', '--map-root-user', '--net', sys.executable,
+                   str(Path(__file__).resolve()), str(library), '--output', str(output),
+                   '--broadcast', '--broadcast-child']
+        return subprocess.call(command, env=environment)
+    parent = os.environ.get('FRANKENLIBC_RPC_BROADCAST_PARENT_NS')
+    if parent is None or int(parent) == os.stat('/proc/self/ns/net').st_ino:
+        raise RuntimeError('refusing broadcast setup outside a fresh network namespace')
+    if socket.if_nameindex() != [(1, 'lo')]:
+        raise RuntimeError('refusing broadcast setup in a namespace with existing interfaces')
+    for command in (['ip', 'link', 'set', 'lo', 'up'],
+                    ['ip', 'link', 'add', 'rpcprobe0', 'type', 'veth', 'peer', 'name', 'rpcprobe1'],
+                    ['ip', 'address', 'add', '192.0.2.1/24', 'broadcast', '192.0.2.255', 'dev', 'rpcprobe0'],
+                    ['ip', 'link', 'set', 'rpcprobe0', 'up'], ['ip', 'link', 'set', 'rpcprobe1', 'up']):
+        subprocess.run(command, check=True)
+    output.mkdir(parents=True, exist_ok=True)
+    library_hash = hashlib.sha256(library.read_bytes()).hexdigest()
+    source = Path(__file__).resolve().parents[1] / 'tests/integration/fixture_rpc_client_create.c'
+    binaries = {False: output / 'fixture', True: output / 'fixture-unwind'}
+    for cpp, binary in binaries.items():
+        subprocess.run(['c++' if cpp else 'cc', '-x', 'c++' if cpp else 'c',
+                        '-std=c++17' if cpp else '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                        str(source), '-ldl', '-pthread', '-o', str(binary)], check=True)
+    clean = {key: value for key, value in os.environ.items()
+             if not key.startswith(('FRANKENLIBC_', 'RPC_TEST_')) and key != 'LD_PRELOAD'}
+    records = []
+
+    def execute(mode, case, negative=False, cpp=False):
+        env = clean.copy()
+        if mode != 'host':
+            env.update(FRANKENLIBC_TEST_LIBRARY=str(library), FRANKENLIBC_THREAD_NATIVE='0')
+            if not negative:
+                env.update(LD_PRELOAD=str(library), FRANKENLIBC_MODE=mode)
+        acknowledgement = os.pipe() if case == 'broadcast-cancel' else None
+        if acknowledgement:
+            env['RPC_BROADCAST_ACK_FD'] = str(acknowledgement[0])
+        peer = None if negative else BroadcastPeer(case, acknowledgement[1] if acknowledgement else None)
+        started = time.monotonic()
+        try:
+            process = subprocess.run([str(binaries[cpp]), case], env=env, capture_output=True,
+                                     pass_fds=(acknowledgement[0],) if acknowledgement else (),
+                                     timeout=75 if case == 'broadcast-timeout' else 10)
+            code, stdout, stderr = process.returncode, process.stdout, process.stderr
+        except subprocess.TimeoutExpired as error:
+            code, stdout, stderr = -999, error.stdout or b'', error.stderr or b''
+        finally:
+            if peer:
+                peer.close()
+            if acknowledgement:
+                for descriptor in acknowledgement:
+                    os.close(descriptor)
+        duration = time.monotonic() - started
+        if negative:
+            passed = code == 113 and stderr == b'WRONG RPC PROVIDER\n'
+            packets, errors = [], []
+        else:
+            packets, errors = peer.packets, peer.errors
+            expected = 0 if ('encode-' in case or case in ('broadcast-large-args', 'broadcast-high-ids')) else (
+                6 if case == 'broadcast-timeout' else 2 if case in ('broadcast-retry', 'broadcast-reentry') else 1)
+            passed = (code, stdout, stderr) == (0, f'PASS {case}\n'.encode(), b'')
+            passed = passed and not errors and len(packets) == expected
+            if case in ('broadcast-retry', 'broadcast-timeout') and packets:
+                passed = passed and len({row[1] for row in packets}) == 1
+                for index, row in enumerate(packets):
+                    # Scheduling can delay a send, but never authorize an early retry.
+                    passed = passed and row[0] >= index * (index + 3) - 0.15
+            if case == 'broadcast-timeout':
+                passed = passed and 53.8 <= duration <= 65
+        stem = f'{mode}-{case}'
+        (output / f'{stem}.stdout').write_bytes(stdout)
+        (output / f'{stem}.stderr').write_bytes(stderr)
+        records.append(dict(mode=mode, case=case, passed=passed, returncode=code,
+                            negative=negative, duration_seconds=duration,
+                            packets=packets, peer_errors=errors))
+        print(f'{"PASS" if passed else "FAIL"} {stem}: rc={code} packets={len(packets)}', flush=True)
+
+    for case in BROADCAST:
+        execute('host', case)
+    execute('wrong-provider', 'broadcast-udp', negative=True)
+    for mode in ('strict', 'hardened'):
+        for case in BROADCAST:
+            execute(mode, case)
+        for case in BROADCAST_UNWIND:
+            execute(mode, case, cpp=True)
+        for case in BROADCAST_OWNED:
+            execute(mode, case)
+    final_hash = hashlib.sha256(library.read_bytes()).hexdigest()
+    (output / 'results.json').write_text(json.dumps(dict(
+        library=str(library), sha256=library_hash, sha256_after=final_hash,
+        fixture_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        isolated_network_namespace=os.stat('/proc/self/ns/net').st_ino,
+        records=records), indent=2) + '\n')
+    passed = all(row['passed'] for row in records) and library_hash == final_hash
+    print(f'RPC broadcast: {"PASS" if passed else "FAIL"} ({len(BROADCAST)} live GNU cases, '
+          f'{2 * (len(BROADCAST) + len(BROADCAST_UNWIND) + len(BROADCAST_OWNED))} candidate cases, 1 provider negative)', flush=True)
+    return int(not passed)
 
 
 def netname_transcript_rows(case, stdout):
@@ -191,10 +390,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('library', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--broadcast', action='store_true', help='run CALLIT broadcast in an isolated network namespace')
+    parser.add_argument('--broadcast-child', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     root = Path(__file__).resolve().parents[1]
     out = args.output.resolve()
+    if args.broadcast:
+        return broadcast_main(library, out, args.broadcast_child)
     out.mkdir(parents=True, exist_ok=True)
     fixture = root / 'tests/integration/fixture_rpc_client_create.c'
     binaries = {False: out / 'fixture', True: out / 'fixture-unwind'}

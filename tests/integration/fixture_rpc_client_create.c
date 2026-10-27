@@ -452,10 +452,144 @@ static void diagnostic_unwind_case(const char *name) {
     CHECK(destructors==1);diagnostic_hook=NULL;expect_diagnostic(&client,"after",&error);
 }
 #endif
+typedef int (*Broadcast)(unsigned long,unsigned long,unsigned long,Xdr,void *,Xdr,void *,int (*)(void *,struct sockaddr_in *));
+static Broadcast broadcast_rpc;
+static int (*broadcast_string)(void *,char **,unsigned);
+static int (*broadcast_opaque)(void *,void *,unsigned);
+static const char *broadcast_scenario;
+static unsigned broadcast_encodes,broadcast_decodes,broadcast_frees,broadcast_results;
+static unsigned broadcast_cleanups;
+static struct { unsigned value; char *text; } broadcast_output;
+static int broadcast_text_result(void) {
+    return strstr(broadcast_scenario,"string") || strstr(broadcast_scenario,"decode-throw")
+        || strstr(broadcast_scenario,"decode-exit") || strstr(broadcast_scenario,"result-throw")
+        || strstr(broadcast_scenario,"result-exit");
+}
+static int broadcast_encode(void *stream,void *value) {
+    ++broadcast_encodes;
+    if(strstr(broadcast_scenario,"encode-error")) return 0;
+    if(strstr(broadcast_scenario,"large-args")) {
+        char bytes[2048]={0};return broadcast_opaque(stream,bytes,sizeof(bytes));
+    }
+#ifdef __cplusplus
+    if(strstr(broadcast_scenario,"encode-throw") || strstr(broadcast_scenario,"encode-exit")) {
+        Marker marker;interrupt_now();
+    }
+#endif
+    return xdr_uint(stream,value);
+}
+static int broadcast_decode(void *stream,void *value) {
+    (void)value;
+    int operation=*(int *)stream;
+    if(operation==1) ++broadcast_decodes;
+    if(operation==2) ++broadcast_frees;
+    int ok=broadcast_text_result()?broadcast_string(stream,&broadcast_output.text,128)
+                                  :xdr_uint(stream,&broadcast_output.value);
+#ifdef __cplusplus
+    if(operation==1 && (strstr(broadcast_scenario,"decode-throw") || strstr(broadcast_scenario,"decode-exit"))) {
+        CHECK(ok && broadcast_output.text);Marker marker;interrupt_now();
+    }
+#endif
+    if(operation==1 && strstr(broadcast_scenario,"decode-error") && broadcast_decodes==1) return 0;
+    return ok;
+}
+static int broadcast_result(void *value,struct sockaddr_in *peer) {
+    CHECK(value==&broadcast_output && peer->sin_family==AF_INET);
+    CHECK(peer->sin_addr.s_addr==inet_addr("192.0.2.1"));
+    ++broadcast_results;
+    unsigned expected=strstr(broadcast_scenario,"multiple")?46+broadcast_results:47;
+    unsigned port=strstr(broadcast_scenario,"port-width")?65535:33333;
+    CHECK(ntohs(peer->sin_port)==port);
+    if(broadcast_text_result()) CHECK(broadcast_output.text && !strcmp(broadcast_output.text,"native-broadcast"));
+    else CHECK(broadcast_output.value==expected);
+    if(strstr(broadcast_scenario,"reentry")) {
+        unsigned nested=41;
+        CHECK(broadcast_rpc(program,1,7,broadcast_encode,&nested,broadcast_decode,&broadcast_output,NULL)==0);
+    }
+#ifdef __cplusplus
+    if(strstr(broadcast_scenario,"result-throw") || strstr(broadcast_scenario,"result-exit")) {
+        Marker marker;interrupt_now();
+    }
+#endif
+    return !strstr(broadcast_scenario,"multiple") || broadcast_results==2;
+}
+static void *broadcast_invoke(void *unused) {
+    (void)unused;unsigned input=40;
+    unsigned long p=program,v=1,procedure=7;
+    if(strstr(broadcast_scenario,"high-ids")) {
+        p|=0x1234567800000000UL;v|=0xabcdef0000000000UL;procedure|=0xffffffff00000000UL;
+    }
+    int status=broadcast_rpc(p,v,procedure,broadcast_encode,&input,broadcast_decode,&broadcast_output,
+                            strstr(broadcast_scenario,"send-only")?NULL:broadcast_result);
+    int expected=strstr(broadcast_scenario,"encode-error") || strstr(broadcast_scenario,"large-args")
+                 || strstr(broadcast_scenario,"high-ids")?1
+                 :strstr(broadcast_scenario,"timeout")?5:0;
+    if(status!=expected) fprintf(stderr,"BROADCAST_STATUS actual=%d expected=%d\n",status,expected);
+    CHECK(status==expected);
+    return NULL;
+}
+static void broadcast_cleanup(void *unused) { (void)unused;++broadcast_cleanups; }
+static void *broadcast_cancellable(void *unused) {
+    pthread_cleanup_push(broadcast_cleanup,NULL);
+    broadcast_invoke(unused);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+static void broadcast_case(const char *name) {
+    broadcast_scenario=name;
+    broadcast_rpc=(Broadcast)symbol("clnt_broadcast");
+    xdr_uint=(Xdr)symbol("xdr_u_int");
+    broadcast_string=(int (*)(void *,char **,unsigned))symbol("xdr_string");
+    broadcast_opaque=(int (*)(void *,void *,unsigned))symbol("xdr_opaque");
+    int before=descriptor_count();
+    if(strstr(name,"timeout")) alarm(70);
+    if(!strcmp(name,"broadcast-cancel")) {
+        const char *descriptor=getenv("RPC_BROADCAST_ACK_FD");CHECK(descriptor);
+        pthread_t worker;void *returned=NULL;char acknowledged=0;
+        CHECK(!pthread_create(&worker,NULL,broadcast_cancellable,NULL));
+        /* The independent wire peer acknowledges receipt before cancellation;
+           no sleep is used to guess whether the worker reached its wait. */
+        CHECK(read(atoi(descriptor),&acknowledged,1)==1 && acknowledged=='R');
+        CHECK(!pthread_cancel(worker));
+        CHECK(!pthread_join(worker,&returned) && returned==PTHREAD_CANCELED);
+        CHECK(broadcast_encodes==1 && broadcast_decodes==0 && broadcast_results==0);
+        CHECK(broadcast_cleanups==1 && descriptor_count()==before);
+        return;
+    }
+#ifdef __cplusplus
+    if(strstr(name,"throw") || strstr(name,"exit")) {
+        scenario=name;
+        if(strstr(name,"exit")) {
+            pthread_t worker;void *returned=NULL;
+            CHECK(!pthread_create(&worker,NULL,broadcast_invoke,NULL));
+            CHECK(!pthread_join(worker,&returned) && returned==(void *)19);
+        } else {
+            int caught=0;
+            try { broadcast_invoke(NULL); } catch(const CodecException &) { caught=1; }
+            CHECK(caught);
+        }
+        CHECK(destructors==1 && broadcast_output.text==NULL);
+        CHECK(broadcast_frees==(strstr(name,"encode-")?0U:1U));
+        CHECK(descriptor_count()==before);
+        return;
+    }
+#endif
+    broadcast_invoke(NULL);
+    CHECK(broadcast_encodes==(strstr(name,"reentry")?2U:strstr(name,"high-ids")?0U:1U));
+    unsigned expected_results=strstr(name,"send-only") || strstr(name,"encode-error")
+        || strstr(name,"large-args") || strstr(name,"high-ids") || strstr(name,"timeout")?0:strstr(name,"multiple")?2:1;
+    CHECK(broadcast_results==expected_results);
+    CHECK(broadcast_decodes==expected_results+(strstr(name,"decode-error") || strstr(name,"stale")?1U:0U));
+    CHECK(broadcast_frees>=broadcast_decodes);
+    CHECK(broadcast_output.text==NULL && descriptor_count()==before);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2); alarm(8);
     if(!strncmp(argv[1],"netname-",8)) {
         netname_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
+    }
+    if(!strncmp(argv[1],"broadcast-",10)) {
+        broadcast_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
     }
     create=(Create)symbol("clnt_create");
     xdr_uint=(Xdr)symbol("xdr_u_int");

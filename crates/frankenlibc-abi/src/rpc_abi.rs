@@ -2361,23 +2361,31 @@ pub unsafe extern "C" fn clntunix_create(
     unsafe { rpc_udp::create_unix(raddr, prog, vers, sockp, sendsz, recvsz) }
 }
 
-/// Broadcast an RPC call to all hosts on the local network.
-/// Returns RPC_UNKNOWNPROTO (17) — broadcast requires portmapper which is not supported.
+/// Broadcast a portmapper CALLIT request on active IPv4 broadcast networks.
+/// Each accepted reply is decoded and delivered until the callback requests
+/// completion. A null eachresult sends once without waiting for replies.
 ///
 /// # Safety
-/// ABI boundary function.
+/// Codecs and result storage follow the public XDR ABI and remain live through
+/// all callbacks. Result codecs must support XDR_FREE, including partial decode.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clnt_broadcast(
-    _prog: c_ulong,
-    _vers: c_ulong,
-    _proc_: c_ulong,
-    _xargs: *mut c_void,
-    _argsp: *mut c_void,
-    _xresults: *mut c_void,
-    _resultsp: *mut c_void,
-    _eachresult: *mut c_void,
+pub unsafe extern "C-unwind" fn clnt_broadcast(
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    xargs: *mut c_void,
+    argsp: *mut c_void,
+    xresults: *mut c_void,
+    resultsp: *mut c_void,
+    eachresult: *mut c_void,
 ) -> c_int {
-    17 // RPC_UNKNOWNPROTO — no broadcast support
+    // SAFETY: the native implementation retains all resources across the
+    // application's unwind-capable callbacks and bounds every network packet.
+    unsafe {
+        rpc_udp::broadcast(
+            prog, vers, proc_, xargs, argsp, xresults, resultsp, eachresult,
+        )
+    }
 }
 
 /// Print RPC error number description to stderr. Native implementation.
@@ -3054,7 +3062,11 @@ pub unsafe extern "C-unwind" fn pmap_rmtcall(
 ) -> c_int {
     // SAFETY: the native operation validates fixed structures and retains all
     // private ownership guards across the application's live XDR callbacks.
-    unsafe { rpc_udp::remote_call(addr, prog, vers, proc_, xdrargs, argsp, xdrres, resp, tout, portp) }
+    unsafe {
+        rpc_udp::remote_call(
+            addr, prog, vers, proc_, xdrargs, argsp, xdrres, resp, tout, portp,
+        )
+    }
 }
 
 /// Register a program with the local portmapper v2 service.

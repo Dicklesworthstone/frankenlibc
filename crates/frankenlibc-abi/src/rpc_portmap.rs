@@ -1,16 +1,18 @@
-//! Native portmapper DUMP and CALLIT clients.
+//! Native portmapper DUMP, CALLIT and broadcast clients.
 //!
 //! Both operations reuse the native CLIENT transport, callbacks and deadline
 //! machinery. No rpcbind daemon is embedded and no host RPC function is called.
 //! DUMP uses TCP; CALLIT uses UDP and preserves GNU's callback-visible port
 //! publication and caller-address reset behavior.
 
-use super::super::{Pmap, PmapList, XDR_DECODE, XDR_ENCODE, XDR_TRUE};
+use super::super::{Pmap, PmapList, XDR_DECODE, XDR_ENCODE, XDR_FREE, XDR_TRUE};
 use super::{
-    Client, CreateFailure, MAX_STREAM_BUFFER, Network, RPC_SYSTEMERROR, RpcError, Timeval, Xdr,
-    XdrProc, call, creation_error, destroy, import, make_client, nanos, publish,
+    Auth, Client, CreateFailure, MAX_STREAM_BUFFER, Network, RPC_SYSTEMERROR, Reply, RpcError,
+    Socket, Timeval, Xdr, XdrProc, buffer, call, creation_error, destroy, import, make_client,
+    monotonic, nanos, publish, transaction_id, wire,
 };
 use frankenlibc_core::rpc::wire::portmap::{MappingError, decode_mappings};
+use frankenlibc_core::syscall as raw;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use std::ffi::{c_int, c_uint, c_void};
 use std::mem::size_of;
@@ -380,6 +382,298 @@ pub(crate) unsafe fn remote_call(
             })
         })()
     };
+    let status = outcome.unwrap_or_else(|error| error.status);
+    super::super::runtime_policy::observe(ApiFamily::Socket, decision.profile, 100, status != 0);
+    status
+}
+
+/// Broadcast RPC uses the historical 1400-byte UDP packet budget, including
+/// the RPC and CALLIT envelopes. One encoded request is retransmitted unchanged
+/// after 4, 6, 8, 10, 12 and 14 second receive intervals. Unrelated packets and
+/// EINTR never reset an interval, so a noisy network cannot extend the budget.
+const BROADCAST_BUFFER: usize = 1400;
+type EachResult = unsafe extern "C-unwind" fn(*mut c_void, *mut libc::sockaddr_in) -> c_int;
+
+struct BroadcastAuth(*mut Auth);
+impl Drop for BroadcastAuth {
+    fn drop(&mut self) {
+        // SAFETY: this guard exclusively owns the native AUTH_SYS handle. It
+        // is never published to the application and outlives all marshaling.
+        unsafe { ((*(*self.0).operations).destroy)(self.0) };
+    }
+}
+
+struct BroadcastResult {
+    callback: Codec,
+    pointer: *mut c_void,
+}
+impl Drop for BroadcastResult {
+    fn drop(&mut self) {
+        // SAFETY: XDR_FREE needs no backing byte stream. The application keeps
+        // its result object live for the entire call. Cleanup also runs if a
+        // decoder or eachresult callback throws or calls pthread_exit, and
+        // releases partially decoded objects when a codec returns failure.
+        let mut stream: Xdr = unsafe { std::mem::zeroed() };
+        stream.x_op = XDR_FREE;
+        unsafe { (self.callback)((&mut stream as *mut Xdr).cast(), self.pointer) };
+    }
+}
+
+fn broadcast_addresses() -> Result<Vec<libc::sockaddr_in>, RpcError> {
+    struct Addresses(*mut c_void);
+    impl Drop for Addresses {
+        fn drop(&mut self) {
+            // SAFETY: the list was allocated by the paired native enumerator.
+            unsafe { crate::unistd_abi::freeifaddrs(self.0) };
+        }
+    }
+    let mut list = Addresses(ptr::null_mut());
+    // SAFETY: the native enumerator writes one live pointer-sized stack slot.
+    if unsafe { crate::unistd_abi::getifaddrs(&mut list.0) } != 0 {
+        return Err(RpcError::status(3));
+    }
+    let mut destinations = Vec::new();
+    let mut next = list.0.cast::<libc::ifaddrs>();
+    while !next.is_null() {
+        // SAFETY: every node and sockaddr belongs to the retained native list.
+        let interface = unsafe { &*next };
+        if interface.ifa_flags & (libc::IFF_UP | libc::IFF_BROADCAST) as u32
+            == (libc::IFF_UP | libc::IFF_BROADCAST) as u32
+            && !interface.ifa_addr.is_null()
+            && !interface.ifa_ifu.is_null()
+            && unsafe { (*interface.ifa_addr).sa_family as c_int } == libc::AF_INET
+            && unsafe { (*interface.ifa_ifu).sa_family as c_int } == libc::AF_INET
+        {
+            // SAFETY: this list node carries an initialized IPv4 broadcast
+            // sockaddr. Copy it before releasing the interface-list owner.
+            let mut address = unsafe { interface.ifa_ifu.cast::<libc::sockaddr_in>().read() };
+            address.sin_port = 111u16.to_be();
+            destinations
+                .try_reserve(1)
+                .map_err(|_| RpcError::system(RPC_SYSTEMERROR, libc::ENOMEM))?;
+            destinations.push(address);
+        }
+        next = interface.ifa_next;
+    }
+    Ok(destinations)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn broadcast(
+    program: u64,
+    version: u64,
+    procedure: u64,
+    arguments: *mut c_void,
+    argument: *mut c_void,
+    results: *mut c_void,
+    result: *mut c_void,
+    each: *mut c_void,
+) -> c_int {
+    let (_, decision) =
+        super::super::runtime_policy::decide(ApiFamily::Socket, 0, 0, false, true, 0);
+    let outcome = (|| -> Result<c_int, RpcError> {
+        if matches!(decision.action, MembraneAction::Deny) {
+            return Err(RpcError::system(RPC_SYSTEMERROR, libc::EACCES));
+        }
+        if arguments.is_null() {
+            return Ok(1);
+        }
+        if !each.is_null() && results.is_null() {
+            return Ok(2);
+        }
+        // CALLIT encodes these identifiers with GNU xdr_u_long, which rejects
+        // values outside the 32-bit wire domain before invoking the argument
+        // codec. This differs from the ordinary fixed RPC call-header encoder.
+        if program > u32::MAX as u64 || version > u32::MAX as u64 || procedure > u32::MAX as u64 {
+            return Ok(1);
+        }
+        let socket = Socket::open().map_err(|_| RpcError::status(3))?;
+        let enabled: c_int = 1;
+        // SAFETY: the socket is owned and the option points to one live int.
+        unsafe {
+            raw::sys_setsockopt(
+                socket.fd,
+                libc::SOL_SOCKET,
+                libc::SO_BROADCAST,
+                (&enabled as *const c_int).cast(),
+                size_of::<c_int>(),
+            )
+        }
+        .map_err(|_| RpcError::status(3))?;
+        let destinations = broadcast_addresses()?;
+        let auth = unsafe { super::authunix_create_default() }.cast::<Auth>();
+        if auth.is_null() {
+            return Err(RpcError::status(RPC_SYSTEMERROR));
+        }
+        let auth = BroadcastAuth(auth);
+        let mut packet = buffer(BROADCAST_BUFFER)?;
+        let mut received = buffer(BROADCAST_BUFFER)?;
+        let xid = transaction_id();
+        wire::encode_call_prefix(&mut packet, xid, PORTMAPPER as u32, VERSION as u32, 5)
+            .map_err(|_| RpcError::status(1))?;
+        // SAFETY: both streams start initialized and reference owned buffers.
+        let mut stream: Xdr = unsafe { std::mem::zeroed() };
+        unsafe {
+            super::super::xdrmem_create(
+                (&mut stream as *mut Xdr).cast(),
+                packet.as_mut_ptr().add(wire::CALL_PREFIX_BYTES).cast(),
+                (packet.len() - wire::CALL_PREFIX_BYTES) as c_uint,
+                XDR_ENCODE,
+            )
+        };
+        if stream.x_ops.is_null() {
+            return Ok(1);
+        }
+        let mut args = Arguments {
+            program,
+            version,
+            procedure,
+            // SAFETY: the non-null callback follows the public XDR ABI; the
+            // unwind-capable type preserves C++ and pthread_exit cleanup.
+            callback: unsafe { std::mem::transmute::<*mut c_void, Codec>(arguments) },
+            pointer: argument,
+        };
+        if unsafe { ((*(*auth.0).operations).marshal)(auth.0, &mut stream) } == 0
+            || unsafe {
+                remote_arguments(
+                    (&mut stream as *mut Xdr).cast(),
+                    (&mut args as *mut Arguments).cast(),
+                )
+            } == 0
+        {
+            return Ok(1);
+        }
+        let length = wire::CALL_PREFIX_BYTES
+            .checked_add(unsafe { super::super::mem_pos(&stream) } as usize)
+            .filter(|&length| length <= packet.len())
+            .ok_or_else(|| RpcError::status(1))?;
+        let started = monotonic()?;
+        let mut elapsed = 0u64;
+        for interval in [4u64, 6, 8, 10, 12, 14] {
+            for address in &destinations {
+                // SAFETY: both the exact encoded packet and copied sockaddr
+                // stay live through this nonblocking datagram send.
+                let sent = unsafe {
+                    raw::sys_sendto(
+                        socket.fd,
+                        packet.as_ptr(),
+                        length,
+                        libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+                        (address as *const libc::sockaddr_in).cast(),
+                        size_of::<libc::sockaddr_in>(),
+                    )
+                }
+                .map_err(|_| RpcError::status(3))?;
+                if sent as usize != length {
+                    return Ok(3);
+                }
+            }
+            if each.is_null() {
+                return Ok(0);
+            }
+            elapsed += interval * super::SECOND;
+            let deadline = started.saturating_add(elapsed);
+            loop {
+                let now = monotonic()?;
+                if now >= deadline {
+                    break;
+                }
+                let mut poll = libc::pollfd {
+                    fd: socket.fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let wait = (deadline - now).div_ceil(1_000_000).min(c_int::MAX as u64) as c_int;
+                // SAFETY: poll owns its live stack slot. Socket/auth/buffer
+                // guards remain active across the foreign cancellation edge.
+                let ready = unsafe {
+                    crate::pthread_abi::at_cancellation_point(|| {
+                        raw::sys_poll((&mut poll as *mut libc::pollfd).cast(), 1, wait)
+                    })
+                };
+                match ready {
+                    Ok(0) | Err(libc::EINTR) => continue,
+                    Err(_) => return Ok(4),
+                    Ok(_) => {}
+                }
+                let mut peer: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+                let mut peer_length = size_of::<libc::sockaddr_in>() as libc::socklen_t;
+                // SAFETY: the kernel receives only owned bounded output areas.
+                let count = match unsafe {
+                    raw::sys_recvfrom(
+                        socket.fd,
+                        received.as_mut_ptr(),
+                        received.len(),
+                        libc::MSG_DONTWAIT | libc::MSG_TRUNC,
+                        (&mut peer as *mut libc::sockaddr_in).cast(),
+                        &mut peer_length,
+                    )
+                } {
+                    Ok(count) => count as usize,
+                    Err(libc::EAGAIN | libc::EINTR) => continue,
+                    Err(_) => return Ok(4),
+                };
+                if count > received.len()
+                    || count < 4
+                    || peer_length as usize != size_of::<libc::sockaddr_in>()
+                    || peer.sin_family as c_int != libc::AF_INET
+                {
+                    continue;
+                }
+                let received_xid = u32::from_be_bytes(received[..4].try_into().unwrap());
+                let Ok(Reply::Success { results: range, .. }) =
+                    wire::decode_reply(&received[..count], received_xid)
+                else {
+                    continue;
+                };
+                // SAFETY: each and results were checked above. Both remain
+                // live application callbacks until this operation returns.
+                let callback = unsafe { std::mem::transmute::<*mut c_void, EachResult>(each) };
+                let codec = unsafe { std::mem::transmute::<*mut c_void, Codec>(results) };
+                let mut port = 0u64;
+                let mut output = Results {
+                    port: &mut port,
+                    callback: codec,
+                    pointer: result,
+                };
+                unsafe {
+                    super::super::xdrmem_create(
+                        (&mut stream as *mut Xdr).cast(),
+                        received.as_mut_ptr().add(range.start).cast(),
+                        range.len() as c_uint,
+                        XDR_DECODE,
+                    )
+                };
+                if stream.x_ops.is_null() {
+                    return Ok(2);
+                }
+                let cleanup = BroadcastResult {
+                    callback: codec,
+                    pointer: result,
+                };
+                let decoded = unsafe {
+                    remote_results(
+                        (&mut stream as *mut Xdr).cast(),
+                        (&mut output as *mut Results).cast(),
+                    )
+                } != 0;
+                // GNU decodes/frees each successful RPC envelope before
+                // checking its transaction ID. Preserve codec side effects,
+                // but never deliver a stale response to the result callback.
+                if decoded && received_xid == xid {
+                    peer.sin_port = (port as u16).to_be();
+                    // SAFETY: peer and decoded result remain live until the
+                    // callback returns; cleanup then releases result storage.
+                    if unsafe { callback(result, &mut peer) } != 0 {
+                        drop(cleanup);
+                        return Ok(0);
+                    }
+                }
+                drop(cleanup);
+            }
+        }
+        Ok(5)
+    })();
     let status = outcome.unwrap_or_else(|error| error.status);
     super::super::runtime_policy::observe(ApiFamily::Socket, decision.profile, 100, status != 0);
     status
