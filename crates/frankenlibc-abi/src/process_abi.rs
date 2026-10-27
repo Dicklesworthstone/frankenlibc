@@ -1510,9 +1510,18 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
 /// Stack for a `CLONE_VM` spawn child.
 const SPAWN_CHILD_STACK_SIZE: usize = 64 * 1024;
 
-/// Create the spawn child with `clone3(CLONE_VM | CLONE_VFORK | extra_flags)`
-/// on its own stack, running `spawn_child_main(ctx)`; returns the child pid in
-/// the parent once the child has exec'd or exited.
+/// Adapt the spawn entry point to the legacy clone stack trampoline.
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" fn legacy_spawn_child(ctx: usize) -> usize {
+    // SAFETY: clone_spawn_child keeps the borrowed context alive until the
+    // CLONE_VFORK child has exec'd or exited. The child entry never returns.
+    unsafe { spawn_child_main(ctx as *const SpawnChildContext<'_>) }
+}
+
+/// Create the spawn child with `CLONE_VM | CLONE_VFORK | extra_flags` on its
+/// own stack, running `spawn_child_main(ctx)`; returns the child pid in the
+/// parent once the child has exec'd or exited. Prefer clone3, falling back to
+/// legacy clone only when the kernel or a syscall filter reports ENOSYS.
 ///
 /// A full fork copied the parent's page tables for every spawn, although
 /// the child only execs: posix_spawn of /bin/true ran ~4.6 ms vs glibc's
@@ -1571,13 +1580,38 @@ unsafe fn clone_spawn_child(
             lateout("r11") _,
         );
     }
-    // SAFETY: the child no longer runs on this stack (exec'd or exited).
-    let _ = unsafe { raw_syscall::sys_munmap(stack, SPAWN_CHILD_STACK_SIZE) };
-    if (-4095..0).contains(&ret) {
+    let result = if ret == -(libc::ENOSYS as isize) {
+        // clone3 did not create a child. Reuse its dedicated stack for the
+        // legacy clone trampoline, which pops the entry point and argument.
+        // CLONE_PIDFD writes atomically through clone's parent_tid argument;
+        // do not replace it with a racy pidfd_open after child creation.
+        // SAFETY: reserve two aligned words at the end of the fresh mapping.
+        let child_sp =
+            unsafe { stack.add(SPAWN_CHILD_STACK_SIZE - 2 * std::mem::size_of::<usize>()) }
+                .cast::<usize>();
+        // SAFETY: both words lie in our writable mapping. CLONE_VFORK keeps
+        // this stack and the context alive until the child execs or exits.
+        unsafe {
+            child_sp.write(legacy_spawn_child as *const () as usize);
+            child_sp
+                .add(1)
+                .write(ctx as *const SpawnChildContext<'_> as usize);
+            raw_syscall::sys_clone_thread(
+                (CLONE_VM | CLONE_VFORK | extra_flags | libc::SIGCHLD as u64) as usize,
+                child_sp as usize,
+                pidfd,
+                std::ptr::null_mut(),
+                0,
+            )
+        }
+    } else if (-4095..0).contains(&ret) {
         Err((-ret) as c_int)
     } else {
         Ok(ret as c_int)
-    }
+    };
+    // SAFETY: either clone failed, or its child has exec'd or exited.
+    let _ = unsafe { raw_syscall::sys_munmap(stack, SPAWN_CHILD_STACK_SIZE) };
+    result
 }
 
 /// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.
@@ -1751,7 +1785,7 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         err_fd: err_pipe[1],
         err_slot: (!use_pipe).then_some(&child_error),
     };
-    // Use clone3(CLONE_PIDFD) when a pidfd is wanted, so the parent receives
+    // Use CLONE_PIDFD when a pidfd is wanted, so the parent receives
     // it in the same kernel operation that creates the child: pidfd_open
     // after the fact has a PID-reuse race for very short-lived children.
     let extra_flags = if want_pidfd {
@@ -1833,8 +1867,8 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
 /// GNU `pidfd_spawn`/`pidfd_spawnp` implementation shared by the ABI aliases.
 ///
 /// Unlike `posix_spawn` followed by `pidfd_open`, this uses
-/// `clone3(CLONE_PIDFD)` so the process handle is allocated atomically with
-/// child creation.
+/// `CLONE_PIDFD` so the process handle is allocated atomically with child
+/// creation, including the x86_64 legacy clone fallback.
 pub(crate) unsafe fn pidfd_spawn_impl(
     pidfd: *mut c_int,
     path: *const c_char,

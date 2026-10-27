@@ -11,6 +11,11 @@ on:
       - 'crates/frankenlibc-abi/src/errno_abi.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/process_abi.rs'
+      - 'crates/frankenlibc-abi/src/spawn_protocol.rs'
+      - 'crates/frankenlibc-core/src/syscall/**'
+      - 'tests/c_abi/spawn_launch_contract.c'
+      - 'scripts/check_spawn_launch_contract.sh'
       - 'crates/frankenlibc-membrane/src/util.rs'
       - 'crates/frankenlibc-abi/tests/membrane_rounding_link_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
@@ -33,6 +38,11 @@ on:
       - 'crates/frankenlibc-abi/src/errno_abi.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/process_abi.rs'
+      - 'crates/frankenlibc-abi/src/spawn_protocol.rs'
+      - 'crates/frankenlibc-core/src/syscall/**'
+      - 'tests/c_abi/spawn_launch_contract.c'
+      - 'scripts/check_spawn_launch_contract.sh'
       - 'crates/frankenlibc-membrane/src/util.rs'
       - 'crates/frankenlibc-abi/tests/membrane_rounding_link_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
@@ -96,6 +106,36 @@ jobs:
         with:
           name: native-caller-${{ matrix.mode }}
           path: artifacts/native-caller/
+
+  spawn-launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the exact release ABI candidate
+        run: cargo build --release -p frankenlibc-abi --lib
+      - name: Compare spawn fallback and syscall denials against live GNU
+        env:
+          SPAWN_CONTRACT_SUITE: clone-fallback
+          SPAWN_CONTRACT_BUILD_DIR: artifacts/spawn-launch
+        run: |
+          mkdir -p artifacts/spawn-launch
+          bash scripts/check_spawn_launch_contract.sh "$PWD/target/release/libfrankenlibc_abi.so" \
+            | tee artifacts/spawn-launch-summary.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spawn-launch-contract
+          path: |
+            artifacts/spawn-launch/
+            artifacts/spawn-launch-summary.log
 
   validated-rwclock-source:
     if: >-

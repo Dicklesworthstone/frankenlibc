@@ -3,8 +3,15 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
+#include <dirent.h>
+#include <dlfcn.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <signal.h>
+#include <stddef.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
@@ -91,6 +98,15 @@ static int child_mode(int argc, char **argv) {
         const char *value = getenv("SPAWN_LAUNCH_MARKER");
         const char *path = getenv("PATH");
         return value && !strcmp(value, "child-only") && path && !strcmp(path, "/no-child-search-path") ? 0 : 97;
+    }
+    if (!strcmp(argv[2], "clone-mask")) {
+        sigset_t mask;
+        if (sigprocmask(SIG_SETMASK, NULL, &mask)) return 99;
+        return sigismember(&mask, SIGUSR1) == 1 && sigismember(&mask, SIGUSR2) == 0 ? 0 : 100;
+    }
+    if (!strcmp(argv[2], "clone-output")) {
+        static const char payload[] = "spawn pipe payload";
+        return write(STDOUT_FILENO, payload, sizeof payload) == (ssize_t)sizeof payload ? 0 : 101;
     }
     if (!strcmp(argv[2], "okay")) return 0;
     return 98;
@@ -311,13 +327,246 @@ static void resetids_contract(void) {
     if (result == 77) skip("RESETIDS differing real/effective IDs (namespace lacks capabilities)");
     else record("RESETIDS drops effective IDs to real IDs before exec", result == 0);
 }
+
+/* A restricted kernel may report clone3 as unavailable even when legacy
+ * clone works. Install the restriction only in this bounded test process;
+ * each mode is a separate exec so libc's feature cache cannot hide errors. */
+typedef int (*launch_fn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
+                         const posix_spawnattr_t *, char *const[], char *const[]);
+struct launch_api {
+    const char *name;
+    int search, pidfd;
+    launch_fn call;
+};
+static int check_launch_provider(const char *expected, const char *symbol, void *address) {
+    struct stat wanted, actual;
+    Dl_info info;
+    if (!address || stat(expected, &wanted) || !dladdr(address, &info) ||
+        !info.dli_fname || stat(info.dli_fname, &actual)) {
+        fprintf(stderr, "FAIL provider unavailable: %s\n", symbol);
+        return 0;
+    }
+    fprintf(stderr, "provider %s=%s\n", symbol, info.dli_fname);
+    if (actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "FAIL wrong spawn provider: %s\n", symbol);
+        return 0;
+    }
+    return 1;
+}
+static int open_fd_count(void) {
+    DIR *dir = opendir("/proc/self/fd");
+    if (!dir) fatal("opendir fd count");
+    int count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)))
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) ++count;
+    if (closedir(dir)) fatal("closedir fd count");
+    return count;
+}
+static int launch_expect(const struct launch_api *api, const char *path,
+                         posix_spawn_file_actions_t *actions, posix_spawnattr_t *attr,
+                         char *const argv[], char *const envp[], int wanted_error) {
+    pid_t output = api->pidfd ? -1 : -4242;
+    int result = api->call(&output, path, actions, attr, argv, envp);
+    if (result) {
+        int okay = result == wanted_error && output == (api->pidfd ? -1 : -4242);
+        if (!okay) fprintf(stderr, "FAIL %s error=%d output=%d expected=%d\n",
+                           api->name, result, (int)output, wanted_error);
+        return okay;
+    }
+    int okay;
+    if (api->pidfd) {
+        siginfo_t info = {0};
+        int flags = fcntl(output, F_GETFD);
+        int waited;
+        do {
+            waited = (int)syscall(SYS_waitid, P_PIDFD, output, &info, WEXITED, NULL);
+        } while (waited < 0 && errno == EINTR);
+        okay = flags >= 0 && (flags & FD_CLOEXEC) && waited == 0 &&
+               info.si_code == CLD_EXITED && info.si_status == 0;
+        if (close(output)) okay = 0;
+        /* Even a wrong returned descriptor must not strand a live child. */
+        if (waited) (void)wait_child(-1);
+    } else {
+        okay = wait_child(output) == 0;
+    }
+    if (wanted_error) {
+        fprintf(stderr, "FAIL %s succeeded instead of error=%d\n", api->name, wanted_error);
+        okay = 0;
+    }
+    return okay;
+}
+static void launch_record(const struct launch_api *api, const char *test, int okay) {
+    char name[192];
+    snprintf(name, sizeof name, "%s %s", api->name, test);
+    record(name, okay);
+}
+static void restrict_clone3(int error, int legacy_error) {
+    struct sock_filter code[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone3, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (unsigned int)error),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, legacy_error ? SECCOMP_RET_ERRNO | (unsigned int)legacy_error
+                                            : SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog filter = {.len = sizeof code / sizeof code[0], .filter = code};
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+        prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &filter)) fatal("seccomp clone3");
+    errno = 0;
+    long result = syscall(SYS_clone3, NULL, 0);
+    if (result != -1 || errno != error) {
+        fprintf(stderr, "FAIL clone3 filter did not return %d (result=%ld errno=%d)\n",
+                error, result, errno);
+        exit(2);
+    }
+}
+static int clone_contract(const char *mode, const char *expected_provider) {
+    int restriction;
+    int legacy_error = 0;
+    if (!strcmp(mode, "native")) restriction = 0;
+    else if (!strcmp(mode, "enosys")) restriction = ENOSYS;
+    else if (!strcmp(mode, "eperm")) restriction = EPERM;
+    else if (!strcmp(mode, "eagain")) restriction = EAGAIN;
+    else if (!strcmp(mode, "legacy-eperm")) { restriction = ENOSYS; legacy_error = EPERM; }
+    else { fprintf(stderr, "unknown clone mode: %s\n", mode); return 2; }
+    struct launch_api apis[] = {
+        {"posix_spawn", 0, 0, NULL}, {"posix_spawnp", 1, 0, NULL},
+        {"pidfd_spawn", 0, 1, NULL}, {"pidfd_spawnp", 1, 1, NULL},
+    };
+    for (size_t i = 0; i < sizeof apis / sizeof apis[0]; ++i) {
+        void *address = dlsym(RTLD_DEFAULT, apis[i].name);
+        if (!check_launch_provider(expected_provider, apis[i].name, address)) return 2;
+        apis[i].call = (launch_fn)address;
+    }
+    static const char *const helpers[] = {
+        "posix_spawnattr_init", "posix_spawnattr_destroy", "posix_spawnattr_setflags",
+        "posix_spawnattr_setsigmask", "posix_spawn_file_actions_init",
+        "posix_spawn_file_actions_destroy", "posix_spawn_file_actions_adddup2",
+        "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_addclosefrom_np",
+        "posix_spawn_file_actions_addchdir_np",
+    };
+    for (size_t i = 0; i < sizeof helpers / sizeof helpers[0]; ++i)
+        if (!check_launch_provider(expected_provider, helpers[i], dlsym(RTLD_DEFAULT, helpers[i]))) return 2;
+
+    char directory[PATH_MAX];
+    strcpy(directory, self);
+    char *slash = strrchr(directory, '/');
+    if (!slash) { errno = EINVAL; fatal("self path"); }
+    *slash = 0;
+    const char *basename = strrchr(self, '/') + 1;
+    if (setenv("PATH", directory, 1)) fatal("clone PATH");
+    char *child_env[] = {"PATH=/no-child-search-path", "SPAWN_LAUNCH_MARKER=child-only", NULL};
+    char *okay[] = {self, "--child", "okay", NULL};
+    char *environment[] = {self, "--child", "environment", NULL};
+    char *mask_args[] = {self, "--child", "clone-mask", NULL};
+    char *output_args[] = {self, "--child", "clone-output", NULL};
+    const char *missing = "/proc/self/frankenlibc-spawn-missing-program";
+    sigset_t original, blocked, before, after;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGUSR2);
+    if (sigprocmask(SIG_BLOCK, &blocked, &original) ||
+        sigprocmask(SIG_SETMASK, NULL, &before)) fatal("clone parent signal mask");
+    int descriptors_before = open_fd_count();
+    alarm(30);
+    if (restriction) restrict_clone3(restriction, legacy_error);
+    int wanted_error = legacy_error ? legacy_error : restriction == ENOSYS ? 0 : restriction;
+    for (size_t i = 0; i < sizeof apis / sizeof apis[0]; ++i) {
+        const struct launch_api *api = &apis[i];
+        const char *path = api->search ? basename : self;
+        if (wanted_error) {
+            launch_record(api, legacy_error ? "preserves legacy clone denial" : "preserves clone3 denial",
+                          launch_expect(api, path, NULL, NULL, okay, child_env, wanted_error));
+            continue;
+        }
+        launch_record(api, "launches with explicit child environment",
+                      launch_expect(api, path, NULL, NULL, environment, child_env, 0));
+        posix_spawnattr_t attr;
+        init_attrs(&attr);
+        sigset_t child_mask;
+        sigemptyset(&child_mask);
+        sigaddset(&child_mask, SIGUSR1);
+        if (posix_spawnattr_setsigmask(&attr, &child_mask) ||
+            posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK)) fatal("clone child mask attribute");
+        launch_record(api, "installs child signal mask",
+                      launch_expect(api, path, NULL, &attr, mask_args, child_env, 0));
+        posix_spawnattr_destroy(&attr);
+
+        int pipefd[2];
+        if (pipe2(pipefd, O_CLOEXEC)) fatal("clone payload pipe");
+        posix_spawn_file_actions_t actions;
+        init_actions(&actions);
+        if (posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO) ||
+            posix_spawn_file_actions_addclose(&actions, pipefd[0]) ||
+            posix_spawn_file_actions_addclose(&actions, pipefd[1])) fatal("clone payload actions");
+        int good = launch_expect(api, path, &actions, NULL, output_args, child_env, 0);
+        int parent_flags = fcntl(pipefd[1], F_GETFD);
+        good &= parent_flags >= 0 && (parent_flags & FD_CLOEXEC) != 0;
+        posix_spawn_file_actions_destroy(&actions);
+        close(pipefd[1]);
+        char payload[64];
+        ssize_t received = read(pipefd[0], payload, sizeof payload);
+        good &= received == (ssize_t)sizeof "spawn pipe payload" &&
+                !memcmp(payload, "spawn pipe payload", sizeof "spawn pipe payload");
+        close(pipefd[0]);
+        launch_record(api, "applies pipe actions without changing parent fd flags", good);
+
+        if (pipe2(pipefd, O_CLOEXEC)) fatal("clone same-fd pipe");
+        char fd_number[32];
+        snprintf(fd_number, sizeof fd_number, "%d", pipefd[1]);
+        char *fd_args[] = {self, "--child", "fd", fd_number, NULL};
+        init_actions(&actions);
+        if (posix_spawn_file_actions_adddup2(&actions, pipefd[1], pipefd[1])) fatal("clone same-fd action");
+        good = launch_expect(api, path, &actions, NULL, fd_args, child_env, 0);
+        parent_flags = fcntl(pipefd[1], F_GETFD);
+        good &= parent_flags >= 0 && (parent_flags & FD_CLOEXEC) != 0;
+        posix_spawn_file_actions_destroy(&actions);
+        close(pipefd[0]); close(pipefd[1]);
+        launch_record(api, "clears same-fd CLOEXEC only in child", good);
+        launch_record(api, "reports exec error without publishing a handle",
+                      launch_expect(api, missing, NULL, NULL, okay, child_env, ENOENT));
+        init_actions(&actions);
+        if (posix_spawn_file_actions_addchdir_np(&actions, missing)) fatal("clone failing action");
+        launch_record(api, "reports file action error without publishing a handle",
+                      launch_expect(api, path, &actions, NULL, okay, child_env, ENOENT));
+        posix_spawn_file_actions_destroy(&actions);
+        init_actions(&actions);
+        if (posix_spawn_file_actions_addclosefrom_np(&actions, 0)) fatal("clone closefrom action");
+        launch_record(api, "reports exec error after closefrom zero",
+                      launch_expect(api, missing, &actions, NULL, okay, child_env, ENOENT));
+        posix_spawn_file_actions_destroy(&actions);
+    }
+    if (sigprocmask(SIG_SETMASK, NULL, &after)) fatal("clone parent mask readback");
+    int mask_unchanged = 1;
+    for (int signal = 1; signal <= SIGRTMAX; ++signal)
+        if (sigismember(&before, signal) != sigismember(&after, signal)) mask_unchanged = 0;
+    record("parent signal mask restored after launches and errors", mask_unchanged);
+    if (sigprocmask(SIG_SETMASK, &original, NULL)) fatal("clone parent mask restore");
+    int status;
+    errno = 0;
+    pid_t leftover = waitpid(-1, &status, WNOHANG);
+    record("all successful and failed children reaped", leftover == -1 && errno == ECHILD);
+    /* Some GNU releases leak the private pidfd on pre-exec failure. Keep the
+     * live observation visible; the runner independently requires zero for
+     * every native mode, without copying that reference bug into the ABI. */
+    fprintf(stderr, "OBSERVE descriptor_delta=%d\n", open_fd_count() - descriptors_before);
+    alarm(0);
+    printf("SUMMARY tests=%d failed=%d skipped=%d\n", tests, failures, skips);
+    return failures ? 1 : 0;
+}
 int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--child")) return child_mode(argc, argv);
+    int only_clone = argc == 4 && !strcmp(argv[1], "--clone-contract");
     int only_descriptors = argc == 2 && !strcmp(argv[1], "--descriptors");
-    if (argc > 1 && !only_descriptors) { fprintf(stderr, "usage: %s [--descriptors]\n", argv[0]); return 2; }
+    if (argc > 1 && !only_descriptors && !only_clone) {
+        fprintf(stderr, "usage: %s [--descriptors | --clone-contract MODE PROVIDER]\n", argv[0]);
+        return 2;
+    }
     ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
     if (n < 0 || (size_t)n >= sizeof self - 1) fatal("readlink self");
     self[n] = 0;
+    if (only_clone) return clone_contract(argv[2], argv[3]);
     strcpy(scratch, "/tmp/frankenlibc-spawn-contract-XXXXXX");
     if (!mkdtemp(scratch)) fatal("mkdtemp");
     alarm(40); /* A broken error channel must fail, not hang the test lane. */
