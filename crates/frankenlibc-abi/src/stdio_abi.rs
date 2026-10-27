@@ -4299,7 +4299,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     sync_input_position(s);
     // Flush pending writes.
     let pending = s.prepare_close();
-    let mut adverse = false;
+    let mut close_error = None;
 
     if !pending.is_empty() && fd >= 0 {
         let mut written = 0usize;
@@ -4316,10 +4316,10 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
                 if e == errno::EINTR {
                     continue;
                 }
-                adverse = true;
+                close_error = Some(e);
                 break;
             } else if rc == 0 {
-                adverse = true;
+                close_error = Some(errno::EIO);
                 break;
             }
             written += rc as usize;
@@ -4331,15 +4331,35 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     // already closed behind stdio's back must report EBADF (gnulib
     // test-closein, test-fclose). The raw close reports its errno only in
     // the result.
-    if fd >= 0
-        && let Err(e) = raw_syscall::sys_close(fd)
-    {
-        unsafe { set_abi_errno(e) };
-        adverse = true;
+    let (child, closed) = if fd >= 0 {
+        close_stream_descriptor(id, fd)
+    } else {
+        (None, Ok(()))
+    };
+    if let Err(e) = closed {
+        close_error.get_or_insert(e);
     }
-
+    // Neither the stream lock nor the process registry may remain held while
+    // waiting: another thread must be able to close another process stream.
+    drop(s_guard);
     maybe_unregister_dynamic_native_stream(stream);
-    if adverse { libc::EOF } else { 0 }
+    let status = if let Some(pid) = child {
+        match wait_popen_child(pid) {
+            Ok(status) => status,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                return libc::EOF;
+            }
+        }
+    } else {
+        0
+    };
+    if let Some(e) = close_error {
+        unsafe { set_abi_errno(e) };
+        libc::EOF
+    } else {
+        status
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -14721,6 +14741,7 @@ pub unsafe extern "C-unwind" fn freopen(
     // Close the old stream. Lock ordering: registry → cell (freopen only); no path
     // acquires the registry while holding a cell lock, so this nesting cannot deadlock.
     let mut target_fd = -1;
+    let mut process_child = None;
     if let Some(old_cell) = reg.remove_stream(id) {
         let mut old_guard = old_cell.lock();
         let old = &mut *old_guard;
@@ -14774,9 +14795,18 @@ pub unsafe extern "C-unwind" fn freopen(
                 // only handle on the file. bd-mpp7kt.
                 target_fd = old_fd;
             } else {
-                let _ = raw_syscall::sys_close(old_fd);
+                (process_child, _) = close_stream_descriptor(id, old_fd);
             }
         }
+    }
+
+    // Replacing a process stream consumes its child ownership too. Waiting
+    // under the stream registry would block unrelated closes, so release it
+    // only for this process-stream case; ordinary freopen stays serialized.
+    if let Some(pid) = process_child {
+        drop(reg);
+        let _ = wait_popen_child(pid);
+        reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     }
 
     // `freopen(NULL, mode, stream)` changes a stream's mode without naming the
@@ -14826,10 +14856,14 @@ pub unsafe extern "C-unwind" fn freopen(
                 && id != STDOUT_SENTINEL
                 && id != STDERR_SENTINEL
             {
-                let _ = raw_syscall::sys_close(target_fd);
+                drop(reg);
+                let (child, _) = close_stream_descriptor(id, target_fd);
+                if let Some(pid) = child {
+                    let _ = wait_popen_child(pid);
+                }
             }
-            unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
+            unsafe { set_abi_errno(e) };
             return std::ptr::null_mut();
         }
     };
@@ -15428,8 +15462,42 @@ fn write_u64_to_buf(buf: &mut [u8], start: usize, mut v: u64) -> usize {
 // popen / pclose
 // ---------------------------------------------------------------------------
 
-/// Registry to map FILE* sentinels to child PIDs for pclose.
-static POPEN_PIDS: Mutex<Option<ArtifactHashMap<usize, i32>>> = Mutex::new(None);
+struct PopenChild {
+    pid: i32,
+    fd: c_int,
+}
+
+/// Every active process stream's parent descriptor must be closed in a new
+/// popen child. Publication, fork and descriptor removal share this lock so a
+/// child cannot inherit an untracked writer or close a reused descriptor.
+static POPEN_PIDS: Mutex<Option<ArtifactHashMap<usize, PopenChild>>> = Mutex::new(None);
+
+fn close_stream_descriptor(id: usize, fd: c_int) -> (Option<i32>, Result<(), c_int>) {
+    let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+    let child = guard.as_mut().and_then(|map| map.remove(&id));
+    if child.is_none() {
+        // An ordinary descriptor can have a blocking close (e.g. SO_LINGER).
+        // Only process pipes need to serialize their close with popen forks.
+        drop(guard);
+        return (None, raw_syscall::sys_close(fd));
+    }
+    let closed = raw_syscall::sys_close(fd);
+    (child.map(|child| child.pid), closed)
+}
+
+fn wait_popen_child(pid: i32) -> Result<c_int, c_int> {
+    let mut status = 0;
+    loop {
+        // GNU process-stream close retries interruptions and does not enter a
+        // cancellation window while it owns an unreaped child. No locks may be
+        // held by the caller during this wait.
+        match unsafe { raw_syscall::sys_wait4(pid, &mut status, 0, std::ptr::null_mut()) } {
+            Ok(child) if child == pid => return Ok(status),
+            Ok(_) | Err(libc::EINTR) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
 
 /// POSIX `popen` — open a process by creating a pipe.
 ///
@@ -15480,52 +15548,90 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         }
     }
 
-    // Create pipe: pipe_fds[0] = read end, pipe_fds[1] = write end.
+    // Start both ends close-on-exec. Plain r/w clears the parent flag only
+    // after publishing the descriptor under the process registry lock.
     let mut pipe_fds = [0i32; 2];
-    let pipe_flags = if close_on_exec { libc::O_CLOEXEC } else { 0 };
-    let pipe_result = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), pipe_flags) };
+    let pipe_result = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) };
     if let Err(e) = pipe_result {
         if e != libc::ENOSYS {
-            unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            unsafe { set_abi_errno(e) };
             return std::ptr::null_mut();
         }
-        // Fallback for kernels without pipe2: use pipe2(0) + fcntl(FD_CLOEXEC) if requested.
+        // Retain the fallback for environments rejecting pipe2 flags.
         if let Err(e) = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), 0) } {
-            unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            unsafe { set_abi_errno(e) };
             return std::ptr::null_mut();
         }
-        if close_on_exec {
+        for fd in pipe_fds {
             if let Err(e) = unsafe {
-                raw_syscall::sys_fcntl(pipe_fds[0], libc::F_SETFD, libc::FD_CLOEXEC as usize)
+                raw_syscall::sys_fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC as usize)
             } {
                 let _ = raw_syscall::sys_close(pipe_fds[0]);
                 let _ = raw_syscall::sys_close(pipe_fds[1]);
-                unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
-                return std::ptr::null_mut();
-            }
-            if let Err(e) = unsafe {
-                raw_syscall::sys_fcntl(pipe_fds[1], libc::F_SETFD, libc::FD_CLOEXEC as usize)
-            } {
-                let _ = raw_syscall::sys_close(pipe_fds[0]);
-                let _ = raw_syscall::sys_close(pipe_fds[1]);
                 unsafe { set_abi_errno(e) };
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
                 return std::ptr::null_mut();
             }
         }
+    }
+
+    let (our_fd, child_fd) = if reading {
+        (pipe_fds[0], pipe_fds[1])
+    } else {
+        (pipe_fds[1], pipe_fds[0])
+    };
+    let open_flags = OpenFlags {
+        readable: reading,
+        writable: !reading,
+        cloexec: close_on_exec,
+        ..Default::default()
+    };
+    // Allocate/register before starting a child. Failure must not run the
+    // command, and no stream-registry or stream-cell lock nests under POPEN_PIDS.
+    let fp = fdopen_native_impl(our_fd, &open_flags);
+    if fp.is_null() {
+        let saved_errno = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        let _ = raw_syscall::sys_close(our_fd);
+        let _ = raw_syscall::sys_close(child_fd);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        unsafe { set_abi_errno(saved_errno) };
+        return std::ptr::null_mut();
+    }
+    let id = canonical_stream_id(fp);
+    if let Some(cell) = stream_cell(id) {
+        cell.lock().set_orientation(-1);
+    }
+    let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(artifact_hash_map);
+    // Reserve the entry before forking so the parent publication cannot
+    // allocate after a child has started. pid 0 denotes this unpublished child.
+    map.insert(id, PopenChild { pid: 0, fd: our_fd });
+    if !close_on_exec
+        && let Err(e) = unsafe { raw_syscall::sys_fcntl(our_fd, libc::F_SETFD, 0) }
+    {
+        map.remove(&id);
+        drop(guard);
+        let _ = raw_syscall::sys_close(child_fd);
+        unsafe { fclose(fp) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        unsafe { set_abi_errno(e) };
+        return std::ptr::null_mut();
     }
 
     // Fork via clone(SIGCHLD).
     let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(p) => p,
         Err(e) => {
-            unsafe { set_abi_errno(e) };
-            let _ = raw_syscall::sys_close(pipe_fds[0]);
-            let _ = raw_syscall::sys_close(pipe_fds[1]);
+            map.remove(&id);
+            drop(guard);
+            let _ = raw_syscall::sys_close(child_fd);
+            unsafe { fclose(fp) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            unsafe { set_abi_errno(e) };
             return std::ptr::null_mut();
         }
     };
@@ -15533,6 +15639,15 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
     if pid == 0 {
         // Child process.
         let child_exit = || -> ! { raw_syscall::sys_exit_group(127) };
+
+        // The child only reads the fork snapshot: no allocation, locking or
+        // destructors before exec. Close old pipes before installing stdio,
+        // because an older popen descriptor can itself occupy fd 0 or fd 1.
+        for child in map.values() {
+            if child.pid != 0 {
+                let _ = raw_syscall::sys_close(child.fd);
+            }
+        }
 
         // Move the child's pipe end onto `target`. If the pipe already landed
         // there (the parent had closed stdin/stdout, so pipe2 returned fd 0 or
@@ -15584,42 +15699,9 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         child_exit();
     }
 
-    // Parent: close unused end and wrap the other in a stdio stream.
-    let our_fd = if reading {
-        let _ = raw_syscall::sys_close(pipe_fds[1]);
-        pipe_fds[0]
-    } else {
-        let _ = raw_syscall::sys_close(pipe_fds[0]);
-        pipe_fds[1]
-    };
-
-    let open_flags = OpenFlags {
-        readable: reading,
-        writable: !reading,
-        cloexec: close_on_exec,
-        ..Default::default()
-    };
-
-    // Create stream via fdopen_native_impl.
-    let fp = fdopen_native_impl(our_fd, &open_flags);
-    if fp.is_null() {
-        // fdopen failed (registry full) - close fd and waitpid to reap child.
-        let _ = raw_syscall::sys_close(our_fd);
-        unsafe { crate::process_abi::waitpid(pid, std::ptr::null_mut(), 0) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
-        return std::ptr::null_mut();
-    }
-
-    let id = canonical_stream_id(fp);
-    // glibc's popen streams are byte-oriented from creation (_mode == -1).
-    if let Some(cell) = stream_cell(id) {
-        cell.lock().set_orientation(-1);
-    }
-    {
-        let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-        let map = guard.get_or_insert_with(artifact_hash_map);
-        map.insert(id, pid);
-    }
+    let _ = raw_syscall::sys_close(child_fd);
+    map.insert(id, PopenChild { pid, fd: our_fd });
+    drop(guard);
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, false);
     fp
@@ -15636,33 +15718,17 @@ pub unsafe extern "C-unwind" fn pclose(stream: *mut c_void) -> c_int {
     }
 
     let id = canonical_stream_id(stream);
-    let pid = {
-        let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-        pids.as_mut().and_then(|m| m.remove(&id))
+    let is_process_stream = {
+        let pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+        pids.as_ref().is_some_and(|map| map.contains_key(&id))
     };
-    let Some(pid) = pid else {
+    if !is_process_stream {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
-    };
-
-    // Close the stream (flushes and closes fd).
-    unsafe { fclose(stream) };
-
-    // Wait for child.
-    let mut wstatus: c_int = 0;
-    loop {
-        match unsafe { raw_syscall::sys_wait4(pid, &mut wstatus, 0, std::ptr::null_mut()) } {
-            Ok(child_pid) if child_pid == pid => break,
-            Ok(_) => continue,
-            Err(libc::EINTR) => continue,
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                return -1;
-            }
-        }
     }
-
-    wstatus
+    // fclose owns flush, descriptor removal and reaping for process streams.
+    // In particular, a successful child exit must not hide an EPIPE on flush.
+    unsafe { fclose(stream) }
 }
 
 // __snprintf_chk — defined in fortify_abi.rs (canonical module)

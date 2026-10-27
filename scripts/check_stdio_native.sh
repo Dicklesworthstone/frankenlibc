@@ -6,8 +6,9 @@ GNU_ONLY=0
 GLOBALS_ONLY=0
 READ_ERRORS_ONLY=0
 WRITE_ERRORS_ONLY=0
+POPEN_ONLY=0
 if [[ "$#" -gt 1 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen]" >&2
   exit 2
 fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
@@ -18,8 +19,10 @@ elif [[ "${1:-}" == "--read-errors" ]]; then
   READ_ERRORS_ONLY=1
 elif [[ "${1:-}" == "--write-errors" ]]; then
   WRITE_ERRORS_ONLY=1
+elif [[ "${1:-}" == "--popen" ]]; then
+  POPEN_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
@@ -27,7 +30,7 @@ if [[ "${GNU_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-rc0923-epic-eeuy4f.34"
 elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2.1"
-elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
+elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2"
 fi
 
@@ -64,18 +67,25 @@ fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
-if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
+if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 ]]; then
   error_kind=read
   error_mode=fd-errors
   error_cases=112
+  error_option=--read-errors
   if [[ "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
     error_kind=write
     error_mode=write-errors
     error_cases=13
+    error_option=--write-errors
+  elif [[ "${POPEN_ONLY}" -eq 1 ]]; then
+    error_kind=popen
+    error_mode=popen
+    error_cases=24
+    error_option=--popen
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
   "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
-    "${ROOT}/tests/integration/fixture_stdio.c" -ldl -o "${error_bin}"
+    "${ROOT}/tests/integration/fixture_stdio.c" -pthread -ldl -o "${error_bin}"
   host_provider="$(env -u LD_PRELOAD ldd "${error_bin}" | awk '$1 == "libc.so.6" { print $3 }')"
   if [[ ! -f "${host_provider}" ]]; then
     echo "FAIL: cannot identify live GNU stdio provider" >&2
@@ -104,7 +114,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
     exit 1
   fi
   grep -q '^FAIL: wrong stdio provider for ' "${OUT_DIR}/${error_kind}-errors.provider-negative.stderr.log"
-  echo "check_stdio_native --${error_kind}-errors: PASS (${error_cases} live GNU cases, $((error_cases * 2)) native cases, 1 provider negative)"
+  echo "check_stdio_native ${error_option}: PASS (${error_cases} live GNU cases, $((error_cases * 2)) native cases, 1 provider negative)"
   exit 0
 fi
 

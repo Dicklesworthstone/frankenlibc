@@ -94,6 +94,14 @@ jobs:
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/write-errors" \
             bash scripts/check_stdio_native.sh --write-errors
+      - name: Close inherited process pipes and reap popen children
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/popen" \
+            bash scripts/check_stdio_native.sh --popen
       - name: Cancel native stdio reads and preserve C and C++ cleanup
         run: |
           set -euo pipefail
