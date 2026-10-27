@@ -149,8 +149,7 @@ pub(super) unsafe fn invoke(
                     deadline.check()?;
                 }
                 // SAFETY: the live AUTH table's refresh callback has this ABI.
-                let refresh: unsafe extern "C-unwind" fn(*mut super::Auth) -> c_int =
-                    unsafe { std::mem::transmute((*(*auth).operations).refresh) };
+                let refresh = unsafe { (*(*auth).operations).refresh };
                 if unsafe { refresh(auth) } == 0 {
                     return Err(RpcError::remote(RemoteError::Authentication(2)));
                 }

@@ -472,12 +472,16 @@ struct AuthOps {
     next: unsafe extern "C" fn(*mut Auth),
     marshal: unsafe extern "C" fn(*mut Auth, *mut Xdr) -> c_int,
     validate: unsafe extern "C" fn(*mut Auth, *mut OpaqueAuth) -> c_int,
-    refresh: unsafe extern "C" fn(*mut Auth) -> c_int,
+    refresh: unsafe extern "C-unwind" fn(*mut Auth) -> c_int,
     destroy: unsafe extern "C" fn(*mut Auth),
 }
 #[path = "rpc_auth_unix.rs"]
 mod auth_unix;
 pub(super) use auth_unix::{create as authunix_create, create_default as authunix_create_default};
+
+#[path = "rpc_auth_des.rs"]
+mod auth_des;
+pub(super) use auth_des::{create as authdes_create, create_pk as authdes_pk_create, rtime};
 
 unsafe extern "C" fn none_noop(_: *mut Auth) {}
 unsafe extern "C" fn none_marshal(_: *mut Auth, xdr: *mut Xdr) -> c_int {
@@ -492,7 +496,7 @@ unsafe extern "C" fn none_marshal(_: *mut Auth, xdr: *mut Xdr) -> c_int {
 unsafe extern "C" fn none_validate(_: *mut Auth, _: *mut OpaqueAuth) -> c_int {
     1
 }
-unsafe extern "C" fn none_refresh(_: *mut Auth) -> c_int {
+unsafe extern "C-unwind" fn none_refresh(_: *mut Auth) -> c_int {
     0
 }
 static NONE_OPS: AuthOps = AuthOps {

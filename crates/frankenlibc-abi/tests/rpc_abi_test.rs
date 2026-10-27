@@ -806,7 +806,7 @@ fn seterr_reply_success_case() {
 // ===========================================================================
 
 #[test]
-fn rtime_returns_failure() {
+fn rtime_rejects_missing_address_and_output() {
     let rc = unsafe {
         rtime(
             std::ptr::null_mut(),
@@ -814,7 +814,7 @@ fn rtime_returns_failure() {
             std::ptr::null_mut(),
         )
     };
-    assert_eq!(rc, -1, "rtime should return -1 (not supported)");
+    assert_eq!(rc, -1, "rtime must reject missing caller storage");
 }
 
 // ===========================================================================

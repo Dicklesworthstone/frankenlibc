@@ -394,7 +394,7 @@ unsafe extern "C" fn validate(auth: *mut Auth, verifier: *mut OpaqueAuth) -> c_i
     }
 }
 
-unsafe extern "C" fn refresh(auth: *mut Auth) -> c_int {
+unsafe extern "C-unwind" fn refresh(auth: *mut Auth) -> c_int {
     let state = unsafe { &*(*auth).private.cast::<State>() };
     let Some(_gate) = Gate::enter(state) else {
         return 0;

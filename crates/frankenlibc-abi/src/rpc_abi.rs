@@ -5,7 +5,8 @@
 //! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
 //! pure Rust. Native clients/services cover IPv4 UDP/TCP, Unix streams and
 //! synchronous memory RPC with AUTH_NONE/AUTH_SYS. Legacy authentication
-//! constructors retain their explicitly limited behavior; see README coverage.
+//! AUTH_DES clients use native DES and keyserver operations. Server-side DES
+//! authentication and credential mapping retain their explicitly limited scope.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
@@ -2053,7 +2054,7 @@ pub unsafe extern "C" fn xdr_unixcred(xdrs: *mut c_void, ucp: *mut c_void) -> c_
     }
 }
 
-/// Serialize DES auth credential (deprecated — minimal implementation).
+/// Serialize the public GNU DES credential layout and RFC 1057 union.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_authdes_cred(xdrs: *mut c_void, cred: *mut c_void) -> c_int {
     // DES auth is cryptographically broken. Provide wire-format support for
@@ -2075,8 +2076,9 @@ pub unsafe extern "C" fn xdr_authdes_cred(xdrs: *mut c_void, cred: *mut c_void) 
             unsafe { xdr_opaque(xdrs, b.add(24) as *mut c_char, 4) }
         }
         1 => {
-            // ADN_NICKNAME: 4-byte opaque
-            unsafe { xdr_opaque(xdrs, b.add(8) as *mut c_char, 4) }
+            // GNU's C record stores the nickname after the complete fullname,
+            // rather than overlaying it with that struct as a C union would.
+            unsafe { xdr_opaque(xdrs, b.add(32) as *mut c_char, 4) }
         }
         _ => XDR_FALSE,
     }
@@ -2246,33 +2248,33 @@ pub unsafe extern "C" fn authunix_create_default() -> *mut c_void {
     unsafe { rpc_udp::authunix_create_default() }
 }
 
-/// Create a DES authentication handle. Returns NULL — DES is cryptographically broken.
+/// Create a legacy AUTH_DES client using the server's public-key NSS entry.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn authdes_create(
-    _servername: *mut c_char,
-    _window: c_uint,
-    _syncaddr: *mut c_void,
-    _ckey: *mut c_void,
+pub unsafe extern "C-unwind" fn authdes_create(
+    servername: *mut c_char,
+    window: c_uint,
+    syncaddr: *mut c_void,
+    ckey: *mut c_void,
 ) -> *mut c_void {
-    std::ptr::null_mut()
+    unsafe { rpc_udp::authdes_create(servername, window, syncaddr, ckey) }
 }
 
-/// Create a DES authentication handle with public key. Returns NULL — DES is broken.
+/// Create an owned legacy AUTH_DES client with a supplied server public key.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn authdes_pk_create(
-    _servername: *mut c_char,
-    _pkey: *mut c_void,
-    _window: c_uint,
-    _syncaddr: *mut c_void,
-    _ckey: *mut c_void,
+pub unsafe extern "C-unwind" fn authdes_pk_create(
+    servername: *mut c_char,
+    pkey: *mut c_void,
+    window: c_uint,
+    syncaddr: *mut c_void,
+    ckey: *mut c_void,
 ) -> *mut c_void {
-    std::ptr::null_mut()
+    unsafe { rpc_udp::authdes_pk_create(servername, pkey, window, syncaddr, ckey) }
 }
 
 /// Extract UNIX credentials from a DES auth handle. Returns 0 (failure) — DES is broken.
@@ -3878,18 +3880,18 @@ pub unsafe extern "C" fn user2netname(
     unsafe { rpc_netname_write(netname, identity.as_bytes(), domain) }
 }
 
-/// Get time from a remote time server (RFC 868). Returns -1 (failure).
-/// Programs should use NTP or local clock instead of the legacy TIME protocol.
+/// Query RFC 868 TIME over UDP (timeout supplied) or TCP (null timeout).
+/// Time values use GNU's eight-byte `rpc_timeval`, not the LP64 `timeval`.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rtime(
-    _addrp: *mut c_void,
-    _timep: *mut c_void,
-    _timeout: *mut c_void,
+    addrp: *mut c_void,
+    timep: *mut c_void,
+    timeout: *mut c_void,
 ) -> c_int {
-    -1 // Not supported — use local clock
+    unsafe { rpc_udp::rtime(addrp, timep, timeout) }
 }
 
 /// Bind a socket to a reserved port (ports 512-1023).

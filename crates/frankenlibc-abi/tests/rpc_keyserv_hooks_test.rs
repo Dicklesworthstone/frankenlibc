@@ -6,7 +6,7 @@
 
 use frankenlibc_abi::rpc_abi::{
     __key_decryptsession_pk_LOCAL, __key_encryptsession_pk_LOCAL, __key_gendes_LOCAL,
-    key_decryptsession_pk, key_encryptsession_pk, key_gendes as generate,
+    authdes_pk_create, key_decryptsession_pk, key_encryptsession_pk, key_gendes as generate,
 };
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::ptr;
@@ -165,8 +165,7 @@ fn local_hooks_allow_reentry_and_unwinding_without_publishing() {
     let _lock = HOOKS.lock().unwrap();
     let _generator = Installed::new(&__key_gendes_LOCAL, generate_local as *mut c_void);
     {
-        let _installed =
-            Installed::new(&__key_encryptsession_pk_LOCAL, reentrant as *mut c_void);
+        let _installed = Installed::new(&__key_encryptsession_pk_LOCAL, reentrant as *mut c_void);
         assert_eq!(unsafe { exercise(true) }, (0, *b"[changed!]"));
     }
     {
@@ -238,4 +237,157 @@ fn invalid_argument_extents_are_rejected_before_local_hooks() {
         -1
     );
     assert_eq!(&key, b"old-key!");
+}
+
+#[repr(C)]
+struct OpaqueAuth {
+    flavor: c_int,
+    bytes: *mut c_void,
+    length: c_uint,
+}
+
+#[repr(C)]
+struct Auth {
+    credential: OpaqueAuth,
+    verifier: OpaqueAuth,
+    key: [u8; 8],
+    operations: *const AuthOps,
+    private: *mut c_void,
+}
+
+#[repr(C)]
+struct AuthOps {
+    next: usize,
+    marshal: usize,
+    validate: usize,
+    refresh: unsafe extern "C-unwind" fn(*mut Auth) -> c_int,
+    destroy: unsafe extern "C" fn(*mut Auth),
+}
+
+struct OwnedAuth(*mut Auth);
+impl Drop for OwnedAuth {
+    fn drop(&mut self) {
+        unsafe { ((*(*self.0).operations).destroy)(self.0) };
+    }
+}
+
+static ACTIVE_AUTH: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+
+unsafe extern "C-unwind" fn authdes_reentrant(uid: u32, argument: *mut c_void) -> *const c_void {
+    let auth = ACTIVE_AUTH.load(Ordering::Acquire).cast::<Auth>();
+    assert!(!auth.is_null());
+    // Both nested operations must reject the live outer operation, without
+    // destroying its borrowed buffers or leaving the gate permanently busy.
+    assert_eq!(unsafe { ((*(*auth).operations).refresh)(auth) }, 0);
+    unsafe { ((*(*auth).operations).destroy)(auth) };
+    assert_eq!(unsafe { (*auth).credential.flavor }, 3);
+    unsafe { success(uid, argument) }
+}
+
+unsafe fn make_auth(generated: bool) -> *mut Auth {
+    let mut public = *b"pub\0key";
+    let mut object = NetObject {
+        length: public.len() as u32,
+        bytes: public.as_mut_ptr().cast(),
+    };
+    let mut key = *b"old-key!";
+    unsafe {
+        authdes_pk_create(
+            c"rpc-test".as_ptr().cast_mut(),
+            (&mut object as *mut NetObject).cast(),
+            300,
+            ptr::null_mut(),
+            if generated {
+                ptr::null_mut()
+            } else {
+                key.as_mut_ptr().cast()
+            },
+        )
+        .cast()
+    }
+}
+
+unsafe extern "C-unwind" fn generated_session(uid: u32, argument: *mut c_void) -> *const c_void {
+    assert_eq!(uid, unsafe { libc::geteuid() });
+    let argument = unsafe { &*argument.cast::<PublicCryptArgument>() };
+    assert_eq!(argument.key, GENERATED);
+    (&SUCCESS as *const CryptResult).cast()
+}
+
+#[test]
+fn authdes_generated_keys_and_owned_refresh_use_local_keyserver_hooks() {
+    let _lock = HOOKS.lock().unwrap();
+    let _generator = Installed::new(&__key_gendes_LOCAL, generate_local as *mut c_void);
+    let _encryption = Installed::new(
+        &__key_encryptsession_pk_LOCAL,
+        generated_session as *mut c_void,
+    );
+    let pointer = unsafe { make_auth(true) };
+    assert!(!pointer.is_null());
+    let auth = OwnedAuth(pointer);
+    assert_eq!(unsafe { (*auth.0).key }, GENERATED);
+    assert_eq!(unsafe { (*auth.0).credential.flavor }, 3);
+    // The helper's public-key object/key arrays have gone out of scope. Refresh
+    // must retain only its own storage, and preserve the conversation key.
+    assert_eq!(unsafe { ((*(*auth.0).operations).refresh)(auth.0) }, 1);
+    assert_eq!(unsafe { (*auth.0).key }, GENERATED);
+}
+
+#[test]
+fn authdes_constructor_and_refresh_allow_hook_unwind_and_retry() {
+    let _lock = HOOKS.lock().unwrap();
+    {
+        let _encryption = Installed::new(&__key_encryptsession_pk_LOCAL, unwind as *mut c_void);
+        assert!(std::panic::catch_unwind(|| unsafe { make_auth(false) }).is_err());
+    }
+    let _encryption = Installed::new(&__key_encryptsession_pk_LOCAL, success as *mut c_void);
+    let pointer = unsafe { make_auth(false) };
+    assert!(!pointer.is_null());
+    let auth = OwnedAuth(pointer);
+    {
+        let _unwind = Installed::new(&__key_encryptsession_pk_LOCAL, unwind as *mut c_void);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                ((*(*auth.0).operations).refresh)(auth.0)
+            }))
+            .is_err()
+        );
+    }
+    assert_eq!(unsafe { ((*(*auth.0).operations).refresh)(auth.0) }, 1);
+    assert_eq!(unsafe { (*auth.0).key }, *b"old-key!");
+    {
+        let _active = Installed::new(&ACTIVE_AUTH, auth.0.cast());
+        let _reentry = Installed::new(
+            &__key_encryptsession_pk_LOCAL,
+            authdes_reentrant as *mut c_void,
+        );
+        assert_eq!(unsafe { ((*(*auth.0).operations).refresh)(auth.0) }, 1);
+    }
+    assert_eq!(unsafe { ((*(*auth.0).operations).refresh)(auth.0) }, 1);
+}
+
+#[test]
+fn authdes_invalid_inputs_are_rejected_before_keyserver_hooks() {
+    let _lock = HOOKS.lock().unwrap();
+    let _encryption = Installed::new(&__key_encryptsession_pk_LOCAL, unwind as *mut c_void);
+    let _generator = Installed::new(&__key_gendes_LOCAL, unwind as *mut c_void);
+    let mut public = NetObject {
+        length: 1025,
+        bytes: ptr::null_mut(),
+    };
+    let call = |name, public: &mut NetObject| unsafe {
+        authdes_pk_create(
+            name,
+            (public as *mut NetObject).cast(),
+            300,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert!(call(c"rpc-test".as_ptr().cast_mut(), &mut public).is_null());
+    public.length = 1;
+    assert!(call(c"rpc-test".as_ptr().cast_mut(), &mut public).is_null());
+    let mut unterminated = [b'x'; 256];
+    assert!(call(unterminated.as_mut_ptr().cast(), &mut public).is_null());
+    assert!(call(ptr::null_mut(), &mut public).is_null());
 }
