@@ -14783,11 +14783,11 @@
     },
     {
       "symbol": "timer_create",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_create \u2014 create POSIX per-process timer using kernel timer id output",
-      "hardened_semantics": "SYS_timer_create \u2014 same syscall path with deterministic errno propagation",
+      "strict_semantics": "Kernel POSIX timers with full-width timer_t output; SIGEV_THREAD uses owned handles, copied attributes and detached callbacks through the selected pthread backend (host-backed by default)",
+      "hardened_semantics": "Same timer ownership and callback runtime with deterministic errno propagation; no host timer_* delegation",
       "default_stub": false
     },
     {
@@ -14795,8 +14795,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_delete \u2014 delete POSIX per-process timer by kernel timer id",
-      "hardened_semantics": "SYS_timer_delete \u2014 same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_timer_delete with owned SIGEV_THREAD handle validation and serialized callback-state retirement",
+      "hardened_semantics": "Same kernel deletion and owned-handle validation with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -14804,7 +14804,7 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_getoverrun \u2014 fetch timer overrun count from kernel timer id",
+      "strict_semantics": "SYS_timer_getoverrun with owned SIGEV_THREAD handle translation; kernel expiration accounting",
       "hardened_semantics": "SYS_timer_getoverrun \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
@@ -14813,7 +14813,7 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_gettime \u2014 read timer expiration state into itimerspec",
+      "strict_semantics": "SYS_timer_gettime with owned SIGEV_THREAD handle translation; read timer expiration state into itimerspec",
       "hardened_semantics": "SYS_timer_gettime \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
@@ -14822,7 +14822,7 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_settime \u2014 arm/disarm timer using itimerspec payload",
+      "strict_semantics": "SYS_timer_settime with owned SIGEV_THREAD handle translation; arm/disarm timer using itimerspec payload",
       "hardened_semantics": "SYS_timer_settime \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
@@ -33219,21 +33219,21 @@
   "summary": {
     "total": 4119,
     "implemented": 2419,
-    "raw_syscall": 410,
-    "wraps_host_libc": 1272,
+    "raw_syscall": 409,
+    "wraps_host_libc": 1273,
     "glibc_call_through": 0,
     "stub": 18
   },
   "implemented": 2419,
-  "raw_syscall": 410,
+  "raw_syscall": 409,
   "glibc_call_through": 0,
   "stub": 18,
   "counts": {
     "implemented": 2419,
-    "raw_syscall": 410,
+    "raw_syscall": 409,
     "glibc_call_through": 0,
     "stub": 18,
-    "wraps_host_libc": 1272
+    "wraps_host_libc": 1273
   },
-  "wraps_host_libc": 1272
+  "wraps_host_libc": 1273
 }

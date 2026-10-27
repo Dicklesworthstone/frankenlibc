@@ -73,6 +73,7 @@ use crate::runtime_policy;
 use crate::util::{ArtifactHashMap, ArtifactHashSet, artifact_hash_map, artifact_hash_set};
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+type UnwindStartRoutine = unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void;
 type ResolvedPthreadGettidNpFn = unsafe extern "C" fn(libc::pthread_t) -> libc::pid_t;
 type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
 type ResolvedPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
@@ -2164,7 +2165,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             host_create(
                 &mut host_thread,
                 attr,
-                Some(host_thread_start_trampoline),
+                Some(host_thread_start_entry()),
                 start_ctx.cast(),
             )
         };
@@ -2284,7 +2285,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             let create_rc = host_create(
                 &mut host_thread,
                 &host_attr,
-                Some(host_thread_start_trampoline),
+                Some(host_thread_start_entry()),
                 start_ctx.cast(),
             );
             if create_rc != 0 {
@@ -2303,7 +2304,16 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     result
 }
 
-unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
+fn host_thread_start_entry() -> StartRoutine {
+    // SAFETY: C and C-unwind have the same machine ABI. The host pthread slot
+    // uses C, while the actual entry must permit pthread_exit/cancellation to
+    // unwind through its Rust frame.
+    unsafe {
+        std::mem::transmute::<UnwindStartRoutine, StartRoutine>(host_thread_start_trampoline)
+    }
+}
+
+unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     // Create the membrane's per-thread validation cache first, while this
     // thread holds no lock at all. Created lazily, its destructor registration
     // callocs and takes the loader lock from inside whatever validation first
@@ -2325,7 +2335,12 @@ unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_vo
     } else {
         wait_for_host_thread_handoff(start_ctx)
     };
-    let start_routine = start_ctx.start_routine;
+    // SAFETY: POSIX start routines can leave through pthread_exit or forced
+    // cancellation unwinding. Use the unwind-capable ABI at the Rust call
+    // boundary without changing the exported pthread_create signature.
+    let start_routine = unsafe {
+        std::mem::transmute::<StartRoutine, UnwindStartRoutine>(start_ctx.start_routine)
+    };
     let start_arg = start_ctx.arg;
     if child_owned {
         // SAFETY: the creator never touches a child-owned context after the
@@ -5342,6 +5357,134 @@ fn managed_attr_data_ptr_const(
     // SAFETY: `data` comes from `attr_data_ptr_const`, which validated non-null/alignment.
     let is_managed = unsafe { (*data).magic == MANAGED_ATTR_MAGIC };
     is_managed.then_some(data)
+}
+
+/// An immutable, address-stable copy of the standard SIGEV_THREAD attributes.
+/// GNU timer notifications copy stack/guard/scheduling attributes, but ignore
+/// the GNU affinity and signal-mask extensions. No caller-owned attribute or
+/// extension pointer survives timer_create.
+pub(crate) struct TimerThreadAttributes {
+    storage: Box<libc::pthread_attr_t>,
+}
+
+impl TimerThreadAttributes {
+    /// The caller keeps source alive and unmodified during this call only.
+    pub(crate) unsafe fn new(source: *const libc::pthread_attr_t) -> Result<Self, c_int> {
+        // SAFETY: zero is valid backing storage; pthread_attr_init establishes
+        // the managed representation before any attribute operation or Drop.
+        let mut owned = Self {
+            storage: Box::new(unsafe { std::mem::zeroed() }),
+        };
+        let target = std::ptr::from_mut(owned.storage.as_mut());
+        // SAFETY: target is aligned, exclusively owned and address-stable.
+        let rc = unsafe { pthread_attr_init(target) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        if !source.is_null() {
+            if let Some(data) = managed_attr_data_ptr_const(source) {
+                // SAFETY: a managed inline attribute contains scalar values
+                // only. GNU extension ownership is deliberately not copied.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data, target.cast::<PthreadAttrData>(), 1);
+                }
+            } else {
+                // Preserve valid attributes constructed by an un-interposed
+                // host library without copying its private extension pointers.
+                unsafe { Self::copy_host_fields(source, target.cast()) }?;
+            }
+        }
+        // SAFETY: this private object is never exposed for concurrent mutation.
+        unsafe {
+            (*target.cast::<PthreadAttrData>()).flags &= !3;
+            (*target.cast::<PthreadAttrData>()).detach_state = libc::PTHREAD_CREATE_DETACHED;
+        }
+        Ok(owned)
+    }
+
+    unsafe fn copy_host_fields(
+        source: *const libc::pthread_attr_t,
+        target: *mut PthreadAttrData,
+    ) -> Result<(), c_int> {
+        let getstack = unsafe { resolved_pthread_attr_getstack_fn() }.ok_or(libc::ENOSYS)?;
+        let getsize = unsafe { resolved_pthread_attr_getstacksize_fn() }.ok_or(libc::ENOSYS)?;
+        let getguard = unsafe { resolved_pthread_attr_getguardsize_fn() }.ok_or(libc::ENOSYS)?;
+        let mut address = std::ptr::null_mut();
+        let mut size = 0;
+        // SAFETY: source is a live foreign attribute; each output is owned here.
+        let rc = unsafe { getstack(source, &mut address, &mut size) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let mut stack_size = 0;
+        let rc = unsafe { getsize(source, &mut stack_size) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let mut guard_size = 0;
+        let rc = unsafe { getguard(source, &mut guard_size) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        type GetInt = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+        let mut inherit = 0;
+        let mut policy = 0;
+        for (name, output) in [
+            (b"pthread_attr_getinheritsched\0".as_slice(), &mut inherit),
+            (b"pthread_attr_getschedpolicy\0".as_slice(), &mut policy),
+        ] {
+            let symbol = unsafe { resolve_host_symbol_with_aliases(&[name]) };
+            if symbol.is_null() {
+                return Err(libc::ENOSYS);
+            }
+            // SAFETY: both named host getters have this exact signature.
+            let getter = unsafe { std::mem::transmute::<*mut c_void, GetInt>(symbol) };
+            let rc = unsafe { getter(source, output) };
+            if rc != 0 {
+                return Err(rc);
+            }
+        }
+        let symbol = unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getschedparam\0"]) };
+        if symbol.is_null() {
+            return Err(libc::ENOSYS);
+        }
+        type GetParam = unsafe extern "C" fn(
+            *const libc::pthread_attr_t,
+            *mut libc::sched_param,
+        ) -> c_int;
+        // SAFETY: the symbol is the host getter with this signature.
+        let getter = unsafe { std::mem::transmute::<*mut c_void, GetParam>(symbol) };
+        let mut param = libc::sched_param { sched_priority: 0 };
+        let rc = unsafe { getter(source, &mut param) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        // GNU unset stack addresses can appear as 0 - size. They do not
+        // describe a caller-provided mapping and must remain allocated stacks.
+        let user_stack = !address.is_null() && (address as usize).wrapping_add(size) != 0;
+        // SAFETY: target is our live, exclusively owned managed overlay.
+        unsafe {
+            (*target).stack_size = if user_stack { size } else { stack_size };
+            (*target).stack_addr = if user_stack { address as usize } else { 0 };
+            (*target).guard_size = guard_size;
+            (*target).inherit_sched = inherit;
+            (*target).sched_policy = policy;
+            (*target).sched_priority = param.sched_priority;
+            (*target).flags = if user_stack { ATTR_FLAG_USER_STACK } else { 0 };
+        }
+        Ok(())
+    }
+
+    pub(crate) fn as_ptr(&self) -> *const libc::pthread_attr_t {
+        std::ptr::from_ref(self.storage.as_ref())
+    }
+}
+
+impl Drop for TimerThreadAttributes {
+    fn drop(&mut self) {
+        // SAFETY: this snapshot owns the managed object at a stable address.
+        let _ = unsafe { pthread_attr_destroy(std::ptr::from_mut(self.storage.as_mut())) };
+    }
 }
 
 // --- Thread attributes ---

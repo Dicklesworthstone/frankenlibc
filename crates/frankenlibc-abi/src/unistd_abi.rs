@@ -15400,8 +15400,11 @@ pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, mut arg
 }
 
 // ---------------------------------------------------------------------------
-// timer_* — RawSyscall (POSIX per-process timers)
+// timer_* — kernel timers with owned SIGEV_THREAD notification dispatch
 // ---------------------------------------------------------------------------
+
+#[path = "posix_timer.rs"]
+mod posix_timer;
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timer_create(
@@ -15409,8 +15412,30 @@ pub unsafe extern "C" fn timer_create(
     sevp: *mut c_void,
     timerid: *mut c_void,
 ) -> c_int {
-    match unsafe { syscall::sys_timer_create(clockid, sevp as usize, timerid as *mut i32) } {
-        Ok(()) => 0,
+    if timerid.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: the caller supplies a live sigevent when non-null. Only the
+    // callback form needs userspace dispatch; signal/none/thread-id events
+    // retain the kernel implementation and its error semantics.
+    let result = if !sevp.is_null()
+        && unsafe { (*sevp.cast::<libc::sigevent>()).sigev_notify == libc::SIGEV_THREAD }
+    {
+        unsafe { posix_timer::create(clockid, sevp.cast()) }
+    } else {
+        let mut kernel_id = 0;
+        unsafe { syscall::sys_timer_create(clockid, sevp as usize, &mut kernel_id) }
+            .map(|()| kernel_id as usize as *mut c_void)
+    };
+    match result {
+        Ok(handle) => {
+            // SAFETY: timer_t is pointer-sized on supported Linux LP64 ABIs.
+            // Writing the kernel's four-byte ID directly left the upper half
+            // of a caller's otherwise uninitialized timer_t untouched.
+            unsafe { timerid.cast::<*mut c_void>().write(handle) };
+            0
+        }
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -15425,14 +15450,14 @@ pub unsafe extern "C" fn timer_settime(
     new_value: *const c_void,
     old_value: *mut c_void,
 ) -> c_int {
-    match unsafe {
+    match posix_timer::with_kernel_id(timerid, |kernel_id| unsafe {
         syscall::sys_timer_settime(
-            timerid as i32,
+            kernel_id,
             flags,
             new_value as *const u8,
             old_value as *mut u8,
         )
-    } {
+    }) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -15463,7 +15488,9 @@ pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_
         return -1;
     }
 
-    let rc = match unsafe { syscall::sys_timer_gettime(timerid as i32, curr_value as *mut u8) } {
+    let rc = match posix_timer::with_kernel_id(timerid, |kernel_id| unsafe {
+        syscall::sys_timer_gettime(kernel_id, curr_value as *mut u8)
+    }) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -15477,7 +15504,7 @@ pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timer_delete(timerid: *mut c_void) -> c_int {
-    match syscall::sys_timer_delete(timerid as i32) {
+    match posix_timer::delete(timerid) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -15488,7 +15515,7 @@ pub unsafe extern "C" fn timer_delete(timerid: *mut c_void) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
-    match syscall::sys_timer_getoverrun(timerid as i32) {
+    match posix_timer::with_kernel_id(timerid, syscall::sys_timer_getoverrun) {
         Ok(count) => count,
         Err(e) => {
             unsafe { set_abi_errno(e) };

@@ -5,12 +5,16 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/posix_timer.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
       - 'tests/integration/fixture_pthread_key_destructors.c'
+      - 'tests/integration/fixture_posix_timers.c'
       - 'scripts/check_pthread_extensions_native.sh'
+      - 'scripts/check_posix_timers.py'
       - '.github/workflows/native-pthread-stacks.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -113,6 +117,13 @@ jobs:
         run: |
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
             bash scripts/check_pthread_extensions_native.sh --key-destructors
+      - name: Compare POSIX timer callbacks and lifecycle against GNU libc
+        shell: bash
+        run: |
+          python3 scripts/check_posix_timers.py \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/target/conformance/posix_timers" \
+            --require-kernel-accounting
       - name: Record the tested revision and compiler
         if: always()
         run: |
@@ -126,5 +137,6 @@ jobs:
           path: |
             target/conformance/pthread_startup/
             target/conformance/pthread_keys/
+            target/conformance/posix_timers/
           if-no-files-found: error
           retention-days: 14
