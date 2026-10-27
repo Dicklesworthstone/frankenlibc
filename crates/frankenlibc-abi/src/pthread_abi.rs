@@ -21,6 +21,9 @@ use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
 use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
 use frankenlibc_core::pthread::thread::{
     ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
+    current_thread_handle as core_current_thread_handle,
+    request_cancellation as core_request_cancellation,
+    take_current_cancellation as core_take_current_cancellation,
 };
 use frankenlibc_core::pthread::tls::{
     PthreadKey, pthread_key_create as core_pthread_key_create,
@@ -2342,9 +2345,7 @@ fn host_thread_start_entry() -> StartRoutine {
     // SAFETY: C and C-unwind have the same machine ABI. The host pthread slot
     // uses C, while the actual entry must permit pthread_exit/cancellation to
     // unwind through its Rust frame.
-    unsafe {
-        std::mem::transmute::<UnwindStartRoutine, StartRoutine>(host_thread_start_trampoline)
-    }
+    unsafe { std::mem::transmute::<UnwindStartRoutine, StartRoutine>(host_thread_start_trampoline) }
 }
 
 unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
@@ -2372,9 +2373,8 @@ unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *m
     // SAFETY: POSIX start routines can leave through pthread_exit or forced
     // cancellation unwinding. Use the unwind-capable ABI at the Rust call
     // boundary without changing the exported pthread_create signature.
-    let start_routine = unsafe {
-        std::mem::transmute::<StartRoutine, UnwindStartRoutine>(start_ctx.start_routine)
-    };
+    let start_routine =
+        unsafe { std::mem::transmute::<StartRoutine, UnwindStartRoutine>(start_ctx.start_routine) };
     let start_arg = start_ctx.arg;
     if child_owned {
         // SAFETY: the creator never touches a child-owned context after the
@@ -5393,15 +5393,14 @@ fn managed_attr_data_ptr_const(
     is_managed.then_some(data)
 }
 
-/// An immutable, address-stable copy of the standard SIGEV_THREAD attributes.
-/// GNU timer notifications copy stack/guard/scheduling attributes, but ignore
-/// the GNU affinity and signal-mask extensions. No caller-owned attribute or
-/// extension pointer survives timer_create.
-pub(crate) struct TimerThreadAttributes {
+/// An immutable, address-stable copy of SIGEV_THREAD attributes. Timers copy
+/// standard stack/guard/scheduling fields; message queues also copy affinity.
+/// No caller-owned attribute or extension pointer survives registration.
+pub(crate) struct NotificationThreadAttributes {
     storage: Box<libc::pthread_attr_t>,
 }
 
-impl TimerThreadAttributes {
+impl NotificationThreadAttributes {
     /// The caller keeps source alive and unmodified during this call only.
     pub(crate) unsafe fn new(source: *const libc::pthread_attr_t) -> Result<Self, c_int> {
         // SAFETY: zero is valid backing storage; pthread_attr_init establishes
@@ -5432,6 +5431,77 @@ impl TimerThreadAttributes {
         unsafe {
             (*target.cast::<PthreadAttrData>()).flags &= !3;
             (*target.cast::<PthreadAttrData>()).detach_state = libc::PTHREAD_CREATE_DETACHED;
+        }
+        Ok(owned)
+    }
+
+    /// GNU message-queue notifications retain CPU affinity, unlike timers.
+    /// Both notification kinds establish their own signal masks at dispatch.
+    pub(crate) unsafe fn for_mqueue(source: *const libc::pthread_attr_t) -> Result<Self, c_int> {
+        // SAFETY: source remains live throughout this snapshot operation.
+        let mut owned = unsafe { Self::new(source) }?;
+        if source.is_null() {
+            return Ok(owned);
+        }
+        let affinity = if let Some(data) = managed_attr_data_ptr_const(source) {
+            // SAFETY: the managed source is live and not concurrently modified.
+            if unsafe { (*data).flags & 1 == 0 } {
+                None
+            } else {
+                let registry = EXTENDED_ATTR_REGISTRY
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                Some(
+                    registry
+                        .get(&(source as usize))
+                        .and_then(|extended| extended.affinity.clone())
+                        .ok_or(libc::EINVAL)?,
+                )
+            }
+        } else {
+            // Query the public host interface rather than copying private
+            // pointers from a foreign pthread_attr_t. Grow for large CPU sets.
+            let symbol =
+                unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"]) };
+            if symbol.is_null() {
+                return Err(libc::ENOSYS);
+            }
+            type GetAffinity = unsafe extern "C" fn(
+                *const libc::pthread_attr_t,
+                usize,
+                *mut libc::cpu_set_t,
+            ) -> c_int;
+            // SAFETY: the resolved public getter has this exact signature.
+            let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
+            let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
+            loop {
+                let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
+                if rc == 0 {
+                    // GNU reports an unset affinity as all ones, including
+                    // bytes beyond the kernel CPU set. Preserve inheritance.
+                    break if bytes.iter().all(|byte| *byte == u8::MAX) {
+                        None
+                    } else {
+                        Some((bytes.len(), bytes))
+                    };
+                }
+                if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
+                    return Err(rc);
+                }
+                bytes.resize(bytes.len() * 2, 0);
+            }
+        };
+        if let Some((size, bytes)) = affinity {
+            if size == 0 || size != bytes.len() {
+                return Err(libc::EINVAL);
+            }
+            // SAFETY: the snapshot owns the stable destination and all bytes.
+            let rc = unsafe {
+                pthread_attr_setaffinity_np(owned.storage.as_mut(), size, bytes.as_ptr().cast())
+            };
+            if rc != 0 {
+                return Err(rc);
+            }
         }
         Ok(owned)
     }
@@ -5478,14 +5548,13 @@ impl TimerThreadAttributes {
                 return Err(rc);
             }
         }
-        let symbol = unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getschedparam\0"]) };
+        let symbol =
+            unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getschedparam\0"]) };
         if symbol.is_null() {
             return Err(libc::ENOSYS);
         }
-        type GetParam = unsafe extern "C" fn(
-            *const libc::pthread_attr_t,
-            *mut libc::sched_param,
-        ) -> c_int;
+        type GetParam =
+            unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sched_param) -> c_int;
         // SAFETY: the symbol is the host getter with this signature.
         let getter = unsafe { std::mem::transmute::<*mut c_void, GetParam>(symbol) };
         let mut param = libc::sched_param { sched_priority: 0 };
@@ -5514,7 +5583,7 @@ impl TimerThreadAttributes {
     }
 }
 
-impl Drop for TimerThreadAttributes {
+impl Drop for NotificationThreadAttributes {
     fn drop(&mut self) {
         // SAFETY: this snapshot owns the managed object at a stable address.
         let _ = unsafe { pthread_attr_destroy(std::ptr::from_mut(self.storage.as_mut())) };
@@ -6099,6 +6168,9 @@ fn is_detached_thread_handle(thread: libc::pthread_t) -> bool {
 }
 
 fn current_cancel_key() -> usize {
+    if let Some(handle) = core_current_thread_handle() {
+        return handle as usize;
+    }
     native_pthread_self() as usize
 }
 
@@ -6123,16 +6195,29 @@ fn set_cancellation_pending(thread_key: usize, pending: bool) {
 }
 
 fn cancel_enabled_for_current_thread() -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: this is the calling thread's live, registered handle.
+        return unsafe { (*handle).cancel_state.load(Ordering::Relaxed) }
+            == PTHREAD_CANCEL_ENABLE_STATE;
+    }
     with_pthread_tls(|tls| tls.thread_cancel_state == PTHREAD_CANCEL_ENABLE_STATE)
 }
 
 fn cancel_async_for_current_thread() -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: this is the calling thread's live, registered handle.
+        return unsafe { (*handle).cancel_type.load(Ordering::Relaxed) }
+            == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE;
+    }
     with_pthread_tls(|tls| tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE)
 }
 
 fn consume_pending_cancel_for_current_thread() -> bool {
     if !cancel_enabled_for_current_thread() {
         return false;
+    }
+    if core_current_thread_handle().is_some() {
+        return core_take_current_cancellation();
     }
     let thread_key = current_cancel_key();
     if !cancellation_pending(thread_key) {
@@ -6195,31 +6280,46 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
         return libc::ESRCH;
     }
 
-    if !force_native_threading_enabled()
-        && !is_managed_thread_handle(thread)
-        && let Some(host_cancel) = resolved_thread_cancel_raw()
-    {
-        let (target, is_self) = host_cancel_target(thread);
-        if is_self {
-            // A single-threaded process may cancel itself; glibc then treats
-            // the process as multi-threaded so that its next cancellation
-            // point acts. fl's cancellation points consult fl's own copy of
-            // the flag (cancellation_window_hook).
-            crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
-        }
-        // SAFETY: `target` is glibc's handle for a live host thread.
-        return unsafe { host_cancel(target) };
-    }
-
-    // Validate that the target looks alive before enqueuing a cancel request.
-    // Signal 0 performs existence checking without delivering a signal.
-    let liveness = unsafe { pthread_kill(thread, 0) };
-    if liveness != 0 {
-        return liveness;
-    }
-
     let thread_key = pthread_handle_key(thread);
-    set_cancellation_pending(thread_key, true);
+    if !core_request_cancellation(thread_key) {
+        // A native identity can disappear concurrently with this call. Never
+        // leave an address-keyed fallback request behind for its next owner.
+        if is_managed_thread_handle(thread) {
+            // An unjoined native thread may already have completed teardown.
+            // Its still-owned joinable handle accepts a harmless request, as
+            // GNU does; detached/reclaimed handles are no longer live targets.
+            return if THREAD_HANDLE_REGISTRY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&thread_key)
+            {
+                0
+            } else {
+                libc::ESRCH
+            };
+        }
+        if !force_native_threading_enabled()
+            && let Some(host_cancel) = resolved_thread_cancel_raw()
+        {
+            let (target, is_self) = host_cancel_target(thread);
+            if is_self {
+                // A single-threaded process may cancel itself; glibc then
+                // treats the process as multi-threaded so that its next
+                // cancellation point acts. fl consults its own flag too.
+                crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
+            }
+            // SAFETY: `target` is glibc's handle for a live host thread.
+            return unsafe { host_cancel(target) };
+        }
+
+        // Unregistered native-mode callers (including main) retain the
+        // fallback path. Signal 0 checks existence without sending a signal.
+        let liveness = unsafe { pthread_kill(thread, 0) };
+        if liveness != 0 {
+            return liveness;
+        }
+        set_cancellation_pending(thread_key, true);
+    }
 
     // If cancelling ourselves in async mode, act on it immediately.
     if thread_key == current_cancel_key()
@@ -6241,18 +6341,26 @@ pub unsafe extern "C-unwind" fn pthread_setcancelstate(
         return libc::EINVAL;
     }
 
-    if !force_native_threading_enabled()
+    let native = core_current_thread_handle();
+    if native.is_none()
+        && !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
         && let Some(host_setcancelstate) = resolved_thread_setcancelstate_raw()
     {
         return unsafe { host_setcancelstate(state, oldstate) };
     }
 
-    let previous = with_pthread_tls(|tls| {
-        let prev = tls.thread_cancel_state;
-        tls.thread_cancel_state = state;
-        prev
-    });
+    let previous = if let Some(handle) = native {
+        // SAFETY: the owner keeps this handle live through the call. Atomic
+        // settings also permit the owner's signal handler to query/change them.
+        unsafe { (*handle).cancel_state.swap(state, Ordering::Relaxed) }
+    } else {
+        with_pthread_tls(|tls| {
+            let prev = tls.thread_cancel_state;
+            tls.thread_cancel_state = state;
+            prev
+        })
+    };
     if !oldstate.is_null() {
         // SAFETY: oldstate is provided by caller and checked for null.
         unsafe { *oldstate = previous };
@@ -6270,18 +6378,25 @@ pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut 
         return libc::EINVAL;
     }
 
-    if !force_native_threading_enabled()
+    let native = core_current_thread_handle();
+    if native.is_none()
+        && !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
         && let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()
     {
         return unsafe { host_setcanceltype(typ, oldtype) };
     }
 
-    let previous = with_pthread_tls(|tls| {
-        let prev = tls.thread_cancel_type;
-        tls.thread_cancel_type = typ;
-        prev
-    });
+    let previous = if let Some(handle) = native {
+        // SAFETY: this is the calling thread's live, registered handle.
+        unsafe { (*handle).cancel_type.swap(typ, Ordering::Relaxed) }
+    } else {
+        with_pthread_tls(|tls| {
+            let prev = tls.thread_cancel_type;
+            tls.thread_cancel_type = typ;
+            prev
+        })
+    };
     if !oldtype.is_null() {
         // SAFETY: oldtype is provided by caller and checked for null.
         unsafe { *oldtype = previous };
@@ -6537,7 +6652,8 @@ fn record_own_image_range() -> usize {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_testcancel() {
-    if !force_native_threading_enabled()
+    if core_current_thread_handle().is_none()
+        && !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
         && let Some(host_testcancel) = resolved_thread_testcancel_raw()
     {

@@ -7146,9 +7146,20 @@ pub(crate) unsafe fn mq_timedsend_cp(
 }
 
 /// `mq_notify` — register for notification when a message arrives.
+#[path = "mqueue_notify.rs"]
+mod mqueue_notify;
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_notify(mqdes: c_int, sevp: *const libc::sigevent) -> c_int {
-    match unsafe { syscall::sys_mq_notify(mqdes, sevp as usize) } {
+    // SIGEV_THREAD uses Linux's netlink cookie protocol; the application event
+    // itself contains a callback and must never be passed directly to Linux.
+    // Signal/none events and unregister retain the kernel's existing contract.
+    let result = if !sevp.is_null() && unsafe { (*sevp).sigev_notify == libc::SIGEV_THREAD } {
+        unsafe { mqueue_notify::register(mqdes, sevp) }
+    } else {
+        unsafe { syscall::sys_mq_notify(mqdes, sevp as usize) }
+    };
+    match result {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

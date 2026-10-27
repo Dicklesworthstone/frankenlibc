@@ -141,6 +141,15 @@ pub struct ThreadHandle {
     /// Written by the child before exit; read by the joiner after `tid == 0`.
     pub retval: core::cell::UnsafeCell<usize>,
 
+    /// The native thread's errno slot. Only its owner and that owner's signal
+    /// handlers access this cell; no inherited compiler TLS is involved.
+    pub errno: core::cell::UnsafeCell<i32>,
+
+    /// POSIX cancellation settings, initialized independently of the creator.
+    /// These settings do not imply native asynchronous cancellation delivery.
+    pub cancel_state: AtomicI32,
+    pub cancel_type: AtomicI32,
+
     /// Base address of the owned mapping, including its guard. Zero for a
     /// caller-provided stack, which this implementation must never unmap.
     pub stack_base: usize,
@@ -165,6 +174,7 @@ pub struct ThreadHandle {
 
 // SAFETY: ThreadHandle is designed for cross-thread sharing via atomic fields.
 // The `retval` field is accessed only after synchronization (tid cleared to 0).
+// The errno cell is accessed only by its owning thread and its signal handlers.
 #[allow(unsafe_code)]
 unsafe impl Send for ThreadHandle {}
 #[allow(unsafe_code)]
@@ -241,9 +251,15 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // Register TLS storage before signals can run application handlers or the
     // user routine can query its native handle. This path allocates nothing.
     // SAFETY: handle_ptr is live and this thread exclusively owns tls_values.
-    super::tls::register_thread_tls(current_tid, unsafe {
+    if !super::tls::register_thread_tls(current_tid, unsafe {
         (*handle_ptr).tls_values.as_mut_ptr()
-    });
+    }) {
+        // Exhausting the fixed identity table must not start a thread whose
+        // errno, key values or cancellation settings alias its creator.
+        handle.state.store(THREAD_FINISHED, Ordering::Release);
+        publish_startup(handle, 11 + 1); // EAGAIN
+        syscall::sys_exit_thread(0);
+    }
 
     // Try to transition STARTING → RUNNING. If detach_thread already set
     // DETACHED, we must not overwrite it.
@@ -401,7 +417,7 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
 #[allow(unsafe_code)]
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
-    super::tls::teardown_thread_tls(tid);
+    super::tls::teardown_native_thread_tls(tid);
 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return
     // value becomes visible only after the FINISHED/DETACHED synchronization.
@@ -729,6 +745,9 @@ pub unsafe fn create_thread_with_startup(
         state: AtomicU32::new(THREAD_STARTING),
         started: AtomicU32::new(0),
         retval: core::cell::UnsafeCell::new(0),
+        errno: core::cell::UnsafeCell::new(0),
+        cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
+        cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
         stack_base,
         stack_total_size,
         stack_addr: stack.address,
@@ -1186,6 +1205,43 @@ pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn self_tid() -> i32 {
     syscall::sys_gettid()
+}
+
+/// Return the calling native thread's live handle, without TLS, allocation,
+/// locks or host calls. Ordinary hosted processes avoid even the TID syscall
+/// until native thread creation has been attempted.
+///
+/// The pointer belongs to the calling thread. It remains valid through key
+/// destructors; native exit blocks signals before unregistering and reclaiming
+/// it. Callers must not retain it beyond the thread's lifetime.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
+    if !super::tls::native_threads_may_exist() {
+        return None;
+    }
+    handle_for_tid(syscall::sys_gettid())
+}
+
+/// Request cooperative cancellation of a live native thread without borrowing
+/// its handle. The identity table retires requests before handle reclamation.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn request_cancellation(handle_address: usize) -> bool {
+    if !super::tls::native_threads_may_exist() {
+        return false;
+    }
+    let Some(values_address) =
+        handle_address.checked_add(core::mem::offset_of!(ThreadHandle, tls_values))
+    else {
+        return false;
+    };
+    super::tls::request_thread_cancellation(values_address)
+}
+
+/// Consume a cooperative request for the calling native thread only.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn take_current_cancellation() -> bool {
+    super::tls::take_thread_cancellation(syscall::sys_gettid())
 }
 
 /// Resolve a kernel TID to a `ThreadHandle` pointer.

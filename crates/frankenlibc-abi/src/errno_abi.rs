@@ -103,15 +103,29 @@ unsafe extern "C" {
     fn frankenlibc_errno_location_async() -> *mut c_int;
 }
 
+#[inline]
+fn errno_location() -> *mut c_int {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: only this native thread and its signal handlers can access
+        // its errno cell. The handle stays registered throughout destructors;
+        // exit blocks signals before removing or reclaiming it.
+        return unsafe { (*handle).errno.get() };
+    }
+    // SAFETY: the hidden leaf addresses the caller's canonical static TLS slot
+    // without a resolver, allocation, Rust TLS initialization or locking.
+    unsafe { frankenlibc_errno_location_async() }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {
-    unsafe { frankenlibc_errno_location_async() }
+    errno_location()
 }
 
 /// Set the thread-local errno value.
 ///
-/// In interpose mode, `__errno_location` directly returns glibc's canonical
-/// static TLS slot. In standalone mode it returns FrankenLibC's owned TLS slot.
+/// Native clone threads use their ThreadHandle's private cell. Other interpose
+/// threads use glibc's canonical static TLS slot; standalone fallback threads
+/// use FrankenLibC's owned TLS slot.
 ///
 /// Uses volatile write to prevent the LTO optimizer from eliminating the store.
 #[inline]
@@ -122,10 +136,11 @@ pub unsafe fn set_abi_errno(val: c_int) {
 /// Set errno without host symbol lookup, Rust TLS, allocation, or locking.
 ///
 /// This is the errno path used by async-signal-safe ABI entries such as
-/// `_Fork`. The hidden assembly leaf is initial-exec TLS in both build modes.
+/// `_Fork`. Native ownership lookup uses only a raw TID syscall and atomic
+/// table reads; the fallback assembly leaf is initial-exec TLS in both modes.
 #[inline]
 pub(crate) unsafe fn set_abi_errno_local(val: c_int) {
-    let p = unsafe { frankenlibc_errno_location_async() };
+    let p = errno_location();
     unsafe { std::ptr::write_volatile(p, val) };
 }
 

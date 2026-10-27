@@ -140,7 +140,14 @@ def broadcast_main(library, output, child):
     if not child:
         environment = os.environ.copy()
         environment['FRANKENLIBC_RPC_BROADCAST_PARENT_NS'] = str(os.stat('/proc/self/ns/net').st_ino)
-        command = ['unshare', '--user', '--map-root-user', '--net', sys.executable,
+        effective_caps = next(line.split()[1] for line in Path('/proc/self/status').read_text().splitlines()
+                              if line.startswith('CapEff:'))
+        # A sudo caller already allowed to create a network namespace must
+        # retain its current user namespace: a new one loses the DAC override
+        # needed to traverse a private checkout owned by the CI runner.
+        namespace = ['--net'] if int(effective_caps, 16) & (1 << 21) else [
+            '--user', '--map-root-user', '--net']  # CAP_SYS_ADMIN
+        command = ['unshare', *namespace, sys.executable,
                    str(Path(__file__).resolve()), str(library), '--output', str(output),
                    '--broadcast', '--broadcast-child']
         return subprocess.call(command, env=environment)

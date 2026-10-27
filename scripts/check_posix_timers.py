@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare POSIX timer behavior with live GNU libc and the deployed candidate."""
+"""Compare POSIX timers and queue notifications with live GNU and the candidate."""
 
 import argparse
 import datetime
@@ -20,7 +20,15 @@ CASES = (
     "pending-sigpipe", "self-delete",
     "signal", "none", "default-signal", "fork-reset", "invalid", "lifetime",
     "concurrent",
+    "mq-thread", "mq-attributes", "mq-foreign-attributes", "mq-default-attributes",
+    "mq-rearm", "mq-busy", "mq-unregister", "mq-close", "mq-nonempty", "mq-signal",
+    "mq-none", "mq-fork", "mq-callback-exit", "mq-callback-cancel", "mq-overlap",
+    "mq-lifetime", "mq-pressure", "mq-concurrent",
 )
+# POSIX permits only async-signal-safe child operations after a multithreaded
+# fork. Retain the full active-helper recovery test for our implementation;
+# mq-fork compares process ownership with GNU after a single-threaded fork.
+CANDIDATE_ONLY_CASES = ("mq-fork-active",)
 
 
 def main():
@@ -66,7 +74,7 @@ def main():
     records = []
     reference = {}
 
-    def run_case(label, case, environment, expected, negative=False):
+    def run_case(label, case, environment, expected, negative=False, candidate_only=False):
         command = [str(executable), case, str(expected), str(host)]
         try:
             result = subprocess.run(command, env=environment, capture_output=True,
@@ -82,6 +90,8 @@ def main():
         if negative:
             passed = (code == 86 and not stdout and
                       stderr == "posix-timers:provider-mismatch:timer_create\n")
+        elif candidate_only:
+            passed = code == 0 and stdout == f"posix-timers:{case}:PASS\n"
         elif label == "gnu":
             expected = f"posix-timers:{case}:PASS\n"
             accepted = (expected,)
@@ -106,21 +116,24 @@ def main():
     for mode in ("strict", "hardened"):
         environment = dict(clean_env, LD_PRELOAD=str(library),
                            FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE="0")
-        for case in CASES:
-            run_case(mode, case, environment, library)
+        for case in CASES + CANDIDATE_ONLY_CASES:
+            run_case(mode, case, environment, library,
+                     candidate_only=case in CANDIDATE_ONLY_CASES)
     run_case("provider-negative", CASES[0], clean_env, library, negative=True)
     report = {
         "library": str(library),
         "library_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
         "gnu_library": str(host),
         "thread_backend": "hosted",
+        "candidate_only_cases": list(CANDIDATE_ONLY_CASES),
         "kernel_accounting_required": args.require_kernel_accounting,
         "records": records,
     }
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     passed = all(record["passed"] for record in records)
-    print(f"POSIX timers: {'PASS' if passed else 'FAIL'} "
-          f"({len(CASES)} live GNU cases, {2 * len(CASES)} candidate cases, "
+    print(f"POSIX timers and queues: {'PASS' if passed else 'FAIL'} "
+          f"({len(CASES)} live GNU cases, "
+          f"{2 * (len(CASES) + len(CANDIDATE_ONLY_CASES))} candidate cases, "
           "1 provider negative)")
     print(f"artifacts={output}")
     if any(record["kernel_accounting_unavailable"] for record in records):

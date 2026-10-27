@@ -1,7 +1,9 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <mqueue.h>
 #include <pthread.h>
 #include <sched.h>
 #include <semaphore.h>
@@ -588,9 +590,481 @@ static void concurrent_creation(void) {
     if (before >= 0) CHECK(kernel_timer_count() == before);
 }
 
+/* Message queues share SIGEV_THREAD's public callback ABI with timers, but
+ * use a different Linux delivery protocol and GNU signal-mask contract. */
+struct queue_state {
+    mqd_t queue;
+    sem_t ready, release, finished, cleanup;
+    _Atomic int calls;
+    pthread_t creator;
+    pthread_key_t key;
+    size_t stack_size, guard_size;
+    cpu_set_t affinity;
+    int rearm_count;
+};
+static struct queue_state queues[6];
+static _Atomic unsigned queue_serial;
+
+static void queue_initialize(struct queue_state *s) {
+    CHECK(sem_init(&s->ready, 0, 0) == 0);
+    CHECK(sem_init(&s->release, 0, 0) == 0);
+    CHECK(sem_init(&s->finished, 0, 0) == 0);
+    CHECK(sem_init(&s->cleanup, 0, 0) == 0);
+    s->creator = pthread_self();
+}
+
+static mqd_t queue_open(void) {
+    char name[96];
+    unsigned serial = atomic_fetch_add(&queue_serial, 1);
+    CHECK(snprintf(name, sizeof(name), "/frankenlibc-notify-%ld-%u",
+                   (long)getpid(), serial) > 0);
+    struct mq_attr attr = {.mq_maxmsg = 4, .mq_msgsize = 32};
+    mqd_t result = mq_open(name, O_CREAT | O_EXCL | O_RDWR | O_NONBLOCK, 0600, &attr);
+    CHECK(result != (mqd_t)-1);
+    /* Remove only this newly-created kernel queue name; descriptors retain it. */
+    CHECK(mq_unlink(name) == 0);
+    return result;
+}
+
+static void queue_send(mqd_t queue) { CHECK(mq_send(queue, "event", 5, 7) == 0); }
+static void queue_receive(mqd_t queue) {
+    char message[32];
+    unsigned priority;
+    CHECK(mq_receive(queue, message, sizeof(message), &priority) == 5);
+    CHECK(priority == 7 && !memcmp(message, "event", 5));
+}
+
+static struct sigevent queue_event(struct queue_state *s, void (*callback)(union sigval),
+                                   pthread_attr_t *attributes) {
+    struct sigevent event = {.sigev_notify = SIGEV_THREAD,
+                            .sigev_notify_function = callback,
+                            .sigev_notify_attributes = attributes,
+                            .sigev_value.sival_ptr = s};
+    return event;
+}
+
+static void queue_callback(union sigval value) {
+    struct queue_state *s = value.sival_ptr;
+    CHECK(s >= queues && s < queues + 6);
+    CHECK(!pthread_equal(s->creator, pthread_self()));
+    pthread_attr_t attributes;
+    int detached;
+    sigset_t mask;
+    CHECK(pthread_getattr_np(pthread_self(), &attributes) == 0);
+    CHECK(pthread_attr_getdetachstate(&attributes, &detached) == 0);
+    CHECK(pthread_attr_destroy(&attributes) == 0);
+    CHECK(detached == PTHREAD_CREATE_DETACHED);
+    CHECK(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0);
+    CHECK(sigismember(&mask, SIGUSR1) == 0 && sigismember(&mask, SIGUSR2) == 0);
+    atomic_fetch_add(&s->calls, 1);
+    CHECK(sem_post(&s->ready) == 0);
+}
+
+static void queue_quiet(struct queue_state *s) {
+    struct timespec deadline;
+    CHECK(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+    deadline.tv_nsec += 30000000;
+    if (deadline.tv_nsec >= 1000000000) { ++deadline.tv_sec; deadline.tv_nsec -= 1000000000; }
+    errno = 0;
+    CHECK(sem_timedwait(&s->ready, &deadline) == -1 && errno == ETIMEDOUT);
+}
+
+static void queue_thread(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    struct sigevent event = queue_event(s, queue_callback, NULL);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    memset(&event, 0xa5, sizeof(event));
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(atomic_load(&s->calls) == 1);
+    queue_receive(s->queue);
+    queue_send(s->queue);
+    queue_quiet(s);
+    CHECK(atomic_load(&s->calls) == 1);
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void queue_attribute_callback(union sigval value) {
+    struct queue_state *s = value.sival_ptr;
+    pthread_attr_t attr;
+    size_t stack, guard;
+    cpu_set_t affinity;
+    CHECK(pthread_getattr_np(pthread_self(), &attr) == 0);
+    CHECK(pthread_attr_getstacksize(&attr, &stack) == 0);
+    CHECK(pthread_attr_getguardsize(&attr, &guard) == 0);
+    CHECK(pthread_attr_destroy(&attr) == 0);
+    CHECK(stack == s->stack_size && guard == s->guard_size);
+    CHECK(sched_getaffinity(0, sizeof(affinity), &affinity) == 0);
+    CHECK(CPU_EQUAL(&affinity, &s->affinity));
+    queue_callback(value);
+}
+
+static void queue_attributes(int foreign) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    s->stack_size = 512 * 1024;
+    s->guard_size = 8192;
+    cpu_set_t available;
+    CHECK(sched_getaffinity(0, sizeof(available), &available) == 0);
+    CPU_ZERO(&s->affinity);
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (CPU_ISSET(cpu, &available)) { CPU_SET(cpu, &s->affinity); break; }
+    }
+    void *host = foreign ? dlopen(host_library, RTLD_NOW | RTLD_LOCAL) : NULL;
+    CHECK(!foreign || host != NULL);
+    int (*init)(pthread_attr_t *) = foreign ? dlsym(host, "pthread_attr_init") : pthread_attr_init;
+    int (*destroy)(pthread_attr_t *) = foreign ? dlsym(host, "pthread_attr_destroy") : pthread_attr_destroy;
+    int (*stack)(pthread_attr_t *, size_t) = foreign ? dlsym(host, "pthread_attr_setstacksize") : pthread_attr_setstacksize;
+    int (*guard)(pthread_attr_t *, size_t) = foreign ? dlsym(host, "pthread_attr_setguardsize") : pthread_attr_setguardsize;
+    int (*affinity)(pthread_attr_t *, size_t, const cpu_set_t *) = foreign ? dlsym(host, "pthread_attr_setaffinity_np") : pthread_attr_setaffinity_np;
+    int (*set_mask)(pthread_attr_t *, const sigset_t *) = foreign ? dlsym(host, "pthread_attr_setsigmask_np") : pthread_attr_setsigmask_np;
+    CHECK(init && destroy && stack && guard && affinity && set_mask);
+    pthread_attr_t attr;
+    sigset_t blocked;
+    CHECK(sigfillset(&blocked) == 0);
+    CHECK(init(&attr) == 0);
+    CHECK(stack(&attr, s->stack_size) == 0 && guard(&attr, s->guard_size) == 0);
+    CHECK(affinity(&attr, sizeof(s->affinity), &s->affinity) == 0);
+    CHECK(set_mask(&attr, &blocked) == 0);
+    struct sigevent event = queue_event(s, queue_attribute_callback, &attr);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    CHECK(destroy(&attr) == 0);
+    memset(&attr, 0xa5, sizeof(attr));
+    memset(&event, 0xa5, sizeof(event));
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(mq_close(s->queue) == 0);
+    if (host) CHECK(dlclose(host) == 0);
+}
+
+static void queue_defaults(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    s->stack_size = 768 * 1024;
+    s->guard_size = 12288;
+    CHECK(sched_getaffinity(0, sizeof(s->affinity), &s->affinity) == 0);
+    struct sigevent event = queue_event(s, queue_attribute_callback, NULL);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    pthread_attr_t saved, attr;
+    CHECK(pthread_getattr_default_np(&saved) == 0);
+    CHECK(pthread_attr_init(&attr) == 0);
+    CHECK(pthread_attr_setstacksize(&attr, s->stack_size) == 0);
+    CHECK(pthread_attr_setguardsize(&attr, s->guard_size) == 0);
+    CHECK(pthread_setattr_default_np(&attr) == 0);
+    CHECK(pthread_attr_destroy(&attr) == 0);
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(pthread_setattr_default_np(&saved) == 0);
+    CHECK(pthread_attr_destroy(&saved) == 0);
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void queue_rearm_callback(union sigval value) {
+    struct queue_state *s = value.sival_ptr;
+    int call = atomic_fetch_add(&s->calls, 1) + 1;
+    if (call < s->rearm_count) {
+        struct sigevent event = queue_event(s, queue_rearm_callback, NULL);
+        CHECK(mq_notify(s->queue, &event) == 0);
+    }
+    queue_receive(s->queue);
+    CHECK(sem_post(&s->ready) == 0);
+}
+
+static void queue_rearm(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    s->rearm_count = 8;
+    struct sigevent event = queue_event(s, queue_rearm_callback, NULL);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    for (int i = 1; i <= s->rearm_count; ++i) {
+        queue_send(s->queue);
+        wait_for(&s->ready);
+        CHECK(atomic_load(&s->calls) == i);
+    }
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void queue_busy(void) {
+    struct queue_state *first = &queues[0], *second = &queues[1];
+    queue_initialize(first);
+    queue_initialize(second);
+    first->queue = queue_open();
+    struct sigevent event = queue_event(first, queue_callback, NULL);
+    CHECK(mq_notify(first->queue, &event) == 0);
+    event.sigev_value.sival_ptr = second;
+    errno = 0;
+    CHECK(mq_notify(first->queue, &event) == -1 && errno == EBUSY);
+    queue_send(first->queue);
+    wait_for(&first->ready);
+    queue_quiet(second);
+    CHECK(atomic_load(&first->calls) == 1 && atomic_load(&second->calls) == 0);
+    CHECK(mq_close(first->queue) == 0);
+    errno = 0;
+    CHECK(mq_notify(-1, &event) == -1 && errno == EBADF);
+    errno = 0;
+    CHECK(mq_notify(-1, NULL) == -1 && errno == EBADF);
+}
+
+static void queue_remove(int close_descriptor) {
+    struct queue_state *first = &queues[0], *second = &queues[1];
+    queue_initialize(first);
+    queue_initialize(second);
+    mqd_t original = queue_open();
+    mqd_t remaining = close_descriptor ? dup(original) : original;
+    CHECK(remaining != (mqd_t)-1);
+    struct sigevent event = queue_event(first, queue_callback, NULL);
+    CHECK(mq_notify(original, &event) == 0);
+    if (close_descriptor) CHECK(mq_close(original) == 0);
+    else CHECK(mq_notify(original, NULL) == 0);
+    event.sigev_value.sival_ptr = second;
+    CHECK(mq_notify(remaining, &event) == 0);
+    queue_send(remaining);
+    wait_for(&second->ready);
+    queue_quiet(first);
+    CHECK(atomic_load(&first->calls) == 0 && atomic_load(&second->calls) == 1);
+    CHECK(mq_close(remaining) == 0);
+}
+
+static void queue_nonempty(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    queue_send(s->queue);
+    struct sigevent event = queue_event(s, queue_callback, NULL);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    queue_quiet(s);
+    queue_receive(s->queue);
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(atomic_load(&s->calls) == 1);
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void queue_signal(void) {
+    sigset_t mask, saved;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
+    CHECK(pthread_sigmask(SIG_BLOCK, &mask, &saved) == 0);
+    mqd_t queue = queue_open();
+    struct sigevent event = {.sigev_notify = SIGEV_SIGNAL, .sigev_signo = SIGUSR1,
+                            .sigev_value.sival_int = 0x14325};
+    CHECK(mq_notify(queue, &event) == 0);
+    queue_send(queue);
+    siginfo_t info;
+    struct timespec timeout = {.tv_sec = 5};
+    CHECK(sigtimedwait(&mask, &info, &timeout) == SIGUSR1);
+    CHECK(info.si_code == SI_MESGQ && info.si_value.sival_int == 0x14325);
+    CHECK(info.si_pid == getpid() && info.si_uid == getuid());
+    CHECK(mq_close(queue) == 0);
+    CHECK(pthread_sigmask(SIG_SETMASK, &saved, NULL) == 0);
+}
+
+static void queue_none(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    struct sigevent event = {.sigev_notify = SIGEV_NONE};
+    CHECK(mq_notify(s->queue, &event) == 0);
+    event = queue_event(s, queue_callback, NULL);
+    errno = 0;
+    CHECK(mq_notify(s->queue, &event) == -1 && errno == EBUSY);
+    queue_send(s->queue);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    queue_receive(s->queue);
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(atomic_load(&s->calls) == 1);
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void queue_fork(int active_helper) {
+    struct queue_state *parent = &queues[0], *child = &queues[1];
+    queue_initialize(parent);
+    parent->queue = queue_open();
+    struct sigevent event = queue_event(parent, queue_callback, NULL);
+    int ready[2];
+    CHECK(pipe(ready) == 0);
+    /* The GNU comparison forks a single-threaded process: mq_notify and
+     * pthread_create are not async-signal-safe child operations after a
+     * multithreaded fork. The candidate-only active-helper variant separately
+     * exercises our additional recovery guarantee without treating GNU's
+     * intermittent post-fork deadlock as a conformance oracle. */
+    if (active_helper) CHECK(mq_notify(parent->queue, &event) == 0);
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        CHECK(close(ready[1]) == 0);
+        char registered;
+        CHECK(read(ready[0], &registered, 1) == 1 && registered == 'R');
+        CHECK(close(ready[0]) == 0);
+        queue_initialize(child);
+        child->queue = queue_open();
+        struct sigevent own = queue_event(child, queue_callback, NULL);
+        errno = 0;
+        CHECK(mq_notify(parent->queue, &own) == -1 && errno == EBUSY);
+        CHECK(mq_notify(child->queue, &own) == 0);
+        queue_send(parent->queue);
+        queue_send(child->queue);
+        wait_for(&child->ready);
+        CHECK(atomic_load(&child->calls) == 1 && atomic_load(&parent->calls) == 0);
+        CHECK(mq_close(child->queue) == 0 && mq_close(parent->queue) == 0);
+        _Exit(0);
+    }
+    CHECK(close(ready[0]) == 0);
+    if (!active_helper) CHECK(mq_notify(parent->queue, &event) == 0);
+    CHECK(write(ready[1], "R", 1) == 1);
+    CHECK(close(ready[1]) == 0);
+    wait_for(&parent->ready);
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(atomic_load(&parent->calls) == 1);
+    CHECK(mq_close(parent->queue) == 0);
+}
+
+static void queue_cleanup(void *argument) {
+    struct queue_state *s = argument;
+    CHECK(sem_post(&s->cleanup) == 0);
+}
+static void queue_destructor(void *argument) {
+    struct queue_state *s = argument;
+    CHECK(sem_post(&s->finished) == 0);
+}
+static void queue_exit_callback(union sigval value) {
+    struct queue_state *s = value.sival_ptr;
+    CHECK(pthread_setspecific(s->key, s) == 0);
+    pthread_cleanup_push(queue_cleanup, s);
+    if (s->rearm_count) {
+        CHECK(pthread_cancel(pthread_self()) == 0);
+        pthread_testcancel();
+        CHECK(0);
+    } else {
+        pthread_exit(NULL);
+    }
+    pthread_cleanup_pop(0);
+}
+static void queue_callback_exit(int cancel) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    s->rearm_count = cancel;
+    CHECK(pthread_key_create(&s->key, queue_destructor) == 0);
+    struct sigevent event = queue_event(s, queue_exit_callback, NULL);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    queue_send(s->queue);
+    wait_for(&s->cleanup);
+    wait_for(&s->finished);
+    CHECK(mq_close(s->queue) == 0);
+    CHECK(pthread_key_delete(s->key) == 0);
+}
+
+static void queue_overlap_callback(union sigval value) {
+    struct queue_state *s = value.sival_ptr;
+    CHECK(sem_post(&s->ready) == 0);
+    wait_for(&s->release);
+    CHECK(sem_post(&s->finished) == 0);
+}
+static void queue_overlap(void) {
+    for (int i = 0; i < 2; ++i) {
+        struct queue_state *s = &queues[i];
+        queue_initialize(s);
+        s->queue = queue_open();
+        struct sigevent event = queue_event(s, queue_overlap_callback, NULL);
+        CHECK(mq_notify(s->queue, &event) == 0);
+        queue_send(s->queue);
+        wait_for(&s->ready);
+    }
+    for (int i = 0; i < 2; ++i) {
+        CHECK(sem_post(&queues[i].release) == 0);
+        wait_for(&queues[i].finished);
+        CHECK(mq_close(queues[i].queue) == 0);
+    }
+}
+
+static void queue_lifetime(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    s->queue = queue_open();
+    struct sigevent event = queue_event(s, queue_callback, NULL);
+    for (int i = 0; i < 128; ++i) {
+        pthread_attr_t attr;
+        CHECK(pthread_attr_init(&attr) == 0);
+        CHECK(sched_getaffinity(0, sizeof(s->affinity), &s->affinity) == 0);
+        CHECK(pthread_attr_setaffinity_np(&attr, sizeof(s->affinity), &s->affinity) == 0);
+        event.sigev_notify_attributes = &attr;
+        CHECK(mq_notify(s->queue, &event) == 0);
+        CHECK(pthread_attr_destroy(&attr) == 0);
+        CHECK(mq_notify(s->queue, NULL) == 0);
+    }
+    event.sigev_notify_attributes = NULL;
+    CHECK(mq_notify(s->queue, &event) == 0);
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(atomic_load(&s->calls) == 1);
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void queue_pressure(void) {
+    struct queue_state *s = &queues[0];
+    queue_initialize(s);
+    cpu_set_t available, single;
+    CHECK(sched_getaffinity(0, sizeof(available), &available) == 0);
+    CPU_ZERO(&single);
+    int selected = -1;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (CPU_ISSET(cpu, &available)) { selected = cpu; break; }
+    }
+    CHECK(selected >= 0);
+    CPU_SET(selected, &single);
+    CHECK(sched_setaffinity(0, sizeof(single), &single) == 0);
+    s->queue = queue_open();
+    struct sigevent event = queue_event(s, queue_callback, NULL);
+    /* Removal cookies can fill the helper's netlink receive buffer. Linux
+     * mq_notify may then wait for receive-buffer space, so registration must
+     * not hold the same registry lock that the receiver needs to keep draining.
+     * One CPU exposes the registrar/receiver handoff without altering hidden
+     * descriptors, socket options, or the application's queue configuration. */
+    for (int i = 0; i < 200000; ++i) {
+        CHECK(mq_notify(s->queue, &event) == 0);
+        CHECK(mq_notify(s->queue, NULL) == 0);
+    }
+    CHECK(sched_setaffinity(0, sizeof(available), &available) == 0);
+    CHECK(mq_notify(s->queue, &event) == 0);
+    queue_send(s->queue);
+    wait_for(&s->ready);
+    CHECK(atomic_load(&s->calls) == 1);
+    CHECK(mq_close(s->queue) == 0);
+}
+
+static void *queue_concurrent_worker(void *argument) {
+    struct queue_state *s = argument;
+    queue_initialize(s);
+    for (int i = 0; i < 16; ++i) {
+        s->queue = queue_open();
+        struct sigevent event = queue_event(s, queue_callback, NULL);
+        CHECK(mq_notify(s->queue, &event) == 0);
+        queue_send(s->queue);
+        wait_for(&s->ready);
+        CHECK(atomic_load(&s->calls) == i + 1);
+        CHECK(mq_close(s->queue) == 0);
+    }
+    return NULL;
+}
+static void queue_concurrent(void) {
+    pthread_t workers[4];
+    for (int i = 0; i < 4; ++i)
+        CHECK(pthread_create(&workers[i], NULL, queue_concurrent_worker, &queues[i]) == 0);
+    for (int i = 0; i < 4; ++i) CHECK(pthread_join(workers[i], NULL) == 0);
+}
+
 static int verify_provider(const char *expected) {
     static const char *symbols[] = {
         "timer_create", "timer_settime", "timer_gettime", "timer_delete", "timer_getoverrun",
+        "mq_notify", "mq_open", "mq_close", "mq_send", "mq_receive", "mq_unlink",
     };
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); ++i) {
         void *address = dlsym(RTLD_DEFAULT, symbols[i]);
@@ -640,6 +1114,25 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "invalid")) invalid_requests();
     else if (!strcmp(name, "lifetime")) lifetime_cycles();
     else if (!strcmp(name, "concurrent")) concurrent_creation();
+    else if (!strcmp(name, "mq-thread")) queue_thread();
+    else if (!strcmp(name, "mq-attributes")) queue_attributes(0);
+    else if (!strcmp(name, "mq-foreign-attributes")) queue_attributes(1);
+    else if (!strcmp(name, "mq-default-attributes")) queue_defaults();
+    else if (!strcmp(name, "mq-rearm")) queue_rearm();
+    else if (!strcmp(name, "mq-busy")) queue_busy();
+    else if (!strcmp(name, "mq-unregister")) queue_remove(0);
+    else if (!strcmp(name, "mq-close")) queue_remove(1);
+    else if (!strcmp(name, "mq-nonempty")) queue_nonempty();
+    else if (!strcmp(name, "mq-signal")) queue_signal();
+    else if (!strcmp(name, "mq-none")) queue_none();
+    else if (!strcmp(name, "mq-fork")) queue_fork(0);
+    else if (!strcmp(name, "mq-fork-active")) queue_fork(1);
+    else if (!strcmp(name, "mq-callback-exit")) queue_callback_exit(0);
+    else if (!strcmp(name, "mq-callback-cancel")) queue_callback_exit(1);
+    else if (!strcmp(name, "mq-overlap")) queue_overlap();
+    else if (!strcmp(name, "mq-lifetime")) queue_lifetime();
+    else if (!strcmp(name, "mq-pressure")) queue_pressure();
+    else if (!strcmp(name, "mq-concurrent")) queue_concurrent();
     else return 2;
     printf("posix-timers:%s:PASS\n", name);
     return 0;

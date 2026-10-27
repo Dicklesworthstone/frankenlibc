@@ -32,7 +32,7 @@ use crate::syscall;
 
 use crate::rcu;
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Maximum number of TLS keys (POSIX requires >= 128; glibc uses 1024).
@@ -116,6 +116,23 @@ static TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] = [const { AtomicI32::new(0) }; TL
 /// Pointer array (paired with TLS_TIDS). Stores `*mut [TlsEntry; PTHREAD_KEYS_MAX]`
 /// cast to usize. 0 = no pointer.
 static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
+
+/// Native cancellation belongs to one registration, not a reusable handle
+/// address. The low bit is pending; the remaining bits identify the lifetime.
+/// Remote callers update this static word without dereferencing a handle that
+/// a detached thread could concurrently free. Removal retires the generation
+/// before the pointer is cleared, so an in-flight request cannot hit a new
+/// occupant of either the table slot or the allocation.
+static TLS_CANCEL_WORDS: [AtomicU64; TLS_TABLE_SLOTS] =
+    [const { AtomicU64::new(0) }; TLS_TABLE_SLOTS];
+static NEXT_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(2);
+const CANCEL_PENDING: u64 = 1;
+
+fn publish_tls_slot(index: usize, values_ptr: *mut TlsEntry, generation: u64) {
+    TLS_CANCEL_WORDS[index].store(0, Ordering::Release);
+    TLS_PTRS[index].store(values_ptr as usize, Ordering::Release);
+    TLS_CANCEL_WORDS[index].store(generation, Ordering::Release);
+}
 
 // Thread-local fallback values for threads that are not explicitly registered
 // in the TID -> pointer table.
@@ -369,10 +386,19 @@ fn fallback_table_remove(tid: i32) -> *mut TlsEntry {
 /// Register a TID → values-pointer mapping in the global table.
 ///
 /// This function is **allocation-free** and safe to call from clone-based threads.
-fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
+fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
     if tid <= 0 {
-        return;
+        return false;
     }
+    // Refuse further registrations on exhaustion instead of ever reusing a
+    // generation. In practice this permits over nine quintillion lifetimes.
+    let Ok(generation) =
+        NEXT_CANCEL_GENERATION.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            next.checked_add(2)
+        })
+    else {
+        return false;
+    };
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
     let mut first_tombstone: Option<usize> = None;
     for i in 0..TLS_TABLE_SLOTS {
@@ -380,8 +406,8 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
         let current = TLS_TIDS[idx].load(Ordering::Acquire);
         if current == tid {
             // Already registered (shouldn't happen, but handle gracefully).
-            TLS_PTRS[idx].store(values_ptr as usize, Ordering::Release);
-            return;
+            publish_tls_slot(idx, values_ptr, generation);
+            return true;
         }
 
         if current == TLS_SLOT_TOMBSTONE {
@@ -397,8 +423,8 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
                     .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
-                    TLS_PTRS[tomb_idx].store(values_ptr as usize, Ordering::Release);
-                    return;
+                    publish_tls_slot(tomb_idx, values_ptr, generation);
+                    return true;
                 }
                 first_tombstone = None;
                 continue;
@@ -408,8 +434,8 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
                 .compare_exchange(TLS_SLOT_EMPTY, tid, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                TLS_PTRS[idx].store(values_ptr as usize, Ordering::Release);
-                return;
+                publish_tls_slot(idx, values_ptr, generation);
+                return true;
             }
         }
     }
@@ -419,8 +445,10 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
             .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     {
-        TLS_PTRS[tomb_idx].store(values_ptr as usize, Ordering::Release);
+        publish_tls_slot(tomb_idx, values_ptr, generation);
+        return true;
     }
+    false
 }
 
 /// Look up the TLS values pointer for a given TID.
@@ -446,6 +474,66 @@ pub(crate) fn table_lookup(tid: i32) -> *mut TlsEntry {
     core::ptr::null_mut()
 }
 
+/// Set a request only while the observed registration is still alive.
+fn request_cancel_generation(index: usize, mut observed: u64) -> bool {
+    let generation = observed & !CANCEL_PENDING;
+    if generation == 0 {
+        return false;
+    }
+    loop {
+        match TLS_CANCEL_WORDS[index].compare_exchange(
+            observed,
+            observed | CANCEL_PENDING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(current) if current & !CANCEL_PENDING == generation => observed = current,
+            Err(_) => return false,
+        }
+    }
+}
+
+/// Request cancellation by an opaque native TLS-storage address. Neither the
+/// caller nor this table needs to dereference the target's allocation.
+pub(crate) fn request_thread_cancellation(values_address: usize) -> bool {
+    if values_address == 0 {
+        return false;
+    }
+    for index in 0..TLS_TABLE_SLOTS {
+        // Acquire the generation before comparing the pointer. Publishing a
+        // replacement pointer also replaces this generation; the CAS detects
+        // removal/reuse even when the allocator returns the identical address.
+        let observed = TLS_CANCEL_WORDS[index].load(Ordering::Acquire);
+        if observed != 0 && TLS_PTRS[index].load(Ordering::Acquire) == values_address {
+            return request_cancel_generation(index, observed);
+        }
+    }
+    false
+}
+
+/// Consume the calling native thread's request. Its registration cannot be
+/// removed until this same thread enters final teardown.
+pub(crate) fn take_thread_cancellation(tid: i32) -> bool {
+    if tid <= 0 {
+        return false;
+    }
+    let start = tid as u32 as usize % TLS_TABLE_SLOTS;
+    for offset in 0..TLS_TABLE_SLOTS {
+        let index = (start + offset) % TLS_TABLE_SLOTS;
+        let stored_tid = TLS_TIDS[index].load(Ordering::Acquire);
+        if stored_tid == tid {
+            return TLS_CANCEL_WORDS[index].fetch_and(!CANCEL_PENDING, Ordering::AcqRel)
+                & CANCEL_PENDING
+                != 0;
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            break;
+        }
+    }
+    false
+}
+
 /// Remove a TID from the table and return its values pointer.
 ///
 /// **Allocation-free.**
@@ -458,6 +546,7 @@ fn table_remove(tid: i32) -> *mut TlsEntry {
         let idx = (start + i) % TLS_TABLE_SLOTS;
         let stored_tid = TLS_TIDS[idx].load(Ordering::Acquire);
         if stored_tid == tid {
+            TLS_CANCEL_WORDS[idx].store(0, Ordering::Release);
             let ptr = TLS_PTRS[idx].swap(0, Ordering::AcqRel);
             TLS_TIDS[idx].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
             return ptr as *mut TlsEntry;
@@ -519,6 +608,7 @@ static TID_CACHE_DISABLED: core::sync::atomic::AtomicBool =
 fn rekey_fork_child_table(
     tids: &[AtomicI32; TLS_TABLE_SLOTS],
     pointers: &[AtomicUsize; TLS_TABLE_SLOTS],
+    cancellation: Option<&[AtomicU64; TLS_TABLE_SLOTS]>,
     parent_tid: i32,
     child_tid: i32,
     retain_unused_blocks: bool,
@@ -529,7 +619,13 @@ fn rekey_fork_child_table(
     let survivor = survivor_index
         .map(|index| pointers[index].swap(0, Ordering::AcqRel))
         .unwrap_or(0);
+    let survivor_cancel = cancellation
+        .zip(survivor_index)
+        .map_or(0, |(words, index)| words[index].load(Ordering::Acquire));
     for index in 0..TLS_TABLE_SLOTS {
+        if let Some(words) = cancellation {
+            words[index].store(0, Ordering::Release);
+        }
         tids[index].store(TLS_SLOT_EMPTY, Ordering::Release);
         if !retain_unused_blocks {
             pointers[index].store(0, Ordering::Release);
@@ -546,6 +642,9 @@ fn rekey_fork_child_table(
             pointers[source].store(spare, Ordering::Release);
         }
         tids[destination].store(child_tid, Ordering::Release);
+        if let Some(words) = cancellation {
+            words[destination].store(survivor_cancel, Ordering::Release);
+        }
     }
 }
 
@@ -557,11 +656,19 @@ fn rekey_fork_child_table(
 /// metadata must not be accessed concurrently while it is rebuilt.
 pub unsafe fn note_fork_child(parent_tid: i32) {
     let child_tid = syscall::sys_gettid();
-    rekey_fork_child_table(&TLS_TIDS, &TLS_PTRS, parent_tid, child_tid, false);
+    rekey_fork_child_table(
+        &TLS_TIDS,
+        &TLS_PTRS,
+        Some(&TLS_CANCEL_WORDS),
+        parent_tid,
+        child_tid,
+        false,
+    );
     #[cfg(feature = "owned-tls-cache")]
     rekey_fork_child_table(
         &FALLBACK_TLS_TIDS,
         &FALLBACK_TLS_PTRS,
+        None,
         parent_tid,
         child_tid,
         true,
@@ -572,6 +679,12 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
 /// Call before cloning a thread that shares its creator's TLS.
 pub(crate) fn disable_tid_cache() {
     TID_CACHE_DISABLED.store(true, Ordering::SeqCst);
+}
+
+/// Whether a native thread may share the caller's inherited compiler TLS.
+#[inline]
+pub(crate) fn native_threads_may_exist() -> bool {
+    TID_CACHE_DISABLED.load(Ordering::Relaxed)
 }
 
 // ---------------------------------------------------------------------------
@@ -844,10 +957,13 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
 ///
 /// **Allocation-free** — safe to call from clone-based threads.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) {
-    table_register(tid, values_ptr);
+pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
+    if !table_register(tid, values_ptr) {
+        return false;
+    }
     // Register with RCU for lock-free KEY_REGISTRY reads.
     let _ = rcu::rcu_register_thread(tid as u32);
+    true
 }
 
 /// Run the POSIX key destructors of the exiting thread `tid`: the hook for
@@ -871,6 +987,19 @@ pub fn run_exiting_thread_key_destructors(tid: i32) {
 /// After all iterations, the thread's table entry is removed.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn teardown_thread_tls(tid: i32) {
+    teardown_thread_tls_impl(tid, false);
+}
+
+/// Native exit must stop application signal handlers before withdrawing the
+/// identity that owns errno and cancellation settings. Destructors still run
+/// with the application's signal mask and the live native handle.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn teardown_native_thread_tls(tid: i32) {
+    teardown_thread_tls_impl(tid, true);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
     let values_ptr = table_lookup(tid);
     // Native threads own the block in their ThreadHandle. Their inherited
     // hardware TLS can still belong to the creator, so neither access nor
@@ -962,6 +1091,26 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
         }
     }
 
+    if native_exit {
+        let blocked = u64::MAX;
+        // SAFETY: both supported Linux ABIs use this eight-byte signal set.
+        // The identical syscall/mask succeeded before clone. If application
+        // seccomp policy now forbids it, terminating the process is safer than
+        // exposing a reclaimed handle to an application signal handler.
+        if unsafe {
+            syscall::sys_rt_sigprocmask(
+                2, // SIG_SETMASK
+                core::ptr::from_ref(&blocked).cast(),
+                core::ptr::null_mut(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .is_err()
+        {
+            syscall::sys_exit_group(127);
+        }
+    }
+
     if registered {
         table_remove(tid);
     } else {
@@ -999,6 +1148,7 @@ pub(crate) fn reset_tls_state() {
 
     // Clear the table.
     for i in 0..TLS_TABLE_SLOTS {
+        TLS_CANCEL_WORDS[i].store(0, Ordering::Release);
         TLS_TIDS[i].store(TLS_SLOT_EMPTY, Ordering::Release);
         TLS_PTRS[i].store(0, Ordering::Release);
     }
@@ -1158,17 +1308,30 @@ mod tests {
             // the child's destination and contains a second vanished thread.
             let tids = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
             let pointers = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
+            let cancellation = [const { AtomicU64::new(0) }; TLS_TABLE_SLOTS];
             tids[100].store(100, Ordering::Relaxed);
             pointers[100].store(0x1000, Ordering::Relaxed);
+            cancellation[100].store(3, Ordering::Relaxed);
             tids[101].store(100 + TLS_TABLE_SLOTS as i32, Ordering::Relaxed);
             pointers[101].store(0x2000, Ordering::Relaxed);
+            cancellation[101].store(5, Ordering::Relaxed);
             tids[102].store(101 + TLS_TABLE_SLOTS as i32, Ordering::Relaxed);
             pointers[102].store(0x3000, Ordering::Relaxed);
 
-            rekey_fork_child_table(&tids, &pointers, 100, 101, retain_unused);
+            rekey_fork_child_table(
+                &tids,
+                &pointers,
+                Some(&cancellation),
+                100,
+                101,
+                retain_unused,
+            );
 
             assert_eq!(tids[101].load(Ordering::Relaxed), 101);
             assert_eq!(pointers[101].load(Ordering::Relaxed), 0x1000);
+            assert_eq!(cancellation[101].load(Ordering::Relaxed), 3);
+            assert_eq!(cancellation[100].load(Ordering::Relaxed), 0);
+            assert_eq!(cancellation[102].load(Ordering::Relaxed), 0);
             assert_eq!(
                 tids.iter()
                     .filter(|tid| tid.load(Ordering::Relaxed) != TLS_SLOT_EMPTY)
@@ -1743,6 +1906,69 @@ mod tests {
             seq_after_create + 1,
             "seq should increment on delete"
         );
+    }
+
+    #[test]
+    fn full_identity_table_rejects_native_creation_before_user_code() {
+        let _g = lock_and_reset();
+        static ENTERED: AtomicU32 = AtomicU32::new(0);
+        unsafe extern "C" fn entry(_: usize) -> usize {
+            ENTERED.fetch_add(1, AtomicOrdering::SeqCst);
+            0
+        }
+        ENTERED.store(0, AtomicOrdering::SeqCst);
+        let mut block = TestTlsBlock::new();
+        for index in 0..TLS_TABLE_SLOTS {
+            // Linux TIDs cannot reach this range. Each fake identity occupies
+            // one slot without interfering with the real creator/child TIDs.
+            table_register(i32::MAX - index as i32, block.as_mut_ptr());
+        }
+        let result =
+            unsafe { super::super::thread::create_thread(entry as *const () as usize, 0, 0) };
+        let error = match result {
+            Err(error) => error,
+            Ok(handle) => {
+                // Reclaim the unexpected child before reporting a regression.
+                let _ = unsafe { super::super::thread::join_thread(handle) };
+                0
+            }
+        };
+        for index in 0..TLS_TABLE_SLOTS {
+            table_remove(i32::MAX - index as i32);
+        }
+        assert_eq!(error, 11, "identity exhaustion must report EAGAIN");
+        assert_eq!(ENTERED.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[test]
+    fn cancellation_requests_retire_with_native_identity() {
+        let _g = lock_and_reset();
+        let first_tid = 1001;
+        let next_tid = first_tid + TLS_TABLE_SLOTS as i32;
+        let index = first_tid as usize % TLS_TABLE_SLOTS;
+        let mut block = TestTlsBlock::new();
+        let address = block.as_mut_ptr() as usize;
+        assert!(table_register(first_tid, block.as_mut_ptr()));
+        let old_generation = TLS_CANCEL_WORDS[index].load(Ordering::Acquire);
+        assert!(request_thread_cancellation(address));
+        assert!(take_thread_cancellation(first_tid));
+        assert!(!take_thread_cancellation(first_tid));
+
+        // Return with an unconsumed request, then reuse both the registration
+        // slot and the allocation address for a different thread.
+        assert!(request_thread_cancellation(address));
+        table_remove(first_tid);
+        assert!(!request_thread_cancellation(address));
+        assert!(table_register(next_tid, block.as_mut_ptr()));
+        assert!(!take_thread_cancellation(next_tid));
+
+        // A requester paused between observing the old address/generation and
+        // publishing its request must not cancel the replacement identity.
+        assert!(!request_cancel_generation(index, old_generation));
+        assert!(!take_thread_cancellation(next_tid));
+        assert!(request_thread_cancellation(address));
+        assert!(take_thread_cancellation(next_tid));
+        table_remove(next_tid);
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use frankenlibc_core::syscall as raw;
 
 use super::aio_completion::{self, Notice};
-use crate::pthread_abi::TimerThreadAttributes;
+use crate::pthread_abi::NotificationThreadAttributes;
 use crate::util::{ArtifactHashMap, artifact_hash_map};
 
 const HANDLE_TAG: usize = 1usize << (usize::BITS - 1);
@@ -26,7 +26,7 @@ const HELPER_STACK_SIZE: usize = 256 * 1024;
 struct ThreadTimer {
     kernel_id: c_int,
     notice: Notice,
-    attributes: TimerThreadAttributes,
+    attributes: NotificationThreadAttributes,
 }
 
 struct TimerRuntime {
@@ -136,7 +136,9 @@ unsafe extern "C-unwind" fn helper_start(arg: *mut c_void) -> *mut c_void {
         wake_helper_start(runtime);
         return std::ptr::null_mut();
     }
-    runtime.helper_tid.store(raw::sys_gettid(), Ordering::Release);
+    runtime
+        .helper_tid
+        .store(raw::sys_gettid(), Ordering::Release);
     wake_helper_start(runtime);
 
     loop {
@@ -188,12 +190,20 @@ impl TimerRuntime {
     fn ensure_helper(&'static self) -> Result<c_int, c_int> {
         let existing = self.helper_tid.load(Ordering::Acquire);
         if existing != 0 {
-            return if existing > 0 { Ok(existing) } else { Err(-existing) };
+            return if existing > 0 {
+                Ok(existing)
+            } else {
+                Err(-existing)
+            };
         }
         let _start = self.helper_start.lock().unwrap_or_else(|e| e.into_inner());
         let existing = self.helper_tid.load(Ordering::Acquire);
         if existing != 0 {
-            return if existing > 0 { Ok(existing) } else { Err(-existing) };
+            return if existing > 0 {
+                Ok(existing)
+            } else {
+                Err(-existing)
+            };
         }
         // The helper has implementation-owned attributes, independent of the
         // application's notification stack, affinity and scheduling settings.
@@ -203,11 +213,13 @@ impl TimerRuntime {
         if init != 0 {
             return Err(init);
         }
-        let stack = unsafe {
-            crate::pthread_abi::pthread_attr_setstacksize(&mut attr, HELPER_STACK_SIZE)
-        };
+        let stack =
+            unsafe { crate::pthread_abi::pthread_attr_setstacksize(&mut attr, HELPER_STACK_SIZE) };
         let detached = unsafe {
-            crate::pthread_abi::pthread_attr_setdetachstate(&mut attr, libc::PTHREAD_CREATE_DETACHED)
+            crate::pthread_abi::pthread_attr_setdetachstate(
+                &mut attr,
+                libc::PTHREAD_CREATE_DETACHED,
+            )
         };
         let spawned = if stack != 0 {
             Err(stack)
@@ -217,11 +229,7 @@ impl TimerRuntime {
             // SAFETY: self is persistent. pthread_create consumes attr before
             // returning and the detached worker never borrows that local object.
             unsafe {
-                aio_completion::spawn(
-                    helper_start,
-                    (self as *const Self).cast_mut().cast(),
-                    &attr,
-                )
+                aio_completion::spawn(helper_start, (self as *const Self).cast_mut().cast(), &attr)
             }
         };
         let _ = unsafe { crate::pthread_abi::pthread_attr_destroy(&mut attr) };
@@ -261,7 +269,7 @@ pub(super) unsafe fn create(
     if !matches!(notice, Notice::Thread { .. }) {
         return Err(libc::EINVAL);
     }
-    let attributes = unsafe { TimerThreadAttributes::new(attributes) }?;
+    let attributes = unsafe { NotificationThreadAttributes::new(attributes) }?;
     let runtime = runtime();
     let tid = runtime.ensure_helper()?;
     let token = NEXT_TIMER_TOKEN
@@ -307,7 +315,9 @@ pub(super) fn with_kernel_id<T>(
         return operation(timer as c_int);
     }
     let timers = runtime().timers.lock().unwrap_or_else(|e| e.into_inner());
-    let timer = timers.get(&(timer as usize & !HANDLE_TAG)).ok_or(libc::EINVAL)?;
+    let timer = timers
+        .get(&(timer as usize & !HANDLE_TAG))
+        .ok_or(libc::EINVAL)?;
     operation(timer.kernel_id)
 }
 

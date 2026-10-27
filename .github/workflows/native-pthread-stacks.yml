@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/errno_abi.rs'
+      - 'crates/frankenlibc-abi/src/mqueue_notify.rs'
       - 'crates/frankenlibc-abi/src/posix_timer.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
@@ -19,6 +21,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
+      - 'tests/integration/fixture_pthread_native_state.c'
+      - 'scripts/check_pthread_native_state.py'
   workflow_dispatch:
 
 permissions:
@@ -54,7 +58,7 @@ jobs:
                     'pthread::thread::tests::'], 'strict', 23)]
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                  *features, 'pthread::tls::tests::'], 'strict', 44))
+                  *features, 'pthread::tls::tests::'], 'strict', 46))
           for mode in ['strict', 'hardened']:
               cases.append((mode, ['cargo', 'test', '-p', 'frankenlibc-abi',
                   '--test', 'pthread_stack_abi_test'], mode, 8))
@@ -117,7 +121,13 @@ jobs:
         run: |
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
             bash scripts/check_pthread_extensions_native.sh --key-destructors
-      - name: Compare POSIX timer callbacks and lifecycle against GNU libc
+      - name: Compare native errno and cancellation settings against GNU pthreads
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/target/conformance/pthread_native_state"
+      - name: Compare POSIX timer and message-queue callbacks against GNU libc
         shell: bash
         run: |
           python3 scripts/check_posix_timers.py \
@@ -137,6 +147,7 @@ jobs:
           path: |
             target/conformance/pthread_startup/
             target/conformance/pthread_keys/
+            target/conformance/pthread_native_state/
             target/conformance/posix_timers/
           if-no-files-found: error
           retention-days: 14

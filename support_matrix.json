@@ -8472,11 +8472,11 @@
     },
     {
       "symbol": "mq_notify",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Register notification on message queue via SYS_mq_notify",
-      "hardened_semantics": "MQ notification with sigevent pointer validation",
+      "strict_semantics": "Kernel signal/none notification; SIGEV_THREAD uses an owned netlink registration and detached callback thread with copied attributes. Default pthread backend requires host libc.",
+      "hardened_semantics": "Same notification, unregister, callback ownership and fork-isolation contract",
       "default_stub": false
     },
     {
@@ -33219,21 +33219,21 @@
   "summary": {
     "total": 4119,
     "implemented": 2419,
-    "raw_syscall": 409,
-    "wraps_host_libc": 1273,
+    "raw_syscall": 408,
+    "wraps_host_libc": 1274,
     "glibc_call_through": 0,
     "stub": 18
   },
   "implemented": 2419,
-  "raw_syscall": 409,
+  "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 18,
   "counts": {
     "implemented": 2419,
-    "raw_syscall": 409,
+    "raw_syscall": 408,
     "glibc_call_through": 0,
     "stub": 18,
-    "wraps_host_libc": 1273
+    "wraps_host_libc": 1274
   },
-  "wraps_host_libc": 1273
+  "wraps_host_libc": 1274
 }
