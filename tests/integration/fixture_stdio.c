@@ -5,9 +5,13 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 static int make_temp_path(char path[64]) {
@@ -451,30 +455,259 @@ static int test_cookie_scanf_preserves_unread_suffix(void) {
     return 0;
 }
 
-static int check_cookie_providers(const char *expected) {
-    const char *symbols[] = {"fopencookie", "fread", "setvbuf", "ferror", "feof", "fclose"};
+static int check_stdio_providers(const char *expected, const char *const *symbols,
+                                 size_t count) {
     char *wanted = realpath(expected, NULL);
     if (!wanted) return 1;
     int failed = 0;
-    for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         Dl_info info;
         void *address = dlsym(RTLD_DEFAULT, symbols[i]);
         if (!address || !dladdr(address, &info)) { failed = 1; break; }
         char *actual = realpath(info.dli_fname, NULL);
         fprintf(stderr, "provider %s=%s\n", symbols[i], info.dli_fname);
-        if (!actual || strcmp(actual, wanted)) failed = 1;
+        if (!actual) {
+            fprintf(stderr, "FAIL: cannot resolve stdio provider path for %s\n", symbols[i]);
+            failed = 1;
+        } else if (strcmp(actual, wanted)) {
+            fprintf(stderr, "FAIL: wrong stdio provider for %s\n", symbols[i]);
+            failed = 1;
+        }
         free(actual);
     }
     free(wanted);
     return failed;
 }
 
+/* Real descriptor errors must stay visible at the FILE boundary. The second
+ * alarm supplies data and EOF only as a bounded negative control: an incorrect
+ * EINTR retry then produces a mismatching result instead of hanging this test.
+ * These cases use only anonymous pipes and never remove filesystem objects. */
+static volatile sig_atomic_t fd_error_signals;
+static volatile sig_atomic_t fd_error_writer = -1;
+
+static void interrupt_stdio_read(int signal_number) {
+    (void)signal_number;
+    int saved_errno = errno;
+    ++fd_error_signals;
+    if (fd_error_signals == 2) {
+        (void)syscall(SYS_write, fd_error_writer, "X\n", 2);
+        (void)syscall(SYS_close, fd_error_writer);
+        fd_error_writer = -1;
+    }
+    errno = saved_errno;
+}
+
+enum fd_read_api {
+    FD_GETC, FD_READ, FD_READ_LARGE, FD_READ_ELEMENTS, FD_GETS, FD_GETLINE,
+    FD_GETDELIM, FD_READ_API_COUNT
+};
+
+struct nonblocking_cookie {
+    size_t remaining;
+};
+
+static ssize_t read_cookie_eagain(void *opaque, char *buf, size_t count) {
+    struct nonblocking_cookie *cookie = opaque;
+    if (cookie->remaining) {
+        size_t n = cookie->remaining < count ? cookie->remaining : count;
+        memcpy(buf, "abc" + 3 - cookie->remaining, n);
+        cookie->remaining -= n;
+        return (ssize_t)n;
+    }
+    errno = EAGAIN;
+    return -1;
+}
+
+static int test_cookie_read_eagain(int unbuffered, int partial, int line_read) {
+    struct nonblocking_cookie cookie = {.remaining = partial ? 3 : 0};
+    FILE *stream = fopencookie(&cookie, "r", (cookie_io_functions_t){.read = read_cookie_eagain});
+    if (!stream) return 1;
+    if (setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0)) {
+        fclose(stream);
+        return 1;
+    }
+    unsigned char bytes[8], expected[8];
+    memset(bytes, 0xA5, sizeof(bytes));
+    memset(expected, 0xA5, sizeof(expected));
+    if (partial) memcpy(expected, "abc", 3);
+    if (line_read && partial) expected[3] = 0;
+    errno = 0;
+    long result = line_read ? fgets((char *)bytes, sizeof(bytes), stream) != NULL
+                            : (long)fread(bytes, 1, sizeof(bytes), stream);
+    int saved_errno = errno;
+    int error = ferror(stream) != 0, eof = feof(stream) != 0;
+    long expected_result = partial ? (line_read ? 1 : 3) : 0;
+    int failed = result != expected_result || saved_errno != EAGAIN || !error || eof ||
+                 memcmp(bytes, expected, sizeof(bytes));
+    printf("cookie-error:%s:%s:%s result=%ld errno=%d error=%d eof=%d\n",
+           line_read ? "fgets" : "fread", unbuffered ? "unbuffered" : "buffered",
+           partial ? "partial" : "empty", result, saved_errno, error, eof);
+    if (fclose(stream) != 0) failed = 1;
+    if (failed) fprintf(stderr, "FAIL: cookie EAGAIN case %d/%d/%d\n",
+                        unbuffered, partial, line_read);
+    return failed;
+}
+
+static int test_fd_read_error(enum fd_read_api api, int unbuffered,
+                              int interrupted, int partial, int warmed) {
+    static const char *names[] = {
+        "fgetc", "fread", "fread-large", "fread-elements", "fgets", "getline", "getdelim"
+    };
+    int fds[2];
+    if (pipe2(fds, interrupted ? 0 : O_NONBLOCK) != 0) return 1;
+    FILE *stream = fdopen(fds[0], "r");
+    if (!stream) {
+        close(fds[0]);
+        close(fds[1]);
+        return 1;
+    }
+    if (setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0) != 0) {
+        fclose(stream);
+        close(fds[1]);
+        return 1;
+    }
+    if (warmed && (write(fds[1], "W", 1) != 1 || fgetc(stream) != 'W')) {
+        fclose(stream);
+        close(fds[1]);
+        return 1;
+    }
+    if (partial && write(fds[1], "abc", 3) != 3) {
+        fclose(stream);
+        close(fds[1]);
+        return 1;
+    }
+    fd_error_signals = 0;
+    fd_error_writer = fds[1];
+    struct itimerval timer = {0};
+    if (interrupted) {
+        timer.it_interval.tv_usec = 250000;
+        timer.it_value.tv_usec = 50000;
+        if (setitimer(ITIMER_REAL, &timer, NULL) != 0) {
+            fclose(stream);
+            close(fds[1]);
+            return 1;
+        }
+    }
+    unsigned char bytes[16384];
+    memset(bytes, 0xA5, sizeof(bytes));
+    char *line = NULL;
+    size_t capacity = 0;
+    long result = -99;
+    errno = 0;
+    switch (api) {
+    case FD_GETC:
+        result = fgetc(stream);
+        break;
+    case FD_READ:
+        result = (long)fread(bytes, 1, 8, stream);
+        break;
+    case FD_READ_LARGE:
+        result = (long)fread(bytes, 1, sizeof(bytes), stream);
+        break;
+    case FD_READ_ELEMENTS:
+        result = (long)fread(bytes, 2, 4, stream);
+        break;
+    case FD_GETS:
+        result = fgets((char *)bytes, 8, stream) != NULL;
+        break;
+    case FD_GETLINE:
+        result = getline(&line, &capacity, stream);
+        break;
+    case FD_GETDELIM:
+        result = getdelim(&line, &capacity, '\n', stream);
+        break;
+    default:
+        break;
+    }
+    int saved_errno = errno;
+    /* Disarm before querying stream state so a delayed diagnostic path cannot
+     * accidentally trip the retry watchdog after a correct return. */
+    memset(&timer, 0, sizeof(timer));
+    if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
+    int signals = fd_error_signals;
+    int error = ferror(stream) != 0;
+    int eof = feof(stream) != 0;
+    long expected_result = partial ? 3 : 0;
+    if (api == FD_GETC) expected_result = EOF;
+    if (api == FD_READ_ELEMENTS) expected_result /= 2;
+    if (api == FD_GETS) expected_result = partial && !interrupted;
+    if ((api == FD_GETLINE || api == FD_GETDELIM) && !partial) expected_result = -1;
+    int failed = result != expected_result || saved_errno != (interrupted ? EINTR : EAGAIN) ||
+                 !error || eof || signals != interrupted;
+    if (api >= FD_GETLINE) {
+        if (partial && (!line || memcmp(line, "abc\0", 4))) failed = 1;
+    } else {
+        unsigned char expected[8];
+        memset(expected, 0xA5, sizeof(expected));
+        if (partial) memcpy(expected, "abc", 3);
+        if (api == FD_GETS && expected_result) expected[3] = 0;
+        if (memcmp(bytes, expected, sizeof(expected))) failed = 1;
+        for (size_t i = sizeof(expected); i < sizeof(bytes); ++i)
+            if (bytes[i] != 0xA5) failed = 1;
+    }
+    /* The error is sticky, but clearerr must allow the same stream to consume
+     * new data. This also exercises cache reuse after an interrupted refill. */
+    clearerr(stream);
+    int recovered = !ferror(stream) && !feof(stream) && fd_error_writer >= 0 &&
+                    write(fd_error_writer, "Z", 1) == 1 && fgetc(stream) == 'Z' &&
+                    !ferror(stream) && !feof(stream);
+    failed |= !recovered;
+    printf("fd-error:%s:%s:%s:%s:%s result=%ld errno=%d error=%d eof=%d signals=%d recovery=%d\n",
+           names[api], unbuffered ? "unbuffered" : "buffered",
+           interrupted ? "EINTR" : "EAGAIN", partial ? "partial" : "empty",
+           warmed ? "warm" : "cold", result, saved_errno, error, eof, signals, recovered);
+    free(line);
+    if (fclose(stream) != 0) failed = 1;
+    if (fd_error_writer >= 0 && close(fd_error_writer) != 0) failed = 1;
+    fd_error_writer = -1;
+    if (failed) fprintf(stderr, "FAIL: descriptor read error case %s/%d/%d/%d/%d\n",
+                        names[api], unbuffered, interrupted, partial, warmed);
+    return failed;
+}
+
+static int test_fd_read_errors(void) {
+    struct sigaction action = {.sa_handler = interrupt_stdio_read}, previous;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGALRM, &action, &previous) != 0) return 1;
+    int failed = 0, cases = 0;
+    for (int interrupted = 0; interrupted <= 1; ++interrupted)
+        for (int unbuffered = 0; unbuffered <= 1; ++unbuffered)
+            for (int api = 0; api < FD_READ_API_COUNT; ++api)
+                for (int partial = 0; partial <= 1; ++partial)
+                    for (int warmed = 0; warmed <= 1; ++warmed) {
+                        if (api == FD_GETC && partial) continue;
+                        failed += test_fd_read_error((enum fd_read_api)api, unbuffered,
+                                                     interrupted, partial, warmed);
+                        ++cases;
+                    }
+    if (sigaction(SIGALRM, &previous, NULL) != 0) ++failed;
+    for (int unbuffered = 0; unbuffered <= 1; ++unbuffered)
+        for (int partial = 0; partial <= 1; ++partial)
+            for (int line_read = 0; line_read <= 1; ++line_read) {
+                failed += test_cookie_read_eagain(unbuffered, partial, line_read);
+                ++cases;
+            }
+    printf("fixture_stdio fd-errors: %s (%d cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", cases, failed);
+    return failed != 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "cookie-eintr") == 0) {
-        if (argc == 3 && check_cookie_providers(argv[2])) return 2;
+        const char *symbols[] = {"fopencookie", "fread", "setvbuf", "ferror", "feof", "fclose"};
+        if (argc == 3 && check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
         int failed = test_cookie_mid_read_eintr(_IOFBF);
         failed += test_cookie_mid_read_eintr(_IONBF);
         return failed ? 1 : 0;
+    }
+    if (argc >= 2 && strcmp(argv[1], "fd-errors") == 0) {
+        const char *symbols[] = {"fdopen", "fgetc", "fread", "fgets", "getline", "getdelim",
+                                 "setvbuf", "clearerr", "ferror", "feof", "fclose", "fopencookie"};
+        if (argc == 3 && check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_fd_read_errors();
     }
     int fails = 0;
     fails += test_fopen_fileno_setvbuf_setbuf();

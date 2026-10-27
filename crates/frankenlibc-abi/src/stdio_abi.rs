@@ -914,16 +914,14 @@ enum StreamPolicyAction {
 
 const STREAM_POLICY_TABLE: [[[StreamPolicyAction; STREAM_POLICY_ERRNO_COUNT];
     STREAM_POLICY_RETURN_COUNT]; STREAM_POLICY_STATE_COUNT] = [
-    // Read
+    // Read errors are observable FILE results, including EINTR and EAGAIN.
+    // Retrying an interrupted read can block after the caller's signal handler
+    // asked it to stop; treating EAGAIN as zero hides the sticky error flag.
+    // Only a successful zero-byte read denotes EOF.
     [
         [StreamPolicyAction::Buffer; STREAM_POLICY_ERRNO_COUNT],
         [StreamPolicyAction::Yield; STREAM_POLICY_ERRNO_COUNT],
-        [
-            StreamPolicyAction::Escalate,
-            StreamPolicyAction::Retry,
-            StreamPolicyAction::Yield,
-            StreamPolicyAction::Escalate,
-        ],
+        [StreamPolicyAction::Escalate; STREAM_POLICY_ERRNO_COUNT],
     ],
     // Write
     [
@@ -4665,10 +4663,7 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
         } else if rc == 0 {
             s.set_eof();
         } else {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if e != errno::EINTR {
-                s.set_error();
-            }
+            s.set_error();
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;
@@ -4925,11 +4920,8 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
                         if rc == 0 {
                             s.set_eof();
                         } else {
-                            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                            if e != errno::EINTR {
-                                s.set_error();
-                                had_error = true;
-                            }
+                            s.set_error();
+                            had_error = true;
                         }
                         break;
                     }
@@ -4943,6 +4935,18 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
         }
     }
     (written, had_error)
+}
+
+/// GNU fgets preserves a partial line on a nonblocking read's EAGAIN while
+/// retaining the stream error indicator. Other read errors, including EINTR,
+/// return NULL even if bytes were copied before the failure.
+fn fgets_read_failed(written: usize, had_error: bool) -> bool {
+    if written == 0 {
+        return true;
+    }
+    // SAFETY: errno is thread-local and this only reads the calling thread's
+    // latest failed read. EWOULDBLOCK equals EAGAIN on supported Linux targets.
+    had_error && unsafe { *super::errno_abi::__errno_location() } != errno::EAGAIN
 }
 
 /// Shared fread read loop: fill `dst` from `s` via buffered reads + fd refill/direct reads
@@ -5092,7 +5096,7 @@ pub(crate) unsafe fn fgets_for_caller(
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut; `buf` valid for `size` bytes.
         let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
         let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst, caller) };
-        if (written == 0 && max > 0) || had_error {
+        if fgets_read_failed(written, had_error) {
             return std::ptr::null_mut();
         }
         unsafe { *buf.add(written) = 0 };
@@ -5119,7 +5123,7 @@ pub(crate) unsafe fn fgets_for_caller(
         // otherwise pays canonical_stream_id + the registry map lock per line. Gen-valid hit
         // ⇒ fill under this stream's lock only. Byte-identical (same `fgets_fill_stream`).
         if let Some((written, had_error)) = try_fgets_fast_cell(stream, dst, caller) {
-            if (written == 0 && max > 0) || had_error {
+            if fgets_read_failed(written, had_error) {
                 return std::ptr::null_mut();
             }
             unsafe { *buf.add(written) = 0 };
@@ -5193,7 +5197,7 @@ pub(crate) unsafe fn fgets_for_caller(
             }
         }
 
-        if (written == 0 && max > 0) || had_error {
+        if fgets_read_failed(written, had_error) {
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -5277,7 +5281,7 @@ pub(crate) unsafe fn fgets_for_caller(
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
     let (written, had_error) = unsafe { fgets_fill_stream(s, dst, caller) };
 
-    if (written == 0 && max > 0) || had_error {
+    if fgets_read_failed(written, had_error) {
         runtime_policy::observe(
             ApiFamily::Stdio,
             decision.profile,
@@ -14962,10 +14966,7 @@ unsafe fn getdelim_fill_stream(
                         s.set_eof();
                         break;
                     } else {
-                        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                        if e != errno::EINTR {
-                            s.set_error();
-                        }
+                        s.set_error();
                         break;
                     }
                 } else if unsafe { refill_stream(s, caller) } <= 0 {

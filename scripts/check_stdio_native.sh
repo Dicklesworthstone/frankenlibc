@@ -4,16 +4,19 @@ set -euo pipefail
 
 GNU_ONLY=0
 GLOBALS_ONLY=0
+READ_ERRORS_ONLY=0
 if [[ "$#" -gt 1 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors]" >&2
   exit 2
 fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
   GNU_ONLY=1
 elif [[ "${1:-}" == "--globals-only" ]]; then
   GLOBALS_ONLY=1
+elif [[ "${1:-}" == "--read-errors" ]]; then
+  READ_ERRORS_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
@@ -21,6 +24,8 @@ if [[ "${GNU_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-rc0923-epic-eeuy4f.34"
 elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2.1"
+elif [[ "${READ_ERRORS_ONLY}" -eq 1 ]]; then
+  BEAD_ID="bd-reality-202609-lx578q.6.2"
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,6 +60,42 @@ if [[ ! -f "${LIB}" ]]; then
 fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
+
+if [[ "${READ_ERRORS_ONLY}" -eq 1 ]]; then
+  read_bin="${BIN_DIR}/fixture_stdio_read_errors.bin"
+  "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_stdio.c" -ldl -o "${read_bin}"
+  host_provider="$(env -u LD_PRELOAD ldd "${read_bin}" | awk '$1 == "libc.so.6" { print $3 }')"
+  if [[ ! -f "${host_provider}" ]]; then
+    echo "FAIL: cannot identify live GNU stdio provider" >&2
+    exit 1
+  fi
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE \
+    timeout --kill-after=2s 30s "${read_bin}" fd-errors "${host_provider}" \
+    >"${OUT_DIR}/read-errors.host.stdout.log" 2>"${OUT_DIR}/read-errors.host.stderr.log"
+  grep -qx 'fixture_stdio fd-errors: PASS (112 cases, 0 failed)' \
+    "${OUT_DIR}/read-errors.host.stdout.log"
+  for mode in strict hardened; do
+    timeout --kill-after=2s 30s env LD_PRELOAD="${LIB}" FRANKENLIBC_MODE="${mode}" \
+      "${read_bin}" fd-errors "${LIB}" \
+      >"${OUT_DIR}/read-errors.${mode}.stdout.log" 2>"${OUT_DIR}/read-errors.${mode}.stderr.log"
+    cmp "${OUT_DIR}/read-errors.host.stdout.log" "${OUT_DIR}/read-errors.${mode}.stdout.log"
+  done
+  set +e
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE \
+    timeout --kill-after=2s 30s "${read_bin}" fd-errors "${LIB}" \
+    >"${OUT_DIR}/read-errors.provider-negative.stdout.log" \
+    2>"${OUT_DIR}/read-errors.provider-negative.stderr.log"
+  provider_status=$?
+  set -e
+  if [[ "${provider_status}" -ne 2 ]]; then
+    echo "FAIL: omitted-preload provider control returned ${provider_status}, expected 2" >&2
+    exit 1
+  fi
+  grep -q '^FAIL: wrong stdio provider for ' "${OUT_DIR}/read-errors.provider-negative.stderr.log"
+  echo "check_stdio_native --read-errors: PASS (112 live GNU cases, 224 native cases, 1 provider negative)"
+  exit 0
+fi
 
 check_pointer_cell() {
   local symbol="$1"

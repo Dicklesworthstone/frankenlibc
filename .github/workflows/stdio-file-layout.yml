@@ -15,6 +15,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-core/src/stdio/**'
+      - 'tests/integration/fixture_stdio.c'
       - 'tests/integration/fixture_stdio_file_layout.c'
       - 'tests/integration/fixture_stdio_lifetime.c'
       - 'tests/integration/fixture_callback_unwind.cpp'
@@ -77,6 +78,14 @@ jobs:
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Preserve stdio errors for interrupted and nonblocking reads
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/read-errors" \
+            bash scripts/check_stdio_native.sh --read-errors
       - name: Cancel native stdio reads and preserve C and C++ cleanup
         run: |
           set -euo pipefail
