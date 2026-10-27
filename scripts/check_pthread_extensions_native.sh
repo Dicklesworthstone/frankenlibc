@@ -3,6 +3,48 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Exercise actual kernel state at the native child entry point, including
+# creation failures. The existing attribute round-trip tests cannot detect
+# pthread_create silently ignoring a correctly stored attribute.
+if [[ "${1:-}" == "--startup-attributes" ]]; then
+  LIBRARY="${FRANKENLIBC_TEST_LIBRARY:-${CARGO_TARGET_DIR:-${ROOT}/target}/release/libfrankenlibc_abi.so}"
+  if [[ ! -f "${LIBRARY}" ]]; then
+    echo "FAIL: build frankenlibc-abi --release or set FRANKENLIBC_TEST_LIBRARY" >&2
+    exit 1
+  fi
+  LIBRARY="$(realpath "${LIBRARY}")"
+  STARTUP_OUT="${ROOT}/target/conformance/pthread_startup/$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "${STARTUP_OUT}"
+  "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_pthread.c" -pthread -ldl \
+    -o "${STARTUP_OUT}/probe"
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
+    timeout 30s "${STARTUP_OUT}/probe" --startup-attributes >"${STARTUP_OUT}/host.txt"
+  negative_rc=0
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
+    timeout 30s "${STARTUP_OUT}/probe" --startup-attributes "${LIBRARY}" \
+    >"${STARTUP_OUT}/provider-negative.txt" 2>&1 || negative_rc=$?
+  if [[ "${negative_rc}" -ne 1 ]] || \
+    ! grep -Fq 'FAIL: pthread_create is not from the requested candidate' \
+      "${STARTUP_OUT}/provider-negative.txt"; then
+    echo "FAIL: omitted-preload control did not fail at provider admission" >&2
+    exit 1
+  fi
+  for backend in 0 1; do
+    for mode in strict hardened; do
+      timeout 30s env LD_PRELOAD="${LIBRARY}" FRANKENLIBC_MODE="${mode}" \
+        FRANKENLIBC_THREAD_NATIVE="${backend}" \
+        "${STARTUP_OUT}/probe" --startup-attributes "${LIBRARY}" \
+        >"${STARTUP_OUT}/${mode}-native${backend}.txt"
+      diff -u "${STARTUP_OUT}/host.txt" "${STARTUP_OUT}/${mode}-native${backend}.txt"
+    done
+  done
+  echo "pthread startup attributes: PASS (14 live GNU cases, 56 candidate cases, provider negative)"
+  echo "artifacts=${STARTUP_OUT}"
+  exit 0
+fi
+
 OUT_ROOT="${ROOT}/target/conformance/pthread_extensions_native"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${OUT_ROOT}/${RUN_ID}"

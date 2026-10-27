@@ -8,6 +8,8 @@ on:
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/syscall/**'
+      - 'tests/integration/fixture_pthread.c'
+      - 'scripts/check_pthread_extensions_native.sh'
       - '.github/workflows/native-pthread-stacks.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -44,7 +46,7 @@ jobs:
           root = pathlib.Path('artifacts/pthread-stacks')
           root.mkdir(parents=True, exist_ok=True)
           cases = [('core', ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                    'pthread::thread::tests::'], 'strict', 18)]
+                    'pthread::thread::tests::'], 'strict', 23)]
           for mode in ['strict', 'hardened']:
               cases.append((mode, ['cargo', 'test', '-p', 'frankenlibc-abi',
                   '--test', 'pthread_stack_abi_test'], mode, 8))
@@ -71,5 +73,47 @@ jobs:
         with:
           name: native-pthread-stacks
           path: artifacts/pthread-stacks/
+          if-no-files-found: error
+          retention-days: 14
+
+  startup-attributes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Build deployed pthread ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/conformance/pthread_startup
+          cargo build --locked --release -p frankenlibc-abi --lib 2>&1 \
+            | tee target/conformance/pthread_startup/build.log
+      - name: Compare child execution attributes against live GNU pthreads
+        shell: bash
+        run: |
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+            bash scripts/check_pthread_extensions_native.sh --startup-attributes
+      - name: Record the tested revision and compiler
+        if: always()
+        run: |
+          mkdir -p target/conformance/pthread_startup
+          git rev-parse HEAD > target/conformance/pthread_startup/revision.txt
+          rustc --version --verbose > target/conformance/pthread_startup/rustc.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-pthread-startup-attributes
+          path: target/conformance/pthread_startup/
           if-no-files-found: error
           retention-days: 14

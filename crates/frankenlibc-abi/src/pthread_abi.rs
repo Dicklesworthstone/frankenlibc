@@ -19,6 +19,9 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use frankenlibc_core::elf::Elf64Header;
 use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
 use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
+use frankenlibc_core::pthread::thread::{
+    ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
+};
 use frankenlibc_core::pthread::tls::{
     PthreadKey, pthread_key_create as core_pthread_key_create,
     pthread_key_delete as core_pthread_key_delete,
@@ -35,8 +38,7 @@ use frankenlibc_core::pthread::{
     condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
     condvar_timed_futex_op as core_condvar_timed_futex_op,
     condvar_wait_finish as core_condvar_wait_finish,
-    condvar_wait_prepare as core_condvar_wait_prepare,
-    create_thread_with_stack as core_create_thread_with_stack, detach_thread as core_detach_thread,
+    condvar_wait_prepare as core_condvar_wait_prepare, detach_thread as core_detach_thread,
     exit_current_thread as core_exit_current_thread, handle_for_tid as core_handle_for_tid,
     join_thread as core_join_thread, self_tid as core_self_tid,
 };
@@ -1927,6 +1929,9 @@ unsafe fn native_pthread_create(
     let mut caller_stack = false;
     let mut guard_size = ATTR_DEFAULT_GUARD_SIZE;
     let mut detach_state: c_int = 0;
+    let mut affinity = None;
+    let mut signal_mask = None;
+    let mut scheduling = None;
     if !attr.is_null() {
         if let Some(data_ptr) = managed_attr_data_for_host_translation(attr)
             && data_ptr.is_null()
@@ -1940,6 +1945,45 @@ unsafe fn native_pthread_create(
             caller_stack = unsafe { (*data).has_stack_address() };
             guard_size = unsafe { (*data).guard_size };
             detach_state = unsafe { (*data).detach_state };
+            // Scheduling attributes take effect only in explicit mode. A
+            // clone already inherits the creator's policy and priority.
+            // SAFETY: managed_attr_data_ptr_const checked the live overlay.
+            let data = unsafe { &*data };
+            if data.inherit_sched == libc::PTHREAD_EXPLICIT_SCHED {
+                scheduling = Some((data.sched_policy, data.sched_priority));
+            }
+            if data.flags & 0b11 != 0 {
+                // Snapshot extended storage before clone. No registry lock or
+                // reference into it may remain live while the child starts.
+                let extended = EXTENDED_ATTR_REGISTRY
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .get(&(attr as usize))
+                    .cloned();
+                let Some(extended) = extended else {
+                    return libc::EINVAL;
+                };
+                if data.flags & 0b01 != 0 {
+                    let Some((size, bytes)) = extended.affinity else {
+                        return libc::EINVAL;
+                    };
+                    if size == 0 || size != bytes.len() {
+                        return libc::EINVAL;
+                    }
+                    affinity = Some(bytes);
+                }
+                if data.flags & 0b10 != 0 {
+                    let Some(bytes) = extended.sigmask else {
+                        return libc::EINVAL;
+                    };
+                    // Linux's rt_sigprocmask ABI consumes the first 64 bits of
+                    // sigset_t on both supported targets. Like the public
+                    // pthread signal API, never block NPTL's reserved signals.
+                    let mut kernel_mask = [0u8; 8];
+                    kernel_mask.copy_from_slice(&bytes[..8]);
+                    signal_mask = Some(u64::from_ne_bytes(kernel_mask) & !((1 << 31) | (1 << 32)));
+                }
+            }
             handled = true;
         }
         if !handled {
@@ -2000,12 +2044,21 @@ unsafe fn native_pthread_create(
             size: stack_size,
         }
     };
-    let handle_ptr =
-        match unsafe { core_create_thread_with_stack(start_routine as usize, arg as usize, stack) }
-        {
-            Ok(ptr) => ptr,
-            Err(errno) => return errno,
-        };
+    let handle_ptr = match unsafe {
+        core_create_thread_with_startup(
+            start_routine as usize,
+            arg as usize,
+            stack,
+            ThreadStartup {
+                affinity: affinity.as_deref(),
+                signal_mask,
+                scheduling,
+            },
+        )
+    } {
+        Ok(ptr) => ptr,
+        Err(errno) => return errno,
+    };
 
     let thread_key = handle_ptr as usize;
 
@@ -3773,6 +3826,23 @@ pub unsafe extern "C" fn pthread_create(
     if thread_out.is_null() || start_routine.is_none() {
         return libc::EINVAL;
     }
+    // GNU process defaults govern creation with a null attr, including the
+    // extended affinity/signal settings. Snapshot them into a normal managed
+    // object so both lifecycle backends consume the same complete attributes.
+    // The common never-overridden path still inherits the backend defaults.
+    let use_defaults = attr.is_null() && DEFAULT_THREAD_ATTR_OVERRIDDEN.load(Ordering::Acquire);
+    let mut default_attr = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+    let attr = if use_defaults {
+        // SAFETY: the getter initializes this writable attr and its extension
+        // record; the local remains stable until creation and destruction end.
+        let rc = unsafe { pthread_getattr_default_np(default_attr.as_mut_ptr()) };
+        if rc != 0 {
+            return rc;
+        }
+        default_attr.as_ptr()
+    } else {
+        attr
+    };
     // Clear __libc_single_threaded on first thread creation.
     crate::glibc_internal_abi::__libc_single_threaded
         .store(0, std::sync::atomic::Ordering::Release);
@@ -3783,14 +3853,21 @@ pub unsafe extern "C" fn pthread_create(
     let start = start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
     // Host pthreads are an explicit compatibility opt-out. The default and
     // standalone paths stay on the native lifecycle.
-    if !force_native && let Some(host_create) = resolved_thread_create_raw() {
+    let result = if !force_native && let Some(host_create) = resolved_thread_create_raw() {
         ensure_strict_host_thread_tls_gap();
-        return unsafe {
+        unsafe {
             dispatch_host_thread_create_with_managed_attr(host_create, thread_out, attr, start, arg)
-        };
+        }
+    } else {
+        // SAFETY: pointers and start routine are validated by this wrapper.
+        unsafe { native_pthread_create(thread_out, attr, start, arg) }
+    };
+    if use_defaults {
+        // SAFETY: the local attr was initialized above and creation no longer
+        // borrows its storage. Destroy its temporary extension record too.
+        let _ = unsafe { pthread_attr_destroy(default_attr.as_mut_ptr()) };
     }
-    // SAFETY: pointers and start routine are validated by this wrapper.
-    unsafe { native_pthread_create(thread_out, attr, start, arg) }
+    result
 }
 
 /// POSIX `pthread_join`.
@@ -5165,6 +5242,8 @@ static EXTENDED_ATTR_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ExtendedAtt
 /// Default thread attributes (for `pthread_getattr_default_np` / `pthread_setattr_default_np`).
 static DEFAULT_THREAD_ATTR: LazyLock<Mutex<PthreadAttrDefaults>> =
     LazyLock::new(|| Mutex::new(PthreadAttrDefaults::new()));
+static DEFAULT_THREAD_ATTR_OVERRIDDEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone)]
 struct PthreadAttrDefaults {
@@ -8752,6 +8831,13 @@ pub unsafe extern "C" fn pthread_setattr_default_np(attr: *const libc::pthread_a
     let Some(data) = managed_attr_data_ptr_const(attr) else {
         return libc::EINVAL;
     };
+    // A caller-owned stack cannot be shared by every future default thread.
+    // Reject it before mutating defaults rather than silently dropping the
+    // address and retaining only its size.
+    // SAFETY: the managed-attribute lookup validated this live overlay.
+    if unsafe { (*data).has_stack_address() } {
+        return libc::EINVAL;
+    }
     let key = attr as usize;
     let extended = {
         let reg = match EXTENDED_ATTR_REGISTRY.lock() {
@@ -8777,6 +8863,7 @@ pub unsafe extern "C" fn pthread_setattr_default_np(attr: *const libc::pthread_a
         defaults.sched_priority = (*data).sched_priority;
     }
     defaults.extended = extended;
+    DEFAULT_THREAD_ATTR_OVERRIDDEN.store(true, Ordering::Release);
     0
 }
 

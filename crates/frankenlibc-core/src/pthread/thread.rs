@@ -133,7 +133,8 @@ pub struct ThreadHandle {
     /// Lifecycle state (see `THREAD_*` constants).
     pub state: AtomicU32,
 
-    /// Startup synchronization futex: child stores 1 after reading args.
+    /// Startup synchronization futex: 0 while pending, 1 on success, or
+    /// `errno + 1` when setup failed before the user entry point ran.
     pub started: AtomicU32,
 
     /// Return value from the user's `start_routine`.
@@ -178,6 +179,12 @@ struct ThreadStartArgs {
     start_routine: usize, // fn ptr as usize
     /// User's argument to start_routine.
     arg: usize, // *mut c_void as usize
+    /// Affinity storage is borrowed only until `started` is published. The
+    /// parent keeps its configuration alive while waiting for that publication.
+    affinity: *const u8,
+    affinity_len: usize,
+    scheduling: Option<(i32, i32)>,
+    signal_mask: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -189,15 +196,16 @@ struct ThreadStartArgs {
 /// Called by the clone trampoline asm with `args_raw` in `rdi`.
 /// This function:
 /// 1. Reads the `ThreadStartArgs` from the pointer
-/// 2. Signals the parent that startup is complete
-/// 3. Calls the user's `start_routine(arg)`
-/// 4. Stores the return value in the handle
-/// 5. Returns (the asm trampoline then calls `sys_exit`)
+/// 2. Applies scheduling/affinity and registers its thread-local key storage
+/// 3. Signals the parent that setup is complete and restores the signal mask
+/// 4. Calls the user's `start_routine(arg)`
+/// 5. Stores the return value in the handle and exits
 ///
 /// # Safety
 ///
 /// `args_raw` must be a valid pointer to `ThreadStartArgs` on the child's stack.
-/// All pointers in `ThreadStartArgs` must be valid for the thread's lifetime.
+/// The affinity slice must remain valid until startup is published; the user
+/// argument and handle retain their normal thread-lifetime requirements.
 #[allow(unsafe_code)]
 unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // SAFETY: args_raw is a pointer to ThreadStartArgs that the parent placed
@@ -206,6 +214,7 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     let handle_ptr = args.handle;
     let start_routine_addr = args.start_routine;
     let arg = args.arg;
+    let signal_mask = args.signal_mask;
 
     // SAFETY: handle_ptr was allocated by the parent and is valid for the
     // thread's entire lifetime.
@@ -216,6 +225,26 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
         handle.tid.store(current_tid, Ordering::Release);
     }
 
+    // clone inherited a blocked signal mask. No application code, allocation,
+    // or inherited host TLS is used while installing the requested attributes.
+    // SAFETY: the creator keeps args and its borrowed affinity alive until
+    // this thread publishes startup, which has not happened yet.
+    let setup = unsafe { apply_thread_startup(args) };
+    if let Err(error) = setup {
+        // This handle has not escaped the creator. Leave its owned stack for
+        // the parent to reclaim only after CLONE_CHILD_CLEARTID clears tid.
+        handle.state.store(THREAD_FINISHED, Ordering::Release);
+        publish_startup(handle, error as u32 + 1);
+        syscall::sys_exit_thread(0);
+    }
+
+    // Register TLS storage before signals can run application handlers or the
+    // user routine can query its native handle. This path allocates nothing.
+    // SAFETY: handle_ptr is live and this thread exclusively owns tls_values.
+    super::tls::register_thread_tls(current_tid, unsafe {
+        (*handle_ptr).tls_values.as_mut_ptr()
+    });
+
     // Try to transition STARTING → RUNNING. If detach_thread already set
     // DETACHED, we must not overwrite it.
     let _ = handle.state.compare_exchange(
@@ -224,33 +253,29 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
         Ordering::AcqRel,
         Ordering::Acquire,
     );
-    handle.started.store(1, Ordering::Release);
-
-    // Wake the parent waiting on started futex.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        let futex_ptr = &handle.started as *const AtomicU32 as *const u32;
-        // SAFETY: futex_ptr points to a valid, aligned u32 in the handle.
-        let _ = unsafe {
-            syscall::sys_futex(
-                futex_ptr,
-                0x01 | 0x80, // FUTEX_WAKE | FUTEX_PRIVATE_FLAG
-                1,           // wake 1 waiter
-                0,
-                0,
-                0,
-            )
-        };
+    // Nothing below reads the parent's affinity buffer. Publish readiness
+    // before restoring the mask: a pending signal handler may immediately
+    // wait for the creator, which must already be able to return from create.
+    publish_startup(handle, 1);
+    // SAFETY: Linux's kernel sigset is exactly one u64 on both supported ISAs.
+    // The parent used this same syscall successfully before clone. With valid
+    // arguments, restoring a mask cannot fail under the ordinary Linux ABI.
+    if unsafe {
+        syscall::sys_rt_sigprocmask(
+            2, // SIG_SETMASK
+            core::ptr::from_ref(&signal_mask).cast(),
+            core::ptr::null_mut(),
+            core::mem::size_of::<u64>(),
+        )
     }
-
-    // Register TLS storage for this thread (bd-rth1).
-    // SAFETY: handle_ptr is valid and exclusively owned by this thread for
-    // the tls_values field. The pointer is stored in the TLS table and only
-    // accessed by this thread via getspecific/setspecific.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    super::tls::register_thread_tls(handle.tid.load(Ordering::Acquire), unsafe {
-        (*handle_ptr).tls_values.as_mut_ptr()
-    });
+    .is_err()
+    {
+        // A syscall filter can still deny the otherwise valid restoration.
+        // Startup has been published so application signal handlers can wait
+        // for the creator; do not enter the user routine under the wrong mask.
+        // SAFETY: this thread owns the live handle and its registered TLS.
+        unsafe { exit_current_thread(handle_ptr, 0) }
+    }
 
     // Cast the start_routine address back to a function pointer and call it.
     // SAFETY: start_routine_addr was a valid extern "C" fn pointer stored by
@@ -262,6 +287,43 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // Explicit and implicit thread exit must follow the same teardown/state
     // transition path so detached threads self-clean and TLS destructors run.
     unsafe { exit_current_thread(handle_ptr, retval) }
+}
+
+/// Install the child-only attributes while all maskable signals remain blocked.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+unsafe fn apply_thread_startup(args: &ThreadStartArgs) -> Result<(), i32> {
+    if !args.affinity.is_null() {
+        // SAFETY: create_thread_with_startup borrows this exact slice until
+        // after startup publication, which has not happened yet.
+        unsafe { syscall::sys_sched_setaffinity(0, args.affinity_len, args.affinity) }?;
+    }
+    if let Some((policy, priority)) = args.scheduling {
+        // Linux sched_param consists of the single sched_priority integer.
+        // SAFETY: priority is a live, aligned i32 throughout the syscall.
+        unsafe {
+            syscall::sys_sched_setscheduler(0, policy, core::ptr::from_ref(&priority).cast())
+        }?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+fn publish_startup(handle: &ThreadHandle, outcome: u32) {
+    handle.started.store(outcome, Ordering::Release);
+    // SAFETY: the handle remains live until its tid is cleared and its parent
+    // reclaims it; started is an aligned futex word within that allocation.
+    let _ = unsafe {
+        syscall::sys_futex(
+            core::ptr::from_ref(&handle.started).cast(),
+            0x01 | 0x80, // FUTEX_WAKE | FUTEX_PRIVATE_FLAG
+            1,
+            0,
+            0,
+            0,
+        )
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +504,23 @@ pub enum ThreadStack {
     Borrowed { address: usize, size: usize },
 }
 
+/// Attributes installed by the native creator before the user's routine runs.
+///
+/// Unspecified attributes are inherited from the creating thread. Affinity
+/// bytes are borrowed only for the synchronous creation handshake, so the ABI
+/// can pass its snapshot without allocating or freeing on the clone child.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ThreadStartup<'a> {
+    /// Linux CPU bitmap; `Some(&[])` is an explicit invalid/empty mask rather
+    /// than a request to inherit the current affinity.
+    pub affinity: Option<&'a [u8]>,
+    /// Linux's 64-bit kernel signal mask. Public libc policy, such as reserving
+    /// internal signals, is applied at the ABI boundary before passing it here.
+    pub signal_mask: Option<u64>,
+    /// An explicit `(policy, priority)` pair; `None` retains clone inheritance.
+    pub scheduling: Option<(i32, i32)>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct PreparedThreadStack {
     mapping_base: usize,
@@ -612,6 +691,31 @@ pub unsafe fn create_thread_with_stack(
     arg: usize,
     stack: ThreadStack,
 ) -> Result<*mut ThreadHandle, i32> {
+    // SAFETY: this wrapper forwards the entry/argument/stack guarantees and
+    // selects ordinary inheritance for every execution attribute.
+    unsafe { create_thread_with_startup(start_routine, arg, stack, ThreadStartup::default()) }
+}
+
+/// Create a native thread with explicit stack and execution attributes.
+///
+/// Affinity and scheduling failures are reported by the creating thread before
+/// a handle is published to its caller. The failed child never enters user code,
+/// and its owned stack is reclaimed after the kernel acknowledges its exit.
+///
+/// # Safety
+///
+/// The entry point, argument and stack have the same requirements as
+/// `create_thread_with_stack`. The safe borrowed affinity slice remains live
+/// until this function returns; the child consumes it before releasing the
+/// startup handshake and never retains it during application execution.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub unsafe fn create_thread_with_startup(
+    start_routine: usize,
+    arg: usize,
+    stack: ThreadStack,
+    startup: ThreadStartup<'_>,
+) -> Result<*mut ThreadHandle, i32> {
     let stack = prepare_thread_stack(stack)?;
     let stack_base = stack.mapping_base;
     let stack_total_size = stack.mapping_size;
@@ -637,10 +741,33 @@ pub unsafe fn create_thread_with_stack(
     // Prepare ThreadStartArgs on the child stack.
     // The args struct goes near the top of the stack, and the trampoline
     // frame (fn_ptr + arg) goes at the very top.
+    // Block application signals over clone so they cannot run on the child
+    // before its native TLS and execution attributes are ready. The parent
+    // restores its original mask on every path after the raw clone syscall.
+    let blocked_mask = u64::MAX;
+    let mut inherited_mask = 0u64;
+    // SAFETY: both masks are live u64 values and Linux uses an 8-byte sigset.
+    if let Err(error) = unsafe {
+        syscall::sys_rt_sigprocmask(
+            2, // SIG_SETMASK
+            core::ptr::from_ref(&blocked_mask).cast(),
+            core::ptr::from_mut(&mut inherited_mask).cast(),
+            core::mem::size_of::<u64>(),
+        )
+    } {
+        // SAFETY: clone has not run and handle_ptr is exclusively ours.
+        unsafe { drop(Box::from_raw(handle_ptr)) };
+        free_thread_stack(stack_base, stack_total_size);
+        return Err(error);
+    }
     let args = ThreadStartArgs {
         handle: handle_ptr,
         start_routine,
         arg,
+        affinity: startup.affinity.map_or(core::ptr::null(), <[u8]>::as_ptr),
+        affinity_len: startup.affinity.map_or(0, <[u8]>::len),
+        scheduling: startup.scheduling,
+        signal_mask: startup.signal_mask.unwrap_or(inherited_mask),
     };
 
     // Place args in a stable location. We'll put it in the upper portion of
@@ -704,6 +831,16 @@ pub unsafe fn create_thread_with_stack(
             0, // TLS: not set in phase 1 (bd-rth1 scope)
         )
     };
+    // SAFETY: inherited_mask was captured immediately before clone and is
+    // still live. All arguments and the syscall were validated by that call.
+    let _ = unsafe {
+        syscall::sys_rt_sigprocmask(
+            2,
+            core::ptr::from_ref(&inherited_mask).cast(),
+            core::ptr::null_mut(),
+            core::mem::size_of::<u64>(),
+        )
+    };
 
     match result {
         Ok(_child_tid) => {
@@ -715,8 +852,16 @@ pub unsafe fn create_thread_with_stack(
             // Wait for the child to signal that it has started and read the args.
             // This ensures the stack-based ThreadStartArgs are consumed before
             // we consider the create operation complete.
-            wait_for_startup(handle_ptr);
-            Ok(handle_ptr)
+            match wait_for_startup(handle_ptr) {
+                Ok(()) => Ok(handle_ptr),
+                Err(error) => {
+                    // SAFETY: the failed child never entered application code
+                    // and this handle has not escaped. join waits for the
+                    // kernel to clear tid before freeing its owned storage.
+                    let _ = unsafe { join_thread(handle_ptr) };
+                    Err(error)
+                }
+            }
         }
         Err(errno) => {
             // Clone failed — clean up.
@@ -733,13 +878,17 @@ pub unsafe fn create_thread_with_stack(
 /// Uses futex wait on `handle.started` until it becomes non-zero.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
-fn wait_for_startup(handle_ptr: *mut ThreadHandle) {
+fn wait_for_startup(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
     // SAFETY: handle_ptr is valid (we just allocated it).
     let handle = unsafe { &*handle_ptr };
     loop {
         let started = handle.started.load(Ordering::Acquire);
         if started != 0 {
-            return;
+            return if started == 1 {
+                Ok(())
+            } else {
+                Err((started - 1) as i32)
+            };
         }
         // Futex wait: sleep until started changes from 0.
         let futex_ptr = &handle.started as *const AtomicU32 as *const u32;
@@ -1084,6 +1233,186 @@ mod tests {
         let flag = unsafe { &*(arg as *const AtomicU32) };
         flag.store(42, Ordering::Release);
         0
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct StartupSnapshot {
+        affinity: [u8; 128],
+        signal_mask: u64,
+        policy: i32,
+        priority: i32,
+    }
+
+    fn startup_snapshot() -> Result<StartupSnapshot, i32> {
+        let mut snapshot = StartupSnapshot {
+            affinity: [0; 128],
+            signal_mask: 0,
+            policy: syscall::sys_sched_getscheduler(0)?,
+            priority: 0,
+        };
+        // SAFETY: each output points to correctly sized, live local storage.
+        unsafe {
+            syscall::sys_sched_getaffinity(
+                0,
+                snapshot.affinity.len(),
+                snapshot.affinity.as_mut_ptr(),
+            )?;
+            syscall::sys_sched_getparam(0, core::ptr::from_mut(&mut snapshot.priority).cast())?;
+            syscall::sys_rt_sigprocmask(
+                2,
+                core::ptr::null(),
+                core::ptr::from_mut(&mut snapshot.signal_mask).cast(),
+                core::mem::size_of::<u64>(),
+            )?;
+        }
+        Ok(snapshot)
+    }
+
+    struct StartupProbe {
+        result: core::cell::UnsafeCell<Option<Result<StartupSnapshot, i32>>>,
+    }
+
+    unsafe extern "C" fn startup_probe_start(arg: usize) -> usize {
+        // SAFETY: the parent keeps this probe alive until join, and reads its
+        // result only after the child's exit synchronizes the plain write.
+        let probe = unsafe { &*(arg as *const StartupProbe) };
+        unsafe { *probe.result.get() = Some(startup_snapshot()) };
+        0x517a
+    }
+
+    fn probe_startup(startup: ThreadStartup<'_>) -> Result<StartupSnapshot, i32> {
+        let probe = StartupProbe {
+            result: core::cell::UnsafeCell::new(None),
+        };
+        // SAFETY: getpagesize has no arguments or caller-owned pointers.
+        let page_size = unsafe { host_page_size() } as usize;
+        // SAFETY: the entry point has the required ABI, probe outlives join,
+        // and the creator owns this allocated stack and the affinity borrow.
+        let created = unsafe {
+            create_thread_with_startup(
+                startup_probe_start as *const () as usize,
+                core::ptr::from_ref(&probe) as usize,
+                ThreadStack::Allocated {
+                    size: 256 * 1024,
+                    guard_size: page_size,
+                    page_size,
+                },
+                startup,
+            )
+        };
+        match created {
+            Ok(handle) => {
+                // SAFETY: this test is the sole owner of the joinable handle.
+                assert_eq!(unsafe { join_thread(handle) }, Ok(0x517a));
+                // SAFETY: join proves the child has stopped writing.
+                unsafe { (*probe.result.get()).take() }.expect("start routine did not run")
+            }
+            Err(error) => {
+                // SAFETY: failed creation waits for the child to exit; the
+                // start routine must not have touched caller-owned data.
+                assert!(unsafe { &*probe.result.get() }.is_none());
+                Err(error)
+            }
+        }
+    }
+
+    #[test]
+    fn native_startup_inherits_execution_attributes() {
+        let before = startup_snapshot().unwrap();
+        let child = probe_startup(ThreadStartup::default()).unwrap();
+        assert_eq!(child, before);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_applies_affinity_before_user_entry() {
+        let before = startup_snapshot().unwrap();
+        let cpu = before
+            .affinity
+            .iter()
+            .enumerate()
+            .find_map(|(index, byte)| {
+                (*byte != 0).then(|| index * 8 + byte.trailing_zeros() as usize)
+            })
+            .expect("the test thread must have an allowed CPU");
+        let mut affinity = [0u8; 128];
+        affinity[cpu / 8] = 1 << (cpu % 8);
+        let child = probe_startup(ThreadStartup {
+            affinity: Some(&affinity),
+            ..ThreadStartup::default()
+        })
+        .unwrap();
+        assert_eq!(child.affinity, affinity);
+        assert_eq!(child.signal_mask, before.signal_mask);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_applies_signal_mask_before_user_entry() {
+        let before = startup_snapshot().unwrap();
+        // SIGUSR1 and SIGUSR2 are ordinary maskable Linux signals on the
+        // supported ISAs; only the child receives this explicit mask.
+        let requested = (1u64 << (10 - 1)) | (1u64 << (12 - 1));
+        let child = probe_startup(ThreadStartup {
+            signal_mask: Some(requested),
+            ..ThreadStartup::default()
+        })
+        .unwrap();
+        assert_eq!(child.signal_mask, requested);
+        assert_eq!(child.affinity, before.affinity);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_applies_explicit_scheduling_before_user_entry() {
+        let before = startup_snapshot().unwrap();
+        // SCHED_OTHER and SCHED_BATCH both permit priority zero without
+        // CAP_SYS_NICE. Select a different policy from the inherited one so
+        // simply ignoring the requested attributes cannot pass this test.
+        let policy = if before.policy == 0 { 3 } else { 0 };
+        let child = probe_startup(ThreadStartup {
+            scheduling: Some((policy, 0)),
+            ..ThreadStartup::default()
+        })
+        .unwrap();
+        assert_eq!(child.policy, policy);
+        assert_eq!(child.priority, 0);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_failures_do_not_run_user_code_or_change_parent() {
+        let before = startup_snapshot().unwrap();
+        let no_cpus = [0u8; 128];
+        for _ in 0..8 {
+            for startup in [
+                ThreadStartup {
+                    affinity: Some(&no_cpus),
+                    ..ThreadStartup::default()
+                },
+                ThreadStartup {
+                    affinity: Some(&[]),
+                    ..ThreadStartup::default()
+                },
+                ThreadStartup {
+                    scheduling: Some((0, 1)), // SCHED_OTHER requires priority 0.
+                    ..ThreadStartup::default()
+                },
+                ThreadStartup {
+                    // A later setup error must reclaim the child even after
+                    // a preceding attribute was installed successfully.
+                    affinity: Some(&before.affinity),
+                    signal_mask: Some(1 << (12 - 1)),
+                    scheduling: Some((0, 1)),
+                },
+            ] {
+                assert_eq!(probe_startup(startup), Err(crate::errno::EINVAL));
+                assert_eq!(startup_snapshot().unwrap(), before);
+            }
+        }
+        // The same creator still works after repeatedly reclaiming failed
+        // children: no stale startup publication or poisoned lifecycle state.
+        assert_eq!(probe_startup(ThreadStartup::default()).unwrap(), before);
     }
 
     #[test]
