@@ -7,6 +7,9 @@
 #[path = "records.rs"]
 pub mod records;
 
+#[path = "portmap.rs"]
+pub mod portmap;
+
 #[path = "service.rs"]
 pub mod service;
 

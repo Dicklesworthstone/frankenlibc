@@ -1168,6 +1168,71 @@ fn snprintf_truncates_and_reports_full_length() {
 }
 
 #[test]
+fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
+    let mut buf = [0x5a_i8; 64];
+    let mut count = -77_i32;
+    // SAFETY: every variadic operand matches the directive; buffers/count are
+    // live writable objects, and the string argument is NUL-terminated.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%0*.*lQ:%d:%s:%.1f%n".as_ptr(),
+            -7_i32,
+            -3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    // SAFETY: the successful nontruncated call terminated this live buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-07Q:701:tail:1.5"
+    );
+    assert!(buf[19..].iter().all(|&v| v == 0x5a));
+    // SAFETY: the positional types and capacities match the live objects.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            5,
+            c"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n".as_ptr(),
+            7_i32,
+            3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    // SAFETY: positive capacity guarantees a terminator inside this buffer.
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"%7.3");
+    assert_eq!(buf[5] as u8, b':');
+    // SAFETY: GNU I-flag unknown conversions consume one promoted int width
+    // and no value; the following int and output buffers match the format.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%I*Q:%d".as_ptr(),
+            i32::MIN,
+            701_i32,
+        )
+    };
+    assert_eq!(written, 28);
+    // SAFETY: the successful nontruncated snprintf terminated this buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-I18446744071562067968Q:701"
+    );
+}
+
+#[test]
 fn snprintf_percent_m_formats_errno_message() {
     let mut buf = [0_i8; 64];
     unsafe {
@@ -6979,6 +7044,57 @@ fn printf_pooled_output_buffer_does_not_leak_stale_bytes() {
         "the pooled path should still be intact after asprintf"
     );
     assert_eq!(&after[..3], b"ab\0");
+}
+
+#[test]
+fn printf_pooled_output_survives_thread_local_destruction() {
+    use std::cell::Cell;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    struct LateRender(Arc<AtomicBool>);
+
+    fn render() {
+        let mut out = [0xa5u8; 32];
+        // Positional arguments force the general renderer and its output pool.
+        // SAFETY: the arguments match the format and out includes room for NUL.
+        let count = unsafe {
+            snprintf(
+                out.as_mut_ptr().cast(),
+                out.len(),
+                c"%2$s:%1$d".as_ptr(),
+                42 as c_int,
+                c"late".as_ptr(),
+            )
+        };
+        assert_eq!(count, 7);
+        assert_eq!(&out[..8], b"late:42\0");
+        assert!(out[8..].iter().all(|byte| *byte == 0xa5));
+    }
+
+    impl Drop for LateRender {
+        fn drop(&mut self) {
+            // The printf pool was initialized after this slot and is destroyed
+            // first. Both taking and returning a scratch buffer must still work.
+            render();
+            render();
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    thread_local! {
+        static LATE_RENDER: Cell<Option<LateRender>> = const { Cell::new(None) };
+    }
+
+    let completed = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&completed);
+    thread::spawn(move || {
+        LATE_RENDER.with(|slot| slot.set(Some(LateRender(observed))));
+        render();
+    })
+    .join()
+    .expect("rendering thread must finish without a teardown panic");
+    assert!(completed.load(Ordering::SeqCst));
 }
 
 #[test]

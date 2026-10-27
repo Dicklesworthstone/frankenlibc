@@ -41211,6 +41211,7 @@ ones that would notice a threading-policy depth counter behaving differently.
   `incumbent_ratio=0.307375` (headline `national`, `%n`);
   `incumbent_bootstrap_median_ci=[0.306321,0.308299]`;
   `null_bootstrap_median_ci=[0.997949,1.001534]` (FL/FL; glibc/glibc `[0.995204,1.000866]`);
+  same-invocation FL/FL null median 0.999701, bootstrap median CI [0.997949,1.001534];
   `bench_elf_sha256=486c7b102d2b439463d980fc6ec0016e41899ac0b6747556b1981e66a92524eb`
   (in-process self-report); `cv_used=false`.
 - **WHAT THIS IS.** `22595833b` (strfmon half), `cb1f46f8b`, `e25f441c6` (2026-07-31) added a closed
@@ -41264,9 +41265,9 @@ ones that would notice a threading-policy depth counter behaving differently.
   LC_MONETARY (the fast path assumes the C locale's empty currency and grouping tables), or if a
   strfmon differential gate diverges.
 
-## 2026-10-06 (salvage/junk-review-old) — REJECT (no measured win): the restored scanf narrow-whitespace inline (`baf79327b`) moves the sscanf family both ways by 2-9%, inside this instrument's between-build band
+## 2026-10-06 (salvage/junk-review-old) — the restored scanf narrow-whitespace inline (`baf79327b`) moves the sscanf family both ways by 2-9%, inside this instrument's between-build band
 
-- **RESULT CLASS:** `result_class=self-speedup` (comparison of two fl builds, each against live glibc);
+- **RESULT CLASS:** comparison of two fl builds, each against live glibc;
   verdict REJECT. No campaign claim.
 - **WHAT WAS TESTED.** `baf79327b` (2026-07-31) moved `ws_seq_len`'s Unicode arm out of line, gave
   `skip_ws` a narrow byte loop, and specialised narrow `%s`. Merge `0be7b9dafe87` took the replayed
@@ -41294,7 +41295,7 @@ ones that would notice a threading-policy depth counter behaving differently.
   provably runs `skip_ws`/`ws_seq_len` per byte, with a same-invocation self-A/B
   (`--fl-so-b`).
 
-## 2026-10-06 (salvage/junk-review-old) — CAMPAIGN WIN (RESTORED, TRIMMED): the strict `strftime` exact-format dispatcher that merge `0be7b9dafe87` silently dropped measures 0.10-0.61x vs live glibc on 21 cases; the fused single-name path is REJECTED
+## 2026-10-06 (salvage/junk-review-old) — CAMPAIGN WIN (RESTORED, TRIMMED): the strict `strftime` exact-format dispatcher that merge `0be7b9dafe87` silently dropped measures 0.10-0.61x vs live glibc on 21 cases; the fused single-name path is removed
 
 - **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
   `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
@@ -41394,7 +41395,7 @@ ones that would notice a threading-policy depth counter behaving differently.
   | `http_date` | 0.1983 | [0.1970,0.2006] | 1.0025 [0.9951,1.0079] | FL_FASTER | 22.2 | 0.1876 | 20.7 |
 
   Every restored leaf clears twice its null and its CI excludes 1.0. `alias_X` has the widest
-  null (FL/FL 1.0199, CI [0.9990,1.0495]); its effect, 0.159 against a 1.0 boundary, is still far
+  null (FL/FL 1.0199, bootstrap median CI [0.9990,1.0495]); its effect, 0.159 against a 1.0 boundary, is still far
   outside 2x that half-width.
 - **THE RESIDUAL COST, recorded and not hidden.** With the dispatcher inline, main's banked leaves
   still run first and stay campaign wins, but this build measured them 0.6-1.5 ns slower:
@@ -41784,6 +41785,447 @@ ones that would notice a threading-policy depth counter behaving differently.
   | `strict-candidate` | `28.52` | `22.59` | `1.032x` | — |
 
 - **DISPOSITION.** KEEP. Hardened `sort120k` drops from `252.42ms` (`9.136x` glibc) to `71.07ms` (`2.572x` glibc), a **`3.552x` speedup** (`71.8%` wall-time reduction) that clears the `<=3x` target on `sort120k`.
+
+## 2026-10-22 — `bd-rc0923-epic-eeuy4f.9`: bounded `%g` allocation removal and certificate memo repair (MAINTENANCE; throughput task remains open)
+
+- **CHANGE.** Source `2258bb1d4d256458cfefebb55d0e541629ff94b3` keeps common
+  at-most-17-digit `%g` rendering in stack scratch, sharing the existing rounding
+  guards with the allocating formatter. Complete output is trimmed before copying
+  a bounded prefix; a new tiny-buffer test exposed the previous trim-after-truncate
+  defect. The existing 16-entry Clifford memo now absorbs primary-bucket collisions
+  and retires startup entries in insertion order. Its key includes the overlap
+  contract, which affects compatibility even for disjoint addresses. Entries remain
+  32 bytes, with no new TLS cell, allocation, global lock, or controller-law change.
+- **OBJECTS.** Both release artifacts were built remotely from base
+  `86fb3ed9b49a4244e19e300bd0c789ea8915e20d` plus clean overlay
+  `62f5ddf6c58d8a0e6dd968a870a6d1b1f9837a82226eee6e9ec9846cd407415a`;
+  the three modified source files equal commit `2258bb1d4`. The receipt's base tree
+  is not the modified tree. SHA-256, checked on worker, retrieved file, and frozen copy:
+  default `986da6a14fd4f3e59997920f42550c0488bd451e9f1f8401b1b9955804d14e15`;
+  `owned-tls-cache` `cc5a62c79228c5f8fc9d6dbe645a0abf45d211a65b838631427d82bb1947fdd8`.
+  Incumbent default SHA-256
+  `b79e9a16e488c61d5729398f8c6af5edc7303b7b269b3001e6d7aedd45fcb38d`.
+  Timing below is default TLS only; owned TLS receives functional coverage only.
+- **LIVE REFERENCE / DENOMINATOR.** ovh-b, Xeon E3-1245 V2, CPU 0 affinity,
+  GNU libc 2.43 live in the same invocation as incumbent and candidate. Nine
+  measured rounds and two warmups, rotating order, 200,000 calls per format/string
+  sample. All 15 format cases, both modes, heap/stack short strings, and macro
+  controls are retained, including losses. `/usr/bin/sort` is uutils 0.10.0 linked
+  to GNU libc; this is the same deployed executable for all configurations.
+- **FORWARD RESULTS (ns/call).** These are scoped maintenance measurements, not a
+  banked claim that FrankenLibC beats GNU libc:
+
+  | case | mode | GNU libc | incumbent | candidate |
+  |---|---|---:|---:|---:|
+  | `%.6g` | strict | 246.60 | 392.77 | 311.42 |
+  | `%.6g` | hardened | 241.16 | 7,233.09 | 1,534.32 |
+  | `%.17g` | hardened | 300.67 | 7,865.67 | 2,281.69 |
+  | `%+400.2f` | hardened | 273.15 | 2,535.11 | 1,160.57 |
+  | `[%+020.6G]` | hardened | 305.51 | 3,946.42 | 4,044.65 |
+  | heap `strlen`, lengths 0/7/15/31 | hardened | 2.66 | 924.70 | 95.25 |
+  | stack `strlen`, same lengths | hardened | 2.71 | 129.40 | 132.87 |
+  | stack `memcmp`, same lengths | hardened | 3.57 | 196.55 | 197.39 |
+  | heap `memcmp`, same lengths | hardened | 3.23 | 67.18 | 68.58 |
+
+- **NUMERIC MACRO LIMIT (`sort -g`).** Genuine 100,000-line seeded input SHA-256
+  `6e584c8b4674544d18369ff7b00768739d56f190935eb56c4848dbf42c4b2704`:
+  GNU libc 131.21 ms; incumbent strict/hardened 140.09/304.46 ms; candidate
+  147.01/314.19 ms. Candidate hardened is 2.394x GNU libc but **2.137x strict**,
+  failing the original 2x target. The numeric 120k control is also slower: incumbent
+  hardened 366.12 ms, candidate 373.38 ms, candidate strict 167.78 ms (2.225x).
+  All sorted outputs match. No macro speedup or task closure is claimed.
+- **LEXICAL MACRO LIMIT (plain `sort`).** The historical bead does not specify a
+  sort flag; the numeric probe cannot silently stand in for every sort workload.
+  A separate lexical run on the same input and libraries gives GNU 31.70 ms,
+  incumbent strict/hardened 39.89/164.70 ms, candidate 39.43/159.78 ms:
+  **4.052x strict and 5.040x GNU**, missing both original milestones. The numeric
+  3x-GNU observation therefore does **not** establish the general first milestone.
+  This is a new retained seeded corpus, not a reconstruction of the unretained
+  historical input. `sort100k-lexical/report.json` SHA-256
+  `5beff1e9060456d8b09eccf82ee703ac1b11d21d86b09489799560f90027deed`.
+  Reversed order confirms the miss: GNU 31.59 ms, candidate strict/hardened
+  39.53/154.50 ms, **3.909x strict / 4.891x GNU**; incumbent hardened 160.21 ms.
+  Reverse report SHA-256
+  `e6767e4dd3467a876e8b1d2be3fd4bea1b7818d94faba6733cec8c0470b4474b`.
+  The corresponding five-child Callgrind job records total instructions GNU
+  221,501,170; incumbent/candidate strict 292,175,441/292,177,803; hardened
+  1,260,703,795/1,260,662,512, effectively unchanged. Candidate exclusive costs:
+  `memcmp_validating` 313.99M; membrane guard 122.30M; TLS remaining lookup 117.13M;
+  PCC TLS closure 116.27M; safety-level lookup 46.37M. **The next lexical-sort
+  lever is redundant memcmp guard/TLS/policy work**, preserving tracked-pointer
+  bounds, quarantine, repair logging and PCC explainability. This differs from
+  numeric-sort attribution; the workload split matters. Lexical profile report
+  SHA-256 `eb6a9f92203e8b7cf3b8c5b8fb5703af11bb0bca6fdfc9b424e681bafc765478`.
+- **LOSSES THAT CHANGED THE IMPLEMENTATION.** The first stack-render candidate
+  repeatedly regressed hardened width-400 padding by about 2.1x and padded `%G`
+  by about 1.64x, including reversed order. Callgrind exposed an added interposed
+  slice-to-String copy and mixed-length certificate recomputation. Bounded ASCII
+  pushes plus the memo repair removed that extra work. The initial sign-insertion
+  explanation was wrong. Incumbent width-400 timings themselves varied roughly
+  1.2–2.54 microseconds across batches/path/layout, so every elapsed delta cannot
+  be attributed solely to source. A pre-format build of the same algorithm had
+  stack `memcmp` at 206.90 ns: one favorable sub-200 ns batch does not establish
+  the general short-call target. Earlier artifacts remain separate from final ones.
+- **EXECUTED FUNCTIONAL EVIDENCE.** Original memo with the new regression tests:
+  `13 passed; 2 failed; 0 ignored` (mixed-length retention and opposite overlap
+  contracts). Final complete membrane suite:
+  `1466 passed; 0 failed; 0 ignored; 0 filtered out`. Fresh committed-input C replay
+  against both final artifacts, strict and hardened: **628,808 configured GNU
+  differential rows plus 40 original cases**, with all 20 wrong-provider negatives
+  rejected. The full stdio gate remains red before execution: missing
+  `stdin/_IO_2_1_stdin_` symbols, **zero cases**, for both artifacts.
+  The unchanged deployed `fixture_membrane_access.c` (source SHA-256
+  `71d11cf2d21942bb5d3ad9babe120f3fb5ac2cd8aa66aa1a5ec2a9af519f577a`)
+  additionally executed **74/74 cases** on both final TLS artifacts: valid calls
+  in both modes and hardened header/canary corruption, end-of-allocation and
+  quarantine cases. Its provider-pinned `malloc`, `free`, copy/fill and string
+  entrypoints all came from the selected library. This is bounded repair/deny
+  evidence, not universal safety. `membrane-safety-final/report.json` SHA-256
+  `277ef205954280bf4b760bfd9a656393964814aa0e706fe3b2cfbeab836c5424`.
+- **STATIC LIMITS.** Final runtime-source workspace Clippy exits 101 with the same
+  27 diagnostic occurrences (17 distinct title/file pairs) as the retained baseline.
+  A newly introduced
+  identical-branch lint was fixed and both artifacts rebuilt; no suppression was
+  added. Final `cargo fmt --check` has exactly the baseline's 583 diff bodies,
+  zero added or removed. Neither check is green. UBS was not executed because
+  its installed wrapper deletes temporary files and no preserve mode was found.
+- **FINAL FOLLOW-UP.** Final-source `cargo check --workspace --all-targets
+  --keep-going` executed remotely and exited 0 (15m49s compiler run; existing
+  warnings retained). `printf_float_differential_fuzz` compiled and executed:
+  `1 passed; 0 failed; 0 ignored; 0 filtered out`, **300,000 comparisons, zero
+  divergences vs host glibc**. Earlier pinned-worker queue timeouts executed zero
+  tests. An obsolete, separately bound release build hit its 3600-second deadline
+  with exit 137; neither its source nor output is the qualified artifact above.
+  Final-source `hardened_mode_safety_test` then compiled and executed on the same
+  clean overlay: **`17 passed; 0 failed; 0 ignored; 0 filtered out`**, exit 0.
+  The final focused conversion replay also compiled and executed:
+  **`12 passed; 0 failed; 0 ignored; 3664 filtered out`**, including the tiny-buffer
+  prefix and precision-boundary gates. This is a focused result, not a full core pass.
+- **MEMCMP GATE CONNECTED.** The lexical profile exposed a coverage gap: the
+  deployed fault fixture did not exercise either `memcmp` operand. Test-only
+  source `0922448c3` adds valid nonzero comparisons and header/canary/end/quarantine
+  cases for both sides in the existing C fixture and existing gate runner. All
+  original 74 cases per library remain; 24 new comparison cases make **98 per
+  library**, covering runtime math on/off. The existing runner compiled with
+  `-Wall -Wextra -Werror`, executed **196/196 positive cases** across the two frozen
+  release artifacts, and rejected both unpreloaded provider controls before fault
+  injection. Both compile logs are empty. Runtime-library source remains `2258bb1d4`;
+  these tests do not imply a newly rebuilt library from the test-only commit.
+  Fixture SHA-256 `6ce9105ac5557a50c98e8b6e3fe5615e392b1134d36d29fc9f85541cb7d3e9f6`;
+  runner `e658c3890257db98b711f65581b7a9733653272bff3c5eb3d3fb069685fb430e`.
+  Reports `membrane-access-default-ts1/results.json` SHA-256
+  `99652c73f6e020c1f071c825f1c5daa5dcdc0cfe35f7f5695cbe5306e4fa7302`;
+  `membrane-access-owned-ts1/results.json`
+  `184e72bf511bf344c250822857a0c0cba1cf6583f10d727971a05b8d3f79ca61`.
+  After this extension, the six-file clean overlay
+  `0f05ec759faed52893729f43ed2ec8a23306199e8dbc6041af845501c8d09144`
+  passed `cargo check --workspace --all-targets --keep-going` again (exit 0,
+  16m27s compiler run). The repeated formatting check executed and retained exactly
+  583 baseline diff bodies, zero added/removed; exit 1 remains red. A prior fmt
+  attempt lost SSH completion, was recovered as exit 255 with terminal acknowledgement,
+  and supplies no formatting proof. Its subsequent worker-admission failure also
+  executed zero formatting cases. Post-extension Clippy reached its configured
+  3600-second deadline, exit 137 after 3607.958 seconds, while compiling test
+  dependencies. Its partial output contains 14 baseline diagnostic occurrences
+  (9 distinct title/file pairs), zero new pairs, with 13 baseline occurrences not
+  observed. It did not finish all targets: this is **incomplete**, not a second
+  full baseline-equivalence result. The earlier completed runtime-source Clippy
+  comparison above remains separate. Log `clippy-native-final.log`, exact wrapper
+  `rchw-20467d77-6dc8-4826-af5c-1677a892e720`; no automatic replay or local fallback.
+- **REVERSED ORDER.** Same cases and frozen default artifact, separate outputs:
+  hardened `%.6g` 7,228.94 -> 1,531.44 ns; `%.17g` 7,840.41 -> 2,276.11 ns;
+  padded `%G` 3,957.63 -> 4,100.23 ns (3.6% slower); heap `strlen`
+  917.88 -> 97.64 ns; stack `memcmp` 193.79 -> 197.11 ns. Width-400 incumbent
+  returned to 1,166.21 ns, candidate 1,159.63 ns: its large forward-only delta is
+  **not a repeatable improvement**. No format median exceeded 1.1x incumbent in
+  either final order. Sort100k GNU/strict/hardened candidate medians were
+  133.64/143.72/311.56 ms: **2.168x strict, 2.331x GNU**, still failing 2x.
+  Sort120k candidate hardened was 376.86 ms versus incumbent 361.20 ms (4.3%
+  slower), candidate strict 175.42 ms. These controls do not establish a macro win.
+  Reverse reports SHA-256: `short-strings-final-reverse/report.json`
+  `9ee674b6e76428778dc4d3606641bc79614eb8028e3fef15a37d6e1dc2f5e93d`;
+  `timing-reverse-final/report.json`
+  `3dcdec5a61bd049f024e4d132994037d595d9050333a80a4500088df3c6ec5e3`;
+  `sort100k-reverse/report.json`
+  `b805da32dae49560f772624b42f7d1e011bcebf6608bc14b487d2d1bbb024650`.
+- **ACTUAL 100K PROFILE.** One profile job runs five Callgrind children: live GNU
+  libc, incumbent strict/hardened, and final candidate strict/hardened on that same
+  input, with identical output SHA-256
+  `54f31903923d9bdf8dad573b725402e6beb926d7d59c7446c390c89981a36e4e`.
+  Total instructions: GNU 1,006,442,145; incumbent strict 1,057,834,511;
+  candidate strict 1,057,836,733; incumbent hardened 1,632,630,601;
+  candidate hardened 1,633,201,691. **No macro instruction reduction.** Candidate
+  inclusive costs include malloc 260.40M, free 157.27M, and memcpy validation
+  196.23M instructions (nested counts must not be summed). Exclusive costs include
+  arena free 47.40M, memcpy validation 38.42M, SipHash 33.81M, index
+  insertion 29.64M, bloom insertion 29.52M, SIMD selection 22.08M, policy decide
+  21.24M, and attempted HTM 19.06M. Allocator bookkeeping and the remaining copy
+  path are the next measured levers; Clifford recomputation is no longer a major
+  named row here. These instruction counts are not hardware-counter or latency
+  proof. `sort100k-profile/report.json` SHA-256
+  `3b62491fc83072f1d174eaaf4e0b54ea53ff5fd3138e9f85cbedb55d9e5e5f6f`;
+  both inclusive and exclusive annotations and all five raw profiles are retained.
+- **RECEIPTS.** Frozen root
+  `/Users/jemanuel/projects/.frankenlibc-g-format-final-job-20261022/artifacts/`:
+  `replay/report.json` SHA-256
+  `ec1bccb75fc60ad28c8ef6772784c02441ccf8bee58c6aac4e926b4f566bb768`;
+  `timing-qualified-final/report.json`
+  `db505b5254807baea747d65025d9cf3fede51a9cd74a77f79bcae60384188fed`;
+  `short-strings-final/report.json`
+  `4c79fe00768ddab7fa10fa47843cf6d538f6d372ad5af0e79fb024180bf0df60`;
+  `sort100k/report.json`
+  `eb8e2efb2ca36c3071ce239a18313f03fd13d652311e9a9dcbc6bf7a48146efc`.
+  Raw output, provider checks, compiler failures and prior candidates are retained.
+- **DISPOSITION.** KEEP the bounded implementation and correctness repair;
+  **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
+  acceptance: stable short-call bounds, <=3x GNU and <=2x strict macro throughput,
+  durable deployed-path bench group, and corpus performance enforcement remain required.
+  Final-source ABI safety, conversion, compiler, fuzz, reverse-order timing and
+  actual 100k profiles have executed. Post-extension compiler and formatting
+  checks finished; the Clippy recheck timed out as recorded above. The original
+  throughput acceptance remains unmet.
+  This entry serves that named bead's review; it retires as active evidence when
+  superseded by its next bound qualification, while preserving the history.
+
+## 2026-10-22 — Connect deployed overhead enforcement; retain the failures (.9)
+
+`bd-rc0923-epic-eeuy4f.9` remains **in progress**. This continuation supplies
+the missing deployed benchmark consumer and corpus enforcement. It does not
+establish the original throughput targets or integrated L1 readiness.
+
+- **CONNECTED CODE.** Existing `fixture_membrane_access.c` now times valid,
+  warmed, provider-pinned `strlen`/`memcmp` calls through function pointers with
+  `-fno-builtin`. Stack and heap lengths 0, 1, 7, 15, 31 and 63 are separate
+  cases; alternating unequal operands and checked checksums prevent a constant
+  zero comparison from masquerading as work. All original 98 fault/valid cases
+  remain. The existing Python runner adds `--benchmark`, with live GNU libc,
+  strict and hardened children in one invocation, optional incumbent arms,
+  two retained warmups, nine measured rounds, rotated arm order, CPU affinity,
+  provider and sort-binding checks, exact sort-output parity, source/library/
+  corpus hashes, and retained raw rows. The existing Cargo bench accepts
+  `--deployed LIBRARY`; the corpus script consumes the same runner. Its scoped
+  `--performance-only` invocation propagates failure without claiming the full
+  functional corpus. The full corpus path also requires this benchmark after
+  its two mode suites. Original limits stay fixed: each hardened short-case
+  maximum batch mean <=200 ns, sort100k median <=3x GNU and <=2x strict.
+  Batch means are not individual-call tail latencies. Both lexical and numeric
+  sort are mandatory; the favorable numeric denominator cannot hide lexical.
+- **ACTUAL FAILURES.** Runtime artifacts in these first wiring executions are
+  the previously qualified `2258bb1d4` libraries: default SHA-256
+  `986da6a14fd4f3e59997920f42550c0488bd451e9f1f8401b1b9955804d14e15`,
+  owned-TLS `cc5a62c79228c5f8fc9d6dbe645a0abf45d211a65b838631427d82bb1947fdd8`.
+  The default invocation retained **1,430 child rows: 1,170 measured and 260
+  warmup**, with five live arms, 24 short-case groups and two sort workloads.
+  Wrong-provider and all three malformed-argument controls rejected. All
+  measured checksums, provider checks and sort-output comparisons passed;
+  throughput gate **exit 1**: lexical hardened was **3.002x strict / 3.515x
+  GNU**, and stack memcmp maxima at 7/63 bytes were **202.25/202.92 ns**.
+  Numeric was 1.718x strict / 1.917x GNU on this host and input, not a general
+  acceptance result. Actual Cargo caller compilation and execution retained
+  **858 rows** and propagated exit 1 (lexical 3.040x strict / 3.375x GNU).
+  Actual corpus performance-only caller retained **858 rows**, exit 1
+  (lexical 3.154x strict / 3.764x GNU; several short stack memcmp cases also
+  exceeded 200 ns). These are distinct invocations, not independent reviewers.
+  The unpreloaded host reports GNU **2.43**; Franken's compatibility version
+  string is **2.38**, which must not be called the worker's host version.
+- **SAFETY AND OWNED-TLS LIMIT.** The revised existing fixture compiled with
+  `-Wall -Wextra -Werror` and executed **98/98 cases on each frozen library**,
+  including runtime math on/off; both wrong-provider controls rejected before
+  fault injection. The owned-TLS benchmark nevertheless terminated with a
+  **30-second lexical-sort timeout, exit 2**. It has partial raw rows, not a
+  completed `benchmark.json` or a nine-sample pass. Its retained hardened heap
+  memcmp 63-byte batch measured **13,633.42 ns/call**, with the correct checksum.
+  Source diagnosis: `tls_cache.rs` intentionally uses a fresh unbacked cache
+  under `owned-tls-cache`, and `try_with_tls_cache_hit` always misses there.
+  Its short-lived EBR handles and process-global validation-depth storage need
+  owner-safe lifecycle integration. Re-enabling host TLS or substituting a
+  global locked cache would not qualify that work. Existing .9/standalone/L1
+  blockers retain it; no new follow-up is used to close the original.
+- **BOUNDED EXECUTION.** The full corpus was **not executed**: its existing
+  gencat case contains `rm -r`, and `fixture_remove_dir_ftell_ebadf` exercises
+  deletion. No-deletion instructions remain binding. The full aggregation
+  branch was source-reviewed; only its real performance-only branch executed.
+  UBS remains unrun because its installed wrapper deletes temporary files
+  and no preserve mode was found. Neither omission is a pass.
+- **FROZEN EVIDENCE.** Root:
+  `/Users/jemanuel/projects/.frankenlibc-deployed-bench-job-20261022/`.
+  SHA-256: `artifacts/default/benchmark.json`
+  `39f62d32dfc41f8ef7b2676ca84b792e78a686c6a93fef8efd3a26b4d784583a`;
+  `artifacts/bench-caller/deployed/benchmark.json`
+  `d264f74e53a55e4c132665f6335366207200902ea3514ad50f238c83b46efacd`;
+  `input/target/ld_preload_smoke/deployed-bound/deployed-overhead/benchmark.json`
+  `b4dc53d08e0514fb0ebc11b4ba9e2dfde18fe83656cf7955c04636ec11c54567`;
+  `artifacts/safety-default/results.json`
+  `a9e5ce94ceaf314fe334129e5c48093da7ef71a8e189ac8c6969ff3c8345e948`;
+  `artifacts/safety-owned/results.json`
+  `8c47eee258514a874808798500ff60cc0a30374e57a24d4eba3c1fa79ea14c11`.
+  Frozen fixture SHA-256 `bf6bccd38cd283fda3dd02c7554814aa27658fbdbb9bd750c09bc86011c425e1`;
+  runner `c3d64ad244f0bd74f9bf5e766e0c12ed96d74a47c1915b10f663a4cd5b165f27`;
+  corpus script `173077e6561d4d49658611b73aca603c734378673ff169c8b38b79c5c13da494`.
+  This entry serves .9's unchanged acceptance review and retires as active
+  evidence when its next bound qualification supersedes it; history remains.
+- **INLINE EXPERIMENT: DISCARD.** Four experimental lines added cross-crate
+  inline hints to the unchanged bounds-healing decision and global-policy
+  accessor. A fresh explicit Linux release artifact was actually compiled:
+  SHA-256 `a57bc2d79097c2c1c4594e9967da1625acdec1e75e0d945ea39d8acfa016ad9a`,
+  bound to base `4ed4f55dac1ad8adb9c3c3c813f1bf64811af570` plus six-file overlay
+  `1a8ce601c5e87694c01da36f5e2d6e71335347a20677db2e7bd126eab81da860`.
+  Both incumbent and candidate ELF compiler comments identify Rust
+  `1.100.0-nightly (908501772 2026-08-30)`; no compiler mismatch is inferred
+  from a worker's ambient toolchain listing. The actual existing Cargo caller
+  then compiled for 13m46s and executed **1,430 rows**, five live arms,
+  nine measured rounds and both warmups. It propagated failure, exit 1.
+  Against live default986 incumbent, hardened lexical was 292.393/298.058 ms
+  (-1.90%); numeric was 674.823/629.296 ms (**+7.23%**). Several other case
+  medians regressed >5%. High host load and dispersion prevent a general or
+  causal performance claim; this mixed result fails the predeclared keep
+  criterion. Original limits also still fail: lexical **3.397x GNU / 3.127x
+  strict**, numeric **2.189x strict**, and multiple short-call maxima >200 ns.
+  The four experimental lines were manually removed, preserving commit
+  `50589d03c`, the artifact and every raw row. `heal.rs` is again byte-identical
+  to base4ed (SHA-256 `5908b4b4e602c83d23c21e1c1d837964e8a840c7858db87e7066a384cb0289d7`).
+  No runtime performance improvement from this continuation is retained.
+  Report `artifacts/inline-ab/benchmark.json` SHA-256
+  `2d84dad1677834a415f56ad0fddad53009d24d8d017a319c643142f5eb8ab0a1`.
+  The new artifact separately passed **98/98 actual deployed fault cases**
+  with provider rejection, report `artifacts/inline-safety/results.json`
+  SHA-256 `9666aa731603d7379c7c1de66067c623199cf21300f83847253e3adcece2e511`.
+  Its complete membrane unit suite compiled and ran **1,466 passed, 0 failed,
+  0 ignored, 0 filtered out**. Those facts do not turn the losing timing result
+  into a win or identify that rejected artifact as the retained runtime.
+- **STATIC SCOPE.** Hint-source six-file overlay1a8 passed workspace
+  `cargo check --workspace --all-targets --keep-going`, exit 0. After the
+  bench's one-line working-directory correction, six-file overlay
+  `dbb90516c41b215bdceffcdd389da212ea3eac9636ba2ebe01bbc62bbbbe1a02`
+  completed workspace Clippy with `--all-targets --keep-going -- -D warnings`,
+  exit 101: exactly **27 baseline diagnostic occurrences / 17 distinct
+  title-file pairs**, zero added/removed. Formatting actually executed,
+  exit 1: exactly **583 baseline diff bodies**, zero added/removed. These
+  remain red. Current bench SHA-256
+  `680cb2e943e3a64bd62a01c568b84bbe281a338541f629bd9bce76fe75056ec2`;
+  actual relative-path Cargo invocation, including its two frozen ELF data
+  overlays, was bound to overlay
+  `1bf30467cb500901cb784bf6b430740c49390f434795126d4e87682f98b40175`.
+  The hint removal restores previously checked baseline runtime bytes; it
+  does not produce a new qualified release artifact. README documents the
+  exercised commands and uses `--keep-going` for workspace compile/lint checks.
+  The cwd-corrected overlaydbb workspace check subsequently completed **exit 0**
+  on vmi1167313 (1,744.0 seconds overall). It compiled the source cut with the
+  experimental hints; the later four-line removal restores base4ed's exact
+  runtime bytes and is not presented as a second full workspace execution.
+  CI already used `--keep-going` for compiler checks but omitted it for Clippy;
+  that two-line command/label omission is now corrected without changing failure
+  handling. `bash -n scripts/ci.sh scripts/ld_preload_smoke.sh` passed syntax
+  inspection; the full CI script itself was not executed. The completed
+  workspace Clippy command above actually exercised the stronger target-wide
+  flag and still failed on the unchanged baseline diagnostics.
+- **FAILED ATTEMPTS AND COST.** Avoidable qualification churn consumed too much
+  time: incompatible RCH flags, omitted ignored lockfile, initial oversized
+  arbitrary-job core estimates, implicit Apple target for a Linux artifact,
+  and my absent USB output destination. The corrected explicit Linux compile
+  exited 0, but its overall delivery exited **102**. Frozen artifact bytes
+  were independently copied and hashed; this is not a green delivery pipeline.
+  Exact retrieval receipt `rchw-c5265ef8-42f6-48c8-9337-9aa52a018005` remains
+  unacknowledged after supported recovery failed on that destination. No
+  daemon restart, journal rewrite, lock clearing, pressure override or foreign
+  artifact bypass was used. Source-ownership refusals executed zero tests;
+  private clean-snapshot Cargo execution supplied the actual A/B instead.
+  The queued hz2 safety request `rchw-aa9eedd5-bac2-4a66-9d56-472f3b90f867`
+  was cancelled **before start**, exit 130, zero slots, terminal acknowledged;
+  only then did the freed vmi1156319 execute the native gate successfully.
+  No started test or healthy compile was cancelled. A formatting admission
+  timeout also executed zero cases; the later executed result above is separate.
+  Full real-work and twenty-point honesty worksheets are filled in .9's
+  comments. Verdict **DRIFTING**: connected enforcement is an exercised enabler,
+  while retry churn and audit prose earn no runtime capability credit. Work
+  was solo; no independent verifier or broad performance/safety/release win
+  is claimed. Original .9 acceptance and the owned-TLS performance gap stay open.
+
+## 2026-10-22 — Discard HTM bookkeeping experiment; repair its isolated test setup (.9)
+
+- **DISCARD.** Two guards avoided the cooldown clock for an unset deadline and
+  summary bookkeeping without `runtime-tracing`. Both new cost regressions
+  compiled and failed separately on old source `ed44d7b31`; the candidate passed
+  all six HTM units in default and tracing builds. Nevertheless, the actual
+  five-arm deployed invocation rejected it: hardened numeric sort was
+  **1,192.880 ms versus 1,007.463 ms incumbent (+18.40%)**; lexical was
+  480.665/486.449 ms (-1.19%). No favorable rerun or causal/general loss claim.
+  Both guards and their two optimization-specific tests were manually rolled
+  back together. Commits `ed44d7b31` and `1c2ca7c9b` and all evidence remain.
+  The HTM file again exactly matches pre-experiment `2624ba6cc`, SHA-256
+  `1d7a689c02e9f8e0e47c560260f00b6894a2bf35e8e25c52c14673674029565e`;
+  its original four tests actually execute **4 passed / 0 failed / 229 filtered**.
+  Automatic save had already published `1c2ca7c9b`; rollback `0c0e5ce44` was
+  pushed to main and the required legacy mirror, with both remote refs verified.
+- **ORIGINAL LIMITS STILL FAIL.** The rejected candidate's same-invocation GNU
+  ratios were lexical 2.694x and numeric 2.367x, but strict ratios were
+  **4.509x and 2.411x**. Twenty-two of 24 short groups exceeded the original
+  maximum batch mean of 200 ns; the worst was 1,375.99 ns. This invocation
+  retained **1,430 rows: 1,170 measured and 260 warmup**, 130 nine-sample
+  summaries and ten sort-binding records. Provider rejection, three malformed
+  controls, checksums and sort-output parity all held. GNU 2.43 was live in the
+  same invocation; the compatibility strings were 2.38. Host load changed from
+  6.00/11.22/14.81 to 14.20/12.56/14.88. All raw samples remain; neither an
+  improved lexical median nor the GNU-only limits qualify the failed targets.
+- **REJECTED ARTIFACT SCOPE.** Explicit Linux default and owned-TLS release
+  builds and delivery both completed with exit 0, bound to `ed44d7b31` plus
+  overlay `32c51efc9c9ea4e0b76cb26329691363fb7569dc2b048e4b5e70418fd0ec7fe3`.
+  Default ELF SHA-256
+  `caadd42a3969e8cdd681c864747ac358e74aaa002c4c9f475df00e15ce2e1f5d`
+  passed **98/98 deployed safety cases** and wrong-provider rejection. Owned
+  SHA-256 `4fa0e39b9cb1be9bc78a6c70d75f26dbfbcdc0a89238d433f5ae7fbbbdef7157`
+  received no native/performance execution after discard. These are rejected
+  artifacts, not replacements for the retained runtime. The default candidate
+  and live incumbent both identify Rust 1.100.0-nightly (908501772 2026-08-30).
+  Workspace compilation passed on the candidate; its Clippy/fmt failures matched
+  the baseline. None of those receipts is a post-rollback execution.
+- **RETAINED TEST REPAIR.** Actual isolated malloc HTM integration failed in
+  strict and hardened modes: single-threaded slot-local statistics never enter
+  the global combiner, so counters remained zero. The first failure poisoned
+  the shared test mutex; the second was not an independent allocator failure.
+  An additional old-source commit test run alone failed directly, **0 passed /
+  1 failed / 88 filtered**, confirming the hidden ordering prerequisite.
+  Existing `malloc_abi_test.rs` now allocates/frees on the calling thread and a
+  real joined second thread, asserts the actual multi-threaded latch, then
+  resets the site before the original forced-mode allocation/free sequence.
+  All original commit/abort/fallback assertions remain. No production branch,
+  counter injection, mock, tolerance, skip or direct statistics hook was added.
+  With `--no-fail-fast`, all three binaries actually execute in **each** mode:
+  malloc **2 passed / 87 filtered**, mutex **2 passed / 18 filtered**, memcpy
+  **2 passed / 211 filtered**, with zero failures and both overall exits 0.
+  This exercises the intended global-combiner path without depending on another
+  test first creating a second allocating thread. It proves neither hardware
+  RTM execution nor full allocator conformance. Exact test SHA-256
+  `7e981d36c1ea962517794516f3cad48d30b6c071fd3b81e888dc350485491e68`;
+  source receipt `2624ba6cc` plus overlay
+  `6fcd240213b149a68294e1657888e3afe7082e690cd7e7defcae0541bd5cbf5b`.
+- **FINAL CHECKS AND LIMITS.** Helper-source full workspace Clippy with
+  `--all-targets --keep-going -- -D warnings` completed exit 101 with exactly
+  **27 baseline occurrences / 17 title-file pairs**, zero added/removed.
+  Formatting completed exit 1 with exactly **583 baseline diff bodies**, zero
+  added/removed. The final helper-source workspace compiler check with
+  `--all-targets --keep-going` completed **exit 0** (16m03s compiler time),
+  bound to the same `2624ba6cc` + overlay `6fcd2402` source as the repaired
+  integration tests. Full allocator-file/corpus
+  and UBS execution remain unrun. Original `.9` throughput and owned-TLS
+  lifecycle/cache work, `bd-dcrhgl` allocator acceptance, and L1 readiness stay
+  open. The retained change is a test enabler; **no runtime optimization is
+  retained**. Admission churn and reports earn no capability credit.
+- **RECEIPTS.** Existing root
+  `/Users/jemanuel/projects/.frankenlibc-deployed-bench-job-20261022/` retains
+  `artifacts/htm-ab/benchmark.json`, SHA-256
+  `fe8eae06c5dd15719bc1e1d14ba2f2880d4e661db2d03b2d4ea43867c49ec476`;
+  `benchmark.raw.jsonl`,
+  `b6c76f429714fc3e80f73fb4d5dac1ebad33f0a0ff28517e238949888ec48695`;
+  and `artifacts/htm-safety-default/results.json`,
+  `bd1c39d7790cad51585f0c83f39f1dd9f2444e30798264de419376da793bcdd5`.
+  Original isolated failures and all command logs remain. Detailed TODO and
+  gate-fix win/lose split are recorded on `.9` and `bd-dcrhgl`; this entry retires
+  as active evidence when the next exact-source qualification supersedes it.
+  Guarded tracker export preserved all 7,544 IDs, 4,693 dependencies, 13,232
+  labels and every prior comment, appending only nine comments on two tasks.
+  Tracker doctor still exits 1 for its existing inner-ignore-template warning
+  and preserved temporary/recovery artifacts; no cleanup or repair was applied.
 
 ## 2026-10-25 — `bd-rc0923-epic-eeuy4f.9`: Wave 2 — MRU `ranges[0]` Pair Lookup, Single-Slot Guard, and Lock-Free Context Short-Circuits (`1.596x` strict on `sort120k`, `12.09ns` `strlen_16`, `23.70ns` `memcmp_16`)
 

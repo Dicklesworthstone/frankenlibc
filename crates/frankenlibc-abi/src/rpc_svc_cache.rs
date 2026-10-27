@@ -155,6 +155,9 @@ impl ReplyCache {
 
     /// Store only a fully encoded response. Oversized data leaves the cache
     /// unchanged. Replacing a reply to the same request consumes no FIFO slot.
+    /// Tests use this convenience composition; transports snapshot before
+    /// callbacks with stage() and publish later with remember_staged().
+    #[cfg(test)]
     pub fn remember(&mut self, peer: Peer, generation: u64, request: &[u8], reply: &[u8]) -> bool {
         if request.len() > self.packet_size || reply.len() > self.packet_size {
             return false;

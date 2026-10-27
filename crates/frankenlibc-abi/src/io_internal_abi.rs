@@ -1469,7 +1469,7 @@ impl NativeStreamRegistry {
 
         // SAFETY: _IO_list_all is only accessed within the registry mutex.
         unsafe {
-            _IO_list_all = stderr_ptr.cast::<c_void>();
+            publish_native_file_list(stderr_ptr.cast::<c_void>());
         }
     }
 
@@ -1486,9 +1486,9 @@ impl NativeStreamRegistry {
                 // SAFETY: _IO_list_all is protected by the registry mutex.
                 let new_file_ptr: *mut NativeFile = &mut slot.file;
                 unsafe {
-                    let old_head = _IO_list_all.cast::<NativeFile>();
+                    let old_head = native_file_list().cast::<NativeFile>();
                     slot.file.set_chain(old_head);
-                    _IO_list_all = new_file_ptr.cast::<c_void>();
+                    publish_native_file_list(new_file_ptr.cast::<c_void>());
                 }
                 return Some(i);
             }
@@ -1508,14 +1508,14 @@ impl NativeStreamRegistry {
         // SAFETY: _IO_list_all is protected by the registry mutex.
         unsafe {
             let mut prev: *mut NativeFile = ptr::null_mut();
-            let mut curr = _IO_list_all.cast::<NativeFile>();
+            let mut curr = native_file_list().cast::<NativeFile>();
             while !curr.is_null() {
                 if curr == file_ptr {
                     // Found it. Unlink.
                     let next = (*curr).chain();
                     if prev.is_null() {
                         // Unlinking the head.
-                        _IO_list_all = next.cast::<c_void>();
+                        publish_native_file_list(next.cast::<c_void>());
                     } else {
                         (*prev).set_chain(next);
                     }
@@ -2551,6 +2551,51 @@ pub static NATIVE_IO_JUMP_T: _IO_jump_t = _IO_jump_t {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _IO_list_all: *mut c_void = std::ptr::null_mut();
 
+// Bind native registry links to this DSO's physical storage even when a host
+// executable or libc preempts the public data symbol. The alias must share
+// this Rust module/codegen unit with the storage definition above.
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_io_list_all_storage",
+    ".hidden __frankenlibc_io_list_all_storage",
+    ".set __frankenlibc_io_list_all_storage, _IO_list_all",
+);
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "__frankenlibc_io_list_all_storage"]
+    static mut OWNED_IO_LIST_ALL: *mut c_void;
+}
+
+#[inline]
+unsafe fn native_file_list() -> *mut c_void {
+    #[cfg(debug_assertions)]
+    {
+        unsafe { _IO_list_all }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        unsafe { OWNED_IO_LIST_ALL }
+    }
+}
+
+#[inline]
+unsafe fn publish_native_file_list(head: *mut c_void) {
+    #[cfg(debug_assertions)]
+    unsafe {
+        _IO_list_all = head;
+    }
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        OWNED_IO_LIST_ALL = head;
+        if stdio_abi::stdio_symbols_are_interposed() {
+            // Every new or removed head must reach an executable's COPY cell,
+            // not only the initial standard-stream chain in the constructor.
+            _IO_list_all = head;
+        }
+    }
+}
+
 /// `_IO_file_jumps` — default FILE vtable for regular files.
 /// Native-owned: initialized with our native trampolines for full vtable dispatch.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2619,8 +2664,9 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// stream tracking for binaries that do have COPY relocations.
 ///
 /// The patch is applied ONLY when fl's stdio ABI actually interposed the
-/// host's — the C-visible `stdout` resolves to fl's exported global instead of
-/// glibc's own cell. When fl is linked statically into a consumer (rlib: every
+/// host's — function lookup resolves to fl's native stdio. A COPY-relocated
+/// host stdout cell alone does not establish ownership. When fl is linked
+/// statically into a consumer (rlib: every
 /// conformance test binary), glibc's `_IO_list_all` is the LIVE chain of the
 /// REAL streams, and NULLing it orphaned every host stream from `fflush(NULL)`
 /// and from glibc's exit flush for the rest of the process. Measured
@@ -2630,26 +2676,7 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// mode fl's registry is separate machinery and the host chain must stay
 /// untouched.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
-    // The C-visible `stdout` cell: RTLD_DEFAULT resolves through the global
-    // scope, where an interposing fl precedes libc. The host dlsym is reached
-    // through the raw ELF scanner rather than libc::dlsym — the replacement
-    // guard (bd-130) treats any libc::f(...) call-through text as forbidden,
-    // and in a replacement build there is no host dlsym to call anyway
-    // (resolve_host_symbol_raw then returns None and the whole patch is
-    // skipped, which is the correct standalone behavior).
-    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
-    let Some(host_dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
-        // No resolvable host dlsym: not an interpose deployment; nothing to patch.
-        return;
-    };
-    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(host_dlsym_addr) };
-    let visible = unsafe { host_dlsym(std::ptr::null_mut(), c"stdout".as_ptr().cast()) };
-    let Some(glibc_cell) = crate::host_resolve::resolve_host_symbol_raw("stdout") else {
-        // No resolvable host stdout: not an interpose deployment; nothing to patch.
-        return;
-    };
-    let interposed = !visible.is_null() && visible != glibc_cell as *mut c_void;
-    if !interposed {
+    if !stdio_abi::stdio_symbols_are_interposed() {
         return;
     }
     if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
@@ -2663,7 +2690,7 @@ pub(crate) unsafe fn bootstrap_host_libio_exports() {
 /// Accessor: return our native `_IO_list_all` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_list_all_get() -> *mut c_void {
-    unsafe { _IO_list_all }
+    unsafe { native_file_list() }
 }
 
 /// Accessor: return pointer to our native `_IO_file_jumps` vtable.
@@ -3278,19 +3305,27 @@ pub unsafe extern "C" fn _IO_flush_all_linebuffered() {
 
 /// `_IO_fprintf` — internal fprintf (variadic, forwards to _IO_vfprintf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fprintf(fp: *mut c_void, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fprintf(
+    fp: *mut c_void,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     unsafe { stdio_abi::vfprintf(fp, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
 /// `_IO_printf` — internal printf (variadic, forwards to _IO_vfprintf on stdout).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
     unsafe { stdio_abi::vprintf(fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
 /// `_IO_sprintf` — internal sprintf (variadic, forwards to _IO_vsprintf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_sprintf(buf: *mut c_char, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_sprintf(
+    buf: *mut c_char,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     unsafe { stdio_abi::vsprintf(buf, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
@@ -3885,7 +3920,7 @@ pub unsafe extern "C" fn _IO_switch_to_wget_mode(fp: *mut c_void) -> c_int {
 
 /// `_IO_vfprintf` — internal vfprintf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vfprintf(
+pub unsafe extern "C-unwind" fn _IO_vfprintf(
     fp: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
@@ -3914,7 +3949,7 @@ pub unsafe extern "C" fn _IO_vfscanf(
 
 /// `_IO_vsprintf` — internal vsprintf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vsprintf(
+pub unsafe extern "C-unwind" fn _IO_vsprintf(
     buf: *mut c_char,
     fmt: *const c_char,
     ap: *mut c_void,

@@ -1,5 +1,5 @@
-//! Name Service Switch dispatch policy for the passwd, group, shadow and
-//! initgroups databases.
+//! Name Service Switch dispatch policy for passwd, group, shadow, initgroups
+//! and Secure RPC publickey databases.
 //!
 //! Clean-room from the GNU libc manual ("The NSS Configuration File",
 //! "Actions in the NSS configuration") and behaviour measured against glibc
@@ -16,8 +16,9 @@
 //!   default actions are SUCCESS=return, everything else continue.
 //! - The last line for a database wins; a missing line means `files` alone,
 //!   except that `initgroups` falls back to the `group` line and `shadow` to
-//!   the `passwd` line when they have none. An explicitly empty line means no
-//!   sources at all.
+//!   the `passwd` line when they have none. Secure RPC's `publickey` default
+//!   is `nis nisplus`, measured with modules using the public GNU NSS ABI.
+//!   An explicitly empty line means no sources at all.
 //! - `merge` (group database only): a SUCCESS result is held and the next
 //!   source's SUCCESS result is merged into it when the group name and gid
 //!   both match (members appended, no de-duplication, the first result's
@@ -143,6 +144,7 @@ pub enum Database {
     Group,
     Shadow,
     Initgroups,
+    Publickey,
 }
 
 impl Database {
@@ -152,6 +154,14 @@ impl Database {
             Self::Group => b"group",
             Self::Shadow => b"shadow",
             Self::Initgroups => b"initgroups",
+            Self::Publickey => b"publickey",
+        }
+    }
+
+    fn default_services(self) -> Vec<Service> {
+        match self {
+            Self::Publickey => vec![Service::new(b"nis"), Service::new(b"nisplus")],
+            _ => vec![Service::new(b"files")],
         }
     }
 }
@@ -159,11 +169,12 @@ impl Database {
 /// The source list of one database, resolved from an nsswitch.conf image.
 ///
 /// `None` content (no readable file) and a file without a line for the
-/// database both mean glibc's built-in default, `files`. A malformed line is
-/// skipped as if absent, so an earlier well-formed line can still apply.
+/// database both mean its built-in default: `nis nisplus` for publickey and
+/// `files` for the account databases. A malformed line is skipped as if absent,
+/// so an earlier well-formed line can still apply.
 pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
     let Some(config) = config else {
-        return vec![Service::new(b"files")];
+        return database.default_services();
     };
     if let Some(services) = parse_database(config, database.key()) {
         return services;
@@ -171,14 +182,14 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
     let fallback = match database {
         Database::Initgroups => Some(Database::Group),
         Database::Shadow => Some(Database::Passwd),
-        Database::Passwd | Database::Group => None,
+        Database::Passwd | Database::Group | Database::Publickey => None,
     };
     if let Some(fallback) = fallback
         && let Some(services) = parse_database(config, fallback.key())
     {
         return services;
     }
-    vec![Service::new(b"files")]
+    database.default_services()
 }
 
 /// The last well-formed line for `database`, or `None` when there is none.
@@ -424,6 +435,7 @@ mod tests {
                 "passwd" => Database::Passwd,
                 "group" => Database::Group,
                 "shadow" => Database::Shadow,
+                "publickey" => Database::Publickey,
                 _ => Database::Initgroups,
             },
         )
@@ -440,6 +452,34 @@ mod tests {
             names(&services_for(Some(b"hosts: dns\n"), Database::Group)),
             [b"files"]
         );
+    }
+
+    #[test]
+    fn secure_rpc_uses_its_own_measured_default_and_status_actions() {
+        assert_eq!(
+            names(&services_for(None, Database::Publickey)),
+            [b"nis".as_slice(), b"nisplus"]
+        );
+        assert_eq!(
+            names(&services_for(
+                Some(b"passwd: files\ngroup: sss\n"),
+                Database::Publickey
+            )),
+            [b"nis".as_slice(), b"nisplus"]
+        );
+        assert!(line("publickey", "").is_empty());
+        let sources = line("publickey", "missing [UNAVAIL=return] files");
+        let mut calls = Vec::new();
+        let answer: Answer<()> = lookup(
+            &sources,
+            |service| {
+                calls.push(service.name().to_vec());
+                Answer::Unavailable(2)
+            },
+            None,
+        );
+        assert_eq!(calls, [b"missing".to_vec()]);
+        assert_eq!(answer, Answer::Unavailable(2));
     }
 
     #[test]

@@ -5,8 +5,13 @@
 # any non-zero/timeout outcome.
 set -euo pipefail
 
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" ) ]]; then
+  echo "usage: $0 [--performance-only]" >&2
+  exit 2
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_ROOT="${ROOT}/target/ld_preload_smoke"
+OUT_ROOT="${FRANKENLIBC_SMOKE_OUT_ROOT:-${ROOT}/target/ld_preload_smoke}"
 RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 case "${RUN_ID}" in
   ""|*[!A-Za-z0-9._-]*)
@@ -81,7 +86,12 @@ for candidate in "${LIB_CANDIDATES[@]}"; do
   fi
 done
 
-mkdir -p "${RUN_DIR}" "${BIN_DIR}"
+mkdir -p "${OUT_ROOT}"
+if ! mkdir "${RUN_DIR}"; then
+  echo "ld_preload_smoke: a fresh run directory is required: ${RUN_DIR}" >&2
+  exit 2
+fi
+mkdir -p "${BIN_DIR}"
 : > "${TRACE_FILE}"
 printf 'mode\tlabel\tstatus\tworkload\tstartup_path\tfailure_signature\tsignature_guard_triggered\tparity_required\tparity_pass\tperf_required\tperf_pass\tlatency_ratio_ppm\tbaseline_rc\tpreload_rc\tstdout_match\tstderr_match\tbaseline_latency_ns\tpreload_latency_ns\tvalgrind_checked\tvalgrind_pass\n' > "${CASE_TSV}"
 
@@ -103,6 +113,20 @@ fi
 if [[ -z "${LIB_PATH}" ]]; then
   echo "ld_preload_smoke: could not locate libfrankenlibc_abi.so" >&2
   exit 2
+fi
+
+run_deployed_overhead() {
+  # The same provider-pinned deployed runner is used by the bench crate.
+  # These hardened budgets are mandatory, independent of ENFORCE_PERF_MODES
+  # (which controls the older per-command startup timings below).
+  python3 "${ROOT}/scripts/check_membrane_access.py" "${LIB_PATH}" \
+    --benchmark --output "${RUN_DIR}/deployed-overhead"
+}
+
+if [[ "${1:-}" == "--performance-only" ]]; then
+  # Scoped invocation: never label it a pass of the whole functional corpus.
+  run_deployed_overhead
+  exit 0
 fi
 
 if ! command -v cc >/dev/null 2>&1; then
@@ -613,7 +637,7 @@ run_case() {
   local baseline_start_ns
   baseline_start_ns="$(date +%s%N)"
   set +e
-  timeout "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
   local baseline_rc=$?
   set -e
   local baseline_end_ns
@@ -623,7 +647,7 @@ run_case() {
   local preload_start_ns
   preload_start_ns="$(date +%s%N)"
   set +e
-  timeout "${TIMEOUT_SECONDS}" \
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
     env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
     > "${preload_stdout}" 2> "${preload_stderr}"
   local preload_rc=$?
@@ -692,7 +716,7 @@ run_case() {
           # execve()s the real target. With the default --trace-children=no valgrind
           # does not follow that exec, so the preloaded target would run
           # un-instrumented and this gate would inspect only `env` (always clean).
-          timeout "${TIMEOUT_SECONDS}" \
+          timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
             valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet \
             --trace-children=yes \
             env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
@@ -1130,7 +1154,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "getent_initgroups" bash -c 'LC_ALL=C getent initgroups root daemon nobody 2>&1; echo "rc=$?"' || mode_failed=1
   # gencat creates, then merges into, a catalog through glibc's private
   # __open_catalog and __libc_scratch_buffer_set_array_size.
-  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d) && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat; cd / && rm -r "$d"' || mode_failed=1
+  # Keep both catalogs and inputs beside the captured case output.
+  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d "$1/gencat.XXXXXX") && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat' smoke-gencat "${RUN_DIR}/${mode}/gencat_create_merge" || mode_failed=1
   # /etc/hosts semantics: every address of the family, aliases merged across
   # lines (bd-rc0923-epic-eeuy4f.21).
   run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1
@@ -1205,10 +1230,17 @@ emit_trace "info" "suite_start" "all" "all" "running" \
 overall_failed=0
 run_suite_for_mode strict || overall_failed=1
 run_suite_for_mode hardened || overall_failed=1
+deployed_overhead_exit=0
+run_deployed_overhead || deployed_overhead_exit=$?
+if [[ "${deployed_overhead_exit}" -ne 0 ]]; then
+  overall_failed=1
+fi
 emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && echo "pass" || echo "fail")" \
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 
 export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT="${deployed_overhead_exit}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT="${RUN_DIR}/deployed-overhead/benchmark.json"
 export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
 export LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES}"
 export LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES}"
@@ -1323,6 +1355,13 @@ payload = {
         if m.strip()
     ],
     "perf_ratio_max_ppm": int(env["LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM"]),
+    "deployed_overhead": {
+        "required": True,
+        "modes": ["strict", "hardened"],
+        "exit_code": int(env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"]),
+        "passed": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"] == "0",
+        "report": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT"],
+    },
     "valgrind_policy": env["LD_PRELOAD_SMOKE_VALGRIND_POLICY"],
     "summary": {
         "total_cases": len(cases),

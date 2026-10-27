@@ -232,6 +232,21 @@ fn allocate_fallback_tls_block() -> *mut TlsEntry {
 }
 
 #[cfg(feature = "owned-tls-cache")]
+fn fallback_tls_block_for_slot(index: usize) -> *mut TlsEntry {
+    let values = FALLBACK_TLS_PTRS[index].load(Ordering::Acquire) as *mut TlsEntry;
+    if values.is_null() {
+        return allocate_fallback_tls_block();
+    }
+    // A fork child retains other threads' allocations as unassigned blocks.
+    // This caller has claimed the slot, so no live thread can access the old
+    // values. Clear every key before giving the block to its new owner.
+    // SAFETY: only owned fallback allocations are retained in this table;
+    // each block contains exactly PTHREAD_KEYS_MAX entries, all zero-valid.
+    unsafe { core::ptr::write_bytes(values, 0, PTHREAD_KEYS_MAX) };
+    values
+}
+
+#[cfg(feature = "owned-tls-cache")]
 unsafe fn drop_fallback_tls_block(values_ptr: *mut TlsEntry) {
     if !values_ptr.is_null() {
         // SAFETY: values_ptr was produced by allocate_fallback_tls_block and has
@@ -302,7 +317,7 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
                 .is_ok()
             {
                 if owned_ptr.is_null() {
-                    owned_ptr = allocate_fallback_tls_block();
+                    owned_ptr = fallback_tls_block_for_slot(target);
                 }
                 FALLBACK_TLS_PTRS[target].store(owned_ptr as usize, Ordering::Release);
                 return owned_ptr;
@@ -317,7 +332,7 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
             .is_ok()
     {
         if owned_ptr.is_null() {
-            owned_ptr = allocate_fallback_tls_block();
+            owned_ptr = fallback_tls_block_for_slot(tomb_idx);
         }
         FALLBACK_TLS_PTRS[tomb_idx].store(owned_ptr as usize, Ordering::Release);
         return owned_ptr;
@@ -494,8 +509,63 @@ static TID_CACHE_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::Atom
 static TID_CACHE_DISABLED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Rebuild one inherited TID table around the sole surviving thread.
+///
+/// Old hash positions cannot be relabeled: the child's new TID has a different
+/// probe sequence. Native blocks are borrowed from their ThreadHandles; only
+/// the survivor remains reachable. Owned fallback blocks for vanished threads
+/// remain unassigned and are cleared/reused by the next slot claimant. No
+/// allocator, destructor, lock, or caller callback runs in this fork hook.
+fn rekey_fork_child_table(
+    tids: &[AtomicI32; TLS_TABLE_SLOTS],
+    pointers: &[AtomicUsize; TLS_TABLE_SLOTS],
+    parent_tid: i32,
+    child_tid: i32,
+    retain_unused_blocks: bool,
+) {
+    let survivor_index = tids
+        .iter()
+        .position(|tid| tid.load(Ordering::Acquire) == parent_tid);
+    let survivor = survivor_index
+        .map(|index| pointers[index].swap(0, Ordering::AcqRel))
+        .unwrap_or(0);
+    for index in 0..TLS_TABLE_SLOTS {
+        tids[index].store(TLS_SLOT_EMPTY, Ordering::Release);
+        if !retain_unused_blocks {
+            pointers[index].store(0, Ordering::Release);
+        }
+    }
+    if survivor != 0 {
+        let destination = child_tid as u32 as usize % TLS_TABLE_SLOTS;
+        let spare = pointers[destination].swap(survivor, Ordering::AcqRel);
+        if let Some(source) = survivor_index
+            && spare != 0
+        {
+            // Keep the displaced owned allocation in the survivor's vacated
+            // slot. Native tables were cleared above and never enter here.
+            pointers[source].store(spare, Ordering::Release);
+        }
+        tids[destination].store(child_tid, Ordering::Release);
+    }
+}
+
 /// Call first thing in a fork child, before anything reads a TLS key.
-pub fn note_fork_child() {
+///
+/// # Safety
+/// The caller is the sole surviving thread in a freshly forked address space,
+/// and parent_tid is its kernel TID captured before fork. Inherited table
+/// metadata must not be accessed concurrently while it is rebuilt.
+pub unsafe fn note_fork_child(parent_tid: i32) {
+    let child_tid = syscall::sys_gettid();
+    rekey_fork_child_table(&TLS_TIDS, &TLS_PTRS, parent_tid, child_tid, false);
+    #[cfg(feature = "owned-tls-cache")]
+    rekey_fork_child_table(
+        &FALLBACK_TLS_TIDS,
+        &FALLBACK_TLS_PTRS,
+        parent_tid,
+        child_tid,
+        true,
+    );
     TID_CACHE_EPOCH.fetch_add(1, Ordering::AcqRel);
 }
 
@@ -790,21 +860,28 @@ pub fn run_exiting_thread_key_destructors(tid: i32) {
 
 /// Run TLS destructors for an exiting thread and remove its table entry.
 ///
-/// **Allocation-free** — safe to call from clone-based threads.
+/// The registered-thread path is allocation-free and uses constant stack
+/// space, including when all keys have destructors on a minimum-size stack.
 ///
 /// Per POSIX, destructors are called up to `PTHREAD_DESTRUCTOR_ITERATIONS`
-/// times. Each iteration:
-/// 1. For each active key with a non-null value, snapshot the value and
-///    set it to 0.
-/// 2. Call the destructor with the snapshotted value.
-/// 3. If any destructor set new non-null values, repeat.
+/// times. Each key's value is cleared immediately before invoking its
+/// destructor, with no registry guard held over application code. Re-read
+/// the registry for the next key: a destructor may delete or replace it.
 ///
 /// After all iterations, the thread's table entry is removed.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn teardown_thread_tls(tid: i32) {
     let values_ptr = table_lookup(tid);
+    // Native threads own the block in their ThreadHandle. Their inherited
+    // hardware TLS can still belong to the creator, so neither access nor
+    // reclaim fallback storage when this registered block exists.
+    let registered = !values_ptr.is_null();
     #[cfg(feature = "owned-tls-cache")]
-    let fallback_values_ptr = fallback_table_lookup(tid);
+    let fallback_values_ptr = if registered {
+        core::ptr::null_mut()
+    } else {
+        fallback_table_lookup(tid)
+    };
 
     // Ensure RCU registration for lock-free registry reads. Required for the
     // registered-thread path; the fallback path also needs an RCU read lock to
@@ -812,128 +889,95 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
     let _ = rcu::rcu_register_thread(tid as u32);
 
     for _iteration in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
-        // Snapshot destructors and values via RCU read (no mutex).
-        // We collect into a stack-allocated array to avoid heap allocation.
-        let mut call_count = 0usize;
-        // We use PTHREAD_KEYS_MAX to guarantee all destructors run.
-        // 1024 * 16 bytes = 16KB stack frame, perfectly safe for thread exit.
-        const MAX_CALLS: usize = PTHREAD_KEYS_MAX;
-        let mut calls: [(u64, unsafe extern "C" fn(*mut c_void)); MAX_CALLS] =
-            [(0, noop_destructor); MAX_CALLS];
+        let mut called = false;
+        for index in 0..PTHREAD_KEYS_MAX {
+            rcu::rcu_read_lock();
+            // SAFETY: the read section protects the immutable registry. Copy
+            // one slot so no registry reference escapes into a destructor.
+            let slot = unsafe { KEY_REGISTRY_RCU.read().map(|reg| reg.slots[index]) };
+            rcu::rcu_read_unlock();
+            let Some(slot) = slot.filter(|slot| slot.in_use) else {
+                continue;
+            };
 
-        rcu::rcu_read_lock();
-        unsafe {
-            if let Some(reg) = KEY_REGISTRY_RCU.read() {
-                for (i, slot) in reg.slots.iter().enumerate() {
-                    if call_count >= MAX_CALLS {
-                        break;
-                    }
-                    if !slot.in_use {
-                        continue;
-                    }
-                    // Primary path: walk the per-thread TLS table if this
-                    // thread was registered via register_thread_tls (native
-                    // clone trampoline path).
-                    if !values_ptr.is_null() {
-                        // SAFETY: values_ptr points to a valid
-                        // [TlsEntry; PTHREAD_KEYS_MAX] for the registered
-                        // native-managed thread.
-                        let entry = *values_ptr.add(i);
+            let value = if registered {
+                // SAFETY: this thread exclusively owns its registered block,
+                // which remains live until all destructor rounds finish.
+                let entry = unsafe { &mut *values_ptr.add(index) };
+                if entry.seq == slot.seq {
+                    core::mem::replace(&mut entry.value, 0)
+                } else {
+                    0
+                }
+            } else {
+                #[cfg(not(feature = "owned-tls-cache"))]
+                {
+                    FALLBACK_TLS_VALUES.with(|values| {
+                        let entry = values.get(index);
                         if entry.seq == slot.seq && entry.value != 0 {
-                            // Clear the value before calling destructor.
-                            (*values_ptr.add(i)).value = 0;
-                            if let Some(dtor) = slot.destructor {
-                                calls[call_count] = (entry.value, dtor);
-                                call_count += 1;
-                                continue;
-                            }
+                            values.set(
+                                index,
+                                TlsEntry {
+                                    seq: entry.seq,
+                                    value: 0,
+                                },
+                            );
+                            entry.value
+                        } else {
+                            0
                         }
-                    }
-                    // Fallback path: a thread whose pthread_create went
-                    // through the host libc path never calls
-                    // register_thread_tls, so values set via
-                    // pthread_setspecific land in fallback storage.
-                    #[cfg(not(feature = "owned-tls-cache"))]
-                    {
-                        // FALLBACK_TLS_VALUES is thread-local, which means we
-                        // can only address it from the exiting thread itself —
-                        // exactly where teardown_thread_tls runs.
-                        FALLBACK_TLS_VALUES.with(|values| {
-                            let entry = values.get(i);
-                            if entry.seq == slot.seq && entry.value != 0 {
-                                // Clear the value before calling destructor.
-                                values.set(
-                                    i,
-                                    TlsEntry {
-                                        seq: entry.seq,
-                                        value: 0,
-                                    },
-                                );
-                                if let Some(dtor) = slot.destructor
-                                    && call_count < MAX_CALLS
-                                {
-                                    calls[call_count] = (entry.value, dtor);
-                                    call_count += 1;
-                                }
-                            }
-                        });
-                    }
-                    #[cfg(feature = "owned-tls-cache")]
-                    {
-                        if !fallback_values_ptr.is_null() {
-                            // SAFETY: fallback_values_ptr points to the
-                            // current thread's owned fallback block until the
-                            // end of teardown_thread_tls.
-                            let entry = *fallback_values_ptr.add(i);
-                            if entry.seq == slot.seq && entry.value != 0 {
-                                // Clear the value before calling destructor.
-                                (*fallback_values_ptr.add(i)).value = 0;
-                                if let Some(dtor) = slot.destructor
-                                    && call_count < MAX_CALLS
-                                {
-                                    calls[call_count] = (entry.value, dtor);
-                                    call_count += 1;
-                                }
-                            }
+                    })
+                }
+                #[cfg(feature = "owned-tls-cache")]
+                {
+                    if fallback_values_ptr.is_null() {
+                        0
+                    } else {
+                        // SAFETY: this unregistered thread owns the fallback
+                        // block until it is removed below, after all callbacks.
+                        let entry = unsafe { &mut *fallback_values_ptr.add(index) };
+                        if entry.seq == slot.seq {
+                            core::mem::replace(&mut entry.value, 0)
+                        } else {
+                            0
                         }
                     }
                 }
+            };
+            if value != 0
+                && let Some(dtor) = slot.destructor
+            {
+                called = true;
+                // QSBR read_unlock is a no-op: explicitly leave the read
+                // period before running application code.
+                rcu::rcu_quiescent_state(tid as u32);
+                // SAFETY: the callback was registered for this generation,
+                // and the owning thread's value was cleared before the call.
+                unsafe { dtor(value as *mut c_void) };
             }
         }
-        rcu::rcu_read_unlock();
         rcu::rcu_quiescent_state(tid as u32);
-
-        if call_count == 0 {
+        if !called {
             break;
-        }
-
-        // Call destructors outside the RCU read section.
-        for &(value, dtor) in calls.iter().take(call_count) {
-            // SAFETY: dtor is the POSIX destructor registered via pthread_key_create.
-            // The value was stored as u64 but represents a *mut c_void pointer.
-            unsafe { dtor(value as *mut c_void) };
         }
     }
 
-    // Remove from the table and unregister from RCU. table_remove is a no-op
-    // for the fallback path (tid was never inserted) — safe to call either way.
-    table_remove(tid);
-    // This thread's high-key spill block (keys >= 32) is dead once every
-    // destructor round has run. `try_with`: TLS may already be torn down.
-    #[cfg(not(feature = "owned-tls-cache"))]
-    let _ = FALLBACK_TLS_VALUES.try_with(FallbackTls::release_spill);
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        let fallback_ptr = fallback_table_remove(tid);
-        // SAFETY: fallback_table_remove transfers ownership of the allocation
-        // created by fallback_table_get_or_insert.
-        unsafe { drop_fallback_tls_block(fallback_ptr) };
+    if registered {
+        table_remove(tid);
+    } else {
+        // Only unregistered threads own fallback storage. A native child must
+        // not release its creator's high-key spill block on its way out.
+        #[cfg(not(feature = "owned-tls-cache"))]
+        let _ = FALLBACK_TLS_VALUES.try_with(FallbackTls::release_spill);
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            let fallback_ptr = fallback_table_remove(tid);
+            // SAFETY: removal transfers ownership of the fallback allocation.
+            unsafe { drop_fallback_tls_block(fallback_ptr) };
+        }
     }
     let _ = rcu::rcu_unregister_thread(tid as u32);
 }
-
-/// No-op destructor used as default in the calls array.
-unsafe extern "C" fn noop_destructor(_: *mut c_void) {}
 
 // ---------------------------------------------------------------------------
 // Test support: reset global state between tests
@@ -1107,6 +1151,154 @@ mod tests {
     }
 
     #[test]
+    fn fork_child_table_rekeys_collisions_and_preserves_only_owned_spares() {
+        for retain_unused in [false, true] {
+            // Private tables keep this hash-placement check independent of
+            // other tests' live thread state. The old probe chain intersects
+            // the child's destination and contains a second vanished thread.
+            let tids = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
+            let pointers = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
+            tids[100].store(100, Ordering::Relaxed);
+            pointers[100].store(0x1000, Ordering::Relaxed);
+            tids[101].store(100 + TLS_TABLE_SLOTS as i32, Ordering::Relaxed);
+            pointers[101].store(0x2000, Ordering::Relaxed);
+            tids[102].store(101 + TLS_TABLE_SLOTS as i32, Ordering::Relaxed);
+            pointers[102].store(0x3000, Ordering::Relaxed);
+
+            rekey_fork_child_table(&tids, &pointers, 100, 101, retain_unused);
+
+            assert_eq!(tids[101].load(Ordering::Relaxed), 101);
+            assert_eq!(pointers[101].load(Ordering::Relaxed), 0x1000);
+            assert_eq!(
+                tids.iter()
+                    .filter(|tid| tid.load(Ordering::Relaxed) != TLS_SLOT_EMPTY)
+                    .count(),
+                1,
+                "only the survivor remains a live thread"
+            );
+            assert_eq!(
+                pointers[100].load(Ordering::Relaxed),
+                if retain_unused { 0x2000 } else { 0 },
+                "only owned fallback storage may be retained for reuse"
+            );
+            assert_eq!(
+                pointers[102].load(Ordering::Relaxed),
+                if retain_unused { 0x3000 } else { 0 }
+            );
+        }
+    }
+
+    #[test]
+    fn fork_child_preserves_values_and_destructor_rounds() {
+        let _g = lock_and_reset();
+        static KEY: AtomicU32 = AtomicU32::new(0);
+        static ROUNDS: AtomicU32 = AtomicU32::new(0);
+        unsafe extern "C" fn rearm(value: *mut c_void) {
+            ROUNDS.fetch_add(1, AtomicOrdering::SeqCst);
+            if (value as usize) < 3 {
+                let key = PthreadKey {
+                    id: KEY.load(AtomicOrdering::SeqCst),
+                };
+                if pthread_setspecific(key, value as u64 + 1) != 0 {
+                    syscall::sys_exit_group(102);
+                }
+            }
+        }
+        let key = create_key(Some(rearm));
+        KEY.store(key.id, AtomicOrdering::SeqCst);
+        ROUNDS.store(0, AtomicOrdering::SeqCst);
+        assert_eq!(pthread_setspecific(key, 1), 0);
+        let parent_tid = syscall::sys_gettid();
+        #[cfg(feature = "owned-tls-cache")]
+        let spare_tid = parent_tid + TLS_TABLE_SLOTS as i32;
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            let (index, sequence) = key_parts(&key);
+            write_tls_value(spare_tid, index, sequence, 77);
+        }
+
+        unsafe extern "C" {
+            fn fork() -> i32;
+        }
+        // SAFETY: the host fork resets its allocator/runtime locks. The child
+        // uses the production fork hook and exits without returning to the
+        // test harness or dropping its inherited serialization guard.
+        let pid = unsafe { fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            // SAFETY: this is the sole surviving thread in the copied process.
+            unsafe { note_fork_child(parent_tid) };
+            if pthread_getspecific(key) != 1 {
+                syscall::sys_exit_group(103);
+            }
+            #[cfg(feature = "owned-tls-cache")]
+            {
+                if !fallback_table_lookup(parent_tid).is_null()
+                    || (spare_tid != syscall::sys_gettid()
+                        && !fallback_table_lookup(spare_tid).is_null())
+                {
+                    syscall::sys_exit_group(104);
+                }
+                // Claim a retained spare directly by its empty table slot.
+                // Reuse must clear stale key values instead of inheriting a
+                // vanished thread's data, and must not allocate another block.
+                let spare = FALLBACK_TLS_TIDS
+                    .iter()
+                    .zip(FALLBACK_TLS_PTRS.iter())
+                    .position(|(tid, ptr)| {
+                        tid.load(Ordering::Acquire) == TLS_SLOT_EMPTY
+                            && ptr.load(Ordering::Acquire) != 0
+                    });
+                let Some(index) = spare else {
+                    syscall::sys_exit_group(105)
+                };
+                let reusable = FALLBACK_TLS_PTRS[index].load(Ordering::Acquire);
+                let fresh_tid = index as i32 + TLS_TABLE_SLOTS as i32;
+                let reused = fallback_table_get_or_insert(fresh_tid);
+                let (key_index, sequence) = key_parts(&key);
+                if reused as usize != reusable
+                    || read_tls_value(fresh_tid, key_index, sequence) != 0
+                {
+                    syscall::sys_exit_group(106);
+                }
+                // This is owned fallback storage, reclaimed after host fork
+                // has reset the allocator; native borrowed blocks never enter.
+                unsafe { drop_fallback_tls_block(fallback_table_remove(fresh_tid)) };
+            }
+            teardown_thread_tls(syscall::sys_gettid());
+            if ROUNDS.load(AtomicOrdering::SeqCst) != 3 || pthread_getspecific(key) != 0 {
+                syscall::sys_exit_group(107);
+            }
+            syscall::sys_exit_group(0);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut status = 0;
+        loop {
+            // SAFETY: status is writable and pid names this test's own child.
+            match unsafe { syscall::sys_wait4(pid, &mut status, 1, core::ptr::null_mut()) } {
+                Ok(0) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Ok(found) if found == pid => break,
+                Err(4) if std::time::Instant::now() < deadline => continue,
+                other => {
+                    let _ = syscall::sys_kill(pid, 9);
+                    // SAFETY: reap only this test's child after a timeout/error.
+                    let _ =
+                        unsafe { syscall::sys_wait4(pid, &mut status, 0, core::ptr::null_mut()) };
+                    panic!("fork child did not finish: {other:?}");
+                }
+            }
+        }
+        assert_eq!(status, 0, "fork child rejected inherited TLS state");
+        assert_eq!(pthread_getspecific(key), 1, "child mutated parent TLS");
+        assert_eq!(ROUNDS.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(pthread_setspecific(key, 0), 0);
+        assert_eq!(pthread_key_delete(key), 0);
+    }
+
+    #[test]
     fn setspecific_invalid_key_returns_einval() {
         let _g = lock_and_reset();
         let key = create_key(None);
@@ -1175,6 +1367,187 @@ mod tests {
 
         teardown_thread_tls(tid);
         assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[test]
+    fn registered_teardown_preserves_fallback_values_and_spill() {
+        let _g = lock_and_reset();
+        static CALLS: AtomicU32 = AtomicU32::new(0);
+        static SUM: AtomicU64 = AtomicU64::new(0);
+        CALLS.store(0, AtomicOrdering::SeqCst);
+        SUM.store(0, AtomicOrdering::SeqCst);
+        unsafe extern "C" fn dtor(value: *mut c_void) {
+            CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+            SUM.fetch_add(value as u64, AtomicOrdering::SeqCst);
+        }
+
+        // Populate both inline and high-key fallback storage before adding a
+        // registered block. A native clone inherits this same hardware TLS.
+        let keys: Vec<_> = (0..40).map(|_| create_key(Some(dtor))).collect();
+        assert_eq!(pthread_setspecific(keys[0], 11), 0);
+        assert_eq!(pthread_setspecific(keys[39], 33), 0);
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        block.set(&keys[0], 22);
+        table_register(tid, block.as_mut_ptr());
+
+        teardown_thread_tls(tid);
+
+        assert_eq!(CALLS.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(SUM.load(AtomicOrdering::SeqCst), 22);
+        assert_eq!(pthread_getspecific(keys[0]), 11);
+        assert_eq!(
+            pthread_getspecific(keys[39]),
+            33,
+            "creator spill was reclaimed"
+        );
+
+        // The surviving owner still gets both callbacks at its own teardown.
+        teardown_thread_tls(tid);
+        assert_eq!(CALLS.load(AtomicOrdering::SeqCst), 3);
+        assert_eq!(SUM.load(AtomicOrdering::SeqCst), 66);
+    }
+
+    #[test]
+    fn destructor_can_observe_and_replace_a_later_key() {
+        let _g = lock_and_reset();
+        static NEXT_KEY: AtomicU32 = AtomicU32::new(0);
+        static OBSERVED: AtomicU64 = AtomicU64::new(0);
+        static RECEIVED: AtomicU64 = AtomicU64::new(0);
+        static CALLS: AtomicU32 = AtomicU32::new(0);
+        unsafe extern "C" fn first(_: *mut c_void) {
+            let next = PthreadKey {
+                id: NEXT_KEY.load(AtomicOrdering::SeqCst),
+            };
+            OBSERVED.store(pthread_getspecific(next), AtomicOrdering::SeqCst);
+            let _ = pthread_setspecific(next, 33);
+        }
+        unsafe extern "C" fn second(value: *mut c_void) {
+            RECEIVED.store(value as u64, AtomicOrdering::SeqCst);
+            CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+
+        for registered in [false, true] {
+            OBSERVED.store(0, AtomicOrdering::SeqCst);
+            RECEIVED.store(0, AtomicOrdering::SeqCst);
+            CALLS.store(0, AtomicOrdering::SeqCst);
+            let first = create_key(Some(first));
+            let second = create_key(Some(second));
+            NEXT_KEY.store(second.id, AtomicOrdering::SeqCst);
+            let tid = current_tid();
+            let mut block = TestTlsBlock::new();
+            if registered {
+                table_register(tid, block.as_mut_ptr());
+            }
+            assert_eq!(pthread_setspecific(first, 11), 0);
+            assert_eq!(pthread_setspecific(second, 22), 0);
+
+            teardown_thread_tls(tid);
+
+            assert_eq!(OBSERVED.load(AtomicOrdering::SeqCst), 22);
+            assert_eq!(RECEIVED.load(AtomicOrdering::SeqCst), 33);
+            assert_eq!(CALLS.load(AtomicOrdering::SeqCst), 1);
+            assert_eq!(pthread_key_delete(first), 0);
+            assert_eq!(pthread_key_delete(second), 0);
+        }
+    }
+
+    #[test]
+    fn destructor_can_delete_and_recreate_a_later_key() {
+        let _g = lock_and_reset();
+        static NEXT_KEY: AtomicU32 = AtomicU32::new(0);
+        static OLD_CALLS: AtomicU32 = AtomicU32::new(0);
+        static NEW_VALUE: AtomicU64 = AtomicU64::new(0);
+        static ERRORS: AtomicU32 = AtomicU32::new(0);
+        unsafe extern "C" fn old(_: *mut c_void) {
+            OLD_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        unsafe extern "C" fn replacement(value: *mut c_void) {
+            NEW_VALUE.fetch_add(value as u64, AtomicOrdering::SeqCst);
+        }
+        unsafe extern "C" fn first(_: *mut c_void) {
+            let next = PthreadKey {
+                id: NEXT_KEY.load(AtomicOrdering::SeqCst),
+            };
+            if pthread_key_delete(next) != 0 {
+                ERRORS.fetch_add(1, AtomicOrdering::SeqCst);
+                return;
+            }
+            let mut new_key = PthreadKey::default();
+            if pthread_key_create(&mut new_key, Some(replacement)) != 0 {
+                ERRORS.fetch_add(1, AtomicOrdering::SeqCst);
+                return;
+            }
+            NEXT_KEY.store(new_key.id, AtomicOrdering::SeqCst);
+            if pthread_setspecific(new_key, 33) != 0 {
+                ERRORS.fetch_add(1, AtomicOrdering::SeqCst);
+            }
+        }
+
+        for registered in [false, true] {
+            OLD_CALLS.store(0, AtomicOrdering::SeqCst);
+            NEW_VALUE.store(0, AtomicOrdering::SeqCst);
+            ERRORS.store(0, AtomicOrdering::SeqCst);
+            let first = create_key(Some(first));
+            let second = create_key(Some(old));
+            NEXT_KEY.store(second.id, AtomicOrdering::SeqCst);
+            let tid = current_tid();
+            let mut block = TestTlsBlock::new();
+            if registered {
+                table_register(tid, block.as_mut_ptr());
+            }
+            assert_eq!(pthread_setspecific(first, 11), 0);
+            assert_eq!(pthread_setspecific(second, 22), 0);
+
+            teardown_thread_tls(tid);
+
+            assert_eq!(ERRORS.load(AtomicOrdering::SeqCst), 0);
+            assert_eq!(OLD_CALLS.load(AtomicOrdering::SeqCst), 0);
+            assert_eq!(NEW_VALUE.load(AtomicOrdering::SeqCst), 33);
+            assert_eq!(pthread_key_delete(first), 0);
+            assert_eq!(
+                pthread_key_delete(PthreadKey {
+                    id: NEXT_KEY.load(AtomicOrdering::SeqCst)
+                }),
+                0
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn native_minimum_stack_runs_key_destructors() {
+        let _g = lock_and_reset();
+        static KEY: AtomicU32 = AtomicU32::new(0);
+        static CALLS: AtomicU32 = AtomicU32::new(0);
+        CALLS.store(0, AtomicOrdering::SeqCst);
+        unsafe extern "C" fn dtor(value: *mut c_void) {
+            CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+            if value as usize == 1 {
+                let key = PthreadKey {
+                    id: KEY.load(AtomicOrdering::SeqCst),
+                };
+                let _ = pthread_setspecific(key, 2);
+            }
+        }
+        unsafe extern "C" fn worker(_: usize) -> usize {
+            let key = PthreadKey {
+                id: KEY.load(AtomicOrdering::SeqCst),
+            };
+            pthread_setspecific(key, 1) as usize
+        }
+        let key = create_key(Some(dtor));
+        KEY.store(key.id, AtomicOrdering::SeqCst);
+
+        // SAFETY: the worker and destructor reference only live static state;
+        // join waits for the kernel to finish using the guarded native stack.
+        let handle = unsafe {
+            super::super::thread::create_thread(worker as *const () as usize, 0, 16 * 1024)
+        }
+        .expect("minimum-size native stack");
+        assert_eq!(unsafe { super::super::thread::join_thread(handle) }, Ok(0));
+        assert_eq!(CALLS.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(pthread_key_delete(key), 0);
     }
 
     #[test]
@@ -1521,7 +1894,13 @@ mod tests {
         }
         let high = keys[39];
         assert_eq!(pthread_getspecific(high), 0);
+        #[cfg(not(feature = "owned-tls-cache"))]
         FALLBACK_TLS_VALUES.with(|f| assert!(f.spill.get().is_null(), "read must not allocate"));
+        #[cfg(feature = "owned-tls-cache")]
+        assert!(
+            fallback_table_lookup(tid).is_null(),
+            "read must not allocate"
+        );
         assert_eq!(pthread_setspecific(high, 0x5151), 0);
         assert_eq!(pthread_getspecific(high), 0x5151);
         assert_eq!(
@@ -1531,7 +1910,10 @@ mod tests {
         );
         teardown_thread_tls(tid);
         assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 1);
+        #[cfg(not(feature = "owned-tls-cache"))]
         FALLBACK_TLS_VALUES.with(|f| assert!(f.spill.get().is_null(), "teardown frees spill"));
+        #[cfg(feature = "owned-tls-cache")]
+        assert!(fallback_table_lookup(tid).is_null(), "teardown frees block");
         assert_eq!(pthread_getspecific(high), 0);
     }
 

@@ -5,11 +5,24 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/fortify_abi.rs'
+      - 'crates/frankenlibc-abi/src/wchar_abi.rs'
+      - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi/**'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-core/src/stdio/**'
+      - 'tests/integration/fixture_stdio.c'
       - 'tests/integration/fixture_stdio_file_layout.c'
+      - 'tests/integration/fixture_stdio_lifetime.c'
+      - 'tests/integration/fixture_callback_unwind.cpp'
+      - 'tests/integration/fixture_stdio_printf.c'
+      - 'tests/integration/fixture_stdio_cancel.c'
+      - 'scripts/check_stdio_native.sh'
+      - 'scripts/check_stdio_read_cancellation.sh'
       - '.github/workflows/stdio-file-layout.yml'
   workflow_dispatch:
 
@@ -38,6 +51,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: never
       RUST_BACKTRACE: 1
+      FRANKENLIBC_TEST_PRESERVE_FILES: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -64,7 +78,122 @@ jobs:
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Preserve stdio errors for interrupted and nonblocking reads
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/read-errors" \
+            bash scripts/check_stdio_native.sh --read-errors
+      - name: Preserve write failures without replaying buffered output
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/write-errors" \
+            bash scripts/check_stdio_native.sh --write-errors
+      - name: Close inherited process pipes and reap popen children
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/popen" \
+            bash scripts/check_stdio_native.sh --popen
+      - name: Cancel native stdio reads and preserve C and C++ cleanup
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_STDIO_CANCEL_OUT_DIR="$PWD/artifacts/stdio-layout/read-cancellation" \
+            bash scripts/check_stdio_read_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
+      - name: Preserve host stdio across local loading and native COPY relocations
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          cc -O2 -Wall -Wextra -Werror -fno-pie -no-pie tests/integration/fixture_stdio_lifetime.c -ldl -o target/stdio-lifetime-copy
+          cc -O2 -Wall -Wextra -Werror -fPIC -pie tests/integration/fixture_stdio_lifetime.c -ldl -o target/stdio-lifetime-pic
+          readelf -rW target/stdio-lifetime-copy > artifacts/stdio-layout/lifetime-copy.relocations
+          readelf -rW target/stdio-lifetime-pic > artifacts/stdio-layout/lifetime-pic.relocations
+          for symbol in stdin stdout stderr _IO_list_all; do
+            grep -Eq "R_.*_COPY.* ${symbol}(@| )" artifacts/stdio-layout/lifetime-copy.relocations
+          done
+          if grep -Eq 'R_.*_COPY' artifacts/stdio-layout/lifetime-pic.relocations; then exit 1; fi
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          for model in copy pic; do
+            timeout 20 "target/stdio-lifetime-$model" "$library" host-flush \
+              > "artifacts/stdio-layout/lifetime-$model-host-flush.out" \
+              2> "artifacts/stdio-layout/lifetime-$model-host-flush.err"
+            for mode in strict hardened; do
+              FRANKENLIBC_MODE="$mode" timeout 20 "target/stdio-lifetime-$model" "$library" local \
+                > "artifacts/stdio-layout/lifetime-$model-$mode-local.out" \
+                2> "artifacts/stdio-layout/lifetime-$model-$mode-local.err"
+              timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+                "target/stdio-lifetime-$model" "$library" preload \
+                > "artifacts/stdio-layout/lifetime-$model-$mode-preload.out" \
+                2> "artifacts/stdio-layout/lifetime-$model-$mode-preload.err"
+            done
+          done
+      - name: Exercise registration and callback dispatch through the Rust ABI
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test glibc_internal_abi_test register_printf -- --nocapture \
+              2>&1 | tee "artifacts/stdio-layout/registration-$mode.log"
+            grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+              "artifacts/stdio-layout/registration-$mode.log"
+          done
+      - name: Propagate registered C++ callback exceptions through every printf boundary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_callback_unwind.cpp -ldl -o target/stdio-callback-unwind
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          host="$(env -u LD_PRELOAD ldd target/stdio-callback-unwind | awk '$1 == "libc.so.6" {print $3}')"
+          test -f "$host"
+          cases=(printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf dprintf vdprintf asprintf vasprintf
+            wprintf vwprintf fwprintf vfwprintf swprintf vswprintf
+            __printf_chk __vprintf_chk __fprintf_chk __vfprintf_chk __sprintf_chk __vsprintf_chk __snprintf_chk __vsnprintf_chk
+            __dprintf_chk __vdprintf_chk __asprintf_chk __vasprintf_chk
+            __wprintf_chk __vwprintf_chk __fwprintf_chk __vfwprintf_chk __swprintf_chk __vswprintf_chk
+            obstack_printf obstack_vprintf __obstack_printf_chk __obstack_vprintf_chk __vsnprintf __asprintf
+            _IO_printf _IO_fprintf _IO_vfprintf _IO_sprintf _IO_vsprintf parse_printf_format)
+          count=0
+          for case in "${cases[@]}"; do
+            for stage in 0 1 2; do
+              if [[ "$case" == parse_printf_format && "$stage" != 1 ]]; then continue; fi
+              prefix="artifacts/stdio-layout/unwind-$case-$stage"
+              env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$host" \
+                timeout 20 target/stdio-callback-unwind --printf "$case" "$stage" > "$prefix-host.out" 2> "$prefix-host.err"
+              grep -qx 'printf-callback-unwind:PASS' "$prefix-host.out"
+              test ! -s "$prefix-host.err"
+              for mode in strict hardened; do
+                timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$library" \
+                  target/stdio-callback-unwind --printf "$case" "$stage" > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+                cmp "$prefix-host.out" "$prefix-$mode.out"
+                cmp "$prefix-host.err" "$prefix-$mode.err"
+              done
+              count=$((count + 1))
+            done
+          done
+          test "$count" -eq 142
+      - name: Exercise GNU printf callbacks against the live host in both modes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/gnu-printf" \
+            timeout 240 bash scripts/check_stdio_native.sh --gnu-printf
       - name: Compare inline FILE operations against host glibc in both modes
+        if: always()
         shell: bash
         run: |
           set -uo pipefail
@@ -88,3 +217,9 @@ jobs:
           name: stdio-layout-results
           path: artifacts/stdio-layout/
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stdio-candidate-library
+          path: target/release/libfrankenlibc_abi.so
+          retention-days: 2

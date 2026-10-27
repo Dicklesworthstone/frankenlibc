@@ -6,7 +6,7 @@
 //! ## Architecture
 //!
 //! Each new thread gets:
-//! - A dedicated stack allocated via `mmap` (default 2 MiB + guard page)
+//! - A dedicated stack allocated via `mmap`, or a caller-owned stack
 //! - A `ThreadHandle` that tracks TID, state, return value, and stack ownership
 //! - `CLONE_CHILD_CLEARTID` so the kernel clears the TID and futex-wakes joiners on exit
 //!
@@ -38,7 +38,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Default thread stack size: 2 MiB (matches glibc default).
+/// Default stack size for direct core callers; the ABI supplies its own default.
 const DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
 
 /// Minimum usable stack for the supported Linux native-thread backends.
@@ -133,18 +133,30 @@ pub struct ThreadHandle {
     /// Lifecycle state (see `THREAD_*` constants).
     pub state: AtomicU32,
 
-    /// Startup synchronization futex: child stores 1 after reading args.
+    /// Startup synchronization futex: 0 while pending, 1 on success, or
+    /// `errno + 1` when setup failed before the user entry point ran.
     pub started: AtomicU32,
 
     /// Return value from the user's `start_routine`.
     /// Written by the child before exit; read by the joiner after `tid == 0`.
     pub retval: core::cell::UnsafeCell<usize>,
 
-    /// Base address of the mmap'd stack region (including guard page).
+    /// Base address of the owned mapping, including its guard. Zero for a
+    /// caller-provided stack, which this implementation must never unmap.
     pub stack_base: usize,
 
-    /// Total size of the mmap'd region (guard page + usable stack).
+    /// Length of the owned mapping. Zero for a caller-provided stack.
     pub stack_total_size: usize,
+
+    /// Lowest address of the usable stack, excluding any protected guard.
+    pub stack_addr: usize,
+
+    /// Usable stack extent, including any trailing alignment padding.
+    pub stack_size: usize,
+
+    /// Effective protected guard size, rounded to the runtime page size.
+    /// Caller-provided stacks always have zero libc-managed guard bytes.
+    pub guard_size: usize,
 
     /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
     /// heap-allocated ThreadHandle so clone-based threads never need malloc.
@@ -167,6 +179,12 @@ struct ThreadStartArgs {
     start_routine: usize, // fn ptr as usize
     /// User's argument to start_routine.
     arg: usize, // *mut c_void as usize
+    /// Affinity storage is borrowed only until `started` is published. The
+    /// parent keeps its configuration alive while waiting for that publication.
+    affinity: *const u8,
+    affinity_len: usize,
+    scheduling: Option<(i32, i32)>,
+    signal_mask: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -178,15 +196,16 @@ struct ThreadStartArgs {
 /// Called by the clone trampoline asm with `args_raw` in `rdi`.
 /// This function:
 /// 1. Reads the `ThreadStartArgs` from the pointer
-/// 2. Signals the parent that startup is complete
-/// 3. Calls the user's `start_routine(arg)`
-/// 4. Stores the return value in the handle
-/// 5. Returns (the asm trampoline then calls `sys_exit`)
+/// 2. Applies scheduling/affinity and registers its thread-local key storage
+/// 3. Signals the parent that setup is complete and restores the signal mask
+/// 4. Calls the user's `start_routine(arg)`
+/// 5. Stores the return value in the handle and exits
 ///
 /// # Safety
 ///
 /// `args_raw` must be a valid pointer to `ThreadStartArgs` on the child's stack.
-/// All pointers in `ThreadStartArgs` must be valid for the thread's lifetime.
+/// The affinity slice must remain valid until startup is published; the user
+/// argument and handle retain their normal thread-lifetime requirements.
 #[allow(unsafe_code)]
 unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // SAFETY: args_raw is a pointer to ThreadStartArgs that the parent placed
@@ -195,6 +214,7 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     let handle_ptr = args.handle;
     let start_routine_addr = args.start_routine;
     let arg = args.arg;
+    let signal_mask = args.signal_mask;
 
     // SAFETY: handle_ptr was allocated by the parent and is valid for the
     // thread's entire lifetime.
@@ -205,6 +225,26 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
         handle.tid.store(current_tid, Ordering::Release);
     }
 
+    // clone inherited a blocked signal mask. No application code, allocation,
+    // or inherited host TLS is used while installing the requested attributes.
+    // SAFETY: the creator keeps args and its borrowed affinity alive until
+    // this thread publishes startup, which has not happened yet.
+    let setup = unsafe { apply_thread_startup(args) };
+    if let Err(error) = setup {
+        // This handle has not escaped the creator. Leave its owned stack for
+        // the parent to reclaim only after CLONE_CHILD_CLEARTID clears tid.
+        handle.state.store(THREAD_FINISHED, Ordering::Release);
+        publish_startup(handle, error as u32 + 1);
+        syscall::sys_exit_thread(0);
+    }
+
+    // Register TLS storage before signals can run application handlers or the
+    // user routine can query its native handle. This path allocates nothing.
+    // SAFETY: handle_ptr is live and this thread exclusively owns tls_values.
+    super::tls::register_thread_tls(current_tid, unsafe {
+        (*handle_ptr).tls_values.as_mut_ptr()
+    });
+
     // Try to transition STARTING → RUNNING. If detach_thread already set
     // DETACHED, we must not overwrite it.
     let _ = handle.state.compare_exchange(
@@ -213,33 +253,29 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
         Ordering::AcqRel,
         Ordering::Acquire,
     );
-    handle.started.store(1, Ordering::Release);
-
-    // Wake the parent waiting on started futex.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        let futex_ptr = &handle.started as *const AtomicU32 as *const u32;
-        // SAFETY: futex_ptr points to a valid, aligned u32 in the handle.
-        let _ = unsafe {
-            syscall::sys_futex(
-                futex_ptr,
-                0x01 | 0x80, // FUTEX_WAKE | FUTEX_PRIVATE_FLAG
-                1,           // wake 1 waiter
-                0,
-                0,
-                0,
-            )
-        };
+    // Nothing below reads the parent's affinity buffer. Publish readiness
+    // before restoring the mask: a pending signal handler may immediately
+    // wait for the creator, which must already be able to return from create.
+    publish_startup(handle, 1);
+    // SAFETY: Linux's kernel sigset is exactly one u64 on both supported ISAs.
+    // The parent used this same syscall successfully before clone. With valid
+    // arguments, restoring a mask cannot fail under the ordinary Linux ABI.
+    if unsafe {
+        syscall::sys_rt_sigprocmask(
+            2, // SIG_SETMASK
+            core::ptr::from_ref(&signal_mask).cast(),
+            core::ptr::null_mut(),
+            core::mem::size_of::<u64>(),
+        )
     }
-
-    // Register TLS storage for this thread (bd-rth1).
-    // SAFETY: handle_ptr is valid and exclusively owned by this thread for
-    // the tls_values field. The pointer is stored in the TLS table and only
-    // accessed by this thread via getspecific/setspecific.
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    super::tls::register_thread_tls(handle.tid.load(Ordering::Acquire), unsafe {
-        (*handle_ptr).tls_values.as_mut_ptr()
-    });
+    .is_err()
+    {
+        // A syscall filter can still deny the otherwise valid restoration.
+        // Startup has been published so application signal handlers can wait
+        // for the creator; do not enter the user routine under the wrong mask.
+        // SAFETY: this thread owns the live handle and its registered TLS.
+        unsafe { exit_current_thread(handle_ptr, 0) }
+    }
 
     // Cast the start_routine address back to a function pointer and call it.
     // SAFETY: start_routine_addr was a valid extern "C" fn pointer stored by
@@ -251,6 +287,43 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // Explicit and implicit thread exit must follow the same teardown/state
     // transition path so detached threads self-clean and TLS destructors run.
     unsafe { exit_current_thread(handle_ptr, retval) }
+}
+
+/// Install the child-only attributes while all maskable signals remain blocked.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+unsafe fn apply_thread_startup(args: &ThreadStartArgs) -> Result<(), i32> {
+    if !args.affinity.is_null() {
+        // SAFETY: create_thread_with_startup borrows this exact slice until
+        // after startup publication, which has not happened yet.
+        unsafe { syscall::sys_sched_setaffinity(0, args.affinity_len, args.affinity) }?;
+    }
+    if let Some((policy, priority)) = args.scheduling {
+        // Linux sched_param consists of the single sched_priority integer.
+        // SAFETY: priority is a live, aligned i32 throughout the syscall.
+        unsafe {
+            syscall::sys_sched_setscheduler(0, policy, core::ptr::from_ref(&priority).cast())
+        }?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+fn publish_startup(handle: &ThreadHandle, outcome: u32) {
+    handle.started.store(outcome, Ordering::Release);
+    // SAFETY: the handle remains live until its tid is cleared and its parent
+    // reclaims it; started is an aligned futex word within that allocation.
+    let _ = unsafe {
+        syscall::sys_futex(
+            core::ptr::from_ref(&handle.started).cast(),
+            0x01 | 0x80, // FUTEX_WAKE | FUTEX_PRIVATE_FLAG
+            1,
+            0,
+            0,
+            0,
+        )
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -406,14 +479,95 @@ unsafe fn unmapself_and_exit(stack_base: usize, stack_total_size: usize) -> ! {
 /// - `usable_top` is the top of the usable stack (stack grows down)
 ///
 /// Returns `Err(errno)` on failure.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[allow(unsafe_code)]
 fn allocate_thread_stack(stack_size: usize) -> Result<(usize, usize, usize), i32> {
+    let stack = prepare_thread_stack(ThreadStack::Allocated {
+        size: stack_size,
+        guard_size: GUARD_PAGE_SIZE,
+        page_size: GUARD_PAGE_SIZE,
+    })?;
+    Ok((stack.mapping_base, stack.mapping_size, stack.top))
+}
+
+/// Stack ownership and layout requested by the native thread creator.
+#[derive(Clone, Copy, Debug)]
+pub enum ThreadStack {
+    /// Allocate a usable stack plus a separately protected low-address guard.
+    Allocated {
+        size: usize,
+        guard_size: usize,
+        page_size: usize,
+    },
+    /// Use writable storage owned by the caller. No protection or reclamation
+    /// operation is performed on this region, including on creation failure.
+    Borrowed { address: usize, size: usize },
+}
+
+/// Attributes installed by the native creator before the user's routine runs.
+///
+/// Unspecified attributes are inherited from the creating thread. Affinity
+/// bytes are borrowed only for the synchronous creation handshake, so the ABI
+/// can pass its snapshot without allocating or freeing on the clone child.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ThreadStartup<'a> {
+    /// Linux CPU bitmap; `Some(&[])` is an explicit invalid/empty mask rather
+    /// than a request to inherit the current affinity.
+    pub affinity: Option<&'a [u8]>,
+    /// Linux's 64-bit kernel signal mask. Public libc policy, such as reserving
+    /// internal signals, is applied at the ABI boundary before passing it here.
+    pub signal_mask: Option<u64>,
+    /// An explicit `(policy, priority)` pair; `None` retains clone inheritance.
+    pub scheduling: Option<(i32, i32)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PreparedThreadStack {
+    mapping_base: usize,
+    mapping_size: usize,
+    address: usize,
+    size: usize,
+    guard_size: usize,
+    top: usize,
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+fn prepare_thread_stack(request: ThreadStack) -> Result<PreparedThreadStack, i32> {
+    let (stack_size, guard_size, page_size) = match request {
+        ThreadStack::Borrowed { address, size } => {
+            if address == 0 || size < MIN_STACK_SIZE || size > isize::MAX as usize {
+                return Err(crate::errno::EINVAL);
+            }
+            let end = address.checked_add(size).ok_or(crate::errno::EINVAL)?;
+            return Ok(PreparedThreadStack {
+                mapping_base: 0,
+                mapping_size: 0,
+                address,
+                size,
+                guard_size: 0,
+                top: end & !(THREAD_STACK_ALIGNMENT - 1),
+            });
+        }
+        ThreadStack::Allocated {
+            size,
+            guard_size,
+            page_size,
+        } => (size, guard_size, page_size),
+    };
     if stack_size < MIN_STACK_SIZE {
         return Err(crate::errno::EINVAL);
     }
-    let total_size = GUARD_PAGE_SIZE
+    if page_size < THREAD_STACK_ALIGNMENT || !page_size.is_power_of_two() {
+        return Err(crate::errno::EINVAL);
+    }
+    let guard_size = guard_size
+        .checked_add(page_size - 1)
+        .ok_or(crate::errno::ENOMEM)?
+        & !(page_size - 1);
+    let total_size = guard_size
         .checked_add(stack_size)
+        .filter(|size| *size <= isize::MAX as usize)
         .ok_or(crate::errno::ENOMEM)?;
 
     // Allocate the full region as read+write.
@@ -429,15 +583,13 @@ fn allocate_thread_stack(stack_size: usize) -> Result<(usize, usize, usize), i32
         )
     }?;
 
-    // Set the guard page (bottom of the region) to PROT_NONE.
-    // SAFETY: base is a valid, page-aligned mmap'd region of total_size bytes.
-    let guard_result = unsafe { syscall::sys_mprotect(base, GUARD_PAGE_SIZE, PROT_NONE as i32) };
-
-    if let Err(e) = guard_result {
-        // Clean up: unmap the region on failure.
-        // SAFETY: base/total_size are the mmap'd region we just created.
-        let _ = unsafe { syscall::sys_munmap(base, total_size) };
-        return Err(e);
+    if guard_size != 0 {
+        // SAFETY: the guard is a page-aligned prefix of the owned mapping.
+        if let Err(e) = unsafe { syscall::sys_mprotect(base, guard_size, PROT_NONE as i32) } {
+            // SAFETY: base/total_size are the mapping we just created.
+            let _ = unsafe { syscall::sys_munmap(base, total_size) };
+            return Err(e);
+        }
     }
 
     // A valid pthread stack size need not be a multiple of 16 (or even 8).
@@ -447,14 +599,24 @@ fn allocate_thread_stack(stack_size: usize) -> Result<(usize, usize, usize), i32
     // reclamation. The minimum size leaves room for the startup gap and args
     // even after losing up to THREAD_STACK_ALIGNMENT - 1 trailing bytes.
     let usable_top = (base as usize + total_size) & !(THREAD_STACK_ALIGNMENT - 1);
-    Ok((base as usize, total_size, usable_top))
+    Ok(PreparedThreadStack {
+        mapping_base: base as usize,
+        mapping_size: total_size,
+        address: base as usize + guard_size,
+        size: stack_size,
+        guard_size,
+        top: usable_top,
+    })
 }
 
-/// Free a thread stack allocated by `allocate_thread_stack`.
+/// Reclaim an owned stack mapping; zero extents represent caller-owned storage.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 fn free_thread_stack(base: usize, total_size: usize) {
-    // SAFETY: base/total_size were returned by allocate_thread_stack (mmap).
+    if base == 0 || total_size == 0 {
+        return;
+    }
+    // SAFETY: nonzero base/total_size identify the mapping from prepare_thread_stack.
     let _ = unsafe { syscall::sys_munmap(base as *mut u8, total_size) };
 }
 
@@ -498,8 +660,66 @@ pub unsafe fn create_thread(
     } else {
         DEFAULT_STACK_SIZE
     };
-    // Allocate stack.
-    let (stack_base, stack_total_size, stack_top) = allocate_thread_stack(actual_stack_size)?;
+    // SAFETY: this wrapper requests owned storage and forwards the caller's
+    // guarantees about the entry point and its argument.
+    unsafe {
+        create_thread_with_stack(
+            start_routine,
+            arg,
+            ThreadStack::Allocated {
+                size: actual_stack_size,
+                guard_size: GUARD_PAGE_SIZE,
+                page_size: GUARD_PAGE_SIZE,
+            },
+        )
+    }
+}
+
+/// Create a native thread with an explicit stack ownership policy.
+///
+/// # Safety
+///
+/// The entry point and argument have the same requirements as `create_thread`.
+/// A borrowed stack must be writable, exclusively available to the new thread,
+/// and remain mapped until that thread has terminated. Its caller owns all guard
+/// protection and reclamation, including after join, detach, or creation failure.
+/// An allocated stack's page size must be the actual operating-system page size.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub unsafe fn create_thread_with_stack(
+    start_routine: usize,
+    arg: usize,
+    stack: ThreadStack,
+) -> Result<*mut ThreadHandle, i32> {
+    // SAFETY: this wrapper forwards the entry/argument/stack guarantees and
+    // selects ordinary inheritance for every execution attribute.
+    unsafe { create_thread_with_startup(start_routine, arg, stack, ThreadStartup::default()) }
+}
+
+/// Create a native thread with explicit stack and execution attributes.
+///
+/// Affinity and scheduling failures are reported by the creating thread before
+/// a handle is published to its caller. The failed child never enters user code,
+/// and its owned stack is reclaimed after the kernel acknowledges its exit.
+///
+/// # Safety
+///
+/// The entry point, argument and stack have the same requirements as
+/// `create_thread_with_stack`. The safe borrowed affinity slice remains live
+/// until this function returns; the child consumes it before releasing the
+/// startup handshake and never retains it during application execution.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub unsafe fn create_thread_with_startup(
+    start_routine: usize,
+    arg: usize,
+    stack: ThreadStack,
+    startup: ThreadStartup<'_>,
+) -> Result<*mut ThreadHandle, i32> {
+    let stack = prepare_thread_stack(stack)?;
+    let stack_base = stack.mapping_base;
+    let stack_total_size = stack.mapping_size;
+    let stack_top = stack.top;
 
     // Allocate the ThreadHandle on the heap (Box).
     let handle = Box::new(ThreadHandle {
@@ -511,6 +731,9 @@ pub unsafe fn create_thread(
         retval: core::cell::UnsafeCell::new(0),
         stack_base,
         stack_total_size,
+        stack_addr: stack.address,
+        stack_size: stack.size,
+        guard_size: stack.guard_size,
         tls_values: [super::tls::TlsEntry::default(); super::tls::PTHREAD_KEYS_MAX],
     });
     let handle_ptr = Box::into_raw(handle);
@@ -518,10 +741,33 @@ pub unsafe fn create_thread(
     // Prepare ThreadStartArgs on the child stack.
     // The args struct goes near the top of the stack, and the trampoline
     // frame (fn_ptr + arg) goes at the very top.
+    // Block application signals over clone so they cannot run on the child
+    // before its native TLS and execution attributes are ready. The parent
+    // restores its original mask on every path after the raw clone syscall.
+    let blocked_mask = u64::MAX;
+    let mut inherited_mask = 0u64;
+    // SAFETY: both masks are live u64 values and Linux uses an 8-byte sigset.
+    if let Err(error) = unsafe {
+        syscall::sys_rt_sigprocmask(
+            2, // SIG_SETMASK
+            core::ptr::from_ref(&blocked_mask).cast(),
+            core::ptr::from_mut(&mut inherited_mask).cast(),
+            core::mem::size_of::<u64>(),
+        )
+    } {
+        // SAFETY: clone has not run and handle_ptr is exclusively ours.
+        unsafe { drop(Box::from_raw(handle_ptr)) };
+        free_thread_stack(stack_base, stack_total_size);
+        return Err(error);
+    }
     let args = ThreadStartArgs {
         handle: handle_ptr,
         start_routine,
         arg,
+        affinity: startup.affinity.map_or(core::ptr::null(), <[u8]>::as_ptr),
+        affinity_len: startup.affinity.map_or(0, <[u8]>::len),
+        scheduling: startup.scheduling,
+        signal_mask: startup.signal_mask.unwrap_or(inherited_mask),
     };
 
     // Place args in a stable location. We'll put it in the upper portion of
@@ -585,6 +831,16 @@ pub unsafe fn create_thread(
             0, // TLS: not set in phase 1 (bd-rth1 scope)
         )
     };
+    // SAFETY: inherited_mask was captured immediately before clone and is
+    // still live. All arguments and the syscall were validated by that call.
+    let _ = unsafe {
+        syscall::sys_rt_sigprocmask(
+            2,
+            core::ptr::from_ref(&inherited_mask).cast(),
+            core::ptr::null_mut(),
+            core::mem::size_of::<u64>(),
+        )
+    };
 
     match result {
         Ok(_child_tid) => {
@@ -596,8 +852,16 @@ pub unsafe fn create_thread(
             // Wait for the child to signal that it has started and read the args.
             // This ensures the stack-based ThreadStartArgs are consumed before
             // we consider the create operation complete.
-            wait_for_startup(handle_ptr);
-            Ok(handle_ptr)
+            match wait_for_startup(handle_ptr) {
+                Ok(()) => Ok(handle_ptr),
+                Err(error) => {
+                    // SAFETY: the failed child never entered application code
+                    // and this handle has not escaped. join waits for the
+                    // kernel to clear tid before freeing its owned storage.
+                    let _ = unsafe { join_thread(handle_ptr) };
+                    Err(error)
+                }
+            }
         }
         Err(errno) => {
             // Clone failed — clean up.
@@ -614,13 +878,17 @@ pub unsafe fn create_thread(
 /// Uses futex wait on `handle.started` until it becomes non-zero.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
-fn wait_for_startup(handle_ptr: *mut ThreadHandle) {
+fn wait_for_startup(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
     // SAFETY: handle_ptr is valid (we just allocated it).
     let handle = unsafe { &*handle_ptr };
     loop {
         let started = handle.started.load(Ordering::Acquire);
         if started != 0 {
-            return;
+            return if started == 1 {
+                Ok(())
+            } else {
+                Err((started - 1) as i32)
+            };
         }
         // Futex wait: sleep until started changes from 0.
         let futex_ptr = &handle.started as *const AtomicU32 as *const u32;
@@ -967,6 +1235,186 @@ mod tests {
         0
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct StartupSnapshot {
+        affinity: [u8; 128],
+        signal_mask: u64,
+        policy: i32,
+        priority: i32,
+    }
+
+    fn startup_snapshot() -> Result<StartupSnapshot, i32> {
+        let mut snapshot = StartupSnapshot {
+            affinity: [0; 128],
+            signal_mask: 0,
+            policy: syscall::sys_sched_getscheduler(0)?,
+            priority: 0,
+        };
+        // SAFETY: each output points to correctly sized, live local storage.
+        unsafe {
+            syscall::sys_sched_getaffinity(
+                0,
+                snapshot.affinity.len(),
+                snapshot.affinity.as_mut_ptr(),
+            )?;
+            syscall::sys_sched_getparam(0, core::ptr::from_mut(&mut snapshot.priority).cast())?;
+            syscall::sys_rt_sigprocmask(
+                2,
+                core::ptr::null(),
+                core::ptr::from_mut(&mut snapshot.signal_mask).cast(),
+                core::mem::size_of::<u64>(),
+            )?;
+        }
+        Ok(snapshot)
+    }
+
+    struct StartupProbe {
+        result: core::cell::UnsafeCell<Option<Result<StartupSnapshot, i32>>>,
+    }
+
+    unsafe extern "C" fn startup_probe_start(arg: usize) -> usize {
+        // SAFETY: the parent keeps this probe alive until join, and reads its
+        // result only after the child's exit synchronizes the plain write.
+        let probe = unsafe { &*(arg as *const StartupProbe) };
+        unsafe { *probe.result.get() = Some(startup_snapshot()) };
+        0x517a
+    }
+
+    fn probe_startup(startup: ThreadStartup<'_>) -> Result<StartupSnapshot, i32> {
+        let probe = StartupProbe {
+            result: core::cell::UnsafeCell::new(None),
+        };
+        // SAFETY: getpagesize has no arguments or caller-owned pointers.
+        let page_size = unsafe { host_page_size() } as usize;
+        // SAFETY: the entry point has the required ABI, probe outlives join,
+        // and the creator owns this allocated stack and the affinity borrow.
+        let created = unsafe {
+            create_thread_with_startup(
+                startup_probe_start as *const () as usize,
+                core::ptr::from_ref(&probe) as usize,
+                ThreadStack::Allocated {
+                    size: 256 * 1024,
+                    guard_size: page_size,
+                    page_size,
+                },
+                startup,
+            )
+        };
+        match created {
+            Ok(handle) => {
+                // SAFETY: this test is the sole owner of the joinable handle.
+                assert_eq!(unsafe { join_thread(handle) }, Ok(0x517a));
+                // SAFETY: join proves the child has stopped writing.
+                unsafe { (*probe.result.get()).take() }.expect("start routine did not run")
+            }
+            Err(error) => {
+                // SAFETY: failed creation waits for the child to exit; the
+                // start routine must not have touched caller-owned data.
+                assert!(unsafe { &*probe.result.get() }.is_none());
+                Err(error)
+            }
+        }
+    }
+
+    #[test]
+    fn native_startup_inherits_execution_attributes() {
+        let before = startup_snapshot().unwrap();
+        let child = probe_startup(ThreadStartup::default()).unwrap();
+        assert_eq!(child, before);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_applies_affinity_before_user_entry() {
+        let before = startup_snapshot().unwrap();
+        let cpu = before
+            .affinity
+            .iter()
+            .enumerate()
+            .find_map(|(index, byte)| {
+                (*byte != 0).then(|| index * 8 + byte.trailing_zeros() as usize)
+            })
+            .expect("the test thread must have an allowed CPU");
+        let mut affinity = [0u8; 128];
+        affinity[cpu / 8] = 1 << (cpu % 8);
+        let child = probe_startup(ThreadStartup {
+            affinity: Some(&affinity),
+            ..ThreadStartup::default()
+        })
+        .unwrap();
+        assert_eq!(child.affinity, affinity);
+        assert_eq!(child.signal_mask, before.signal_mask);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_applies_signal_mask_before_user_entry() {
+        let before = startup_snapshot().unwrap();
+        // SIGUSR1 and SIGUSR2 are ordinary maskable Linux signals on the
+        // supported ISAs; only the child receives this explicit mask.
+        let requested = (1u64 << (10 - 1)) | (1u64 << (12 - 1));
+        let child = probe_startup(ThreadStartup {
+            signal_mask: Some(requested),
+            ..ThreadStartup::default()
+        })
+        .unwrap();
+        assert_eq!(child.signal_mask, requested);
+        assert_eq!(child.affinity, before.affinity);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_applies_explicit_scheduling_before_user_entry() {
+        let before = startup_snapshot().unwrap();
+        // SCHED_OTHER and SCHED_BATCH both permit priority zero without
+        // CAP_SYS_NICE. Select a different policy from the inherited one so
+        // simply ignoring the requested attributes cannot pass this test.
+        let policy = if before.policy == 0 { 3 } else { 0 };
+        let child = probe_startup(ThreadStartup {
+            scheduling: Some((policy, 0)),
+            ..ThreadStartup::default()
+        })
+        .unwrap();
+        assert_eq!(child.policy, policy);
+        assert_eq!(child.priority, 0);
+        assert_eq!(startup_snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn native_startup_failures_do_not_run_user_code_or_change_parent() {
+        let before = startup_snapshot().unwrap();
+        let no_cpus = [0u8; 128];
+        for _ in 0..8 {
+            for startup in [
+                ThreadStartup {
+                    affinity: Some(&no_cpus),
+                    ..ThreadStartup::default()
+                },
+                ThreadStartup {
+                    affinity: Some(&[]),
+                    ..ThreadStartup::default()
+                },
+                ThreadStartup {
+                    scheduling: Some((0, 1)), // SCHED_OTHER requires priority 0.
+                    ..ThreadStartup::default()
+                },
+                ThreadStartup {
+                    // A later setup error must reclaim the child even after
+                    // a preceding attribute was installed successfully.
+                    affinity: Some(&before.affinity),
+                    signal_mask: Some(1 << (12 - 1)),
+                    scheduling: Some((0, 1)),
+                },
+            ] {
+                assert_eq!(probe_startup(startup), Err(crate::errno::EINVAL));
+                assert_eq!(startup_snapshot().unwrap(), before);
+            }
+        }
+        // The same creator still works after repeatedly reclaiming failed
+        // children: no stale startup publication or poisoned lifecycle state.
+        assert_eq!(probe_startup(ThreadStartup::default()).unwrap(), before);
+    }
+
     #[test]
     fn native_stack_allocation_rejects_small_and_overflowing_sizes() {
         for size in [0, 1, THREAD_START_ARGS_GAP, MIN_STACK_SIZE - 1] {
@@ -1011,6 +1459,272 @@ mod tests {
             let handle = unsafe { create_thread(start_routine, residue + 1, size) }.unwrap();
             let result = unsafe { join_thread(handle) };
             assert_eq!(result, Ok(residue + 1), "stack size {size}");
+        }
+    }
+
+    struct StackProbe {
+        address: core::sync::atomic::AtomicUsize,
+        release: AtomicU32,
+    }
+
+    unsafe extern "C" {
+        #[link_name = "getpagesize"]
+        fn host_page_size() -> i32;
+    }
+
+    unsafe extern "C" fn stack_probe_start(arg: usize) -> usize {
+        let probe = unsafe { &*(arg as *const StackProbe) };
+        let local = [0x5au8; 128];
+        probe
+            .address
+            .store(local.as_ptr() as usize, Ordering::Release);
+        while probe.release.load(Ordering::Acquire) == 0 {
+            core::hint::spin_loop();
+        }
+        std::hint::black_box(&local);
+        0x51ac
+    }
+
+    fn stack_mapping_permissions(address: usize) -> Option<String> {
+        std::fs::read_to_string("/proc/self/maps")
+            .unwrap()
+            .lines()
+            .find_map(|line| {
+                let mut fields = line.split_whitespace();
+                let (begin, end) = fields.next()?.split_once('-')?;
+                let begin = usize::from_str_radix(begin, 16).ok()?;
+                let end = usize::from_str_radix(end, 16).ok()?;
+                (begin <= address && address < end).then(|| fields.next().unwrap().to_owned())
+            })
+    }
+
+    fn wait_for_stack_probe(probe: &StackProbe) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while probe.address.load(Ordering::Acquire) == 0 {
+            assert!(std::time::Instant::now() < deadline, "child did not start");
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_for_native_tid_exit(tid: i32) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while syscall::sys_tgkill(syscall::sys_getpid(), tid, 0).is_ok() {
+            assert!(std::time::Instant::now() < deadline, "child did not exit");
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn native_stack_requests_validate_ranges_before_writing() {
+        for (address, size) in [
+            (0, MIN_STACK_SIZE),
+            (GUARD_PAGE_SIZE, MIN_STACK_SIZE - 1),
+            (usize::MAX - MIN_STACK_SIZE + 1, MIN_STACK_SIZE),
+            (GUARD_PAGE_SIZE, isize::MAX as usize + 1),
+        ] {
+            assert_eq!(
+                prepare_thread_stack(ThreadStack::Borrowed { address, size }),
+                Err(crate::errno::EINVAL)
+            );
+        }
+        for page_size in [0, 1, 4095] {
+            assert_eq!(
+                prepare_thread_stack(ThreadStack::Allocated {
+                    size: MIN_STACK_SIZE,
+                    guard_size: 0,
+                    page_size,
+                }),
+                Err(crate::errno::EINVAL)
+            );
+        }
+        assert_eq!(
+            prepare_thread_stack(ThreadStack::Allocated {
+                size: MIN_STACK_SIZE,
+                guard_size: usize::MAX,
+                page_size: GUARD_PAGE_SIZE,
+            }),
+            Err(crate::errno::ENOMEM)
+        );
+    }
+
+    #[test]
+    fn native_requested_guards_protect_only_owned_prefix() {
+        let page_size = unsafe { host_page_size() } as usize;
+        for requested in [0, 1, page_size + 1] {
+            let probe = StackProbe {
+                address: core::sync::atomic::AtomicUsize::new(0),
+                release: AtomicU32::new(0),
+            };
+            let handle = unsafe {
+                create_thread_with_stack(
+                    stack_probe_start as *const () as usize,
+                    &probe as *const StackProbe as usize,
+                    ThreadStack::Allocated {
+                        size: 256 * 1024 + 13,
+                        guard_size: requested,
+                        page_size,
+                    },
+                )
+            }
+            .unwrap();
+            wait_for_stack_probe(&probe);
+            let metadata = unsafe { &*handle };
+            let (base, total, address, size, guard) = (
+                metadata.stack_base,
+                metadata.stack_total_size,
+                metadata.stack_addr,
+                metadata.stack_size,
+                metadata.guard_size,
+            );
+            let prefix_permissions = stack_mapping_permissions(base);
+            let usable_permissions = stack_mapping_permissions(address);
+            let local = probe.address.load(Ordering::Acquire);
+            probe.release.store(1, Ordering::Release);
+            assert_eq!(unsafe { join_thread(handle) }, Ok(0x51ac));
+
+            let expected_guard = (requested + page_size - 1) & !(page_size - 1);
+            assert_eq!(guard, expected_guard);
+            assert_eq!(address, base + guard);
+            assert_eq!(size, 256 * 1024 + 13);
+            assert_eq!(total, guard + size);
+            assert!(address <= local && local + 128 <= address + size);
+            assert_eq!(usable_permissions.as_deref(), Some("rw-p"));
+            assert_eq!(
+                prefix_permissions.as_deref(),
+                Some(if requested == 0 { "rw-p" } else { "---p" })
+            );
+        }
+    }
+
+    #[test]
+    fn native_borrowed_stacks_preserve_storage_and_caller_guards() {
+        let page_size = unsafe { host_page_size() } as usize;
+        let writable_size = (272 * 1024 + page_size - 1) & !(page_size - 1);
+        let total = writable_size + 2 * page_size;
+        let base = unsafe {
+            syscall::sys_mmap(
+                core::ptr::null_mut(),
+                total,
+                (PROT_READ | PROT_WRITE) as i32,
+                (MAP_PRIVATE | MAP_ANONYMOUS) as i32,
+                -1,
+                0,
+            )
+        }
+        .unwrap();
+        unsafe {
+            syscall::sys_mprotect(base, page_size, PROT_NONE as i32).unwrap();
+            syscall::sys_mprotect(
+                base.add(page_size + writable_size),
+                page_size,
+                PROT_NONE as i32,
+            )
+            .unwrap();
+        }
+        for residue in 0..THREAD_STACK_ALIGNMENT {
+            let address = base as usize + page_size + 17 + residue;
+            let size = 256 * 1024 + residue;
+            unsafe {
+                ((address - 1) as *mut u8).write(0x35);
+                ((address + size) as *mut u8).write(0x79);
+            }
+            let probe = StackProbe {
+                address: core::sync::atomic::AtomicUsize::new(0),
+                release: AtomicU32::new(0),
+            };
+            let handle = unsafe {
+                create_thread_with_stack(
+                    stack_probe_start as *const () as usize,
+                    &probe as *const StackProbe as usize,
+                    ThreadStack::Borrowed { address, size },
+                )
+            }
+            .unwrap();
+            wait_for_stack_probe(&probe);
+            let metadata = unsafe { &*handle };
+            let actual = (
+                metadata.stack_base,
+                metadata.stack_total_size,
+                metadata.stack_addr,
+                metadata.stack_size,
+                metadata.guard_size,
+            );
+            let local = probe.address.load(Ordering::Acquire);
+            probe.release.store(1, Ordering::Release);
+            assert_eq!(unsafe { join_thread(handle) }, Ok(0x51ac));
+            let mut residency = vec![0u8; total / page_size];
+            assert_eq!(
+                unsafe { syscall::sys_mincore(base as usize, total, residency.as_mut_ptr()) },
+                Ok(())
+            );
+            assert_eq!(actual, (0, 0, address, size, 0));
+            assert!(address <= local && local + 128 <= address + size);
+            assert_eq!(unsafe { ((address - 1) as *const u8).read() }, 0x35);
+            assert_eq!(unsafe { ((address + size) as *const u8).read() }, 0x79);
+        }
+        assert_eq!(
+            stack_mapping_permissions(base as usize).as_deref(),
+            Some("---p")
+        );
+        assert_eq!(
+            stack_mapping_permissions(base as usize + page_size + writable_size).as_deref(),
+            Some("---p")
+        );
+        unsafe { syscall::sys_munmap(base, total).unwrap() };
+    }
+
+    #[test]
+    fn native_borrowed_stacks_survive_both_detach_paths() {
+        let page_size = unsafe { host_page_size() } as usize;
+        for finish_first in [false, true] {
+            let size = 256 * 1024;
+            let base = unsafe {
+                syscall::sys_mmap(
+                    core::ptr::null_mut(),
+                    size,
+                    (PROT_READ | PROT_WRITE) as i32,
+                    (MAP_PRIVATE | MAP_ANONYMOUS) as i32,
+                    -1,
+                    0,
+                )
+            }
+            .unwrap();
+            let probe = StackProbe {
+                address: core::sync::atomic::AtomicUsize::new(0),
+                release: AtomicU32::new(0),
+            };
+            let handle = unsafe {
+                create_thread_with_stack(
+                    stack_probe_start as *const () as usize,
+                    &probe as *const StackProbe as usize,
+                    ThreadStack::Borrowed {
+                        address: base as usize,
+                        size,
+                    },
+                )
+            }
+            .unwrap();
+            wait_for_stack_probe(&probe);
+            let tid = unsafe { (*handle).self_tid.load(Ordering::Acquire) };
+            if finish_first {
+                probe.release.store(1, Ordering::Release);
+                wait_for_native_tid_exit(tid);
+                assert_eq!(unsafe { detach_thread(handle) }, Ok(()));
+            } else {
+                assert_eq!(unsafe { detach_thread(handle) }, Ok(()));
+                probe.release.store(1, Ordering::Release);
+                wait_for_native_tid_exit(tid);
+            }
+            let mut residency = vec![0u8; size.div_ceil(page_size)];
+            assert_eq!(
+                unsafe { syscall::sys_mincore(base as usize, size, residency.as_mut_ptr()) },
+                Ok(())
+            );
+            unsafe {
+                base.write(0xa7);
+                assert_eq!(base.read(), 0xa7);
+                syscall::sys_munmap(base, size).unwrap();
+            }
         }
     }
 

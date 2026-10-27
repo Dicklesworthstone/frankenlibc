@@ -1,23 +1,26 @@
 # FrankenLibC Compatibility Guide
 
-> **Generated from**: `tests/conformance/ld_preload_smoke_summary.v1.json`  
-> **Last regeneration**: 2026-09-18 (bd-reality-202609-lx578q.10; supersedes the 2026-05-22 table that recorded 40/20/4 RED)
+> **Evidence source**: `tests/conformance/ld_preload_smoke_summary.v1.json`
+>
+> **Guide reconciled**: 2026-10-20. The recorded workload run is September 24, 2026 at `a8a4110b98606f26b296cd351d278073ee611ac9`; no new workload run is claimed by this documentation change.
 
-This guide states which workloads work today under `LD_PRELOAD`, which are degraded, and which are broken, per strict and hardened mode. Every number below is copied from the checked-in smoke artifact (run `SnowyMill-ldfix-20260603T034530Z`, checked June 3, 2026); it is a curated workload signal, not a broad production-readiness claim.
+FrankenLibC currently declares **L0 interposition over host glibc**. This guide describes the committed workload snapshot and its limitations. A historical pass does not establish that current HEAD or an arbitrary workload passes.
 
-## Current Status
+## Recorded Smoke Status — September 24, 2026
 
-| Mode | Pass | Fail | Skip | Status |
-|------|------|------|------|--------|
-| **Strict** | 30 | 0 | 2 | GREEN |
-| **Hardened** | 30 | 0 | 2 | GREEN |
-| **Total** | 60 | 0 | 4 | GREEN |
+| Mode | Pass | Fail | Skip | Xfail |
+|------|------|------|------|-------|
+| **Strict** | 94 | 0 | 2 | 1 |
+| **Hardened** | 95 | 0 | 2 | 0 |
+| **Total** | 189 | 0 | 4 | 1 |
+
+These mode assignments come from the artifact's structured fields. Its free-text notes instead assign the xfail to hardened `sed_substitute`; that disagreement remains unresolved in the artifact. The xfail and skips are not passes. The older June 3 table (60 passes / zero failures / four skips) covered a smaller battery and is superseded by this recorded corpus.
 
 The 4 skips are the optional `redis-cli --version` and `nginx -v` probes (2 per mode), skipped only when those binaries are not installed. They are tracked separately from failures.
 
-## What Works Today (Strict Mode)
+## Workloads Represented in the Recorded Corpus
 
-Workloads that pass the curated smoke battery in strict mode:
+The corpus includes the following workload families; consult the per-case transcripts for exact commands and outcomes:
 
 - Coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`)
 - `python3 -c` inline workloads
@@ -25,36 +28,37 @@ Workloads that pass the curated smoke battery in strict mode:
 - `sqlite3 :memory:`
 - The integration link fixture (`tests/integration/link_test.c`)
 - Repeated stress iterations of the above (5 iterations per stress case)
+- GNU `FILE` constructors, `sed`, `grep`, `awk`, `find`, archive/compression round trips, `make`, Perl, Git, C++ runtime initialization, and Python extensions/subprocesses
 
 ## What Works (Hardened Mode)
 
-`FRANKENLIBC_MODE=hardened` passes the same 30-case battery. Hardened mode adds deterministic repair for invalid patterns; the smoke gate also enforces the ~2x latency bound for this battery in both modes.
+The structured snapshot records 95 hardened-mode passes. Hardened mode can repair or deny invalid operations on explicitly wired paths; valid-program smoke cases do not establish universal memory safety. The smoke gate applies its per-run latency criterion, but this old result does not establish a current-source overhead bound.
 
 ## Known Issues
 
 ### Signature Guard Failures (0 cases in the checked run)
 
-No signature-guard failures occurred in the checked June 3, 2026 battery. An earlier 2026-05-22 generation of this guide recorded 12 such failures from an older run; that state is superseded.
+No signature-guard failures are recorded in the September 24 artifact. This is a statement about that run, not a new verification result.
 
 ### Performance Failures (0 cases in the checked run)
 
-No performance-gate failures occurred in the checked battery (0 `perf_failures` in both modes). The ~2x latency bound is enforced per-run by the smoke gate rather than assumed.
+The September 24 artifact records zero `perf_failures` in both modes. Current allocator, hardened-sort and startup performance must be measured against a live incumbent in the same invocation; historical smoke timing does not discharge those tasks.
 
 ### Optional/Skipped Binaries
 
-The following binaries are optional and skipped when not present (4 of 64 cases in the checked run):
+The following binaries are optional and skipped when not present (four of 194 cases in the recorded run):
 
 - `redis-cli` (network service)
 - `nginx` (web server)
 
 ## Maturity Level
 
-FrankenLibC is currently at **L1 interpose** maturity per `tests/conformance/replacement_levels.json`:
+The canonical `tests/conformance/replacement_levels.json` declares **L0**:
 
-- L0 (In-progress): Basic compilation and symbol resolution
-- **L1 (Current)**: LD_PRELOAD interposition works for the curated smoke battery in both modes
-- L2 (Future): Standalone replacement (no host glibc)
-- L3 (Future): Full glibc replacement artifact
+- **L0 (Current)**: Interposition over host glibc with native, host-backed and unsupported subsets explicitly tracked
+- L1 (Promotion target): Hardened interposition satisfying zero-stub, workload and performance requirements; host glibc remains required
+- L2 (Future): Standalone-ready qualification
+- L3 (Future): Standalone replacement artifact
 
 ## Decision Tree
 
@@ -68,7 +72,7 @@ Is your workload single-threaded?
     └── No → Likely works in strict mode
 
 Do you need hardened mode security checks?
-├── Yes → Expect up to ~2x latency overhead (enforced bound for this battery)
+├── Yes → Check that the required paths are wired; measure workload-specific overhead
 └── No → Use strict mode for better performance
 
 Is your workload latency-sensitive?
@@ -94,7 +98,7 @@ Check the exit status and verify expected behavior.
 
 ## Evidence Artifacts
 
-This guide is regenerated from machine artifacts:
+Use these evidence artifacts with their recorded source and build identities; updating this guide does not regenerate execution evidence:
 
 - Smoke battery: `tests/conformance/ld_preload_smoke_summary.v1.json`
 - Performance data: `tests/conformance/heavyweight_runtime_perf.v1.json`

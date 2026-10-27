@@ -10,6 +10,8 @@ import subprocess
 
 CASES = ('dispatch-throw', 'encode-throw', 'decode-throw', 'free-throw',
          'dispatch-exit', 'encode-exit', 'decode-exit', 'destroy-exit')
+CASES += tuple('tcp-' + case for case in CASES)
+CASES += tuple('unix-' + case for case in CASES[:8])
 
 
 def main() -> int:

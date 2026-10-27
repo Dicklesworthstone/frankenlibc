@@ -1,4 +1,4 @@
-name: Native UDP RPC services
+name: Native UDP and TCP RPC services
 on:
   push:
     branches: [main]
@@ -11,7 +11,7 @@ on:
       - '.github/workflows/rpc-svc.yml'
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: rpc-svc-cache-${{ github.ref }}
   cancel-in-progress: false
@@ -38,9 +38,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Qualify the exact reviewed reply-cache integration
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Record the committed reply-cache implementation
         shell: bash
         run: |
           set -euo pipefail
@@ -48,11 +46,7 @@ jobs:
           mkdir -p "$root/source"
           git rev-parse HEAD > "$root/revision.txt"
           rustc --version --verbose > "$root/rustc.txt"
-          test "$(git hash-object crates/frankenlibc-abi/src/rpc_abi.rs)" = 49798575be2489d2274a02e8297a3aa41d7c43f8
-          test "$(git hash-object crates/frankenlibc-abi/src/rpc_svc.rs)" = 7514113ae4941c8392eaee8048e8cf45b142228a
-          gh api repos/${{ github.repository }}/git/blobs/5714ab600d99949f969d00d075fdd9d57e625fd8 --jq .content | base64 -d > "$root/integration.patch"
-          git apply --check "$root/integration.patch"
-          git apply "$root/integration.patch"
+          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs scripts/check_rpc_svc*.py tests/integration/fixture_rpc_svc*
           for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs; do
             cp "crates/frankenlibc-abi/src/$file" "$root/source/"
             git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
@@ -66,9 +60,13 @@ jobs:
           root=artifacts/rpc-svc
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
+          cp Cargo.lock "$root/Cargo.lock"
+          sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
-          python3 scripts/check_rpc_svc.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cases"
+          # UDP registerrpc and TCP svc_register publish through an exclusive loopback port 111 peer,
+          # using the same privilege boundary as the existing RPC client gate.
+          sudo python3 "$PWD/scripts/check_rpc_svc.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/cases"
           cargo test -p frankenlibc-abi --test rpc_svc_cache_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/cache-unit.log"
           grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-unit.log"
           cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture --test-threads=1 2>&1 | tee "$root/core.log"
@@ -79,27 +77,23 @@ jobs:
           # gai-async.yml. No global resolver or kernel configuration is changed.
           sudo python3 "$PWD/scripts/check_gai_async.py" "$PWD/target/release/libfrankenlibc_abi.so" --output "$PWD/$root/dns"
           python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/aio"
-      - name: Publish only tested immutable source objects
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify tested sources still match the checkout
         shell: bash
         run: |
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, urllib.request
+          import hashlib, json, pathlib, subprocess
+          subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--',
+              'crates/frankenlibc-abi/src/rpc*.rs', 'scripts/check_rpc_svc*.py',
+              'tests/integration/fixture_rpc_svc*'], check=True)
+          assert pathlib.Path('Cargo.lock').read_bytes() == pathlib.Path('artifacts/rpc-svc/Cargo.lock').read_bytes()
           result = {}
-          for name in ['rpc_svc.rs', 'rpc_abi.rs']:
+          for name in ['rpc_svc.rs', 'rpc_abi.rs', 'rpc_svc_cache.rs']:
               path = pathlib.Path('crates/frankenlibc-abi/src') / name
               data = path.read_bytes()
               assert data == (pathlib.Path('artifacts/rpc-svc/source') / name).read_bytes()
               expected = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
-              request = urllib.request.Request(f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs',
-                  data=json.dumps({'content': data.decode(), 'encoding': 'utf-8'}).encode(),
-                  headers={'Authorization': f'Bearer {os.environ["GH_TOKEN"]}', 'Content-Type': 'application/json'}, method='POST')
-              with urllib.request.urlopen(request) as response:
-                  blob = json.load(response)
-              assert blob['sha'] == expected
               result[str(path)] = expected
-          pathlib.Path('artifacts/rpc-svc/published-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
+          pathlib.Path('artifacts/rpc-svc/source-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
           print(json.dumps(result, indent=2))
           PY
       - uses: actions/upload-artifact@v4

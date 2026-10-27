@@ -7,9 +7,88 @@
 //! `strfromf128` formatter (bd-trosmi): the rounding and `%a/%e/%f/%g` format
 //! assembly are layered on top of this exact decomposition by the caller.
 //!
-//! The exported function takes the raw 128-bit pattern (`u128`) rather than a
-//! `f128`, so it needs no nightly `f128` feature and can be unit-tested against
-//! exact reference values independent of argument-passing ABI concerns.
+//! Binary128 APIs take a raw 128-bit pattern (`u128`) rather than a `f128`, so
+//! they need no nightly `f128` feature. Binary64 and x87 adapters reuse the
+//! exact engine while preserving their hexadecimal encoding conventions.
+//! Tests remain independent of argument-passing ABI concerns.
+
+/// The calling thread's floating-point rounding direction. Formatting reads
+/// hardware state, so fesetenv and direct environment restoration work without
+/// maintaining a second, potentially stale software copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoundingMode {
+    Nearest,
+    Downward,
+    Upward,
+    TowardZero,
+}
+
+impl RoundingMode {
+    /// Read the architectural rounding control without changing exception
+    /// flags or the caller's control word. This is the hardware boundary;
+    /// digit generation and rounding below remain entirely safe Rust.
+    #[allow(unsafe_code)]
+    pub fn current() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut control = 0u16;
+            // SAFETY: fnstcw writes exactly two bytes to live stack storage and
+            // neither changes the x87 environment nor reads caller memory.
+            unsafe {
+                core::arch::asm!("fnstcw [{}]", in(reg) &mut control, options(nostack, preserves_flags));
+            }
+            match (control >> 10) & 3 {
+                1 => Self::Downward,
+                2 => Self::Upward,
+                3 => Self::TowardZero,
+                _ => Self::Nearest,
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let control: u64;
+            // SAFETY: reading FPCR is unprivileged and has no memory or
+            // floating-point status side effects.
+            unsafe {
+                core::arch::asm!("mrs {}, fpcr", out(reg) control, options(nomem, nostack, preserves_flags));
+            }
+            match (control >> 22) & 3 {
+                1 => Self::Upward,
+                2 => Self::Downward,
+                3 => Self::TowardZero,
+                _ => Self::Nearest,
+            }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        Self::Nearest
+    }
+
+    fn magnitude(self, negative: bool) -> MagnitudeRounding {
+        match self {
+            Self::Nearest => MagnitudeRounding::Even,
+            Self::Upward if !negative => MagnitudeRounding::Away,
+            Self::Downward if negative => MagnitudeRounding::Away,
+            _ => MagnitudeRounding::Truncate,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MagnitudeRounding {
+    Even,
+    Away,
+    Truncate,
+}
+
+impl MagnitudeRounding {
+    fn increment(self, first: u8, half: u8, rest: bool, odd: bool) -> bool {
+        match self {
+            Self::Even => first > half || (first == half && (rest || odd)),
+            Self::Away => first != 0 || rest,
+            Self::Truncate => false,
+        }
+    }
+}
 
 /// A minimal big unsigned integer: base-2^32, little-endian limbs, with no
 /// trailing zero limbs (the value zero is the empty limb vector).
@@ -1161,23 +1240,27 @@ fn parse_base0(seq: &[u8]) -> u64 {
 /// rounding to a fixed number of fractional places maps onto it by choosing
 /// `max_sig` from the value's magnitude.
 pub fn round_to_sig_digits(digits: &[u8], exp10: i32, max_sig: usize) -> (Vec<u8>, i32) {
+    round_to_sig_digits_with(digits, exp10, max_sig, MagnitudeRounding::Even)
+}
+
+fn round_to_sig_digits_with(
+    digits: &[u8],
+    exp10: i32,
+    max_sig: usize,
+    rounding: MagnitudeRounding,
+) -> (Vec<u8>, i32) {
     let n = digits.len();
     if max_sig == 0 || n <= max_sig {
         return (digits.to_vec(), exp10);
     }
     let dropped = n - max_sig;
     let mut kept: Vec<u8> = digits[..max_sig].to_vec();
-    let round_digit = digits[max_sig];
-    let round_up = if round_digit > b'5' {
-        true
-    } else if round_digit < b'5' {
-        false
-    } else if digits[max_sig + 1..].iter().any(|&d| d != b'0') {
-        true
-    } else {
-        // Exact tie: round to even (round up iff the last kept digit is odd).
-        (kept[max_sig - 1] - b'0') % 2 == 1
-    };
+    let round_up = rounding.increment(
+        digits[max_sig] - b'0',
+        5,
+        digits[max_sig + 1..].iter().any(|&d| d != b'0'),
+        (kept[max_sig - 1] - b'0') % 2 == 1,
+    );
     let mut new_exp10 = exp10 + dropped as i32;
     if round_up {
         let mut i = max_sig;
@@ -1234,8 +1317,16 @@ fn finite_parts(cls: &F128Class) -> (Vec<u8>, i32) {
 
 /// Scientific (`%e`) body, unsigned. `p` fractional digits; `strip` removes
 /// trailing zeros (for `%g`).
-fn render_e(digits: &[u8], exp10: i32, p: usize, upper: bool, alt: bool, strip: bool) -> Vec<u8> {
-    let (rd, rexp10) = round_to_sig_digits(digits, exp10, p + 1);
+fn render_e(
+    digits: &[u8],
+    exp10: i32,
+    p: usize,
+    upper: bool,
+    alt: bool,
+    strip: bool,
+    rounding: MagnitudeRounding,
+) -> Vec<u8> {
+    let (rd, rexp10) = round_to_sig_digits_with(digits, exp10, p + 1, rounding);
     let x = sci_exp(&rd, rexp10);
     let mut sig = rd;
     while sig.len() < p + 1 {
@@ -1266,16 +1357,31 @@ fn render_e(digits: &[u8], exp10: i32, p: usize, upper: bool, alt: bool, strip: 
 }
 
 /// Fixed-point (`%f`) body, unsigned. `p` fractional digits; `strip` for `%g`.
-fn render_f(digits: &[u8], exp10: i32, p: usize, alt: bool, strip: bool) -> Vec<u8> {
+fn render_f(
+    digits: &[u8],
+    exp10: i32,
+    p: usize,
+    alt: bool,
+    strip: bool,
+    rounding: MagnitudeRounding,
+) -> Vec<u8> {
     let x0 = sci_exp(digits, exp10);
     let keep = x0 + 1 + p as i32;
     let (rd, rexp10) = if keep >= 1 {
-        round_to_sig_digits(digits, exp10, keep as usize)
+        round_to_sig_digits_with(digits, exp10, keep as usize, rounding)
     } else {
         // Value is below the last retained fractional place: rounds to 0, or up
         // to one unit in the last place if it is >= half.
-        let round_up = keep == 0
-            && (digits[0] > b'5' || (digits[0] == b'5' && digits[1..].iter().any(|&d| d != b'0')));
+        let round_up = if keep == 0 {
+            rounding.increment(
+                digits[0] - b'0',
+                5,
+                digits[1..].iter().any(|&d| d != b'0'),
+                false,
+            )
+        } else {
+            rounding.increment(0, 5, digits.iter().any(|&d| d != b'0'), false)
+        };
         if round_up {
             (vec![b'1'], -(p as i32))
         } else {
@@ -1325,25 +1431,33 @@ fn render_g(
     precision: Option<usize>,
     upper: bool,
     alt: bool,
+    rounding: MagnitudeRounding,
 ) -> Vec<u8> {
     let mut p = precision.unwrap_or(6);
     if p == 0 {
         p = 1;
     }
-    let (rd, rexp10) = round_to_sig_digits(digits, exp10, p);
+    let (rd, rexp10) = round_to_sig_digits_with(digits, exp10, p, rounding);
     let x = sci_exp(&rd, rexp10);
     if x < -4 || x >= p as i32 {
-        render_e(digits, exp10, p - 1, upper, alt, !alt)
+        render_e(digits, exp10, p - 1, upper, alt, !alt, rounding)
     } else {
-        render_f(digits, exp10, (p as i32 - 1 - x).max(0) as usize, alt, !alt)
+        render_f(
+            digits,
+            exp10,
+            (p as i32 - 1 - x).max(0) as usize,
+            alt,
+            !alt,
+            rounding,
+        )
     }
 }
 
 /// Round a hex-float significand — a leading digit plus its fraction nibbles —
 /// to `p_opt` fraction digits, in place, and return the leading digit.
 ///
-/// Round-half-to-even over the hexadecimal digits, which is what glibc's `%a`
-/// does. MEASURED against the running glibc rather than assumed: at precision 0
+/// Round the hexadecimal digits in the active magnitude direction. The
+/// default is half-to-even. MEASURED against the running glibc: at precision 0
 /// `0x8.8` stays `0x8` (kept digit even) while `0x9.8` becomes `0xa` (odd rounds
 /// up), and `0x8.8000000000000001` goes to `0x9` because a nonzero tail past the
 /// `8` breaks the tie. With no precision the fraction keeps every significant
@@ -1352,16 +1466,19 @@ fn render_g(
 /// The carry can push the leading digit past `0xf`. binary128 enters with a lead
 /// of 0 or 1 and cannot, but an x87 significand's leading nibble is `0x8..0xf`
 /// for every normal, so [`render_a_x87`] renormalises on the way out.
-fn round_hex_nibbles(nibs: &mut Vec<u8>, lead: u32, p_opt: Option<usize>) -> u32 {
+fn round_hex_nibbles(
+    nibs: &mut Vec<u8>,
+    lead: u32,
+    p_opt: Option<usize>,
+    rounding: MagnitudeRounding,
+) -> u32 {
     let mut lead = lead;
     match p_opt {
         Some(p) if p < nibs.len() => {
             let round_nib = nibs[p];
             let rest_nonzero = nibs[p + 1..].iter().any(|&x| x != 0);
             let last_kept = if p == 0 { lead as u8 } else { nibs[p - 1] };
-            let round_up = round_nib > 8
-                || (round_nib == 8 && rest_nonzero)
-                || (round_nib == 8 && !rest_nonzero && (last_kept & 1) == 1);
+            let round_up = rounding.increment(round_nib, 8, rest_nonzero, (last_kept & 1) == 1);
             nibs.truncate(p);
             if round_up {
                 let mut carry = true;
@@ -1395,7 +1512,13 @@ fn round_hex_nibbles(nibs: &mut Vec<u8>, lead: u32, p_opt: Option<usize>) -> u32
 }
 
 /// Hex float (`%a`) body, unsigned, including the `0x`/`0X` prefix.
-fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8> {
+fn render_a(
+    bits: u128,
+    p_opt: Option<usize>,
+    upper: bool,
+    alt: bool,
+    rounding: MagnitudeRounding,
+) -> Vec<u8> {
     let exp_field = ((bits >> 112) & 0x7fff) as i32;
     let mantissa = bits & ((1u128 << 112) - 1);
     let (lead, exp2): (u32, i32) = if exp_field == 0 {
@@ -1407,7 +1530,7 @@ fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8>
         .rev()
         .map(|i| ((mantissa >> (i * 4)) & 0xf) as u8)
         .collect();
-    let lead = round_hex_nibbles(&mut nibs, lead, p_opt);
+    let lead = round_hex_nibbles(&mut nibs, lead, p_opt, rounding);
     emit_hex_float(lead, &nibs, exp2, upper, alt)
 }
 
@@ -1430,6 +1553,7 @@ fn render_a_x87(
     p_opt: Option<usize>,
     upper: bool,
     alt: bool,
+    rounding: MagnitudeRounding,
 ) -> Vec<u8> {
     // Exponent fields 0 and 1 denote the same scale, so `max(1)` is the whole
     // subnormal handling — the leading nibble is simply 0 there, which is why
@@ -1448,7 +1572,7 @@ fn render_a_x87(
         .rev()
         .map(|i| ((significand >> (i * 4)) & 0xf) as u8)
         .collect();
-    let mut lead = round_hex_nibbles(&mut nibs, lead, p_opt);
+    let mut lead = round_hex_nibbles(&mut nibs, lead, p_opt, rounding);
     if lead > 0xf {
         // The carry left the leading digit entirely: `0xf.8` at precision 0 is
         // `0x1p+1`, not `0x10p-3`. One hex digit is four binades.
@@ -1515,6 +1639,71 @@ fn assemble(sign: &[u8], body: &[u8], spec: &FmtSpec, is_hex: bool, numeric: boo
     }
 }
 
+/// Widen the encoding exactly, including binary64 subnormals and NaN payloads.
+/// No floating arithmetic can introduce an extra rounding step here.
+fn binary64_to_binary128(bits: u64) -> u128 {
+    let sign = u128::from(bits >> 63) << 127;
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    match exponent {
+        0 if fraction == 0 => sign,
+        0 => {
+            let top = 63 - fraction.leading_zeros();
+            let normalized = u128::from(fraction) << (112 - top);
+            sign | (((top as i32 - 1074 + 16383) as u128) << 112)
+                | (normalized & ((1u128 << 112) - 1))
+        }
+        0x7ff => sign | (0x7fffu128 << 112) | (u128::from(fraction) << 60),
+        _ => sign | (((exponent - 1023 + 16383) as u128) << 112) | (u128::from(fraction) << 60),
+    }
+}
+
+/// Format a binary64 value using the exact shared rounding engine. Decimal
+/// conversions widen without loss. Hex conversions retain binary64's encoding:
+/// subnormals have a leading zero and exponent -1022, rather than the widened
+/// binary128 value's normalized exponent.
+pub fn format_binary64(value: f64, spec: &FmtSpec) -> Vec<u8> {
+    let bits = value.to_bits();
+    if !spec.conv.eq_ignore_ascii_case(&b'a') || !value.is_finite() || value == 0.0 {
+        return format_binary128(binary64_to_binary128(bits), spec);
+    }
+    let negative = bits >> 63 != 0;
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    let mut nibs: Vec<u8> = (0..13)
+        .rev()
+        .map(|i| ((fraction >> (i * 4)) & 0xf) as u8)
+        .collect();
+    let lead = round_hex_nibbles(
+        &mut nibs,
+        u32::from(exponent != 0),
+        spec.precision,
+        RoundingMode::current().magnitude(negative),
+    );
+    let upper = spec.conv.is_ascii_uppercase();
+    let body = emit_hex_float(
+        lead,
+        &nibs,
+        if exponent == 0 {
+            -1022
+        } else {
+            exponent - 1023
+        },
+        upper,
+        spec.alt,
+    );
+    let sign: &[u8] = if negative {
+        b"-"
+    } else if spec.plus {
+        b"+"
+    } else if spec.space {
+        b" "
+    } else {
+        b""
+    };
+    assemble(sign, &body, spec, true, true)
+}
+
 /// Format a binary128 value per `spec`, returning the bytes (no NUL), matching
 /// glibc's `strfromf128` / `printf` float conversions.
 pub fn format_binary128(bits: u128, spec: &FmtSpec) -> Vec<u8> {
@@ -1554,19 +1743,35 @@ pub fn format_binary128(bits: u128, spec: &FmtSpec) -> Vec<u8> {
     }
 
     let conv = spec.conv.to_ascii_lowercase();
+    let rounding = RoundingMode::current().magnitude(negative);
     let body = match conv {
-        b'a' => render_a(bits, spec.precision, upper, spec.alt),
+        b'a' => render_a(bits, spec.precision, upper, spec.alt, rounding),
         b'e' => {
             let (d, e) = finite_parts(&cls);
-            render_e(&d, e, spec.precision.unwrap_or(6), upper, spec.alt, false)
+            render_e(
+                &d,
+                e,
+                spec.precision.unwrap_or(6),
+                upper,
+                spec.alt,
+                false,
+                rounding,
+            )
         }
         b'f' => {
             let (d, e) = finite_parts(&cls);
-            render_f(&d, e, spec.precision.unwrap_or(6), spec.alt, false)
+            render_f(
+                &d,
+                e,
+                spec.precision.unwrap_or(6),
+                spec.alt,
+                false,
+                rounding,
+            )
         }
         b'g' => {
             let (d, e) = finite_parts(&cls);
-            render_g(&d, e, spec.precision, upper, spec.alt)
+            render_g(&d, e, spec.precision, upper, spec.alt, rounding)
         }
         _ => Vec::new(),
     };
@@ -1615,7 +1820,14 @@ pub fn format_x87(bytes: &[u8; 10], spec: &FmtSpec) -> Vec<u8> {
         };
         return assemble(sign, body, spec, false, false);
     }
-    let body = render_a_x87(significand, exp_field, spec.precision, upper, spec.alt);
+    let body = render_a_x87(
+        significand,
+        exp_field,
+        spec.precision,
+        upper,
+        spec.alt,
+        RoundingMode::current().magnitude(sign_exp >> 15 != 0),
+    );
     assemble(sign, &body, spec, true, true)
 }
 
@@ -1696,6 +1908,49 @@ mod tests {
         assert_eq!(round("1999", -3, 1), ("2".into(), 0)); // 1.999 -> 2
     }
 
+    #[test]
+    fn directed_decimal_rounding_preserves_exactness_and_handles_carry() {
+        let up = MagnitudeRounding::Away;
+        let down = MagnitudeRounding::Truncate;
+        assert_eq!(
+            round_to_sig_digits_with(b"125", -2, 2, up),
+            (b"13".to_vec(), -1)
+        );
+        assert_eq!(
+            round_to_sig_digits_with(b"125", -2, 2, down),
+            (b"12".to_vec(), -1)
+        );
+        assert_eq!(
+            round_to_sig_digits_with(b"100", 0, 1, up),
+            (b"1".to_vec(), 2)
+        );
+        assert_eq!(
+            round_to_sig_digits_with(b"9991", 0, 3, up),
+            (b"1".to_vec(), 4)
+        );
+        assert_eq!(render_f(b"1", -1000, 2, false, false, up), b"0.01");
+        assert_eq!(render_f(b"1", -1000, 2, false, false, down), b"0.00");
+    }
+
+    #[test]
+    fn directed_hex_rounding_crosses_the_leading_digit() {
+        let up = MagnitudeRounding::Away;
+        let down = MagnitudeRounding::Truncate;
+        assert_eq!(
+            render_a_x87(0xf000_0000_0000_0001, 0x3fff, Some(0), false, false, up),
+            b"0x1p+1"
+        );
+        assert_eq!(
+            render_a_x87(0xf000_0000_0000_0001, 0x3fff, Some(0), false, false, down),
+            b"0xfp-3"
+        );
+        assert_eq!(render_a_x87(1, 0, Some(0), false, false, up), b"0x1p-16385");
+        assert_eq!(
+            render_a_x87(1, 0, Some(0), false, false, down),
+            b"0x0p-16385"
+        );
+    }
+
     fn fmt(b: u128, conv: u8, precision: Option<usize>) -> String {
         let spec = FmtSpec {
             conv,
@@ -1721,6 +1976,37 @@ mod tests {
         assert_eq!(fmt(bits(0, 0, 0), b'e', None), "0.000000e+00"); // 0.0
         assert_eq!(fmt(bits(0, 0, 0), b'a', None), "0x0p+0");
         assert_eq!(fmt(bits(0, 0x4000, 1 << 111), b'a', Some(0)), "0x2p+1"); // 3.0 %.0a
+    }
+
+    #[test]
+    fn binary64_widens_subnormals_and_preserves_special_encodings() {
+        assert_eq!(binary64_to_binary128(1), bits(0, 0x3bcd, 0));
+        assert_eq!(binary64_to_binary128(1u64 << 63), 1u128 << 127);
+        assert_eq!(binary64_to_binary128(1.0f64.to_bits()), bits(0, 0x3fff, 0));
+        assert_eq!(
+            binary64_to_binary128(0x7ff8_0000_0000_0123),
+            bits(0, 0x7fff, (1u128 << 111) | (0x123u128 << 60))
+        );
+    }
+
+    #[test]
+    fn binary64_hex_retains_the_narrow_subnormal_exponent() {
+        let spec = FmtSpec {
+            conv: b'a',
+            precision: None,
+            width: 0,
+            left: false,
+            plus: false,
+            space: false,
+            alt: false,
+            zero: false,
+        };
+        assert_eq!(
+            format_binary64(f64::from_bits(1), &spec),
+            b"0x0.0000000000001p-1022"
+        );
+        assert_eq!(format_binary64(f64::MAX, &spec), b"0x1.fffffffffffffp+1023");
+        assert_eq!(format_binary64(-0.0, &spec), b"-0x0p+0");
     }
 
     #[test]

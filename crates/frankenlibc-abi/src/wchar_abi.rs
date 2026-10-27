@@ -5403,20 +5403,29 @@ macro_rules! extract_wprintf_args_registers {
                         $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
-                    match spec.conversion {
-                        b'%' => {}
-                        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
-                            if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
-                                _idx += 1;
-                            }
+                    // Share the parser's value classification with the narrow
+                    // extractor. Unknown conversions and %m consume stars but
+                    // no value; a default GP read here shifts every later
+                    // argument and can turn an integer into a string pointer.
+                    match spec.value_arg_kind() {
+                        Some(ValueArgKind::Fp) if _idx < $extract_count => {
+                            // SAFETY: the parsed directive requires a promoted
+                            // double in this caller's live va_list.
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
                         }
-                        _ => {
-                            if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.next_arg::<u64>() };
-                                _idx += 1;
-                            }
+                        Some(ValueArgKind::Gp) if _idx < $extract_count => {
+                            // SAFETY: GP arguments occupy an eight-byte slot
+                            // in the supported variadic ABIs.
+                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _idx += 1;
                         }
+                        Some(ValueArgKind::X87) => {
+                            // The outer macro routes every X87 format through
+                            // the raw walker before this macro can run.
+                            debug_assert!(false, "X87 reached wide register extraction");
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -5767,8 +5776,8 @@ fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
 /// the buffer bound, and report glibc's return value.
 ///
 /// Returns `-1` with `EILSEQ` when the locale cannot convert the rendered
-/// bytes, and `-1` WITHOUT touching errno when the output simply did not fit —
-/// two different failures that share a return value, which is why they are
+/// bytes, and `-1` with `E2BIG` when the output simply did not fit — two
+/// different failures that share a return value, which is why they are
 /// distinguished here rather than at each call site.
 fn finish_swprintf(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> c_int {
     let Some(wide_count) = narrow_to_wide_count(rendered) else {
@@ -5779,7 +5788,12 @@ fn finish_swprintf(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> c_int {
         // glibc still writes the TRUNCATED prefix plus a NUL rather than
         // emptying the buffer.
         if narrow_to_wide_buf(rendered, s, n).is_none() {
+            // SAFETY: errno is this thread's writable error slot.
             unsafe { set_abi_errno(libc::EILSEQ) };
+        } else if n != 0 {
+            // SAFETY: GNU reports truncation through this thread's errno;
+            // n==0 retains the entrypoint's no-write/no-errno contract.
+            unsafe { set_abi_errno(libc::E2BIG) };
         }
         return -1;
     }
@@ -6380,7 +6394,7 @@ pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
 
 /// Native `swprintf`: format into wide buffer with size limit.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn swprintf(
+pub unsafe extern "C-unwind" fn swprintf(
     s: *mut libc::wchar_t,
     n: usize,
     format: *const libc::wchar_t,
@@ -6388,6 +6402,18 @@ pub unsafe extern "C" fn swprintf(
 ) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: the wide format and this frame's C va_list remain live.
+        let fmt = unsafe { wide_to_narrow_pooled(format) };
+        return unsafe {
+            super::stdio_abi::registered_swprintf(
+                s,
+                n,
+                fmt.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+            )
+        };
     }
     if unsafe { is_exact_wide_percent_ls(format) } {
         let arg = unsafe { args.next_arg::<*const libc::wchar_t>() };
@@ -6432,12 +6458,23 @@ pub unsafe extern "C" fn swprintf(
 
 /// Native `wprintf`: format to stdout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stdout is wide-oriented and this frame owns the va_list.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(
+                stdout_ptr,
+                fmt_narrow.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+                true,
+            )
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6469,7 +6506,7 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
 
 /// Native `fwprintf`: format to stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwprintf(
+pub unsafe extern "C-unwind" fn fwprintf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     mut args: ...
@@ -6478,6 +6515,17 @@ pub unsafe extern "C" fn fwprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stream is wide-oriented and this frame owns the va_list.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(
+                stream,
+                fmt_narrow.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+                true,
+            )
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6511,7 +6559,7 @@ pub unsafe extern "C" fn fwprintf(
 
 /// Native `vswprintf`: format into wide buffer from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vswprintf(
+pub unsafe extern "C-unwind" fn vswprintf(
     s: *mut libc::wchar_t,
     n: usize,
     format: *const libc::wchar_t,
@@ -6521,6 +6569,10 @@ pub unsafe extern "C" fn vswprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: the caller supplies the wide output and matching C va_list.
+        return unsafe { super::stdio_abi::registered_swprintf(s, n, fmt_narrow.as_bytes(), ap) };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6541,7 +6593,7 @@ pub unsafe extern "C" fn vswprintf(
 
 /// Native `vwprintf`: format to stdout from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vwprintf(
+pub unsafe extern "C-unwind" fn vwprintf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
@@ -6550,6 +6602,12 @@ pub unsafe extern "C" fn vwprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stdout is wide-oriented and ap matches this format.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(stdout_ptr, fmt_narrow.as_bytes(), ap, true)
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6580,7 +6638,7 @@ pub unsafe extern "C" fn vwprintf(
 
 /// Native `vfwprintf`: format to stream from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwprintf(
+pub unsafe extern "C-unwind" fn vfwprintf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
@@ -6589,6 +6647,12 @@ pub unsafe extern "C" fn vfwprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stream is wide-oriented and ap matches this format.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(stream, fmt_narrow.as_bytes(), ap, true)
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];

@@ -27,6 +27,13 @@
 typedef int (*setjmp_symbol_fn)(jmp_buf);
 
 static int running_with_frankenlibc_preload(void) {
+    /* The actual-library runner verifies providers first and supplies this
+     * explicit identity even when the tested .so has been renamed. Never
+     * skip the ARM layout/guard cases merely because its filename changed. */
+    const char *expected = getenv("FRANKENLIBC_EXPECT_LIBRARY");
+    if (expected != NULL && expected[0] != '\0') {
+        return 1;
+    }
     const char *preload = getenv("LD_PRELOAD");
     return preload != NULL && strstr(preload, "frankenlibc_abi") != NULL;
 }

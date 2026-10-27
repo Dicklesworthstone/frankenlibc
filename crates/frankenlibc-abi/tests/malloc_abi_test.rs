@@ -878,11 +878,32 @@ fn test_mallinfo2_balanced_after_concurrent_alloc_free() {
     );
 }
 
+fn prepare_malloc_stats_htm_test() {
+    malloc_stats_init_for_tests();
+    // The single-threaded slot-local counters bypass the global HTM combiner.
+    // Establish its real two-thread precondition without relying on other tests.
+    let allocate_and_free = || {
+        // SAFETY: malloc accepts a nonzero size and returns an owned allocation.
+        let ptr = unsafe { malloc(1) };
+        assert!(!ptr.is_null(), "HTM setup allocation should succeed");
+        // SAFETY: ptr is the live allocation returned above, freed exactly once.
+        unsafe { free(ptr) };
+    };
+    allocate_and_free();
+    std::thread::spawn(allocate_and_free)
+        .join()
+        .expect("HTM setup thread should finish");
+    assert!(
+        malloc_reentry_multithreaded_latched_for_tests(),
+        "two allocating threads must select the global statistics path"
+    );
+    malloc_htm_reset_for_tests();
+}
+
 #[test]
 fn test_malloc_stats_htm_fast_path_commits_when_forced() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    malloc_stats_init_for_tests();
-    malloc_htm_reset_for_tests();
+    prepare_malloc_stats_htm_test();
 
     let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
     let before = malloc_htm_snapshot_for_tests();
@@ -907,8 +928,7 @@ fn test_malloc_stats_htm_fast_path_commits_when_forced() {
 #[test]
 fn test_malloc_stats_htm_abort_falls_back_without_breaking_alloc_free() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    malloc_stats_init_for_tests();
-    malloc_htm_reset_for_tests();
+    prepare_malloc_stats_htm_test();
 
     let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceAbort);
     let previous_code = htm_swap_abort_code_for_tests(0xABCD);

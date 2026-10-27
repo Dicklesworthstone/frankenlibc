@@ -2884,7 +2884,7 @@ pub unsafe extern "C" fn _obstack_memory_used(h: *mut c_void) -> SizeT {
 // __obstack_printf_chk: fortified printf to obstack. The flag is fortify
 // metadata; obstack growth is bounds-checked by the native obstack path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __obstack_printf_chk(
+pub unsafe extern "C-unwind" fn __obstack_printf_chk(
     h: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -2896,7 +2896,7 @@ pub unsafe extern "C" fn __obstack_printf_chk(
 
 // __obstack_vprintf_chk: vprintf to obstack with overflow checking
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __obstack_vprintf_chk(
+pub unsafe extern "C-unwind" fn __obstack_vprintf_chk(
     h: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -3889,23 +3889,17 @@ pub unsafe extern "C" fn __arch_prctl(_code: c_int, _addr: c_ulong) -> c_int {
     unsafe { set_abi_errno(libc::ENOSYS) };
     -1
 }
-// __asprintf: glibc internal alias for asprintf — forward to our vasprintf via va_list
-// Since this is variadic and we can't easily forward varargs, use dlsym fallback
-// to host glibc's __asprintf. This is one of the few symbols that genuinely needs
-// host delegation because variadic→va_list forwarding in Rust is not portable.
-// Return ENOSYS stub for the replace profile; interpose profile keeps passthrough.
+// GNU's internal variadic alias shares the native vasprintf implementation,
+// including registered callbacks and their unwind-safe buffer ownership.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __asprintf(
+pub unsafe extern "C-unwind" fn __asprintf(
     strp: *mut *mut c_char,
-    _fmt: *const c_char, // ... variadic
+    fmt: *const c_char,
+    mut args: ...
 ) -> c_int {
-    // Cannot forward variadic args to vasprintf without platform-specific va_list tricks.
-    // For safety, return error. Real callers should use asprintf() which we handle natively.
-    if !strp.is_null() {
-        unsafe { *strp = std::ptr::null_mut() };
-    }
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    // SAFETY: the C variadic ABI supplies the same live va_list representation
+    // consumed by the ordinary asprintf and fortified alias entrypoints.
+    unsafe { super::stdio_abi::vasprintf(strp, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 // __backtrace: native — forward to our backtrace
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4142,13 +4136,21 @@ pub unsafe extern "C" fn __getauxval(typ: c_ulong) -> c_ulong {
 }
 // __getdelim: native — forward to our getdelim
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __getdelim(
+pub unsafe extern "C-unwind" fn __getdelim(
     lineptr: *mut *mut c_char,
     n: *mut SizeT,
     delim: c_int,
     stream: *mut c_void,
 ) -> SSizeT {
-    unsafe { super::stdio_abi::getdelim(lineptr, n, delim, stream) }
+    unsafe {
+        super::stdio_abi::getdelim_for_caller(
+            lineptr,
+            n,
+            delim,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 // __getmntent_r: native — forward to our getmntent_r
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4646,7 +4648,7 @@ pub unsafe extern "C" fn __vfscanf(
 }
 // __vsnprintf: native — forward to our vsnprintf
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsnprintf(
+pub unsafe extern "C-unwind" fn __vsnprintf(
     buf: *mut c_char,
     size: SizeT,
     fmt: *const c_char,
@@ -5371,7 +5373,7 @@ pub unsafe extern "C" fn __x86_get_cpuid_feature_leaf(_leaf: c_uint, _info: *mut
 pub unsafe extern "C" fn __fentry__() {}
 // __uflow/__underflow/__w*flow: glibc stdio vtable helpers
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __uflow(fp: *mut c_void) -> c_int {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
@@ -5379,17 +5381,26 @@ pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
     // The inlined getc_unlocked calls this when its read window is empty:
     // after the refill, publish the new window so the following bytes are
     // read inline (bd-ygc3li).
-    let ch = unsafe { crate::io_internal_abi::_IO_default_uflow(fp) };
+    let ch = unsafe {
+        crate::stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize)
+    };
     crate::stdio_abi::republish_read_window(fp);
     ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __underflow(fp: *mut c_void) -> c_int {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    let ch = unsafe { crate::io_internal_abi::_IO_file_underflow(fp) };
+    let ch = unsafe {
+        crate::stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize)
+    };
+    if ch != libc::EOF {
+        // Underflow peeks rather than consuming the byte. The cancellation
+        // window, if needed, has already closed before the stream is changed.
+        let _ = unsafe { crate::stdio_abi::ungetc(ch, fp) };
+    }
     crate::stdio_abi::republish_read_window(fp);
     ch
 }
@@ -6740,16 +6751,43 @@ pub unsafe extern "C" fn modify_ldt(_func: c_int, _ptr: *mut c_void, _bytecount:
 }
 // parse_printf_format: introspect printf format string to get argument types
 // glibc PA_* type constants
-const PA_INT: c_int = 1;
-const PA_CHAR: c_int = 2;
-const PA_STRING: c_int = 4;
-const PA_POINTER: c_int = 6;
-const PA_DOUBLE: c_int = 8;
-const PA_FLAG_LONG: c_int = 0x100;
-const PA_FLAG_LONG_LONG: c_int = 0x200;
+const PA_INT: c_int = 0;
+const PA_CHAR: c_int = 1;
+const PA_WCHAR: c_int = 2;
+const PA_STRING: c_int = 3;
+const PA_WSTRING: c_int = 4;
+const PA_POINTER: c_int = 5;
+const PA_DOUBLE: c_int = 7;
+const PA_FLAG_LONG_DOUBLE: c_int = 0x100;
+const PA_FLAG_LONG: c_int = 0x200;
 const PA_FLAG_SHORT: c_int = 0x400;
+const PA_FLAG_PTR: c_int = 0x800;
+
+fn printf_decimal(bytes: &[u8], pos: &mut usize) -> usize {
+    let mut value = 0usize;
+    while let Some(digit) = bytes.get(*pos).filter(|c| c.is_ascii_digit()) {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((digit - b'0') as usize);
+        *pos += 1;
+    }
+    value
+}
+
+fn printf_position(bytes: &[u8], pos: &mut usize) -> Option<usize> {
+    let start = *pos;
+    let value = printf_decimal(bytes, pos);
+    if *pos > start && bytes.get(*pos) == Some(&b'$') {
+        *pos += 1;
+        (value <= c_int::MAX as usize).then_some(value)
+    } else {
+        *pos = start;
+        None
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn parse_printf_format(
+pub unsafe extern "C-unwind" fn parse_printf_format(
     fmt: *const c_char,
     n: SizeT,
     argtypes: *mut c_int,
@@ -6757,104 +6795,139 @@ pub unsafe extern "C" fn parse_printf_format(
     if fmt.is_null() {
         return 0;
     }
-    let mut p = fmt as *const u8;
-    let mut count: usize = 0;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
+    // SAFETY: the caller supplies a terminated C format. The allocation-aware
+    // scan retains the existing ABI's protection for tracked unterminated data.
+    let len = unsafe { bounded_c_string_len(fmt) };
+    // SAFETY: the scan established these len readable bytes in the C string.
+    let bytes = unsafe { std::slice::from_raw_parts(fmt.cast::<u8>(), len) };
+    if crate::stdio_abi::printf_extensions_active() {
+        // SAFETY: the same format and caller-provided output capacity are
+        // consumed by the registered arginfo path without holding its lock.
+        return unsafe { crate::stdio_abi::parse_printf_extensions(bytes, n, argtypes) };
+    }
+    let mut pos = 0;
+    let mut next = 0usize;
+    let mut count = 0usize;
+    let mut record = |index: usize, kind: Option<c_int>| {
+        count = count.max(index.saturating_add(1));
+        if index < n
+            && !argtypes.is_null()
+            && let Some(kind) = kind
+        {
+            // SAFETY: n is the caller's writable array capacity. Unreferenced
+            // positional holes deliberately retain the caller's original bytes.
+            unsafe { *argtypes.add(index) = kind };
+        }
+    };
+    while pos < bytes.len() {
+        if bytes[pos] != b'%' {
+            pos += 1;
+            continue;
+        }
+        pos += 1;
+        let value_position = printf_position(bytes, &mut pos);
+        if value_position == Some(0) {
             break;
         }
-        if c != b'%' {
-            p = unsafe { p.add(1) };
-            continue;
+        if let Some(position) = value_position {
+            // GNU counts an explicit reference even for a conversion which
+            // consumes no value (%m, %% or an unregistered custom character).
+            record(position - 1, None);
         }
-        p = unsafe { p.add(1) }; // skip '%'
-        if unsafe { *p } == b'%' {
-            p = unsafe { p.add(1) };
-            continue;
+        while bytes.get(pos).is_some_and(|b| b"-+0 #'I".contains(b)) {
+            pos += 1;
         }
-        // Skip flags: -+0 #'
-        while {
-            let f = unsafe { *p };
-            f == b'-' || f == b'+' || f == b'0' || f == b' ' || f == b'#' || f == b'\''
-        } {
-            p = unsafe { p.add(1) };
-        }
-        // Skip width (may be * which consumes an int arg)
-        if unsafe { *p } == b'*' {
-            if count < n && !argtypes.is_null() {
-                unsafe { *argtypes.add(count) = PA_INT };
-            }
-            count += 1;
-            p = unsafe { p.add(1) };
-        } else {
-            while unsafe { (*p).is_ascii_digit() } {
-                p = unsafe { p.add(1) };
-            }
-        }
-        // Skip precision
-        if unsafe { *p } == b'.' {
-            p = unsafe { p.add(1) };
-            if unsafe { *p } == b'*' {
-                if count < n && !argtypes.is_null() {
-                    unsafe { *argtypes.add(count) = PA_INT };
+        for precision in [false, true] {
+            if precision {
+                if bytes.get(pos) != Some(&b'.') {
+                    break;
                 }
-                count += 1;
-                p = unsafe { p.add(1) };
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'*') {
+                pos += 1;
+                let index = match printf_position(bytes, &mut pos) {
+                    Some(position) if position > 0 => position - 1,
+                    _ => {
+                        let index = next;
+                        next = next.saturating_add(1);
+                        index
+                    }
+                };
+                record(index, Some(PA_INT));
             } else {
-                while unsafe { (*p).is_ascii_digit() } {
-                    p = unsafe { p.add(1) };
-                }
+                printf_decimal(bytes, &mut pos);
             }
         }
-        // Length modifiers
-        let mut length_flag: c_int = 0;
-        match unsafe { *p } {
-            b'h' => {
-                p = unsafe { p.add(1) };
-                if unsafe { *p } == b'h' {
-                    p = unsafe { p.add(1) };
-                }
-                length_flag = PA_FLAG_SHORT;
-            }
-            b'l' => {
-                p = unsafe { p.add(1) };
-                if unsafe { *p } == b'l' {
-                    p = unsafe { p.add(1) };
-                    length_flag = PA_FLAG_LONG_LONG;
+        let mut integer_type = PA_INT;
+        let mut long_double = false;
+        match bytes.get(pos) {
+            Some(b'h') => {
+                pos += 1;
+                integer_type = if bytes.get(pos) == Some(&b'h') {
+                    pos += 1;
+                    PA_CHAR
                 } else {
-                    length_flag = PA_FLAG_LONG;
+                    PA_INT | PA_FLAG_SHORT
+                };
+            }
+            Some(b'l') => {
+                pos += 1;
+                if bytes.get(pos) == Some(&b'l') {
+                    pos += 1;
+                    long_double = true;
                 }
+                // On the supported LP64 ABI long and long long have the same
+                // argument representation; glibc reports PA_FLAG_LONG for both.
+                integer_type = PA_INT | PA_FLAG_LONG;
             }
-            b'L' | b'q' => {
-                p = unsafe { p.add(1) };
-                length_flag = PA_FLAG_LONG_LONG;
+            Some(b'j' | b'z' | b't') => {
+                pos += 1;
+                integer_type = PA_INT | PA_FLAG_LONG;
             }
-            b'z' | b'j' | b't' => {
-                p = unsafe { p.add(1) };
-                length_flag = PA_FLAG_LONG;
+            Some(b'L' | b'q') => {
+                pos += 1;
+                long_double = true;
+            }
+            Some(b'w') => {
+                pos += 1;
+                let fast = bytes.get(pos) == Some(&b'f');
+                pos += usize::from(fast);
+                integer_type = match (fast, printf_decimal(bytes, &mut pos)) {
+                    (_, 8) => PA_CHAR,
+                    (false, 16) => PA_INT | PA_FLAG_SHORT,
+                    (false, 32) => PA_INT,
+                    (_, 64) | (true, 16 | 32) => PA_INT | PA_FLAG_LONG,
+                    _ => break,
+                };
             }
             _ => {}
         }
-        // Conversion specifier
-        let argtype = match unsafe { *p } {
-            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' => PA_INT | length_flag,
-            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => PA_DOUBLE | length_flag,
-            b'c' => PA_CHAR | length_flag,
-            b's' => PA_STRING | length_flag,
-            b'p' => PA_POINTER,
-            b'n' => PA_POINTER,
-            _ => PA_INT,
+        let Some(&conversion) = bytes.get(pos) else {
+            break;
         };
-        if unsafe { *p } != 0 {
-            p = unsafe { p.add(1) };
-        }
-        if count < n && !argtypes.is_null() {
-            unsafe { *argtypes.add(count) = argtype };
-        }
-        count += 1;
+        pos += 1;
+        let kind = match conversion {
+            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' | b'b' | b'B' => integer_type,
+            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => {
+                PA_DOUBLE | if long_double { PA_FLAG_LONG_DOUBLE } else { 0 }
+            }
+            b'c' => PA_CHAR,
+            b'C' => PA_WCHAR,
+            b's' => PA_STRING,
+            b'S' => PA_WSTRING,
+            b'p' => PA_POINTER,
+            b'n' => PA_INT | PA_FLAG_PTR,
+            _ => continue,
+        };
+        let index = value_position.map(|p| p - 1).unwrap_or_else(|| {
+            let index = next;
+            next = next.saturating_add(1);
+            index
+        });
+        record(index, Some(kind));
     }
-    count as SizeT
+    count
 }
 /// pidfd_getpid: native syscall (Linux 6.9+)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7097,41 +7170,31 @@ pub unsafe extern "C" fn rcmd_af(
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     -1
 }
-// register_printf_function: GNU extension for custom printf formatters — not supported
-abi_stub_contract!(register_printf_function);
+// GNU printf callbacks are consumed by the opt-in native formatting path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_function(
-    _spec: c_int,
-    _render: *mut c_void,
-    _arginfo: *mut c_void,
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    crate::stdio_abi::register_printf_conversion(spec, render, arginfo, false)
 }
-// register_printf_modifier: GNU extension — not supported
-abi_stub_contract!(register_printf_modifier);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn register_printf_modifier(_str: *const WcharT) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn register_printf_modifier(str: *const WcharT) -> c_int {
+    // SAFETY: GNU's registration contract supplies a terminated wide string.
+    unsafe { crate::stdio_abi::register_printf_modifier_impl(str) }
 }
-// register_printf_specifier: GNU extension — not supported
-abi_stub_contract!(register_printf_specifier);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_specifier(
-    _spec: c_int,
-    _render: *mut c_void,
-    _arginfo: *mut c_void,
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    crate::stdio_abi::register_printf_conversion(spec, render, arginfo, true)
 }
-// register_printf_type: GNU extension — not supported
-abi_stub_contract!(register_printf_type);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn register_printf_type(_fct: *mut c_void) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn register_printf_type(fct: *mut c_void) -> c_int {
+    crate::stdio_abi::register_printf_type_impl(fct)
 }
 // revoke: BSD — not implemented on Linux
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8506,23 +8569,254 @@ pub static mut _obstack: *mut c_void = std::ptr::null_mut();
 
 // __stpcpy_small: optimized small-string stpcpy
 
-// printf_size: custom printf formatter for human-readable sizes — requires register_printf_specifier, not supported
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn printf_size(
-    _fp: *mut c_void,
-    _info: *const c_void,
-    _args: *const *const c_void,
-) -> c_int {
-    -1
+// GNU printf_info's bitfield storage on the supported Linux LP64 targets.
+// Keep the pad after the two 16-bit fields: treating the flags as a u32 with
+// no user field silently reads a different wide/pad contract.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PrintfInfo {
+    pub(crate) precision: c_int,
+    pub(crate) width: c_int,
+    pub(crate) spec: WcharT,
+    pub(crate) flags: u16,
+    pub(crate) user: u16,
+    pub(crate) pad: WcharT,
 }
-// printf_size_info: arginfo callback for printf_size — not supported
+
+unsafe fn printf_size_write(fp: *mut c_void, wide: bool, bytes: &[u8]) -> bool {
+    if wide {
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            // SAFETY: setting the calling thread's ABI errno owns no FILE data.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return false;
+        };
+        for ch in text.chars() {
+            // SAFETY: the caller owns the FILE and requests wide output. The
+            // existing wide writer handles orientation, encoding, and errors.
+            if unsafe { crate::wchar_abi::fputwc(ch as u32, fp) } == u32::MAX {
+                return false;
+            }
+        }
+        true
+    } else {
+        // SAFETY: bytes is live for this synchronous native FILE write.
+        let written =
+            unsafe { crate::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), fp) };
+        written == bytes.len()
+    }
+}
+
+unsafe fn printf_size_padding(fp: *mut c_void, wide: bool, byte: u8, mut n: usize) -> bool {
+    let chunk = [byte; 128];
+    while n > 0 {
+        let len = n.min(chunk.len());
+        // SAFETY: same live FILE and bounded initialized chunk as the caller.
+        if !unsafe { printf_size_write(fp, wide, &chunk[..len]) } {
+            return false;
+        }
+        n -= len;
+    }
+    true
+}
+
+// Positive normal values only: printf_size scales only values >= the unit.
+// Dividing a 64/113-bit significand by 1000 needs at most 123 numerator bits,
+// so integer division gives the exact rounding remainder without double
+// rounding through the compiler's always-nearest binary128 arithmetic.
+fn printf_size_divide(bits: u128, binary_unit: bool, x87: bool) -> u128 {
+    use frankenlibc_core::float128::RoundingMode;
+    if binary_unit {
+        return bits - (10u128 << 112);
+    }
+    let precision = if x87 { 64 } else { 113 };
+    let significand = ((bits & ((1u128 << 112) - 1)) | (1u128 << 112)) >> (113 - precision);
+    let shift = if (significand << 10) / 1000 >= 1u128 << precision {
+        9
+    } else {
+        10
+    };
+    let numerator = significand << shift;
+    let mut quotient = numerator / 1000;
+    let remainder = numerator % 1000;
+    let increment = match RoundingMode::current() {
+        RoundingMode::Nearest => remainder > 500 || (remainder == 500 && quotient & 1 != 0),
+        RoundingMode::Upward => remainder != 0,
+        RoundingMode::Downward | RoundingMode::TowardZero => false,
+    };
+    quotient += u128::from(increment);
+    let mut exponent = ((bits >> 112) & 0x7fff) - shift;
+    if quotient >= 1u128 << precision {
+        quotient >>= 1;
+        exponent += 1;
+    }
+    (exponent << 112) | ((quotient - (1u128 << (precision - 1))) << (113 - precision))
+}
+
+/// Native GNU size callback, also callable directly before registering it.
+/// Registration and custom-conversion dispatch remain separate work.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn printf_size(
+    fp: *mut c_void,
+    info: *const c_void,
+    args: *const *const c_void,
+) -> c_int {
+    use frankenlibc_core::float128::RoundingMode;
+    use frankenlibc_core::stdio::printf::{
+        FormatFlags, FormatSpec, LengthMod, Precision, Width, format_float, take_render_failure,
+    };
+    if fp.is_null() || info.is_null() || args.is_null() {
+        // SAFETY: this only updates the calling thread's errno.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: GNU's callback ABI supplies one live printf_info and an array of
+    // addresses of arguments. No argument is read through a narrower type.
+    let info = unsafe { &*info.cast::<PrintfInfo>() };
+    // SAFETY: the callback ABI provides at least one argument-address slot.
+    let arg = unsafe { *args };
+    if arg.is_null() {
+        // SAFETY: this only updates the calling thread's errno.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let precision = if info.precision < 0 {
+        3
+    } else {
+        info.precision as usize
+    };
+    // Beyond this many fractional digits every supported binary float is
+    // exact. Render a bounded prefix and stream the remaining zeroes, rather
+    // than inheriting the f64 renderer's clamp or allocating precision bytes.
+    let extra_precision = precision.saturating_sub(65_535);
+    let binary128 = info.flags & (1 << 12) != 0;
+    let extended = binary128 || info.flags & 1 != 0;
+    let uppercase = (b'A' as libc::wchar_t..=b'Z' as libc::wchar_t).contains(&info.spec);
+    let units = if uppercase {
+        b" KMGTPEZY"
+    } else {
+        b" kmgtpezy"
+    };
+    let divisor = if uppercase { 1000.0 } else { 1024.0 };
+    let mut unit = 0;
+    let directed = RoundingMode::current() != RoundingMode::Nearest;
+    let spec = FormatSpec::new(
+        FormatFlags {
+            force_sign: info.flags & (1 << 6) != 0,
+            space_sign: info.flags & (1 << 4) != 0,
+            alt_form: info.flags & (1 << 3) != 0,
+            group: info.flags & (1 << 7) != 0,
+            ..FormatFlags::default()
+        },
+        Width::None,
+        Precision::Fixed(precision.min(65_535)),
+        if extended || directed {
+            LengthMod::BigL
+        } else {
+            LengthMod::None
+        },
+        b'f',
+        None,
+    );
+    let mut body = Vec::new();
+    let _ = take_render_failure();
+    let finite;
+    if extended {
+        let x87 = !binary128 && cfg!(target_arch = "x86_64");
+        let mut value = if x87 {
+            let mut bytes = [0u8; 10];
+            // SAFETY: an x87 argument has at least its ten significant bytes.
+            unsafe { std::ptr::copy_nonoverlapping(arg.cast::<u8>(), bytes.as_mut_ptr(), 10) };
+            f128::from_bits(frankenlibc_core::float128::x87_to_binary128(&bytes))
+        } else {
+            // SAFETY: IEEE binary128 arguments occupy sixteen bytes.
+            unsafe { std::ptr::read_unaligned(arg.cast::<f128>()) }
+        };
+        finite = (value.to_bits() >> 112) & 0x7fff != 0x7fff;
+        while finite && value >= divisor as f128 && unit + 1 < units.len() {
+            value = f128::from_bits(printf_size_divide(value.to_bits(), !uppercase, x87));
+            unit += 1;
+        }
+        spec.render_binary128_arg(value.to_bits(), &mut body);
+    } else {
+        // SAFETY: the ordinary callback argument is an address of a double.
+        let mut value = unsafe { std::ptr::read_unaligned(arg.cast::<f64>()) };
+        finite = value.is_finite();
+        while finite && value >= divisor && unit + 1 < units.len() {
+            value /= divisor;
+            unit += 1;
+        }
+        if directed {
+            spec.render_binary128_arg((value as f128).to_bits(), &mut body);
+        } else {
+            format_float(value, &spec, &mut body);
+        }
+    }
+    let failure = take_render_failure();
+    if failure != 0 {
+        // SAFETY: propagate the current thread's recorded render error.
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
+    let wide = info.flags & (1 << 10) != 0;
+    let body_len = if wide {
+        let Ok(text) = std::str::from_utf8(&body) else {
+            // SAFETY: this only updates the calling thread's errno.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return -1;
+        };
+        text.chars().count()
+    } else {
+        body.len()
+    };
+    let len = body_len + if finite { 1 + extra_precision } else { 0 };
+    // GNU's special-value path uses precision as a minimum field width.
+    let width = (info.width.max(0) as usize).max(if finite { 0 } else { precision });
+    let count = width.max(len);
+    if count > c_int::MAX as usize {
+        // SAFETY: this only updates the calling thread's errno, before writing.
+        unsafe { set_abi_errno(libc::EOVERFLOW) };
+        return -1;
+    }
+    let padding = width.saturating_sub(len);
+    let left = info.flags & (1 << 5) != 0;
+    let zero = finite && info.pad == b'0' as WcharT;
+    // Zeroes are always adjacent to the number and precede the suffix, even
+    // for left alignment. Space padding goes after the suffix when left.
+    let sign_len = usize::from(zero && body.first().is_some_and(|b| b"-+ ".contains(b)));
+    // SAFETY: all writes share the caller's live FILE and initialized slices.
+    let ok = unsafe {
+        (left || zero || printf_size_padding(fp, wide, b' ', padding))
+            && printf_size_write(fp, wide, &body[..sign_len])
+            && (!zero || left || printf_size_padding(fp, wide, b'0', padding))
+            && printf_size_write(fp, wide, &body[sign_len..])
+            && (!finite || printf_size_padding(fp, wide, b'0', extra_precision))
+            && (!zero || !left || printf_size_padding(fp, wide, b'0', padding))
+            && (!finite || printf_size_write(fp, wide, &units[unit..unit + 1]))
+            && (!left || zero || printf_size_padding(fp, wide, b' ', padding))
+    };
+    if ok { count as c_int } else { -1 }
+}
+
+// GNU's old-style arginfo callback returns int, not size_t.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn printf_size_info(
-    _info: *const c_void,
-    _n: SizeT,
-    _argtypes: *mut c_int,
-) -> SizeT {
-    0
+    info: *const c_void,
+    n: SizeT,
+    argtypes: *mut c_int,
+) -> c_int {
+    if n > 0 && !argtypes.is_null() && !info.is_null() {
+        // SAFETY: n promises slot zero is writable; info uses the GNU layout.
+        unsafe {
+            let info = &*info.cast::<PrintfInfo>();
+            *argtypes = PA_DOUBLE
+                | if info.flags & 1 != 0 {
+                    PA_FLAG_LONG_DOUBLE
+                } else {
+                    0
+                };
+        }
+    }
+    1
 }
 
 // nfsservctl: deprecated NFS server control

@@ -12,6 +12,7 @@
 // Unconditional: the `getnameinfo` render paths below borrow-or-own their host
 // and service text in both feature configurations.
 use std::borrow::Cow;
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
 use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
@@ -2864,25 +2865,35 @@ fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> 
         })
 }
 
-/// Select the families requested by getaddrinfo using one NSS service. A
-/// positive answer in either requested family wins over a failure in the
-/// other. IPv6's canonical owner takes precedence when both families answer.
+/// Select the families requested by getaddrinfo using one NSS service.
+/// AF_UNSPEC first uses the combined tuple ABI. Older modules retain the
+/// family-specific fallback, with IPv6's canonical owner taking precedence.
 fn module_addrinfo_lookup(
     service: &[u8],
     name: &[u8],
     family: c_int,
     flags: c_int,
-) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<crate::nss_module::HostEntry, c_int> {
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<crate::nss_module::AddrInfoEntry, c_int> {
     use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+
+    if family == libc::AF_UNSPEC
+        && let Some(answer) = crate::nss_module::gethostbyname4(service, name)
+    {
+        return answer;
+    }
+    let convert = |entry: crate::nss_module::HostEntry| crate::nss_module::AddrInfoEntry {
+        canonical_name: Some(entry.canonical_name.unwrap_or(entry.name)),
+        addresses: entry.addresses.into_iter().map(|address| (address, 0)).collect(),
+    };
     if family == libc::AF_INET {
-        return crate::nss_module::gethostbyname(service, name, libc::AF_INET);
+        return crate::nss_module::gethostbyname(service, name, libc::AF_INET).map(convert);
     }
     let ipv6 = crate::nss_module::gethostbyname(service, name, libc::AF_INET6);
     if family == libc::AF_INET6
         && (flags & libc::AI_V4MAPPED == 0
             || (flags & libc::AI_ALL == 0 && matches!(ipv6, BackendResult::Success(_))))
     {
-        return ipv6;
+        return ipv6.map(convert);
     }
     let ipv4 = crate::nss_module::gethostbyname(service, name, libc::AF_INET);
     match (ipv6, ipv4) {
@@ -2903,6 +2914,7 @@ fn module_addrinfo_lookup(
             BackendResult::Unavailable(error)
         }
     }
+    .map(convert)
 }
 
 /// POSIX `getaddrinfo`: numeric/scoped hosts and configured NSS sources.
@@ -3152,6 +3164,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 // Standalone builds report those module services unavailable.
                 use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
                 enum HostAnswer {
+                    Module(crate::nss_module::AddrInfoEntry),
                     Files {
                         addresses: Vec<std::net::IpAddr>,
                         name: Option<std::ffi::CString>,
@@ -3262,22 +3275,43 @@ pub unsafe extern "C" fn getaddrinfo(
                     Backend::Files => files_lookup(),
                     Backend::Dns => dns_lookup(),
                     Backend::Module(service) => observe_module_hosts_result(
-                        module_addrinfo_lookup(service, text.as_bytes(), family, flags).map(
-                            |entry| HostAnswer::Files {
-                                addresses: address_policy.select(&entry.addresses),
-                                name: if canonname.is_some() {
-                                    std::ffi::CString::new(
-                                        entry.canonical_name.unwrap_or(entry.name),
-                                    )
-                                    .ok()
-                                } else {
-                                    None
-                                },
-                            },
-                        ),
+                        module_addrinfo_lookup(service, text.as_bytes(), family, flags)
+                            .map(HostAnswer::Module),
                     ),
                 });
                 match answer {
+                    Ok(HostAnswer::Module(entry)) => {
+                        let name = if canonname.is_some() {
+                            entry.canonical_name.and_then(|name| std::ffi::CString::new(name).ok())
+                        } else {
+                            None
+                        };
+                        let addresses = if family == libc::AF_UNSPEC {
+                            // The tuple ABI can distinguish identical IPv6
+                            // address bytes on different interfaces.
+                            entry.addresses
+                        } else {
+                            // Family-specific hostent results have no scope.
+                            // Retain the existing IPv4-mapped selection policy.
+                            let plain: Vec<_> =
+                                entry.addresses.into_iter().map(|(address, _)| address).collect();
+                            address_policy
+                                .select(&plain)
+                                .into_iter()
+                                .map(|address| (address, 0))
+                                .collect()
+                        };
+                        for (address, scope_id) in addresses {
+                            push_addrinfo_address_nodes(
+                                &mut nodes,
+                                address,
+                                scope_id,
+                                &profiles,
+                                hints_ref,
+                                name.as_deref().or(canonname),
+                            );
+                        }
+                    }
                     Ok(HostAnswer::Files { addresses, name }) => {
                         for address in addresses {
                             push_addrinfo_address_nodes(
@@ -4906,7 +4940,10 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
                 unsafe { set_abi_errno(code) };
             }
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-            return code;
+            // GNU gethostbyaddr_r reports a temporary PTR lookup failure
+            // through the null result and h_errnop, returning zero. The
+            // forward reentrant interfaces still return EAGAIN instead.
+            return 0;
         }
     };
 

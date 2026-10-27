@@ -3,13 +3,14 @@
 //! These are legacy ONC RPC functions from glibc's `<rpc/rpc.h>`, `<rpc/xdr.h>`,
 //! `<rpc/svc.h>`, `<rpc/clnt.h>`, `<rpc/auth.h>`, `<rpc/pmap_clnt.h>`, and
 //! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
-//! pure Rust. IPv4 UDP clients, AUTH_NONE, and portmapper v2 lookup/registration
-//! have native implementations. Other RPC transports, server operations, and
-//! legacy authentication constructors retain their explicitly limited behavior.
+//! pure Rust. Native clients/services cover IPv4 UDP/TCP, Unix streams and
+//! synchronous memory RPC with AUTH_NONE/AUTH_SYS. Legacy authentication
+//! constructors retain their explicitly limited behavior; see README coverage.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::mem::size_of;
 
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -19,14 +20,21 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
+#[path = "rpc_client_create.rs"]
+mod rpc_client_create;
 #[path = "rpc_svc.rs"]
 mod rpc_svc;
+#[path = "rpc_svc_cache.rs"]
+mod rpc_svc_cache;
 #[path = "rpc_udp.rs"]
 mod rpc_udp;
+pub use rpc_client_create::{callrpc, clnt_create};
 pub use rpc_svc::{
-    svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset, svc_register, svc_run,
-    svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode, svcerr_noproc, svcerr_noprog,
-    svcerr_progvers, svcerr_systemerr, svcerr_weakauth, svcudp_bufcreate, svcudp_create,
+    _authenticate, registerrpc, svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll,
+    svc_getreqset, svc_register, svc_run, svc_sendreply, svc_unregister, svcerr_auth,
+    svcerr_decode, svcerr_noproc, svcerr_noprog, svcerr_progvers, svcerr_systemerr,
+    svcerr_weakauth, svcfd_create, svctcp_create, svcudp_bufcreate, svcudp_create,
+    svcudp_enablecache, svcunix_create, svcunixfd_create,
 };
 
 /// Read a user-supplied C string pointer with a known-region bound so a
@@ -57,95 +65,6 @@ type c_long = i64;
 pub struct Timeval {
     pub tv_sec: c_long,
     pub tv_usec: c_long,
-}
-
-// ---------------------------------------------------------------------------
-// Explicit safe-default stub macro for RPC functions
-// ---------------------------------------------------------------------------
-// Sun RPC is a legacy subsystem. Instead of delegating to host glibc via
-// dlsym(RTLD_NEXT), we return deterministic safe defaults:
-//   - boolean c_int → 0 (FALSE / failure)
-//   - status c_int → the API's explicit failure sentinel
-//   - *mut c_void → null (handle creation failed)
-//   - () → no-op
-//   - *mut c_char → null (no error string)
-//   - c_ulong → 0
-//   - u16 → 0
-// This eliminates the last glibc call-through dependency for RPC symbols.
-/// Generate explicitly annotated deterministic safe-default RPC stubs.
-///
-/// Sun RPC is a legacy subsystem. Rather than delegating to host glibc,
-/// we return deterministic safe defaults directly:
-///   - boolean c_int → 0 (FALSE / failure)
-///   - status c_int → the API's explicit failure sentinel
-///   - *mut c_void → null (handle creation failed)
-///   - () → no-op
-///   - *mut c_char → null (no error string)
-///   - c_ulong → 0
-///   - u16 → 0
-macro_rules! rpc_stub {
-    // Pattern 1: function returning an explicit c_int failure sentinel.
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int = $failure:expr) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
-            $( let _ = $pname; )*
-            $failure
-        }
-    };
-    // Pattern 2: boolean-style function returning FALSE.
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
-            $( let _ = $pname; )*
-            0
-        }
-    };
-    // Pattern 3: function returning *mut c_void
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_void) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_void {
-            $( let _ = $pname; )*
-            std::ptr::null_mut()
-        }
-    };
-    // Pattern 4: function returning ()
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> ()) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) {
-            $( let _ = $pname; )*
-        }
-    };
-    // Pattern 5: function returning c_ulong
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_ulong) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_ulong {
-            $( let _ = $pname; )*
-            0
-        }
-    };
-    // Pattern 6: function returning *mut c_char
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_char) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_char {
-            $( let _ = $pname; )*
-            std::ptr::null_mut()
-        }
-    };
-    // Pattern 7: function returning u16
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> u16) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> u16 {
-            $( let _ = $pname; )*
-            0
-        }
-    };
 }
 
 // ===========================================================================
@@ -1000,7 +919,8 @@ pub unsafe extern "C" fn xdr_u_long(xdrs: *mut c_void, lp: *mut c_ulong) -> c_in
                 return XDR_FALSE;
             }
             unsafe {
-                *lp = v as c_long as c_ulong;
+                // XDR unsigned longs are 32-bit wire values even on LP64.
+                *lp = v as u32 as c_ulong;
             }
             XDR_TRUE
         }
@@ -1708,13 +1628,60 @@ struct RmtCallRes {
     xdr_results: *mut c_void,
 }
 
-// UnixCred: { uid(4), gid(4), gidlen(2), [6pad], gids(*) } = 24 bytes
+// key_prot.x's unixcred contains an XDR array, whose count is unsigned int.
+// This is distinct from authdes_getucred's short * output parameter.
 #[repr(C)]
 struct UnixCred {
     uid: u32,
     gid: u32,
-    gidlen: i16,
+    gidlen: c_uint,
     gids: *mut u32,
+}
+
+const HEXKEYBYTES: c_uint = 48;
+
+#[repr(C)]
+struct NetObj {
+    len: c_uint,
+    bytes: *mut c_char,
+}
+
+#[repr(C)]
+struct CryptKeyArg {
+    remotename: *mut c_char,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct CryptKeyArg2 {
+    remotename: *mut c_char,
+    remotekey: NetObj,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct CryptKeyRes {
+    status: c_int,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct GetCredRes {
+    status: c_int,
+    cred: UnixCred,
+}
+
+#[repr(C)]
+struct KeyNetStArg {
+    priv_key: [u8; HEXKEYBYTES as usize],
+    pub_key: [u8; HEXKEYBYTES as usize],
+    netname: *mut c_char,
+}
+
+#[repr(C)]
+struct KeyNetStRes {
+    status: c_int,
+    knet: KeyNetStArg,
 }
 
 // --- RPC type XDR functions ---
@@ -1981,7 +1948,11 @@ pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_i
         // peek and the tail-of-list `*cursor = null` write target
         // initialized memory.
         unsafe {
-            (**cursor).pml_next = std::ptr::null_mut();
+            if op == XDR_DECODE {
+                (**cursor).pml_next = std::ptr::null_mut();
+            }
+            // ENCODE must retain the caller's next link and serialize the
+            // complete list, including lists returned by pmap_getmaps.
             cursor = &mut (**cursor).pml_next as *mut *mut PmapList;
         }
     }
@@ -2068,18 +2039,13 @@ pub unsafe extern "C" fn xdr_unixcred(xdrs: *mut c_void, ucp: *mut c_void) -> c_
     if unsafe { xdr_u_int(xdrs, (&mut (*u).gid as *mut u32).cast()) } != XDR_TRUE {
         return XDR_FALSE;
     }
-    let mut glen = unsafe { (*u).gidlen } as c_uint;
-    if unsafe { xdr_u_int(xdrs, &mut glen) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe {
-        (*u).gidlen = glen as i16;
-    }
+    // SAFETY: the caller supplies a live unixcred. xdr_array serializes its
+    // count exactly once and owns any allocation made during DECODE.
     unsafe {
         xdr_array(
             xdrs,
             (&mut (*u).gids as *mut *mut u32).cast(),
-            &mut glen,
+            &mut (*u).gidlen,
             16,
             4,
             xdr_u_int as *mut c_void,
@@ -2130,13 +2096,14 @@ pub unsafe extern "C" fn xdr_authdes_verf(xdrs: *mut c_void, verf: *mut c_void) 
 }
 
 // --- Key server XDR types (Secure RPC / keyserv protocol) ---
-// These are only used with the key server daemon which we don't support.
-// Each type serializes fields used in the keyserv RPC protocol.
+// Layouts and discriminants follow the public key_prot.x protocol. A failed
+// result has no union payload, including during XDR_FREE.
 
-/// Serialize a key buffer (HEXKEYBYTES = 144 bytes of opaque data).
+/// Serialize a classic Secure RPC key (48 hexadecimal bytes, no terminator).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_keybuf(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    unsafe { xdr_opaque(xdrs, p as *mut c_char, 144) }
+    // SAFETY: keybuf is a fixed-size opaque array supplied by the caller.
+    unsafe { xdr_opaque(xdrs, p.cast(), HEXKEYBYTES) }
 }
 
 /// Serialize key status enum.
@@ -2154,71 +2121,101 @@ pub unsafe extern "C" fn xdr_netnamestr(xdrs: *mut c_void, p: *mut c_void) -> c_
 /// Serialize cryptkeyarg: remotename(string) + deskey(des_block=8).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_cryptkeyarg(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    // { char *remotename; des_block deskey; }
-    if unsafe { xdr_netnamestr(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let arg = p.cast::<CryptKeyArg>();
+    // SAFETY: arg has the public cryptkeyarg layout, and its fields remain
+    // live for the selected XDR operation.
+    unsafe {
+        if xdr_netnamestr(xdrs, (&mut (*arg).remotename as *mut *mut c_char).cast()) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        xdr_des_block(xdrs, (*arg).deskey.as_mut_ptr().cast())
     }
-    unsafe { xdr_des_block(xdrs, b.add(8).cast()) }
 }
 
-/// Serialize cryptkeyarg2: remotename(string) + netname(netnamestr) + deskey(des_block).
+/// Serialize cryptkeyarg2: remote name, counted binary public key, DES block.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_cryptkeyarg2(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_netnamestr(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let arg = p.cast::<CryptKeyArg2>();
+    // SAFETY: arg has the public cryptkeyarg2 layout. The netobj codec
+    // preserves embedded NUL bytes and enforces the protocol's 1024-byte cap.
+    unsafe {
+        if xdr_netnamestr(xdrs, (&mut (*arg).remotename as *mut *mut c_char).cast()) != XDR_TRUE
+            || xdr_netobj(xdrs, (&mut (*arg).remotekey as *mut NetObj).cast()) != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        xdr_des_block(xdrs, (*arg).deskey.as_mut_ptr().cast())
     }
-    if unsafe { xdr_netnamestr(xdrs, b.add(8).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe { xdr_des_block(xdrs, b.add(16).cast()) }
 }
 
-/// Serialize cryptkeyres: status(keystatus) + deskey(des_block).
+/// Serialize cryptkeyres, including a DES block only for KEY_SUCCESS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_cryptkeyres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keystatus(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let result = p.cast::<CryptKeyRes>();
+    // SAFETY: only the selected union arm is visited; failure replies need
+    // neither initialized nor accessible success-payload storage.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_des_block(xdrs, (*result).deskey.as_mut_ptr().cast())
+        } else {
+            XDR_TRUE
+        }
     }
-    unsafe { xdr_des_block(xdrs, b.add(4).cast()) }
 }
 
-/// Serialize getcredres: status(keystatus) + client_name(netnamestr).
+/// Serialize getcredres, including UNIX credentials only for KEY_SUCCESS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_getcredres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keystatus(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let result = p.cast::<GetCredRes>();
+    // SAFETY: result has the public union layout, including the alignment
+    // padding before unixcred on LP64. The inactive arm is never touched.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_unixcred(xdrs, (&mut (*result).cred as *mut UnixCred).cast())
+        } else {
+            XDR_TRUE
+        }
     }
-    unsafe { xdr_netnamestr(xdrs, b.add(8).cast()) }
 }
 
 /// Serialize key_netstarg: priv_key(keybuf) + pub_key(keybuf) + netname(string).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_key_netstarg(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keybuf(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let arg = p.cast::<KeyNetStArg>();
+    // SAFETY: the two fixed key buffers and following netname pointer match
+    // key_netstarg from the public protocol, without guessed byte offsets.
+    unsafe {
+        if xdr_keybuf(xdrs, (*arg).priv_key.as_mut_ptr().cast()) != XDR_TRUE
+            || xdr_keybuf(xdrs, (*arg).pub_key.as_mut_ptr().cast()) != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        xdr_netnamestr(xdrs, (&mut (*arg).netname as *mut *mut c_char).cast())
     }
-    if unsafe { xdr_keybuf(xdrs, b.add(144).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe { xdr_netnamestr(xdrs, b.add(288).cast()) }
 }
 
-/// Serialize key_netstres: status(keystatus) + priv_key(keybuf) + pub_key(keybuf).
+/// Serialize key_netstres, including both keys and netname on KEY_SUCCESS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let b = p as *mut u8;
-    if unsafe { xdr_keystatus(xdrs, b.cast()) } != XDR_TRUE {
-        return XDR_FALSE;
+    let result = p.cast::<KeyNetStRes>();
+    // SAFETY: visit the complete successful union arm, including its owned
+    // string during XDR_FREE; failed arms contain only the status word.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_key_netstarg(xdrs, (&mut (*result).knet as *mut KeyNetStArg).cast())
+        } else {
+            XDR_TRUE
+        }
     }
-    if unsafe { xdr_keybuf(xdrs, b.add(8).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe { xdr_keybuf(xdrs, b.add(152).cast()) }
 }
 
 // ===========================================================================
@@ -2293,22 +2290,17 @@ pub unsafe extern "C" fn authdes_getucred(
     0
 }
 
-rpc_stub!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int = 7);
-
 // ===========================================================================
 // RPC client creation and error handling (14 symbols)
 // ===========================================================================
 
-rpc_stub!(
-    clnt_create(
-        host: *const c_char,
-        prog: c_ulong,
-        vers: c_ulong,
-        proto: *const c_char,
-    ) -> *mut c_void
-);
-
-rpc_stub!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
+/// Return the caller-thread memory RPC client; construction reuses its handle
+/// and resets AUTH_NONE. No socket or descriptor is created. The handle remains
+/// live until thread exit; its destroy/geterr operations are GNU no-ops.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void {
+    rpc_udp::create_raw(prog, vers)
+}
 
 /// Create a native IPv4 TCP RPC client with bounded record framing.
 /// Borrowed descriptors must already be connected and remain caller-owned.
@@ -2350,29 +2342,24 @@ pub unsafe extern "C" fn clntudp_bufcreate(
     unsafe { rpc_udp::create(raddr, prog, vers, wait, sockp, sendsz, recvsz) }
 }
 
-rpc_stub!(
-    clntunix_create(
-        raddr: *mut c_void,
-        prog: c_ulong,
-        vers: c_ulong,
-        sockp: *mut c_int,
-        sendsz: c_uint,
-        recvsz: c_uint,
-    ) -> *mut c_void
-);
-
-rpc_stub!(
-    callrpc(
-        host: *const c_char,
-        prognum: c_ulong,
-        versnum: c_ulong,
-        procnum: c_ulong,
-        inproc: *mut c_void,
-        in_: *mut c_char,
-        outproc: *mut c_void,
-        out: *mut c_char,
-    ) -> c_int = 17
-);
+/// Create a native Unix RPC stream client with credential-bearing records.
+///
+/// # Safety
+/// raddr and sockp point to live public sockaddr_un/int objects. A supplied
+/// connected descriptor must have no competing consumer. It stays caller-owned
+/// unless CLSET_FD_CLOSE transfers ownership; Unix I/O enables SO_PASSCRED.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntunix_create(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
+) -> *mut c_void {
+    // SAFETY: native construction imports all user structures with fault checks.
+    unsafe { rpc_udp::create_unix(raddr, prog, vers, sockp, sendsz, recvsz) }
+}
 
 /// Broadcast an RPC call to all hosts on the local network.
 /// Returns RPC_UNKNOWNPROTO (17) — broadcast requires portmapper which is not supported.
@@ -2399,15 +2386,46 @@ pub unsafe extern "C" fn clnt_broadcast(
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
-    let msg = rpc_errstr(stat);
-    // Write to stderr: "RPC: <message>\n". Raw writes: an error report is not
-    // a cancellation point here (a forced unwind must not start in a "C" frame).
-    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"RPC: ".as_ptr().cast(), 5) };
-    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, msg.as_ptr().cast(), msg.len()) };
-    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
+    write_rpc_diagnostic(rpc_errstr(stat).to_bytes());
 }
 
-rpc_stub!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
+fn write_rpc_diagnostic(bytes: &[u8]) {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        // SAFETY: the complete byte range remains live during each raw write.
+        // These reporting functions introduce no cancellation point in C frames.
+        let written = unsafe {
+            crate::unistd_abi::sys_write_fd(
+                2,
+                bytes.as_ptr().add(offset).cast(),
+                bytes.len() - offset,
+            )
+        };
+        // SAFETY: __errno_location provides this thread's live errno slot.
+        if written > 0 {
+            offset += written as usize;
+        } else if written < 0 && unsafe { *crate::errno_abi::__errno_location() } == libc::EINTR {
+            continue;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Print the CLIENT's last error using its own geterr callback. The rendered
+/// message already has the status-specific newline, if any.
+///
+/// # Safety
+/// The CLIENT/table/callback and optional C prefix must remain live for the call.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_perror(clnt: *mut c_void, s: *const c_char) {
+    // SAFETY: the caller supplies the same CLIENT and prefix contract.
+    let message = unsafe { clnt_sperror(clnt, s) };
+    if !message.is_null() {
+        // SAFETY: clnt_sperror published an owned NUL-terminated thread buffer.
+        write_rpc_diagnostic(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes());
+    }
+}
 
 /// Print RPC client creation error to stderr. Native implementation.
 /// Reads from thread-local rpc_createerr (via __rpc_thread_createerr).
@@ -2418,38 +2436,8 @@ rpc_stub!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
 pub unsafe extern "C" fn clnt_pcreateerror(s: *const c_char) {
     let msg = unsafe { clnt_spcreateerror(s) };
     if !msg.is_null() {
-        let len = unsafe { crate::string_abi::strlen(msg) };
-        // Raw writes, as in clnt_perrno.
-        let _ = unsafe { crate::unistd_abi::sys_write_fd(2, msg.cast(), len) };
-        let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
-    }
-}
-
-#[cfg(feature = "owned-tls-cache")]
-static SPERRNO_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
-    crate::owned_tls_cache::OwnedTlsCache::new(empty_sperrno_buf);
-
-#[cfg(feature = "owned-tls-cache")]
-fn empty_sperrno_buf() -> [u8; 64] {
-    [0u8; 64]
-}
-
-// Thread-local buffer for clnt_sperrno return value.
-#[cfg(not(feature = "owned-tls-cache"))]
-std::thread_local! {
-    static SPERRNO_BUF: std::cell::UnsafeCell<[u8; 64]> =
-        const { std::cell::UnsafeCell::new([0u8; 64]) };
-}
-
-#[inline]
-fn with_sperrno_buf<R>(f: impl FnOnce(&mut [u8; 64]) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        SPERRNO_BUF_OWNED_TLS.with(f)
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        SPERRNO_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+        // SAFETY: the creation formatter published a complete terminated buffer.
+        write_rpc_diagnostic(unsafe { std::ffi::CStr::from_ptr(msg) }.to_bytes());
     }
 }
 
@@ -2457,46 +2445,99 @@ fn with_sperrno_buf<R>(f: impl FnOnce(&mut [u8; 64]) -> R) -> R {
 /// Uses RPC_* status codes from glibc's <rpc/clnt_stat.h>.
 ///
 /// # Safety
-/// ABI boundary function. Returns a pointer valid until the next call from the same thread.
+/// The returned pointer refers to immutable process-lifetime C-locale storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
-    let msg = rpc_errstr(stat);
-    with_sperrno_buf(|buf| {
-        let len = msg.len().min(63);
-        buf[..len].copy_from_slice(&msg.as_bytes()[..len]);
-        buf[len] = 0;
-        buf.as_mut_ptr().cast()
-    })
+    rpc_errstr(stat).as_ptr().cast_mut()
 }
 
-rpc_stub!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
-
 #[cfg(feature = "owned-tls-cache")]
-static SPCREATEERR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
-    crate::owned_tls_cache::OwnedTlsCache::new(empty_spcreateerr_buf);
+static RPC_DIAGNOSTIC_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
 
-#[cfg(feature = "owned-tls-cache")]
-fn empty_spcreateerr_buf() -> [u8; 256] {
-    [0u8; 256]
-}
-
-// Thread-local buffer for clnt_spcreateerror return value.
+// GNU client/creation diagnostics share one per-thread allocation. Build the
+// next message before replacing it, including when the prefix aliases it.
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static SPCREATEERR_BUF: std::cell::UnsafeCell<[u8; 256]> =
-        const { std::cell::UnsafeCell::new([0u8; 256]) };
+    static RPC_DIAGNOSTIC_BUF: std::cell::UnsafeCell<Vec<u8>> =
+        const { std::cell::UnsafeCell::new(Vec::new()) };
 }
 
 #[inline]
-fn with_spcreateerr_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
+fn with_rpc_diagnostic_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
-        SPCREATEERR_BUF_OWNED_TLS.with(f)
+        RPC_DIAGNOSTIC_BUF_OWNED_TLS.with(f)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SPCREATEERR_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+        // SAFETY: only this thread accesses the cell; callers replace the Vec
+        // without invoking application callbacks while the borrow is held.
+        RPC_DIAGNOSTIC_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
     }
+}
+
+unsafe fn rpc_diagnostic_prefix(prefix: *const c_char) -> Vec<u8> {
+    if prefix.is_null() {
+        b"(null)".to_vec()
+    } else {
+        // SAFETY: the caller supplies a live C string; the existing bounded
+        // reader applies the mode-specific checked-prefix policy.
+        unsafe { read_bounded_cstr(prefix) }.unwrap_or_default()
+    }
+}
+
+fn rpc_errno_description(number: c_int) -> Option<&'static [u8]> {
+    let message = crate::string_abi::strerrordesc_np(number);
+    if message.is_null() {
+        None
+    } else {
+        // SAFETY: strerrordesc_np returns immutable NUL-terminated static data.
+        Some(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes())
+    }
+}
+
+fn publish_rpc_diagnostic(
+    message: Result<Vec<u8>, std::collections::TryReserveError>,
+) -> *mut c_char {
+    match message {
+        Ok(message) => with_rpc_diagnostic_buf(|previous| {
+            *previous = message;
+            previous.as_mut_ptr().cast()
+        }),
+        Err(_) => {
+            // SAFETY: setting errno accesses only the current thread's slot.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Render a live CLIENT's last error. Prefix bytes are copied before calling
+/// application geterr code; no diagnostic storage borrow/lock crosses it.
+///
+/// # Safety
+/// The CLIENT/table/callback must be live. A non-null prefix must be a valid C
+/// string. The result lasts until the next client/creation diagnostic on this thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char {
+    // SAFETY: the public prefix contract is forwarded to the bounded reader.
+    let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    // SAFETY: the caller keeps the CLIENT/table/geterr callback live.
+    let (status, words) = match unsafe { rpc_udp::client_error(clnt) } {
+        Ok(error) => error,
+        Err(error) => {
+            // SAFETY: setting errno accesses only the current thread's slot.
+            unsafe { set_abi_errno(error) };
+            return std::ptr::null_mut();
+        }
+    };
+    publish_rpc_diagnostic(frankenlibc_core::rpc::client_error_message(
+        &prefix,
+        status,
+        words,
+        rpc_errno_description(words[0] as c_int),
+    ))
 }
 
 /// Return a string describing the RPC client creation error. Native implementation.
@@ -2506,58 +2547,36 @@ fn with_spcreateerr_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
 /// ABI boundary function. `s` must be a valid C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
-    let prefix = unsafe { read_bounded_cstr(s) }
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .unwrap_or_default();
-    // Read cf_stat from thread-local rpc_createerr (first 4 bytes = clnt_stat enum)
-    let createerr = unsafe { __rpc_thread_createerr() };
-    let cf_stat = if createerr.is_null() {
-        0i32
-    } else {
-        unsafe { std::ptr::read_unaligned(createerr as *const i32) }
-    };
-    let err_msg = rpc_errstr(cf_stat);
-    let formatted = format!("{}: {}\0", prefix, err_msg);
-    with_spcreateerr_buf(|buf| {
-        let len = formatted.len().min(255);
-        buf[..len].copy_from_slice(&formatted.as_bytes()[..len]);
-        buf[len] = 0;
-        buf.as_mut_ptr().cast()
-    })
+    // SAFETY: the public prefix contract is forwarded to the bounded reader.
+    let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    let (status, nested_status, words) = rpc_udp::creation_error_details();
+    let error_number = words[0] as c_int;
+    publish_rpc_diagnostic(frankenlibc_core::rpc::creation_error_message(
+        &prefix,
+        status,
+        nested_status,
+        error_number,
+        rpc_errno_description(error_number),
+    ))
 }
 
-// rpc_errstr moved to frankenlibc_core::rpc::status_message. Local
-// alias preserves the call sites in clnt_perrno / clnt_sperrno /
-// clnt_spcreateerror unchanged.
 use frankenlibc_core::rpc::status_message as rpc_errstr;
 
 // ===========================================================================
 // RPC server / SVC (24 symbols; 18 UDP service symbols provided by rpc_svc)
 // ===========================================================================
 
-// --- SVC transport creation (non-UDP stubs) ---
-
-rpc_stub!(svcraw_create() -> *mut c_void);
-rpc_stub!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_stub!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_stub!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
-rpc_stub!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_stub!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+/// Return a caller-thread memory RPC service with a logical descriptor of zero.
+/// It never owns stdin and is excluded from socket readiness sets. Register
+/// dispatch with svc_register(..., 0); the native raw client invokes it directly.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn svcraw_create() -> *mut c_void {
+    rpc_svc::create_raw()
+}
 
 // ===========================================================================
 // RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)
 // ===========================================================================
-
-rpc_stub!(
-    registerrpc(
-        prognum: c_ulong,
-        versnum: c_ulong,
-        procnum: c_ulong,
-        progname: *mut c_void,
-        inproc: *mut c_void,
-        outproc: *mut c_void,
-    ) -> c_int = -1
-);
 
 /// Returns the file descriptor table size (same as getdtablesize).
 /// Uses getrlimit(RLIMIT_NOFILE) with a fallback to FD_SETSIZE (1024).
@@ -2591,8 +2610,8 @@ pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
 // get per-thread storage without needing to call into glibc.
 
 // rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
-// This is 24 bytes on x86_64 (4 + padding + 16 for rpc_err).
-// We allocate 32 bytes to be safe for SIZE — and, since callers receive this
+// This is 32 bytes on x86_64 (4 + padding + 24 for rpc_err).
+// We allocate exactly 32 bytes — and, since callers receive this
 // address as a `struct rpc_createerr *` and write `cf_stat`/`cf_error` fields
 // through it, for ALIGNMENT too: a bare `[u8; 32]` has align 1, which is the
 // class that aborted `re_comp` and `getmntent` with misaligned pointer
@@ -2866,103 +2885,113 @@ pub unsafe extern "C" fn _seterr_reply(msg: *mut c_void, error: *mut c_void) {
 // Key management / Secure RPC (16+ symbols)
 // ===========================================================================
 
-/// Decrypt a session key using the key server. Returns -1 (failure) — no keyserv.
+/// Decrypt a session key through the local native keyserver client.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn key_decryptsession(
-    _remotename: *const c_char,
-    _deskey: *mut c_void,
+    remotename: *const c_char,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: the helper imports caller storage before the protocol exchange.
+    unsafe { rpc_udp::key_session(remotename, deskey, false) }
 }
 
-/// Decrypt a session key with a public key. Returns -1 (failure) — no keyserv.
+/// Decrypt using a counted public key, including an installed local key hook.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_decryptsession_pk(
-    _remotename: *const c_char,
-    _remotekey: *mut c_void,
-    _deskey: *mut c_void,
+pub unsafe extern "C-unwind" fn key_decryptsession_pk(
+    remotename: *const c_char,
+    remotekey: *mut c_void,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: checked private snapshots remain live across reentry or unwind.
+    unsafe { rpc_udp::key_session_pk(remotename, remotekey, deskey, false) }
 }
 
-/// Encrypt a session key using the key server. Returns -1 (failure) — no keyserv.
+/// Encrypt a session key through the local native keyserver client.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn key_encryptsession(
-    _remotename: *const c_char,
-    _deskey: *mut c_void,
+    remotename: *const c_char,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: the helper imports caller storage before the protocol exchange.
+    unsafe { rpc_udp::key_session(remotename, deskey, true) }
 }
 
-/// Encrypt a session key with a public key. Returns -1 (failure) — no keyserv.
+/// Encrypt using a counted public key, including an installed local key hook.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_encryptsession_pk(
-    _remotename: *const c_char,
-    _remotekey: *mut c_void,
-    _deskey: *mut c_void,
+pub unsafe extern "C-unwind" fn key_encryptsession_pk(
+    remotename: *const c_char,
+    remotekey: *mut c_void,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: checked private snapshots remain live across reentry or unwind.
+    unsafe { rpc_udp::key_session_pk(remotename, remotekey, deskey, true) }
 }
 
-/// Generate a DES key using the key server. Returns -1 (failure) — no keyserv.
+/// Generate a DES key using native KEY_GEN or an installed local generator.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_gendes(_deskey: *mut c_void) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C-unwind" fn key_gendes(deskey: *mut c_void) -> c_int {
+    // SAFETY: output admission precedes the request or user-installed callback.
+    unsafe { rpc_udp::key_generate(deskey) }
 }
 
-/// Get conversation key from public key. Returns -1 (failure) — no keyserv.
+/// Derive a conversation key from a classic 48-byte public key via keyserv.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_get_conv(_pkey: *mut c_char, _deskey: *mut c_void) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C" fn key_get_conv(pkey: *mut c_char, deskey: *mut c_void) -> c_int {
+    // SAFETY: keybuf and output are imported/published through the checked copier.
+    unsafe { rpc_udp::key_conversation(pkey, deskey) }
 }
 /// Check if the secret key has been set with the key server.
-/// Returns 0 (FALSE) — no keyserv integration in FrankenLibC.
+/// Returns zero on a missing/empty secret or failed protocol exchange.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn key_secretkey_is_set() -> c_int {
-    0 // No keyserv client installed
+    // SAFETY: the operation uses only private request and result storage.
+    unsafe { rpc_udp::key_secret_is_set() }
 }
 
-/// Set network key parameters. Returns -1 (failure) — no keyserv.
+/// Store private/public keys and a network identity; returns one on success.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_setnet(_arg: *mut c_void) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C" fn key_setnet(arg: *mut c_void) -> c_int {
+    // SAFETY: the public record and its name are copied before daemon access.
+    unsafe { rpc_udp::key_set_network(arg) }
 }
 
-/// Set secret key with key server. Returns -1 (failure) — no keyserv.
+/// Store a classic 48-byte secret key with the local keyserver.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_setsecret(_secretkey: *const c_char) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C" fn key_setsecret(secretkey: *const c_char) -> c_int {
+    // SAFETY: the helper retains and erases its own fixed-size secret copy.
+    unsafe { rpc_udp::key_set_secret(secretkey) }
 }
 
 // --- Internal key function pointer globals ---
-// In glibc these are `int (*__key_*_LOCAL)(...)` global function pointers.
+// The public-key hooks return a borrowed cryptkeyres*, while the generator
+// returns a borrowed des_block*. Both receive uid_t and a procedure argument.
 // We export them as mutable static AtomicPtrs so programs and libraries
 // can read/write them. Initialized to null (no keyserv client installed).
 
@@ -2981,13 +3010,14 @@ pub static __key_gendes_LOCAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null
 // Portmapper client (5 symbols)
 // ===========================================================================
 
-/// Get portmapper registrations from a host. Returns NULL — no portmapper support.
+/// Retrieve a native, caller-freeable portmapper v2 registration list over TCP.
 ///
 /// # Safety
-/// ABI boundary function.
+/// address points to a live writable sockaddr_in throughout the operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_getmaps(_address: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
+pub unsafe extern "C" fn pmap_getmaps(address: *mut c_void) -> *mut c_void {
+    // SAFETY: the native importer checks the public address and owns all results.
+    unsafe { rpc_udp::getmaps(address) }
 }
 
 /// Get a program's port from the remote portmapper v2 service.
@@ -3004,24 +3034,27 @@ pub unsafe extern "C" fn pmap_getport(
     unsafe { rpc_udp::getport(address, prog, vers, proto) }
 }
 
-/// Perform a remote procedure call via portmapper. Returns RPC_UNKNOWNPROTO (17).
+/// Execute portmapper v2 CALLIT with native UDP transport and XDR callbacks.
 ///
 /// # Safety
-/// ABI boundary function.
+/// addr/portp are live writable public objects. Codecs and their payloads remain
+/// live for the call; application unwinding releases the owned transport.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_rmtcall(
-    _addr: *mut c_void,
-    _prog: c_ulong,
-    _vers: c_ulong,
-    _proc_: c_ulong,
-    _xdrargs: *mut c_void,
-    _argsp: *mut c_void,
-    _xdrres: *mut c_void,
-    _resp: *mut c_void,
-    _tout: Timeval,
-    _portp: *mut c_ulong,
+pub unsafe extern "C-unwind" fn pmap_rmtcall(
+    addr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    xdrargs: *mut c_void,
+    argsp: *mut c_void,
+    xdrres: *mut c_void,
+    resp: *mut c_void,
+    tout: Timeval,
+    portp: *mut c_ulong,
 ) -> c_int {
-    17 // RPC_UNKNOWNPROTO
+    // SAFETY: the native operation validates fixed structures and retains all
+    // private ownership guards across the application's live XDR callbacks.
+    unsafe { rpc_udp::remote_call(addr, prog, vers, proc_, xdrargs, argsp, xdrres, resp, tout, portp) }
 }
 
 /// Register a program with the local portmapper v2 service.
@@ -3043,81 +3076,244 @@ pub unsafe extern "C" fn pmap_unset(prog: c_ulong, vers: c_ulong) -> c_int {
 }
 
 // ===========================================================================
-// DES crypt helpers (6 symbols) — Native stubs
-//
-// DES is cryptographically broken (56-bit key). These functions are from
-// <rpc/des_crypt.h> and are deprecated. We return DESERR_NOHWDEVICE (4)
-// for cbc_crypt/ecb_crypt to indicate no DES hardware is available,
-// and 0 (failure) for xencrypt/xdecrypt/passwd2des. des_setparity is
-// a no-op since we don't use DES.
+// DES crypt helpers (6 symbols) — native legacy RPC compatibility
 // ===========================================================================
 
-/// DESERR_NOHWDEVICE — no DES hardware available (standard return code).
-const DESERR_NOHWDEVICE: c_int = 4;
+const DESERR_NOHWDEVICE: c_int = 1;
+const DESERR_BADPARAM: c_int = 3;
 
-/// CBC-mode DES encryption/decryption. Returns DESERR_NOHWDEVICE.
+/// Copy public bytes through the existing tracked-bound, fault-checked copier.
+/// No Rust slice or reference is formed over caller-owned storage.
+unsafe fn rpc_des_copy(source: *const u8, destination: *mut u8, bytes: usize) -> bool {
+    // SAFETY: callers keep initialized private buffers live for the copy. The
+    // shared copier checks both external address ranges and kernel permissions.
+    match unsafe { crate::io_abi::iov_snapshot::copy_user_bytes(source, destination, bytes) } {
+        Ok(()) => true,
+        Err(error) => {
+            // SAFETY: errno is the calling thread's writable error slot.
+            unsafe { set_abi_errno(error) };
+            false
+        }
+    }
+}
+
+unsafe fn rpc_des_password(password: *const c_char) -> Option<[u8; 8]> {
+    let mut prefix = [0u8; 8];
+    for (index, byte) in prefix.iter_mut().enumerate() {
+        // SAFETY: byte is private initialized storage; the source remains an
+        // untrusted address. GNU consumes at most eight bytes, stopping at NUL.
+        if !unsafe { rpc_des_copy(password.cast::<u8>().wrapping_add(index), byte, 1) } {
+            return None;
+        }
+        if *byte == 0 {
+            break;
+        }
+    }
+    Some(prefix)
+}
+
+unsafe fn rpc_des_apply(
+    key: *const c_char,
+    buffer: *mut c_char,
+    length: c_uint,
+    mode: c_uint,
+    vector: Option<*mut c_char>,
+) -> c_int {
+    use frankenlibc_core::crypt::des::{RPC_DES_MAX_DATA, rpc_des_crypt};
+    let length = length as usize;
+    if length > RPC_DES_MAX_DATA || !length.is_multiple_of(8) {
+        return DESERR_BADPARAM;
+    }
+    let mut key_bytes = [0u8; 8];
+    let mut iv = [0u8; 8];
+    let mut data = Vec::new();
+    if data.try_reserve_exact(length).is_err() {
+        // SAFETY: errno is the calling thread's writable error slot.
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return DESERR_BADPARAM;
+    }
+    data.resize(length, 0u8);
+    // SAFETY: all destinations are initialized private storage of exact size.
+    if !unsafe { rpc_des_copy(key.cast(), key_bytes.as_mut_ptr(), key_bytes.len()) }
+        || !unsafe { rpc_des_copy(buffer.cast(), data.as_mut_ptr(), length) }
+    {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: import the complete IV before writing either public output.
+        if !unsafe { rpc_des_copy(vector.cast(), iv.as_mut_ptr(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    // Check writable extents while republishing their unchanged contents. A
+    // failed admission cannot publish ciphertext or a new chaining vector.
+    // Concurrent changes to permissions/storage remain the caller's concern.
+    if !unsafe { rpc_des_copy(data.as_ptr(), buffer.cast(), length) } {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: iv contains exactly the imported public bytes.
+        if !unsafe { rpc_des_copy(iv.as_ptr(), vector.cast(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    if rpc_des_crypt(
+        &key_bytes,
+        &mut data,
+        mode & 1 != 0,
+        vector.map(|_| &mut iv),
+    )
+    .is_err()
+    {
+        return DESERR_BADPARAM;
+    }
+    // SAFETY: the same checked copier publishes only initialized owned bytes.
+    if !unsafe { rpc_des_copy(data.as_ptr(), buffer.cast(), length) } {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: the complete resulting IV is initialized and still private.
+        if !unsafe { rpc_des_copy(iv.as_ptr(), vector.cast(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    if mode & 2 == 0 { DESERR_NOHWDEVICE } else { 0 }
+}
+
+/// CBC DES with GNU-compatible software fallback and chaining-vector updates.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// key and ivec name eight live bytes; buf names len writable bytes. Public
+/// storage remains live for the call; tracked extents and faults are checked.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cbc_crypt(
-    _key: *mut c_char,
-    _buf: *mut c_char,
-    _len: c_uint,
-    _mode: c_uint,
-    _ivec: *mut c_char,
+    key: *mut c_char,
+    buf: *mut c_char,
+    len: c_uint,
+    mode: c_uint,
+    ivec: *mut c_char,
 ) -> c_int {
-    DESERR_NOHWDEVICE
+    // SAFETY: the importer owns all intermediate key, data and IV bytes.
+    unsafe { rpc_des_apply(key, buf, len, mode, Some(ivec)) }
 }
 
-/// ECB-mode DES encryption/decryption. Returns DESERR_NOHWDEVICE.
+/// ECB DES with GNU-compatible software fallback.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// key names eight live bytes; buf names len live writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ecb_crypt(
-    _key: *mut c_char,
-    _buf: *mut c_char,
-    _len: c_uint,
-    _mode: c_uint,
+    key: *mut c_char,
+    buf: *mut c_char,
+    len: c_uint,
+    mode: c_uint,
 ) -> c_int {
-    DESERR_NOHWDEVICE
+    // SAFETY: the importer owns all intermediate key and data bytes.
+    unsafe { rpc_des_apply(key, buf, len, mode, None) }
 }
 
-/// Set DES key parity bits. No-op since DES is not supported.
+/// Apply the legacy seven-bit DES odd-parity table to eight key bytes.
 ///
 /// # Safety
-/// ABI boundary function.
+/// key names eight live writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn des_setparity(_key: *mut c_char) {
-    // No-op: DES parity is irrelevant without DES support.
+pub unsafe extern "C" fn des_setparity(key: *mut c_char) {
+    let mut bytes = [0u8; 8];
+    // SAFETY: the checked importer fills exactly this private key array.
+    if !unsafe { rpc_des_copy(key.cast(), bytes.as_mut_ptr(), bytes.len()) } {
+        return;
+    }
+    frankenlibc_core::crypt::des::rpc_des_setparity(&mut bytes);
+    // SAFETY: publish only initialized key bytes through the same checked path.
+    unsafe { rpc_des_copy(bytes.as_ptr(), key.cast(), bytes.len()) };
 }
 
-/// Hex-encrypt a secret key with a password. Returns 0 (failure).
-///
-/// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xencrypt(_secret: *mut c_char, _passwd: *mut c_char) -> c_int {
-    0 // failure — no DES support
+unsafe fn rpc_des_hex(secret: *mut c_char, password: *const c_char, decrypt: bool) -> c_int {
+    use frankenlibc_core::crypt::des::{RPC_DES_MAX_DATA, RpcDesError, rpc_des_hex_crypt};
+    // SAFETY: only the bounded eight-byte password prefix is imported.
+    let Some(password) = (unsafe { rpc_des_password(password) }) else {
+        return 0;
+    };
+    let mut bytes = Vec::new();
+    // One odd trailing nibble is accepted and discarded by GNU. Include its
+    // terminating NUL in private storage so even empty output needs no new
+    // allocation after transformation.
+    for index in 0..=2 * RPC_DES_MAX_DATA + 1 {
+        let mut byte = 0u8;
+        // SAFETY: one-byte fault-checked reads never pass a valid terminator
+        // or an allocation boundary merely to fill a speculative chunk.
+        if !unsafe { rpc_des_copy(secret.cast::<u8>().wrapping_add(index), &mut byte, 1) } {
+            return 0;
+        }
+        if bytes.try_reserve(1).is_err() {
+            // SAFETY: errno is the calling thread's writable error slot.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return 0;
+        }
+        bytes.push(byte);
+        if byte != 0 {
+            continue;
+        }
+        let binary_length = index / 2;
+        if !binary_length.is_multiple_of(8) {
+            return 0;
+        }
+        let output_length = binary_length * 2 + 1;
+        // SAFETY: test the exact output extent by copying its original bytes.
+        if !unsafe { rpc_des_copy(bytes.as_ptr(), secret.cast(), output_length) } {
+            return 0;
+        }
+        let length = match rpc_des_hex_crypt(&mut bytes[..index], &password, decrypt) {
+            Ok(length) => length,
+            Err(RpcDesError::Allocation) => {
+                // SAFETY: errno is the calling thread's writable error slot.
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return 0;
+            }
+            Err(RpcDesError::BadLength) => return 0,
+        };
+        bytes[length] = 0;
+        // SAFETY: the complete output and terminator fit the checked extent.
+        return c_int::from(unsafe { rpc_des_copy(bytes.as_ptr(), secret.cast(), length + 1) });
+    }
+    0
 }
 
-/// Hex-decrypt a secret key with a password. Returns 0 (failure).
+/// Hex-encrypt a legacy RPC secret with password-derived CBC DES.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// secret is a live writable NUL-terminated string; passwd remains readable
+/// through its first NUL or eight bytes. Tracked bounds and faults are checked.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xdecrypt(_secret: *mut c_char, _passwd: *mut c_char) -> c_int {
-    0 // failure — no DES support
+pub unsafe extern "C" fn xencrypt(secret: *mut c_char, passwd: *mut c_char) -> c_int {
+    // SAFETY: the shared implementation imports and bounds both public inputs.
+    unsafe { rpc_des_hex(secret, passwd, false) }
 }
 
-/// Convert a password to a DES key. Returns 0 (failure).
+/// Hex-decrypt a legacy RPC secret with password-derived CBC DES.
 ///
 /// # Safety
-/// ABI boundary function; parameters are unchecked raw pointers.
+/// secret and passwd have the same live-buffer requirements as xencrypt.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn passwd2des(_passwd: *mut c_char, _key: *mut c_char) -> c_int {
-    0 // failure — no DES support
+pub unsafe extern "C" fn xdecrypt(secret: *mut c_char, passwd: *mut c_char) -> c_int {
+    // SAFETY: the shared implementation imports and bounds both public inputs.
+    unsafe { rpc_des_hex(secret, passwd, true) }
+}
+
+/// Convert at most eight password bytes to the legacy RPC key. The C ABI is void.
+///
+/// # Safety
+/// passwd remains readable through its first NUL or eight bytes. key names
+/// eight live writable bytes; all accesses use the checked copier.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn passwd2des(passwd: *mut c_char, key: *mut c_char) {
+    // SAFETY: the bounded importer does not form a reference to caller memory.
+    let Some(password) = (unsafe { rpc_des_password(passwd) }) else {
+        return;
+    };
+    let bytes = frankenlibc_core::crypt::des::rpc_passwd2des(&password);
+    // SAFETY: publish only the complete initialized key.
+    unsafe { rpc_des_copy(bytes.as_ptr(), key.cast(), bytes.len()) };
 }
 
 // ===========================================================================
@@ -3148,53 +3344,286 @@ pub unsafe extern "C" fn get_myaddress(addr: *mut c_void) {
     }
 }
 
-/// Get the netname for the current effective uid.
-/// Format: "unix.<uid>@<domain>" — we use "localhost" as the domain.
-/// Returns 1 on success, 0 on failure.
+/// Read the kernel hostname or NIS domain without inventing an identity.
+fn rpc_netname_system_component(host: bool) -> Option<Vec<u8>> {
+    let mut bytes = [0u8; 65];
+    // SAFETY: both native entry points receive writable storage large enough
+    // for a Linux UTS field and its terminating NUL.
+    let status = unsafe {
+        if host {
+            crate::unistd_abi::gethostname(bytes.as_mut_ptr().cast(), bytes.len())
+        } else {
+            crate::unistd_abi::getdomainname(bytes.as_mut_ptr().cast(), bytes.len())
+        }
+    };
+    if status != 0 {
+        return None;
+    }
+    let end = bytes.iter().position(|&byte| byte == 0)?;
+    Some(bytes[..end].to_vec())
+}
+
+/// Publish a Secure RPC name in the caller's buffer.
 ///
 /// # Safety
-/// ABI boundary function. `name` must point to a buffer of at least MAXNETNAMELEN+1 (256) bytes.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
-    if name.is_null() {
+/// destination is non-null and writable for 256 bytes, or its smaller extent
+/// is registered with the allocator. Both input components are owned bytes.
+unsafe fn rpc_netname_write(destination: *mut c_char, identity: &[u8], domain: &[u8]) -> c_int {
+    let len = 5 + identity.len() + 1 + domain.len() + 1;
+    if len > 256 || known_remaining(destination as usize).is_some_and(|remaining| remaining < len) {
         return 0;
     }
-    let uid = raw_syscall::sys_geteuid();
-    // Format: "unix.<uid>@localhost"
-    let netname = format!("unix.{}@localhost\0", uid);
-    let bytes = netname.as_bytes();
-    // MAXNETNAMELEN is typically 255 in glibc
-    if bytes.len() > 256 {
-        return 0;
-    }
+    let mut bytes = [0u8; 256];
+    bytes[..5].copy_from_slice(b"unix.");
+    let separator = 5 + identity.len();
+    bytes[5..separator].copy_from_slice(identity);
+    bytes[separator] = b'@';
+    bytes[separator + 1..len - 1].copy_from_slice(domain);
+    // SAFETY: callers validate the destination, the tracked extent is checked,
+    // and the complete output, including its NUL, fits in the local buffer.
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), name.cast(), bytes.len());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination.cast(), len);
     }
     1
 }
 
-/// Get the public key for a netname from the publickey database.
-/// Returns 0 (failure) — no publickey database support.
+/// Get the current Secure RPC netname. Root uses the machine identity;
+/// other effective users use their uid and the kernel NIS domain.
 ///
 /// # Safety
-/// ABI boundary function.
+/// name must point to a writable buffer of at least 256 bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getpublickey(_netname: *const c_char, _publickey: *mut c_char) -> c_int {
-    0 // Not found
+pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
+    let uid = raw_syscall::sys_geteuid();
+    // SAFETY: both delegates validate null pointers and share this function's
+    // caller-owned output contract; null inputs select system components.
+    unsafe {
+        if uid == 0 {
+            host2netname(name, std::ptr::null(), std::ptr::null())
+        } else {
+            user2netname(name, uid, std::ptr::null())
+        }
+    }
 }
 
-/// Get the secret key for a netname from the publickey database.
-/// Returns 0 (failure) — no publickey database support.
+/// Read a bounded native Secure RPC database image. A descriptor is closed on
+/// every exit; interrupted reads retry without publishing a partial image.
+fn rpc_identity_file<T>(
+    path: &std::ffi::CStr,
+    parse: impl FnOnce(&[u8]) -> Option<T>,
+) -> frankenlibc_core::nss::Answer<T> {
+    use frankenlibc_core::nss::Answer;
+    const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+    struct File(c_int);
+    impl Drop for File {
+        fn drop(&mut self) {
+            let _ = raw_syscall::sys_close(self.0);
+        }
+    }
+    let read = || -> Result<Vec<u8>, c_int> {
+        // SAFETY: path is a live NUL-terminated constant; no mode is needed
+        // for a read-only open. No host libc lookup is used for file access.
+        let fd = File(unsafe {
+            raw_syscall::sys_openat(
+                libc::AT_FDCWD,
+                path.as_ptr().cast(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                0,
+            )?
+        });
+        let mut image = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            // SAFETY: chunk is writable for its complete length and fd is
+            // owned by this call until its RAII guard closes it.
+            let count =
+                match unsafe { raw_syscall::sys_read(fd.0, chunk.as_mut_ptr(), chunk.len()) } {
+                    Ok(0) => return Ok(image),
+                    Ok(count) => count,
+                    Err(libc::EINTR) => continue,
+                    Err(error) => return Err(error),
+                };
+            if count > MAX_IMAGE_BYTES - image.len() {
+                return Err(libc::EFBIG);
+            }
+            image.try_reserve(count).map_err(|_| libc::ENOMEM)?;
+            image.extend_from_slice(&chunk[..count]);
+        }
+    };
+    match read() {
+        Ok(image) => parse(&image).map_or(Answer::NotFound, Answer::Found),
+        Err(error) => {
+            // SAFETY: errno is the calling thread's valid, writable error slot.
+            unsafe { set_abi_errno(error) };
+            Answer::Unavailable(error)
+        }
+    }
+}
+
+/// Get the public key for an exact network identity through the publickey
+/// NSS database. The native files source reads `/etc/publickey`; configured
+/// modules use their public GNU nss_getpublickey entry point.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname is a readable C string and publickey is writable for 49 bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpublickey(netname: *const c_char, publickey: *mut c_char) -> c_int {
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    if publickey.is_null()
+        || known_remaining(publickey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        return 0;
+    }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/publickey", |image| {
+                    frankenlibc_core::rpc::lookup_publickey(image, &name)
+                })
+            } else {
+                crate::nss_module::getpublickey(service.name(), &name)
+            }
+        },
+        None,
+    );
+    let Answer::Found(key) = answer else {
+        return 0;
+    };
+    // SAFETY: the entire fixed-size output was validated before the lookup;
+    // the owned key is disjoint from caller storage and includes no NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(key.as_ptr(), publickey.cast(), key.len());
+        *publickey.add(key.len()) = 0;
+    }
+    1
+}
+
+/// Import a bounded Secure RPC input without dereferencing caller storage.
+unsafe fn rpc_secret_string(source: *const c_char, maximum: usize) -> Option<Vec<u8>> {
+    let mut value = Vec::new();
+    for index in 0..=maximum {
+        let Some(address) = (source as usize).checked_add(index) else {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EFAULT) };
+            return None;
+        };
+        let mut byte = 0u8;
+        // SAFETY: the byte destination is private; the copier checks each
+        // source address and never reads beyond a discovered terminator.
+        if !unsafe { rpc_des_copy(address as *const u8, &mut byte, 1) } {
+            return None;
+        }
+        if byte == 0 {
+            return Some(value);
+        }
+        if index == maximum {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return None;
+        }
+        if value.try_reserve(1).is_err() {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return None;
+        }
+        value.push(byte);
+    }
+    None
+}
+
+/// Get a classic secret key through the publickey NSS database. Native files
+/// decrypt and verify the stored checksum; configured GNU modules receive the
+/// complete password through their public four-argument entry point.
+///
+/// A found key with a wrong password returns 1 and publishes an empty string.
+/// A missing key or failed source returns 0 without publishing partial output.
+///
+/// # Safety
+/// netname/passwd are readable C strings. secretkey is writable for 49 bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsecretkey(
-    _netname: *const c_char,
-    _secretkey: *mut c_char,
-    _passwd: *const c_char,
+    netname: *const c_char,
+    secretkey: *mut c_char,
+    passwd: *const c_char,
 ) -> c_int {
-    0 // Not found
+    use frankenlibc_core::crypt::des::RpcDesError;
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    use frankenlibc_core::rpc::secret::{SecretKey, decrypt_secret, lookup_encrypted_secret};
+
+    if secretkey.is_null()
+        || known_remaining(secretkey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return 0;
+    }
+    // SAFETY: inputs are only addresses for the fault-checked importer. The
+    // native name limit is 255; the password bound matches NSS scratch limits.
+    let Some(name) = (unsafe { rpc_secret_string(netname, 255) }) else {
+        return 0;
+    };
+    if name.is_empty() {
+        return 0;
+    }
+    let Some(password) = (unsafe { rpc_secret_string(passwd, 1 << 24) }) else {
+        return 0;
+    };
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() != b"files" {
+                return crate::nss_module::getsecretkey(service.name(), &name, &password);
+            }
+            match rpc_identity_file(c"/etc/publickey", |image| {
+                lookup_encrypted_secret(image, &name)
+            }) {
+                Answer::Found(encrypted) => match decrypt_secret(&encrypted, &password) {
+                    Ok(secret) => Answer::Found(secret),
+                    Err(RpcDesError::Allocation) => {
+                        // SAFETY: errno belongs to the calling thread.
+                        unsafe { set_abi_errno(libc::ENOMEM) };
+                        Answer::TryAgain(libc::ENOMEM)
+                    }
+                    Err(RpcDesError::BadLength) => Answer::NotFound,
+                },
+                Answer::NotFound => Answer::NotFound,
+                Answer::Unavailable(error) => Answer::Unavailable(error),
+                Answer::TryAgain(error) => Answer::TryAgain(error),
+                Answer::BufferTooSmall => Answer::BufferTooSmall,
+            }
+        },
+        None,
+    );
+    let Answer::Found(secret) = answer else {
+        return 0;
+    };
+    let mut output = [0u8; PUBLICKEY_HEX_BYTES + 1];
+    let length = match secret {
+        SecretKey::Key(key) => {
+            output[..PUBLICKEY_HEX_BYTES].copy_from_slice(&key);
+            output.len()
+        }
+        // Only this byte changes on a wrong password, preserving the public
+        // distinction between a missing key and a found but unusable key.
+        SecretKey::WrongPassword => 1,
+    };
+    // SAFETY: only initialized private bytes are published; the shared copier
+    // checks tracked allocation bounds and actual writable kernel mappings.
+    c_int::from(unsafe { rpc_des_copy(output.as_ptr(), secretkey.cast(), length) })
 }
 
 /// Get the port number for an RPC program on a remote host.
@@ -3214,189 +3643,227 @@ pub unsafe extern "C" fn getrpcport(
     0 // Not found — no native portmapper support
 }
 
-/// Convert a hostname to a netname. Format: "unix.<host>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Convert a hostname to a Secure RPC netname in a caller-owned buffer.
+/// A null host selects the kernel hostname. A null domain uses the hostname
+/// suffix when present, otherwise the kernel NIS domain.
 ///
 /// # Safety
-/// ABI boundary function. `netname` must point to a valid `*mut c_char` pointer.
+/// netname must point to a writable buffer of at least 256 bytes.
+/// Non-null host and domain must point to readable C strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn host2netname(
-    netname: *mut *mut c_char,
+    netname: *mut c_char,
     host: *const c_char,
     domain: *const c_char,
 ) -> c_int {
-    if netname.is_null() {
+    if netname.is_null() || known_remaining(netname as usize) == Some(0) {
         return 0;
     }
-    // Bounded reads — non-NUL-terminated host/domain pointers must not
-    // walk arbitrary memory. (REVIEW round 5: bd-z4k96 class.)
-    let host_owned = if host.is_null() {
-        b"localhost".to_vec()
-    } else {
-        match unsafe { read_bounded_cstr(host) } {
-            Some(b) => b,
-            None => return 0,
-        }
-    };
-    let domain_owned = if domain.is_null() {
-        b"localhost".to_vec()
-    } else {
-        match unsafe { read_bounded_cstr(domain) } {
-            Some(b) => b,
-            None => return 0,
-        }
-    };
-    let host_str = match std::str::from_utf8(&host_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let domain_str = match std::str::from_utf8(&domain_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let name = format!("unix.{}@{}\0", host_str, domain_str);
-    // POSIX host2netname returns a heap buffer that the caller frees with the
-    // standard free(). Route through the FrankenLibC allocator entrypoint so
-    // replacement mode has no direct host call-through while keeping the public
-    // alloc/free pair matched.
-    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
-    if buf.is_null() {
-        return 0;
-    }
+    // GNU clears the output on a rejected host/domain pair.
+    // SAFETY: the destination is non-null with at least one writable byte.
     unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.cast(), name.len());
-        *netname = buf;
+        *netname = 0;
     }
-    1
+    let host_owned = if host.is_null() {
+        rpc_netname_system_component(true)
+    } else {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(host) }
+    };
+    let Some(host_owned) = host_owned else {
+        return 0;
+    };
+    // The host ABI bounds each component before applying its dot rules.
+    let host = &host_owned[..host_owned.len().min(64)];
+    let dot = host.iter().position(|&byte| byte == b'.');
+    let domain_owned = if !domain.is_null() {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(domain) }
+    } else if let Some(dot) = dot {
+        Some(host[dot + 1..].to_vec())
+    } else {
+        rpc_netname_system_component(false)
+    };
+    let Some(domain_owned) = domain_owned else {
+        return 0;
+    };
+    let domain = &domain_owned[..domain_owned.len().min(64)];
+    if domain.is_empty() {
+        return 0;
+    }
+    let domain = domain.strip_suffix(b".").unwrap_or(domain);
+    let host = &host[..dot.unwrap_or(host.len())];
+    // SAFETY: the output was validated above and both components are owned.
+    unsafe { rpc_netname_write(netname, host, domain) }
 }
 
-/// Extract hostname from a netname. Format: "unix.<host>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Resolve a network identity to the authoritative `/etc/netid` host mapping.
+/// The publickey NSS source order and status actions apply. GNU defines no
+/// netname2host service-module entry point, so other sources are unavailable.
+/// A successful files answer copies and pads exactly hostlen bytes, matching
+/// the public netid implementation's strncpy contract (truncation may omit NUL).
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname is a readable C string; hostname is writable for hostlen bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn netname2host(
     netname: *const c_char,
     hostname: *mut c_char,
     hostlen: c_int,
 ) -> c_int {
-    if netname.is_null() || hostname.is_null() || hostlen <= 0 {
+    use frankenlibc_core::nss::{Answer, Database};
+    if hostlen < 0 || (hostlen > 0 && hostname.is_null()) {
         return 0;
     }
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
-    let name_owned = match unsafe { read_bounded_cstr(netname) } {
-        Some(b) => b,
-        None => return 0,
-    };
-    let name = match std::str::from_utf8(&name_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    // Parse "unix.<host>@<domain>"
-    let rest = match name.strip_prefix("unix.") {
-        Some(r) => r,
-        None => return 0,
-    };
-    let host = match rest.find('@') {
-        Some(idx) => &rest[..idx],
-        None => return 0,
-    };
-    if host.len() >= hostlen as usize {
+    let hostlen = hostlen as usize;
+    if known_remaining(hostname as usize).is_some_and(|remaining| remaining < hostlen) {
         return 0;
     }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_host(image, &name).map(<[u8]>::to_vec)
+                })
+            } else {
+                Answer::Unavailable(libc::ENOSYS)
+            }
+        },
+        None,
+    );
+    let Answer::Found(host) = answer else {
+        return 0;
+    };
+    if hostlen == 0 {
+        return 1;
+    }
+    let copied = host.len().min(hostlen);
+    // SAFETY: the caller and tracked extent authorize hostlen writable bytes;
+    // the owned host image cannot alias the destination. Both ranges fit.
     unsafe {
-        std::ptr::copy_nonoverlapping(host.as_ptr(), hostname.cast(), host.len());
-        *hostname.add(host.len()) = 0;
+        std::ptr::copy_nonoverlapping(host.as_ptr(), hostname.cast(), copied);
+        std::ptr::write_bytes(hostname.add(copied), 0, hostlen - copied);
     }
     1
 }
 
-/// Extract user info from a netname. Format: "unix.<uid>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Resolve an exact network name through the publickey NSS database to an
+/// authoritative uid, primary gid and supplementary group list. The files
+/// source reads `/etc/netid`; other sources use nss_netname2user modules.
+/// No local credentials are inferred from the spelling of the network name.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname is a readable C string; scalar outputs are writable uid_t/gid_t/int
+/// slots. gidlist has the public NGROUPS capacity, or a tracked smaller extent
+/// sufficient for the returned supplementary groups. A zero-group result may
+/// use a null gidlist. Failure does not publish partial caller outputs.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn netname2user(
     netname: *const c_char,
-    uidp: *mut c_ulong,
-    gidp: *mut c_ulong,
+    uidp: *mut libc::uid_t,
+    gidp: *mut libc::gid_t,
     gidlenp: *mut c_int,
-    _gidlist: *mut c_int,
+    gidlist: *mut libc::gid_t,
 ) -> c_int {
-    if netname.is_null() || uidp.is_null() || gidp.is_null() || gidlenp.is_null() {
+    use frankenlibc_core::nss::{Answer, Database};
+    if uidp.is_null()
+        || gidp.is_null()
+        || gidlenp.is_null()
+        || known_remaining(uidp as usize)
+            .is_some_and(|remaining| remaining < size_of::<libc::uid_t>())
+        || known_remaining(gidp as usize)
+            .is_some_and(|remaining| remaining < size_of::<libc::gid_t>())
+        || known_remaining(gidlenp as usize).is_some_and(|remaining| remaining < size_of::<c_int>())
+    {
         return 0;
     }
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
-    let name_owned = match unsafe { read_bounded_cstr(netname) } {
-        Some(b) => b,
-        None => return 0,
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
     };
-    let name = match std::str::from_utf8(&name_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_user(image, &name)
+                })
+            } else {
+                crate::nss_module::netname2user(service.name(), &name)
+            }
+        },
+        None,
+    );
+    let Answer::Found(user) = answer else {
+        return 0;
     };
-    let rest = match name.strip_prefix("unix.") {
-        Some(r) => r,
-        None => return 0,
-    };
-    let uid_str = match rest.find('@') {
-        Some(idx) => &rest[..idx],
-        None => return 0,
-    };
-    let uid: u64 = match uid_str.parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
+    let group_bytes = user.groups.len() * size_of::<libc::gid_t>();
+    if !user.groups.is_empty()
+        && (gidlist.is_null()
+            || known_remaining(gidlist as usize).is_some_and(|remaining| remaining < group_bytes))
+    {
+        return 0;
+    }
+    // SAFETY: all caller extents were checked before any publication. uid_t
+    // and gid_t remain 32-bit on LP64; no adjacent word or unused group slot
+    // is changed. Private module/file buffers cannot alias caller outputs.
     unsafe {
-        *uidp = uid;
-        *gidp = uid; // Default: gid = uid
-        *gidlenp = 0; // No supplementary groups
+        if !user.groups.is_empty() {
+            std::ptr::copy_nonoverlapping(user.groups.as_ptr(), gidlist, user.groups.len());
+        }
+        *uidp = user.uid;
+        *gidp = user.gid;
+        *gidlenp = user.groups.len() as c_int;
     }
     1
 }
 
-/// Convert a uid to a netname. Format: "unix.<uid>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Convert a uid to a Secure RPC netname in a caller-owned buffer.
+/// A null domain selects the kernel NIS domain.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname must point to a writable buffer of at least 256 bytes.
+/// A non-null domain must point to a readable C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn user2netname(
-    netname: *mut *mut c_char,
-    uid: c_ulong,
+    netname: *mut c_char,
+    uid: libc::uid_t,
     domain: *const c_char,
 ) -> c_int {
     if netname.is_null() {
         return 0;
     }
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
     let domain_owned = if domain.is_null() {
-        b"localhost".to_vec()
+        rpc_netname_system_component(false)
     } else {
-        match unsafe { read_bounded_cstr(domain) } {
-            Some(b) => b,
-            None => return 0,
-        }
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(domain) }
     };
-    let domain_str = match std::str::from_utf8(&domain_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Some(domain_owned) = domain_owned else {
+        return 0;
     };
-    let name = format!("unix.{}@{}\0", uid, domain_str);
-    // Sibling of host2netname: POSIX returns a buffer freed by the caller's
-    // free(), so use the FrankenLibC allocator entrypoint for a matched public
-    // alloc/free pair without a source-level host call-through.
-    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
-    if buf.is_null() {
+    // GNU reserves space for the longest signed uid before stripping a dot.
+    // A rejected user domain must leave the entire destination unchanged.
+    if domain_owned.len() > 237 {
         return 0;
     }
-    unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.cast(), name.len());
-        *netname = buf;
-    }
-    1
+    let domain = domain_owned.strip_suffix(b".").unwrap_or(&domain_owned);
+    let identity = (uid as i32).to_string();
+    // SAFETY: the output is non-null and the publisher checks its known extent.
+    unsafe { rpc_netname_write(netname, identity.as_bytes(), domain) }
 }
 
 /// Get time from a remote time server (RFC 868). Returns -1 (failure).
@@ -3520,17 +3987,4 @@ pub unsafe extern "C" fn bindresvport6(sd: c_int, sin6: *mut c_void) -> c_int {
 // The pmap_getport above already handles this with u16 return type.
 // ===========================================================================
 
-// ===========================================================================
-// RPC global variable note
-// ===========================================================================
-//
-// The following are global variables in glibc, NOT functions:
-//   svc_fdset, svc_max_pollfd, svc_pollfd, _null_auth, rpc_createerr,
-//   rexecoptions, svcauthdes_stats
-//
-// For LD_PRELOAD interposition these are automatically resolved from
-// glibc's data segment. We do NOT re-export them here because:
-// 1. Rust cannot reliably export mutable global C data with correct ABI
-// 2. Programs link against glibc's copy directly
-// 3. The __rpc_thread_* accessors above provide function-based access
-//    to the thread-local variants where needed.
+// =================================

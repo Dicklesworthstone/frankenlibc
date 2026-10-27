@@ -132,7 +132,6 @@ use crate::stdio_abi::{vasprintf, vdprintf, vfprintf, vprintf, vsnprintf};
 // compiler is the signature check -- an `extern` declaration that disagreed with
 // fl's definition fails at the call site rather than silently binding to
 // something else, which is the whole point of importing rather than declaring.
-use crate::stdio_abi::{fgets, fread};
 use crate::unistd_abi::vsyslog;
 use crate::wchar_abi::{
     fgetws, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf, vswprintf, vwprintf, wcsnrtombs, wcsrtombs,
@@ -345,9 +344,11 @@ pub unsafe extern "C" fn __stpncpy_chk(
 }
 
 // ── printf family (variadic → va_list forwarding) ──────────────────────────
+// Registered render/arginfo/type callbacks may unwind. Each forwarding frame
+// must preserve that ABI so the formatting engine's stream/buffer guards run.
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sprintf_chk(
+pub unsafe extern "C-unwind" fn __sprintf_chk(
     buf: *mut c_char,
     _flag: c_int,
     buflen: usize,
@@ -363,7 +364,7 @@ pub unsafe extern "C" fn __sprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __snprintf_chk(
+pub unsafe extern "C-unwind" fn __snprintf_chk(
     buf: *mut c_char,
     maxlen: usize,
     _flag: c_int,
@@ -379,7 +380,7 @@ pub unsafe extern "C" fn __snprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsprintf_chk(
+pub unsafe extern "C-unwind" fn __vsprintf_chk(
     buf: *mut c_char,
     _flag: c_int,
     buflen: usize,
@@ -394,7 +395,7 @@ pub unsafe extern "C" fn __vsprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsnprintf_chk(
+pub unsafe extern "C-unwind" fn __vsnprintf_chk(
     buf: *mut c_char,
     maxlen: usize,
     _flag: c_int,
@@ -409,7 +410,7 @@ pub unsafe extern "C" fn __vsnprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fprintf_chk(
+pub unsafe extern "C-unwind" fn __fprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -420,7 +421,7 @@ pub unsafe extern "C" fn __fprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vfprintf_chk(
+pub unsafe extern "C-unwind" fn __vfprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -430,18 +431,26 @@ pub unsafe extern "C" fn __vfprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __printf_chk(_flag: c_int, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __printf_chk(
+    _flag: c_int,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { vprintf(fmt, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vprintf_chk(_flag: c_int, fmt: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __vprintf_chk(
+    _flag: c_int,
+    fmt: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
     unsafe { vprintf(fmt, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __dprintf_chk(
+pub unsafe extern "C-unwind" fn __dprintf_chk(
     fd: c_int,
     _flag: c_int,
     fmt: *const c_char,
@@ -452,7 +461,7 @@ pub unsafe extern "C" fn __dprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vdprintf_chk(
+pub unsafe extern "C-unwind" fn __vdprintf_chk(
     fd: c_int,
     _flag: c_int,
     fmt: *const c_char,
@@ -462,7 +471,7 @@ pub unsafe extern "C" fn __vdprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __asprintf_chk(
+pub unsafe extern "C-unwind" fn __asprintf_chk(
     strp: *mut *mut c_char,
     _flag: c_int,
     fmt: *const c_char,
@@ -473,7 +482,7 @@ pub unsafe extern "C" fn __asprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vasprintf_chk(
+pub unsafe extern "C-unwind" fn __vasprintf_chk(
     strp: *mut *mut c_char,
     _flag: c_int,
     fmt: *const c_char,
@@ -517,19 +526,20 @@ unsafe fn fgets_chk_common(
     buflen: usize,
     n: c_int,
     stream: *mut c_void,
+    caller: usize,
 ) -> *mut c_char {
     // A non-positive `n` returns NULL rather than aborting — `n as usize` would
     // otherwise turn a negative count into a huge one — and an unknown size
     // cannot bound anything.
     if n <= 0 || buflen == usize::MAX {
         // SAFETY: caller's contract.
-        return unsafe { fgets(buf, n, stream) };
+        return unsafe { crate::stdio_abi::fgets_for_caller(buf, n, stream, caller) };
     }
 
     // Inside glibc's bound: pass through untouched, which is what it does.
     if (n as usize) <= buflen {
         // SAFETY: caller's contract.
-        return unsafe { fgets(buf, n, stream) };
+        return unsafe { crate::stdio_abi::fgets_for_caller(buf, n, stream, caller) };
     }
 
     // `n` exceeds the buffer, so bound the read to what it holds. `fgets` writes
@@ -537,7 +547,7 @@ unsafe fn fgets_chk_common(
     // `buflen` can never write past the buffer whatever the content is.
     let clamped = buflen.min(n as usize) as c_int;
     // SAFETY: `clamped` is at most the buffer's byte capacity.
-    let result = unsafe { fgets(buf, clamped, stream) };
+    let result = unsafe { crate::stdio_abi::fgets_for_caller(buf, clamped, stream, caller) };
     if result.is_null() {
         return result;
     }
@@ -560,7 +570,7 @@ unsafe fn fgets_chk_common(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fgets_chk(
+pub unsafe extern "C-unwind" fn __fgets_chk(
     buf: *mut c_char,
     buflen: usize,
     n: c_int,
@@ -580,11 +590,19 @@ pub unsafe extern "C" fn __fgets_chk(
     // `__fgetws_chk`/`__fgetws_unlocked_chk` already got this right, which is
     // what made the narrow pair's version look deliberate rather than a slip.
     // SAFETY: delegates to the shared rule; `fgets` is fl's own narrow reader.
-    unsafe { fgets_chk_common(buf, buflen, n, stream) }
+    unsafe {
+        fgets_chk_common(
+            buf,
+            buflen,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fgets_unlocked_chk(
+pub unsafe extern "C-unwind" fn __fgets_unlocked_chk(
     buf: *mut c_char,
     buflen: usize,
     n: c_int,
@@ -604,11 +622,19 @@ pub unsafe extern "C" fn __fgets_unlocked_chk(
     // `__fgetws_chk`/`__fgetws_unlocked_chk` already got this right, which is
     // what made the narrow pair's version look deliberate rather than a slip.
     // SAFETY: delegates to the shared rule; `fgets` is fl's own narrow reader.
-    unsafe { fgets_chk_common(buf, buflen, n, stream) }
+    unsafe {
+        fgets_chk_common(
+            buf,
+            buflen,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fread_chk(
+pub unsafe extern "C-unwind" fn __fread_chk(
     buf: *mut c_void,
     _buflen: usize,
     size: usize,
@@ -616,11 +642,19 @@ pub unsafe extern "C" fn __fread_chk(
     stream: *mut c_void,
 ) -> usize {
     // Skip fortify check: see __fread_unlocked_chk comment.
-    unsafe { fread(buf, size, nmemb, stream) }
+    unsafe {
+        crate::stdio_abi::fread_for_caller(
+            buf,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fread_unlocked_chk(
+pub unsafe extern "C-unwind" fn __fread_unlocked_chk(
     buf: *mut c_void,
     _buflen: usize,
     size: usize,
@@ -631,7 +665,15 @@ pub unsafe extern "C" fn __fread_unlocked_chk(
     // which is always <= nmemb. The buffer overflow check is a compile-time
     // defense that can produce false positives when buflen doesn't match
     // the runtime reality (e.g., libsystemd's internal buffers).
-    unsafe { fread(buf, size, nmemb, stream) }
+    unsafe {
+        crate::stdio_abi::fread_for_caller(
+            buf,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1096,7 +1138,7 @@ pub unsafe extern "C" fn __wmemset_chk(
 // ── Wide printf ────────────────────────────────────────────────────────────
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __swprintf_chk(
+pub unsafe extern "C-unwind" fn __swprintf_chk(
     buf: *mut WcharT,
     maxlen: usize,
     _flag: c_int,
@@ -1116,7 +1158,7 @@ pub unsafe extern "C" fn __swprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vswprintf_chk(
+pub unsafe extern "C-unwind" fn __vswprintf_chk(
     buf: *mut WcharT,
     maxlen: usize,
     _flag: c_int,
@@ -1132,13 +1174,17 @@ pub unsafe extern "C" fn __vswprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wprintf_chk(_flag: c_int, fmt: *const WcharT, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __wprintf_chk(
+    _flag: c_int,
+    fmt: *const WcharT,
+    mut args: ...
+) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { vwprintf(fmt, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vwprintf_chk(
+pub unsafe extern "C-unwind" fn __vwprintf_chk(
     _flag: c_int,
     fmt: *const WcharT,
     ap: *mut c_void,
@@ -1147,7 +1193,7 @@ pub unsafe extern "C" fn __vwprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fwprintf_chk(
+pub unsafe extern "C-unwind" fn __fwprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const WcharT,
@@ -1158,7 +1204,7 @@ pub unsafe extern "C" fn __fwprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vfwprintf_chk(
+pub unsafe extern "C-unwind" fn __vfwprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const WcharT,

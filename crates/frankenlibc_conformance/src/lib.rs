@@ -2674,8 +2674,11 @@ fn rpc_legacy_network_netname_class(ptr: *const c_char) -> &'static str {
     }
     // SAFETY: caller passes a local buffer that getnetname NUL-terminates on success.
     let value = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-    if value.starts_with("unix.") && value.ends_with("@localhost") {
-        "UNIX_LOCALHOST"
+    if value
+        .strip_prefix("unix.")
+        .is_some_and(|identity| identity.contains('@'))
+    {
+        "UNIX_NETNAME"
     } else {
         "OTHER"
     }

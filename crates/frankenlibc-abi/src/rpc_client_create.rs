@@ -2,8 +2,10 @@
 //! Reuse the native resolver, portmapper, transport and codec ownership paths.
 //! No host RPC delegation or process-global client cache.
 
-use super::{Timeval, XdrProc, __rpc_thread_createerr, c_char, c_int, c_ulong,
-            c_void, read_bounded_cstr, rpc_udp, set_abi_errno};
+use super::{
+    __rpc_thread_createerr, Timeval, XdrProc, c_char, c_int, c_ulong, c_void, read_bounded_cstr,
+    rpc_udp, set_abi_errno,
+};
 
 /// Create an IPv4 RPC client using the native resolver and UDP/TCP transports.
 /// The transport owns portmapper discovery and publishes its detailed creation
@@ -19,14 +21,14 @@ pub unsafe extern "C" fn clnt_create(
         Some(name) if name == b"udp" => libc::IPPROTO_UDP,
         Some(name) if name == b"tcp" => libc::IPPROTO_TCP,
         _ => {
-            rpc_udp::creation_status(17); // RPC_UNKNOWNPROTO
+            rpc_udp::creation_status(17, libc::EPFNOSUPPORT); // RPC_UNKNOWNPROTO
             return std::ptr::null_mut();
         }
     };
-    let name = unsafe { read_bounded_cstr(host) }
-        .and_then(|bytes| std::ffi::CString::new(bytes).ok());
+    let name =
+        unsafe { read_bounded_cstr(host) }.and_then(|bytes| std::ffi::CString::new(bytes).ok());
     let Some(name) = name else {
-        rpc_udp::creation_status(13); // RPC_UNKNOWNHOST
+        rpc_udp::creation_status(13, 0); // RPC_UNKNOWNHOST
         return std::ptr::null_mut();
     };
     let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
@@ -42,7 +44,7 @@ pub unsafe extern "C" fn clnt_create(
         crate::resolv_abi::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut result)
     } != 0
     {
-        rpc_udp::creation_status(13);
+        rpc_udp::creation_status(13, 0);
         return std::ptr::null_mut();
     }
 
@@ -68,8 +70,7 @@ pub unsafe extern "C" fn clnt_create(
             && !entry.ai_addr.is_null()
             && entry.ai_addrlen as usize >= std::mem::size_of::<libc::sockaddr_in>()
         {
-            let mut address =
-                unsafe { entry.ai_addr.cast::<libc::sockaddr_in>().read_unaligned() };
+            let mut address = unsafe { entry.ai_addr.cast::<libc::sockaddr_in>().read_unaligned() };
             address.sin_port = 0;
             let mut descriptor = -1; // Construct an owned, not borrowed, socket.
             return if protocol == libc::IPPROTO_UDP {
@@ -102,28 +103,29 @@ pub unsafe extern "C" fn clnt_create(
         }
         current = entry.ai_next;
     }
-    rpc_udp::creation_status(13);
+    rpc_udp::creation_status(13, 0);
     std::ptr::null_mut()
 }
 
 /// Execute a one-shot UDP RPC using the native CLIENT and XDR implementations.
-/// The public convenience ABI takes C `int` identifiers; interpret their bits
-/// as unsigned wire words rather than sign-extending into the LP64 interface.
+/// The GNU LP64 ABI takes `unsigned long` identifiers. Discovery rejects a
+/// program/version outside the 32-bit wire domain; the procedure uses its
+/// low 32 bits, matching the GNU call header encoder.
 /// Each call owns and retires its client; no process-global client cache or
 /// lock is retained across application encoder/decoder callbacks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn callrpc(
+pub unsafe extern "C-unwind" fn callrpc(
     host: *const c_char,
-    prognum: c_int,
-    versnum: c_int,
-    procnum: c_int,
+    prognum: c_ulong,
+    versnum: c_ulong,
+    procnum: c_ulong,
     inproc: *mut c_void,
     in_: *mut c_char,
     outproc: *mut c_void,
     out: *mut c_char,
 ) -> c_int {
     if host.is_null() {
-        rpc_udp::creation_status(13); // RPC_UNKNOWNHOST
+        rpc_udp::creation_status(13, 0); // RPC_UNKNOWNHOST
         return 13;
     }
     // Reject missing codecs without constructing a client or issuing a call.
@@ -134,14 +136,7 @@ pub unsafe extern "C" fn callrpc(
     if outproc.is_null() {
         return 2; // RPC_CANTDECODERES
     }
-    let client = unsafe {
-        clnt_create(
-            host,
-            prognum as u32 as u64,
-            versnum as u32 as u64,
-            c"udp".as_ptr(),
-        )
-    };
+    let client = unsafe { clnt_create(host, prognum, versnum, c"udp".as_ptr()) };
     if client.is_null() {
         // Native constructors publish the top-level discovery/transport status
         // together with the more detailed nested RPC error in this TLS slot.
@@ -153,7 +148,7 @@ pub unsafe extern "C" fn callrpc(
     unsafe {
         rpc_udp::call_once(
             client,
-            procnum as u32 as u64,
+            procnum,
             Some(encode),
             in_.cast(),
             Some(decode),

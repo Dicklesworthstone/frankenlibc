@@ -5,8 +5,8 @@
 //! is a retry authorization. All attempts share one absolute call deadline.
 
 use super::{
-    Client, Data, Deadline, OpaqueAuth, RemoteError, Reply, RpcError, Timeval, Xdr, XdrProc,
-    exchange_until, nanos, transaction_id, wire,
+    Client, Data, Deadline, OpaqueAuth, RPC_SYSTEMERROR, RemoteError, Reply, RpcError, Timeval,
+    Xdr, XdrProc, exchange_until, nanos, transaction_id, wire,
 };
 use std::ffi::{c_int, c_uint, c_void};
 
@@ -21,11 +21,30 @@ pub(super) unsafe fn invoke(
     result: *mut c_void,
     timeout: Timeval,
 ) -> Result<(), RpcError> {
-    let timeout = nanos(data.timeout.unwrap_or(timeout), false)?;
+    // A memory call is synchronous and GNU ignores its timeval, including
+    // invalid values. Do not impose a network deadline or perform a clock read.
+    let timeout = if data.raw {
+        0
+    } else {
+        nanos(data.timeout.unwrap_or(timeout), false)?
+    };
     let retry = nanos(data.retry, true)?;
-    let deadline = Deadline::new(timeout)?;
+    let deadline = if data.raw {
+        Deadline {
+            at: 0,
+            nonblocking: true,
+        }
+    } else {
+        Deadline::new(timeout)?
+    };
     let arguments = arguments.ok_or_else(|| RpcError::status(1))?;
     let results = results.ok_or_else(|| RpcError::status(2))?;
+    // SAFETY: C and C-unwind use the same public callback layout. Application
+    // codecs may throw or call pthread_exit; all intervening Rust ownership
+    // guards must run instead of aborting at a non-unwinding callback edge.
+    type Codec = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int;
+    let arguments: Codec = unsafe { std::mem::transmute(arguments) };
+    let results: Codec = unsafe { std::mem::transmute(results) };
     let auth = unsafe { (*client).auth };
     if auth.is_null() || unsafe { (*auth).operations.is_null() } {
         return Err(RpcError::remote(RemoteError::Authentication(7)));
@@ -75,7 +94,11 @@ pub(super) unsafe fn invoke(
         }
         // Data is exclusively gated. Reentrant calls/control/free/destroy fail without
         // accessing it; no Rust mutable reference to the AUTH or CLIENT is formed.
-        if unsafe { ((*(*auth).operations).marshal)(auth, &mut xdr) } == 0
+        // SAFETY: the installed AUTH table follows the public glibc layout;
+        // its application callbacks have the same foreign-unwind contract.
+        let marshal: unsafe extern "C-unwind" fn(*mut super::Auth, *mut Xdr) -> c_int =
+            unsafe { std::mem::transmute((*(*auth).operations).marshal) };
+        if unsafe { marshal(auth, &mut xdr) } == 0
             || unsafe { arguments((&mut xdr as *mut Xdr).cast(), argument) } == 0
         {
             return Err(RpcError::status(1));
@@ -84,7 +107,21 @@ pub(super) unsafe fn invoke(
             .checked_add(unsafe { super::super::mem_pos(&xdr) } as usize)
             .filter(|&length| length <= data.send.len())
             .ok_or_else(|| RpcError::status(1))?;
-        let length = if let Some(stream) = &mut data.stream {
+        let length = if data.raw {
+            // SAFETY: request/reply are disjoint owned buffers, and the bridge
+            // releases TLS/registry/operation locks before dispatching C code.
+            unsafe { super::super::rpc_svc::raw_exchange(&data.send[..used], &mut data.receive) }
+                .map_err(|error| {
+                    RpcError::system(
+                        if error == libc::ENOMSG {
+                            2
+                        } else {
+                            RPC_SYSTEMERROR
+                        },
+                        error,
+                    )
+                })?
+        } else if let Some(stream) = &mut data.stream {
             stream.exchange(
                 &data.socket,
                 &data.send[..used],
@@ -108,14 +145,21 @@ pub(super) unsafe fn invoke(
                 // Only an explicit server rejection authorizes re-encoding/retry.
                 // Transport failures and an invalid verifier on an ACCEPTED reply
                 // must never replay a procedure that may already have executed.
-                deadline.check()?;
-                if unsafe { ((*(*auth).operations).refresh)(auth) } == 0 {
+                if !data.raw {
+                    deadline.check()?;
+                }
+                // SAFETY: the live AUTH table's refresh callback has this ABI.
+                let refresh: unsafe extern "C-unwind" fn(*mut super::Auth) -> c_int =
+                    unsafe { std::mem::transmute((*(*auth).operations).refresh) };
+                if unsafe { refresh(auth) } == 0 {
                     return Err(RpcError::remote(RemoteError::Authentication(2)));
                 }
                 refreshes += 1;
                 // A caller callback cannot be preempted, but its elapsed time must
                 // not buy another transport budget or another send after expiry.
-                deadline.check()?;
+                if !data.raw {
+                    deadline.check()?;
+                }
                 continue;
             }
             Reply::Failure(error) => return Err(RpcError::remote(error)),
@@ -131,7 +175,12 @@ pub(super) unsafe fn invoke(
                     oa_base: verifier_bytes.as_mut_ptr().cast(),
                     oa_length: verifier.len() as c_uint,
                 };
-                if unsafe { ((*(*auth).operations).validate)(auth, &mut verifier) } == 0 {
+                // SAFETY: the live AUTH table's verifier callback has this ABI.
+                let validate: unsafe extern "C-unwind" fn(
+                    *mut super::Auth,
+                    *mut OpaqueAuth,
+                ) -> c_int = unsafe { std::mem::transmute((*(*auth).operations).validate) };
+                if unsafe { validate(auth, &mut verifier) } == 0 {
                     return Err(RpcError::remote(RemoteError::Authentication(6)));
                 }
                 // SAFETY: range came from the bounded envelope parser; callbacks see

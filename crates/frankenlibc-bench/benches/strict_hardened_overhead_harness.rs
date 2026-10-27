@@ -22,6 +22,34 @@ use frankenlibc_membrane::runtime_math::{
 // timing and strict fast-path budget attribution.
 
 fn main() {
+    let mut arguments = env::args_os().skip(1);
+    if let Some(argument) = arguments.next()
+        && argument == "--deployed"
+    {
+        let library = arguments
+            .next()
+            .expect("--deployed requires a release library");
+        let current = env::current_dir().expect("cannot locate benchmark working directory");
+        let root = current
+            .ancestors()
+            .find(|path| path.join("scripts/check_membrane_access.py").is_file())
+            .expect("run the deployed bench inside the project or its bound source snapshot");
+        let output = output_dir(selected_lane()).join("deployed");
+        // The measured process is the provider-pinned C fixture under preload,
+        // never this executable's linked Rust implementations. Reuse the exact
+        // runner consumed by the corpus gate, including its failure exit code.
+        let status = Command::new("python3")
+            .current_dir(root)
+            .arg(root.join("scripts/check_membrane_access.py"))
+            .arg(library)
+            .arg("--benchmark")
+            .arg("--output")
+            .arg(output)
+            .args(arguments)
+            .status()
+            .expect("failed to execute deployed ABI overhead runner");
+        std::process::exit(status.code().unwrap_or(2));
+    }
     let lane = selected_lane();
     let out_dir = output_dir(lane);
     let artifact_refs = artifact_refs(&out_dir);

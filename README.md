@@ -47,7 +47,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Host-backed and unsupported subsets are explicit | **1,272 `WrapsHostLibc` (30.9%), 0 `GlibcCallThrough`, 18 `Stub` (0.4%)** |
 | Interposition has a checked workload snapshot | The committed 2026-09-24 preload artifact reports **189 passes / 0 fails / 4 optional skips / 1 xfail** across strict + hardened modes. It was produced from source commit `a8a4110b…`, not current HEAD, so it is historical evidence rather than a current-release result (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
-| Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
+| Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
 | Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
 | Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 control-kernel modules** with live execution paths, not just design docs (which calls reach them depends on mode; see [Runtime Math Controllers](#runtime-math-controllers)) |
 | Build-time proof-oriented infrastructure | Three supplied Gram matrices are checked for PSD/Cholesky validity and an algebraic recomposition identity; a source scanner inventories selected atomic sites. These are consistency checks, not proofs of allocator fragmentation, thread safety, or size-class correctness (`crates/frankenlibc-membrane/build.rs`) |
@@ -194,7 +194,17 @@ Total exports in the checked taxonomy snapshot: **4119**.
 
 The 18 explicit stubs are: `_authenticate`, `callrpc`, `clnt_create`, `clnt_perror`, `clnt_sperror`, `clntraw_create`, `clntunix_create`, `register_printf_function`, `register_printf_modifier`, `register_printf_specifier`, `register_printf_type`, `registerrpc`, `svcfd_create`, `svcraw_create`, `svctcp_create`, `svcudp_enablecache`, `svcunix_create`, and `svcunixfd_create`. Fourteen are SunRPC APIs; four are printf registration APIs.
 
+That list describes the dated taxonomy snapshot. Subsequent native RPC work now supplies bounded behavior for `_authenticate` (AUTH_NONE/AUTH_SYS), `callrpc`, `clnt_create`, `clnt_perror`, `clnt_sperror`, `clntraw_create`, `clntunix_create`, `registerrpc`, `svcudp_enablecache`, `svcfd_create`, `svcraw_create`, `svctcp_create`, `svcunix_create`, and `svcunixfd_create`. The stream service paths support IPv4 and Unix listeners, incremental record decoding, queued nonblocking replies, and callback unwinding. Unix services receive and send kernel credentials, retain the local verifier per transport, and reject received descriptors and credential changes within a record. Listener socket pathnames remain after destruction. Service records are limited to 16 MiB and 4096 fragments; service constructor buffer sizes are hints. `svcfd_create` currently requires a connected stream socket, and `svcunixfd_create` requires a connected Unix stream socket. Full Unix service caller-address compatibility remains unqualified.
+
+The Unix client shares the native stream client's deadlines, framing, authentication callbacks, and ownership controls. It supports pathname connections and borrowed connected Unix sockets, sends effective process credentials, and returns the complete `sockaddr_un` through client address controls. Borrowed descriptors retain their file flags; Unix I/O enables `SO_PASSCRED`. Client call/reply buffers are currently hard bounds, with a 16 MiB maximum. The gate checks GNU Unix XID and thread-local creation-error behavior, authenticated client/server calls, partial-reply timeout recovery, and received-descriptor cleanup. The service gate in `scripts/check_rpc_svc.py` distinguishes host comparisons from native bounds/lifetime tests, including acceptance of empty nonfinal fragments that glibc rejects.
+
+The raw constructors now connect caller-thread memory clients and services through native XDR, authentication and dispatch, without opening a socket or registering a poll descriptor. Register the service with `svc_register(..., 0)` before calling the raw client on that thread. Each request/reply buffer is limited to 8800 bytes, including its RPC envelope. Calls are synchronous and ignore the timeout argument; recursive calls on the same client fail rather than corrupting its buffers. Construction reuses the thread's client and resets AUTH_NONE. Client control returns false; client geterr and client/service destroy are GNU-style no-ops, and logical service descriptor zero never owns stdin. The live glibc 2.43 raw round-trip probe crashed; its constructor diagnostics are retained separately from native positive tests. Socket-syscall denial, authenticated exchanges, errors, string cleanup, thread isolation and callback unwinding execute in both modes and both TLS feature configurations. Full fourteen-contract qualification remains open under `bd-rc0923-epic-eeuy4f.35`; these increments do not promote the checked taxonomy or replacement level.
+
 The classified surface is not fully native at the support-taxonomy layer. The shipping artifact is the interpose-first preload library (`libfrankenlibc_abi.so`); it remains host-glibc-dependent for the explicit `WrapsHostLibc` subset and is not a full standalone libc replacement. The staged path to a fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating host-backed rows, closing promotion-evidence gaps surfaced by the support-matrix maintenance gate, and by the L1 / L2 / L3 replacement-level promotion contracts.
+
+Secure RPC identity lookup now reads authoritative `/etc/netid` and `/etc/publickey` records. `netname2user` returns the configured 32-bit UID, primary GID and supplementary groups instead of deriving credentials from the netname; `netname2host` returns the mapped host name, and `getpublickey` returns a validated 48-digit public key. The `publickey` NSS database honors source ordering and status actions, including public GNU `netname2user` and `getpublickey` module callbacks. Invalid records, module results and undersized tracked output buffers fail before publishing caller-visible data. `scripts/check_rpc_identity.py` compares isolated files lookups with libtirpc and module policies with GNU libc, then exercises the candidate in strict and hardened modes with C and C++ callers. Secret-key decryption remains unimplemented; this increment does not qualify the complete Secure RPC surface.
+
+The GNU `printf_size` and `printf_size_info` callbacks now have native implementations and can be called directly through `<printf.h>`. They reuse the exact floating-point formatter for double, x87 long double and binary128, with narrow and wide FILE output, GNU size suffixes and error propagation. Standard `parse_printf_format` introspection now uses GNU type codes and positional argument slots, preserving untouched slots and respecting the supplied array capacity. The live differential fixture covers the C locale on x86-64, including special values, 25-digit precision and the 65,535/65,536-digit boundary. Ordinary double and extended decimal/hexadecimal output honor all four rounding directions. The gate exercises narrow buffers, allocated strings, streams and wide output, including their `v*` variants, positional width/precision, truncation counts, subnormals, carry boundaries and concurrent threads restoring their own environments. Binary64 hexadecimal subnormals retain GNU's leading-zero/exponent convention. Floating-point exception-flag parity, other locales and aarch64 remain unqualified by this gate. Run `FRANKENLIBC_TEST_LIBRARY=/absolute/path/to/libfrankenlibc_abi.so bash scripts/check_stdio_native.sh --gnu-printf` to qualify an existing artifact against the host GNU library in both modes. This command qualifies these callbacks, introspection and the original printf fixture; the full stdio gate remains separate and currently fails its legacy `_IO_2_1_*` alias check. The four `register_printf_*` APIs now register native handlers, argument readers and modifier bits, and dispatch through all twelve narrow and six wide printf entry points. Registered introspection supports positional and multiargument conversions; callbacks may recursively format or change registrations because each call releases the registry lock before invoking them. The same qualifier runs independent GNU registration fixtures, including truncation, `%n`, replacement, unregistration, fallback and wide output. One GNU mixed custom/native-fallback case emits 17 bytes and stores `%n = 17` while returning 14; its exact return-count comparison remains an explicit diagnostic, so full qualification under `bd-rc0923-epic-eeuy4f.33` and `.34` remains open.
 
 ### Claim Field Contract
 
@@ -302,9 +312,9 @@ The committed curated preload snapshot has 189 pass / 0 fail / 4 optional skips 
 
 | Crate | Purpose | Approx size |
 |---|---|---:|
-| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 50 files, ~121 kLOC |
-| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 109 files, ~75 kLOC |
-| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 197 Rust files, ~1.16 MLOC including generated codec tables |
+| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 115 Rust source files, ~216 kLOC |
+| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~82 kLOC |
+| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 201 Rust source files, ~1.16 MLOC including generated codec tables |
 | `frankenlibc-harness` | Conformance CLI, fixture capture/verify, reports, evidence tooling | 44 files, ~34 kLOC |
 | `frankenlibc-bench` | Criterion benches | 1 module, ~25 kLOC |
 | `frankenlibc-fuzz` | 66 `cargo-fuzz` targets | — |
@@ -322,7 +332,7 @@ This project is only interesting if existing binaries can talk to it. The ABI bo
 
 ### 2. Safety at the edge
 
-Unsafe C inputs are not trusted. The TSM sits at the libc boundary and classifies pointers, regions, fds, and contexts before anything meaningful happens. Safe-Rust kernels run after classification, never before.
+On membrane-wired paths, the TSM classifies pointers, regions, fds, and contexts before dispatching the protected operation. Other compatibility paths, particularly strict-mode hot paths, bypass full validation. Safe-Rust implementation code alone does not establish safety for the raw C caller.
 
 ### 3. Native by default
 
@@ -432,7 +442,7 @@ The Galois proof notes live under `docs/proofs/galois_monotonic_probability_boun
 
 The progression is geometric in spirit but not strictly so; the larger bins jump to power-of-two-friendly steps so the LargeAllocator threshold (`MAX_SMALL_SIZE = 32 KiB`) is reached without wasting slab slots on rarely-used intermediate sizes. The table is declared as `SIZE_TABLE: [usize; NUM_SIZE_CLASSES]` in `crates/frankenlibc-core/src/malloc/size_class.rs`.
 
-Each size class is backed by **64 KB slabs**. In this core model every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`). On the deployed paths today: hardened-mode allocations come from the membrane's generational arena and DO carry the SipHash fingerprint header and trailing canary (`arena.rs`); strict-mode allocations come from the segment allocator (or the host allocator) and carry NEITHER, so overflow/underflow detection is a hardened-mode property.
+Each size class is backed by **64 KB slabs**. In this core model every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`). Hardened allocations served by the membrane's generational arena carry its SipHash fingerprint header and trailing canary (`arena.rs`). Bootstrap/reentrant allocations and the uninitialized-pipeline fallback can use other providers, even in hardened mode. Strict segment/host allocations do not carry the arena metadata. Canary-based overflow/underflow detection therefore depends on the allocation's provider and a later check being reached.
 
 ### Thread-Local Magazine Cache
 
@@ -634,7 +644,7 @@ The x86_64 release path (`setjmp_abi.rs`, naked asm) uses glibc's exact 200-byte
 
 The aarch64 asm mangles too. It stores the saved frame pointer (`x29`), return address (`x30`) and stack pointer (`sp`) as `value ^ pointer_guard` (`eor`, with no rotate: glibc rotates only on x86_64; glibc also leaves `x29` in plaintext). aarch64 has no fixed TCB slot for the guard the way x86_64 has `%fs:0x30`. glibc's `__pointer_chk_guard` is a `GLIBC_PRIVATE` symbol that an interposing library cannot rely on resolving. So the guard is FrankenLibC's own `__frankenlibc_pointer_guard`, which the library's `.init_array` constructor seeds from the same `AT_RANDOM` bytes glibc uses, and the asm reads through the GOT. Unlike glibc's RELRO copy, the word stays writable after startup. `__longjmp_chk` performs the same stack-direction check there. aarch64's `jmp_buf` word layout is FrankenLibC's own; it is not byte-identical to glibc's aarch64 `__jmp_buf`. So the inspection and overwritten-return-address checks live in `tests/integration/fixture_setjmp_edges.c`, under the FrankenLibC preload, rather than in the byte-compared corpus.
 
-**aarch64 is not a shipping release target yet** (bd-aarch64-setjmp-ship-w6nh8r). The aarch64 cdylib does not build until the x86_64-only TLSDESC asm in `dlfcn_tls.rs` is gated. Even with that gate, the `global_asm!` setjmp family is not exported, so an aarch64 preload binds `setjmp`/`longjmp` to glibc while `__longjmp_chk` binds to FrankenLibC. Until that is fixed, the mangling above is verified only on the cross-built library under qemu-aarch64, and the aarch64 blocks of `fixture_setjmp_edges.c` cannot run under a real preload.
+**aarch64 remains a bring-up target with bounded release evidence** (`bd-rc0923-epic-eeuy4f.41`–`.42`). On 2026-10-23 a linked AArch64 release library passed provider-verified C probes under QEMU in strict and hardened modes, including the ARM blocks of `fixture_setjmp_edges.c`. The qualifier checks both symbol lookups and executable call bindings; GNU FORTIFY aliases such as `longjmp` to `__longjmp_chk` must resolve to the same tested library. The release build also executed 163 FORTIFY integration tests and two raw-poll tests successfully. Full workload coverage, native ARM hardware qualification and standalone replacement remain open.
 
 The guard metadata below is **not** in release builds: it does not fit glibc's layout, and rejecting cross-thread jumps would diverge from glibc in strict mode.
 
@@ -666,7 +676,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,861 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,862 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -716,7 +726,7 @@ All five claims have completion-contract artifacts under `tests/conformance/*_co
 
 ## Runtime Math Controllers
 
-`crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules. Which calls reach them depends on the mode: in hardened mode allocator and validation calls go through `RuntimeMathKernel::decide` (58 distinct runtime-math symbols in a `perf` profile of an allocation-heavy perl run, 2026-10-06), while the strict-mode hot paths bypass the kernel (no runtime-math or runtime-policy symbol at all in the same perl run under strict). Decision law for a call that reaches the kernel:
+`crates/frankenlibc-membrane/src/runtime_math/` contains ~71 controller modules. Routing is path- and mode-specific: the ABI policy's seven high-frequency hardened families return before its kernel decision, while the pointer-validation pipeline can consult a separate `RuntimeMathKernel`. A historical allocation-heavy Perl profile (2026-10-06) contained 58 runtime-math symbols in hardened mode and none in strict mode; execution in a profile does not prove that a controller changed an ABI-visible decision. That influence needs a route-specific causal test. Decision law for a call that reaches the kernel:
 
 ```
 mode + context + risk + budget + pareto + design + barrier + consistency
@@ -917,7 +927,7 @@ LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so /bin/echo hello
 
 ### Requirements
 
-- Linux (x86_64 primary; aarch64 supported and cross-compile-tested). The x86_64 release artifact targets baseline x86-64 and picks SSE4.2/AVX2/FMA kernels at run time, so no particular CPU generation is required.
+- Linux (x86_64 primary; aarch64 has bounded QEMU release/interposition qualification). The x86_64 release artifact targets baseline x86-64 and picks SSE4.2/AVX2/FMA kernels at run time, so no particular CPU generation is required.
 - Rust nightly with `rustfmt` and `clippy` (pinned via `rust-toolchain.toml`)
 - A normal Cargo workspace; no mixed package-manager build system
 
@@ -956,8 +966,8 @@ LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
 ### 5. Run the default repo gates
 
 ```bash
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --all-targets --keep-going
+cargo clippy --workspace --all-targets --keep-going -- -D warnings
 cargo test --workspace
 ```
 
@@ -969,6 +979,25 @@ bash scripts/check_c_fixture_suite.sh
 TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 ```
 
+The smoke script also enforces deployed hardened overhead: separate short
+`strlen`/`memcmp` stack and heap cases must stay within 200 ns per warmed batch
+mean, and both lexical and numeric sort100k must stay within 3x GNU libc and
+2x strict mode. Run only that performance group with
+`bash scripts/ld_preload_smoke.sh --performance-only`; this scoped invocation
+does not run the functional corpus. The same provider-pinned group is available
+through the existing bench entrypoint:
+
+```bash
+cargo bench -p frankenlibc-bench --bench strict_hardened_overhead_harness -- \
+  --deployed "$PWD/target/release/libfrankenlibc_abi.so"
+```
+
+Add `--incumbent /absolute/path/to/earlier.so` to retain a live comparison arm.
+The runner retains raw warmups, measured rows, provider checks and hashes; it
+returns nonzero on a missed budget or failed setup. Each benchmark output
+directory must be empty so a new run cannot overwrite earlier evidence. Set
+`FRANKENLIBC_OVERHEAD_HARNESS_OUT_DIR` to a fresh directory for each Cargo run.
+
 ---
 
 ## Common Commands
@@ -976,8 +1005,8 @@ TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 | Workflow | Command | What it does |
 |---|---|---|
 | Build interpose library | `cargo build -p frankenlibc-abi --release` | Produces `libfrankenlibc_abi.so` |
-| Workspace correctness gate | `cargo check --workspace --all-targets` | Compile validation |
-| Lint gate | `cargo clippy --workspace --all-targets -- -D warnings` | Lint validation |
+| Workspace correctness gate | `cargo check --workspace --all-targets --keep-going` | Compile validation across targets |
+| Lint gate | `cargo clippy --workspace --all-targets --keep-going -- -D warnings` | Lint validation across targets |
 | Test gate | `cargo test --workspace` | Unit + integration coverage |
 | Repo CI gate | `bash scripts/ci.sh` | Project-standard default gate |
 | Support-matrix drift check | `bash scripts/check_support_matrix_maintenance.sh` | Regenerates and validates maintenance report |
@@ -988,7 +1017,8 @@ TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 | Membrane verification | `cargo run -p frankenlibc-harness --bin harness -- verify-membrane --mode both --output /tmp/healing.json` | Runs strict/hardened healing oracle |
 | Benchmarking | `cargo bench -p frankenlibc-bench` | Benchmarks library hot paths |
 | Fuzzing (target) | `cargo +nightly fuzz run <target>` | Runs a `cargo-fuzz` target |
-| aarch64 cross-compile gate | `bash scripts/check_aarch64_crosscompile.sh` | Cross-compile validation |
+| aarch64 cross-compile gate | `bash scripts/check_aarch64_crosscompile.sh` | Rust frontend validation |
+| aarch64 linked-library smoke | `FRANKENLIBC_AARCH64_ARTIFACT=/absolute/path/to/libfrankenlibc_abi.so bash scripts/run_aarch64_smoke.sh run` | Dynamic providers and C behavior in both modes, with foreign-provider controls |
 | L1 dashboard freshness | `bash scripts/check_release_gate.sh` | Top-level claim coherence |
 
 Interpretation note:
@@ -1340,7 +1370,7 @@ If any source file has fewer matching atomic sites than expected, the build fail
 
 ### ABI Build Script
 
-`crates/frankenlibc-abi/build.rs` links the GNU ld version script (`libc.map`) into non-debug, non-fuzz `cdylib` builds when present. Debug and fuzz builds skip version-script linking to avoid conflicts with rustc's generated export list. Native packaging checks that need the versioned `libc.so` link the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
+The ABI manifest selects `crates/frankenlibc-abi/build_elf.rs`, which runs the existing `build.rs` policy checks. For Linux x86_64 interpose builds it also supplies `version_scripts/fromfp.map` version nodes for the C23 `fromfp` exports and the corresponding linker handling. This is distinct from applying the full `libc.map` to every default interpose export. Native packaging checks that need the versioned `libc.so` link the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
 
 ---
 
@@ -1428,7 +1458,7 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 |---|---|---|---|
 | `string` | Strong native ownership | Full classified surface, hardened single-pass kernels, tracked-region bound sweep, internal-alias differentials | Continued metamorphic and fuzz coverage expansion |
 | `stdio` | Native end-to-end | Full printf engine, scanf, FILE I/O, `_IO_*` internals, memstreams, vis() family | Edge-case stress closure |
-| `malloc` | Split deployed paths | Strict mode uses the segment allocator with host fallback; hardened mode uses the generational arena with fingerprint/canary metadata. The core slab/magazine model is not the deployed provider | Multi-threaded allocation architecture and performance (`bd-rc0923-epic-eeuy4f.26`) |
+| `malloc` | Split deployed paths | Strict mode uses the segment allocator with host fallback; hardened mode normally uses the generational arena. Bootstrap/reentry and uninitialized-pipeline fallbacks bypass that arena. The core slab/magazine model is not the deployed provider | Multi-threaded allocation architecture and performance (`bd-rc0923-epic-eeuy4f.26`) |
 | `pthread` | Mixed native + host-backed | Native mutex/condvar/rwlock paths; thread creation, join, and cancellation use host NPTL by default under preload | Native lifecycle/cancellation and stress closure |
 | `resolver` | Native resolver with bounded NSS coverage | Numeric, `/etc/hosts`, nsswitch `hosts:` ordering, native UDP/TCP DNS, CNAME/PTR, multi-address addrinfo, IDNA, b64 | NSS module breadth and policy/concurrency closure (`bd-rc0923-epic-eeuy4f.19`) |
 | `locale` | Native bootstrap | C/POSIX, `setlocale`, `localeconv`, `nl_langinfo`, ctype/wchar locale variants, catgets | Full localedata breadth |
@@ -1441,7 +1471,7 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 
 - `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
-- `resolver`: `IMPLEMENTED_PARTIAL` — bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign.
+- `resolver`: `IMPLEMENTED_PARTIAL` — source implements numeric/files/native DNS lookup and native addrinfo-list disposal, with installed NSS modules loaded through the host bridge. The support taxonomy still labels `getaddrinfo` and `freeaddrinfo` host-backed; that classification needs reconciliation with provider evidence. Deferred scope: NSS breadth, policy/concurrency closure and full retry/cache/poisoning hardening qualification.
 - `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
 - `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the engine contains about 300 `Encoding` variants; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope is per-codec conformance and deterministic table-generation closure, not the obsolete four-codec phase-1 breadth.
@@ -2183,7 +2213,9 @@ Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) 
 
 ## Cargo Profile and Build Configuration
 
-The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). LTO, a single codegen unit and stripping are untried tuning for the shipped artifact, not current settings. The release artifact is built for **baseline x86-64** (`.cargo/config.toml` adds no target features) and runs on any x86_64 CPU; its SSE4.2/AVX/AVX2/AVX-512 string and memory kernels and the AVX2+FMA twins of the hot math kernels are selected per call from the CPUID bits `std` caches (bd-rc0923-epic-eeuy4f.13). `scripts/check_baseline_isa.sh` keeps it that way: an objdump allow-list of the dispatch-guarded functions, plus the C fixture suite and a few real programs under `qemu-x86_64 -cpu Nehalem` and `-cpu qemu64`. The `release-x86-64-v3` profile (`cargo build -p frankenlibc-abi --profile release-x86-64-v3`, output in `target/release-x86-64-v3/`) compiles everything with `+avx2,+fma` for A/B benchmarking; that build refuses to start on a CPU without the extensions it was compiled for, with a message naming them and exit 127, instead of dying of SIGILL.
+The workspace inherits Cargo's release defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`), with a package override setting **`codegen-units = 1` for `frankenlibc-abi`** so versioned math entries share an ELF object. LTO and stripping are not enabled for the default release artifact.
+
+The default target is **baseline x86-64** (`.cargo/config.toml` adds no target features). Its SSE4.2/AVX/AVX2/AVX-512 string and memory kernels and AVX2+FMA math variants require runtime dispatch. `scripts/check_baseline_isa.sh` qualifies an actual artifact using an objdump allow-list, C fixtures and selected programs under `qemu-x86_64 -cpu Nehalem` and `-cpu qemu64`. Source configuration alone is not that artifact qualification. The `release-x86-64-v3` profile (`cargo build -p frankenlibc-abi --profile release-x86-64-v3`, output in `target/release-x86-64-v3/`) enables `+avx2,+fma` for A/B benchmarking and requires those CPU extensions; it is not the default release artifact.
 
 `Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-08-31`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
 
@@ -2271,8 +2303,8 @@ Run the curated preload smoke battery: `TIMEOUT_SECONDS=10 bash scripts/ld_prelo
 The default gate is `bash scripts/ci.sh`, which runs:
 
 1. `cargo fmt --check`
-2. `cargo check --workspace --all-targets`
-3. `cargo clippy --workspace --all-targets -- -D warnings`
+2. `cargo check --workspace --all-targets --keep-going`
+3. `cargo clippy --workspace --all-targets --keep-going -- -D warnings`
 4. `cargo test --workspace`
 5. Repo-standard drift checks (`scripts/check_*.sh` for support-matrix, runtime env, claim fields)
 
@@ -2808,25 +2840,23 @@ This pattern lets the project add a new behavior contract by *capturing* it from
 
 ## Cross-Architecture: aarch64 Today
 
-x86_64 is the primary target. aarch64 is gated and tested via cross-compile. The aarch64-specific completion contracts:
+x86_64 is the primary target. aarch64 has source branches, a Rust type-check gate, and bounded linked-release QEMU evidence. The aarch64-specific completion contracts describe intended coverage:
 
 - `aarch64_arch_regression_gate_completion_contract.v1.json` — Ensures aarch64 builds remain green
 - `aarch64_conformance_perf_matrix_completion_contract.v1.json` — Performance parity matrix
 - `aarch64_raw_syscall_tls_completion_contract.v1.json` — TLS layout differences and raw-syscall correctness
 
-The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) builds the workspace with `--target aarch64-unknown-linux-gnu` and asserts that:
+The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) runs `cargo check` for the core and ABI crates with `--target aarch64-unknown-linux-gnu`. It checks the Rust frontend paths, including architecture-specific source and inline-assembly declarations. It does not link a release library, verify its dynamic symbols, or execute syscall/TLS behavior.
 
-- All crates compile cleanly
-- The version script `libc.map` exports the right symbols
-- The native syscall layer correctly uses the aarch64 syscall numbering (different from x86_64)
-- The futex implementation uses the right argument-passing convention
-- TLS access uses the aarch64-specific `tpidr_el0` register rather than x86_64's `fs:`
+`scripts/run_aarch64_smoke.sh` qualifies an explicit linked AArch64 library. It checks ELF architecture and exports, builds dynamic C probes, verifies both lookup and call-binding providers, and executes allocator/string, constructor, TLS/thread, FORTIFY, raw-I/O and jump cases in strict and hardened modes. Volatile function pointers keep compiler inlining from replacing the memory and printf operations being tested. Partial foreign interposers must be rejected; missing tools/artifacts, compile failures, static probes and timeouts cannot qualify. Generated sources, binaries and logs are retained.
+
+The 2026-10-23 release artifact (`sha256:6445302cfa3a3abf93b85188567ad200674e1305f95d177fb88f810837070650`) passed 26 named-provider checks and 48 behavior checks per mode, with both fortified and unfortified callers. A renamed library also passed, including its ARM jump-edge cases. An eight-case acceptance run verified these positives and rejection of missing artifacts, wrong architecture, missing compiler, compile failure, static-only execution and compiler timeout. The artifact was built through RCH from `5e9008051` plus the recorded ARM repair overlay; exact commands and receipts are attached to `bd-rc0923-epic-eeuy4f.41`. This is L0 interposition evidence, with full ABI differential coverage and hardware performance still unqualified.
 
 What's *not* yet done on aarch64:
 
 - Full ABI-fixture differential coverage (the fixture corpus is x86_64-captured)
 - Hardware-transactional-memory fast path (HTM is x86-specific; aarch64 needs its own LSE / SVE equivalents)
-- Production `LD_PRELOAD` smoke run (curated battery is x86_64-only today)
+- Broad production-workload `LD_PRELOAD` smoke run (the curated real-program battery is x86_64-only today)
 
 RISC-V, MIPS, and others are explicitly out of scope for v0.1.
 
@@ -3879,19 +3909,19 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,829 native/direct-syscall rows (68.7%), 1,272 host-backed wrapper rows (30.9%), and 18 explicit stubs (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,878 |
-| `crates/frankenlibc-abi/src/` | 114 Rust files, 214,982 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,160 lines |
-| `crates/frankenlibc-core/src/` | 201 Rust files, 1,164,450 lines including generated codec tables |
+| Tracked Rust files in `crates/` | 2,879 |
+| `crates/frankenlibc-abi/src/` | 115 Rust files, 216,293 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,393 lines |
+| `crates/frankenlibc-core/src/` | 201 Rust files, 1,164,398 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
-| C integration fixtures | 122 |
+| C integration fixtures | 123 |
 | Completion contracts | 282 (267 checker scripts: 147 `executes`, 120 `receipt`) |
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Top-level shell/scripts files | 718 files under `scripts/` |
+| Top-level shell/scripts files | 719 files under `scripts/` |
 | GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,049 lines (supplied-matrix consistency + atomic-site inventory) |
 | Curated `LD_PRELOAD` snapshot | 189 pass / 0 fail / 4 optional skip + 1 xfail at source `a8a4110b…`; stale relative to HEAD |

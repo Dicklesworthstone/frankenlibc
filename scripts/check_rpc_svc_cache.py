@@ -16,7 +16,8 @@ import subprocess
 CASES = ['cache-basic', 'cache-peers', 'cache-eviction', 'cache-error',
          'cache-burst', 'cache-transport', 'cache-failed-encode', 'cache-body',
          'cache-credentials', 'cache-generation', 'cache-limits', 'cache-destroy',
-         'cache-callback-exit', 'cache-oversized', 'cache-input-snapshot']
+         'cache-callback-exit', 'cache-oversized', 'cache-input-snapshot',
+         'cache-disabled', 'cache-enable-callback', 'cache-invalid-cursor']
 HOST_CASES = CASES[:7]
 
 

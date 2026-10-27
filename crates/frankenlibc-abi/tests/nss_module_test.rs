@@ -288,6 +288,11 @@ fn build_modules(dir: &Path) {
     let source = repo_root().join("tests/integration/fixture_nss_module_lib.c");
     let variants: &[(&str, &[&str])] = &[
         ("fltest", &[]),
+        ("fltesthost4", &["-DWITH_HOST4"]),
+        (
+            "fltesttupleonly",
+            &["-DWITH_HOST4", "-DNO_HOST1", "-DNO_HOST2", "-DNO_HOST3"],
+        ),
         ("fltestnoig", &["-DNO_INITGROUPS"]),
         ("fltesthost2", &["-DNO_HOST3", "-DNO_HOSTADDR2"]),
         (
@@ -313,7 +318,7 @@ fn build_modules(dir: &Path) {
     }
 }
 
-fn run_child(mut command: Command, label: &str) {
+fn run_child(mut command: Command, label: &str) -> std::process::Output {
     let output = command.output().expect("launch child test process");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -327,6 +332,7 @@ fn run_child(mut command: Command, label: &str) {
         stdout.contains("1 passed"),
         "{label} child ran no test:\n{stdout}"
     );
+    output
 }
 
 fn child_test_command(test_name: &str) -> Command {
@@ -655,6 +661,108 @@ fn host_module_child(test: &str, dir: &Path, config: &str, tag: &str) -> Command
         .env_remove("FLTEST_STATUS")
         .env_remove("FLTEST_TRACE");
     child
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ScopedHostAnswer {
+    canonical: Vec<u8>,
+    addresses: Vec<(IpAddr, u32)>,
+}
+
+/// Call each provider directly, preserving scope IDs that a hostent loses.
+fn scoped_named_addresses(
+    host: bool,
+    name: &str,
+    family: c_int,
+) -> Result<ScopedHostAnswer, c_int> {
+    let name = CString::new(name).unwrap();
+    let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+    hints.ai_family = family;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    hints.ai_flags = libc::AI_CANONNAME;
+    let mut head = std::ptr::null_mut();
+    // SAFETY: both providers receive a C string, valid hints and an output slot.
+    let rc = unsafe {
+        if host {
+            libc::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut head)
+        } else {
+            frankenlibc_abi::resolv_abi::getaddrinfo(
+                name.as_ptr(),
+                std::ptr::null(),
+                &hints,
+                &mut head,
+            )
+        }
+    };
+    if rc != 0 {
+        assert!(head.is_null(), "failed lookup published a partial addrinfo list");
+        return Err(rc);
+    }
+    assert!(!head.is_null());
+    let canonical = unsafe { cstr((*head).ai_canonname) };
+    let mut addresses = Vec::new();
+    let mut current = head;
+    while !current.is_null() {
+        assert!(addresses.len() < 16, "cyclic or oversized addrinfo result");
+        let item = unsafe { &*current };
+        assert!(!item.ai_addr.is_null());
+        if current != head {
+            assert!(item.ai_canonname.is_null(), "canonical name repeated");
+        }
+        let address = match item.ai_family {
+            libc::AF_INET => {
+                assert_eq!(
+                    item.ai_addrlen as usize,
+                    std::mem::size_of::<libc::sockaddr_in>()
+                );
+                let address = unsafe { &*item.ai_addr.cast::<libc::sockaddr_in>() };
+                assert_eq!(address.sin_family as c_int, libc::AF_INET);
+                (
+                    IpAddr::V4(Ipv4Addr::from(address.sin_addr.s_addr.to_ne_bytes())),
+                    0,
+                )
+            }
+            libc::AF_INET6 => {
+                assert_eq!(
+                    item.ai_addrlen as usize,
+                    std::mem::size_of::<libc::sockaddr_in6>()
+                );
+                let address = unsafe { &*item.ai_addr.cast::<libc::sockaddr_in6>() };
+                assert_eq!(address.sin6_family as c_int, libc::AF_INET6);
+                (
+                    IpAddr::V6(Ipv6Addr::from(address.sin6_addr.s6_addr)),
+                    address.sin6_scope_id,
+                )
+            }
+            value => panic!("invalid addrinfo family: {value}"),
+        };
+        addresses.push(address);
+        current = item.ai_next;
+    }
+    // SAFETY: release with the same provider that allocated the list.
+    unsafe {
+        if host {
+            libc::freeaddrinfo(head);
+        } else {
+            frankenlibc_abi::resolv_abi::freeaddrinfo(head);
+        }
+    }
+    addresses.sort();
+    Ok(ScopedHostAnswer {
+        canonical,
+        addresses,
+    })
+}
+
+fn tuple_addresses() -> Vec<(IpAddr, u32)> {
+    let mut addresses = vec![
+        (Ipv4Addr::new(192, 0, 2, 41).into(), 0),
+        ("2001:db8::41".parse().unwrap(), 0),
+        ("fe80::41".parse().unwrap(), 7),
+        ("fe80::41".parse().unwrap(), 9),
+    ];
+    addresses.sort();
+    addresses
 }
 
 fn assert_module_hosts(include_ipv6: bool, has_canonp: bool) {
@@ -1063,6 +1171,8 @@ fn assert_hosts_policy(expected: &str) {
                 assert_eq!(reverse, Err(libc::EAI_AGAIN));
                 assert_eq!(h_errno, 2);
                 assert_eq!(reverse_h_errno, 2);
+                assert_eq!(rc, libc::EAGAIN, "forward temporary return convention");
+                assert_eq!(reverse_rc, 0, "reverse errors are reported through h_errno");
             } else {
                 assert!(forward.is_err());
                 assert!(reverse.is_err());
@@ -1111,5 +1221,198 @@ fn hosts_modules_policy_order_statuses_and_files_isolation() {
             .env("FLTEST_STATUS", status)
             .env("FLTEST_HOST_EXPECTED", expected);
         run_child(child, &format!("hosts policy {index}: {config}"));
+    }
+}
+
+#[test]
+fn hosts_modules_tuple_lookup_matches_glibc() {
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_TUPLE_PROVIDER").unwrap() == "host";
+        assert_ne!(
+            libc::getaddrinfo as *const (),
+            frankenlibc_abi::resolv_abi::getaddrinfo as *const (),
+            "the host oracle and candidate must be distinct providers"
+        );
+        if host {
+            unsafe extern "C" {
+                fn __nss_configure_lookup(
+                    database: *const c_char,
+                    sources: *const c_char,
+                ) -> c_int;
+            }
+            let sources = CString::new(std::env::var("FLTEST_TUPLE_SOURCES").unwrap()).unwrap();
+            // SAFETY: this child owns its process-local hosts configuration.
+            assert_eq!(unsafe { __nss_configure_lookup(c"hosts".as_ptr(), sources.as_ptr()) }, 0);
+        }
+        let scenario = std::env::var("FLTEST_TUPLE_SCENARIO").unwrap();
+        match scenario.as_str() {
+            "tuple" => {
+                let expected = ScopedHostAnswer {
+                    canonical: b"fltest-tuple.example".to_vec(),
+                    addresses: tuple_addresses(),
+                };
+                for name in ["fltest-tuple", "fltest-tuple-large", "fltest-tuple"] {
+                    assert_eq!(
+                        scoped_named_addresses(host, name, libc::AF_UNSPEC),
+                        Ok(ScopedHostAnswer {
+                            canonical: expected.canonical.clone(),
+                            addresses: expected.addresses.clone(),
+                        }),
+                        "provider={host} query={name}"
+                    );
+                }
+            }
+            "legacy" | "family" => {
+                let family = if scenario == "family" { libc::AF_INET } else { libc::AF_UNSPEC };
+                let mut addresses = vec![
+                    (Ipv4Addr::new(192, 0, 2, 41).into(), 0),
+                    (Ipv4Addr::new(192, 0, 2, 42).into(), 0),
+                ];
+                if family == libc::AF_UNSPEC {
+                    addresses.push(("2001:db8::41".parse().unwrap(), 0));
+                    addresses.push(("2001:db8::42".parse().unwrap(), 0));
+                }
+                addresses.sort();
+                assert_eq!(
+                    scoped_named_addresses(host, "fltest-host", family),
+                    Ok(ScopedHostAnswer {
+                        canonical: b"fltest-host.example".to_vec(),
+                        addresses,
+                    })
+                );
+            }
+            "notfound" => assert_eq!(
+                scoped_named_addresses(host, "fltest-host", libc::AF_UNSPEC),
+                Err(libc::EAI_NONAME),
+                "a present tuple entry point must not fall back within its module"
+            ),
+            "temporary" => assert_eq!(
+                scoped_named_addresses(host, "fltest-tuple", libc::AF_UNSPEC),
+                Err(libc::EAI_AGAIN)
+            ),
+            other => panic!("unknown tuple scenario: {other}"),
+        }
+        return;
+    }
+
+    let dir = scratch_dir("hosts-tuples");
+    build_modules(&dir);
+    std::fs::write(dir.join("hosts"), HOSTS).unwrap();
+    let cases = [
+        ("tuple", "fltesthost4", "tuple", ""),
+        ("tuple-only", "fltesttupleonly", "tuple", ""),
+        ("legacy", "fltest", "legacy", ""),
+        ("family", "fltesthost4", "family", ""),
+        ("notfound", "fltesthost4", "notfound", ""),
+        (
+            "notfound-return",
+            "fltesthost4 [NOTFOUND=return] fltest",
+            "notfound",
+            "",
+        ),
+        (
+            "notfound-continue",
+            "fltesthost4 [NOTFOUND=continue] fltest",
+            "legacy",
+            "",
+        ),
+        ("temporary", "fltesthost4", "temporary", "tryagain"),
+    ];
+    for (tag, sources, scenario, status) in cases {
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("{tag}-{provider}-{mode}");
+            let mut child = host_module_child(
+                "hosts_modules_tuple_lookup_matches_glibc",
+                &dir,
+                &format!("hosts: {sources}\n"),
+                &label,
+            );
+            child
+                .env("FLTEST_TUPLE_PROVIDER", provider)
+                .env("FLTEST_TUPLE_SOURCES", sources)
+                .env("FLTEST_TUPLE_SCENARIO", scenario)
+                .env("FLTEST_STATUS", status)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FLTEST_REQUIRE_TUPLE_HEAD_RESET", if provider == "fl" { "1" } else { "0" })
+                .env_remove("FLTEST_TUPLE_SHAPE");
+            let output = run_child(child, &label);
+            let trace = String::from_utf8_lossy(&output.stderr);
+            let has_tuple = sources.starts_with("fltesthost4") || sources == "fltesttupleonly";
+            if has_tuple && scenario != "family" {
+                assert!(trace.contains(":gethostbyname4_r("), "{label}: {trace}");
+                for function in ["gethostbyname3_r", "gethostbyname2_r", "gethostbyname_r"] {
+                    assert!(
+                        !trace.contains(&format!("fltesthost4:{function}("))
+                            && !trace.contains(&format!("fltesttupleonly:{function}(")),
+                        "same-module fallback after tuple result: {label}: {trace}"
+                    );
+                }
+            } else {
+                assert!(!trace.contains(":gethostbyname4_r("), "{label}: {trace}");
+            }
+            if scenario == "tuple" {
+                assert!(trace.contains(":gethostbyname4_r_ERANGE("), "{label}: {trace}");
+            }
+            if scenario == "legacy" || scenario == "family" {
+                assert!(
+                    ["gethostbyname3_r", "gethostbyname2_r", "gethostbyname_r"]
+                        .iter()
+                        .any(|function| trace.contains(*function)),
+                    "missing legacy dispatch: {label}: {trace}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn hosts_modules_tuple_defensive_results() {
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let shape = std::env::var("FLTEST_TUPLE_SHAPE").unwrap();
+        // A regression in cycle handling must fail instead of hanging the suite.
+        unsafe { libc::alarm(10) };
+        let result = scoped_named_addresses(false, "fltest-tuple", libc::AF_UNSPEC);
+        unsafe { libc::alarm(0) };
+        if shape == "nameless" {
+            assert_eq!(
+                result,
+                Ok(ScopedHostAnswer {
+                    canonical: b"fltest-tuple".to_vec(),
+                    addresses: tuple_addresses(),
+                })
+            );
+        } else {
+            assert_eq!(result, Err(libc::EAI_FAIL), "malformed tuple list: {shape}");
+        }
+        return;
+    }
+    let dir = scratch_dir("hosts-tuple-defensive");
+    build_modules(&dir);
+    std::fs::write(dir.join("hosts"), HOSTS).unwrap();
+    for shape in ["nameless", "empty", "badfamily", "cycle"] {
+        for mode in ["strict", "hardened"] {
+            let label = format!("{shape}-{mode}");
+            let mut child = host_module_child(
+                "hosts_modules_tuple_defensive_results",
+                &dir,
+                "hosts: fltesttupleonly\n",
+                &label,
+            );
+            child
+                .env("FLTEST_TUPLE_SHAPE", shape)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &label);
+            let trace = String::from_utf8_lossy(&output.stderr);
+            assert!(trace.contains("fltesttupleonly:gethostbyname4_r("), "{label}: {trace}");
+            assert!(
+                trace.contains(&format!("gethostbyname4_r_shape({shape})")),
+                "malformed fixture was not exercised: {label}: {trace}"
+            );
+            for function in ["gethostbyname3_r", "gethostbyname2_r", "gethostbyname_r"] {
+                assert!(!trace.contains(function), "{label}: {trace}");
+            }
+        }
     }
 }

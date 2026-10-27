@@ -27,7 +27,7 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type SnprintfFn = unsafe extern "C-unwind" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
 
 union SnprintfSym {
     raw: *mut c_void,
@@ -74,7 +74,8 @@ fn snprintf_for_arm(arm: &str) -> SnprintfFn {
                 "the glibc arm resolved to fl's own snprintf — this would compare \
                  fl against itself"
             );
-            // SAFETY: the resolved symbol has C's documented snprintf signature.
+            // SAFETY: the resolved symbol has snprintf's C calling convention;
+            // GNU registration callbacks can unwind through this frontend.
             unsafe { SnprintfSym { raw }.function }
         }
         other => panic!("unknown arm {other:?}; expected 'fl' or 'glibc'"),

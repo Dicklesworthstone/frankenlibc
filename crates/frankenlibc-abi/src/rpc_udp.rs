@@ -1,4 +1,4 @@
-//! Native IPv4 Sun RPC clients, shared with the portmapper v2 client.
+//! Native IPv4/Unix Sun RPC clients, shared with the portmapper v2 client.
 //!
 //! The public layouts follow glibc's LP64 rpc/clnt.h and rpc/auth.h. Wire
 //! parsing is safe core code; procedure callbacks use the existing native XDR.
@@ -22,6 +22,18 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 #[path = "rpc_tcp.rs"]
 mod tcp;
 
+#[path = "rpc_portmap.rs"]
+mod portmap;
+pub(super) use portmap::{getmaps, remote_call};
+
+#[path = "rpc_keyserv.rs"]
+mod keyserv;
+pub(super) use keyserv::{
+    conversation as key_conversation, generate as key_generate, secret_is_set as key_secret_is_set,
+    session as key_session, session_pk as key_session_pk, set_network as key_set_network,
+    set_secret as key_set_secret,
+};
+
 // Reuse the same tracked-bound, fault-checked copier as the socket importers.
 // Keep one implementation; do not introduce another process_vm/pipe fallback.
 use crate::io_abi::iov_snapshot as user_copy;
@@ -44,6 +56,11 @@ struct RpcError {
 }
 
 impl RpcError {
+    fn words(self) -> [u64; 2] {
+        let parts = self.detail.as_chunks::<8>().0;
+        [u64::from_ne_bytes(parts[0]), u64::from_ne_bytes(parts[1])]
+    }
+
     fn status(status: c_int) -> Self {
         Self {
             status,
@@ -93,9 +110,15 @@ fn creation_error(status: c_int, error: RpcError) {
     };
 }
 
-#[allow(dead_code)]
-pub(super) fn creation_status(status: c_int) {
-    creation_error(status, RpcError::status(status));
+pub(super) fn creation_status(status: c_int, error: c_int) {
+    creation_error(status, RpcError::system(status, error));
+}
+
+pub(super) fn creation_error_details() -> (c_int, c_int, [u64; 2]) {
+    // SAFETY: the public TLS accessor provides initialized, aligned storage
+    // for this exact all-integer LP64 layout for the current thread.
+    let value = unsafe { super::__rpc_thread_createerr().cast::<CreateError>().read() };
+    (value.status, value.error.status, value.error.words())
 }
 
 fn kernel(raw_value: usize) -> Result<usize, c_int> {
@@ -504,6 +527,7 @@ pub(super) fn authnone() -> *mut c_void {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct Client {
     auth: *mut Auth,
     operations: *const ClientOps,
@@ -511,7 +535,7 @@ struct Client {
 }
 #[repr(C)]
 struct ClientOps {
-    call: unsafe extern "C" fn(
+    call: unsafe extern "C-unwind" fn(
         *mut Client,
         u64,
         Option<XdrProc>,
@@ -522,7 +546,7 @@ struct ClientOps {
     ) -> c_int,
     abort: unsafe extern "C" fn(),
     geterr: unsafe extern "C" fn(*mut Client, *mut RpcError),
-    freeres: unsafe extern "C" fn(*mut Client, Option<XdrProc>, *mut c_void) -> c_int,
+    freeres: unsafe extern "C-unwind" fn(*mut Client, Option<XdrProc>, *mut c_void) -> c_int,
     destroy: unsafe extern "C" fn(*mut Client),
     control: unsafe extern "C" fn(*mut Client, c_int, *mut c_char) -> c_int,
 }
@@ -532,8 +556,10 @@ struct State {
 }
 struct Data {
     socket: Socket,
+    raw: bool,
     stream: Option<tcp::Stream>,
     peer: libc::sockaddr_in,
+    unix_peer: Option<libc::sockaddr_un>,
     program: u32,
     version: u32,
     xid: u32,
@@ -560,11 +586,97 @@ impl Drop for Gate<'_> {
     }
 }
 
+// GNU raw clients reuse one caller-thread handle. destroy is deliberately a
+// no-op; TLS owns the boxes, independently of user-owned AUTH replacements.
+struct RawClient {
+    client: Box<Client>,
+    state: Box<State>,
+}
+// SAFETY: slots are keyed by their owning thread, and each State has a
+// nonblocking operation gate. No public pointer is dereferenced under a lock
+// belonging to a different slot; external C mutation has the usual CLIENT rules.
+unsafe impl Send for RawClient {}
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RAW_CLIENT: std::cell::RefCell<Option<RawClient>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(feature = "owned-tls-cache")]
+static RAW_CLIENT: crate::owned_tls_cache::OwnedTlsCache<Option<RawClient>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| None);
+fn with_raw_client<R>(f: impl FnOnce(&mut Option<RawClient>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RAW_CLIENT.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RAW_CLIENT.with(|slot| f(&mut slot.borrow_mut()))
+    }
+}
+
+pub(super) fn create_raw(program: u64, version: u64) -> *mut c_void {
+    let result = with_raw_client(|slot| -> Result<*mut c_void, RpcError> {
+        if let Some(raw) = slot {
+            let Some(_gate) = Gate::enter(&raw.state) else {
+                return Err(RpcError::system(RPC_SYSTEMERROR, libc::EBUSY));
+            };
+            // SAFETY: the operation gate owns initialized state and creation
+            // occurs before returning the public pointer, outside any callback.
+            let data = unsafe { &mut *raw.state.data.get() };
+            data.program = program as u32;
+            data.version = version as u32;
+            raw.client.auth = authnone().cast();
+            return Ok((&mut *raw.client as *mut Client).cast());
+        }
+        let state = boxed(State {
+            busy: AtomicBool::new(false),
+            data: UnsafeCell::new(Data {
+                socket: Socket {
+                    fd: -1,
+                    owned: false,
+                },
+                raw: true,
+                stream: None,
+                // SAFETY: raw clients have no kernel address fields.
+                peer: unsafe { std::mem::zeroed() },
+                unix_peer: None,
+                program: program as u32,
+                version: version as u32,
+                xid: 0,
+                next_xid: None,
+                retry: Timeval {
+                    tv_sec: 1,
+                    tv_usec: 0,
+                },
+                timeout: None,
+                send: buffer(DEFAULT_BUFFER)?,
+                receive: buffer(DEFAULT_BUFFER)?,
+                error: RpcError::status(0),
+            }),
+        })?;
+        let mut client = boxed(Client {
+            auth: authnone().cast(),
+            operations: &RAW_CLIENT_OPS,
+            private: (&*state as *const State).cast_mut(),
+        })?;
+        let pointer = (&mut *client as *mut Client).cast();
+        *slot = Some(RawClient { client, state });
+        Ok(pointer)
+    });
+    result.unwrap_or_else(|error| {
+        // SAFETY: only the caller's errno is modified on local failure.
+        unsafe {
+            super::set_abi_errno(c_int::from_ne_bytes(error.detail[..4].try_into().unwrap()))
+        };
+        ptr::null_mut()
+    })
+}
+
 #[path = "rpc_call.rs"]
 mod invocation;
 use invocation::invoke;
 
-unsafe extern "C" fn call(
+unsafe extern "C-unwind" fn call(
     client: *mut Client,
     procedure: u64,
     arguments: Option<XdrProc>,
@@ -606,6 +718,42 @@ unsafe extern "C" fn call(
     data.error.status
 }
 unsafe extern "C" fn abort() {}
+
+/// Snapshot any live public CLIENT through its own geterr operation. A
+/// foreign CLIENT need not use our private State or have non-null unrelated
+/// operations. Do not hold an owned diagnostic-buffer lock over the callback.
+pub(super) unsafe fn client_error(client: *mut c_void) -> Result<(c_int, [u64; 2]), c_int> {
+    if client.is_null() {
+        return Err(libc::EINVAL);
+    }
+    // SAFETY: import fault-checks the address and Client contains only raw
+    // pointers, so every imported bit pattern is valid as an opaque header.
+    let header = unsafe { import::<Client>(client.cast()) }.map_err(|_| libc::EFAULT)?;
+    if header.operations.is_null() {
+        return Err(libc::EINVAL);
+    }
+    // Use integer arithmetic for an untrusted table address and import only
+    // the one slot: a foreign table can have NULL in its other function slots.
+    let slot = (header.operations as usize)
+        .checked_add(std::mem::offset_of!(ClientOps, geterr))
+        .ok_or(libc::EFAULT)?;
+    // SAFETY: import fault-checks this one integer-sized slot, without
+    // constructing function pointers from the table's unrelated NULL slots.
+    let operation = unsafe { import::<usize>(slot as *const usize) }.map_err(|_| libc::EFAULT)?;
+    if operation == 0 {
+        return Err(libc::EINVAL);
+    }
+    // SAFETY: a live CLIENT supplies a callable public geterr slot. C-unwind
+    // preserves application exceptions/pthread_exit across this boundary.
+    let operation: unsafe extern "C-unwind" fn(*mut Client, *mut RpcError) =
+        unsafe { std::mem::transmute(operation) };
+    let mut error = RpcError::system(RPC_SYSTEMERROR, libc::EINVAL);
+    // SAFETY: the caller keeps the public CLIENT/callback live; error is a
+    // writable, fully initialized rpc_err for the duration of the callback.
+    unsafe { operation(client.cast(), &mut error) };
+    Ok((error.status, error.words()))
+}
+
 unsafe extern "C" fn geterr(client: *mut Client, output: *mut RpcError) {
     let state = unsafe { &*(*client).private };
     let error = if let Some(_gate) = Gate::enter(state) {
@@ -615,7 +763,7 @@ unsafe extern "C" fn geterr(client: *mut Client, output: *mut RpcError) {
     };
     let _ = unsafe { publish(&error, output) };
 }
-unsafe extern "C" fn freeres(
+unsafe extern "C-unwind" fn freeres(
     client: *mut Client,
     callback: Option<XdrProc>,
     result: *mut c_void,
@@ -629,6 +777,10 @@ unsafe extern "C" fn freeres(
     };
     let mut xdr: Xdr = unsafe { std::mem::zeroed() };
     xdr.x_op = super::XDR_FREE;
+    // SAFETY: the callback has the public XDR ABI; permit foreign exceptions
+    // and forced pthread unwinds to release the operation gate.
+    let callback: unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int =
+        unsafe { std::mem::transmute(callback) };
     unsafe { callback((&mut xdr as *mut Xdr).cast(), result) }
 }
 unsafe extern "C" fn destroy(client: *mut Client) {
@@ -685,7 +837,15 @@ unsafe extern "C" fn control(
                     information.cast(),
                 )
             }?,
-            3 => unsafe { publish(&data.peer, information.cast()) }?,
+            3 => {
+                if let Some(peer) = &data.unix_peer {
+                    // SAFETY: publish fault-checks the complete Unix address.
+                    unsafe { publish(peer, information.cast()) }?;
+                } else {
+                    // SAFETY: IPv4 retains its original 16-byte control ABI.
+                    unsafe { publish(&data.peer, information.cast()) }?;
+                }
+            }
             5 => unsafe { publish(&data.retry, information.cast()) }?,
             6 => unsafe { publish(&data.socket.fd, information.cast()) }?,
             8 => data.socket.owned = true,
@@ -695,7 +855,14 @@ unsafe extern "C" fn control(
             11 => {
                 let next = unsafe { import::<u64>(information.cast()) }? as u32;
                 data.xid = next.wrapping_sub(1);
-                data.next_xid = Some(next);
+                // GNU's Unix client decrements the serialized word after
+                // CLSET_XID prepares htonl(next - 1). Preserve that observable
+                // Unix control behavior without changing IPv4 clients.
+                data.next_xid = Some(if data.unix_peer.is_some() {
+                    u32::from_be(next.wrapping_sub(1).to_be().wrapping_sub(1))
+                } else {
+                    next
+                });
             }
             12 => unsafe { publish(&(data.version as u64), information.cast()) }?,
             13 => data.version = unsafe { import::<u64>(information.cast()) }? as u32,
@@ -715,10 +882,20 @@ static CLIENT_OPS: ClientOps = ClientOps {
     destroy,
     control,
 };
+unsafe extern "C" fn raw_geterr(_: *mut Client, _: *mut RpcError) {}
+unsafe extern "C" fn raw_destroy(_: *mut Client) {}
+unsafe extern "C" fn raw_control(_: *mut Client, _: c_int, _: *mut c_char) -> c_int {
+    0
+}
+static RAW_CLIENT_OPS: ClientOps = ClientOps {
+    geterr: raw_geterr,
+    destroy: raw_destroy,
+    control: raw_control,
+    ..CLIENT_OPS
+};
 
 /// One-shot convenience calls own their freshly constructed client. Keep the
 /// callback casts and the matching destruction in the CLIENT implementation.
-#[allow(dead_code)]
 pub(super) unsafe fn call_once(
     client: *mut c_void,
     procedure: u64,
@@ -727,9 +904,19 @@ pub(super) unsafe fn call_once(
     results: Option<XdrProc>,
     result: *mut c_void,
 ) -> c_int {
-    let status = unsafe {
+    struct OwnedClient(*mut Client);
+    impl Drop for OwnedClient {
+        fn drop(&mut self) {
+            // SAFETY: this guard owns the freshly constructed client. The
+            // inner operation gate drops before normal or foreign unwinding
+            // reaches here, so destruction can release its socket and buffers.
+            unsafe { destroy(self.0) };
+        }
+    }
+    let client = OwnedClient(client.cast());
+    unsafe {
         call(
-            client.cast(),
+            client.0,
             procedure,
             arguments,
             argument,
@@ -740,14 +927,18 @@ pub(super) unsafe fn call_once(
                 tv_usec: 0,
             },
         )
-    };
-    unsafe { destroy(client.cast()) };
-    status
+    }
 }
 
 struct CreateFailure {
     status: c_int,
     error: RpcError,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Network {
+    Datagram,
+    Tcp,
+    Unix,
 }
 impl From<RpcError> for CreateFailure {
     fn from(error: RpcError) -> Self {
@@ -775,22 +966,39 @@ unsafe fn make_client(
     descriptor: *mut c_int,
     sendsize: c_uint,
     recvsize: c_uint,
-    stream: bool,
+    network: Network,
 ) -> Result<*mut c_void, CreateFailure> {
     nanos(retry, true)?;
-    let mut peer = unsafe { import::<libc::sockaddr_in>(address.cast()) }?;
+    let stream = network != Network::Datagram;
+    let unix_peer = if network == Network::Unix {
+        // SAFETY: import copies the complete public sockaddr_un with faults checked.
+        let peer = unsafe { import::<libc::sockaddr_un>(address.cast()) }?;
+        if peer.sun_family as c_int != libc::AF_UNIX {
+            return Err(RpcError::system(RPC_SYSTEMERROR, libc::EAFNOSUPPORT).into());
+        }
+        Some(peer)
+    } else {
+        None
+    };
+    let mut peer = if unix_peer.is_some() {
+        // SAFETY: the unused IPv4 fields have a valid initialized zero representation.
+        unsafe { std::mem::zeroed() }
+    } else {
+        // SAFETY: the shared importer bounds and fault-checks the IPv4 input.
+        unsafe { import::<libc::sockaddr_in>(address.cast()) }?
+    };
     let fd = unsafe { import(descriptor.cast_const()) }?;
-    if peer.sin_family as c_int != libc::AF_INET {
+    if unix_peer.is_none() && peer.sin_family as c_int != libc::AF_INET {
         return Err(RpcError::system(RPC_SYSTEMERROR, libc::EAFNOSUPPORT).into());
     }
     let original_port = peer.sin_port;
-    if peer.sin_port == 0 {
+    if unix_peer.is_none() && peer.sin_port == 0 {
         let protocol = if stream {
             libc::IPPROTO_TCP
         } else {
             libc::IPPROTO_UDP
         };
-        let port = portmap(&peer, program as u32, version as u32, protocol as u32, 0, 3)
+        let port = portmap(&peer, program, version, protocol as u32, 0, 3)
             .map_err(CreateFailure::portmapper)?;
         peer.sin_port = port.to_be();
     }
@@ -814,21 +1022,29 @@ unsafe fn make_client(
     };
     let send = buffer(size(sendsize, wire::NULL_CALL_BYTES)?)?;
     let receive = buffer(size(recvsize, 24)?)?;
-    let socket = if stream {
+    let socket = if let Some(peer) = &unix_peer {
+        tcp::connect_unix(peer, fd)?
+    } else if stream {
         tcp::connect(&peer, fd)?
     } else if fd == -1 {
         Socket::open()?
     } else {
         Socket::borrow(fd)?
     };
-    let stream = stream.then(|| tcp::Stream::new(receive.len()));
+    let stream = stream.then(|| {
+        let mut transport = tcp::Stream::new(receive.len());
+        transport.unix = unix_peer.is_some();
+        transport
+    });
     let returned_fd = socket.fd;
     let state = boxed(State {
         busy: AtomicBool::new(false),
         data: UnsafeCell::new(Data {
             socket,
+            raw: false,
             stream,
             peer,
+            unix_peer,
             program: program as u32,
             version: version as u32,
             xid: transaction_id(),
@@ -845,7 +1061,7 @@ unsafe fn make_client(
         operations: &CLIENT_OPS,
         private: (&*state as *const State).cast_mut(),
     })?;
-    if original_port == 0 {
+    if unix_peer.is_none() && original_port == 0 {
         let port_pointer = unsafe {
             address
                 .cast::<u8>()
@@ -854,7 +1070,7 @@ unsafe fn make_client(
         };
         unsafe { publish(&peer.sin_port, port_pointer) }?;
     }
-    if fd == -1 {
+    if fd == -1 || (unix_peer.is_some() && fd < 0) {
         unsafe { publish(&returned_fd, descriptor) }?;
     }
     // Ownership leaves these two Boxes only after every fallible operation.
@@ -873,7 +1089,14 @@ pub(super) unsafe fn create(
 ) -> *mut c_void {
     unsafe {
         create_transport(
-            address, program, version, retry, descriptor, sendsize, recvsize, false,
+            address,
+            program,
+            version,
+            retry,
+            descriptor,
+            sendsize,
+            recvsize,
+            Network::Datagram,
         )
     }
 }
@@ -898,7 +1121,33 @@ pub(super) unsafe fn create_tcp(
             descriptor,
             sendsize,
             recvsize,
-            true,
+            Network::Tcp,
+        )
+    }
+}
+
+pub(super) unsafe fn create_unix(
+    address: *mut c_void,
+    program: u64,
+    version: u64,
+    descriptor: *mut c_int,
+    sendsize: c_uint,
+    recvsize: c_uint,
+) -> *mut c_void {
+    // SAFETY: the common constructor imports all public buffers with fault checks.
+    unsafe {
+        create_transport(
+            address,
+            program,
+            version,
+            Timeval {
+                tv_sec: 1,
+                tv_usec: 0,
+            },
+            descriptor,
+            sendsize,
+            recvsize,
+            Network::Unix,
         )
     }
 }
@@ -912,7 +1161,7 @@ unsafe fn create_transport(
     descriptor: *mut c_int,
     sendsize: c_uint,
     recvsize: c_uint,
-    stream: bool,
+    network: Network,
 ) -> *mut c_void {
     let (_, decision) =
         super::runtime_policy::decide(ApiFamily::Socket, address as usize, 0, false, true, 0);
@@ -924,7 +1173,7 @@ unsafe fn create_transport(
     } else {
         unsafe {
             make_client(
-                address, program, version, retry, descriptor, sendsize, recvsize, stream,
+                address, program, version, retry, descriptor, sendsize, recvsize, network,
             )
         }
     };
@@ -932,7 +1181,20 @@ unsafe fn create_transport(
     match result {
         Ok(client) => client,
         Err(error) => {
-            creation_error(error.status, error.error);
+            if network == Network::Unix && error.status == RPC_SYSTEMERROR {
+                // GNU Unix creation writes cf_stat and re_errno only. The
+                // caller-visible nested status/union tail retain their prior
+                // TLS values, including values installed by a previous error.
+                // SAFETY: this accessor supplies the current thread's live,
+                // initialized and aligned public 32-byte create-error record.
+                unsafe {
+                    let slot = &mut *super::__rpc_thread_createerr().cast::<CreateError>();
+                    slot.status = error.status;
+                    slot.error.detail[..4].copy_from_slice(&error.error.detail[..4]);
+                }
+            } else {
+                creation_error(error.status, error.error);
+            }
             ptr::null_mut()
         }
     }
@@ -942,12 +1204,17 @@ unsafe fn create_transport(
 /// A zero GETPORT result is a semantic failure, not a valid endpoint.
 fn portmap(
     peer: &libc::sockaddr_in,
-    program: u32,
-    version: u32,
+    program: u64,
+    version: u64,
     protocol: u32,
     port: u16,
     procedure: u32,
 ) -> Result<u16, RpcError> {
+    // Mapping arguments use GNU xdr_u_long, which rejects values outside the
+    // 32-bit wire domain. Do not turn an invalid LP64 identifier into a query
+    // for a different, truncated program or version.
+    let program = u32::try_from(program).map_err(|_| RpcError::status(1))?;
+    let version = u32::try_from(version).map_err(|_| RpcError::status(1))?;
     let mut endpoint = *peer;
     endpoint.sin_port = 111u16.to_be();
     let mut arguments = [0u8; 16];
@@ -964,17 +1231,32 @@ fn portmap(
     let xid = transaction_id();
     wire::encode_null_call(&mut request, xid, 100000, 2, procedure, &arguments)
         .map_err(|_| RpcError::status(1))?;
-    let socket = Socket::open()?;
     let mut response = [0u8; 1024];
-    let length = exchange(
-        &socket,
-        &endpoint,
-        &request,
-        &mut response,
-        xid,
-        5 * SECOND,
-        60 * SECOND,
-    )?;
+    let length = if procedure == 3 && protocol == libc::IPPROTO_TCP as u32 {
+        // GNU TCP discovery consults the mapper over TCP too. Reuse the
+        // bounded native record transport without recursively constructing a
+        // CLIENT or falling back to UDP when TCP is unavailable.
+        let socket = tcp::connect(&endpoint, -1)?;
+        let mut stream = tcp::Stream::new(response.len());
+        stream.exchange(
+            &socket,
+            &request,
+            &mut response,
+            xid,
+            Deadline::new(60 * SECOND)?,
+        )?
+    } else {
+        let socket = Socket::open()?;
+        exchange(
+            &socket,
+            &endpoint,
+            &request,
+            &mut response,
+            xid,
+            5 * SECOND,
+            60 * SECOND,
+        )?
+    };
     let result =
         match wire::decode_reply(&response[..length], xid).map_err(|_| RpcError::status(2))? {
             Reply::Failure(error) => return Err(RpcError::remote(error)),
@@ -1010,7 +1292,7 @@ pub(super) unsafe fn getport(
             if peer.sin_family as c_int != libc::AF_INET {
                 return Err(RpcError::system(RPC_SYSTEMERROR, libc::EAFNOSUPPORT));
             }
-            let result = portmap(&peer, program as u32, version as u32, protocol, 0, 3);
+            let result = portmap(&peer, program, version, protocol, 0, 3);
             // Public pmap_getport resets the caller's port on return (including a
             // zero/unregistered result). Constructors instead publish the discovered
             // service port. Keep those two ABI contracts distinct.
@@ -1055,8 +1337,8 @@ pub(super) fn registration(
     } else {
         portmap(
             &peer,
-            program as u32,
-            version as u32,
+            program,
+            version,
             protocol as u32,
             port,
             if remove { 2 } else { 1 },

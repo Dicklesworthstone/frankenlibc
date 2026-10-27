@@ -3,8 +3,10 @@
 //! Record state survives receive timeouts. A partial request write or malformed
 //! framing poisons the transport: silently replaying a possibly executed RPC on a
 //! fresh connection would be unsafe for non-idempotent procedures. Borrowed file
-//! descriptors are never reconfigured, reconnected, shut down, or closed here.
+//! descriptors keep their file flags and are never reconnected or shut down.
+//! Unix clients enable SO_PASSCRED; the caller still owns a borrowed descriptor.
 
+use super::super::rpc_svc::{UnixCredential, unix_receive, unix_send};
 use super::{Deadline, RpcError, SECOND, Socket, kernel, monotonic};
 use frankenlibc_core::rpc::wire::records::{RecordDecoder, RecordError, fragment_header};
 use frankenlibc_core::syscall as raw;
@@ -15,21 +17,27 @@ const CONNECT_TIMEOUT: u64 = 30 * SECOND;
 const MAX_FRAGMENTS: usize = 4096;
 
 pub(super) struct Stream {
+    pub(super) unix: bool,
     decoder: RecordDecoder,
     input: [u8; 4096],
     start: usize,
     end: usize,
     failure: Option<RpcError>,
+    chunk_credential: Option<UnixCredential>,
+    record_credential: Option<UnixCredential>,
 }
 
 impl Stream {
     pub(super) fn new(limit: usize) -> Self {
         Self {
+            unix: false,
             decoder: RecordDecoder::new(limit, MAX_FRAGMENTS),
             input: [0; 4096],
             start: 0,
             end: 0,
             failure: None,
+            chunk_credential: None,
+            record_credential: None,
         }
     }
 
@@ -78,17 +86,22 @@ impl Stream {
                 }
                 // SAFETY: the exact remaining initialized slice is submitted;
                 // MSG_NOSIGNAL contains peer-close errors within this operation.
-                let result = kernel(unsafe {
-                    raw::syscall6(
-                        libc::SYS_sendto as usize,
-                        socket.fd as usize,
-                        bytes[offset..].as_ptr() as usize,
-                        bytes.len() - offset,
-                        (libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) as usize,
-                        0,
-                        0,
-                    )
-                });
+                let result = if self.unix {
+                    unix_send(socket.fd, &bytes[offset..]).map(|count| count as usize)
+                } else {
+                    // SAFETY: the retained request slice outlives this send.
+                    kernel(unsafe {
+                        raw::syscall6(
+                            libc::SYS_sendto as usize,
+                            socket.fd as usize,
+                            bytes[offset..].as_ptr() as usize,
+                            bytes.len() - offset,
+                            (libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) as usize,
+                            0,
+                            0,
+                        )
+                    })
+                };
                 match result {
                     Ok(0) => return self.poison(RpcError::system(3, libc::EPIPE)),
                     Ok(count) => {
@@ -125,12 +138,22 @@ impl Stream {
                 return Err(RpcError::status(5));
             }
             if self.start < self.end {
+                if self.unix {
+                    if let Some(previous) = self.record_credential {
+                        if Some(previous) != self.chunk_credential {
+                            return self.poison(RpcError::system(4, libc::EPROTO));
+                        }
+                    } else {
+                        self.record_credential = self.chunk_credential;
+                    }
+                }
                 let used = match self.decoder.consume(&self.input[self.start..self.end]) {
                     Ok(used) => used,
                     Err(error) => return self.poison(record_error(error)),
                 };
                 self.start += used;
                 if let Some(record) = self.decoder.record() {
+                    self.record_credential = None;
                     if record.len() < 4 {
                         self.decoder.discard_record();
                         return Err(RpcError::system(2, libc::EPROTO));
@@ -154,17 +177,25 @@ impl Stream {
                 Err(error) => return self.poison(error),
             }
             // SAFETY: recv writes at most input.len() bytes to owned storage.
-            let received = kernel(unsafe {
-                raw::syscall6(
-                    libc::SYS_recvfrom as usize,
-                    socket.fd as usize,
-                    self.input.as_mut_ptr() as usize,
-                    self.input.len(),
-                    libc::MSG_DONTWAIT as usize,
-                    0,
-                    0,
-                )
-            });
+            let received = if self.unix {
+                unix_receive(socket.fd, &mut self.input).map(|(count, credential)| {
+                    self.chunk_credential = Some(credential);
+                    count as usize
+                })
+            } else {
+                // SAFETY: input is owned writable scratch of exactly this length.
+                kernel(unsafe {
+                    raw::syscall6(
+                        libc::SYS_recvfrom as usize,
+                        socket.fd as usize,
+                        self.input.as_mut_ptr() as usize,
+                        self.input.len(),
+                        libc::MSG_DONTWAIT as usize,
+                        0,
+                        0,
+                    )
+                })
+            };
             match received {
                 Ok(0) => {
                     let error = match self.decoder.finish() {
@@ -258,21 +289,71 @@ fn option(fd: c_int, name: c_int) -> Result<c_int, RpcError> {
 }
 
 pub(super) fn connect(peer: &libc::sockaddr_in, fd: c_int) -> Result<Socket, RpcError> {
+    connect_address(
+        (peer as *const libc::sockaddr_in).cast(),
+        size_of::<libc::sockaddr_in>(),
+        libc::AF_INET,
+        fd,
+    )
+}
+
+pub(super) fn connect_unix(peer: &libc::sockaddr_un, fd: c_int) -> Result<Socket, RpcError> {
+    let length = if fd < 0 {
+        let length = peer
+            .sun_path
+            .iter()
+            .position(|&byte| byte == 0)
+            .filter(|&length| length != 0)
+            .ok_or_else(|| RpcError::system(12, libc::ENAMETOOLONG))?;
+        size_of::<libc::sa_family_t>() + length + 1
+    } else {
+        size_of::<libc::sockaddr_un>()
+    };
+    // GNU Unix constructors accept any negative descriptor as an allocation
+    // request. Supplied connected sockets are borrowed without reconnecting.
+    let socket = connect_address(
+        (peer as *const libc::sockaddr_un).cast(),
+        length,
+        libc::AF_UNIX,
+        if fd < 0 { -1 } else { fd },
+    )?;
+    let enabled = 1i32;
+    // SAFETY: the kernel only reads the owned initialized option scalar.
+    unsafe {
+        raw::sys_setsockopt(
+            socket.fd,
+            libc::SOL_SOCKET,
+            libc::SO_PASSCRED,
+            (&enabled as *const i32).cast(),
+            size_of::<i32>(),
+        )
+    }
+    .map_err(|error| RpcError::system(12, error))?;
+    Ok(socket)
+}
+
+// Only the two typed wrappers call this, with a live copied address and length.
+fn connect_address(
+    address: *const u8,
+    length: usize,
+    family: c_int,
+    fd: c_int,
+) -> Result<Socket, RpcError> {
     if fd != -1 {
-        if option(fd, libc::SO_TYPE)? != libc::SOCK_STREAM
-            || option(fd, libc::SO_DOMAIN)? != libc::AF_INET
+        if option(fd, libc::SO_TYPE)? != libc::SOCK_STREAM || option(fd, libc::SO_DOMAIN)? != family
         {
             return Err(RpcError::system(12, libc::EPROTOTYPE));
         }
-        let mut address: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-        let mut length = size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        // SAFETY: zero initializes writable storage for either peer family.
+        let mut peer: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut length = size_of::<libc::sockaddr_storage>() as libc::socklen_t;
         // SAFETY: caller sockets must already be connected, matching clnttcp's
         // borrowed-descriptor contract. Probe with owned output storage only.
         kernel(unsafe {
             raw::syscall3(
                 libc::SYS_getpeername as usize,
                 fd as usize,
-                (&mut address as *mut libc::sockaddr_in) as usize,
+                (&mut peer as *mut libc::sockaddr_storage) as usize,
                 (&mut length as *mut libc::socklen_t) as usize,
             )
         })
@@ -284,7 +365,7 @@ pub(super) fn connect(peer: &libc::sockaddr_in, fd: c_int) -> Result<Socket, Rpc
     let fd = kernel(unsafe {
         raw::syscall3(
             libc::SYS_socket as usize,
-            libc::AF_INET as usize,
+            family as usize,
             (libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK) as usize,
             0,
         )
@@ -294,13 +375,13 @@ pub(super) fn connect(peer: &libc::sockaddr_in, fd: c_int) -> Result<Socket, Rpc
     let deadline = monotonic()?
         .checked_add(CONNECT_TIMEOUT)
         .ok_or_else(|| RpcError::system(12, libc::EOVERFLOW))?;
-    // SAFETY: peer is the validated copied IPv4 socket address.
+    // SAFETY: the typed wrapper retains the complete validated copied address.
     match kernel(unsafe {
         raw::syscall3(
             libc::SYS_connect as usize,
             fd as usize,
-            (peer as *const libc::sockaddr_in) as usize,
-            size_of::<libc::sockaddr_in>(),
+            address as usize,
+            length,
         )
     }) {
         Ok(_) => {}

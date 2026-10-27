@@ -1414,13 +1414,13 @@ fn gconv_transliterate_returns_noconv() {
 // parse_printf_format
 // ===========================================================================
 
-const PA_INT: i32 = 1;
-const PA_CHAR: i32 = 2;
-const PA_STRING: i32 = 4;
-const PA_POINTER: i32 = 6;
-const PA_DOUBLE: i32 = 8;
-const PA_FLAG_LONG: i32 = 0x100;
-const PA_FLAG_LONG_LONG: i32 = 0x200;
+// Values from GNU printf.h, independently checked by the live C fixture.
+const PA_INT: i32 = 0;
+const PA_CHAR: i32 = 1;
+const PA_STRING: i32 = 3;
+const PA_POINTER: i32 = 5;
+const PA_DOUBLE: i32 = 7;
+const PA_FLAG_LONG: i32 = 0x200;
 
 #[test]
 fn parse_printf_format_simple_types() {
@@ -1441,7 +1441,7 @@ fn parse_printf_format_length_modifiers() {
     let count = unsafe { parse_printf_format(fmt.as_ptr(), 8, types.as_mut_ptr()) };
     assert_eq!(count, 4);
     assert_eq!(types[0], PA_INT | PA_FLAG_LONG);
-    assert_eq!(types[1], PA_INT | PA_FLAG_LONG_LONG);
+    assert_eq!(types[1], PA_INT | PA_FLAG_LONG); // LP64: long == long long representation
     assert_eq!(types[2], PA_INT | 0x400); // PA_FLAG_SHORT
     assert_eq!(types[3], PA_CHAR);
 }
@@ -1478,6 +1478,53 @@ fn parse_printf_format_null_argtypes_just_counts() {
 fn parse_printf_format_null_fmt_returns_zero() {
     let count = unsafe { parse_printf_format(ptr::null(), 0, ptr::null_mut()) };
     assert_eq!(count, 0);
+}
+
+#[test]
+fn parse_printf_format_positional_slots_and_write_bounds() {
+    let fmt = CString::new("%3$*2$.*1$f %5$s %m %% %Q").unwrap();
+    let mut types = [-77; 7];
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 3, types.as_mut_ptr()) },
+        5
+    );
+    assert_eq!(types, [PA_INT, PA_INT, PA_DOUBLE, -77, -77, -77, -77]);
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 7, types.as_mut_ptr()) },
+        5
+    );
+    assert_eq!(types, [PA_INT, PA_INT, PA_DOUBLE, -77, PA_STRING, -77, -77]);
+}
+
+#[test]
+fn parse_printf_format_wide_aliases_and_count_pointers() {
+    let fmt = CString::new("%lc %C %ls %S %hhn %lln %Lf %hhd").unwrap();
+    let mut types = [-77; 8];
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 8, types.as_mut_ptr()) },
+        8
+    );
+    assert_eq!(
+        types,
+        [PA_CHAR, 2, PA_STRING, 4, 0x800, 0x800, 263, PA_CHAR]
+    );
+}
+
+#[test]
+fn parse_printf_format_no_value_positions_preserve_holes() {
+    let fmt = CString::new("%5$Q %3$m %2$%").unwrap();
+    let mut types = [-77; 5];
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 5, types.as_mut_ptr()) },
+        5
+    );
+    assert_eq!(types, [-77; 5]);
+    let overflow = CString::new("%2147483648$d").unwrap();
+    assert_eq!(
+        unsafe { parse_printf_format(overflow.as_ptr(), 1, types.as_mut_ptr()) },
+        1
+    );
+    assert_eq!(types, [PA_INT, -77, -77, -77, -77]);
 }
 
 // ===========================================================================
@@ -2830,31 +2877,286 @@ fn inet6_rth_init_too_small_returns_null() {
 }
 
 // ===========================================================================
-// Session 13: printf extension stubs
+// GNU printf extension registration and callback dispatch
 // ===========================================================================
 
 #[test]
-fn register_printf_function_returns_enosys() {
-    let r = unsafe { register_printf_function(0, ptr::null_mut(), ptr::null_mut()) };
+fn register_printf_function_rejects_invalid_specifier() {
+    let r = unsafe { register_printf_function(-1, ptr::null_mut(), ptr::null_mut()) };
     assert_eq!(r, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
-fn register_printf_modifier_returns_enosys() {
+fn register_printf_modifier_rejects_null() {
     let r = unsafe { register_printf_modifier(ptr::null()) };
     assert_eq!(r, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
-fn register_printf_specifier_returns_enosys() {
-    let r = unsafe { register_printf_specifier(0, ptr::null_mut(), ptr::null_mut()) };
+fn register_printf_specifier_rejects_invalid_specifier() {
+    let r = unsafe { register_printf_specifier(256, ptr::null_mut(), ptr::null_mut()) };
     assert_eq!(r, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
-fn register_printf_type_returns_enosys() {
+fn register_printf_type_rejects_null() {
     let r = unsafe { register_printf_type(ptr::null_mut()) };
     assert_eq!(r, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn register_printf_callbacks_render_and_parse() {
+    // Registration is process-wide. Isolate the custom conversions so other
+    // integration tests retain their unregistered parser and fast paths.
+    const CHILD: &str = "FRANKENLIBC_PRINTF_EXTENSIONS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "register_printf_callbacks_render_and_parse",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    use frankenlibc_abi::stdio_abi::{asprintf, fprintf, snprintf};
+    use std::ffi::{CStr, c_char, c_int, c_void};
+
+    #[repr(C)]
+    struct Info {
+        precision: c_int,
+        width: c_int,
+        spec: libc::wchar_t,
+        flags: u16,
+        user: u16,
+        pad: libc::wchar_t,
+    }
+
+    unsafe extern "C" fn integer_info(_: *const Info, n: usize, types: *mut c_int) -> c_int {
+        // Reentrant registration from arginfo must not acquire a held lock.
+        // SAFETY: clearing an unused conversion requires no callback pointers.
+        if unsafe { register_printf_specifier(b'V' as c_int, ptr::null_mut(), ptr::null_mut()) }
+            != 0
+        {
+            return -1;
+        }
+        if n != 0 {
+            // SAFETY: the callback contract grants n writable type slots.
+            unsafe { *types = 0 };
+        }
+        1
+    }
+
+    unsafe extern "C" fn integer_render(
+        stream: *mut c_void,
+        _: *const Info,
+        args: *const *const c_void,
+    ) -> c_int {
+        // SAFETY: integer_info declares a single PA_INT argument. This nested
+        // formatting call also exercises recursive locking of the same FILE.
+        let value = unsafe { *(*args).cast::<c_int>() };
+        unsafe { fprintf(stream, c"[%u]".as_ptr(), value as libc::c_uint) }
+    }
+
+    unsafe extern "C" fn pair_info(
+        _: *const Info,
+        n: usize,
+        types: *mut c_int,
+        sizes: *mut c_int,
+    ) -> c_int {
+        for (i, kind) in [0, 3].into_iter().enumerate().take(n) {
+            // SAFETY: both outputs have n slots under the sized arginfo ABI.
+            unsafe {
+                *types.add(i) = kind;
+                *sizes.add(i) = 0;
+            }
+        }
+        2
+    }
+
+    unsafe extern "C" fn pair_render(
+        stream: *mut c_void,
+        _: *const Info,
+        args: *const *const c_void,
+    ) -> c_int {
+        // SAFETY: pair_info declares PA_INT followed by PA_STRING. The latter
+        // points to the argument's pointer slot, not directly to string bytes.
+        let value = unsafe { *(*args).cast::<c_int>() };
+        let text = unsafe { *(*args.add(1)).cast::<*const c_char>() };
+        unsafe { fprintf(stream, c"%d:%s".as_ptr(), value, text) }
+    }
+
+    unsafe extern "C" fn override_info(
+        info: *const Info,
+        n: usize,
+        types: *mut c_int,
+        _: *mut c_int,
+    ) -> c_int {
+        // SAFETY: every callback receives a live printf_info for this directive.
+        if unsafe { (*info).flags } & 8 != 0 {
+            return -1;
+        }
+        if n != 0 {
+            unsafe { *types = 0 };
+        }
+        1
+    }
+
+    unsafe extern "C" fn override_render(
+        stream: *mut c_void,
+        info: *const Info,
+        args: *const *const c_void,
+    ) -> c_int {
+        // SAFETY: info is live, and the accepted conversion declares one int.
+        if unsafe { (*info).width } == 6 {
+            return -2;
+        }
+        unsafe { integer_render(stream, info, args) }
+    }
+
+    // SAFETY: all registered functions above use the declared GNU C callback
+    // ABI and remain loaded throughout this child process.
+    unsafe {
+        assert_eq!(
+            register_printf_function(
+                b'Q' as c_int,
+                integer_render as *const () as *mut c_void,
+                integer_info as *const () as *mut c_void
+            ),
+            0
+        );
+        assert_eq!(
+            register_printf_specifier(
+                b'R' as c_int,
+                pair_render as *const () as *mut c_void,
+                pair_info as *const () as *mut c_void
+            ),
+            0
+        );
+
+        let mut types = [-77; 4];
+        assert_eq!(
+            parse_printf_format(c"%2$R|%1$d".as_ptr(), 3, types.as_mut_ptr()),
+            3
+        );
+        assert_eq!(types, [0, 0, 3, -77]);
+        let mut native_types = [-77; 11];
+        assert_eq!(
+            parse_printf_format(
+                c"%ls%lc%S%C%hhd%hd%ld%lld%Ld%Lf%llf".as_ptr(),
+                native_types.len(),
+                native_types.as_mut_ptr()
+            ),
+            11
+        );
+        assert_eq!(
+            native_types,
+            [3, 1, 4, 2, 1, 0x400, 0x200, 0x200, 0, 0x107, 0x107]
+        );
+
+        let mut buf = [0x55 as c_char; 64];
+        let mut written = -1;
+        let rc = snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"pre%Q%n:%d".as_ptr(),
+            17 as c_int,
+            &mut written as *mut c_int,
+            29 as c_int,
+        );
+        assert_eq!(rc, 10);
+        assert_eq!(written, 7);
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"pre[17]:29");
+        buf.fill(0x55);
+        assert_eq!(
+            snprintf(
+                buf.as_mut_ptr(),
+                6,
+                c"%2$R|%1$d".as_ptr(),
+                7 as c_int,
+                9 as c_int,
+                c"pair".as_ptr()
+            ),
+            8
+        );
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"9:pai");
+        assert_eq!(buf[6], 0x55);
+        assert_eq!(
+            snprintf(
+                ptr::null_mut(),
+                0,
+                c"%R".as_ptr(),
+                9 as c_int,
+                c"pair".as_ptr()
+            ),
+            6
+        );
+
+        let mut allocated = ptr::null_mut();
+        assert_eq!(
+            asprintf(
+                &mut allocated,
+                c"%R".as_ptr(),
+                42 as c_int,
+                c"allocated".as_ptr()
+            ),
+            12
+        );
+        assert_eq!(CStr::from_ptr(allocated).to_bytes(), b"42:allocated");
+        frankenlibc_abi::malloc_abi::free(allocated.cast());
+
+        assert_eq!(
+            register_printf_specifier(
+                b'd' as c_int,
+                override_render as *const () as *mut c_void,
+                override_info as *const () as *mut c_void
+            ),
+            0
+        );
+        for (format, value, expected) in [
+            (c"%d", 17, b"[17]".as_slice()),
+            (c"%#d", 18, b"18".as_slice()),
+            (c"%6d", 19, b"    19".as_slice()),
+        ] {
+            assert_eq!(
+                snprintf(buf.as_mut_ptr(), buf.len(), format.as_ptr(), value as c_int),
+                expected.len() as c_int
+            );
+            assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), expected);
+        }
+        assert_eq!(
+            register_printf_specifier(b'd' as c_int, ptr::null_mut(), ptr::null_mut()),
+            0
+        );
+        assert_eq!(
+            snprintf(buf.as_mut_ptr(), buf.len(), c"%d".as_ptr(), 31 as c_int),
+            2
+        );
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"31");
+        assert_eq!(
+            register_printf_function(b'Q' as c_int, ptr::null_mut(), ptr::null_mut()),
+            0
+        );
+        assert_eq!(
+            register_printf_specifier(b'R' as c_int, ptr::null_mut(), ptr::null_mut()),
+            0
+        );
+        assert_eq!(snprintf(buf.as_mut_ptr(), buf.len(), c"%Q".as_ptr()), 2);
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"%Q");
+    }
 }
 
 #[test]
@@ -2864,9 +3166,41 @@ fn printf_size_returns_negative() {
 }
 
 #[test]
-fn printf_size_info_returns_zero() {
+fn printf_size_info_counts_without_storage() {
     let r = unsafe { printf_size_info(ptr::null(), 0, ptr::null_mut()) };
-    assert_eq!(r, 0);
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn printf_size_info_gnu_layout_and_single_slot() {
+    #[repr(C)]
+    struct Info {
+        precision: i32,
+        width: i32,
+        spec: i32,
+        flags: u16,
+        user: u16,
+        pad: i32,
+    }
+    assert_eq!(std::mem::size_of::<Info>(), 20);
+    let mut info = Info {
+        precision: -1,
+        width: 0,
+        spec: 115,
+        flags: 0,
+        user: 0,
+        pad: 32,
+    };
+    for (flags, expected) in [(0, 7), (1, 263), (4096, 7), (4097, 263)] {
+        info.flags = flags;
+        for n in 0..=2 {
+            let mut types = [-77; 3];
+            let rc =
+                unsafe { printf_size_info((&info as *const Info).cast(), n, types.as_mut_ptr()) };
+            assert_eq!(rc, 1);
+            assert_eq!(types, [if n == 0 { -77 } else { expected }, -77, -77]);
+        }
+    }
 }
 
 // ===========================================================================
@@ -3322,14 +3656,33 @@ fn obstack_printf_chk_rejects_null_inputs() {
 // ===========================================================================
 
 #[test]
-fn asprintf_internal_returns_enosys() {
-    let mut ptr: *mut i8 = 42usize as *mut i8; // non-null sentinel
-    let fmt = CString::new("hello %d").unwrap();
-    let r = unsafe { __asprintf(&mut ptr, fmt.as_ptr()) };
-    assert_eq!(r, -1);
-    assert!(
-        ptr.is_null(),
-        "__asprintf should set *strp to null on failure"
+fn asprintf_internal_forwards_variadic_arguments() {
+    let mut output = ptr::null_mut();
+    let count = unsafe {
+        __asprintf(
+            &mut output,
+            c"%s:%d".as_ptr(),
+            c"hello".as_ptr(),
+            17 as c_int,
+        )
+    };
+    assert_eq!(count, 8);
+    assert!(!output.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"hello:17");
+    // SAFETY: the native alias allocates with FrankenLibC's allocator, which
+    // remains distinct from the host free declared for obstack tests below.
+    unsafe { frankenlibc_abi::malloc_abi::free(output.cast()) };
+
+    output = ptr::null_mut();
+    assert_eq!(unsafe { __asprintf(&mut output, c"".as_ptr()) }, 0);
+    assert!(!output.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"");
+    // SAFETY: release through the allocator that produced the empty string.
+    unsafe { frankenlibc_abi::malloc_abi::free(output.cast()) };
+
+    assert_eq!(
+        unsafe { __asprintf(ptr::null_mut(), c"ignored".as_ptr()) },
+        -1
     );
 }
 

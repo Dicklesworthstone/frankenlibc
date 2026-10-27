@@ -37,6 +37,11 @@ type HostStartMainFn = unsafe extern "C" fn(
     *mut c_void,
 ) -> c_int;
 
+// The owned startup path still uses host NPTL in the interposed build. Its
+// initial thread therefore needs the same root unwind frame and exit accounting
+// as host-created workers. The native/standalone lifecycle is separate.
+static OWNED_HOST_MAIN: AtomicUsize = AtomicUsize::new(0);
+
 const PROGRAM_NAME_SCAN_LIMIT: usize = MAX_STARTUP_SCAN * 32;
 
 unsafe extern "C" {
@@ -673,6 +678,105 @@ unsafe fn delegate_to_host_libc_start_main(
     Some(unsafe { host_fn(wrapped_main, argc, ubp_av, init, fini, rtld_fini, stack_end) })
 }
 
+/// Resolve the host-owned root-thread lifecycle without repeating owned CRT
+/// validation, initialization or executable constructors. Do not install it
+/// for native threads: those do not have independent host NPTL control blocks.
+fn prepare_owned_host_main_runner() -> Option<HostStartMainFn> {
+    #[cfg(feature = "standalone")]
+    {
+        None
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        if !crate::pthread_abi::host_cancellation_thread() {
+            return None;
+        }
+        let start = crate::host_resolve::resolve_host_symbol_raw("__libc_start_main")?;
+        crate::host_resolve::resolve_host_symbol_raw("on_exit")?;
+        // Use the same ordered ticket in native exit and host-internal exit.
+        // This places executable finalization after its own constructors'
+        // callbacks but before older DSO callbacks. Preparing the bridge also
+        // registers its final stream flush before this ticket, so buffered
+        // output is not flushed ahead of the executable's destructors.
+        if crate::stdlib_abi::register_exit_finalizers() != 0 {
+            return None;
+        }
+        // SAFETY: __libc_start_main has the startup ABI declared above.
+        Some(unsafe { std::mem::transmute::<usize, HostStartMainFn>(start) })
+    }
+}
+
+/// POSIX key destructors run when the initial thread calls pthread_exit or is
+/// cancelled, but not when main returns or calls process exit. Host NPTL owns
+/// its own keys; our keys need this matching unwind cleanup. No registry lock
+/// or TLS borrow crosses the call into application code.
+struct OwnedMainThreadKeyCleanup {
+    armed: bool,
+}
+
+impl Drop for OwnedMainThreadKeyCleanup {
+    fn drop(&mut self) {
+        if self.armed {
+            frankenlibc_core::pthread::run_exiting_thread_key_destructors(
+                frankenlibc_core::syscall::sys_gettid(),
+            );
+        }
+    }
+}
+
+unsafe extern "C-unwind" fn owned_host_main_wrapper(
+    argc: c_int,
+    argv: *mut *mut c_char,
+    envp: *mut *mut c_char,
+) -> c_int {
+    let mut cleanup = OwnedMainThreadKeyCleanup { armed: true };
+    let address = OWNED_HOST_MAIN.load(Ordering::Acquire);
+    // SAFETY: run_owned_main_on_host publishes the live entry point before
+    // calling the host. C-unwind permits C cleanup handlers and C++ destructors
+    // to run through this frame into NPTL's root unwind frame.
+    let main: MainUnwindFn = unsafe { std::mem::transmute(address) };
+    scrub_stack_for_main();
+    // SAFETY: the host forwards the process argument and environment vectors.
+    let status = unsafe { main(argc, argv, envp) };
+    cleanup.armed = false;
+    // Normal main return remains owned exit: flush our streams and drain the
+    // existing callback/finalizer registries. NPTL owns only the unwind path.
+    // SAFETY: normal process termination with main's exit status.
+    unsafe { crate::stdlib_abi::exit(status) }
+}
+
+unsafe extern "C" fn owned_executable_init_complete() {}
+
+unsafe fn run_owned_main_on_host(
+    host: HostStartMainFn,
+    main: MainFn,
+    argc: c_int,
+    argv: *mut *mut c_char,
+    stack_end: *mut c_void,
+) -> c_int {
+    OWNED_HOST_MAIN.store(main as usize, Ordering::Release);
+    // SAFETY: C and C-unwind have the same calling convention. The host's
+    // root frame terminates the forced unwind before it can leave host().
+    let wrapped = unsafe {
+        std::mem::transmute::<MainUnwindFn, MainFn>(owned_host_main_wrapper as MainUnwindFn)
+    };
+    // A non-null init suppresses the host's automatic executable-init walk;
+    // owned startup has already run it. Finalizers were registered above,
+    // before constructors, and must not be registered a second time here.
+    // SAFETY: all arguments retain their original process-startup lifetime.
+    unsafe {
+        host(
+            Some(wrapped),
+            argc,
+            argv,
+            Some(owned_executable_init_complete),
+            None,
+            None,
+            stack_end,
+        )
+    }
+}
+
 /// Test-only hook for overriding host `__libc_start_main` delegation.
 #[cfg(debug_assertions)]
 pub unsafe extern "C" fn __frankenlibc_set_startup_host_delegate_for_tests(
@@ -1059,6 +1163,16 @@ unsafe fn startup_phase0_impl(
     path.push(StartupCheckpoint::SignalRuntimeReady);
     crate::runtime_policy::signal_runtime_ready();
 
+    // Hand finalizers to exit before constructors: a constructor may terminate
+    // the process itself. Fixtures still run their caller-owned hooks below.
+    let finalizers_run_by_exit = publish_environment && !startup_return_to_caller_for_tests();
+    let host_main_runner = if finalizers_run_by_exit {
+        crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
+        prepare_owned_host_main_runner()
+    } else {
+        None
+    };
+
     if let Some(init_fn) = init {
         path.push(StartupCheckpoint::CallInitHook);
         // SAFETY: callback pointer provided by caller.
@@ -1087,16 +1201,6 @@ unsafe fn startup_phase0_impl(
         }
     }
 
-    // A real process start hands the finalizers to exit(), which runs them
-    // after the atexit/on_exit/__cxa_atexit handlers, whether main returns
-    // (finish_libc_start_main_success calls exit) or calls exit itself -- the
-    // glibc `exit(main(...))` sequence. The fixture hook and test builds that
-    // return to their caller still run them here.
-    let finalizers_run_by_exit = publish_environment && !startup_return_to_caller_for_tests();
-    if finalizers_run_by_exit {
-        crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
-    }
-
     // Build the runtime-math kernel and, hardened, the validation pipeline
     // before main rather than on first use. A program that caps RLIMIT_AS
     // before its first decision or small malloc (gnulib's printf-posix2 tests,
@@ -1113,8 +1217,16 @@ unsafe fn startup_phase0_impl(
 
     path.push(StartupCheckpoint::CallMain);
     scrub_stack_for_main();
-    // SAFETY: callback pointer + argv/envp pointers are validated for phase-0 fixture usage.
-    let rc = unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) };
+    let rc = if let Some(host) = host_main_runner {
+        // SAFETY: real startup with host-backed threads; owned initialization
+        // is complete, while the host supplies the root thread's unwind frame.
+        unsafe {
+            run_owned_main_on_host(host, main_fn, normalized_argc as c_int, ubp_av, stack_end)
+        }
+    } else {
+        // SAFETY: callback + vectors are validated for the native/fixture path.
+        unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) }
+    };
 
     if !finalizers_run_by_exit {
         if let Some(fini_fn) = fini {

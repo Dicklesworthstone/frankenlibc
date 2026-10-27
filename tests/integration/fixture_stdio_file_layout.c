@@ -74,7 +74,8 @@ static int check_fopen(void) {
     CHECK(close(fd) == 0);
     FILE *f = fopen(path, "w+");
     CHECK(f != NULL);
-    CHECK(unlink(path) == 0);
+    const char *preserve = getenv("FRANKENLIBC_TEST_PRESERVE_FILES");
+    if (preserve == NULL || strcmp(preserve, "1") != 0) CHECK(unlink(path) == 0);
     CHECK(check_header(f, fileno(f), 0) == 0);
     CHECK(fileno_unlocked(f) == fileno(f));
     return check_update(f);
@@ -84,7 +85,8 @@ static int check_fdopen(void) {
     char path[] = "/tmp/frankenlibc-fd-layout-XXXXXX";
     int fd = mkstemp(path);
     CHECK(fd >= 0);
-    CHECK(unlink(path) == 0);
+    const char *preserve = getenv("FRANKENLIBC_TEST_PRESERVE_FILES");
+    if (preserve == NULL || strcmp(preserve, "1") != 0) CHECK(unlink(path) == 0);
     FILE *f = fdopen(fd, "w+");
     CHECK(check_header(f, fd, 0) == 0);
     CHECK(fileno_unlocked(f) == fd);
