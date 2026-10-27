@@ -4,6 +4,71 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Compare real key lifetimes, callback reentry and minimum native stacks.
+if [[ "${1:-}" == "--key-destructors" ]]; then
+  LIBRARY="${FRANKENLIBC_TEST_LIBRARY:-${CARGO_TARGET_DIR:-${ROOT}/target}/release/libfrankenlibc_abi.so}"
+  if [[ ! -f "${LIBRARY}" ]]; then
+    echo "FAIL: build frankenlibc-abi --release or set FRANKENLIBC_TEST_LIBRARY" >&2
+    exit 1
+  fi
+  LIBRARY="$(realpath "${LIBRARY}")"
+  KEY_OUT="${ROOT}/target/conformance/pthread_keys/$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "${KEY_OUT}"
+  "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -pthread -ldl \
+    -o "${KEY_OUT}/probe"
+  ordinary=(empty-return empty-exit values-return values-exit
+            rounds-return rounds-exit replace-later delete-later)
+  minimum=(minimum-return minimum-exit borrowed-return borrowed-exit)
+  host_count=0
+  for scenario in "${ordinary[@]}" "${minimum[@]}"; do
+    env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
+      timeout 30s "${KEY_OUT}/probe" --key-lifecycle "${scenario}" \
+      >"${KEY_OUT}/host-${scenario}.txt" 2>"${KEY_OUT}/host-${scenario}.stderr"
+    grep -Fxq "key-lifecycle ${scenario} PASS" "${KEY_OUT}/host-${scenario}.txt"
+    [[ "$(wc -l < "${KEY_OUT}/host-${scenario}.txt")" -eq 1 ]]
+    host_count=$((host_count + 1))
+  done
+  negative_rc=0
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_THREAD_NATIVE \
+    timeout 30s "${KEY_OUT}/probe" --key-lifecycle empty-return "${LIBRARY}" \
+    >"${KEY_OUT}/provider-negative.txt" 2>&1 || negative_rc=$?
+  if [[ "${negative_rc}" -ne 1 ]] || \
+    ! grep -Fxq 'FAIL: pthread_create is not from the requested candidate' \
+      "${KEY_OUT}/provider-negative.txt"; then
+    echo "FAIL: omitted-preload control did not fail at provider admission" >&2
+    exit 1
+  fi
+  candidate_count=0
+  for backend in 0 1; do
+    scenarios=("${ordinary[@]}")
+    # The minimum-stack contract belongs to the native creator. The current
+    # hosted artifact's static TLS can exceed the host's 16 KiB stack budget.
+    if [[ "${backend}" -eq 1 ]]; then
+      scenarios+=("${minimum[@]}")
+    fi
+    for mode in strict hardened; do
+      for scenario in "${scenarios[@]}"; do
+        prefix="${KEY_OUT}/${mode}-native${backend}-${scenario}"
+        if ! timeout 30s env LD_PRELOAD="${LIBRARY}" FRANKENLIBC_MODE="${mode}" \
+          FRANKENLIBC_THREAD_NATIVE="${backend}" \
+          "${KEY_OUT}/probe" --key-lifecycle "${scenario}" "${LIBRARY}" \
+          >"${prefix}.txt" 2>"${prefix}.stderr"; then
+          cat "${prefix}.stderr" >&2
+          echo "FAIL: ${mode} native=${backend} key-lifecycle ${scenario}" >&2
+          exit 1
+        fi
+        diff -u "${KEY_OUT}/host-${scenario}.txt" "${prefix}.txt"
+        candidate_count=$((candidate_count + 1))
+      done
+    done
+  done
+  [[ "${host_count}" -eq 12 && "${candidate_count}" -eq 40 ]]
+  echo "pthread key lifecycle: PASS (12 live GNU cases, 40 candidate cases, provider negative)"
+  echo "artifacts=${KEY_OUT}"
+  exit 0
+fi
+
 # Exercise actual kernel state at the native child entry point, including
 # creation failures. The existing attribute round-trip tests cannot detect
 # pthread_create silently ignoring a correctly stored attribute.
