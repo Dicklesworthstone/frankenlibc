@@ -10219,8 +10219,6 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
     printf_result_to_c_int(total_len)
 }
 
-/// POSIX `dprintf`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// Exact `%d` (±\n) direct-fd render+write for dprintf/vdprintf: render into a stack buffer and
 /// `write_all_fd`, skipping parse+extract+render. Byte-identical to the slow path (same render
 /// helper; dprintf writes straight to the fd unbuffered so there is no stream state to sync).
@@ -10247,6 +10245,7 @@ unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) 
     }
 }
 
+/// POSIX `dprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
@@ -11172,8 +11171,6 @@ pub unsafe extern "C" fn vsprintf(
     printf_result_to_c_int(total_len)
 }
 
-/// POSIX `vfprintf` — format to stream from va_list.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// Exact `%d`/`%x`/`%u`/`%ld`/`%lu`/`%lx` (±\n) va_list STREAM fast path shared by vfprintf/vprintf:
 /// pull ONE gp arg from the va_list and reuse fprintf's render+write helpers, skipping
 /// parse_format_string + vprintf_extract_args + render_segments. `Some(result)` when handled (caller
@@ -11204,6 +11201,7 @@ unsafe fn try_vprintf_exact_stream(
     None
 }
 
+/// POSIX `vfprintf` — format to stream from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn vfprintf(
     stream: *mut c_void,

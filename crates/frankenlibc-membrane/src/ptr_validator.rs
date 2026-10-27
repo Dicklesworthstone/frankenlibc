@@ -37,9 +37,7 @@ use serde::Serialize;
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::Cell;
 use std::collections::VecDeque;
-#[cfg(feature = "owned-tls-cache")]
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const VALIDATION_LOG_CAPACITY: usize = 2048;
 const STRICT_VALIDATION_BUDGET_NS: u64 = 20;
@@ -341,6 +339,9 @@ thread_local! {
     static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
+#[cfg(not(feature = "owned-tls-cache"))]
+static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
 #[cfg(feature = "owned-tls-cache")]
 static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
 
@@ -356,9 +357,19 @@ struct ValidationExecutionGuard;
 impl Drop for ValidationExecutionGuard {
     fn drop(&mut self) {
         #[cfg(not(feature = "owned-tls-cache"))]
-        let _ = VALIDATION_DEPTH.try_with(|depth| {
-            depth.set(depth.get().saturating_sub(1));
-        });
+        {
+            let decremented_to_zero = VALIDATION_DEPTH
+                .try_with(|depth| {
+                    let prev = depth.get();
+                    let next = prev.saturating_sub(1);
+                    depth.set(next);
+                    prev > 0 && next == 0
+                })
+                .unwrap_or(false);
+            if decremented_to_zero {
+                ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
+            }
+        }
         #[cfg(feature = "owned-tls-cache")]
         let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             Some(current.saturating_sub(1))
@@ -368,9 +379,18 @@ impl Drop for ValidationExecutionGuard {
 
 fn enter_validation_execution_context() -> ValidationExecutionGuard {
     #[cfg(not(feature = "owned-tls-cache"))]
-    let _ = VALIDATION_DEPTH.try_with(|depth| {
-        depth.set(depth.get().saturating_add(1));
-    });
+    {
+        let incremented_from_zero = VALIDATION_DEPTH
+            .try_with(|depth| {
+                let prev = depth.get();
+                depth.set(prev.saturating_add(1));
+                prev == 0
+            })
+            .unwrap_or(false);
+        if incremented_from_zero {
+            ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
+        }
+    }
     #[cfg(feature = "owned-tls-cache")]
     let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
         Some(current.saturating_add(1))
@@ -378,13 +398,24 @@ fn enter_validation_execution_context() -> ValidationExecutionGuard {
     ValidationExecutionGuard
 }
 
+#[cfg(not(feature = "owned-tls-cache"))]
+#[cold]
+#[inline(never)]
+fn in_validation_context_slow() -> bool {
+    VALIDATION_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(false)
+}
+
+#[inline(always)]
 #[must_use]
 pub fn in_validation_context() -> bool {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        VALIDATION_DEPTH
-            .try_with(|depth| depth.get() > 0)
-            .unwrap_or(false)
+        if ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) == 0 {
+            return false;
+        }
+        in_validation_context_slow()
     }
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -832,6 +863,32 @@ impl ValidationPipeline {
         )
     }
 
+    /// Validate a pointer after [`Self::try_validate_cached_remaining`] or
+    /// [`Self::try_validate_cached_remaining_pair`] has already missed the
+    /// thread-local validation cache.
+    #[inline]
+    pub fn validate_after_tls_cache_miss(&self, addr: usize) -> ValidationOutcome {
+        if !self.validation_logging_enabled() {
+            let mode = safety_level();
+            if addr == 0 {
+                return self.validate_null_without_trace(mode);
+            }
+            if !mode.validation_enabled() {
+                let metrics = global_metrics();
+                MembraneMetrics::inc(&metrics.validations);
+                return ValidationOutcome::Bypassed;
+            }
+            if let Some(outcome) = self.try_validate_foreign_without_trace(addr, mode) {
+                return outcome;
+            }
+        }
+
+        self.validate_with_security_context(
+            addr,
+            ValidationSecurityContext::allow_pointer_validation(),
+        )
+    }
+
     #[inline]
     fn validation_logging_enabled(&self) -> bool {
         self.validation_logging_enabled.load(Ordering::Relaxed)
@@ -877,11 +934,7 @@ impl ValidationPipeline {
             return None;
         }
         try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
-            let hit = cache.lookup_hit_remaining(addr);
-            if hit.is_hit() {
-                cache.record_pipeline_hits(1);
-            }
-            hit
+            cache.lookup_hit_remaining_and_record(addr)
         })
         .decode()
     }
@@ -899,21 +952,7 @@ impl ValidationPipeline {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
         try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
-            let lhs_hit = if lhs != 0 {
-                cache.lookup_hit_remaining(lhs)
-            } else {
-                CachedRemaining::MISS
-            };
-            let rhs_hit = if rhs != 0 {
-                cache.lookup_hit_remaining(rhs)
-            } else {
-                CachedRemaining::MISS
-            };
-            let hits = u64::from(lhs_hit.is_hit()) + u64::from(rhs_hit.is_hit());
-            if hits != 0 {
-                cache.record_pipeline_hits(hits);
-            }
-            (lhs_hit, rhs_hit)
+            cache.lookup_hit_remaining_pair_and_record(lhs, rhs)
         })
     }
 
@@ -936,8 +975,10 @@ impl ValidationPipeline {
         // The page-oracle read lock is the one lock on this fast path: hold the
         // validation context across it, so a signal handler that allocates on
         // this thread meanwhile sees it and does not wait for a writer lock
-        // behind its own read (bd-na6ede).
-        let owned_page = {
+        // behind its own read (bd-na6ede). The lock-free empty/L1-filter check
+        // takes no lock and rejects foreign stack/mmap pointers before touching
+        // TLS validation-depth state.
+        let owned_page = self.page_oracle.may_contain_addr_lockfree(addr) && {
             let _validation_context = enter_validation_execution_context();
             self.page_oracle.query(addr)
         };
@@ -1108,6 +1149,7 @@ impl ValidationPipeline {
         let mut slot: Option<ArenaSlot> = None;
         let mut bloom_negative = false;
         let mut saw_fingerprint = false;
+        let mut verified_fp_hash: Option<u64> = None;
         let mut saw_canary = false;
         let mut epoch_guard: Option<PinnedEpochGuard<'_>> = None;
         // Snapshot of all per-shard TLS-cache epochs, captured lazily on the
@@ -1543,18 +1585,22 @@ impl ValidationPipeline {
                             0,
                         );
                         saw_fingerprint = true;
+                        verified_fp_hash = Some(fp.hash);
                     }
                 }
                 CheckStage::Canary => {
                     if let Some(s) = slot {
                         elapsed_ns =
                             elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
-                        let fp = AllocationFingerprint::compute(
-                            s.user_base,
-                            s.user_size as u64,
-                            s.generation,
-                        );
-                        let expected_canary = fp.canary();
+                        let expected_canary = match verified_fp_hash {
+                            Some(hash) => crate::fingerprint::Canary::from_hash(hash),
+                            None => AllocationFingerprint::compute(
+                                s.user_base,
+                                s.user_size as u64,
+                                s.generation,
+                            )
+                            .canary(),
+                        };
                         let canary_addr = s.user_base + s.user_size;
                         let mut actual = [0u8; CANARY_SIZE];
                         // SAFETY: Valid memory within the allocation's total size.
@@ -1867,15 +1913,19 @@ impl ValidationPipeline {
                 deep_decision.risk_upper_bound_ppm,
                 deep_decision.evidence_seqno,
             );
+            verified_fp_hash = Some(fp.hash);
         }
         if !saw_canary {
             elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
-            let fp = AllocationFingerprint::compute(
-                slot.user_base,
-                slot.user_size as u64,
-                slot.generation,
-            );
-            let expected_canary = fp.canary();
+            let expected_canary = match verified_fp_hash {
+                Some(hash) => crate::fingerprint::Canary::from_hash(hash),
+                None => AllocationFingerprint::compute(
+                    slot.user_base,
+                    slot.user_size as u64,
+                    slot.generation,
+                )
+                .canary(),
+            };
             let canary_addr = slot.user_base + slot.user_size;
             let mut actual = [0u8; CANARY_SIZE];
             // SAFETY: Valid memory within the allocation's total size.

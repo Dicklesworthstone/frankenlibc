@@ -350,7 +350,8 @@ impl TlsValidationCache {
     /// A hit in the recently-validated allocation ranges.
     #[inline(always)]
     fn range_hit(&mut self, addr: usize) -> Option<CachedValidation> {
-        for range in &mut self.ranges {
+        for idx in 0..self.ranges.len() {
+            let range = self.ranges[idx];
             if range.valid && addr.wrapping_sub(range.user_base) < range.user_size {
                 if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
                     return Some(CachedValidation {
@@ -360,7 +361,7 @@ impl TlsValidationCache {
                         state: range.state,
                     });
                 }
-                range.valid = false;
+                self.ranges[idx].valid = false;
             }
         }
         None
@@ -439,17 +440,21 @@ impl TlsValidationCache {
     /// constructing intermediate `CachedValidation` / `ValidationOutcome` values.
     #[inline]
     pub(crate) fn lookup_hit_remaining(&mut self, addr: usize) -> CachedRemaining {
-        for range in &mut self.ranges {
+        for idx in 0..self.ranges.len() {
+            let range = self.ranges[idx];
             let offset = addr.wrapping_sub(range.user_base);
             if range.valid && offset < range.user_size {
                 if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
                     self.hits += 1;
+                    if idx != 0 {
+                        self.ranges.swap(0, idx);
+                    }
                     return CachedRemaining::from_option(Self::remaining_for_state(
                         range.state,
                         range.user_size - offset,
                     ));
                 }
-                range.valid = false;
+                self.ranges[idx].valid = false;
             }
         }
         if let Some(entries) = self.entries.as_deref_mut() {
@@ -472,6 +477,135 @@ impl TlsValidationCache {
             }
         }
         CachedRemaining::MISS
+    }
+
+    #[inline(always)]
+    pub(crate) fn lookup_hit_remaining_and_record(&mut self, addr: usize) -> CachedRemaining {
+        let r0 = &self.ranges[0];
+        let user_base = r0.user_base;
+        let user_size = r0.user_size;
+        let off = addr.wrapping_sub(user_base);
+        if r0.valid
+            && addr != 0
+            && off < user_size
+            && matches!(
+                r0.state,
+                SafetyState::Valid | SafetyState::Readable | SafetyState::Writable
+            )
+            && r0.shard_epoch == current_shard_epoch(r0.shard_idx as usize)
+        {
+            self.hits += 1;
+            let next_hits = self.unflushed_pipeline_hits + 1;
+            if !self.unbacked && next_hits < HIT_METRICS_FLUSH_BATCH {
+                self.unflushed_pipeline_hits = next_hits;
+                return CachedRemaining(user_size - off);
+            }
+            self.record_pipeline_hits(1);
+            return CachedRemaining(user_size - off);
+        }
+        self.lookup_hit_remaining_slow(addr)
+    }
+
+    #[inline(never)]
+    fn lookup_hit_remaining_slow(&mut self, addr: usize) -> CachedRemaining {
+        let hit = self.lookup_hit_remaining(addr);
+        if hit.is_hit() {
+            self.record_pipeline_hits(1);
+        }
+        hit
+    }
+
+    #[inline(always)]
+    pub(crate) fn lookup_hit_remaining_pair_and_record(
+        &mut self,
+        lhs: usize,
+        rhs: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        let r0 = &self.ranges[0];
+        let user_base = r0.user_base;
+        let user_size = r0.user_size;
+        let lhs_off = lhs.wrapping_sub(user_base);
+        let rhs_off = rhs.wrapping_sub(user_base);
+        if r0.valid
+            && lhs != 0
+            && rhs != 0
+            && lhs_off < user_size
+            && rhs_off < user_size
+            && matches!(
+                r0.state,
+                SafetyState::Valid | SafetyState::Readable | SafetyState::Writable
+            )
+            && r0.shard_epoch == current_shard_epoch(r0.shard_idx as usize)
+        {
+            self.hits += 2;
+            let next_hits = self.unflushed_pipeline_hits + 2;
+            if !self.unbacked && next_hits < HIT_METRICS_FLUSH_BATCH {
+                self.unflushed_pipeline_hits = next_hits;
+                return (
+                    CachedRemaining(user_size - lhs_off),
+                    CachedRemaining(user_size - rhs_off),
+                );
+            }
+            self.record_pipeline_hits(2);
+            return (
+                CachedRemaining(user_size - lhs_off),
+                CachedRemaining(user_size - rhs_off),
+            );
+        }
+        self.lookup_hit_remaining_pair_slow(lhs, rhs)
+    }
+
+    #[inline(never)]
+    fn lookup_hit_remaining_pair_slow(
+        &mut self,
+        lhs: usize,
+        rhs: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        if lhs != 0 && rhs != 0 {
+            for idx in 0..self.ranges.len() {
+                let range = self.ranges[idx];
+                if !range.valid {
+                    continue;
+                }
+                let lhs_off = lhs.wrapping_sub(range.user_base);
+                let rhs_off = rhs.wrapping_sub(range.user_base);
+                if lhs_off < range.user_size && rhs_off < range.user_size {
+                    if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
+                        self.hits += 2;
+                        self.record_pipeline_hits(2);
+                        if idx != 0 {
+                            self.ranges.swap(0, idx);
+                        }
+                        let lhs_rem = CachedRemaining::from_option(Self::remaining_for_state(
+                            range.state,
+                            range.user_size - lhs_off,
+                        ));
+                        let rhs_rem = CachedRemaining::from_option(Self::remaining_for_state(
+                            range.state,
+                            range.user_size - rhs_off,
+                        ));
+                        return (lhs_rem, rhs_rem);
+                    }
+                    self.ranges[idx].valid = false;
+                    break;
+                }
+            }
+        }
+        let lhs_hit = if lhs != 0 {
+            self.lookup_hit_remaining(lhs)
+        } else {
+            CachedRemaining::MISS
+        };
+        let rhs_hit = if rhs != 0 {
+            self.lookup_hit_remaining(rhs)
+        } else {
+            CachedRemaining::MISS
+        };
+        let hits = u64::from(lhs_hit.is_hit()) + u64::from(rhs_hit.is_hit());
+        if hits != 0 {
+            self.record_pipeline_hits(hits);
+        }
+        (lhs_hit, rhs_hit)
     }
 
     /// Insert or update a cache entry.
@@ -508,16 +642,24 @@ impl TlsValidationCache {
             entries[idx] = entry;
         }
         if entry.user_size != 0 {
-            // Refresh the range already holding this allocation, else
-            // replace the older of the two.
-            if let Some(range) = self
+            // Refresh the range already holding this allocation and move it to
+            // index 0 so the inline `ranges[0]` fast path hits immediately.
+            if let Some(pos) = self
                 .ranges
-                .iter_mut()
-                .find(|r| r.valid && r.user_base == entry.user_base)
+                .iter()
+                .position(|r| r.valid && r.user_base == entry.user_base)
             {
-                *range = entry;
+                let mut i = pos;
+                while i > 0 {
+                    self.ranges[i] = self.ranges[i - 1];
+                    i -= 1;
+                }
+                self.ranges[0] = entry;
             } else {
-                self.ranges[self.next_range] = entry;
+                self.ranges[3] = self.ranges[2];
+                self.ranges[2] = self.ranges[1];
+                self.ranges[1] = self.ranges[0];
+                self.ranges[0] = entry;
                 self.next_range = (self.next_range + 1) & 3;
             }
         }
@@ -605,6 +747,16 @@ impl CachedRemaining {
     #[inline(always)]
     pub const fn is_hit(self) -> bool {
         self.0 != usize::MAX
+    }
+
+    #[inline(always)]
+    pub const fn is_known_bound(self) -> bool {
+        self.0 < usize::MAX - 1
+    }
+
+    #[inline(always)]
+    pub const fn raw(self) -> usize {
+        self.0
     }
 
     #[inline(always)]

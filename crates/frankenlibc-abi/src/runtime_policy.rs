@@ -12,7 +12,9 @@ use std::fmt::Write as _;
 #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{
+    AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering as AtomicOrdering,
+};
 
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::{Cell, RefCell};
@@ -71,6 +73,11 @@ pub(crate) const FFI_PCC_STRLEN_INDEX: u8 = 8;
 pub(crate) const FFI_PCC_MEMCPY_INDEX: u8 = 9;
 pub(crate) const FFI_PCC_STRCMP_INDEX: u8 = 12;
 pub(crate) const FFI_PCC_STRNCMP_INDEX: u8 = 13;
+pub(crate) const FFI_PCC_STRCHR_INDEX: u8 = 14;
+pub(crate) const FFI_PCC_STRRCHR_INDEX: u8 = 15;
+pub(crate) const FFI_PCC_STRSTR_INDEX: u8 = 16;
+pub(crate) const FFI_PCC_MEMCHR_INDEX: u8 = 17;
+pub(crate) const FFI_PCC_MEMRCHR_INDEX: u8 = 18;
 pub(crate) const FFI_PCC_STRNLEN_INDEX: u8 = 19;
 pub(crate) const FFI_PCC_MEMMOVE_INDEX: u8 = 20;
 pub(crate) const FFI_PCC_MEMSET_INDEX: u8 = 21;
@@ -383,15 +390,15 @@ impl FfiPccCertificate {
         }
     }
 
-    #[inline]
-    fn matches_request(
+    #[inline(always)]
+    const fn matches_request(
         self,
         family: ApiFamily,
         requested_bytes: usize,
         is_write: bool,
         bloom_negative: bool,
     ) -> bool {
-        self.family == family
+        self.family as u8 == family as u8
             && requested_bytes <= self.max_requested_bytes
             && (!is_write || self.allow_write)
             && (!bloom_negative || self.allow_bloom_negative)
@@ -667,11 +674,11 @@ fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
         // bd-14baix: expanded coverage
         (K_STRCMP, 6) => FFI_PCC_STRCMP_INDEX,
         (K_STRNCMP, 7) => FFI_PCC_STRNCMP_INDEX,
-        (K_STRCHR, 6) => 14,
-        (K_STRRCHR, 7) => 15,
-        (K_STRSTR, 6) => 16,
-        (K_MEMCHR, 6) => 17,
-        (K_MEMRCHR, 7) => 18,
+        (K_STRCHR, 6) => FFI_PCC_STRCHR_INDEX,
+        (K_STRRCHR, 7) => FFI_PCC_STRRCHR_INDEX,
+        (K_STRSTR, 6) => FFI_PCC_STRSTR_INDEX,
+        (K_MEMCHR, 6) => FFI_PCC_MEMCHR_INDEX,
+        (K_MEMRCHR, 7) => FFI_PCC_MEMRCHR_INDEX,
         (K_STRNLEN, 7) => FFI_PCC_STRNLEN_INDEX,
         (K_MEMMOVE, 7) => FFI_PCC_MEMMOVE_INDEX,
         (K_MEMSET, 6) => FFI_PCC_MEMSET_INDEX,
@@ -695,9 +702,14 @@ fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
 /// symbol cannot select a row with a different symbol. That covers all rows once instead of
 /// one row per call, and a disagreement now fails verification at init rather than silently
 /// returning `None` for that symbol at runtime.
-#[inline]
-fn ffi_pcc_certificate_by_index(index: u8) -> Option<&'static FfiPccCertificate> {
-    FFI_PCC_CERTIFICATES.get(usize::from(index))
+#[inline(always)]
+const fn ffi_pcc_certificate_by_index(index: u8) -> Option<&'static FfiPccCertificate> {
+    let idx = index as usize;
+    if idx < FFI_PCC_CERTIFICATES.len() {
+        Some(&FFI_PCC_CERTIFICATES[idx])
+    } else {
+        None
+    }
 }
 
 fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
@@ -1387,6 +1399,37 @@ const EXPLAINABILITY_KIND_NONE: u8 = 0;
 const EXPLAINABILITY_KIND_PCC: u8 = 1;
 const EXPLAINABILITY_KIND_FULL: u8 = 2;
 
+/// Compact process-wide fallback for `try_decide_certified_string_pcc` in
+/// deployed builds (`cfg!(not(test))`).
+///
+/// Packs `((u16::from(mode_raw) << 8) | u16::from(pcc_index))` where `mode_raw`
+/// is non-zero (`MODE_STRICT`, `MODE_HARDENED`, or `MODE_OFF`). When non-zero,
+/// it represents a certified string fast-path PCC decision without touching
+/// `RUNTIME_POLICY_TLS` on every call. Any full or TLS-backed PCC explainability
+/// write clears this slot so TLS records take precedence, and `take_last_explainability`
+/// / `peek_last_explainability` expand it when present.
+static LAST_FAST_PCC_PACKED: AtomicU16 = AtomicU16::new(0);
+
+#[inline]
+fn expand_fast_pcc_packed(packed: u16) -> Option<DecisionExplainability> {
+    if packed == 0 {
+        return None;
+    }
+    let mode_raw = (packed >> 8) as u8;
+    let pcc_index = (packed & 0xFF) as u8;
+    if usize::from(pcc_index) >= FFI_PCC_CERTIFICATES.len() {
+        return None;
+    }
+    Some(
+        RecordedPccExplainability {
+            pcc_index,
+            mode: u8_to_mode(mode_raw),
+            ..RecordedPccExplainability::EMPTY
+        }
+        .expand(),
+    )
+}
+
 impl TraceContext {
     const EMPTY: Self = Self {
         trace_seq: 0,
@@ -1780,11 +1823,22 @@ impl Drop for EntrypointTraceGuard {
     }
 }
 
+static ACTIVE_POLICY_REENTRY_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
 struct PolicyReentryGuard;
 
 impl Drop for PolicyReentryGuard {
     fn drop(&mut self) {
-        let _ = with_policy_reentry_depth(|depth| *depth = depth.saturating_sub(1));
+        let decremented_to_zero = with_policy_reentry_depth(|depth| {
+            let prev = *depth;
+            let next = prev.saturating_sub(1);
+            *depth = next;
+            prev > 0 && next == 0
+        })
+        .unwrap_or(false);
+        if decremented_to_zero {
+            ACTIVE_POLICY_REENTRY_CONTEXTS.fetch_sub(1, AtomicOrdering::Release);
+        }
     }
 }
 
@@ -1796,15 +1850,35 @@ fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
             None
         } else {
             *depth = current + 1;
+            ACTIVE_POLICY_REENTRY_CONTEXTS.fetch_add(1, AtomicOrdering::Release);
             Some(PolicyReentryGuard)
         }
     })
     .flatten()
 }
 
+#[cold]
+#[inline(never)]
+fn in_policy_reentry_context_slow() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_runtime_policy_tls(|state| state.policy_reentry_depth > 0)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| tls.policy_reentry_depth.get() > 0)
+            .unwrap_or(false)
+    }
+}
+
+#[inline(always)]
 #[must_use]
 pub(crate) fn in_policy_reentry_context() -> bool {
-    with_policy_reentry_depth(|depth| *depth > 0).unwrap_or(false)
+    if ACTIVE_POLICY_REENTRY_CONTEXTS.load(AtomicOrdering::Acquire) == 0 {
+        return false;
+    }
+    in_policy_reentry_context_slow()
 }
 
 #[must_use]
@@ -1895,45 +1969,52 @@ fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTra
 
 #[must_use]
 pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        with_runtime_policy_tls(|state| {
-            let kind = state.last_explainability_kind;
-            state.last_explainability_kind = EXPLAINABILITY_KIND_NONE;
-            match kind {
-                EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
-                EXPLAINABILITY_KIND_FULL => state
-                    .last_explainability
-                    .take()
-                    .map(RecordedDecisionExplainability::expand),
-                _ => None,
-            }
-        })
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
-            .try_with(|tls| {
-                let kind = tls.last_explainability_kind.get();
-                tls.last_explainability_kind.set(EXPLAINABILITY_KIND_NONE);
+    let fast_packed = LAST_FAST_PCC_PACKED.swap(0, AtomicOrdering::Relaxed);
+    let tls_record = {
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            with_runtime_policy_tls(|state| {
+                let kind = state.last_explainability_kind;
+                state.last_explainability_kind = EXPLAINABILITY_KIND_NONE;
                 match kind {
-                    EXPLAINABILITY_KIND_PCC => Some(tls.last_pcc_explainability.get().expand()),
-                    EXPLAINABILITY_KIND_FULL => tls
+                    EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
+                    EXPLAINABILITY_KIND_FULL => state
                         .last_explainability
-                        .try_borrow_mut()
-                        .ok()
-                        .and_then(|mut slot| slot.take())
+                        .take()
                         .map(RecordedDecisionExplainability::expand),
                     _ => None,
                 }
             })
-            .ok()
-            .flatten()
-    }
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            RUNTIME_POLICY_TLS
+                .try_with(|tls| {
+                    let kind = tls.last_explainability_kind.get();
+                    tls.last_explainability_kind.set(EXPLAINABILITY_KIND_NONE);
+                    match kind {
+                        EXPLAINABILITY_KIND_PCC => Some(tls.last_pcc_explainability.get().expand()),
+                        EXPLAINABILITY_KIND_FULL => tls
+                            .last_explainability
+                            .try_borrow_mut()
+                            .ok()
+                            .and_then(|mut slot| slot.take())
+                            .map(RecordedDecisionExplainability::expand),
+                        _ => None,
+                    }
+                })
+                .ok()
+                .flatten()
+        }
+    };
+    expand_fast_pcc_packed(fast_packed).or(tls_record)
 }
 
 #[must_use]
 pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
+    if let Some(exp) = expand_fast_pcc_packed(LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed)) {
+        return Some(exp);
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         with_runtime_policy_tls(|state| match state.last_explainability_kind {
@@ -2286,6 +2367,7 @@ fn record_last_explainability(
         evidence_seqno: decision.evidence_seqno,
     };
 
+    LAST_FAST_PCC_PACKED.store(0, AtomicOrdering::Relaxed);
     let _ = with_last_explainability(|slot| *slot = Some(explainability));
 }
 
@@ -2301,6 +2383,7 @@ fn record_pcc_explainability(
     if cfg!(not(test)) && matches!(mode, SafetyLevel::Strict) {
         return;
     }
+    LAST_FAST_PCC_PACKED.store(0, AtomicOrdering::Relaxed);
 
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -3110,7 +3193,14 @@ pub(crate) fn try_decide_certified_string_pcc(
         return None;
     }
     let mode = u8_to_mode(mode_raw);
-    if cfg!(not(test)) && matches!(mode, SafetyLevel::Strict) {
+    if cfg!(not(test)) {
+        if matches!(mode, SafetyLevel::Strict) {
+            return Some(mode);
+        }
+        let packed = (u16::from(mode_raw) << 8) | u16::from(pcc_index);
+        if LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed) != packed {
+            LAST_FAST_PCC_PACKED.store(packed, AtomicOrdering::Relaxed);
+        }
         return Some(mode);
     }
 

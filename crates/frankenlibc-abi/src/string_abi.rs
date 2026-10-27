@@ -28,11 +28,6 @@ use frankenlibc_core::syscall as raw_syscall;
 static STRING_MEMBRANE_DEPTH_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
 
-#[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static STRING_MEMBRANE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
 const MEMCPY_HTM_MAX_BYTES: usize = 256;
 static MEMCPY_HTM_SITE: HtmSite = HtmSite::new("memcpy");
 const SIMD_FEATURE_SSE42: u32 = 1 << 0;
@@ -70,9 +65,13 @@ impl StringSimdDispatch {
     }
 }
 
-struct StringMembraneGuard;
+struct StringMembraneGuard {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    flag: &'static std::sync::atomic::AtomicBool,
+}
 
 impl Drop for StringMembraneGuard {
+    #[inline(always)]
     fn drop(&mut self) {
         #[cfg(feature = "owned-tls-cache")]
         {
@@ -81,66 +80,58 @@ impl Drop for StringMembraneGuard {
             });
         }
         #[cfg(not(feature = "owned-tls-cache"))]
-        let _ = STRING_MEMBRANE_DEPTH.try_with(|depth| {
-            let current = depth.get();
-            depth.set(current.saturating_sub(1));
-        });
+        {
+            self.flag.store(false, AtomicOrdering::Relaxed);
+        }
     }
 }
 
+#[inline(always)]
 fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
-    // `string_raw_passthrough_active()`, with the allocator-reentry test and
-    // the signal-handler test answered by one reentry-slot lookup.
+    // `string_raw_passthrough_active()`, with the allocator-reentry test,
+    // the signal-handler test, and the string-membrane recursion flag answered
+    // by one reentry-slot lookup.
     if runtime_policy::bootstrap_passthrough_active()
         || runtime_policy::runtime_policy_tls_access_active()
         || crate::pthread_abi::pthread_tls_access_active()
     {
         return None;
     }
-    let (in_allocator_reentry, in_signal_handler) =
-        crate::malloc_abi::allocator_reentry_and_signal_state();
-    // A signal handler must not re-enter the membrane/policy state the frame
-    // it interrupted on this thread may be in the middle of (bd-na6ede).
-    if in_allocator_reentry
-        || in_signal_handler
-        || frankenlibc_membrane::ptr_validator::in_validation_context()
+    #[cfg(feature = "owned-tls-cache")]
     {
-        return None;
-    }
-    if runtime_policy::is_runtime_ready() {
-        if runtime_policy::in_policy_reentry_context() {
-            return None;
-        }
-        if !crate::pthread_abi::pthread_tls_access_active()
-            && crate::pthread_abi::in_threading_policy_context()
+        let (in_allocator_reentry, in_signal_handler) =
+            crate::malloc_abi::allocator_reentry_and_signal_state();
+        if in_allocator_reentry
+            || in_signal_handler
+            || frankenlibc_membrane::ptr_validator::in_validation_context()
+            || runtime_policy::in_policy_reentry_context()
+            || crate::pthread_abi::in_threading_policy_context()
         {
             return None;
         }
-    }
-    #[cfg(feature = "owned-tls-cache")]
-    {
         STRING_MEMBRANE_DEPTH_OWNED_TLS.with(|depth| {
             if *depth > 0 {
                 None
             } else {
                 *depth += 1;
-                Some(StringMembraneGuard)
+                Some(StringMembraneGuard {})
             }
         })
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        STRING_MEMBRANE_DEPTH
-            .try_with(|depth| {
-                let current = depth.get();
-                if current > 0 {
-                    None
-                } else {
-                    depth.set(current + 1);
-                    Some(StringMembraneGuard)
-                }
-            })
-            .unwrap_or(None)
+        let flag = crate::malloc_abi::try_string_membrane_slot_flag()?;
+        // A signal handler must not re-enter the membrane/policy state the frame
+        // it interrupted on this thread may be in the middle of (bd-na6ede).
+        if flag.load(AtomicOrdering::Relaxed)
+            || frankenlibc_membrane::ptr_validator::in_validation_context()
+            || runtime_policy::in_policy_reentry_context()
+            || crate::pthread_abi::in_threading_policy_context()
+        {
+            return None;
+        }
+        flag.store(true, AtomicOrdering::Relaxed);
+        Some(StringMembraneGuard { flag })
     }
 }
 
@@ -198,6 +189,16 @@ macro_rules! avx2_dispatch {
     };
 }
 pub(crate) use avx2_dispatch;
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn string_simd_avx2_enabled() -> bool {
+    let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);
+    if override_mask != SIMD_FEATURE_OVERRIDE_DISABLED {
+        return (override_mask & SIMD_FEATURE_AVX2) != 0;
+    }
+    std::is_x86_feature_detected!("avx2")
+}
 
 fn active_string_simd_feature_mask() -> u32 {
     let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);
@@ -2089,8 +2090,8 @@ unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c
     // + once-logger) to pick a lane whose ONLY effect here is `>1` (SIMD) vs `==1` (scalar).
     // In strict mode that maps exactly to the byte boundary n>=16 (Sse42 threshold) → the
     // wide `raw_lane_memcmp_bytes` (its 32-byte SSE2 loop is valid for any lane>=16), else
-    // n<16 → the core scalar `memcmp`. Branch on `n` directly and drop the dead dispatch —
-    // byte-identical (same boundary, same two implementations).
+    // n<16 → overlapping wide-word compare. Branch on `n` directly and drop the dead dispatch —
+    // byte-identical (same boundary, same comparison semantics).
     // SAFETY: caller guarantees both regions are readable for `n` bytes.
     unsafe {
         if n >= 16 {
@@ -2100,7 +2101,7 @@ unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c
             #[cfg(target_arch = "x86_64")]
             {
                 if n >= 32 {
-                    if active_string_simd_feature_mask() & SIMD_FEATURE_AVX2 != 0 {
+                    if string_simd_avx2_enabled() {
                         return memcmp_avx2(s1, s2, n);
                     }
                 } else {
@@ -2110,14 +2111,66 @@ unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c
                 }
             }
             raw_lane_memcmp_bytes(s1, s2, n, 32)
-        } else {
-            let lhs = std::slice::from_raw_parts(s1, n);
-            let rhs = std::slice::from_raw_parts(s2, n);
-            match frankenlibc_core::string::mem::memcmp(lhs, rhs, n) {
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Greater => 1,
+        } else if n >= 8 {
+            let hx = u64::from_be(core::ptr::read_unaligned(s1.cast::<u64>()));
+            let hy = u64::from_be(core::ptr::read_unaligned(s2.cast::<u64>()));
+            if hx != hy {
+                return if hx < hy { -1 } else { 1 };
             }
+            let off = n - 8;
+            let tx = u64::from_be(core::ptr::read_unaligned(s1.add(off).cast::<u64>()));
+            let ty = u64::from_be(core::ptr::read_unaligned(s2.add(off).cast::<u64>()));
+            if tx == ty {
+                0
+            } else if tx < ty {
+                -1
+            } else {
+                1
+            }
+        } else if n >= 4 {
+            let hx = u32::from_be(core::ptr::read_unaligned(s1.cast::<u32>()));
+            let hy = u32::from_be(core::ptr::read_unaligned(s2.cast::<u32>()));
+            if hx != hy {
+                return if hx < hy { -1 } else { 1 };
+            }
+            let off = n - 4;
+            let tx = u32::from_be(core::ptr::read_unaligned(s1.add(off).cast::<u32>()));
+            let ty = u32::from_be(core::ptr::read_unaligned(s2.add(off).cast::<u32>()));
+            if tx == ty {
+                0
+            } else if tx < ty {
+                -1
+            } else {
+                1
+            }
+        } else if n >= 2 {
+            let hx = u16::from_be(core::ptr::read_unaligned(s1.cast::<u16>()));
+            let hy = u16::from_be(core::ptr::read_unaligned(s2.cast::<u16>()));
+            if hx != hy {
+                return if hx < hy { -1 } else { 1 };
+            }
+            let off = n - 2;
+            let tx = u16::from_be(core::ptr::read_unaligned(s1.add(off).cast::<u16>()));
+            let ty = u16::from_be(core::ptr::read_unaligned(s2.add(off).cast::<u16>()));
+            if tx == ty {
+                0
+            } else if tx < ty {
+                -1
+            } else {
+                1
+            }
+        } else if n == 1 {
+            let a = *s1;
+            let b = *s2;
+            if a == b {
+                0
+            } else if a < b {
+                -1
+            } else {
+                1
+            }
+        } else {
+            0
         }
     }
 }
@@ -2186,6 +2239,31 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
     runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
 }
 
+#[inline(always)]
+fn maybe_clamp_copy_len_fast(
+    symbol: &'static str,
+    requested: usize,
+    primary_addr: usize,
+    primary_remaining: crate::malloc_abi::KnownRemaining,
+    secondary_addr: Option<usize>,
+    secondary_remaining: crate::malloc_abi::KnownRemaining,
+    enable_repair: bool,
+) -> (usize, bool) {
+    if !enable_repair || requested <= primary_remaining.min(secondary_remaining).raw() {
+        return (requested, false);
+    }
+    maybe_clamp_copy_len(
+        symbol,
+        requested,
+        primary_addr,
+        primary_remaining.into_option(),
+        secondary_addr,
+        secondary_remaining.into_option(),
+        true,
+    )
+}
+
+#[inline(always)]
 fn maybe_clamp_copy_len(
     symbol: &'static str,
     requested: usize,
@@ -2206,26 +2284,46 @@ fn maybe_clamp_copy_len(
             requested: _,
             clamped,
         } => {
-            // The primary pointer is the destination for writes and the first
-            // operand for comparisons/scans. A strictly smaller secondary
-            // extent is the actual bound that caused the clamp; ties remain
-            // attributed to the primary operation pointer.
-            let address = bound_causing_address(
+            record_clamp_copy_bounds(
+                symbol,
+                &action,
                 primary_addr,
                 primary_remaining,
                 secondary_addr,
                 secondary_remaining,
             );
-            global_healing_policy().record(
-                "string_memory",
-                symbol,
-                &action,
-                RepairLogContext::new(0, Some(address)),
-            );
             (clamped, true)
         }
         _ => (requested, false),
     }
+}
+
+#[cold]
+#[inline(never)]
+fn record_clamp_copy_bounds(
+    symbol: &'static str,
+    action: &HealingAction,
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
+) {
+    // The primary pointer is the destination for writes and the first
+    // operand for comparisons/scans. A strictly smaller secondary
+    // extent is the actual bound that caused the clamp; ties remain
+    // attributed to the primary operation pointer.
+    let address = bound_causing_address(
+        primary_addr,
+        primary_remaining,
+        secondary_addr,
+        secondary_remaining,
+    );
+    global_healing_policy().record(
+        "string_memory",
+        symbol,
+        action,
+        RepairLogContext::new(0, Some(address)),
+    );
 }
 
 #[inline]
@@ -4601,34 +4699,24 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         return dst;
     }
 
-    // Raw passthrough (hardened-mode reentrancy/early-startup guard): skip membrane entirely.
-    if string_raw_passthrough_active() {
+    // Out-of-line tail, kept `#[inline(never)]` (without `#[cold]`) so `memcpy` stays a
+    // frameless leaf on the strict path and a frameless tail-jump in hardened mode while
+    // `memcpy_validating` is compiled as a hot function with full inlining of guard,
+    // TLS/PCC, and bloom helpers.
+    unsafe { memcpy_validating(dst, src, n) }
+}
+
+#[inline(never)]
+unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
         {
             unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
-    }
+    };
 
-    // COLD-TAIL SPLIT, cut BELOW the raw bypass — the `memcmp`/`strlen` shape, not the
-    // `wcschr` one. `string_raw_passthrough_active()` above is the re-entrancy/TLS guard
-    // standing between an interposed `memcpy` and a membrane that itself copies; putting
-    // it behind `#[cold] #[inline(never)]` is what made hardened startup SIGSEGV
-    // deterministically for `strlen`. Everything from the trace scope down is ordinary
-    // validating work and moves safely.
-    //
-    // `memcpy` is the hottest entry in any libc and it had never been measured here. It
-    // is the worst ratio in the suite: 92.00 Ir against live glibc's 22.00 at n=64
-    // (4.182x), 69.00 vs 21.03 at n=16 (3.281x). Its prologue was six callee-saved pushes
-    // plus `sub $0xe8,%rsp` — 232 bytes of stack — rented on every call by a deployed path
-    // that is two null tests, a mode test and a copy.
-    unsafe { memcpy_validating(dst, src, n) }
-}
-
-#[cold]
-#[inline(never)]
-unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     if cfg!(test) && !runtime_policy::mode().heals_enabled() {
         let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
         if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
@@ -4657,17 +4745,9 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
         return dst;
     }
 
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
-        // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memcpy semantics.
-        unsafe {
-            raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n);
-        }
-        return dst;
-    };
-
-    let (dst_rem, src_rem) =
-        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
-    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    let (dst_rem_fast, src_rem_fast) =
+        crate::malloc_abi::known_remaining_pair_fast_in_guarded_string(dst as usize, src as usize);
+    let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
             runtime_policy::FFI_PCC_MEMCPY_INDEX,
@@ -4677,13 +4757,13 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
             bloom_negative,
         )
     {
-        let (copy_len, clamped) = maybe_clamp_copy_len(
+        let (copy_len, clamped) = maybe_clamp_copy_len_fast(
             "memcpy",
             n,
             dst as usize,
-            dst_rem,
+            dst_rem_fast,
             Some(src as usize),
-            src_rem,
+            src_rem_fast,
             mode.heals_enabled(),
         );
         if copy_len == 0 {
@@ -4697,9 +4777,13 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
             }
             return dst;
         }
-        if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len) {
-            unsafe {
-                raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len))
+        {
+            if copy_len < 128 {
+                unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), copy_len) };
+            } else {
+                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), copy_len) };
             }
         }
         if clamped {
@@ -4712,6 +4796,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
         }
         return dst;
     }
+    let (dst_rem, src_rem) = (dst_rem_fast.into_option(), src_rem_fast.into_option());
 
     let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
     let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
@@ -4768,7 +4853,9 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
     }
 
     // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
-    if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len) {
+    if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+        && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len))
+    {
         unsafe {
             raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
         }
@@ -4810,12 +4897,6 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
     // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only
     // needed in hardened mode — see the memcpy strict-path note.
     if runtime_policy::strict_passthrough_active() {
-        unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
-        return dst;
-    }
-
-    // Raw passthrough (hardened-mode reentrancy/early-startup guard): skip membrane entirely.
-    if string_raw_passthrough_active() {
         unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         return dst;
     }
@@ -4973,12 +5054,6 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         return dst;
     }
 
-    // Raw passthrough (hardened-mode reentrancy/early-startup guard): skip membrane entirely.
-    if string_raw_passthrough_active() {
-        unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
-        return dst;
-    }
-
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memset semantics.
         unsafe {
@@ -5114,20 +5189,6 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
     if n == 0 {
         return 0;
     }
-    if s1.is_null() || s2.is_null() {
-        if string_raw_passthrough_active() {
-            return 0;
-        }
-        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
-        // Membrane: null pointer in memcmp is UB in C. Return safe default.
-        record_string_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Null)),
-        );
-        return 0;
-    }
 
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces Allow
     // with no clamp (cmp_len == n), so the result is exactly the dispatched raw compare.
@@ -5143,33 +5204,35 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
     // in strict mode it was a redundant ~3-5ns of TLS-context reads (allocator-reentry +
     // validation-depth + bootstrap-phase) on every call. Ordering strict first elides them.
     if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
         return unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n) };
     }
 
-    // Acquire the complete guard here, before the cold validating boundary.
-    // `memcmp_validating` used to repeat the raw-passthrough checks when it
-    // immediately acquired this same guard, so every ordinary hardened call
-    // paid two allocator/TLS/validation-context probes. Keeping the guard in
-    // this frame preserves its lifetime across the whole validating call.
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
-        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
-    };
-
-    // Cold tail in its own frame, cut BELOW the bypass above rather than at the
-    // strict gate. `memcmp` has the same shape `strlen` does: a
-    // `string_raw_passthrough_active()` re-entrancy/TLS bypass sits between the
-    // strict gate and the validating body, and putting that bypass behind a
-    // `#[cold] #[inline(never)]` boundary made hardened startup SIGSEGV
-    // deterministically for `strlen`. Everything from the trace scope down is
-    // ordinary validating work and moves safely. This entry carried the largest
-    // frame of the narrow comparison family — `push rbp/r15/r14/r13/r12/rbx;
-    // sub $0xa8,%rsp`, 168 bytes — rented by the strict fast path on every call.
     unsafe { memcmp_validating(s1, s2, n) }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        if string_raw_passthrough_active() {
+            return 0;
+        }
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+        // Membrane: null pointer in memcmp is UB in C. Return safe default.
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
+    };
     // Resolve `known_remaining` BEFORE entering the memcmp PCC scope. The
     // read-only PCC sets `proof_carried_pointer_validation_active() == true`,
     // which causes `validate_ptr_in_slot` to return `Unknown` and previously
@@ -5178,10 +5241,10 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     // Some(0)` UAF detection on hardened heap allocations, and scanning the
     // 64-slot fallback table twice on every call; bd-rc0923-epic-eeuy4f.28,
     // same ordering invariant as `strlen_validating` in bd-k3skh6).
-    let (lhs_remaining, rhs_remaining) =
-        crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
+    let (lhs_fast, rhs_fast) =
+        crate::malloc_abi::known_remaining_pair_fast_in_guarded_string(s1 as usize, s2 as usize);
     let _ = crate::malloc_abi::known_remaining_for_certified_read;
-    let bloom_negative = lhs_remaining.is_none() && rhs_remaining.is_none();
+    let bloom_negative = lhs_fast.is_none() && rhs_fast.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
             runtime_policy::FFI_PCC_MEMCMP_INDEX,
@@ -5191,13 +5254,13 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
             bloom_negative,
         )
     {
-        let (cmp_len, _clamped) = maybe_clamp_copy_len(
+        let (cmp_len, _clamped) = maybe_clamp_copy_len_fast(
             "memcmp",
             n,
             s1 as usize,
-            lhs_remaining,
+            lhs_fast,
             Some(s2 as usize),
-            rhs_remaining,
+            rhs_fast,
             mode.heals_enabled(),
         );
         if cmp_len == 0 {
@@ -5221,6 +5284,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
         }
         return out;
     }
+    let (lhs_remaining, rhs_remaining) = (lhs_fast.into_option(), rhs_fast.into_option());
 
     let _trace_scope = runtime_policy::entrypoint_scope_memcmp();
     let certified_read = runtime_policy::active_memcmp_pcc_token();
@@ -5503,7 +5567,6 @@ unsafe fn memccpy_page_bounded(dst: *mut u8, src: *const u8, c: u8, n: usize) ->
     }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     if n == 0 || s.is_null() {
@@ -5519,7 +5582,61 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         return std::ptr::null_mut();
     }
 
-    let rem = known_remaining(s as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe {
+            match memchr_page_bounded(s.cast::<u8>(), c as u8, n) {
+                Some(idx) => (s as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMCHR_INDEX,
+            s as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let (scan_len, clamped) = maybe_clamp_copy_len(
+            "memchr",
+            n,
+            s as usize,
+            rem,
+            None,
+            None,
+            mode.heals_enabled(),
+        );
+        if scan_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(6, n),
+                    true,
+                );
+            }
+            return std::ptr::null_mut();
+        }
+        let found = unsafe { memchr_page_bounded(s.cast::<u8>(), c as u8, scan_len) };
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, scan_len),
+                true,
+            );
+        }
+        return match found {
+            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            None => std::ptr::null_mut(),
+        };
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memchr");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
     let (mode, decision) = runtime_policy::decide(
@@ -5527,7 +5644,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         s as usize,
         n,
         false,
-        rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5644,7 +5761,6 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
     unsafe { memrchr_validating(s, c, n) }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     if n == 0 || s.is_null() {
@@ -5660,7 +5776,65 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
         return std::ptr::null_mut();
     }
 
-    let rem = known_remaining(s as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe {
+            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
+            match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+                Some(idx) => (s as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMRCHR_INDEX,
+            s as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let (scan_len, clamped) = maybe_clamp_copy_len(
+            "memrchr",
+            n,
+            s as usize,
+            rem,
+            None,
+            None,
+            mode.heals_enabled(),
+        );
+        if scan_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(6, n),
+                    true,
+                );
+            }
+            return std::ptr::null_mut();
+        }
+        let found = unsafe {
+            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
+            frankenlibc_core::string::mem::memrchr(bytes, c as u8, scan_len)
+        };
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, scan_len),
+                true,
+            );
+        }
+        return match found {
+            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            None => std::ptr::null_mut(),
+        };
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memrchr");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
     let (mode, decision) = runtime_policy::decide(
@@ -5668,7 +5842,7 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
         s as usize,
         n,
         false,
-        rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5814,11 +5988,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // deterministically (3/3 runs, dying before `main`; strict mode unaffected).
     // The 17 Ir is real and is not worth this. See the 2026-08-26 ledger row.
 
-    // Hardened mode only: the remaining reentry/TLS-access bypasses before the
-    // validating membrane (the bootstrap term is harmlessly re-checked here).
-    if string_raw_passthrough_active() {
+    // Hardened mode only: acquire the complete membrane guard here before the cold
+    // validating boundary (matching `memcmp`), so `strlen_validating` can use
+    // `known_remaining_in_guarded_string` without repeating reentry/TLS checks.
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
         return unsafe { scan_c_string(s, None).0 };
-    }
+    };
 
     // Cold tail in its own frame — but split BELOW the bypass above, not above it.
     // An earlier attempt moved the whole tail starting at `string_raw_passthrough_active()`
@@ -5831,30 +6006,10 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     unsafe { strlen_validating(s) }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn strlen_validating(s: *const c_char) -> usize {
     // BOUND LOOKUP BEFORE THE TRACE SCOPE, and the order is the whole fix (bd-k3skh6).
-    //
-    // `entrypoint_scope` sets the policy-reentry flag for as long as it is alive, and
-    // `known_remaining` branches on exactly that flag: inside a reentry context it consults
-    // only `bump_mmap` / `segment` / `fallback` and deliberately SKIPS `validate_ptr`, to
-    // avoid recursing through a validator that itself calls string functions. In HARDENED
-    // mode a `malloc`ed span is discoverable only through `validate_ptr` — `segment_remaining`
-    // answers `None` for it, which is why the strict fast path (whose `known_remaining_strict`
-    // consults the same three sources) is unaffected. So building the scope first made this
-    // lookup return `None` for every tracked allocation, `rem` was `None`, and the code fell
-    // past the `if let Some(limit) = rem` bounded scan into the unbounded one.
-    //
-    // Measured before this change, LD_PRELOAD at PHASE=2, `malloc` of n bytes filled with
-    // non-NUL and a poisoned neighbour: **38 of 40 sizes over-read**, e.g. a 5-byte tracked
-    // allocation reporting length 13. Strict mode was correct at 0 of 40 — hardened, the mode
-    // whose entire purpose is bounds enforcement, was the one not enforcing them.
-    //
-    // Hoisting the lookup restores the full source list. It runs at the same point every
-    // other ABI entry queries it from — outside any scope — so `validate_ptr` is entered
-    // exactly as it is from `memchr`/`memrchr`, not from a nested context.
-    let rem = known_remaining(s as usize);
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
     let bloom_negative = rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -5869,15 +6024,8 @@ unsafe fn strlen_validating(s: *const c_char) -> usize {
             return unsafe { scan_c_string(s, None).0 };
         }
         if let Some(limit) = rem {
-            let dispatch = select_string_simd_dispatch(
-                SimdStringOperation::Strlen,
-                s as usize,
-                s as usize,
-                limit.max(1),
-            );
             // SAFETY: bounded scan within known allocation extent.
-            let (len, terminated) =
-                unsafe { raw_lane_strnlen_bytes(s, limit, dispatch.lane_bytes) };
+            let (len, terminated) = unsafe { scan_c_string(s, Some(limit)) };
             if terminated {
                 return len;
             }
@@ -5899,9 +6047,7 @@ unsafe fn strlen_validating(s: *const c_char) -> usize {
             );
             return limit;
         }
-        let dispatch =
-            select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
-        return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
+        return unsafe { scan_c_string(s, None).0 };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
@@ -6042,7 +6188,6 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
     unsafe { strnlen_validating(s, n) }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     if s.is_null() {
@@ -6056,7 +6201,11 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
         return 0;
     }
 
-    let rem = known_remaining(s as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { scan_c_string_nul_or_bound(s, n).0 };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
     let bloom_negative = rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -6186,7 +6335,6 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
     unsafe { strcmp_validating(s1, s2) }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     if s1.is_null() || s2.is_null() {
@@ -6215,8 +6363,15 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
         return 0;
     }
 
-    let lhs_rem = known_remaining(s1 as usize);
-    let rhs_rem = known_remaining(s2 as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let (i, _hit_limit) = unsafe { scan_strcmp::<false>(s1, s2, usize::MAX) };
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    };
+
+    let (lhs_rem, rhs_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
     let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -6377,7 +6532,6 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
     unsafe { strncmp_validating(s1, s2, n) }
 }
 
-#[cold]
 #[inline(never)]
 unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
     if s1.is_null() || s2.is_null() {
@@ -6391,8 +6545,18 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
         return 0;
     }
 
-    let lhs_rem = known_remaining(s1 as usize);
-    let rhs_rem = known_remaining(s2 as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let (i, hit_limit) = unsafe { scan_strcmp::<true>(s1, s2, n) };
+        if hit_limit {
+            return 0;
+        }
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    };
+
+    let (lhs_rem, rhs_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
     let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(

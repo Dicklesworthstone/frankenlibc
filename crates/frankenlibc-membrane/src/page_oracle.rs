@@ -111,6 +111,21 @@ impl PageOracle {
         self.owned_pages.load(Ordering::Acquire) == 0
     }
 
+    /// Lock-free pre-check for whether `addr` could possibly reside in an owned L1 chunk.
+    ///
+    /// If this returns `false`, [`Self::query`] is guaranteed to return `false`
+    /// without acquiring the `l2_maps` read lock.
+    #[must_use]
+    #[inline]
+    pub fn may_contain_addr_lockfree(&self, addr: usize) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        let page = addr / PAGE_SIZE;
+        let (l1_idx, _) = Self::decompose(page);
+        self.l1_chunk_may_be_present(l1_idx)
+    }
+
     /// Mark all pages covered by an allocation as owned.
     pub fn insert(&self, base: usize, size: usize) {
         if size == 0 {

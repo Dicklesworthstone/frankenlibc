@@ -41785,3 +41785,41 @@ ones that would notice a threading-policy depth counter behaving differently.
 
 - **DISPOSITION.** KEEP. Hardened `sort120k` drops from `252.42ms` (`9.136x` glibc) to `71.07ms` (`2.572x` glibc), a **`3.552x` speedup** (`71.8%` wall-time reduction) that clears the `<=3x` target on `sort120k`.
 
+## 2026-10-25 — `bd-rc0923-epic-eeuy4f.9`: Wave 2 — MRU `ranges[0]` Pair Lookup, Single-Slot Guard, and Lock-Free Context Short-Circuits (`1.596x` strict on `sort120k`, `12.09ns` `strlen_16`, `23.70ns` `memcmp_16`)
+
+- **LEVER (`bd-rc0923-epic-eeuy4f.9`).** Completed the L3 hardened performance target (`<= 2.0x strict` on `sort` 120k and 1.5M lines, `<= 200 ns/call` on deployed short `strlen`/`memcmp`, and `membrane_deployed_so` Criterion benchmark group):
+  1. **MRU `ranges[0]` Inline Fast Path & Single-Borrow Pair Lookup (`tls_cache.rs`, `ptr_validator.rs`, `malloc_abi.rs`):** Promoted the most recently inserted/hit allocation range to `ranges[0]` on insert and range hit, added `lookup_hit_remaining_pair` (checking whether both `lhs` and `rhs` lie in `ranges[0]` in a single epoch check before falling back to `lookup_hit_remaining_pair_slow`), and added single-register `KnownRemaining(usize)` + `known_remaining_pair_fast_in_guarded_string` so `memcmp`, `memcpy`, `memmove`, `strcmp`, `strncmp`, and `strstr` resolve both pointers without `Option<usize>` stack spills.
+  2. **Single-Slot `enter_string_membrane_guard` & Lock-Free Context Short-Circuits (`malloc_abi.rs`, `string_abi.rs`, `ptr_validator.rs`, `pthread_abi.rs`, `runtime_policy.rs`, `page_oracle.rs`):** Added `try_string_membrane_slot_flag` on `AllocatorReentrySlot` (combining `allocator_depth`, `in_signal_handler`, and `string_membrane_active` into one TCB-keyed slot lookup in both single-threaded and multi-threaded processes), added `ACTIVE_VALIDATION_CONTEXTS`, `ACTIVE_POLICY_REENTRY_CONTEXTS`, and `ACTIVE_THREADING_POLICY_CONTEXTS` atomic counters so `in_validation_context()`, `in_policy_reentry_context()`, and `in_threading_policy_context()` short-circuit with one `Acquire` load when zero, and added `PageOracle::may_contain_addr_lockfree` before acquiring the `l2_maps` `RwLock`.
+  3. **Compact Deployed PCC Explainability & Expanded String Fast-Path Coverage (`runtime_policy.rs`, `string_abi.rs`, `membrane_bench.rs`):** Added `LAST_FAST_PCC_PACKED` for deployed `try_decide_certified_string_pcc` decisions (expanded transparently by `take_last_explainability`/`peek_last_explainability` while `cfg(test)` retains full per-call TLS explainability), wired `strchr`, `strrchr`, `strstr`, `memchr`, and `memrchr` into `try_decide_certified_string_pcc`, and added the `membrane_deployed_so` Criterion benchmark group (`deployed_so_strlen_16`, `deployed_so_memcmp_16`, `deployed_so_memcpy_16`).
+- **OBJECTS.**
+  - `incumbent_d41`: `main@d41a6e312` (`/data/tmp/libfrankenlibc_abi.incumbent.so`), SHA-256 `9b607006e621b92cee472466513cfea2dfd200bad269969764bfede65cad73b6`
+  - `incumbent_head`: `main@c0eaadb98` (`/data/tmp/libfrankenlibc_abi.incumbent_head.so`), SHA-256 `0d23014a9c67f00d17e6ee908dcdbfb8bc69f88edbc4a4a01594ece47ec8ad11`
+  - `candidate`: `/data/tmp/cargo-target/release/libfrankenlibc_abi.so`, SHA-256 `e075cf62ea989436ad01bbfac074918c44d605df68ef008154c6534242e78dfa`
+  - `glibc`: host glibc 2.43
+- **SAME-INVOCATION BENCHMARKS:**
+  1. **9-round interleaved `LC_ALL=C /usr/bin/sort --parallel=1 /data/tmp/sort120k_bench.txt > /dev/null` (all outputs byte-exact SHA-256 `6789e3bc71fc5b4da4e583f052eb621e3a7fde8ac6784bfc6b7c979adca3f3f0`):**
+
+     | variant | median (ms) | min (ms) | ratio vs glibc | ratio vs strict |
+     |---|---|---|---|---|
+     | `glibc` | `60.48` | `36.97` | `1.000x` | `0.944x` |
+     | `strict-candidate` | `64.08` | `45.07` | `1.060x` | `1.000x` |
+     | `hardened-incumbent` (`d41a6e312`) | `304.76` | `284.66` | `5.039x` | `4.756x` |
+     | `hardened-incumbent` (`c0eaadb98`) | `172.17` | `146.50` | `2.847x` | `2.687x` |
+     | `hardened-candidate` | **`102.31`** | **`88.28`** | **`1.692x`** | **`1.596x`** |
+
+  2. **`sort` 1.5M lines (`LC_ALL=C /usr/bin/sort`):**
+     - Multi-thread: `glibc` `300.5ms`, `strict` `385.6ms`, `hardened-candidate` **`715.0ms`** (**`1.854x` strict**, **`2.379x` glibc**; previously timed out `> 2 min`).
+     - Single-thread (`--parallel=1`): `glibc` `703.3ms`, `strict` `868.9ms`, `hardened-candidate` **`1620.9ms`** (**`1.865x` strict**, **`2.305x` glibc**).
+  3. **Deployed `.so` per-call latency (2,000,000 calls under `LD_PRELOAD`):**
+
+     | variant | `strlen(16B)` | `memcmp(16B)` | `memcpy(16B)` |
+     |---|---|---|---|
+     | `glibc` | `2.23 ns` | `2.27 ns` | `2.51 ns` |
+     | `strict-candidate` | `3.40 ns` | `4.79 ns` | `3.09 ns` |
+     | `hardened-incumbent` (`d41a6e312`) | `82.20 ns` | `74.18 ns` | `100.66 ns` |
+     | `hardened-incumbent` (`c0eaadb98`) | `69.41 ns` | `33.99 ns` | `46.02 ns` |
+     | `hardened-candidate` | **`12.09 ns`** | **`23.70 ns`** | **`24.84 ns`** |
+
+- **DISPOSITION.** KEEP. Clears both the `<= 2.0x strict` L3 contract (`1.596x` strict on `sort120k`, `1.854x` strict on `sort` 1.5M) and the `<= 200 ns/call` short string/memory target (`12.09 ns` `strlen`, `23.70 ns` `memcmp`, `24.84 ns` `memcpy`).
+
+

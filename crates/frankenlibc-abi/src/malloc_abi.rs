@@ -120,6 +120,9 @@ struct AllocatorReentrySlot {
     /// table lock until just after it releases it; see
     /// `fallback_table_entered_on_this_thread`.
     in_fallback_table: AtomicBool,
+    /// Set (by this thread only) while `StringMembraneGuard` is active on this
+    /// thread, avoiding a separate `thread_local!` lookup on entry and drop.
+    string_membrane_active: AtomicBool,
     /// Stack address of the innermost user signal handler frame entered on
     /// this thread through signal_abi's trampolines, 0 when none; see
     /// `in_signal_handler`.
@@ -150,6 +153,7 @@ impl AllocatorReentrySlot {
             mt_folded: UnsafeCell::new(MallocStatsState::new()),
             mt_unfolded_events: AtomicU32::new(0),
             in_fallback_table: AtomicBool::new(false),
+            string_membrane_active: AtomicBool::new(false),
             signal_handler_sp: AtomicUsize::new(0),
         }
     }
@@ -491,16 +495,14 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
     let keyed = thread_key.is_some() && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
 
-    // Once multi-threading has latched, the normal glibc-backed thread path is
-    // a stable TCB-key lookup. The first probe is overwhelmingly the hit, but
-    // keeping it behind this out-of-line function made every hardened string
-    // call pay several calls plus the generic claim/collision machinery. Inline
-    // only that already-claimed first probe; every mismatch retains the exact
-    // existing path below (including native threads and recycled-key handling).
-    if keyed
-        && MULTI_THREADED.load(Ordering::Relaxed)
-        && let Some(key) = thread_key
-    {
+    // Once the current thread has claimed its TCB-keyed slot, the normal
+    // glibc-backed thread path is a stable TCB-key lookup. The first probe is
+    // overwhelmingly the hit, in both single-threaded and multi-threaded
+    // processes; keeping it behind `current_allocator_reentry_slot_slow` made
+    // every hardened string call pay an out-of-line call. Any unclaimed key
+    // (including the first call on a new thread) misses this check and goes
+    // through `current_allocator_reentry_slot_slow` -> `note_thread_key`.
+    if keyed && let Some(key) = thread_key {
         let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
         let slot = &ALLOCATOR_REENTRY_SLOTS[start & ALLOCATOR_REENTRY_SLOT_MASK];
         if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
@@ -4727,6 +4729,7 @@ fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void)
     fallback_size(ptr)
 }
 
+#[inline(never)]
 fn fallback_remaining(addr: usize) -> Option<usize> {
     if addr <= FALLBACK_SLOT_TOMBSTONE {
         return None;
@@ -4810,6 +4813,8 @@ pub(crate) fn in_allocator_reentry_context() -> bool {
 /// `(in_allocator_reentry_context(), signal_handler_context_now())` from ONE slot
 /// lookup. Under multi-threading the lookup is a keyed table probe, and the
 /// hardened string entry guard asked both questions on every call.
+#[cfg(feature = "owned-tls-cache")]
+#[inline]
 pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {
     match current_allocator_reentry_slot() {
         Some(slot) => (
@@ -4818,6 +4823,18 @@ pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {
         ),
         None => (true, false),
     }
+}
+
+/// Combined slot check for `enter_string_membrane_guard`: verifies this thread
+/// is not in allocator reentry or a signal handler, and returns its per-slot
+/// `string_membrane_active` flag in a single slot lookup.
+#[inline(always)]
+pub(crate) fn try_string_membrane_slot_flag() -> Option<&'static AtomicBool> {
+    let slot = current_allocator_reentry_slot()?;
+    if slot.allocator_depth.load(Ordering::Acquire) > 0 || in_signal_handler(slot) {
+        return None;
+    }
+    Some(&slot.string_membrane_active)
 }
 
 struct AllocatorReentryGuard {
@@ -5483,11 +5500,109 @@ pub(crate) fn known_remaining_in_guarded_string(addr: usize) -> Option<usize> {
     if !runtime_policy::strict_passthrough_active()
         && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
-        && let Some(rem) = pipeline.try_validate_cached_remaining(addr)
     {
-        return rem.or_else(|| fallback_remaining(addr));
+        return match pipeline.try_validate_cached_remaining(addr) {
+            Some(rem) => rem.or_else(|| fallback_remaining(addr)),
+            None => known_remaining_uncached_in_guarded_string(addr, pipeline),
+        };
     }
     known_remaining(addr)
+}
+
+/// Single-register representation of `Option<usize>` for known allocation bounds.
+///
+/// `usize::MAX` represents `None` (unknown/unbounded), while any value
+/// `< usize::MAX` represents `Some(remaining)`. Because no allocation can have
+/// size `usize::MAX`, this representation is lossless and allows two bounds to
+/// be returned in `(rax, rdx)` and combined via `lhs.min(rhs)` without
+/// `Option<usize>` stack spills.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KnownRemaining(usize);
+
+impl KnownRemaining {
+    pub(crate) const UNKNOWN: Self = Self(usize::MAX);
+
+    #[inline(always)]
+    pub(crate) const fn from_option(opt: Option<usize>) -> Self {
+        match opt {
+            Some(n) => Self(n),
+            None => Self::UNKNOWN,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_none(self) -> bool {
+        self.0 == usize::MAX
+    }
+
+    #[inline(always)]
+    pub(crate) const fn raw(self) -> usize {
+        self.0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn into_option(self) -> Option<usize> {
+        if self.0 == usize::MAX {
+            None
+        } else {
+            Some(self.0)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn min(self, other: Self) -> Self {
+        if self.0 < other.0 { self } else { other }
+    }
+}
+
+#[inline(always)]
+fn resolve_cached_remaining_in_guarded_string(
+    addr: usize,
+    cached: frankenlibc_membrane::tls_cache::CachedRemaining,
+    pipeline: &'static frankenlibc_membrane::ptr_validator::ValidationPipeline,
+) -> KnownRemaining {
+    if cached.is_known_bound() {
+        return KnownRemaining(cached.raw());
+    }
+    resolve_uncached_or_unknown_in_guarded_string(addr, cached, pipeline)
+}
+
+#[inline(never)]
+fn resolve_uncached_or_unknown_in_guarded_string(
+    addr: usize,
+    cached: frankenlibc_membrane::tls_cache::CachedRemaining,
+    pipeline: &'static frankenlibc_membrane::ptr_validator::ValidationPipeline,
+) -> KnownRemaining {
+    let opt = if cached.is_hit() {
+        fallback_remaining(addr)
+    } else {
+        known_remaining_uncached_in_guarded_string(addr, pipeline)
+    };
+    KnownRemaining::from_option(opt)
+}
+
+/// Fast single-register remaining-bytes lookup for two pointers in a caller that
+/// has already entered `enter_string_membrane_guard`.
+#[inline(always)]
+pub(crate) fn known_remaining_pair_fast_in_guarded_string(
+    lhs: usize,
+    rhs: usize,
+) -> (KnownRemaining, KnownRemaining) {
+    if !runtime_policy::strict_passthrough_active()
+        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+    {
+        let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
+        return (
+            resolve_cached_remaining_in_guarded_string(lhs, lhs_cached, pipeline),
+            resolve_cached_remaining_in_guarded_string(rhs, rhs_cached, pipeline),
+        );
+    }
+    (
+        KnownRemaining::from_option(known_remaining(lhs)),
+        KnownRemaining::from_option(known_remaining(rhs)),
+    )
 }
 
 /// Fast remaining-bytes lookup for two pointers in a caller that has already
@@ -5498,22 +5613,30 @@ pub(crate) fn known_remaining_pair_in_guarded_string(
     lhs: usize,
     rhs: usize,
 ) -> (Option<usize>, Option<usize>) {
-    if !runtime_policy::strict_passthrough_active()
-        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
-        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
-    {
-        let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
-        let lhs_rem = match lhs_cached.decode() {
-            Some(rem) => rem.or_else(|| fallback_remaining(lhs)),
-            None => known_remaining(lhs),
-        };
-        let rhs_rem = match rhs_cached.decode() {
-            Some(rem) => rem.or_else(|| fallback_remaining(rhs)),
-            None => known_remaining(rhs),
-        };
-        return (lhs_rem, rhs_rem);
-    }
-    (known_remaining(lhs), known_remaining(rhs))
+    let (l, r) = known_remaining_pair_fast_in_guarded_string(lhs, rhs);
+    (l.into_option(), r.into_option())
+}
+
+#[inline(never)]
+fn known_remaining_uncached_in_guarded_string(
+    addr: usize,
+    pipeline: &'static frankenlibc_membrane::ptr_validator::ValidationPipeline,
+) -> Option<usize> {
+    bump_mmap_remaining(addr)
+        .or_else(|| segment_remaining(addr))
+        .or_else(|| {
+            pipeline
+                .validate_after_tls_cache_miss(addr)
+                .access_abstraction()
+                .and_then(|abs| match abs.state {
+                    SafetyState::Valid | SafetyState::Readable | SafetyState::Writable => {
+                        abs.remaining
+                    }
+                    SafetyState::Quarantined | SafetyState::Invalid => Some(0),
+                    _ => None,
+                })
+                .or_else(|| fallback_remaining(addr))
+        })
 }
 
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {

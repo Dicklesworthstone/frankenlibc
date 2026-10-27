@@ -40,12 +40,14 @@ impl SafetyLevel {
     }
 
     /// Returns true if the membrane should apply healing actions.
+    #[inline(always)]
     #[must_use]
     pub const fn heals_enabled(self) -> bool {
         matches!(self, Self::Hardened)
     }
 
     /// Returns true if validation is active.
+    #[inline(always)]
     #[must_use]
     pub const fn validation_enabled(self) -> bool {
         !matches!(self, Self::Off)
@@ -82,7 +84,8 @@ fn level_to_u8(level: SafetyLevel) -> u8 {
     }
 }
 
-fn u8_to_level(v: u8) -> SafetyLevel {
+#[inline(always)]
+const fn u8_to_level(v: u8) -> SafetyLevel {
     match v {
         LEVEL_HARDENED => SafetyLevel::Hardened,
         LEVEL_OFF => SafetyLevel::Off,
@@ -95,6 +98,7 @@ fn u8_to_level(v: u8) -> SafetyLevel {
 /// Uses a non-blocking atomic state machine instead of OnceLock. When a reentrant
 /// call arrives during env var resolution (e.g., our strlen called by std::env::var),
 /// the RESOLVING state is detected and Strict is returned as safe default.
+#[inline(always)]
 #[must_use]
 pub fn safety_level() -> SafetyLevel {
     let cached = CACHED_LEVEL.load(Ordering::Relaxed);
@@ -104,6 +108,12 @@ pub fn safety_level() -> SafetyLevel {
         return u8_to_level(cached);
     }
 
+    safety_level_slow(cached)
+}
+
+#[cold]
+#[inline(never)]
+fn safety_level_slow(cached: u8) -> SafetyLevel {
     // Reentrant call during resolution: return Strict (safe default).
     if cached == LEVEL_RESOLVING {
         return SafetyLevel::Strict;

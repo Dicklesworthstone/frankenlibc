@@ -460,6 +460,199 @@ fn bench_membrane(c: &mut Criterion) {
     }
 
     group.finish();
+    bench_deployed_so(c, mode_label);
+}
+
+struct DeployedSoSymbols {
+    malloc: unsafe extern "C" fn(usize) -> *mut libc::c_void,
+    free: unsafe extern "C" fn(*mut libc::c_void),
+    strlen: unsafe extern "C" fn(*const libc::c_char) -> usize,
+    memcmp: unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, usize) -> libc::c_int,
+    memcpy:
+        unsafe extern "C" fn(*mut libc::c_void, *const libc::c_void, usize) -> *mut libc::c_void,
+}
+
+fn find_deployed_so_path() -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("FRANKENLIBC_BENCH_SO") {
+        let pb = std::path::PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    let mut roots = Vec::new();
+    if let Some(exe) = std::env::current_exe().ok()
+        && let Some(profile_dir) = exe.parent().and_then(|p| p.parent())
+    {
+        let direct = profile_dir.join("libfrankenlibc_abi.so");
+        if direct.exists() {
+            return Some(direct);
+        }
+        if let Some(target_root) = profile_dir.parent() {
+            roots.push(target_root.to_path_buf());
+        }
+    }
+    if let Some(dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        roots.push(std::path::PathBuf::from(dir));
+    }
+    roots.push(std::path::PathBuf::from("/data/tmp/cargo-target"));
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(ws) = manifest_dir.parent().and_then(|p| p.parent()) {
+        roots.push(ws.join("target"));
+        if let Ok(entries) = std::fs::read_dir(ws) {
+            for entry in entries.flatten() {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(".rch-target-"))
+                {
+                    roots.push(entry.path());
+                }
+            }
+        }
+    }
+    for root in roots {
+        for prof in ["release", "bench", "debug"] {
+            let candidate = root.join(prof).join("libfrankenlibc_abi.so");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+#[allow(clippy::missing_transmute_annotations)]
+fn load_deployed_so_symbols() -> Option<DeployedSoSymbols> {
+    unsafe {
+        let handle =
+            if !libc::dlsym(libc::RTLD_DEFAULT, c"__frankenlibc_version".as_ptr()).is_null() {
+                Some(libc::RTLD_DEFAULT)
+            } else if let Some(so_path) = find_deployed_so_path() {
+                let c_path = std::ffi::CString::new(so_path.to_str()?).ok()?;
+                let h = libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+                (!h.is_null()).then_some(h)
+            } else {
+                None
+            };
+        if let Some(handle) = handle {
+            let malloc_ptr = libc::dlsym(handle, c"malloc".as_ptr());
+            let free_ptr = libc::dlsym(handle, c"free".as_ptr());
+            let strlen_ptr = libc::dlsym(handle, c"strlen".as_ptr());
+            let memcmp_ptr = libc::dlsym(handle, c"memcmp".as_ptr());
+            let memcpy_ptr = libc::dlsym(handle, c"memcpy".as_ptr());
+            if !malloc_ptr.is_null()
+                && !free_ptr.is_null()
+                && !strlen_ptr.is_null()
+                && !memcmp_ptr.is_null()
+                && !memcpy_ptr.is_null()
+            {
+                return Some(DeployedSoSymbols {
+                    malloc: std::mem::transmute(malloc_ptr),
+                    free: std::mem::transmute(free_ptr),
+                    strlen: std::mem::transmute(strlen_ptr),
+                    memcmp: std::mem::transmute(memcmp_ptr),
+                    memcpy: std::mem::transmute(memcpy_ptr),
+                });
+            }
+        }
+        frankenlibc_abi::malloc_abi::signal_runtime_ready_for_tests();
+        Some(DeployedSoSymbols {
+            malloc: frankenlibc_abi::malloc_abi::malloc,
+            free: frankenlibc_abi::malloc_abi::free,
+            strlen: frankenlibc_abi::string_abi::strlen,
+            memcmp: frankenlibc_abi::string_abi::memcmp,
+            memcpy: frankenlibc_abi::string_abi::memcpy,
+        })
+    }
+}
+
+fn bench_deployed_so(c: &mut Criterion, mode_label: &str) {
+    let Some(syms) = load_deployed_so_symbols() else {
+        eprintln!("MEMBRANE_BENCH_META deployed_so_skipped libfrankenlibc_abi.so_not_found");
+        return;
+    };
+
+    let mut group = c.benchmark_group("membrane_deployed_so");
+    group.throughput(Throughput::Elements(1));
+
+    unsafe {
+        let buf_a = (syms.malloc)(64).cast::<u8>();
+        let buf_b = (syms.malloc)(64).cast::<u8>();
+        let buf_dst = (syms.malloc)(64).cast::<u8>();
+        assert!(!buf_a.is_null() && !buf_b.is_null() && !buf_dst.is_null());
+        std::ptr::write_bytes(buf_a, b'a', 16);
+        *buf_a.add(16) = 0;
+        std::ptr::write_bytes(buf_b, b'a', 16);
+        *buf_b.add(16) = 0;
+
+        for _ in 0..10_000 {
+            black_box((syms.strlen)(buf_a.cast()));
+            black_box((syms.memcmp)(buf_a.cast(), buf_b.cast(), 16));
+            black_box((syms.memcpy)(buf_dst.cast(), buf_a.cast(), 16));
+        }
+
+        {
+            let stats = RefCell::new(BenchStats::default());
+            group.bench_function(BenchmarkId::new("deployed_so_strlen_16", mode_label), |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box((syms.strlen)(black_box(buf_a.cast())));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            });
+            stats.borrow().report(mode_label, "deployed_so_strlen_16");
+        }
+
+        {
+            let stats = RefCell::new(BenchStats::default());
+            group.bench_function(BenchmarkId::new("deployed_so_memcmp_16", mode_label), |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box((syms.memcmp)(
+                            black_box(buf_a.cast()),
+                            black_box(buf_b.cast()),
+                            black_box(16),
+                        ));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            });
+            stats.borrow().report(mode_label, "deployed_so_memcmp_16");
+        }
+
+        {
+            let stats = RefCell::new(BenchStats::default());
+            group.bench_function(BenchmarkId::new("deployed_so_memcpy_16", mode_label), |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box((syms.memcpy)(
+                            black_box(buf_dst.cast()),
+                            black_box(buf_a.cast()),
+                            black_box(16),
+                        ));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            });
+            stats.borrow().report(mode_label, "deployed_so_memcpy_16");
+        }
+
+        (syms.free)(buf_dst.cast());
+        (syms.free)(buf_b.cast());
+        (syms.free)(buf_a.cast());
+    }
+
+    group.finish();
 }
 
 criterion_group!(

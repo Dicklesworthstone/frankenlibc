@@ -442,6 +442,7 @@ impl HealingPolicy {
     }
 
     /// Decide healing for a copy/memory operation with bounds.
+    #[inline(always)]
     #[must_use]
     pub fn heal_copy_bounds(
         &self,
@@ -467,6 +468,7 @@ impl HealingPolicy {
     }
 
     /// Decide healing for a string operation with destination bounds.
+    #[inline(always)]
     #[must_use]
     pub fn heal_string_bounds(
         &self,

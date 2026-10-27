@@ -5683,7 +5683,6 @@ pub unsafe extern "C" fn atan2pif128(y: f128, x: f128) -> f128 {
         ret
     }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// Re-raise FE_INVALID on the cold pi-function domain path (x = ±inf).
 #[inline]
 fn pi_fn_raise_invalid_f64() {

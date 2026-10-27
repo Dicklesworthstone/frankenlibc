@@ -776,12 +776,24 @@ pub(crate) fn prewarm_host_thread_symbols() {
     remember_main_thread_host_handle();
 }
 
+static ACTIVE_THREADING_POLICY_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
 #[allow(dead_code)]
 struct ThreadingPolicyGuard;
 
 impl Drop for ThreadingPolicyGuard {
     fn drop(&mut self) {
-        let _ = THREADING_POLICY_DEPTH.try_with(|d| d.set(d.get().saturating_sub(1)));
+        let decremented_to_zero = THREADING_POLICY_DEPTH
+            .try_with(|d| {
+                let prev = d.get();
+                let next = prev.saturating_sub(1);
+                d.set(next);
+                prev > 0 && next == 0
+            })
+            .unwrap_or(false);
+        if decremented_to_zero {
+            ACTIVE_THREADING_POLICY_CONTEXTS.fetch_sub(1, Ordering::Release);
+        }
     }
 }
 
@@ -793,6 +805,7 @@ fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
                 None
             } else {
                 d.set(d.get() + 1);
+                ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
                 Some(ThreadingPolicyGuard)
             }
         })
@@ -812,14 +825,24 @@ where
     }
 }
 
-#[must_use]
-pub(crate) fn in_threading_policy_context() -> bool {
+#[cold]
+#[inline(never)]
+fn in_threading_policy_context_slow() -> bool {
     // `unwrap_or(true)` preserved: a thread whose TLS cannot be reached is treated
     // as being inside the threading-policy context, which is the conservative answer
     // the allocator guard relies on.
     THREADING_POLICY_DEPTH
         .try_with(|d| d.get() > 0)
         .unwrap_or(true)
+}
+
+#[inline(always)]
+#[must_use]
+pub(crate) fn in_threading_policy_context() -> bool {
+    if ACTIVE_THREADING_POLICY_CONTEXTS.load(Ordering::Acquire) == 0 {
+        return false;
+    }
+    in_threading_policy_context_slow()
 }
 
 /// Treats the leading atomic word of `pthread_mutex_t` as our lock state.

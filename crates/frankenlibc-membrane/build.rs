@@ -712,7 +712,11 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/ptr_validator.rs",
         domain: "tsm",
-        expected_sites: 10,
+        // 10 -> 13 (bd-rc0923-epic-eeuy4f.9): ACTIVE_VALIDATION_CONTEXTS tracks
+        // threads with non-zero VALIDATION_DEPTH (fetch_add Release on 0->1,
+        // fetch_sub Release on 1->0, load Acquire short-circuit in
+        // in_validation_context).
+        expected_sites: 13,
         stop_at_cfg_test: false,
         optional: false,
     },

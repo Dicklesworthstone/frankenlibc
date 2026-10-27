@@ -7101,7 +7101,6 @@ pub unsafe extern "C" fn qecvt_x87(
     })
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// `qfcvt` — the `long double` form of `fcvt`. See [`qecvt`] for why this is a
 /// naked shim and what it still rounds away.
 ///
@@ -7146,7 +7145,6 @@ pub unsafe extern "C" fn qfcvt_x87(
     })
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// `qgcvt` — the `long double` form of `gcvt`. See [`qecvt`].
 ///
 /// The out-pointer register differs from [`qecvt`]'s: this function has one
