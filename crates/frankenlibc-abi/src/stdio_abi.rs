@@ -929,7 +929,7 @@ const STREAM_POLICY_TABLE: [[[StreamPolicyAction; STREAM_POLICY_ERRNO_COUNT];
         [StreamPolicyAction::Escalate; STREAM_POLICY_ERRNO_COUNT],
         [
             StreamPolicyAction::Escalate,
-            StreamPolicyAction::Retry,
+            StreamPolicyAction::Escalate,
             StreamPolicyAction::Yield,
             StreamPolicyAction::Escalate,
         ],
@@ -3564,21 +3564,18 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
         let ptr = pending[written..].as_ptr();
         let chunk_len = pending.len() - written;
         let rc = unsafe { sys_write_fd(fd, ptr.cast(), chunk_len) };
-        let errno_val = if rc < 0 {
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-        } else {
-            0
-        };
-        match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
-            StreamPolicyAction::Retry => continue,
-            StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
-                stream.set_error();
-                return false;
-            }
-            StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
-        }
-        if rc == 0 {
+        if rc <= 0 {
             stream.set_error();
+            // A failed flush discards the pending span, including any prefix
+            // already written. Retaining it would replay that prefix on the
+            // next fflush/fclose. Buffered bytes already advanced offset, so
+            // remove the unwritten suffix and use the actual fd position when
+            // seekable (especially O_APPEND). Raw lseek preserves write errno.
+            stream.mark_flushed();
+            let unwritten = (len - written).min(i64::MAX as usize) as i64;
+            let position = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+                .unwrap_or_else(|_| stream.offset().saturating_sub(unwritten));
+            stream.set_offset(position);
             return false;
         }
         written += rc as usize;
@@ -14566,6 +14563,26 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
+    // fdopen does not reopen the descriptor. Append mode must therefore set
+    // the kernel flag explicitly so every write appends atomically, even after
+    // fseek. Preserve existing status flags such as O_NONBLOCK.
+    if open_flags.append
+        && descriptor_flags & libc::O_APPEND == 0
+        // SAFETY: F_GETFL validated fd; F_SETFL takes an integer flag argument,
+        // and OR-ing O_APPEND preserves the descriptor's existing status flags.
+        && let Err(e) = unsafe {
+            raw_syscall::sys_fcntl(
+                fd,
+                libc::F_SETFL,
+                (descriptor_flags | libc::O_APPEND) as usize,
+            )
+        }
+    {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        unsafe { set_abi_errno(e) };
+        return std::ptr::null_mut();
+    }
+
     if open_flags.cloexec {
         let existing = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
             Ok(flags) => flags,
@@ -15801,8 +15818,8 @@ pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize
     -1
 }
 
-/// Deliver one contiguous byte span to a cookie write callback, retrying only
-/// the callback results which the shared stream policy classifies as retryable.
+/// Deliver one contiguous byte span to a cookie write callback. Preserve this
+/// path's existing callback EINTR retry independently of descriptor writes.
 unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
     let mut written = 0usize;
     while written < bytes.len() {
@@ -15813,6 +15830,9 @@ unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
         } else {
             0
         };
+        if rc < 0 && errno_val == errno::EINTR {
+            continue;
+        }
         match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
             StreamPolicyAction::Retry => continue,
             StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,

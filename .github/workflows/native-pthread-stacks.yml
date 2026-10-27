@@ -97,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/conformance/pthread_startup
-          cargo build --locked --release -p frankenlibc-abi --lib 2>&1 \
+          cargo build --release -p frankenlibc-abi --lib 2>&1 \
             | tee target/conformance/pthread_startup/build.log
       - name: Compare child execution attributes against live GNU pthreads
         shell: bash

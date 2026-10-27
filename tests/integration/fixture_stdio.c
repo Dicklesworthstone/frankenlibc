@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -693,6 +695,194 @@ static int test_fd_read_errors(void) {
     return failed != 0;
 }
 
+static volatile sig_atomic_t write_error_signals;
+static volatile sig_atomic_t write_error_reader = -1;
+
+static ssize_t drain_write_pipe(int fd) {
+    char bytes[4096];
+    ssize_t total = 0, count;
+    while ((count = syscall(SYS_read, fd, bytes, sizeof(bytes))) > 0) total += count;
+    return total;
+}
+
+static void interrupt_stdio_write(int signal_number) {
+    (void)signal_number;
+    int saved_errno = errno;
+    /* A forbidden EINTR retry is released by the second alarm, and fails the
+     * result, signal-count and data checks instead of hanging the fixture. */
+    if (++write_error_signals == 2) (void)drain_write_pipe(write_error_reader);
+    errno = saved_errno;
+}
+
+static int test_fd_write_error(int interrupted, int immediate, int partial) {
+    int fds[2];
+    if (pipe2(fds, O_NONBLOCK) != 0) return 1;
+    if (fcntl(fds[1], F_SETPIPE_SZ, 4096) != 4096) return 1;
+    char bytes[6000], buffer[16384];
+    memset(bytes, 'A', sizeof(bytes));
+    if (!partial && syscall(SYS_write, fds[1], bytes, 4096) != 4096) return 1;
+    if (interrupted && fcntl(fds[1], F_SETFL, 0) != 0) return 1;
+    FILE *stream = fdopen(fds[1], "w");
+    if (!stream || setvbuf(stream, buffer, immediate ? _IONBF : _IOFBF, sizeof(buffer))) return 1;
+    size_t count = partial ? sizeof(bytes) : 3;
+    if (!immediate && fwrite(bytes, 1, count, stream) != count) return 1;
+    write_error_signals = 0;
+    write_error_reader = fds[0];
+    struct itimerval timer = {0};
+    if (interrupted) {
+        timer.it_value.tv_usec = 50000;
+        timer.it_interval.tv_usec = 250000;
+        if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
+    }
+    errno = 0;
+    long result = immediate ? (long)fwrite(bytes, 1, count, stream) : fflush(stream);
+    int saved_errno = errno;
+    memset(&timer, 0, sizeof(timer));
+    if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
+    int error = ferror(stream) != 0, eof = feof(stream) != 0;
+    int signals = write_error_signals;
+    ssize_t first = drain_write_pipe(fds[0]);
+    clearerr(stream);
+    errno = 0;
+    int retry = fflush(stream), retry_errno = errno, retry_error = ferror(stream) != 0;
+    ssize_t replay = drain_write_pipe(fds[0]);
+    /* Keep fclose bounded even when qualifying the buggy predecessor. */
+    if (fcntl(fds[1], F_SETFL, O_NONBLOCK) != 0) return 1;
+    int closed = fclose(stream);
+    ssize_t close_replay = drain_write_pipe(fds[0]);
+    close(fds[0]);
+    write_error_reader = -1;
+    int failed = result != (immediate ? 0 : EOF) ||
+                 saved_errno != (interrupted ? EINTR : EAGAIN) || !error || eof ||
+                 signals != interrupted || first != 4096 || retry || retry_errno ||
+                 retry_error || replay || closed || close_replay;
+    printf("fd-write:%s:%s:%s result=%ld errno=%d error=%d eof=%d signals=%d first=%zd retry=%d retry_errno=%d retry_error=%d replay=%zd close=%d close_replay=%zd\n",
+           immediate ? "fwrite" : "fflush", interrupted ? "EINTR" : "EAGAIN",
+           partial ? "partial" : "full", result, saved_errno, error, eof, signals,
+           first, retry, retry_errno, retry_error, replay, closed, close_replay);
+    if (failed) fprintf(stderr, "FAIL: descriptor write error case %d/%d/%d\n",
+                        interrupted, immediate, partial);
+    return failed;
+}
+
+static int test_flush_failure_position(int append, int initial, int start, int limit) {
+    int fd = (int)syscall(SYS_memfd_create, "stdio-write-errors", 0);
+    if (fd < 0) return 1;
+    char buffer[16384], expected[32] = {0}, actual[32] = {0};
+    memset(expected, 'S', (size_t)initial);
+    if (syscall(SYS_write, fd, expected, initial) != initial ||
+        syscall(SYS_lseek, fd, start, SEEK_SET) != start) return 1;
+    if (append && fcntl(fd, F_SETFL, O_NONBLOCK)) return 1;
+    FILE *stream = fdopen(fd, append ? (append == 1 ? "a+" : "a") : "w+");
+    if (!stream || setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) ||
+        fseek(stream, start, SEEK_SET) || fwrite("abcdefghij", 1, 10, stream) != 10) return 1;
+    int descriptor_flags = fcntl(fd, F_GETFL);
+    int append_enabled = descriptor_flags >= 0 && (descriptor_flags & O_APPEND) != 0;
+    int nonblocking = descriptor_flags >= 0 && (descriptor_flags & O_NONBLOCK) != 0;
+    struct rlimit previous_limit, restricted;
+    struct sigaction ignore = {.sa_handler = SIG_IGN}, previous_action;
+    sigemptyset(&ignore.sa_mask);
+    if (getrlimit(RLIMIT_FSIZE, &previous_limit) ||
+        sigaction(SIGXFSZ, &ignore, &previous_action)) return 1;
+    restricted = previous_limit;
+    restricted.rlim_cur = (rlim_t)limit;
+    if (setrlimit(RLIMIT_FSIZE, &restricted)) {
+        (void)sigaction(SIGXFSZ, &previous_action, NULL);
+        fclose(stream);
+        return 1;
+    }
+    errno = 0;
+    int result = fflush(stream), saved_errno = errno, error = ferror(stream) != 0;
+    long position = ftell(stream);
+    off_t kernel_position = (off_t)syscall(SYS_lseek, fd, 0, SEEK_CUR);
+    /* CI redirects diagnostics to regular files, so restore the limit before
+     * reporting anything. The hard limit was never changed. */
+    if (setrlimit(RLIMIT_FSIZE, &previous_limit) ||
+        sigaction(SIGXFSZ, &previous_action, NULL)) _exit(2);
+    clearerr(stream);
+    int retry = fflush(stream), retry_error = ferror(stream) != 0;
+    struct stat st;
+    int accepted = limit - (append ? initial : start);
+    int expected_position = accepted ? limit : start;
+    int expected_size = accepted ? limit : initial;
+    memcpy(expected + (append ? initial : start), "abcdefghij", (size_t)accepted);
+    int failed = result != EOF || saved_errno != EFBIG || !error ||
+                 position != expected_position || kernel_position != expected_position ||
+                 (append && (!append_enabled || !nonblocking)) ||
+                 retry || retry_error || fstat(fd, &st) || st.st_size != expected_size ||
+                 pread(fd, actual, sizeof(actual), 0) != expected_size ||
+                 memcmp(actual, expected, (size_t)expected_size);
+    int closed = fclose(stream);
+    failed |= closed != 0;
+    printf("fd-position:%s:initial=%d:start=%d:limit=%d append=%d nonblocking=%d result=%d errno=%d error=%d position=%ld kernel=%ld retry=%d retry_error=%d close=%d\n",
+           append ? (append == 1 ? "a+" : "a") : "regular", initial, start, limit,
+           append_enabled, nonblocking, result, saved_errno, error, position,
+           (long)kernel_position, retry, retry_error, closed);
+    if (failed) fprintf(stderr, "FAIL: failed flush position case %d/%d/%d/%d\n",
+                        append, initial, start, limit);
+    return failed;
+}
+
+struct flush_error_cookie { int calls, error_number; };
+
+static ssize_t write_cookie_failure(void *opaque, const char *bytes, size_t count) {
+    (void)bytes;
+    (void)count;
+    struct flush_error_cookie *cookie = opaque;
+    ++cookie->calls;
+    errno = cookie->error_number;
+    return 0;
+}
+
+static int test_cookie_flush_error(int error_number) {
+    struct flush_error_cookie cookie = {.error_number = error_number};
+    FILE *stream = fopencookie(&cookie, "w", (cookie_io_functions_t){.write = write_cookie_failure});
+    char buffer[16384];
+    if (!stream || setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) ||
+        fwrite("abc", 1, 3, stream) != 3) return 1;
+    errno = 0;
+    int result = fflush(stream), saved_errno = errno, error = ferror(stream) != 0;
+    clearerr(stream);
+    int retry = fflush(stream), retry_error = ferror(stream) != 0;
+    int closed = fclose(stream);
+    int failed = result != EOF || saved_errno != error_number || !error ||
+                 retry || retry_error || closed || cookie.calls != 1;
+    printf("cookie-write:errno_in=%d result=%d errno=%d error=%d retry=%d retry_error=%d close=%d calls=%d\n",
+           error_number, result, saved_errno, error, retry, retry_error, closed, cookie.calls);
+    if (failed) fprintf(stderr, "FAIL: cookie flush error case %d\n", error_number);
+    return failed;
+}
+
+static int test_fd_write_errors(void) {
+    struct sigaction action = {.sa_handler = interrupt_stdio_write}, previous;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGALRM, &action, &previous)) return 1;
+    int failed = 0, cases = 0;
+    for (int interrupted = 0; interrupted <= 1; ++interrupted)
+        for (int immediate = 0; immediate <= 1; ++immediate) {
+            failed += test_fd_write_error(interrupted, immediate, 0);
+            ++cases;
+        }
+    failed += test_fd_write_error(0, 0, 1);
+    ++cases;
+    if (sigaction(SIGALRM, &previous, NULL)) ++failed;
+    const int positions[][4] = {
+        {0, 0, 0, 4}, {0, 7, 5, 9}, {0, 7, 7, 7},
+        {1, 7, 0, 11}, {1, 7, 0, 7}, {2, 7, 3, 7}
+    };
+    for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
+        failed += test_flush_failure_position(positions[i][0], positions[i][1],
+                                               positions[i][2], positions[i][3]);
+        ++cases;
+    }
+    failed += test_cookie_flush_error(EINTR);
+    failed += test_cookie_flush_error(EAGAIN);
+    cases += 2;
+    printf("fixture_stdio write-errors: %s (%d cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", cases, failed);
+    return failed != 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "cookie-eintr") == 0) {
         const char *symbols[] = {"fopencookie", "fread", "setvbuf", "ferror", "feof", "fclose"};
@@ -708,6 +898,13 @@ int main(int argc, char **argv) {
         if (argc == 3 && check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_fd_read_errors();
+    }
+    if (argc >= 2 && strcmp(argv[1], "write-errors") == 0) {
+        const char *symbols[] = {"fdopen", "fwrite", "fflush", "ftell", "fseek", "setvbuf",
+                                 "clearerr", "ferror", "feof", "fclose", "fopencookie"};
+        if (argc == 3 && check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_fd_write_errors();
     }
     int fails = 0;
     fails += test_fopen_fileno_setvbuf_setbuf();

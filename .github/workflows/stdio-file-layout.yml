@@ -86,6 +86,14 @@ jobs:
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/read-errors" \
             bash scripts/check_stdio_native.sh --read-errors
+      - name: Preserve write failures without replaying buffered output
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/write-errors" \
+            bash scripts/check_stdio_native.sh --write-errors
       - name: Cancel native stdio reads and preserve C and C++ cleanup
         run: |
           set -euo pipefail
