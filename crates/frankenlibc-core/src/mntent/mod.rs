@@ -4,7 +4,7 @@
 //! inline in `frankenlibc-abi/src/unistd_abi.rs::getmntent_r` /
 //! `hasmntopt` / `addmntent`. The abi layer keeps responsibility for
 //! the `struct mntent` field-pointer marshalling, caller-buffer NUL
-//! packing, and `BufReader`/`Write` integration; this module produces
+//! packing, and FILE stream integration; this module produces
 //! and consumes byte slices only.
 //!
 //! An mtab/fstab line has six whitespace-separated fields:
@@ -15,6 +15,6 @@
 pub mod parse;
 
 pub use parse::{
-    MntFields, escape_mntent_field, format_mntent_line, has_mnt_opt, parse_mntent_freq_passno,
-    parse_mntent_line, unescape_mntent_field,
+    MntBufferEntry, MntFields, escape_mntent_field, format_mntent_line, has_mnt_opt,
+    parse_mntent_buffer, parse_mntent_freq_passno, parse_mntent_line, unescape_mntent_field,
 };

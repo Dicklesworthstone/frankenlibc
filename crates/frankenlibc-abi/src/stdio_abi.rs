@@ -3498,6 +3498,7 @@ unsafe fn write_bytes_without_runtime_policy(
     let flushed_from_buffer = write_result.flushed_from_buffer;
     let total_written = if write_result.flush_needed {
         let fd = stream_obj.fd();
+        let caller = stream_io_caller(stream_obj, caller);
         let mut written = 0usize;
         let mut success = true;
         while written < write_result.flush_data.len() {
@@ -3560,6 +3561,7 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
 }
 
 unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bool {
+    let caller = stream_io_caller(stream, caller);
     let len = stream.pending_flush().len();
     if len == 0 {
         return true;
@@ -3644,6 +3646,7 @@ impl Drop for RefillTmpGuard {
 
 /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
 unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
+    let caller = stream_io_caller(stream, caller);
     let capacity = stream.buffer_capacity();
     if capacity == 0 {
         return 0; // Cannot buffer anything.
@@ -3691,6 +3694,17 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
                 return 0;
             }
         }
+    }
+}
+
+/// GNU fopen's `c` mode (also implicit in setmntent) suppresses cancellation
+/// only for this stream's descriptor I/O, without changing the thread's state.
+#[inline]
+fn stream_io_caller(stream: &StdioStream, caller: usize) -> usize {
+    if stream.cancellation_enabled() {
+        caller
+    } else {
+        0
     }
 }
 
@@ -4044,6 +4058,21 @@ pub fn init_host_stdio_streams_for_tests() {
 /// Uses raw syscalls exclusively - no host delegation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe { fopen_with_mount_flags(pathname, mode, false) }
+}
+
+/// setmntent is a real FILE opener, with GNU's implicit close-on-exec and
+/// non-cancelling I/O flags. Apply these after parsing so arbitrary mode suffixes
+/// cannot push the implicit modifiers past fopen's six-character scan limit.
+pub(crate) unsafe fn fopen_mount(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe { fopen_with_mount_flags(pathname, mode, true) }
+}
+
+unsafe fn fopen_with_mount_flags(
+    pathname: *const c_char,
+    mode: *const c_char,
+    mount_flags: bool,
+) -> *mut c_void {
     if pathname.is_null() || mode.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
@@ -4094,11 +4123,16 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     }
 
     let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
-    let Some(open_flags) = parse_mode(mode_bytes) else {
+    let Some(mut open_flags) = parse_mode(mode_bytes) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     };
+
+    if mount_flags {
+        open_flags.cloexec = true;
+        open_flags.no_cancel = true;
+    }
 
     // Convert to libc open flags and open the file.
     let oflags = flags_to_oflags(&open_flags);
@@ -4705,7 +4739,8 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
     if s.buffer_capacity() == 0 {
         let mut b = [0u8; 1];
         let fd = s.fd();
-        let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
+        let rc =
+            unsafe { stream_read_fd(stream_io_caller(s, caller), fd, b.as_mut_ptr().cast(), 1) };
         if rc > 0 {
             s.set_offset(s.offset().saturating_add(1));
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
@@ -4869,6 +4904,7 @@ pub(crate) unsafe fn fputc_for_caller(c: c_int, stream: *mut c_void, caller: usi
     let flushed_from_buffer = write_result.flushed_from_buffer;
     let total_written = if write_result.flush_needed {
         let fd = s.fd();
+        let caller = stream_io_caller(s, caller);
         let mut written = 0usize;
         let mut success = true;
         while written < write_result.flush_data.len() {
@@ -4935,6 +4971,7 @@ pub(crate) unsafe fn fputc_for_caller(c: c_int, stream: *mut c_void, caller: usi
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
 unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> (usize, bool) {
+    let caller = stream_io_caller(s, caller);
     let max = dst.len();
     let mut written = 0usize;
     let mut had_error = false;
@@ -5012,6 +5049,7 @@ fn fgets_read_failed(written: usize, had_error: bool) -> bool {
 /// # Safety
 /// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
 unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> usize {
+    let caller = stream_io_caller(s, caller);
     let total = dst.len();
     let mut read_total = 0usize;
     while read_total < total {
@@ -5531,12 +5569,17 @@ pub(crate) unsafe fn fputs_for_caller(
                 runtime_policy::scaled_cost(10, len),
                 true,
             );
+            // A write to a read-only FILE is EBADF in both modes. The core
+            // already sets the stream error flag; publish errno after policy
+            // bookkeeping, just as the strict fast path does.
+            unsafe { set_abi_errno(errno::EBADF) };
             return libc::EOF;
         }
     };
     let flushed_from_buffer = write_result.flushed_from_buffer;
     let total_written = if write_result.flush_needed {
         let fd = stream_obj.fd();
+        let caller = stream_io_caller(stream_obj, caller);
         let mut written = 0usize;
         let mut success = true;
         while written < write_result.flush_data.len() {
@@ -5972,6 +6015,7 @@ pub(crate) unsafe fn fwrite_for_caller(
     let flushed_from_buffer = write_result.flushed_from_buffer;
     let total_written = if write_result.flush_needed {
         let fd = s.fd();
+        let caller = stream_io_caller(s, caller);
         let mut written = 0usize;
         let mut success = true;
         while written < write_result.flush_data.len() {
@@ -11555,6 +11599,7 @@ pub unsafe extern "C-unwind" fn fprintf(
         let flushed_from_buffer = write_result.flushed_from_buffer;
         if write_result.flush_needed {
             let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
             let mut written = 0usize;
             let mut success = true;
             while written < write_result.flush_data.len() {
@@ -11817,6 +11862,7 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
         let flushed_from_buffer = write_result.flushed_from_buffer;
         if write_result.flush_needed {
             let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
             let mut written = 0usize;
             let mut success = true;
             while written < write_result.flush_data.len() {
@@ -13066,6 +13112,7 @@ pub(crate) unsafe fn vfprintf_for_caller(
         let flushed_from_buffer = write_result.flushed_from_buffer;
         if write_result.flush_needed {
             let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
             let mut written = 0usize;
             let mut success = true;
             while written < write_result.flush_data.len() {
@@ -13303,6 +13350,7 @@ pub(crate) unsafe fn vprintf_for_caller(
         let flushed_from_buffer = write_result.flushed_from_buffer;
         if write_result.flush_needed {
             let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
             let mut written = 0usize;
             let mut success = true;
             while written < write_result.flush_data.len() {
@@ -13836,6 +13884,7 @@ pub(crate) unsafe fn read_stream_for_scanf_for_caller(
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    let caller = stream_io_caller(s, caller);
     if !wide_io_active() {
         if s.effective_orientation() > 0 {
             s.set_error();
@@ -14775,11 +14824,14 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     }
     let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
-    let Some(open_flags) = parse_mode(mode_bytes) else {
+    let Some(mut open_flags) = parse_mode(mode_bytes) else {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return std::ptr::null_mut();
     };
+    // GNU fdopen ignores `c`: it associates an existing descriptor and does
+    // not give its I/O the special fopen/open-stream cancellation policy.
+    open_flags.no_cancel = false;
 
     // A positive descriptor can still be closed.  Validate it before creating
     // a registry-owned stream so fdopen() preserves glibc's EBADF contract for
@@ -15213,6 +15265,7 @@ unsafe fn getdelim_fill_stream(
     buf: &mut Vec<u8>,
     caller: usize,
 ) {
+    let caller = stream_io_caller(s, caller);
     loop {
         match s.read_until_delim(delim_byte, &mut *buf) {
             ReadUntil::Found | ReadUntil::Eof => break,

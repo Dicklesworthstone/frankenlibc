@@ -16,14 +16,17 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-core/src/stdio/**'
+      - 'crates/frankenlibc-core/src/mntent/**'
       - 'tests/integration/fixture_stdio.c'
       - 'tests/integration/fixture_stdio_file_layout.c'
       - 'tests/integration/fixture_stdio_lifetime.c'
       - 'tests/integration/fixture_callback_unwind.cpp'
       - 'tests/integration/fixture_stdio_printf.c'
       - 'tests/integration/fixture_stdio_cancel.c'
+      - 'tests/integration/fixture_mntent_file.c'
       - 'scripts/check_stdio_native.sh'
       - 'scripts/check_stdio_read_cancellation.sh'
+      - 'scripts/check_mntent_file.py'
       - '.github/workflows/stdio-file-layout.yml'
   workflow_dispatch:
 
@@ -103,6 +106,12 @@ jobs:
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/popen" \
             bash scripts/check_stdio_native.sh --popen
+      - name: Use real FILE handles for mount tables and preserve stream cancellation modes
+        if: always()
+        run: |
+          python3 scripts/check_mntent_file.py \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/stdio-layout/mntent-file"
       - name: Cancel native stdio I/O and preserve C and C++ cleanup
         run: |
           set -euo pipefail

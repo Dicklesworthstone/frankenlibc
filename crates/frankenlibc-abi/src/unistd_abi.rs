@@ -16025,77 +16025,41 @@ pub unsafe extern "C" fn lio_listio(
 // mount table — Implemented (native /proc/mounts parser)
 // ---------------------------------------------------------------------------
 
-/// Internal mount table stream state for native mntent implementation.
-struct MntStream {
-    reader: std::io::BufReader<std::fs::File>,
-    line_buf: Vec<u8>,
+/// Keep a whole mount-entry operation atomic with respect to other mount
+/// readers/writers using this FILE. The guard also releases the explicit lock
+/// if a foreign cookie callback or an ordinary stream read unwinds.
+struct MntentStreamLock(*mut c_void);
+
+impl MntentStreamLock {
+    unsafe fn new(stream: *mut c_void) -> Self {
+        // SAFETY: each entrypoint requires a live FILE for its entire call.
+        unsafe { crate::stdio_abi::flockfile(stream) };
+        Self(stream)
+    }
+}
+
+impl Drop for MntentStreamLock {
+    fn drop(&mut self) {
+        // SAFETY: construction acquired this stream's recursive explicit lock.
+        unsafe { crate::stdio_abi::funlockfile(self.0) };
+    }
 }
 
 /// `setmntent` — open a mount table file.
 ///
-/// Native implementation: opens the file and returns an opaque MntStream
-/// pointer. The stream is used by getmntent/getmntent_r/addmntent/endmntent.
+/// Returns an ordinary native FILE, including GNU's implicit close-on-exec
+/// and non-cancelling descriptor I/O flags. The same handle supports fileno,
+/// rewind, fgets, buffering, status inspection and normal stream ownership.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void {
-    if filename.is_null() {
-        return std::ptr::null_mut();
-    }
-    let Some(path_bytes) = (unsafe { read_c_string_bytes(filename) }) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return std::ptr::null_mut();
-    };
-    let path_str = match std::str::from_utf8(&path_bytes) {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    // Determine open mode from the type string (fopen-style mode).
-    let mode_bytes = if type_.is_null() {
-        b"r".to_vec()
+    // Retain the existing null-mode extension without translating pathname
+    // bytes to UTF-8: Linux filenames are byte strings.
+    let mode = if type_.is_null() {
+        c"r".as_ptr()
     } else {
-        let Some(bytes) = (unsafe { read_c_string_bytes(type_) }) else {
-            unsafe { set_abi_errno(libc::EINVAL) };
-            return std::ptr::null_mut();
-        };
-        bytes
+        type_
     };
-
-    use std::fs::OpenOptions;
-    let mut opts = OpenOptions::new();
-    match mode_bytes.first() {
-        Some(b'r') => {
-            opts.read(true);
-            if mode_bytes.contains(&b'+') {
-                opts.write(true);
-            }
-        }
-        Some(b'w') => {
-            opts.write(true).create(true).truncate(true);
-            if mode_bytes.contains(&b'+') {
-                opts.read(true);
-            }
-        }
-        Some(b'a') => {
-            opts.append(true).create(true);
-            if mode_bytes.contains(&b'+') {
-                opts.read(true);
-            }
-        }
-        _ => {
-            opts.read(true);
-        }
-    }
-
-    match opts.open(path_str) {
-        Ok(file) => {
-            let ms = Box::new(MntStream {
-                reader: std::io::BufReader::new(file),
-                line_buf: Vec::with_capacity(256),
-            });
-            Box::into_raw(ms) as *mut c_void
-        }
-        Err(_) => std::ptr::null_mut(),
-    }
+    unsafe { crate::stdio_abi::fopen_mount(filename, mode) }
 }
 
 /// Thread-local buffer for the non-reentrant `getmntent`.
@@ -16156,30 +16120,39 @@ fn with_getmntent_buf<R>(f: impl FnOnce(&mut [u8; GETMNTENT_BUFSIZE]) -> R) -> R
 /// Native implementation using thread-local storage. Calls getmntent_r
 /// internally with a thread-local buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getmntent(stream: *mut c_void) -> *mut c_void {
+pub unsafe extern "C-unwind" fn getmntent(stream: *mut c_void) -> *mut c_void {
     if stream.is_null() {
         return std::ptr::null_mut();
     }
-    with_getmntent_buf(|buf| {
-        // struct mntent is the first 48 bytes; string data starts after.
-        let mntbuf = buf.as_mut_ptr() as *mut c_void;
-        let str_buf = unsafe { buf.as_mut_ptr().add(48) } as *mut c_char;
-        let str_len = (GETMNTENT_BUFSIZE - 48) as c_int;
-        unsafe { getmntent_r(stream, mntbuf, str_buf, str_len) }
-    })
+    // Do not retain a Rust mutable borrow over a cookie callback: the callback
+    // may reenter getmntent, whose documented static result is overwritten.
+    let buf = with_getmntent_buf(|buf| buf.as_mut_ptr());
+    let mntbuf = buf.cast::<c_void>();
+    let str_buf = unsafe { buf.add(48) }.cast::<c_char>();
+    let str_len = (GETMNTENT_BUFSIZE - 48) as c_int;
+    unsafe {
+        getmntent_r_for_caller(
+            stream,
+            mntbuf,
+            str_buf,
+            str_len,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `endmntent` — close a mount table stream.
 ///
-/// Native implementation: drops the MntStream box. Always returns 1
-/// per the glibc contract.
+/// Uses normal FILE ownership and always returns 1 per the GNU contract,
+/// including when the underlying close/flush reports an error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endmntent(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn endmntent(stream: *mut c_void) -> c_int {
     if stream.is_null() {
         return 1;
     }
-    // SAFETY: stream was created by setmntent via Box::into_raw.
-    let _ = unsafe { Box::from_raw(stream as *mut MntStream) };
+    unsafe {
+        crate::stdio_abi::fclose_for_caller(stream, core::intrinsics::return_address() as usize)
+    };
     1
 }
 
@@ -16219,86 +16192,77 @@ pub unsafe extern "C" fn hasmntopt(mnt: *const c_void, opt: *const c_char) -> *m
 /// caller-supplied buffers by parsing whitespace-separated fields from the
 /// mount table file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getmntent_r(
+pub unsafe extern "C-unwind" fn getmntent_r(
     stream: *mut c_void,
     mntbuf: *mut c_void,
     buf: *mut c_char,
     buflen: c_int,
 ) -> *mut c_void {
-    use std::io::BufRead;
+    unsafe {
+        getmntent_r_for_caller(
+            stream,
+            mntbuf,
+            buf,
+            buflen,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
 
-    if stream.is_null() || mntbuf.is_null() || buf.is_null() || buflen <= 0 {
+unsafe fn getmntent_r_for_caller(
+    stream: *mut c_void,
+    mntbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: c_int,
+    caller: usize,
+) -> *mut c_void {
+    if stream.is_null() || mntbuf.is_null() || buf.is_null() || buflen <= 1 {
         return std::ptr::null_mut();
     }
-    // SAFETY: stream was created by setmntent via Box::into_raw.
-    let ms = unsafe { &mut *(stream as *mut MntStream) };
-    let buflen_u = buflen as usize;
+    let _lock = unsafe { MntentStreamLock::new(stream) };
 
     loop {
-        ms.line_buf.clear();
-        let bytes_read = match ms.reader.read_until(b'\n', &mut ms.line_buf) {
-            Ok(n) => n,
-            Err(_) => return std::ptr::null_mut(),
-        };
-        if bytes_read == 0 {
-            return std::ptr::null_mut(); // EOF
+        if unsafe { crate::stdio_abi::fgets_for_caller(buf, buflen, stream, caller) }.is_null() {
+            return std::ptr::null_mut();
         }
-        let Some(fields) = frankenlibc_core::mntent::parse_mntent_line(&ms.line_buf) else {
+        // SAFETY: successful fgets initialized a NUL-terminated prefix inside
+        // the caller's buflen-byte writable buffer. No slice crosses I/O.
+        let len = unsafe { CStr::from_ptr(buf) }.to_bytes().len();
+        let newline = unsafe { CStr::from_ptr(buf) }.to_bytes().contains(&b'\n');
+        if !newline {
+            // GNU returns the parsed prefix when the line does not fit, after
+            // discarding its remainder. Never interpret the tail as a second
+            // entry or silently replace this entry with the following line.
+            let mut tail = [0u8; 1024];
+            loop {
+                let next = unsafe {
+                    crate::stdio_abi::fgets_for_caller(
+                        tail.as_mut_ptr().cast(),
+                        tail.len() as c_int,
+                        stream,
+                        caller,
+                    )
+                };
+                if next.is_null() || unsafe { CStr::from_ptr(next) }.to_bytes().contains(&b'\n') {
+                    break;
+                }
+            }
+        }
+        let buffer = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), len + 1) };
+        let Some(entry) = frankenlibc_core::mntent::parse_mntent_buffer(buffer) else {
             continue;
         };
-
-        // Check whether all four NUL-terminated strings fit in caller's buffer.
-        let needed = fields.fsname.len()
-            + 1
-            + fields.dir.len()
-            + 1
-            + fields.mtype.len()
-            + 1
-            + fields.opts.len()
-            + 1;
-        if needed > buflen_u {
-            continue;
-        }
-
-        // Pack NUL-terminated strings into caller buffer, decoding glibc's
-        // mount-table escapes on the way in.
-        //
-        // getmntent_r unescapes \040 space, \011 tab, \012 newline and \134
-        // backslash in every string field, so a mount point may contain
-        // whitespace; anything else (including a backslash before a
-        // non-matching triplet such as \054) is copied verbatim. fl packed the
-        // raw field, so callers saw a literal "/tmp\040dir". bd-bacmxe.
-        //
-        // Decoded straight into the caller's buffer: unescaping only ever
-        // shrinks, so the `needed` bound computed from the raw lengths above
-        // stays a valid upper bound and no scratch allocation is required.
-        let buf_u8 = buf as *mut u8;
-        let mut off = 0usize;
-        let mut pack = |bytes: &[u8]| -> *mut c_char {
-            let p = unsafe { buf_u8.add(off) } as *mut c_char;
-            // SAFETY: the `needed` check above proved `bytes.len() + 1` bytes
-            // remain from `off`, and the decoded form is never longer.
-            let dst = unsafe { std::slice::from_raw_parts_mut(buf_u8.add(off), bytes.len()) };
-            let n = frankenlibc_core::mntent::unescape_mntent_field(bytes, dst);
-            unsafe { *buf_u8.add(off + n) = 0 };
-            off += n + 1;
-            p
-        };
-        let fsname_ptr = pack(fields.fsname);
-        let dir_ptr = pack(fields.dir);
-        let type_ptr = pack(fields.mtype);
-        let opts_ptr = pack(fields.opts);
-
-        // Fill mntent struct: { *fsname, *dir, *type, *opts, freq, passno }
-        let ent = mntbuf as *mut *mut c_char;
+        // SAFETY: all offsets point into the initialized caller buffer and
+        // mntbuf is writable for the public <mntent.h> layout.
         unsafe {
-            *ent = fsname_ptr;
-            *ent.add(1) = dir_ptr;
-            *ent.add(2) = type_ptr;
-            *ent.add(3) = opts_ptr;
-            let int_ptr = ent.add(4) as *mut c_int;
-            *int_ptr = fields.freq as c_int;
-            *int_ptr.add(1) = fields.passno as c_int;
+            mntbuf.cast::<libc::mntent>().write(libc::mntent {
+                mnt_fsname: buf.add(entry.offsets[0]),
+                mnt_dir: buf.add(entry.offsets[1]),
+                mnt_type: buf.add(entry.offsets[2]),
+                mnt_opts: buf.add(entry.offsets[3]),
+                mnt_freq: entry.freq,
+                mnt_passno: entry.passno,
+            });
         }
 
         return mntbuf;
@@ -16310,9 +16274,7 @@ pub unsafe extern "C" fn getmntent_r(
 /// Writes the entry in fstab format: fsname dir type opts freq passno.
 /// Returns 0 on success, 1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c_int {
-    use std::io::Write;
-
+pub unsafe extern "C-unwind" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c_int {
     if stream.is_null() || mnt.is_null() {
         return 1;
     }
@@ -16359,12 +16321,22 @@ pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c
     );
     frankenlibc_core::mntent::format_mntent_line(&fields, &mut line);
 
-    // Write to the underlying file (accessed via BufReader::get_mut).
-    let ms = unsafe { &mut *(stream as *mut MntStream) };
-    match ms.reader.get_mut().write_all(&line) {
-        Ok(()) => 0,
-        Err(_) => 1,
+    line.push(0);
+    let _lock = unsafe { MntentStreamLock::new(stream) };
+    // addmntent always appends, even when an r+ stream is positioned in the
+    // middle of existing buffered input. Seeking through stdio reconciles its
+    // read-ahead/write state; bypassing it corrupts the file and FILE position.
+    if unsafe { crate::stdio_abi::fseek(stream, 0, libc::SEEK_END) } != 0 {
+        return 1;
     }
+    let rc = unsafe {
+        crate::stdio_abi::fputs_for_caller(
+            line.as_ptr().cast(),
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    };
+    c_int::from(rc == libc::EOF)
 }
 
 // ---------------------------------------------------------------------------

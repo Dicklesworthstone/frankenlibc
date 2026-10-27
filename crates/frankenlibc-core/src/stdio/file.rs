@@ -28,6 +28,8 @@ pub struct OpenFlags {
     pub binary: bool,
     pub exclusive: bool,
     pub cloexec: bool,
+    /// GNU fopen's `c` modifier keeps descriptor I/O out of cancellation points.
+    pub no_cancel: bool,
 }
 
 /// Runtime stream state flags.
@@ -101,7 +103,8 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
             b'b' => flags.binary = true,
             b'x' => flags.exclusive = true,
             b'e' => flags.cloexec = true,
-            _ => {} // 'm', 'c': no-ops here; anything else is ignored
+            b'c' => flags.no_cancel = true,
+            _ => {} // 'm': no-op here; anything else is ignored
         }
         pos += 1;
     }
@@ -393,6 +396,12 @@ pub struct StdioStream {
 }
 
 impl StdioStream {
+    /// Whether descriptor reads/writes may act on a pending thread cancellation.
+    /// This follows the stream, including after buffering-mode changes.
+    pub fn cancellation_enabled(&self) -> bool {
+        !self.open_flags.no_cancel
+    }
+
     fn advance_offset(&mut self, bytes: usize) {
         let inc = i64::try_from(bytes).unwrap_or(i64::MAX);
         self.offset = self.offset.saturating_add(inc);
@@ -1753,6 +1762,18 @@ mod tests {
         assert!(f.readable);
         assert!(!f.writable);
         assert!(!f.append);
+    }
+
+    #[test]
+    fn no_cancel_mode_follows_the_open_stream() {
+        let normal = StdioStream::new(7, parse_mode(b"r+").unwrap());
+        assert!(normal.cancellation_enabled());
+        let mut suppressed = StdioStream::new(7, parse_mode(b"r+ce").unwrap());
+        assert!(!suppressed.cancellation_enabled());
+        assert!(suppressed.set_buffering(BufMode::None, 0));
+        assert!(!suppressed.cancellation_enabled());
+        assert!(!parse_mode(b"r,ccs=UTF-8").unwrap().no_cancel);
+        assert!(!parse_mode(b"rbbbbbbc").unwrap().no_cancel);
     }
 
     #[test]

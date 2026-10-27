@@ -63,6 +63,67 @@ pub fn parse_mntent_line(line: &[u8]) -> Option<MntFields<'_>> {
     })
 }
 
+/// The four NUL-terminated field offsets and numeric values in a parsed buffer.
+/// Missing string fields share the buffer's final NUL, so even a two-byte
+/// buffer can represent a truncated one-character entry without overflowing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MntBufferEntry {
+    pub offsets: [usize; 4],
+    pub freq: i32,
+    pub passno: i32,
+}
+
+/// Parse and unescape one NUL-terminated line in its caller-owned buffer.
+/// No allocation or overlapping immutable/mutable slices are needed: field
+/// ranges are captured before decoding, and each rewrite stays inside its own
+/// original range. The NUL or whitespace after that range is its terminator.
+pub fn parse_mntent_buffer(buffer: &mut [u8]) -> Option<MntBufferEntry> {
+    let len = buffer.iter().position(|&byte| byte == 0)?;
+    let fields = parse_mntent_line(&buffer[..len])?;
+    let mut ranges = [(len, 0); 4];
+    for (range, field) in
+        ranges
+            .iter_mut()
+            .zip([fields.fsname, fields.dir, fields.mtype, fields.opts])
+    {
+        if !field.is_empty() {
+            *range = (
+                field.as_ptr() as usize - buffer.as_ptr() as usize,
+                field.len(),
+            );
+        }
+    }
+    let mut entry = MntBufferEntry {
+        offsets: [len; 4],
+        freq: fields.freq,
+        passno: fields.passno,
+    };
+    for (index, (start, count)) in ranges.into_iter().enumerate() {
+        let mut read = start;
+        let mut write = start;
+        let end = start + count;
+        while read < end {
+            let escaped = if buffer[read] == b'\\' && end - read >= 4 {
+                match &buffer[read + 1..read + 4] {
+                    b"040" => Some(b' '),
+                    b"011" => Some(b'\t'),
+                    b"012" => Some(b'\n'),
+                    b"134" => Some(b'\\'),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            buffer[write] = escaped.unwrap_or(buffer[read]);
+            read += if escaped.is_some() { 4 } else { 1 };
+            write += 1;
+        }
+        buffer[write] = 0;
+        entry.offsets[index] = start;
+    }
+    Some(entry)
+}
+
 /// Parse the freq/passno trailing fields, defaulting non-numeric
 /// or empty inputs to `0` (matches glibc's behavior of treating
 /// missing/garbage trailing fields as zero).
@@ -299,6 +360,34 @@ fn strip_trailing_eol(line: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inplace_fields_decode_without_overlapping_their_neighbors() {
+        let mut line = *b"a\\040b c\\134d e\\011f rw 1 2\n\0";
+        let entry = parse_mntent_buffer(&mut line).unwrap();
+        let strings: Vec<&[u8]> = entry
+            .offsets
+            .iter()
+            .map(|&start| {
+                let end = line[start..].iter().position(|&b| b == 0).unwrap();
+                &line[start..start + end]
+            })
+            .collect();
+        assert_eq!(strings, [b"a b".as_slice(), b"c\\d", b"e\tf", b"rw"]);
+        assert_eq!((entry.freq, entry.passno), (1, 2));
+    }
+
+    #[test]
+    fn inplace_short_entries_share_an_in_bounds_empty_string() {
+        let mut tiny = *b"a\0";
+        let entry = parse_mntent_buffer(&mut tiny).unwrap();
+        assert_eq!(entry.offsets, [0, 1, 1, 1]);
+        assert_eq!((entry.freq, entry.passno), (0, 0));
+        assert_eq!(tiny, *b"a\0");
+        assert!(parse_mntent_buffer(&mut []).is_none());
+        assert!(parse_mntent_buffer(&mut *b"a").is_none());
+        assert!(parse_mntent_buffer(&mut *b" # comment\0").is_none());
+    }
 
     #[test]
     fn parse_basic_line() {
