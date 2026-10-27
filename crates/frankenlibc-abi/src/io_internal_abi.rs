@@ -2906,14 +2906,14 @@ pub unsafe extern "C" fn _IO_doallocbuf(_fp: *mut c_void) {
 
 /// `_IO_getc` — internal getc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_getc(fp: *mut c_void) -> c_int {
-    unsafe { stdio_abi::fgetc(fp) }
+pub unsafe extern "C-unwind" fn _IO_getc(fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize) }
 }
 
 /// `_IO_putc` — internal putc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_putc(ch: c_int, fp: *mut c_void) -> c_int {
-    unsafe { stdio_abi::fputc(ch, fp) }
+pub unsafe extern "C-unwind" fn _IO_putc(ch: c_int, fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fputc_for_caller(ch, fp, core::intrinsics::return_address() as usize) }
 }
 
 /// `_IO_feof` — internal feof.
@@ -2936,8 +2936,9 @@ pub unsafe extern "C" fn _IO_fileno(fp: *mut c_void) -> c_int {
 
 /// `_IO_peekc_locked` — internal peek character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_peekc_locked(fp: *mut c_void) -> c_int {
-    let ch = unsafe { stdio_abi::fgetc(fp) };
+pub unsafe extern "C-unwind" fn _IO_peekc_locked(fp: *mut c_void) -> c_int {
+    let ch =
+        unsafe { stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize) };
     if ch != libc::EOF {
         let _ = unsafe { stdio_abi::ungetc(ch, fp) };
     }
@@ -2950,8 +2951,8 @@ pub unsafe extern "C" fn _IO_peekc_locked(fp: *mut c_void) -> c_int {
 
 /// `_IO_fclose` — internal fclose.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fclose(fp: *mut c_void) -> c_int {
-    unsafe { stdio_abi::fclose(fp) }
+pub unsafe extern "C-unwind" fn _IO_fclose(fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fclose_for_caller(fp, core::intrinsics::return_address() as usize) }
 }
 
 /// `_IO_fdopen` — internal fdopen.
@@ -2962,8 +2963,8 @@ pub unsafe extern "C" fn _IO_fdopen(fd: c_int, mode: *const c_char) -> *mut c_vo
 
 /// `_IO_fflush` — internal fflush.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fflush(fp: *mut c_void) -> c_int {
-    unsafe { stdio_abi::fflush(fp) }
+pub unsafe extern "C-unwind" fn _IO_fflush(fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fflush_for_caller(fp, core::intrinsics::return_address() as usize) }
 }
 
 /// `_IO_fgetpos` — internal fgetpos.
@@ -2980,8 +2981,12 @@ pub unsafe extern "C" fn _IO_fgetpos64(fp: *mut c_void, pos: *mut c_void) -> c_i
 
 /// `_IO_fgets` — internal fgets.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fgets(buf: *mut c_char, n: c_int, fp: *mut c_void) -> *mut c_char {
-    unsafe { stdio_abi::fgets(buf, n, fp) }
+pub unsafe extern "C-unwind" fn _IO_fgets(
+    buf: *mut c_char,
+    n: c_int,
+    fp: *mut c_void,
+) -> *mut c_char {
+    unsafe { stdio_abi::fgets_for_caller(buf, n, fp, core::intrinsics::return_address() as usize) }
 }
 
 /// `_IO_fopen` — internal fopen.
@@ -2992,19 +2997,27 @@ pub unsafe extern "C" fn _IO_fopen(filename: *const c_char, mode: *const c_char)
 
 /// `_IO_fputs` — internal fputs.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fputs(s: *const c_char, fp: *mut c_void) -> c_int {
-    unsafe { stdio_abi::fputs(s, fp) }
+pub unsafe extern "C-unwind" fn _IO_fputs(s: *const c_char, fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fputs_for_caller(s, fp, core::intrinsics::return_address() as usize) }
 }
 
 /// `_IO_fread` — internal fread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fread(
+pub unsafe extern "C-unwind" fn _IO_fread(
     buf: *mut c_void,
     size: usize,
     count: usize,
     fp: *mut c_void,
 ) -> usize {
-    unsafe { stdio_abi::fread(buf, size, count, fp) }
+    unsafe {
+        stdio_abi::fread_for_caller(
+            buf,
+            size,
+            count,
+            fp,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `_IO_fsetpos` — internal fsetpos.
@@ -3027,13 +3040,21 @@ pub unsafe extern "C" fn _IO_ftell(fp: *mut c_void) -> i64 {
 
 /// `_IO_fwrite` — internal fwrite.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fwrite(
+pub unsafe extern "C-unwind" fn _IO_fwrite(
     buf: *const c_void,
     size: usize,
     count: usize,
     fp: *mut c_void,
 ) -> usize {
-    unsafe { stdio_abi::fwrite(buf, size, count, fp) }
+    unsafe {
+        stdio_abi::fwrite_for_caller(
+            buf,
+            size,
+            count,
+            fp,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3310,13 +3331,26 @@ pub unsafe extern "C-unwind" fn _IO_fprintf(
     fmt: *const c_char,
     mut args: ...
 ) -> c_int {
-    unsafe { stdio_abi::vfprintf(fp, fmt, (&mut args) as *mut _ as *mut c_void) }
+    unsafe {
+        stdio_abi::vfprintf_for_caller(
+            fp,
+            fmt,
+            (&mut args) as *mut _ as *mut c_void,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `_IO_printf` — internal printf (variadic, forwards to _IO_vfprintf on stdout).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
-    unsafe { stdio_abi::vprintf(fmt, (&mut args) as *mut _ as *mut c_void) }
+    unsafe {
+        stdio_abi::vprintf_for_caller(
+            fmt,
+            (&mut args) as *mut _ as *mut c_void,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `_IO_sprintf` — internal sprintf (variadic, forwards to _IO_vsprintf).
@@ -3925,7 +3959,9 @@ pub unsafe extern "C-unwind" fn _IO_vfprintf(
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { stdio_abi::vfprintf(fp, fmt, ap) }
+    unsafe {
+        stdio_abi::vfprintf_for_caller(fp, fmt, ap, core::intrinsics::return_address() as usize)
+    }
 }
 
 /// `_IO_vfscanf` — internal vfscanf via native stdio_abi.
@@ -3934,13 +3970,15 @@ pub unsafe extern "C-unwind" fn _IO_vfprintf(
 /// `vfscanf` does not have. We delegate to native vfscanf and ignore the
 /// legacy error pointer (callers in practice pass NULL).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vfscanf(
+pub unsafe extern "C-unwind" fn _IO_vfscanf(
     fp: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
     errp: *mut c_int,
 ) -> c_int {
-    let result = unsafe { stdio_abi::vfscanf(fp, fmt, ap) };
+    let result = unsafe {
+        stdio_abi::vfscanf_for_caller(fp, fmt, ap, core::intrinsics::return_address() as usize)
+    };
     if !errp.is_null() && result == libc::EOF {
         unsafe { *errp = 1 };
     }

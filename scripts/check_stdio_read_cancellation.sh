@@ -20,7 +20,23 @@ cases=(fgetc getc fgetc_unlocked getc_unlocked macro-getc_unlocked
   getchar getchar_unlocked macro-getchar_unlocked fgets fgets_unlocked
   fread fread-large fread_unlocked getline __getline getdelim __getdelim
   __fgets_chk __fgets_unlocked_chk __fread_chk __fread_unlocked_chk
-  __uflow __underflow)
+  __uflow __underflow
+  fscanf scanf vfscanf vscanf __isoc99_fscanf __isoc99_scanf
+  __isoc99_vfscanf __isoc99_vscanf _IO_vfscanf
+  fgetwc getwc fgetwc_unlocked getwc_unlocked getwchar getwchar_unlocked
+  fgetws fgetws_unlocked __fgetws_chk __fgetws_unlocked_chk
+  fwscanf wscanf vfwscanf vwscanf __isoc99_fwscanf __isoc99_wscanf
+  __isoc99_vfwscanf __isoc99_vwscanf __wuflow __wunderflow)
+outputs=(fputc putc fputc_unlocked putc_unlocked putchar putchar_unlocked
+  macro-putc_unlocked macro-putchar_unlocked fputs fputs_unlocked puts
+  fwrite fwrite-large fwrite_unlocked fflush fflush_unlocked fclose putw
+  fprintf printf vfprintf vprintf dprintf vdprintf __fprintf_chk __printf_chk
+  __vfprintf_chk __vprintf_chk __dprintf_chk __vdprintf_chk __overflow
+  _IO_putc _IO_puts _IO_fputs _IO_fwrite _IO_fflush _IO_fclose _IO_printf
+  _IO_fprintf _IO_vfprintf fputwc putwc fputwc_unlocked putwc_unlocked
+  putwchar putwchar_unlocked fputws fputws_unlocked fputws-large fwprintf
+  wprintf vfwprintf vwprintf __fwprintf_chk __wprintf_chk __vfwprintf_chk
+  __vwprintf_chk __woverflow)
 count=0
 run_case() {
   local language=$1 symbol=$2 phase=$3 path=$4 mode
@@ -57,6 +73,27 @@ for language in c cpp; do
   for symbol in fgetc fgets fread getdelim macro-getc_unlocked macro-getchar_unlocked; do
     run_case "$language" "$symbol" blocked unbuffered
   done
+  for symbol in fgetwc fgetws fwscanf; do
+    run_case "$language" "$symbol" blocked partial
+  done
+  for symbol in "${outputs[@]}"; do
+    run_case "$language" "$symbol" blocked warm
+    run_case "$language" "$symbol" pending cold
+    run_case "$language" "$symbol" disabled warm
+    case "$symbol" in
+      fflush|fflush_unlocked|fclose|_IO_fflush|_IO_fclose|dprintf|vdprintf|__dprintf_chk|__vdprintf_chk|fwrite-large|fputws-large)
+        ;;
+      *) run_case "$language" "$symbol" buffered warm ;;
+    esac
+    case "$symbol" in
+      dprintf|vdprintf|__dprintf_chk|__vdprintf_chk|fwrite-large|fputws-large)
+        ;;
+      *) run_case "$language" "$symbol" buffered memory ;;
+    esac
+  done
+  for symbol in fputc macro-putc_unlocked fputs fwrite fprintf fputwc fputws fwprintf; do
+    run_case "$language" "$symbol" blocked line
+  done
   # An omitted candidate must not silently qualify host libc as native code.
   set +e
   env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$library" \
@@ -70,5 +107,5 @@ for language in c cpp; do
   fi
   grep -qx 'stdio cancellation: wrong symbol provider' "$out/provider-negative-$language.err"
 done
-test "$count" -eq 196
-echo "Native stdio read cancellation: $count GNU oracle cases, $((count * 2)) candidate cases, 2 provider negatives passed"
+test "$count" -eq 996
+echo "Native stdio cancellation: $count GNU oracle cases, $((count * 2)) candidate cases, 2 provider negatives passed"

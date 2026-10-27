@@ -8,6 +8,7 @@ on:
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/fortify_abi.rs'
       - 'crates/frankenlibc-abi/src/wchar_abi.rs'
+      - 'crates/frankenlibc-abi/src/isoc_abi.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
@@ -102,7 +103,7 @@ jobs:
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/popen" \
             bash scripts/check_stdio_native.sh --popen
-      - name: Cancel native stdio reads and preserve C and C++ cleanup
+      - name: Cancel native stdio I/O and preserve C and C++ cleanup
         run: |
           set -euo pipefail
           FRANKENLIBC_STDIO_CANCEL_OUT_DIR="$PWD/artifacts/stdio-layout/read-cancellation" \

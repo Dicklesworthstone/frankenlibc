@@ -41,7 +41,9 @@ type WcharT = i32;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc23_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::stdio_abi::vscanf(format, ap) }
+    unsafe {
+        crate::stdio_abi::vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize)
+    }
 }
 
 /// `__isoc23_fscanf` — C23 alias for fscanf.
@@ -52,7 +54,14 @@ pub unsafe extern "C-unwind" fn __isoc23_fscanf(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::stdio_abi::vfscanf(stream, format, ap) }
+    unsafe {
+        crate::stdio_abi::vfscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// The membrane decision a scanf fast path makes just before it serves.
@@ -189,20 +198,33 @@ pub unsafe extern "C" fn __isoc23_sscanf(
 
 /// `__isoc23_wscanf` — C23 alias for wscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_wscanf(format: *const WcharT, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __isoc23_wscanf(format: *const WcharT, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
+    unsafe {
+        crate::wchar_abi::vwscanf_for_caller(
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc23_fwscanf` — C23 alias for fwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_fwscanf(
+pub unsafe extern "C-unwind" fn __isoc23_fwscanf(
     stream: *mut c_void,
     format: *const WcharT,
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
+    unsafe {
+        crate::wchar_abi::vfwscanf_for_caller(
+            stream,
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc23_swscanf` — C23 alias for swscanf.
@@ -225,7 +247,9 @@ pub unsafe extern "C" fn __isoc23_swscanf(
 /// `__isoc23_vscanf` — C23 alias for vscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc23_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    unsafe { crate::stdio_abi::vscanf(format, ap) }
+    unsafe {
+        crate::stdio_abi::vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize)
+    }
 }
 
 /// `__isoc23_vfscanf` — C23 alias for vfscanf.
@@ -235,7 +259,14 @@ pub unsafe extern "C-unwind" fn __isoc23_vfscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { crate::stdio_abi::vfscanf(stream, format, ap) }
+    unsafe {
+        crate::stdio_abi::vfscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc23_vsscanf` — C23 alias for vsscanf.
@@ -250,18 +281,31 @@ pub unsafe extern "C" fn __isoc23_vsscanf(
 
 /// `__isoc23_vwscanf` — C23 alias for vwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
-    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
+pub unsafe extern "C-unwind" fn __isoc23_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
+    unsafe {
+        crate::wchar_abi::vwscanf_for_caller(
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc23_vfwscanf` — C23 alias for vfwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_vfwscanf(
+pub unsafe extern "C-unwind" fn __isoc23_vfwscanf(
     stream: *mut c_void,
     format: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
+    unsafe {
+        crate::wchar_abi::vfwscanf_for_caller(
+            stream,
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc23_vswscanf` — C23 alias for vswscanf.
@@ -550,20 +594,33 @@ pub unsafe extern "C" fn __isoc23_wcstoull_l(
 
 /// `__isoc99_wscanf` — C99 alias for wscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_wscanf(format: *const WcharT, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __isoc99_wscanf(format: *const WcharT, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
+    unsafe {
+        crate::wchar_abi::vwscanf_for_caller(
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc99_fwscanf` — C99 alias for fwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_fwscanf(
+pub unsafe extern "C-unwind" fn __isoc99_fwscanf(
     stream: *mut c_void,
     format: *const WcharT,
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
+    unsafe {
+        crate::wchar_abi::vfwscanf_for_caller(
+            stream,
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc99_swscanf` — C99 alias for swscanf.
@@ -585,18 +642,31 @@ pub unsafe extern "C" fn __isoc99_swscanf(
 
 /// `__isoc99_vwscanf` — C99 alias for vwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
-    unsafe { crate::wchar_abi::vwscanf(format.cast::<libc::wchar_t>(), ap) }
+pub unsafe extern "C-unwind" fn __isoc99_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
+    unsafe {
+        crate::wchar_abi::vwscanf_for_caller(
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc99_vfwscanf` — C99 alias for vfwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_vfwscanf(
+pub unsafe extern "C-unwind" fn __isoc99_vfwscanf(
     stream: *mut c_void,
     format: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { crate::wchar_abi::vfwscanf(stream, format.cast::<libc::wchar_t>(), ap) }
+    unsafe {
+        crate::wchar_abi::vfwscanf_for_caller(
+            stream,
+            format.cast::<libc::wchar_t>(),
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc99_vswscanf` — C99 alias for vswscanf.

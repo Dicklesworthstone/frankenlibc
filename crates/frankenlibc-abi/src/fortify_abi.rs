@@ -111,7 +111,9 @@ unsafe fn checked_wide_nlen(ptr: *const WcharT, n: usize) -> usize {
 // Importing fl's implementations directly makes the binding a property of the code
 // rather than of link order. The signatures are identical, so every call site is
 // unchanged.
-use crate::stdio_abi::{vasprintf, vdprintf, vfprintf, vprintf, vsnprintf};
+use crate::stdio_abi::{
+    vasprintf, vdprintf_for_caller, vfprintf_for_caller, vprintf_for_caller, vsnprintf,
+};
 
 // Functions not in the Rust `libc` crate but available in glibc.
 //
@@ -134,8 +136,8 @@ use crate::stdio_abi::{vasprintf, vdprintf, vfprintf, vprintf, vsnprintf};
 // something else, which is the whole point of importing rather than declaring.
 use crate::unistd_abi::vsyslog;
 use crate::wchar_abi::{
-    fgetws, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf, vswprintf, vwprintf, wcsnrtombs, wcsrtombs,
-    wcstombs,
+    fgetws_for_caller, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf_for_caller, vswprintf,
+    vwprintf_for_caller, wcsnrtombs, wcsrtombs, wcstombs,
 };
 
 // AND THE LAST FOUR (bd-8std0q). `longjmp` is the one that mattered most: fl's
@@ -417,7 +419,7 @@ pub unsafe extern "C-unwind" fn __fprintf_chk(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vfprintf(stream, fmt, ap) }
+    unsafe { vfprintf_for_caller(stream, fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -427,7 +429,7 @@ pub unsafe extern "C-unwind" fn __vfprintf_chk(
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vfprintf(stream, fmt, ap) }
+    unsafe { vfprintf_for_caller(stream, fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -437,7 +439,7 @@ pub unsafe extern "C-unwind" fn __printf_chk(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vprintf(fmt, ap) }
+    unsafe { vprintf_for_caller(fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -446,7 +448,7 @@ pub unsafe extern "C-unwind" fn __vprintf_chk(
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vprintf(fmt, ap) }
+    unsafe { vprintf_for_caller(fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -457,7 +459,7 @@ pub unsafe extern "C-unwind" fn __dprintf_chk(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vdprintf(fd, fmt, ap) }
+    unsafe { vdprintf_for_caller(fd, fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -467,7 +469,7 @@ pub unsafe extern "C-unwind" fn __vdprintf_chk(
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vdprintf(fd, fmt, ap) }
+    unsafe { vdprintf_for_caller(fd, fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1180,7 +1182,7 @@ pub unsafe extern "C-unwind" fn __wprintf_chk(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vwprintf(fmt, ap) }
+    unsafe { vwprintf_for_caller(fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1189,7 +1191,7 @@ pub unsafe extern "C-unwind" fn __vwprintf_chk(
     fmt: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vwprintf(fmt, ap) }
+    unsafe { vwprintf_for_caller(fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1200,7 +1202,7 @@ pub unsafe extern "C-unwind" fn __fwprintf_chk(
     mut args: ...
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { vfwprintf(stream, fmt, ap) }
+    unsafe { vfwprintf_for_caller(stream, fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1210,7 +1212,7 @@ pub unsafe extern "C-unwind" fn __vfwprintf_chk(
     fmt: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vfwprintf(stream, fmt, ap) }
+    unsafe { vfwprintf_for_caller(stream, fmt, ap, core::intrinsics::return_address() as usize) }
 }
 
 // ── Wide fgets ─────────────────────────────────────────────────────────────
@@ -1253,18 +1255,19 @@ unsafe fn fgetws_chk_common(
     buflen: usize,
     n: c_int,
     stream: *mut c_void,
+    caller: usize,
 ) -> *mut WcharT {
     // Negative or zero `n` returns NULL rather than aborting, and an unknown size
     // cannot bound anything.
     if n <= 0 || buflen == usize::MAX {
         // SAFETY: caller's contract.
-        return unsafe { fgetws(buf, n, stream) };
+        return unsafe { fgetws_for_caller(buf, n, stream, caller) };
     }
 
     // Inside glibc's static bound: pass through untouched.
     if (n as usize) <= buflen {
         // SAFETY: caller's contract.
-        return unsafe { fgetws(buf, n, stream) };
+        return unsafe { fgetws_for_caller(buf, n, stream, caller) };
     }
 
     // `n` exceeds the buffer, so bound the read to what the buffer holds,
@@ -1280,7 +1283,7 @@ unsafe fn fgetws_chk_common(
     }
     let clamped = cap_wide.min(n as usize) as c_int;
     // SAFETY: `clamped` is at most the buffer's wide-character capacity.
-    let result = unsafe { fgetws(buf, clamped, stream) };
+    let result = unsafe { fgetws_for_caller(buf, clamped, stream, caller) };
     if result.is_null() {
         return result;
     }
@@ -1303,25 +1306,41 @@ unsafe fn fgetws_chk_common(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fgetws_chk(
+pub unsafe extern "C-unwind" fn __fgetws_chk(
     buf: *mut WcharT,
     buflen: usize,
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
     // SAFETY: delegates to the shared rule; `fgetws` is fl's own wide reader.
-    unsafe { fgetws_chk_common(buf, buflen, n, stream) }
+    unsafe {
+        fgetws_chk_common(
+            buf,
+            buflen,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fgetws_unlocked_chk(
+pub unsafe extern "C-unwind" fn __fgetws_unlocked_chk(
     buf: *mut WcharT,
     buflen: usize,
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
     // SAFETY: delegates to the shared rule; `fgetws` is fl's own wide reader.
-    unsafe { fgetws_chk_common(buf, buflen, n, stream) }
+    unsafe {
+        fgetws_chk_common(
+            buf,
+            buflen,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ── Multibyte conversion ───────────────────────────────────────────────────

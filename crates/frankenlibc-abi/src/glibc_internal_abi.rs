@@ -4330,7 +4330,8 @@ pub unsafe extern "C-unwind" fn __open64(
 }
 // __overflow: glibc stdio vtable helper — native file overflow bridge
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
@@ -4341,13 +4342,13 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     // "buffer full" handler would, cost one write(2) per character. Our
     // buffer is not full, so just append through the buffered path.
     if c == libc::EOF {
-        return if unsafe { crate::stdio_abi::fflush(fp) } == 0 {
+        return if unsafe { crate::stdio_abi::fflush_for_caller(fp, caller) } == 0 {
             0
         } else {
             libc::EOF
         };
     }
-    let rc = unsafe { crate::stdio_abi::fputc(c, fp) };
+    let rc = unsafe { crate::stdio_abi::fputc_for_caller(c, fp, caller) };
     // Publish the write window again (fputc's fast path clears it), so the
     // following inline putc_unlocked calls store straight into the buffer
     // until it fills -- the write-side twin of __uflow's republish.
@@ -4639,12 +4640,19 @@ pub unsafe extern "C" fn __vfork() -> c_int {
 }
 // __vfscanf: native — forward to our vfscanf
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vfscanf(
+pub unsafe extern "C-unwind" fn __vfscanf(
     stream: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { super::stdio_abi::vfscanf(stream, fmt, ap) }
+    unsafe {
+        super::stdio_abi::vfscanf_for_caller(
+            stream,
+            fmt,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 // __vsnprintf: native — forward to our vsnprintf
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5405,28 +5413,45 @@ pub unsafe extern "C-unwind" fn __underflow(fp: *mut c_void) -> c_int {
     ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {
+pub unsafe extern "C-unwind" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return usize::MAX as WcharT;
     }
-    unsafe { crate::io_internal_abi::_IO_wfile_overflow(fp, wc as u32) as WcharT }
+    let caller = core::intrinsics::return_address() as usize;
+    if wc as u32 == u32::MAX {
+        return if unsafe { crate::stdio_abi::fflush_for_caller(fp, caller) } == 0 {
+            0
+        } else {
+            u32::MAX as WcharT
+        };
+    }
+    unsafe { crate::wchar_abi::fputwc_for_caller(wc as u32, fp, caller) as WcharT }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wuflow(fp: *mut c_void) -> WcharT {
+pub unsafe extern "C-unwind" fn __wuflow(fp: *mut c_void) -> WcharT {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return usize::MAX as WcharT;
     }
-    unsafe { crate::io_internal_abi::_IO_wdefault_uflow(fp) as WcharT }
+    unsafe {
+        crate::wchar_abi::fgetwc_for_caller(fp, core::intrinsics::return_address() as usize)
+            as WcharT
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wunderflow(fp: *mut c_void) -> WcharT {
+pub unsafe extern "C-unwind" fn __wunderflow(fp: *mut c_void) -> WcharT {
     if fp.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return usize::MAX as WcharT;
     }
-    unsafe { crate::io_internal_abi::_IO_wfile_underflow(fp) as WcharT }
+    let wc = unsafe {
+        crate::wchar_abi::fgetwc_for_caller(fp, core::intrinsics::return_address() as usize)
+    };
+    if wc != u32::MAX {
+        let _ = unsafe { crate::wchar_abi::ungetwc(wc, fp) };
+    }
+    wc as WcharT
 }
 
 // Profiling — no-op stubs (profiling data is unused in frankenlibc)

@@ -30,29 +30,30 @@ use crate::errno_abi::set_abi_errno;
 use crate::io_internal_abi::{self, NativeFileBufMode};
 use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
-use crate::unistd_abi::{sys_read_fd, sys_write_fd};
+use crate::unistd_abi::sys_write_fd;
 use crate::util::{ArtifactHashMap, artifact_hash_map};
 
-type HostFcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-type HostFwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
-type HostFputsFn = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
-type HostFputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
+type HostFcloseFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type HostFwriteFn = unsafe extern "C-unwind" fn(*const c_void, usize, usize, *mut c_void) -> usize;
+type HostFputsFn = unsafe extern "C-unwind" fn(*const c_char, *mut c_void) -> c_int;
+type HostFputcFn = unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int;
 type HostFilenoFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type HostFeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type HostFerrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type HostClearerrFn = unsafe extern "C" fn(*mut c_void);
-type HostFgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-type HostFgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
-type HostFreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+type HostFgetcFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type HostFgetsFn = unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
+type HostFreadFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type HostUngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type HostFseekFn = unsafe extern "C" fn(*mut c_void, c_long, c_int) -> c_int;
 type HostFtellFn = unsafe extern "C" fn(*mut c_void) -> c_long;
-type HostFflushFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type HostFflushFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 type HostSetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
 type HostGetdelimFn =
-    unsafe extern "C" fn(*mut *mut c_char, *mut usize, c_int, *mut c_void) -> isize;
-type HostGetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
-type HostVfscanfFn = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
+    unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, c_int, *mut c_void) -> isize;
+type HostGetlineFn =
+    unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
+type HostVfscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
 type HostFgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
 type HostFsetposFn = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
 type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
@@ -3409,6 +3410,7 @@ unsafe fn write_bytes_without_runtime_policy(
     id: usize,
     _stream: *mut c_void,
     bytes: &[u8],
+    caller: usize,
 ) -> usize {
     if bytes.is_empty() {
         return 0;
@@ -3500,7 +3502,8 @@ unsafe fn write_bytes_without_runtime_policy(
         let mut success = true;
         while written < write_result.flush_data.len() {
             let rc = unsafe {
-                sys_write_fd(
+                stream_write_fd(
+                    caller,
                     fd,
                     write_result.flush_data[written..].as_ptr().cast(),
                     write_result.flush_data.len() - written,
@@ -3553,6 +3556,10 @@ unsafe fn write_bytes_without_runtime_policy(
 
 /// Flush a stream's pending write data to its fd. Returns true on success.
 unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
+    unsafe { flush_stream_for_caller(stream, 0) }
+}
+
+unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bool {
     let len = stream.pending_flush().len();
     if len == 0 {
         return true;
@@ -3563,7 +3570,7 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
         let pending = stream.pending_flush();
         let ptr = pending[written..].as_ptr();
         let chunk_len = pending.len() - written;
-        let rc = unsafe { sys_write_fd(fd, ptr.cast(), chunk_len) };
+        let rc = unsafe { stream_write_fd(caller, fd, ptr.cast(), chunk_len) };
         if rc <= 0 {
             stream.set_error();
             // A failed flush discards the pending span, including any prefix
@@ -3699,6 +3706,21 @@ unsafe fn stream_read_fd(caller: usize, fd: c_int, buf: *mut c_void, count: usiz
         crate::pthread_abi::cancellation_point_syscall_for_caller(
             caller,
             libc::SYS_read,
+            [fd as usize, buf as usize, count, 0, 0, 0],
+        )
+    }
+}
+
+/// Preserve the public entry's cancellation admission through output helpers.
+/// Only the raw write is exposed to asynchronous cancellation: stream locks,
+/// formatted output and flush buffers remain owned by outer unwind guards.
+unsafe fn stream_write_fd(caller: usize, fd: c_int, buf: *const c_void, count: usize) -> isize {
+    // SAFETY: the caller keeps the byte span alive across the syscall and
+    // supplies the captured external caller, or zero for internal I/O.
+    unsafe {
+        crate::pthread_abi::cancellation_point_syscall_for_caller(
+            caller,
+            libc::SYS_write,
             [fd as usize, buf as usize, count, 0, 0, 0],
         )
     }
@@ -4225,6 +4247,10 @@ fn raw_isatty(fd: c_int) -> bool {
 /// POSIX `fclose`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
+    unsafe { fclose_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_int {
     let id = canonical_stream_id(stream);
     if id == 0 {
         return libc::EOF;
@@ -4244,30 +4270,36 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     }
 
     let cell = {
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        let Some(cell) = reg.remove_stream(id) else {
+        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(cell) = reg.streams.get(&id).cloned() else {
             unsafe { set_abi_errno(errno::EBADF) };
             return libc::EOF;
         };
         cell
     };
-    // Lock the removed cell: a concurrent op holding a clone finishes first; the map no
-    // longer resolves this id, so no NEW op can begin. Teardown then proceeds exclusively.
+    // Keep the FILE registered until a cancellable flush finishes. A cleanup
+    // handler must still be able to use and close it if that flush unwinds.
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
-    retire_read_window(s);
 
     // Cookie-backed streams flush their ordinary stdio buffer before invoking
     // the close callback.  `fclose` still performs the close on a flush error,
     // but reports that error to the caller as glibc does.
     if is_cookie_stream(id) {
         let flushed = unsafe { flush_cookie_stream(id, s) };
+        retire_read_window(s);
+        drop(s_guard);
+        registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_stream(id);
         let rc = unsafe { cookie_stream_close(id) };
         return if flushed && rc == 0 { 0 } else { libc::EOF };
     }
 
     // Memory-backed streams: sync data, then clean up.
     if s.is_mem_backed() {
+        retire_read_window(s);
         let flush_ok = s.mem_flush();
         sync_and_unregister_fast_fixed_mem_read(id, s);
         unsafe {
@@ -4290,6 +4322,13 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
             map.remove(&id);
         }
         crate::wchar_abi::unregister_open_wmemstream(id);
+        drop(fixed_guard);
+        drop(sync_guard);
+        drop(s_guard);
+        registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_stream(id);
         maybe_unregister_dynamic_native_stream(stream);
         return if flush_ok { 0 } else { libc::EOF };
     }
@@ -4297,34 +4336,18 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     let fd = s.fd();
     // Input: leave the fd at the stream's position (glibc _IO_file_close_it).
     sync_input_position(s);
-    // Flush pending writes.
-    let pending = s.prepare_close();
-    let mut close_error = None;
-
-    if !pending.is_empty() && fd >= 0 {
-        let mut written = 0usize;
-        while written < pending.len() {
-            let rc = unsafe {
-                sys_write_fd(
-                    fd,
-                    pending[written..].as_ptr().cast(),
-                    pending.len() - written,
-                )
-            };
-            if rc < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if e == errno::EINTR {
-                    continue;
-                }
-                close_error = Some(e);
-                break;
-            } else if rc == 0 {
-                close_error = Some(errno::EIO);
-                break;
-            }
-            written += rc as usize;
-        }
-    }
+    let flushed = unsafe { flush_stream_for_caller(s, caller) };
+    let mut close_error = if flushed {
+        None
+    } else {
+        Some(
+            std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(errno::EIO),
+        )
+    };
+    retire_read_window(s);
+    let _ = s.prepare_close();
 
     // Close the fd — for stdin/stdout/stderr too, as glibc does: coreutils'
     // close_stdout/close_stdin judge success by fclose's result, and an fd
@@ -4342,6 +4365,12 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     // Neither the stream lock nor the process registry may remain held while
     // waiting: another thread must be able to close another process stream.
     drop(s_guard);
+    // Other lifecycle operations acquire registry then cell. Remove the entry
+    // only after releasing this cell, preserving that global lock order.
+    registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove_stream(id);
     maybe_unregister_dynamic_native_stream(stream);
     let status = if let Some(pid) = child {
         match wait_popen_child(pid) {
@@ -4369,6 +4398,10 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
 /// POSIX `fflush`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
+    unsafe { fflush_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_int {
     // MT-safe cell-cache fast path (see feof): a threaded fflush-per-write (durability-logging)
     // loop otherwise pays `canonical_stream_id` (×3) + decide + `stream_cell` PER CALL. A gen-valid
     // hit is a non-cookie non-mem fd stream (primed by the loop's fputc/write), so the slow path's
@@ -4379,7 +4412,7 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
     {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            let ok = unsafe { flush_stream(&mut s) };
+            let ok = unsafe { flush_stream_for_caller(&mut s, caller) };
             sync_input_position(&mut s);
             return if ok { 0 } else { libc::EOF };
         }
@@ -4453,7 +4486,7 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
                 }
                 flush_ok
             } else {
-                unsafe { flush_stream(s) }
+                unsafe { flush_stream_for_caller(s, caller) }
             };
             if !ok {
                 any_fail = true;
@@ -4497,7 +4530,7 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
         if s.effective_orientation() < 0 {
             stream_cell_cache_store(stream, &cell);
         }
-        let ok = unsafe { flush_stream(s) };
+        let ok = unsafe { flush_stream_for_caller(s, caller) };
         sync_input_position(s);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
         if ok { 0 } else { libc::EOF }
@@ -4705,6 +4738,10 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
 /// POSIX `fputc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
+    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fputc_for_caller(c: c_int, stream: *mut c_void, caller: usize) -> c_int {
     let byte = c as u8;
 
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
@@ -4730,7 +4767,7 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let bytes = [byte];
-        let written = unsafe { write_bytes_without_runtime_policy(id, stream, &bytes) };
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, &bytes, caller) };
         return if written == 1 {
             byte as c_int
         } else {
@@ -4836,7 +4873,8 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         let mut success = true;
         while written < write_result.flush_data.len() {
             let rc = unsafe {
-                sys_write_fd(
+                stream_write_fd(
+                    caller,
                     fd,
                     write_result.flush_data[written..].as_ptr().cast(),
                     write_result.flush_data.len() - written,
@@ -5036,9 +5074,10 @@ unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) 
 pub(crate) unsafe fn read_cached_ascii_line_wide(
     stream: *mut c_void,
     dst: &mut [u32],
+    caller: usize,
 ) -> Option<(usize, bool)> {
     let p = wide_cache_lookup_by_stream(stream)?;
-    let result = unsafe { read_cached_ascii_line_wide_inner(p, dst) };
+    let result = unsafe { read_cached_ascii_line_wide_inner(p, dst, caller) };
     mirror_raw_cached(stream, p);
     result
 }
@@ -5046,6 +5085,7 @@ pub(crate) unsafe fn read_cached_ascii_line_wide(
 unsafe fn read_cached_ascii_line_wide_inner(
     p: *mut StdioStream,
     dst: &mut [u32],
+    caller: usize,
 ) -> Option<(usize, bool)> {
     // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
     let s = unsafe { &mut *p };
@@ -5056,7 +5096,7 @@ unsafe fn read_cached_ascii_line_wide_inner(
             if s.buffer_capacity() == 0 {
                 return None;
             }
-            if unsafe { refill_stream(s, 0) } <= 0 {
+            if unsafe { refill_stream(s, caller) } <= 0 {
                 return Some((0, s.is_error()));
             }
             match s.read_ascii_line_into_wide(dst) {
@@ -5322,6 +5362,14 @@ pub(crate) unsafe fn fgets_for_caller(
 /// POSIX `fputs`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
+    unsafe { fputs_for_caller(s, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fputs_for_caller(
+    s: *const c_char,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
     if s.is_null() {
         return libc::EOF;
     }
@@ -5357,7 +5405,7 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let (len, _) = unsafe { scan_c_str_len(s, None) };
         let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
-        let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
         return if written == bytes.len() && orient_stream_byte_by_id(id) {
             0
         } else {
@@ -5493,7 +5541,8 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
         let mut success = true;
         while written < write_result.flush_data.len() {
             let rc = unsafe {
-                sys_write_fd(
+                stream_write_fd(
+                    caller,
                     fd,
                     write_result.flush_data[written..].as_ptr().cast(),
                     write_result.flush_data.len() - written,
@@ -5778,6 +5827,24 @@ pub unsafe extern "C-unwind" fn fwrite(
     nmemb: usize,
     stream: *mut c_void,
 ) -> usize {
+    unsafe {
+        fwrite_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn fwrite_for_caller(
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
     let Some(total) = size.checked_mul(nmemb) else {
         unsafe { set_abi_errno(errno::EOVERFLOW) };
         return 0;
@@ -5803,7 +5870,7 @@ pub unsafe extern "C-unwind" fn fwrite(
     let id = canonical_stream_id(stream);
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
-        let written = unsafe { write_bytes_without_runtime_policy(id, stream, src) };
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, src, caller) };
         return written.checked_div(size).unwrap_or(0);
     }
 
@@ -5909,7 +5976,8 @@ pub unsafe extern "C-unwind" fn fwrite(
         let mut success = true;
         while written < write_result.flush_data.len() {
             let rc = unsafe {
-                sys_write_fd(
+                stream_write_fd(
+                    caller,
                     fd,
                     write_result.flush_data[written..].as_ptr().cast(),
                     write_result.flush_data.len() - written,
@@ -6687,12 +6755,22 @@ pub unsafe extern "C-unwind" fn setbuf(stream: *mut c_void, buf: *mut c_char) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putchar(c: c_int) -> c_int {
     // POSIX: putchar(c) is equivalent to fputc(c, stdout).
-    unsafe { fputc(c, active_stdout_stream()) }
+    unsafe {
+        fputc_for_caller(
+            c,
+            active_stdout_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// POSIX `puts`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
+    unsafe { puts_for_caller(s, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn puts_for_caller(s: *const c_char, caller: usize) -> c_int {
     if s.is_null() {
         return libc::EOF;
     }
@@ -6717,9 +6795,10 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
         let stdout_id = canonical_stream_id(stdout_ptr);
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
         let body_written =
-            unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, bytes) };
+            unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, bytes, caller) };
         let newline_written = body_written == bytes.len()
-            && unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, b"\n") } == 1;
+            && unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, b"\n", caller) }
+                == 1;
         return if body_written == bytes.len() && newline_written {
             0
         } else {
@@ -6751,7 +6830,7 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
     // POSIX: puts writes s followed by a newline to stdout.
     // Use the buffered stream to maintain coherence with fprintf(stdout, ...).
     let stdout_ptr = active_stdout_stream();
-    let rc_body = unsafe { fputs(s, stdout_ptr) };
+    let rc_body = unsafe { fputs_for_caller(s, stdout_ptr, caller) };
     if rc_body == libc::EOF {
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -6761,7 +6840,7 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
         );
         return libc::EOF;
     }
-    let rc_nl = unsafe { fputc(b'\n' as c_int, stdout_ptr) };
+    let rc_nl = unsafe { fputc_for_caller(b'\n' as c_int, stdout_ptr, caller) };
     let adverse = rc_nl == libc::EOF || (!terminated && repair);
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -7535,13 +7614,19 @@ unsafe fn extension_read_argument(
     Ok(arg)
 }
 
-unsafe fn extension_write(stream: *mut c_void, bytes: &[u8], wide: bool) -> Result<usize, c_int> {
+unsafe fn extension_write(
+    stream: *mut c_void,
+    bytes: &[u8],
+    wide: bool,
+    caller: usize,
+) -> Result<usize, c_int> {
     if wide {
         let text = std::str::from_utf8(bytes).map_err(|_| errno::EILSEQ)?;
         let mut count = 0;
         for ch in text.chars() {
             // SAFETY: stream is live and wide-oriented for this operation.
-            if unsafe { crate::wchar_abi::fputwc(ch as u32, stream) } == u32::MAX {
+            if unsafe { crate::wchar_abi::fputwc_for_caller(ch as u32, stream, caller) } == u32::MAX
+            {
                 return Err(unsafe { *super::errno_abi::__errno_location() });
             }
             count += 1;
@@ -7549,7 +7634,9 @@ unsafe fn extension_write(stream: *mut c_void, bytes: &[u8], wide: bool) -> Resu
         Ok(count)
     } else {
         // SAFETY: bytes stays live through the synchronous FILE write.
-        if unsafe { fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) } != bytes.len() {
+        if unsafe { fwrite_for_caller(bytes.as_ptr().cast(), 1, bytes.len(), stream, caller) }
+            != bytes.len()
+        {
             Err(unsafe { *super::errno_abi::__errno_location() })
         } else {
             Ok(bytes.len())
@@ -7651,6 +7738,7 @@ unsafe fn extension_format_stream(
     ap: *mut c_void,
     wide: bool,
     entry_errno: c_int,
+    caller: usize,
 ) -> Result<c_int, c_int> {
     let extensions = printf_extensions_snapshot();
     // SAFETY: the parser calls registered arginfo functions with owned outputs.
@@ -7695,14 +7783,14 @@ unsafe fn extension_format_stream(
             RepairLogContext::new(0, Some(pointer)),
         );
         // SAFETY: the literal format is live and contains no interpreted args.
-        return c_int::try_from(unsafe { extension_write(stream, bytes, wide) }?)
+        return c_int::try_from(unsafe { extension_write(stream, bytes, wide, caller) }?)
             .map_err(|_| errno::EOVERFLOW);
     }
     let mut count = 0usize;
     for segment in plan.segments {
         let emitted = match segment {
             ExtensionSegment::Literal(literal) => {
-                unsafe { extension_write(stream, literal, wide) }?
+                unsafe { extension_write(stream, literal, wide, caller) }?
             }
             ExtensionSegment::Spec(mut spec) => {
                 let unregistered = spec.native.is_unknown_conversion()
@@ -7775,7 +7863,12 @@ unsafe fn extension_format_stream(
                                 RepairLogContext::new(0, Some(pointer)),
                             );
                             unsafe {
-                                extension_write(stream, &bytes[spec.raw_start..spec.raw_end], wide)
+                                extension_write(
+                                    stream,
+                                    &bytes[spec.raw_start..spec.raw_end],
+                                    wide,
+                                    caller,
+                                )
                             }?
                         } else if spec.native.stores_count() {
                             if let Some(arg) = args.get(spec.first_arg) {
@@ -7792,7 +7885,7 @@ unsafe fn extension_format_stream(
                             // for unknown conversions, omitting length modifiers.
                             let spelling =
                                 extension_unknown_conversion(&spec.native, &spec.info, wide);
-                            unsafe { extension_write(stream, &spelling, wide) }?
+                            unsafe { extension_write(stream, &spelling, wide, caller) }?
                         } else if spec.native.is_errno_message() {
                             // Every %m in one call uses errno from function entry,
                             // even if a registered callback changes it mid-format.
@@ -7800,7 +7893,7 @@ unsafe fn extension_format_stream(
                                 crate::string_abi::rendered_strerror_message(entry_errno);
                             let mut rendered = Vec::new();
                             format_str(message.as_bytes(), &spec.native, &mut rendered);
-                            unsafe { extension_write(stream, &rendered, wide) }?
+                            unsafe { extension_write(stream, &rendered, wide, caller) }?
                         } else {
                             let mut segments = FormatSegments::new();
                             segments.push(FormatSegment::Spec(spec.native));
@@ -7822,7 +7915,7 @@ unsafe fn extension_format_stream(
                             if let Some(error) = take_render_failure() {
                                 return Err(error);
                             }
-                            unsafe { extension_write(stream, &rendered, wide) }?
+                            unsafe { extension_write(stream, &rendered, wide, caller) }?
                         }
                     }
                 }
@@ -7841,6 +7934,16 @@ pub(crate) unsafe fn registered_printf_stream(
     bytes: &[u8],
     ap: *mut c_void,
     wide: bool,
+) -> c_int {
+    unsafe { registered_printf_stream_for_caller(stream, bytes, ap, wide, 0) }
+}
+
+pub(crate) unsafe fn registered_printf_stream_for_caller(
+    stream: *mut c_void,
+    bytes: &[u8],
+    ap: *mut c_void,
+    wide: bool,
+    caller: usize,
 ) -> c_int {
     let entry_errno = unsafe { *super::errno_abi::__errno_location() };
     if stream.is_null() {
@@ -7870,7 +7973,7 @@ pub(crate) unsafe fn registered_printf_stream(
     // same stream. It is distinct from the registry lock, which is never held.
     unsafe { flockfile(stream) };
     let _lock = ExtensionStreamLock(stream);
-    match unsafe { extension_format_stream(stream, bytes, ap, wide, entry_errno) } {
+    match unsafe { extension_format_stream(stream, bytes, ap, wide, entry_errno, caller) } {
         Ok(count) => count,
         Err(error) => {
             unsafe { set_abi_errno(error) };
@@ -8044,7 +8147,12 @@ unsafe fn registered_asprintf(
     buffer.result
 }
 
-unsafe fn registered_dprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int {
+unsafe fn registered_dprintf(
+    fd: c_int,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
     let entry_errno = unsafe { *super::errno_abi::__errno_location() };
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -8063,7 +8171,7 @@ unsafe fn registered_dprintf(fd: c_int, format: *const c_char, ap: *mut c_void) 
         // failure case above does not construct a slice from a null pointer.
         unsafe { std::slice::from_raw_parts(buffer.state.data.cast::<u8>(), buffer.state.len) }
     };
-    if write_all_fd(fd, bytes) {
+    if write_all_fd_for_caller(fd, bytes, caller) {
         buffer.result
     } else {
         -1
@@ -9807,6 +9915,7 @@ unsafe fn strict_direct_stream_ux(
     arg: c_uint,
     hex: bool,
     newline: bool,
+    caller: usize,
 ) -> c_int {
     let mut buf = [0u8; 11];
     let len = render_ux_into_buf(arg, hex, newline, &mut buf);
@@ -9814,7 +9923,7 @@ unsafe fn strict_direct_stream_ux(
     if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
         return printf_result_to_c_int(len);
     }
-    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
     if written == len {
         printf_result_to_c_int(len)
     } else {
@@ -9857,6 +9966,7 @@ unsafe fn strict_direct_stream_long(
     conv: u8,
     bits: u64,
     newline: bool,
+    caller: usize,
 ) -> c_int {
     let mut buf = [0u8; 21]; // 20 for "-9223372036854775808" + '\n'
     let mut digits = [0u8; 20];
@@ -9897,7 +10007,7 @@ unsafe fn strict_direct_stream_long(
     if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
         return printf_result_to_c_int(len);
     }
-    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
     if written == len {
         printf_result_to_c_int(len)
     } else {
@@ -9916,6 +10026,7 @@ unsafe fn strict_direct_stream_d(
     stream: *mut c_void,
     arg: c_int,
     newline: bool,
+    caller: usize,
 ) -> c_int {
     let mut buf = [0u8; 12];
     let len = render_d_into_buf(arg, newline, &mut buf);
@@ -9923,7 +10034,7 @@ unsafe fn strict_direct_stream_d(
     if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
         return printf_result_to_c_int(len);
     }
-    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
     if written == len {
         printf_result_to_c_int(len)
     } else {
@@ -9951,6 +10062,7 @@ unsafe fn strict_direct_stream_f(
     stream: *mut c_void,
     value: f64,
     precision: usize,
+    caller: usize,
 ) -> c_int {
     let mut buf = [0u8; DIRECT_FIXED_BUF];
     let len = render_direct_fixed(value, precision, &mut buf);
@@ -9959,7 +10071,7 @@ unsafe fn strict_direct_stream_f(
         return printf_result_to_c_int(len);
     }
     // SAFETY: `id`/`stream` name the caller's stream; `bytes` is initialised.
-    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
     if written == len {
         printf_result_to_c_int(len)
     } else {
@@ -10830,9 +10942,20 @@ unsafe fn try_write_direct_s_newline_stream(id: usize, payload: &[u8]) -> Option
 }
 
 pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
+    write_all_fd_for_caller(fd, data, 0)
+}
+
+pub(crate) fn write_all_fd_for_caller(fd: c_int, data: &[u8], caller: usize) -> bool {
     let mut written = 0usize;
     while written < data.len() {
-        let rc = unsafe { sys_write_fd(fd, data[written..].as_ptr().cast(), data.len() - written) };
+        let rc = unsafe {
+            stream_write_fd(
+                caller,
+                fd,
+                data[written..].as_ptr().cast(),
+                data.len() - written,
+            )
+        };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if e == errno::EINTR {
@@ -11268,17 +11391,19 @@ pub unsafe extern "C-unwind" fn fprintf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
     }
     if printf_extensions_active() {
         // SAFETY: the caller supplies the live FILE, format and variadic list.
         return unsafe {
-            registered_printf_stream(
+            registered_printf_stream_for_caller(
                 stream,
                 c_str_bytes(format),
                 core::ptr::from_mut(&mut args).cast(),
                 false,
+                caller,
             )
         };
     }
@@ -11304,19 +11429,19 @@ pub unsafe extern "C-unwind" fn fprintf(
         && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
     {
         let arg = unsafe { args.next_arg::<c_int>() };
-        return unsafe { strict_direct_stream_d(id, stream, arg, newline) };
+        return unsafe { strict_direct_stream_d(id, stream, arg, newline, caller) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
     {
         let arg = unsafe { args.next_arg::<c_uint>() };
-        return unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline) };
+        return unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline, caller) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) }
     {
         let bits = unsafe { args.next_arg::<u64>() };
-        return unsafe { strict_direct_stream_long(id, stream, conv, bits, newline) };
+        return unsafe { strict_direct_stream_long(id, stream, conv, bits, newline, caller) };
     }
     // Float probe LAST, so it adds no byte-compare to the integer and string
     // stream paths above. Unlike the buffer entry points this one does NOT skip
@@ -11331,7 +11456,7 @@ pub unsafe extern "C-unwind" fn fprintf(
     {
         // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
         let arg = unsafe { args.next_arg::<f64>() };
-        return unsafe { strict_direct_stream_f(id, stream, arg, precision) };
+        return unsafe { strict_direct_stream_f(id, stream, arg, precision, caller) };
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
@@ -11434,7 +11559,8 @@ pub unsafe extern "C-unwind" fn fprintf(
             let mut success = true;
             while written < write_result.flush_data.len() {
                 let rc = unsafe {
-                    sys_write_fd(
+                    stream_write_fd(
+                        caller,
                         fd,
                         write_result.flush_data[written..].as_ptr().cast(),
                         write_result.flush_data.len() - written,
@@ -11527,17 +11653,19 @@ pub unsafe extern "C-unwind" fn fprintf(
 /// POSIX `printf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
     }
     if printf_extensions_active() {
         // SAFETY: printf owns this live va_list and uses the active stdout FILE.
         return unsafe {
-            registered_printf_stream(
+            registered_printf_stream_for_caller(
                 active_stdout_stream(),
                 c_str_bytes(format),
                 core::ptr::from_mut(&mut args).cast(),
                 false,
+                caller,
             )
         };
     }
@@ -11566,19 +11694,19 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
         && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
     {
         let arg = unsafe { args.next_arg::<c_int>() };
-        return unsafe { strict_direct_stream_d(id, stdout_ptr, arg, newline) };
+        return unsafe { strict_direct_stream_d(id, stdout_ptr, arg, newline, caller) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
     {
         let arg = unsafe { args.next_arg::<c_uint>() };
-        return unsafe { strict_direct_stream_ux(id, stdout_ptr, arg, hex, newline) };
+        return unsafe { strict_direct_stream_ux(id, stdout_ptr, arg, hex, newline, caller) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) }
     {
         let bits = unsafe { args.next_arg::<u64>() };
-        return unsafe { strict_direct_stream_long(id, stdout_ptr, conv, bits, newline) };
+        return unsafe { strict_direct_stream_long(id, stdout_ptr, conv, bits, newline, caller) };
     }
     // Float probe LAST, as in fprintf. printf routes through the SAME stdout
     // stream object and the same write ladder, so buffer coherence with an
@@ -11590,7 +11718,7 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
     {
         // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
         let arg = unsafe { args.next_arg::<f64>() };
-        return unsafe { strict_direct_stream_f(id, stdout_ptr, arg, precision) };
+        return unsafe { strict_direct_stream_f(id, stdout_ptr, arg, precision, caller) };
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
@@ -11693,7 +11821,8 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
             let mut success = true;
             while written < write_result.flush_data.len() {
                 let rc = unsafe {
-                    sys_write_fd(
+                    stream_write_fd(
+                        caller,
                         fd,
                         write_result.flush_data[written..].as_ptr().cast(),
                         write_result.flush_data.len() - written,
@@ -11786,10 +11915,10 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
 /// `write_all_fd`, skipping parse+extract+render. Byte-identical to the slow path (same render
 /// helper; dprintf writes straight to the fd unbuffered so there is no stream state to sync).
 #[inline]
-unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool) -> c_int {
+unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool, caller: usize) -> c_int {
     let mut buf = [0u8; 12];
     let len = render_d_into_buf(arg, newline, &mut buf);
-    if write_all_fd(fd, &buf[..len]) {
+    if write_all_fd_for_caller(fd, &buf[..len], caller) {
         printf_result_to_c_int(len)
     } else {
         -1
@@ -11798,10 +11927,16 @@ unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool) -> c_int {
 
 /// Exact `%x`/`%u` (±\n) direct-fd render+write sibling of [`strict_direct_fd_d`].
 #[inline]
-unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) -> c_int {
+unsafe fn strict_direct_fd_ux(
+    fd: c_int,
+    arg: c_uint,
+    hex: bool,
+    newline: bool,
+    caller: usize,
+) -> c_int {
     let mut buf = [0u8; 11];
     let len = render_ux_into_buf(arg, hex, newline, &mut buf);
-    if write_all_fd(fd, &buf[..len]) {
+    if write_all_fd_for_caller(fd, &buf[..len], caller) {
         printf_result_to_c_int(len)
     } else {
         -1
@@ -11811,12 +11946,15 @@ unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) 
 /// POSIX `dprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
     }
     if printf_extensions_active() {
         // SAFETY: the callback engine consumes this frame's live va_list.
-        return unsafe { registered_dprintf(fd, format, core::ptr::from_mut(&mut args).cast()) };
+        return unsafe {
+            registered_dprintf(fd, format, core::ptr::from_mut(&mut args).cast(), caller)
+        };
     }
     // Exact %d/%x/%u (±\n) fast paths — render inline + write straight to the fd, skipping
     // decide + parse + extract + render_segments. Extract-once, return immediately.
@@ -11824,13 +11962,13 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
         && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
     {
         let arg = unsafe { args.next_arg::<c_int>() };
-        return unsafe { strict_direct_fd_d(fd, arg, newline) };
+        return unsafe { strict_direct_fd_d(fd, arg, newline, caller) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
     {
         let arg = unsafe { args.next_arg::<c_uint>() };
-        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline) };
+        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline, caller) };
     }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
@@ -11859,7 +11997,7 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
     };
     let total_len = bytes.len();
 
-    let adverse = !write_all_fd(fd, bytes);
+    let adverse = !write_all_fd_for_caller(fd, bytes, caller);
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -12761,21 +12899,22 @@ unsafe fn try_vprintf_exact_stream(
     stream: *mut c_void,
     format: *const c_char,
     ap: *mut c_void,
+    caller: usize,
 ) -> Option<c_int> {
     if !runtime_policy::strict_passthrough_active() {
         return None;
     }
     if let Some(newline) = unsafe { exact_direct_d_stream_format(format) } {
         let arg = unsafe { va_read_one_gp(ap) } as c_int;
-        return Some(unsafe { strict_direct_stream_d(id, stream, arg, newline) });
+        return Some(unsafe { strict_direct_stream_d(id, stream, arg, newline, caller) });
     }
     if let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) } {
         let arg = unsafe { va_read_one_gp(ap) } as c_uint;
-        return Some(unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline) });
+        return Some(unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline, caller) });
     }
     if let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) } {
         let bits = unsafe { va_read_one_gp(ap) };
-        return Some(unsafe { strict_direct_stream_long(id, stream, conv, bits, newline) });
+        return Some(unsafe { strict_direct_stream_long(id, stream, conv, bits, newline, caller) });
     }
     None
 }
@@ -12787,12 +12926,30 @@ pub unsafe extern "C-unwind" fn vfprintf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
+    unsafe {
+        vfprintf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn vfprintf_for_caller(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
     if format.is_null() {
         return -1;
     }
     if printf_extensions_active() {
         // SAFETY: the caller supplies the live FILE and matching C va_list.
-        return unsafe { registered_printf_stream(stream, c_str_bytes(format), ap, false) };
+        return unsafe {
+            registered_printf_stream_for_caller(stream, c_str_bytes(format), ap, false, caller)
+        };
     }
     let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
@@ -12809,7 +12966,7 @@ pub unsafe extern "C-unwind" fn vfprintf(
         return printf_result_to_c_int(fmt_bytes.len());
     }
     // Exact %d/%x/%u/%ld/%lu/%lx (±\n) va_list stream fast paths — the twins of fprintf's.
-    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stream, format, ap) } {
+    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stream, format, ap, caller) } {
         return r;
     }
     let segments = parse_format_string(fmt_bytes);
@@ -12913,7 +13070,8 @@ pub unsafe extern "C-unwind" fn vfprintf(
             let mut success = true;
             while written < write_result.flush_data.len() {
                 let rc = unsafe {
-                    sys_write_fd(
+                    stream_write_fd(
+                        caller,
                         fd,
                         write_result.flush_data[written..].as_ptr().cast(),
                         write_result.flush_data.len() - written,
@@ -13005,13 +13163,27 @@ pub unsafe extern "C-unwind" fn vfprintf(
 /// POSIX `vprintf` — format to stdout from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { vprintf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vprintf_for_caller(
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
     if format.is_null() {
         return -1;
     }
     if printf_extensions_active() {
         // SAFETY: vprintf formats the caller's arguments to active stdout.
         return unsafe {
-            registered_printf_stream(active_stdout_stream(), c_str_bytes(format), ap, false)
+            registered_printf_stream_for_caller(
+                active_stdout_stream(),
+                c_str_bytes(format),
+                ap,
+                false,
+                caller,
+            )
         };
     }
 
@@ -13031,7 +13203,7 @@ pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) 
         return printf_result_to_c_int(fmt_bytes.len());
     }
     // Exact %d/%x/%u/%ld/%lu/%lx (±\n) va_list stream fast paths (to stdout) — twins of fprintf's.
-    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stdout_ptr, format, ap) } {
+    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stdout_ptr, format, ap, caller) } {
         return r;
     }
     let segments = parse_format_string(fmt_bytes);
@@ -13135,7 +13307,8 @@ pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) 
             let mut success = true;
             while written < write_result.flush_data.len() {
                 let rc = unsafe {
-                    sys_write_fd(
+                    stream_write_fd(
+                        caller,
                         fd,
                         write_result.flush_data[written..].as_ptr().cast(),
                         write_result.flush_data.len() - written,
@@ -13231,12 +13404,21 @@ pub unsafe extern "C-unwind" fn vdprintf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
+    unsafe { vdprintf_for_caller(fd, format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vdprintf_for_caller(
+    fd: c_int,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
     if format.is_null() {
         return -1;
     }
     if printf_extensions_active() {
         // SAFETY: ap is the caller-supplied C va_list for this format.
-        return unsafe { registered_dprintf(fd, format, ap) };
+        return unsafe { registered_dprintf(fd, format, ap, caller) };
     }
     // Exact %d/%x/%u (±\n) va_list fast paths — the va_list twin of dprintf's: pull ONE gp arg,
     // render inline + write straight to the fd. Return immediately (ap advanced).
@@ -13244,13 +13426,13 @@ pub unsafe extern "C-unwind" fn vdprintf(
         && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
     {
         let arg = unsafe { va_read_one_gp(ap) } as c_int;
-        return unsafe { strict_direct_fd_d(fd, arg, newline) };
+        return unsafe { strict_direct_fd_d(fd, arg, newline, caller) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
     {
         let arg = unsafe { va_read_one_gp(ap) } as c_uint;
-        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline) };
+        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline, caller) };
     }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -13281,7 +13463,14 @@ pub unsafe extern "C-unwind" fn vdprintf(
     let mut written = 0usize;
     let mut adverse = false;
     while written < total_len {
-        let rc = unsafe { sys_write_fd(fd, bytes[written..].as_ptr().cast(), total_len - written) };
+        let rc = unsafe {
+            stream_write_fd(
+                caller,
+                fd,
+                bytes[written..].as_ptr().cast(),
+                total_len - written,
+            )
+        };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if e == errno::EINTR {
@@ -13637,7 +13826,11 @@ impl Drop for ScanfReadBuf {
 /// true logical offset so finalization can `lseek` to the parsed prefix. Memory
 /// streams and non-seekable fds over-read into memory and finalize by restoring
 /// the unread suffix to the backing or stream read queue.
-pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, ScanfReadState) {
+pub(crate) unsafe fn read_stream_for_scanf_for_caller(
+    id: usize,
+    limit: usize,
+    caller: usize,
+) -> (ScanfReadBuf, ScanfReadState) {
     let Some(cell) = stream_cell(id) else {
         return (ScanfReadBuf::take(), ScanfReadState::Memory);
     };
@@ -13686,7 +13879,7 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
             held.buf.reserve(cap);
             // SAFETY: `cap` bytes of spare capacity were just reserved, and the
             // length is set only to the count read(2) reports.
-            let rc = unsafe { sys_read_fd(fd, held.buf.as_mut_ptr().cast(), cap) };
+            let rc = unsafe { stream_read_fd(caller, fd, held.buf.as_mut_ptr().cast(), cap) };
             if rc > 0 {
                 // SAFETY: read(2) wrote `rc` bytes into the reserved capacity.
                 unsafe { held.buf.set_len(rc as usize) };
@@ -13722,7 +13915,7 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     let rc = if cookie {
         unsafe { cookie_stream_read(id, tmp.as_mut_ptr(), tmp.len()) }
     } else {
-        unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), tmp.len()) }
+        unsafe { stream_read_fd(caller, fd, tmp.as_mut_ptr().cast(), tmp.len()) }
     };
     if rc > 0 {
         tmp.truncate(rc as usize);
@@ -13798,8 +13991,12 @@ unsafe fn strict_single_char_scan_format(format: *const c_char) -> bool {
 /// avoids a speculative 8 KiB read plus lseek/restore cycle while preserving
 /// the one-byte consumption contract of `%c`.
 #[inline]
-unsafe fn strict_scan_stream_single_char(stream: *mut c_void, destination: *mut c_char) -> c_int {
-    let byte = unsafe { fgetc(stream) };
+unsafe fn strict_scan_stream_single_char(
+    stream: *mut c_void,
+    destination: *mut c_char,
+    caller: usize,
+) -> c_int {
+    let byte = unsafe { fgetc_for_caller(stream, caller) };
     if byte == libc::EOF {
         return libc::EOF;
     }
@@ -13911,6 +14108,7 @@ pub unsafe extern "C-unwind" fn fscanf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if stream.is_null() || format.is_null() {
         return -1;
     }
@@ -13946,17 +14144,16 @@ pub unsafe extern "C-unwind" fn fscanf(
         return -1;
     }
 
-    if runtime_policy::strict_passthrough_active()
-        && unsafe { strict_single_char_scan_format(format) }
-    {
+    if unsafe { strict_single_char_scan_format(format) } {
         // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
         let destination = unsafe { args.next_arg::<*mut c_char>() };
-        let rc = unsafe { strict_scan_stream_single_char(stream, destination) };
+        let rc = unsafe { strict_scan_stream_single_char(stream, destination, caller) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) = read_stream_for_scanf(id, 8192);
+    let (input_buf, scanf_seek_base) =
+        unsafe { read_stream_for_scanf_for_caller(id, 8192, caller) };
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -13987,6 +14184,7 @@ pub unsafe extern "C-unwind" fn fscanf(
 /// POSIX `scanf` — scan formatted input from stdin.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
     }
@@ -13998,17 +14196,16 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
         return -1;
     }
 
-    if runtime_policy::strict_passthrough_active()
-        && unsafe { strict_single_char_scan_format(format) }
-    {
+    if unsafe { strict_single_char_scan_format(format) } {
         // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
         let destination = unsafe { args.next_arg::<*mut c_char>() };
-        let rc = unsafe { strict_scan_stream_single_char(stdin_ptr, destination) };
+        let rc = unsafe { strict_scan_stream_single_char(stdin_ptr, destination, caller) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) = read_stream_for_scanf(stdin_id, 8192);
+    let (input_buf, scanf_seek_base) =
+        unsafe { read_stream_for_scanf_for_caller(stdin_id, 8192, caller) };
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -14141,6 +14338,22 @@ pub unsafe extern "C-unwind" fn vfscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
+    unsafe {
+        vfscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn vfscanf_for_caller(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
     if stream.is_null() || format.is_null() || ap.is_null() {
         return -1;
     }
@@ -14163,17 +14376,16 @@ pub unsafe extern "C-unwind" fn vfscanf(
         return -1;
     }
 
-    if runtime_policy::strict_passthrough_active()
-        && unsafe { strict_single_char_scan_format(format) }
-    {
+    if unsafe { strict_single_char_scan_format(format) } {
         // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
         let destination = unsafe { va_read_one_gp(ap) } as usize as *mut c_char;
-        let rc = unsafe { strict_scan_stream_single_char(stream, destination) };
+        let rc = unsafe { strict_scan_stream_single_char(stream, destination, caller) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) = read_stream_for_scanf(id, 8192);
+    let (input_buf, scanf_seek_base) =
+        unsafe { read_stream_for_scanf_for_caller(id, 8192, caller) };
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -14207,7 +14419,15 @@ pub unsafe extern "C-unwind" fn vfscanf(
 /// POSIX `vscanf` — scan formatted input from stdin with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    unsafe { vfscanf(active_stdin_stream(), format, ap) }
+    unsafe { vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vscanf_for_caller(
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    unsafe { vfscanf_for_caller(active_stdin_stream(), format, ap, caller) }
 }
 
 /// Write scanned values via raw va_list pointer (v* functions).
@@ -14411,7 +14631,7 @@ pub unsafe extern "C-unwind" fn getc(stream: *mut c_void) -> c_int {
 /// POSIX `putc` — identical to `fputc` but as a function (not macro).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putc(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { fputc(c, stream) }
+    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
 }
 
 // ---------------------------------------------------------------------------
@@ -15563,9 +15783,9 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
             return std::ptr::null_mut();
         }
         for fd in pipe_fds {
-            if let Err(e) = unsafe {
-                raw_syscall::sys_fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC as usize)
-            } {
+            if let Err(e) =
+                unsafe { raw_syscall::sys_fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC as usize) }
+            {
                 let _ = raw_syscall::sys_close(pipe_fds[0]);
                 let _ = raw_syscall::sys_close(pipe_fds[1]);
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
@@ -15608,9 +15828,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
     // Reserve the entry before forking so the parent publication cannot
     // allocate after a child has started. pid 0 denotes this unpublished child.
     map.insert(id, PopenChild { pid: 0, fd: our_fd });
-    if !close_on_exec
-        && let Err(e) = unsafe { raw_syscall::sys_fcntl(our_fd, libc::F_SETFD, 0) }
-    {
+    if !close_on_exec && let Err(e) = unsafe { raw_syscall::sys_fcntl(our_fd, libc::F_SETFD, 0) } {
         map.remove(&id);
         drop(guard);
         let _ = raw_syscall::sys_close(child_fd);
@@ -16342,7 +16560,7 @@ pub unsafe extern "C-unwind" fn getc_unlocked(stream: *mut c_void) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { putc(c, stream) }
+    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16352,7 +16570,7 @@ pub unsafe extern "C-unwind" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { fputc(c, stream) }
+    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
 }
 
 /// POSIX `fmemopen` — open a memory buffer as a stream.
@@ -16809,7 +17027,7 @@ pub unsafe extern "C-unwind" fn ferror_unlocked(stream: *mut c_void) -> c_int {
 /// GNU `fflush_unlocked` — flush stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fflush_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { fflush(stream) }
+    unsafe { fflush_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 /// Test hook (bd-0ftdgt): reports whether the three standard streams are still
@@ -16964,7 +17182,13 @@ pub unsafe extern "C-unwind" fn getchar_unlocked() -> c_int {
 /// `putchar_unlocked` — write a character to stdout without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putchar_unlocked(c: c_int) -> c_int {
-    unsafe { putchar(c) }
+    unsafe {
+        fputc_for_caller(
+            c,
+            active_stdout_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fread_unlocked` — binary stream input without locking.
@@ -16994,7 +17218,15 @@ pub unsafe extern "C-unwind" fn fwrite_unlocked(
     nmemb: usize,
     stream: *mut c_void,
 ) -> usize {
-    unsafe { fwrite(ptr, size, nmemb, stream) }
+    unsafe {
+        fwrite_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fgets_unlocked` — get a string from stream without locking.
@@ -17017,7 +17249,7 @@ pub unsafe extern "C-unwind" fn fgets_unlocked(
 /// `fputs_unlocked` — put a string to stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputs_unlocked(s: *const c_char, stream: *mut c_void) -> c_int {
-    unsafe { fputs(s, stream) }
+    unsafe { fputs_for_caller(s, stream, core::intrinsics::return_address() as usize) }
 }
 
 /// `clearerr_unlocked` — clear stream error/EOF indicators without locking.
@@ -17055,7 +17287,7 @@ pub unsafe extern "C-unwind" fn setbuffer(stream: *mut c_void, buf: *mut c_char,
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc99_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
-    unsafe { vscanf(format, ap) }
+    unsafe { vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
 }
 
 /// `__isoc99_sscanf` — C99-conformant sscanf (alias for sscanf).
@@ -17137,13 +17369,20 @@ pub unsafe extern "C-unwind" fn __isoc99_fscanf(
     mut args: ...
 ) -> c_int {
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
-    unsafe { vfscanf(stream, format, ap) }
+    unsafe {
+        vfscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `__isoc99_vscanf` — C99-conformant vscanf (alias for vscanf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc99_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    unsafe { vscanf(format, ap) }
+    unsafe { vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
 }
 
 /// `__isoc99_vsscanf` — C99-conformant vsscanf (alias for vsscanf).
@@ -17163,7 +17402,14 @@ pub unsafe extern "C-unwind" fn __isoc99_vfscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vfscanf(stream, format, ap) }
+    unsafe {
+        vfscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ===========================================================================
@@ -17175,11 +17421,12 @@ pub unsafe extern "C-unwind" fn __isoc99_vfscanf(
 pub unsafe extern "C-unwind" fn getw(stream: *mut c_void) -> c_int {
     let mut val: c_int = 0;
     let n = unsafe {
-        fread(
+        fread_for_caller(
             &mut val as *mut c_int as *mut c_void,
             std::mem::size_of::<c_int>(),
             1,
             stream,
+            core::intrinsics::return_address() as usize,
         )
     };
     if n != 1 { libc::EOF } else { val }
@@ -17189,11 +17436,12 @@ pub unsafe extern "C-unwind" fn getw(stream: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putw(w: c_int, stream: *mut c_void) -> c_int {
     let n = unsafe {
-        fwrite(
+        fwrite_for_caller(
             &w as *const c_int as *const c_void,
             std::mem::size_of::<c_int>(),
             1,
             stream,
+            core::intrinsics::return_address() as usize,
         )
     };
     if n != 1 { libc::EOF } else { 0 }
@@ -17217,8 +17465,8 @@ mod _io_internal {
 
     /// `_IO_puts` — glibc internal puts.
     #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-    pub unsafe extern "C" fn _IO_puts(s: *const c_char) -> c_int {
-        unsafe { puts(s) }
+    pub unsafe extern "C-unwind" fn _IO_puts(s: *const c_char) -> c_int {
+        unsafe { puts_for_caller(s, core::intrinsics::return_address() as usize) }
     }
 
     // NOTE: _IO_feof and _IO_ferror are defined in io_internal_abi.rs.
@@ -17245,12 +17493,17 @@ mod _io_internal {
 
     /// `_IO_padn` — write `count` copies of `pad` char to stream. Returns count or EOF.
     #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-    pub unsafe extern "C" fn _IO_padn(stream: *mut c_void, pad: c_int, count: isize) -> isize {
+    pub unsafe extern "C-unwind" fn _IO_padn(
+        stream: *mut c_void,
+        pad: c_int,
+        count: isize,
+    ) -> isize {
+        let caller = core::intrinsics::return_address() as usize;
         if count <= 0 {
             return 0;
         }
         for _ in 0..count {
-            if unsafe { fputc(pad, stream) } == libc::EOF {
+            if unsafe { fputc_for_caller(pad, stream, caller) } == libc::EOF {
                 return libc::EOF as isize;
             }
         }
@@ -17259,8 +17512,20 @@ mod _io_internal {
 
     /// `_IO_sgetn` — read `n` bytes from stream into buffer. Returns bytes read.
     #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-    pub unsafe extern "C" fn _IO_sgetn(stream: *mut c_void, buf: *mut c_void, n: usize) -> usize {
-        unsafe { fread(buf, 1, n, stream) }
+    pub unsafe extern "C-unwind" fn _IO_sgetn(
+        stream: *mut c_void,
+        buf: *mut c_void,
+        n: usize,
+    ) -> usize {
+        unsafe {
+            fread_for_caller(
+                buf,
+                1,
+                n,
+                stream,
+                core::intrinsics::return_address() as usize,
+            )
+        }
     }
 
     /// `_IO_seekoff` — seek to offset in stream (internal interface).

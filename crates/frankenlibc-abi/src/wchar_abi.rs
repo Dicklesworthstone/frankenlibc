@@ -6058,14 +6058,18 @@ unsafe fn wide_input_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
+pub unsafe extern "C-unwind" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
+    unsafe { fgetwc_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fgetwc_for_caller(stream: *mut std::ffi::c_void, caller: usize) -> u32 {
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
 
     super::stdio_abi::with_wide_io_active(|| {
         // SAFETY: delegated to stdio ABI layer with validated stream handle.
-        let first = unsafe { super::stdio_abi::fgetc(stream) };
+        let first = unsafe { super::stdio_abi::fgetc_for_caller(stream, caller) };
         if first == libc::EOF {
             return WEOF_VALUE;
         }
@@ -6098,7 +6102,7 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
 
         for idx in 1..expected {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            let next = unsafe { super::stdio_abi::fgetc(stream) };
+            let next = unsafe { super::stdio_abi::fgetc_for_caller(stream, caller) };
             if next == libc::EOF {
                 // Put back already consumed bytes to avoid partial-read corruption.
                 for rollback in (0..idx).rev() {
@@ -6126,7 +6130,15 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
+pub unsafe extern "C-unwind" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
+    unsafe { fputwc_for_caller(wc, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fputwc_for_caller(
+    wc: u32,
+    stream: *mut std::ffi::c_void,
+    caller: usize,
+) -> u32 {
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
@@ -6139,7 +6151,9 @@ pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
             // single byte '?' and reports SUCCESS (returns `wc`, leaves errno) —
             // NOT C99's EILSEQ/WEOF (which its own `wcrtomb` returns). frankenlibc
             // is a glibc drop-in, so mirror that observable behaviour.
-            return if unsafe { super::stdio_abi::fputc(b'?' as c_int, stream) } == libc::EOF {
+            return if unsafe { super::stdio_abi::fputc_for_caller(b'?' as c_int, stream, caller) }
+                == libc::EOF
+            {
                 WEOF_VALUE
             } else {
                 wc
@@ -6148,7 +6162,9 @@ pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
 
         for &byte in &bytes[..encoded_len] {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
+            if unsafe { super::stdio_abi::fputc_for_caller(byte as c_int, stream, caller) }
+                == libc::EOF
+            {
                 return WEOF_VALUE;
             }
         }
@@ -6181,10 +6197,19 @@ pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetws(
+pub unsafe extern "C-unwind" fn fgetws(
     ws: *mut libc::wchar_t,
     n: c_int,
     stream: *mut std::ffi::c_void,
+) -> *mut libc::wchar_t {
+    unsafe { fgetws_for_caller(ws, n, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fgetws_for_caller(
+    ws: *mut libc::wchar_t,
+    n: c_int,
+    stream: *mut std::ffi::c_void,
+    caller: usize,
 ) -> *mut libc::wchar_t {
     if ws.is_null() || stream.is_null() || n <= 0 || !super::stdio_abi::orient_stream_wide(stream) {
         return std::ptr::null_mut();
@@ -6197,7 +6222,7 @@ pub unsafe extern "C" fn fgetws(
             // SAFETY: `ws` is valid for `cap` wchar_t elements; `max == cap - 1`.
             let dst = unsafe { std::slice::from_raw_parts_mut(ws as *mut u32, max) };
             if let Some((read, had_error)) =
-                unsafe { super::stdio_abi::read_cached_ascii_line_wide(stream, dst) }
+                unsafe { super::stdio_abi::read_cached_ascii_line_wide(stream, dst, caller) }
             {
                 if read == 0 || had_error {
                     return std::ptr::null_mut();
@@ -6212,7 +6237,7 @@ pub unsafe extern "C" fn fgetws(
         let mut hit_eof = false;
         while written + 1 < cap {
             // SAFETY: delegated to this ABI implementation with validated stream.
-            let wc = unsafe { fgetwc(stream) };
+            let wc = unsafe { fgetwc_for_caller(stream, caller) };
             if wc == WEOF_VALUE {
                 hit_eof = true;
                 break;
@@ -6280,12 +6305,23 @@ pub unsafe fn bench_fgetws_percall(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fputws(
+    ws: *const libc::wchar_t,
+    stream: *mut std::ffi::c_void,
+) -> c_int {
+    unsafe { fputws_for_caller(ws, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fputws_for_caller(
+    ws: *const libc::wchar_t,
+    stream: *mut std::ffi::c_void,
+    caller: usize,
+) -> c_int {
     if ws.is_null() || stream.is_null() {
         return libc::EOF;
     }
 
-    unsafe { fputws_impl(ws, stream) }
+    unsafe { fputws_impl(ws, stream, caller) }
 }
 
 /// Fast path: bulk SIMD `wcstombs` conversion of the whole (buffer-fitting, all-encodable)
@@ -6298,7 +6334,11 @@ pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi:
 /// wctomb) REGRESSED 2.6-3.4x — the win requires bulk CONVERT (this SIMD wcstombs), not bulk
 /// write. See NEGATIVE_EVIDENCE.md 2026-07-02.
 #[inline]
-unsafe fn fputws_impl(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
+unsafe fn fputws_impl(
+    ws: *const libc::wchar_t,
+    stream: *mut std::ffi::c_void,
+    caller: usize,
+) -> c_int {
     if !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }
@@ -6329,7 +6369,13 @@ unsafe fn fputws_impl(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -
                 }
                 // SAFETY: valid stream; `buf[..nbytes]` initialized by wcstombs.
                 return if unsafe {
-                    super::stdio_abi::fwrite(buf.as_ptr().cast(), 1, nbytes, stream)
+                    super::stdio_abi::fwrite_for_caller(
+                        buf.as_ptr().cast(),
+                        1,
+                        nbytes,
+                        stream,
+                        caller,
+                    )
                 } == nbytes
                 {
                     0
@@ -6348,7 +6394,7 @@ unsafe fn fputws_impl(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -
                 return 0;
             }
             // SAFETY: delegated to this ABI implementation with validated stream.
-            if unsafe { fputwc(wc, stream) } == WEOF_VALUE {
+            if unsafe { fputwc_for_caller(wc, stream, caller) } == WEOF_VALUE {
                 return libc::EOF;
             }
             idx += 1;
@@ -6379,13 +6425,24 @@ pub unsafe fn bench_fputws_percall(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getwchar() -> u32 {
-    unsafe { fgetwc(super::stdio_abi::active_stdin_stream()) }
+pub unsafe extern "C-unwind" fn getwchar() -> u32 {
+    unsafe {
+        fgetwc_for_caller(
+            super::stdio_abi::active_stdin_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
-    unsafe { fputwc(wc, super::stdio_abi::active_stdout_stream()) }
+pub unsafe extern "C-unwind" fn putwchar(wc: u32) -> u32 {
+    unsafe {
+        fputwc_for_caller(
+            wc,
+            super::stdio_abi::active_stdout_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ===========================================================================
@@ -6456,9 +6513,44 @@ pub unsafe extern "C-unwind" fn swprintf(
     finish_swprintf(&rendered, s, n)
 }
 
+/// Write the completed wide rendering through its FILE, including buffering
+/// and memory streams. Keep both the rendered buffer and the wide-I/O guard
+/// outside the narrow layer's cancellable syscall window.
+unsafe fn write_wprintf_rendered(
+    stream: *mut std::ffi::c_void,
+    rendered: &[u8],
+    caller: usize,
+) -> c_int {
+    // The result counts wide characters, not encoded bytes. Reject an invalid
+    // conversion before emitting any part of the rendering.
+    let Some(wide_count) = narrow_to_wide_count(rendered) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    };
+    super::stdio_abi::with_wide_io_active(|| {
+        // SAFETY: the rendering is initialized and stream was wide-oriented by
+        // the caller. The narrow implementation retains the original caller.
+        let written = unsafe {
+            super::stdio_abi::fwrite_for_caller(
+                rendered.as_ptr().cast(),
+                1,
+                rendered.len(),
+                stream,
+                caller,
+            )
+        };
+        if written == rendered.len() {
+            wide_count as c_int
+        } else {
+            -1
+        }
+    })
+}
+
 /// Native `wprintf`: format to stdout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
         return -1;
@@ -6467,11 +6559,12 @@ pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: 
     if super::stdio_abi::printf_extensions_active() {
         // SAFETY: stdout is wide-oriented and this frame owns the va_list.
         return unsafe {
-            super::stdio_abi::registered_printf_stream(
+            super::stdio_abi::registered_printf_stream_for_caller(
                 stdout_ptr,
                 fmt_narrow.as_bytes(),
                 core::ptr::from_mut(&mut args).cast(),
                 true,
+                caller,
             )
         };
     }
@@ -6487,21 +6580,7 @@ pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: 
         unsafe { set_abi_errno(errno) };
         return -1;
     }
-    // C: wprintf returns the number of WIDE CHARACTERS transmitted, not the byte
-    // length of the (UTF-8) rendering — they differ for any multibyte output.
-    // The COUNT is the wide-character count, so an unconvertible byte is an
-    // EILSEQ even on the stdout path, where the bytes themselves are written
-    // narrow. glibc reports the wide count, not the byte count.
-    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
-        unsafe { set_abi_errno(libc::EILSEQ) };
-        return -1;
-    };
-
-    if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
-        wide_count as c_int
-    } else {
-        -1
-    }
+    unsafe { write_wprintf_rendered(stdout_ptr, &rendered, caller) }
 }
 
 /// Native `fwprintf`: format to stream.
@@ -6511,6 +6590,7 @@ pub unsafe extern "C-unwind" fn fwprintf(
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if format.is_null() || stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return -1;
     }
@@ -6518,11 +6598,12 @@ pub unsafe extern "C-unwind" fn fwprintf(
     if super::stdio_abi::printf_extensions_active() {
         // SAFETY: stream is wide-oriented and this frame owns the va_list.
         return unsafe {
-            super::stdio_abi::registered_printf_stream(
+            super::stdio_abi::registered_printf_stream_for_caller(
                 stream,
                 fmt_narrow.as_bytes(),
                 core::ptr::from_mut(&mut args).cast(),
                 true,
+                caller,
             )
         };
     }
@@ -6538,23 +6619,7 @@ pub unsafe extern "C-unwind" fn fwprintf(
         unsafe { set_abi_errno(errno) };
         return -1;
     }
-    // fwprintf returns the number of WIDE CHARACTERS written, not bytes.
-    // Convert BEFORE writing: an unconvertible byte must not be emitted and
-    // then reported as an error, which would leave partial output behind.
-    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
-        unsafe { set_abi_errno(libc::EILSEQ) };
-        return -1;
-    };
-
-    // Write each byte through the stdio layer to use stream buffering.
-    super::stdio_abi::with_wide_io_active(|| {
-        for &byte in rendered.iter() {
-            if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
-                return -1;
-            }
-        }
-        wide_count as c_int
-    })
+    unsafe { write_wprintf_rendered(stream, &rendered, caller) }
 }
 
 /// Native `vswprintf`: format into wide buffer from va_list.
@@ -6597,6 +6662,14 @@ pub unsafe extern "C-unwind" fn vwprintf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
+    unsafe { vwprintf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vwprintf_for_caller(
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    caller: usize,
+) -> c_int {
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
         return -1;
@@ -6605,7 +6678,13 @@ pub unsafe extern "C-unwind" fn vwprintf(
     if super::stdio_abi::printf_extensions_active() {
         // SAFETY: stdout is wide-oriented and ap matches this format.
         return unsafe {
-            super::stdio_abi::registered_printf_stream(stdout_ptr, fmt_narrow.as_bytes(), ap, true)
+            super::stdio_abi::registered_printf_stream_for_caller(
+                stdout_ptr,
+                fmt_narrow.as_bytes(),
+                ap,
+                true,
+                caller,
+            )
         };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
@@ -6620,20 +6699,7 @@ pub unsafe extern "C-unwind" fn vwprintf(
         unsafe { set_abi_errno(errno) };
         return -1;
     }
-    // vwprintf returns the number of WIDE CHARACTERS written, not bytes.
-    // The COUNT is the wide-character count, so an unconvertible byte is an
-    // EILSEQ even on the stdout path, where the bytes themselves are written
-    // narrow. glibc reports the wide count, not the byte count.
-    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
-        unsafe { set_abi_errno(libc::EILSEQ) };
-        return -1;
-    };
-
-    if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
-        wide_count as c_int
-    } else {
-        -1
-    }
+    unsafe { write_wprintf_rendered(stdout_ptr, &rendered, caller) }
 }
 
 /// Native `vfwprintf`: format to stream from va_list.
@@ -6643,6 +6709,22 @@ pub unsafe extern "C-unwind" fn vfwprintf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
+    unsafe {
+        vfwprintf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn vfwprintf_for_caller(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    caller: usize,
+) -> c_int {
     if format.is_null() || stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return -1;
     }
@@ -6650,7 +6732,13 @@ pub unsafe extern "C-unwind" fn vfwprintf(
     if super::stdio_abi::printf_extensions_active() {
         // SAFETY: stream is wide-oriented and ap matches this format.
         return unsafe {
-            super::stdio_abi::registered_printf_stream(stream, fmt_narrow.as_bytes(), ap, true)
+            super::stdio_abi::registered_printf_stream_for_caller(
+                stream,
+                fmt_narrow.as_bytes(),
+                ap,
+                true,
+                caller,
+            )
         };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
@@ -6665,21 +6753,7 @@ pub unsafe extern "C-unwind" fn vfwprintf(
         unsafe { set_abi_errno(errno) };
         return -1;
     }
-    // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
-    // Convert BEFORE writing, as in `fwprintf`.
-    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
-        unsafe { set_abi_errno(libc::EILSEQ) };
-        return -1;
-    };
-
-    super::stdio_abi::with_wide_io_active(|| {
-        for &byte in rendered.iter() {
-            if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
-                return -1;
-            }
-        }
-        wide_count as c_int
-    })
+    unsafe { write_wprintf_rendered(stream, &rendered, caller) }
 }
 
 // ===========================================================================
@@ -6721,9 +6795,27 @@ pub unsafe extern "C" fn swscanf(
     result.count
 }
 
+/// A single wide character requires no speculative byte refill after it has
+/// been obtained. In particular, a buffered `%lc` must not block or act on a
+/// pending cancellation by reading beyond its one requested character.
+unsafe fn scan_one_wide_char(
+    stream: *mut std::ffi::c_void,
+    destination: *mut libc::wchar_t,
+    caller: usize,
+) -> c_int {
+    let wc = unsafe { fgetwc_for_caller(stream, caller) };
+    if wc == WEOF_VALUE {
+        return libc::EOF;
+    }
+    // SAFETY: a non-suppressed %lc requires one writable wchar_t argument.
+    unsafe { *destination = wc as libc::wchar_t };
+    1
+}
+
 /// Native `wscanf`: scan from stdin.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     let stdin_ptr = super::stdio_abi::active_stdin_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdin_ptr) {
         return libc::EOF;
@@ -6731,9 +6823,15 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
         return 0;
     };
+    if fmt_cstr.as_bytes() == b"%lc" {
+        // SAFETY: the exact format consumes one wchar_t pointer.
+        let destination = unsafe { args.next_arg::<*mut libc::wchar_t>() };
+        return unsafe { scan_one_wide_char(stdin_ptr, destination, caller) };
+    }
     let sid = super::stdio_abi::stream_id_from_handle(stdin_ptr);
     let Some((result, directives)) = super::stdio_abi::with_wide_io_active(|| {
-        let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(sid, 4096);
+        let (input, scanf_seek_base) =
+            unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(sid, 4096, caller) };
         let Some((result, directives)) =
             super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
         else {
@@ -6755,20 +6853,27 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
 
 /// Native `fwscanf`: scan from stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwscanf(
+pub unsafe extern "C-unwind" fn fwscanf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if stream.is_null() || format.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
         return 0;
     };
+    if fmt_cstr.as_bytes() == b"%lc" {
+        // SAFETY: the exact format consumes one wchar_t pointer.
+        let destination = unsafe { args.next_arg::<*mut libc::wchar_t>() };
+        return unsafe { scan_one_wide_char(stream, destination, caller) };
+    }
     let id = super::stdio_abi::stream_id_from_handle(stream);
     let Some((result, directives)) = super::stdio_abi::with_wide_io_active(|| {
-        let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(id, 4096);
+        let (input, scanf_seek_base) =
+            unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
         let Some((result, directives)) =
             super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
         else {
@@ -6823,16 +6928,43 @@ pub unsafe extern "C" fn vswscanf(
 
 /// Native `vwscanf`: scan from stdin with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
-    unsafe { vfwscanf(super::stdio_abi::active_stdin_stream(), format, ap) }
+pub unsafe extern "C-unwind" fn vwscanf(
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
+    unsafe { vwscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vwscanf_for_caller(
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    caller: usize,
+) -> c_int {
+    unsafe { vfwscanf_for_caller(super::stdio_abi::active_stdin_stream(), format, ap, caller) }
 }
 
 /// Native `vfwscanf`: scan from stream with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwscanf(
+pub unsafe extern "C-unwind" fn vfwscanf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
+) -> c_int {
+    unsafe {
+        vfwscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn vfwscanf_for_caller(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    caller: usize,
 ) -> c_int {
     if stream.is_null()
         || format.is_null()
@@ -6844,9 +6976,15 @@ pub unsafe extern "C" fn vfwscanf(
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
         return 0;
     };
+    if fmt_cstr.as_bytes() == b"%lc" {
+        // SAFETY: ap is a live va_list and the format consumes a wchar_t pointer.
+        let destination = unsafe { super::stdio_abi::va_next_pointer(ap) }.cast();
+        return unsafe { scan_one_wide_char(stream, destination, caller) };
+    }
     let id = super::stdio_abi::stream_id_from_handle(stream);
     let Some((result, directives)) = super::stdio_abi::with_wide_io_active(|| {
-        let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(id, 4096);
+        let (input, scanf_seek_base) =
+            unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
         let Some((result, directives)) =
             super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
         else {
@@ -8796,69 +8934,105 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
 
 /// `getwc` — alias for fgetwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getwc(stream: *mut libc::FILE) -> u32 {
-    unsafe { fgetwc(stream as *mut c_void) }
+pub unsafe extern "C-unwind" fn getwc(stream: *mut libc::FILE) -> u32 {
+    unsafe { fgetwc_for_caller(stream.cast(), core::intrinsics::return_address() as usize) }
 }
 
 /// `putwc` — alias for fputwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putwc(wc: libc::wchar_t, stream: *mut libc::FILE) -> u32 {
-    unsafe { fputwc(wc as u32, stream as *mut c_void) }
+pub unsafe extern "C-unwind" fn putwc(wc: libc::wchar_t, stream: *mut libc::FILE) -> u32 {
+    unsafe {
+        fputwc_for_caller(
+            wc as u32,
+            stream.cast(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fgetwc_unlocked` — unlocked fgetwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetwc_unlocked(stream: *mut libc::FILE) -> u32 {
-    unsafe { fgetwc(stream as *mut c_void) }
+pub unsafe extern "C-unwind" fn fgetwc_unlocked(stream: *mut libc::FILE) -> u32 {
+    unsafe { fgetwc_for_caller(stream.cast(), core::intrinsics::return_address() as usize) }
 }
 
 /// `fgetws_unlocked` — unlocked fgetws.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetws_unlocked(
+pub unsafe extern "C-unwind" fn fgetws_unlocked(
     ws: *mut libc::wchar_t,
     n: std::ffi::c_int,
     stream: *mut libc::FILE,
 ) -> *mut libc::wchar_t {
-    unsafe { fgetws(ws, n, stream as *mut c_void) }
+    unsafe {
+        fgetws_for_caller(
+            ws,
+            n,
+            stream.cast(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fputwc_unlocked` — unlocked fputwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputwc_unlocked(wc: libc::wchar_t, stream: *mut libc::FILE) -> u32 {
-    unsafe { fputwc(wc as u32, stream as *mut c_void) }
+pub unsafe extern "C-unwind" fn fputwc_unlocked(wc: libc::wchar_t, stream: *mut libc::FILE) -> u32 {
+    unsafe {
+        fputwc_for_caller(
+            wc as u32,
+            stream.cast(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `fputws_unlocked` — unlocked fputws.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputws_unlocked(
+pub unsafe extern "C-unwind" fn fputws_unlocked(
     ws: *const libc::wchar_t,
     stream: *mut libc::FILE,
 ) -> std::ffi::c_int {
-    unsafe { fputws(ws, stream as *mut c_void) }
+    unsafe {
+        fputws_for_caller(
+            ws,
+            stream.cast(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `getwc_unlocked` — unlocked getwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getwc_unlocked(stream: *mut libc::FILE) -> u32 {
-    unsafe { getwc(stream) }
+pub unsafe extern "C-unwind" fn getwc_unlocked(stream: *mut libc::FILE) -> u32 {
+    unsafe { fgetwc_for_caller(stream.cast(), core::intrinsics::return_address() as usize) }
 }
 
 /// `getwchar_unlocked` — unlocked getwchar.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getwchar_unlocked() -> u32 {
-    unsafe { getwchar() }
+pub unsafe extern "C-unwind" fn getwchar_unlocked() -> u32 {
+    unsafe {
+        fgetwc_for_caller(
+            super::stdio_abi::active_stdin_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 /// `putwc_unlocked` — unlocked putwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putwc_unlocked(wc: u32, stream: *mut c_void) -> u32 {
-    unsafe { fputwc(wc, stream) }
+pub unsafe extern "C-unwind" fn putwc_unlocked(wc: u32, stream: *mut c_void) -> u32 {
+    unsafe { fputwc_for_caller(wc, stream, core::intrinsics::return_address() as usize) }
 }
 
 /// `putwchar_unlocked` — unlocked putwchar.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putwchar_unlocked(wc: u32) -> u32 {
-    unsafe { putwchar(wc) }
+pub unsafe extern "C-unwind" fn putwchar_unlocked(wc: u32) -> u32 {
+    unsafe {
+        fputwc_for_caller(
+            wc,
+            super::stdio_abi::active_stdout_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
 }
 
 // ===========================================================================
@@ -9503,12 +9677,13 @@ thread_local! {
 fn fgetwln_read_into_buffer(
     stream: *mut std::ffi::c_void,
     buf: &mut Vec<libc::wchar_t>,
+    caller: usize,
 ) -> Option<(*mut libc::wchar_t, usize)> {
     buf.clear();
     loop {
         // SAFETY: stream is a valid FILE* per caller; fgetwc handles UTF-8
         // decode and pushback of incomplete sequences.
-        let wc = unsafe { fgetwc(stream) };
+        let wc = unsafe { fgetwc_for_caller(stream, caller) };
         if wc == WEOF_VALUE {
             // EOF or decode error. If we already have characters, return them
             // (last line without trailing newline).
@@ -9528,15 +9703,21 @@ fn fgetwln_read_into_buffer(
 }
 
 #[cfg(feature = "owned-tls-cache")]
-fn fgetwln_current_buffer(stream: *mut std::ffi::c_void) -> Option<(*mut libc::wchar_t, usize)> {
-    FGETWLN_BUFFER_OWNED_TLS.with(|buf| fgetwln_read_into_buffer(stream, buf))
+fn fgetwln_current_buffer(
+    stream: *mut std::ffi::c_void,
+    caller: usize,
+) -> Option<(*mut libc::wchar_t, usize)> {
+    FGETWLN_BUFFER_OWNED_TLS.with(|buf| fgetwln_read_into_buffer(stream, buf, caller))
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
-fn fgetwln_current_buffer(stream: *mut std::ffi::c_void) -> Option<(*mut libc::wchar_t, usize)> {
+fn fgetwln_current_buffer(
+    stream: *mut std::ffi::c_void,
+    caller: usize,
+) -> Option<(*mut libc::wchar_t, usize)> {
     FGETWLN_BUFFER.with(|cell| {
         let mut buf = cell.borrow_mut();
-        fgetwln_read_into_buffer(stream, &mut buf)
+        fgetwln_read_into_buffer(stream, &mut buf, caller)
     })
 }
 
@@ -9548,7 +9729,7 @@ fn fgetwln_current_buffer(stream: *mut std::ffi::c_void) -> Option<(*mut libc::w
 /// `stream` must be a valid `FILE *`. `lenp`, when non-NULL, must
 /// point to writable `size_t` storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetwln(
+pub unsafe extern "C-unwind" fn fgetwln(
     stream: *mut std::ffi::c_void,
     lenp: *mut usize,
 ) -> *mut libc::wchar_t {
@@ -9560,7 +9741,7 @@ pub unsafe extern "C" fn fgetwln(
         return std::ptr::null_mut();
     }
 
-    let result = fgetwln_current_buffer(stream);
+    let result = fgetwln_current_buffer(stream, core::intrinsics::return_address() as usize);
 
     match result {
         Some((ptr, n)) => {
