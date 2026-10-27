@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/runtime_policy.rs'
+      - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/src/errno_abi.rs'
       - 'crates/frankenlibc-abi/src/mqueue_notify.rs'
       - 'crates/frankenlibc-abi/src/posix_timer.rs'
@@ -23,13 +26,65 @@ on:
       - 'rust-toolchain.toml'
       - 'tests/integration/fixture_pthread_native_state.c'
       - 'tests/integration/fixture_cancel_forced_unwind.cpp'
+      - 'tests/integration/fixture_runtime_ready_arm.cpp'
       - 'scripts/check_pthread_native_state.py'
+      - 'scripts/check_runtime_ready_arm_e2e.sh'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  runtime-startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Initialize owned policy state during startup and fresh thread creation
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=artifacts/runtime-startup
+          mkdir -p "$root"
+          git rev-parse HEAD > "$root/revision.txt"
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
+          bash scripts/check_runtime_ready_arm_e2e.sh \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --thread-backend hosted --out-dir "$root/hosted"
+          bash scripts/check_runtime_ready_arm_e2e.sh \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --thread-backend native --case fresh-serial --out-dir "$root/native-serial"
+          if [[ "$FEATURE" == owned-tls-cache ]]; then
+            cargo test -p frankenlibc-abi --lib --features owned-tls-cache \
+              owned_tls_cache::tests:: -- --test-threads=1 2>&1 | tee "$root/cache-owner.log"
+            grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/cache-owner.log"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-startup-${{ matrix.feature }}
+          path: artifacts/runtime-startup/
+          if-no-files-found: error
+          retention-days: 7
+
   stacks:
     runs-on: ubuntu-latest
     timeout-minutes: 25

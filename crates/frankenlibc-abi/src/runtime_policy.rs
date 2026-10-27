@@ -1146,6 +1146,16 @@ pub(crate) fn resolved_mode() -> SafetyLevel {
 
 #[must_use]
 pub(crate) fn mode() -> SafetyLevel {
+    // Owned scratch storage grows through the allocator. Its first access can
+    // therefore call back into mode() while RUNTIME_POLICY_OWNED_TLS is locked,
+    // including before the process mode has been resolved. Consult only the
+    // immutable atomic in that context: trying the TLS cache again waits for
+    // this very frame. Unresolved/resolving retains the existing strict
+    // bootstrap behavior, without caching that temporary answer.
+    #[cfg(feature = "owned-tls-cache")]
+    if runtime_policy_tls_reentry_active() {
+        return u8_to_mode(MODE_STATE.load(AtomicOrdering::Acquire));
+    }
     if let Some(resolved) = load_thread_local_mode_and_tick_switch() {
         return resolved;
     }
@@ -1570,6 +1580,18 @@ pub(crate) fn runtime_policy_tls_access_active() -> bool {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 pub(crate) const fn runtime_policy_tls_access_active() -> bool {
+    false
+}
+
+#[cfg(feature = "owned-tls-cache")]
+#[inline]
+pub(crate) fn runtime_policy_tls_reentry_active() -> bool {
+    RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread()
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[inline]
+pub(crate) const fn runtime_policy_tls_reentry_active() -> bool {
     false
 }
 

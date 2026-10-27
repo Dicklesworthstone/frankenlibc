@@ -1,139 +1,156 @@
 #!/usr/bin/env bash
-# check_runtime_ready_arm_e2e.sh — E2E test for RUNTIME_READY arming under LD_PRELOAD (bd-06bxm.1)
-#
-# Verifies that signal_runtime_ready() is called in the startup path and the
-# runtime-math kernel arms without deadlock, even with constructor-heavy binaries.
-#
-# Exit 0 = PASS, nonzero = FAIL
-set -uo pipefail
-
+# Constructor arming and owned-cache allocation reentry. The timeout supervisor
+# is never preloaded, so even a constructor deadlock is terminated and reported.
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/data/tmp/cargo-target}"
-export CARGO_TARGET_DIR
+exec env -u LD_PRELOAD -u LD_AUDIT python3 - "$REPO_ROOT" "$@" <<'PY'
+import argparse
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
 
-OUT_DIR="${REPO_ROOT}/target/runtime_ready_arm_e2e"
-mkdir -p "${OUT_DIR}"
+root = Path(sys.argv[1])
+target = Path(os.environ.get("CARGO_TARGET_DIR", root / "target"))
+parser = argparse.ArgumentParser(description="Runtime arming and fresh-thread reentry contract")
+parser.add_argument("--library", type=Path, default=Path(os.environ.get(
+    "FRANKENLIBC_TEST_LIBRARY", os.environ.get("FRANKENLIBC_SMOKE_LIB_PATH",
+                                              target / "release/libfrankenlibc_abi.so"))))
+parser.add_argument("--out-dir", type=Path, default=root / "target/runtime_ready_arm_e2e")
+parser.add_argument("--timeout", type=float, default=20)
+parser.add_argument("--thread-backend", choices=("hosted", "native", "all"), default="hosted",
+                    help="fresh-thread backends to exercise (default: hosted)")
+parser.add_argument("--case", dest="cases", action="append",
+                    choices=("startup", "fresh-serial", "fresh-parallel"),
+                    help="case to run; repeat to select several (default: all)")
+args = parser.parse_args(sys.argv[2:])
+if args.timeout <= 0:
+    parser.error("--timeout must be positive")
+library = args.library.resolve(strict=True)
+output = args.out_dir.resolve()
+output.mkdir(parents=True, exist_ok=True)
+source = root / "tests/integration/fixture_runtime_ready_arm.cpp"
+binary = output / "fixture_runtime_ready_arm"
+environment = {key: value for key, value in os.environ.items()
+               if key not in ("LD_PRELOAD", "LD_AUDIT") and not key.startswith("FRANKENLIBC_")}
+command = shlex.split(os.environ.get("CXX", "c++")) + [
+    "-std=c++17", "-O2", "-fno-builtin", "-Wall", "-Wextra", "-Werror",
+    str(source), "-o", str(binary), "-pthread", "-ldl",
+]
+compiled = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=60)
+(output / "compile.log").write_text(compiled.stdout + compiled.stderr)
+if compiled.returncode:
+    raise SystemExit(f"fixture compilation failed: {output / 'compile.log'}")
 
-LIB_CANDIDATES=(
-  "${FRANKENLIBC_SMOKE_LIB_PATH:-}"
-  "${REPO_ROOT}/target/release/libfrankenlibc_abi.so"
-  "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
-)
 
-LIB_PATH=""
-for candidate in "${LIB_CANDIDATES[@]}"; do
-  if [[ -n "${candidate}" && -f "${candidate}" ]]; then
-    LIB_PATH="${candidate}"
-    break
-  fi
-done
+def run(label, case, arguments, extra=None):
+    invocation = [str(binary)] + arguments
+    try:
+        result = subprocess.run(invocation, env=dict(environment, **(extra or {})),
+                                capture_output=True, text=True, timeout=args.timeout)
+        code, stdout, stderr = result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired as error:
+        code = 124
+        stdout = (error.stdout or b"").decode(errors="replace")
+        stderr = (error.stderr or b"").decode(errors="replace") + "fixture timeout\n"
+    record = {"lane": label, "case": case, "command": invocation, "returncode": code,
+              "stdout": stdout, "stderr": stderr}
+    (output / f"{label}-{case}.log").write_text(stdout + stderr)
+    return record
 
-if [[ -z "${LIB_PATH}" ]]; then
-  echo "Building libfrankenlibc_abi.so..."
-  cargo build -p frankenlibc-abi --release 2>&1 | tail -3
-  for candidate in "${LIB_CANDIDATES[@]}"; do
-    if [[ -n "${candidate}" && -f "${candidate}" ]]; then
-      LIB_PATH="${candidate}"
-      break
-    fi
-  done
-fi
 
-if [[ -z "${LIB_PATH}" ]]; then
-  echo "FAIL: could not locate or build libfrankenlibc_abi.so" >&2
-  exit 1
-fi
+provider = run("gnu", "provider", ["--provider"])
+if provider["returncode"] or provider["stderr"]:
+    raise SystemExit("GNU provider discovery failed")
+host = str(Path(provider["stdout"].strip()).resolve(strict=True))
+records = []
+failures = []
 
-FIXTURE_SRC="${REPO_ROOT}/tests/integration/fixture_runtime_ready_arm.cpp"
-FIXTURE_BIN="${OUT_DIR}/fixture_runtime_ready_arm"
 
-echo "=== RUNTIME_READY Arming E2E Test (bd-06bxm.1) ==="
-echo "Library: ${LIB_PATH}"
-echo ""
+def check(record, code, stdout, stderr=""):
+    passed = (record["returncode"] == code and record["stdout"] == stdout and
+              record["stderr"] == stderr)
+    record["passed"] = passed
+    records.append(record)
+    label = f"{record['lane']}:{record['case']}"
+    print(f"{label}: {'PASS' if passed else 'FAIL'}", flush=True)
+    if not passed:
+        failures.append(label)
 
-# Compile the C++ fixture
-echo "--- Compiling fixture ---"
-if ! g++ -O2 -o "${FIXTURE_BIN}" "${FIXTURE_SRC}"; then
-  echo "FAIL: compilation failed"
-  exit 1
-fi
-echo "Compiled: ${FIXTURE_BIN}"
-echo ""
 
-# Test 1: Run without LD_PRELOAD (should exit 2 - FFI symbols not resolved)
-echo "--- Test 1: Without LD_PRELOAD (expect FFI not resolved) ---"
-if "${FIXTURE_BIN}" 2>&1; then
-  echo "FAIL: fixture should fail without LD_PRELOAD"
-  exit 1
-fi
-echo "PASS: correctly fails without LD_PRELOAD"
-echo ""
+# An absent provider must produce the intended diagnostic, not any failure,
+# timeout, abort, or crash. Also reject a valid GNU run claimed as candidate.
+check(run("negative", "missing-runtime", []), 2, "",
+      "FAIL: FFI symbols not resolved (check LD_PRELOAD)\n")
+check(run("negative", "wrong-provider", ["--case", "startup", str(library)]), 86, "",
+      "runtime-ready-arm:provider-mismatch:malloc\n")
 
-# Test 2: Run with LD_PRELOAD in strict mode
-echo "--- Test 2: Strict mode LD_PRELOAD ---"
-output=$(FRANKENLIBC_MODE=strict LD_PRELOAD="${LIB_PATH}" timeout 10 "${FIXTURE_BIN}" -v 2>&1)
-rc=$?
-echo "${output}"
-if [[ ${rc} -ne 0 ]]; then
-  echo "FAIL: fixture exited ${rc} in strict mode"
-  exit 1
-fi
-echo "PASS: strict mode runtime armed"
-echo ""
+counts = {"startup": 0, "fresh-serial": 40, "fresh-parallel": 48}
+cases = list(dict.fromkeys(args.cases or counts))
+backends = {"hosted": ("0",), "native": ("1",), "all": ("0", "1")}[args.thread_backend]
+# Native raw-clone threads still share host TLS; completing native TLS remains
+# open. Keep the parallel workload available as an explicit diagnostic, with
+# the same assertions and failure status as every supported hosted run.
+# Startup has no worker threads, so do not duplicate it for --thread-backend all.
+startup_backend = "1" if args.thread_backend == "native" else "0"
 
-# Test 3: Run with LD_PRELOAD in hardened mode
-echo "--- Test 3: Hardened mode LD_PRELOAD ---"
-output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" timeout 10 "${FIXTURE_BIN}" -v 2>&1)
-rc=$?
-echo "${output}"
-if [[ ${rc} -ne 0 ]]; then
-  echo "FAIL: fixture exited ${rc} in hardened mode"
-  exit 1
-fi
-echo "PASS: hardened mode runtime armed"
-echo ""
 
-# Test 4: Run multiple times in parallel to stress test arming
-echo "--- Test 4: Parallel stress test (8 concurrent) ---"
-pids=()
-for i in {1..8}; do
-  (FRANKENLIBC_MODE=strict LD_PRELOAD="${LIB_PATH}" timeout 5 "${FIXTURE_BIN}" >/dev/null 2>&1) &
-  pids+=($!)
-done
+def expected(case):
+    return f"runtime-ready-arm:{case}:PASS workers={counts[case]} iterations=12\n"
 
-failed=0
-for pid in "${pids[@]}"; do
-  wait "${pid}" || ((failed++))
-done
 
-if [[ ${failed} -gt 0 ]]; then
-  echo "FAIL: ${failed}/8 parallel runs failed"
-  exit 1
-fi
-echo "PASS: all 8 parallel runs succeeded"
-echo ""
+def candidate_environment(mode, native="0"):
+    return {"LD_PRELOAD": str(library), "FRANKENLIBC_MODE": mode,
+            "FRANKENLIBC_THREAD_NATIVE": native, "FRANKENLIBC_RUNTIME_MATH": "on"}
 
-# Write summary JSON
-SUMMARY_FILE="${REPO_ROOT}/tests/conformance/runtime_ready_arm_e2e.v1.json"
-cat > "${SUMMARY_FILE}" <<EOF
-{
-  "schema_version": "runtime_ready_arm_e2e.v1",
-  "bead_id": "bd-06bxm.1",
-  "generated_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "lib_path": "${LIB_PATH}",
-  "fixture_bin": "${FIXTURE_BIN}",
-  "tests": {
-    "no_preload_fails": "pass",
-    "strict_mode_arms": "pass",
-    "hardened_mode_arms": "pass",
-    "parallel_stress": "pass"
-  },
-  "overall_status": "pass"
+
+for case in cases:
+    reference = run("gnu", case, ["--case", case, host, "--reference"])
+    check(reference, 0, expected(case))
+    for mode in ("strict", "hardened"):
+        for native in (startup_backend,) if case == "startup" else backends:
+            label = f"{'native' if native == '1' else 'hosted'}-{mode}"
+            result = run(label, case, ["--case", case, str(library)],
+                         candidate_environment(mode, native))
+            check(result, 0, expected(case))
+
+# Retain the original eight-process arming stress check with the supervisor
+# outside LD_PRELOAD and inspect every child result individually.
+def parallel_startup(index):
+    return run(f"parallel-{index}", "startup", ["--case", "startup", str(library)],
+               candidate_environment("strict", startup_backend))
+
+
+if "startup" in cases:
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for result in pool.map(parallel_startup, range(8)):
+            check(result, 0, expected("startup"))
+
+
+def sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+gnu_count = sum(record["lane"] == "gnu" for record in records)
+negative_count = sum(record["lane"] == "negative" for record in records)
+candidate_count = len(records) - gnu_count - negative_count
+report = {
+    "schema_version": "runtime_ready_arm_e2e.v2",
+    "library": str(library), "library_sha256": sha256(library),
+    "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
+    "gnu_provider": host, "thread_backend": args.thread_backend, "selected_cases": cases,
+    "gnu_cases": gnu_count, "candidate_cases": candidate_count, "negative_cases": negative_count,
+    "failures": failures, "runs": records,
 }
-EOF
-
-echo "Summary: ${SUMMARY_FILE}"
-echo ""
-echo "PASS: All RUNTIME_READY arming tests passed"
-exit 0
+(output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+if failures:
+    raise SystemExit("runtime-ready-arm: FAIL " + ", ".join(failures))
+print(f"runtime-ready-arm: PASS ({gnu_count} GNU, {candidate_count} candidate, "
+      f"{negative_count} negative cases)")
+PY

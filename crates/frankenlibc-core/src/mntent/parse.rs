@@ -385,8 +385,10 @@ mod tests {
         assert_eq!((entry.freq, entry.passno), (0, 0));
         assert_eq!(tiny, *b"a\0");
         assert!(parse_mntent_buffer(&mut []).is_none());
-        assert!(parse_mntent_buffer(&mut *b"a").is_none());
-        assert!(parse_mntent_buffer(&mut *b" # comment\0").is_none());
+        let mut unterminated = *b"a";
+        assert!(parse_mntent_buffer(&mut unterminated).is_none());
+        let mut comment = *b" # comment\0";
+        assert!(parse_mntent_buffer(&mut comment).is_none());
     }
 
     #[test]

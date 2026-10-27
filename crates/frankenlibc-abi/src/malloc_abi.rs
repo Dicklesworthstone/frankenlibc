@@ -4864,6 +4864,14 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
         .ok()
         .map(|_| AllocatorReentryGuard { slot })?;
 
+    // Creating a fresh owned runtime-policy slot allocates while its mutex is
+    // held. Both the policy-reentry query below and hardened trace setup would
+    // lock that same cache again. Use the tracked internal allocation path,
+    // but only for the owning thread; ordinary contenders retain their policy.
+    if runtime_policy::runtime_policy_tls_reentry_active() {
+        return None;
+    }
+
     if runtime_policy::is_runtime_ready() {
         if runtime_policy::in_policy_reentry_context() {
             return None;
