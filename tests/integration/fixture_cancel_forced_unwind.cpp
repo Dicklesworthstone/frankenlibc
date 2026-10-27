@@ -7,11 +7,15 @@
 // called (a qsort comparator; bd-rc0923-epic-eeuy4f.6). Output must be
 // byte-identical under host glibc and FrankenLibC (strict and hardened).
 #include <cxxabi.h>
+#include <dlfcn.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 
 static int pipefd[2];
@@ -88,7 +92,170 @@ static void run(const char *name, void *(*fn)(void *)) {
   std::fflush(stdout);
 }
 
-int main() {
+/* The optional native-state modes use explicit exit or a cooperatively
+ * reached cancellation point. Remote interruption of blocking syscalls is a
+ * separate native backend feature, so these probes isolate stack unwinding. */
+extern "C" void frankenlibc_native_cleanup_frame(void (*)(void *), void (*)(void *), void *)
+    __attribute__((weak));
+
+struct NativeState {
+  pthread_t thread{};
+  bool cancel = false;
+  bool catch_all = false;
+  bool mixed = false;
+  void *eh_globals = nullptr;
+  int events[16]{};
+  int count = 0;
+  std::atomic<int> ready{0};
+  std::atomic<int> release{0};
+};
+
+static pthread_key_t native_key;
+static NativeState native_states[2];
+
+static void native_require(bool condition, const char *message) {
+  if (!condition) {
+    std::fprintf(stderr, "pthread-native-unwind: %s\n", message);
+    std::_Exit(1);
+  }
+}
+
+static void native_event(NativeState *state, int event) {
+  native_require(state->count < 16, "event capacity");
+  state->events[state->count++] = event;
+}
+
+struct NativeGuard {
+  NativeState *state;
+  int event;
+  ~NativeGuard() { native_event(state, event); }
+};
+
+static void native_key_destructor(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  native_require(pthread_getspecific(native_key) == nullptr, "key cleared before destructor");
+  native_event(state, 9);
+}
+
+static void native_cpp_cleanup(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  native_require(pthread_getspecific(native_key) == state, "cleanup precedes key destructor");
+  native_event(state, 5);
+}
+
+static void native_c_cleanup(void *argument) {
+  native_event(static_cast<NativeState *>(argument), 4);
+}
+
+static void native_inner(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  NativeGuard guard{state, 1};
+  state->ready.store(1, std::memory_order_release);
+  while (!state->release.load(std::memory_order_acquire)) {}
+  if (state->cancel) {
+    pthread_testcancel();
+    std::_Exit(94);
+  }
+  pthread_exit(state);
+}
+
+static void native_inner_dispatch(NativeState *state) {
+  if (state->mixed) {
+    native_require(frankenlibc_native_cleanup_frame != nullptr, "C frame linked");
+    frankenlibc_native_cleanup_frame(native_inner, native_c_cleanup, state);
+  } else {
+    native_inner(state);
+  }
+}
+
+static void *native_worker(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  state->eh_globals = abi::__cxa_get_globals();
+  native_require(pthread_setspecific(native_key, state) == 0, "setspecific");
+  NativeGuard outer{state, 7};
+  pthread_cleanup_push(native_cpp_cleanup, state);
+  if (state->catch_all) {
+    try {
+      native_inner_dispatch(state);
+    } catch (...) {
+      native_event(state, 6);
+      throw;
+    }
+  } else {
+    try {
+      native_inner_dispatch(state);
+    } catch (abi::__forced_unwind &) {
+      native_event(state, 6);
+      throw;
+    }
+  }
+  pthread_cleanup_pop(0);
+  return nullptr;
+}
+
+static int native_provider(const char *expected) {
+  const char *names[] = {"pthread_create", "pthread_join", "pthread_exit", "pthread_testcancel"};
+  struct stat wanted{};
+  if (stat(expected, &wanted)) return 86;
+  for (const char *name : names) {
+    Dl_info info{};
+    struct stat actual{};
+    void *symbol = dlsym(RTLD_DEFAULT, name);
+    if (!symbol || !dladdr(symbol, &info) || stat(info.dli_fname, &actual) ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+      std::fprintf(stderr, "pthread-native-unwind:provider-mismatch:%s\n", name);
+      return 86;
+    }
+  }
+  return 0;
+}
+
+static int native_probe(const char *name, const char *provider) {
+  int checked = native_provider(provider);
+  if (checked) return checked;
+  bool cancel = std::strstr(name, "cancel") != nullptr;
+  bool mixed = std::strstr(name, "mixed") != nullptr;
+  bool catch_all = std::strstr(name, "catch-all") != nullptr;
+  int count = std::strstr(name, "siblings") ? 2 : 1;
+  alarm(12);
+  native_require(pthread_key_create(&native_key, native_key_destructor) == 0, "key_create");
+  void *parent_globals = abi::__cxa_get_globals();
+  for (int i = 0; i < count; ++i) {
+    NativeState *state = &native_states[i];
+    state->cancel = cancel;
+    state->mixed = mixed;
+    state->catch_all = catch_all;
+    native_require(pthread_create(&state->thread, nullptr, native_worker, state) == 0, "create");
+    while (!state->ready.load(std::memory_order_acquire)) {}
+    native_require(state->eh_globals != parent_globals, "child exception state aliases parent");
+    if (i) native_require(state->eh_globals != native_states[0].eh_globals,
+                          "sibling exception states alias");
+  }
+  for (int i = 0; i < count; ++i) {
+    NativeState *state = &native_states[i];
+    if (cancel) native_require(pthread_cancel(state->thread) == 0, "cancel");
+    state->release.store(1, std::memory_order_release);
+    void *result = nullptr;
+    native_require(pthread_join(state->thread, &result) == 0, "join");
+    native_require(result == (cancel ? PTHREAD_CANCELED : static_cast<void *>(state)), "exit value");
+    const int expected[] = {1, 4, 6, 5, 7, 9};
+    native_require(state->count == (mixed ? 6 : 5), "all cleanup frames run exactly once");
+    int index = 0;
+    for (int event : expected) {
+      if (!mixed && event == 4) continue;
+      native_require(state->events[index++] == event, "C/C++/key cleanup order");
+    }
+    if (i + 1 < count) native_require(native_states[i + 1].count == 0, "sibling remains live");
+  }
+  native_require(pthread_key_delete(native_key) == 0, "key_delete");
+  std::printf("pthread-native-unwind:%s:PASS\n", name);
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 3 && !std::strncmp(argv[1], "native-", 7)) {
+    return native_probe(argv[1], argv[2]);
+  }
   if (pipe(pipefd) != 0) {
     return 1;
   }

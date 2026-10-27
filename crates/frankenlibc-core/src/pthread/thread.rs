@@ -32,7 +32,7 @@
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::syscall;
 
-use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -150,6 +150,28 @@ pub struct ThreadHandle {
     pub cancel_state: AtomicI32,
     pub cancel_type: AtomicI32,
 
+    /// Top of the ABI's caller-owned C cancellation cleanup chain. Only the
+    /// owner changes this pointer, and every entry is removed before its
+    /// callback can reenter libc. Kept here rather than in inherited TLS.
+    pub cleanup_head: AtomicUsize,
+
+    /// Set once the native exit protocol begins. Further cancellation points
+    /// in cleanup callbacks must not restart an unwind already in progress.
+    pub exit_started: AtomicU32,
+
+    /// Stack pointer of the clone trampoline before application entry. The
+    /// ABI unwinder stops above this frame instead of interpreting clone's
+    /// synthetic stack as though it had a normal calling frame.
+    pub unwind_stack_boundary: AtomicUsize,
+
+    /// ABI-owned unwind header, aligned for the Itanium unwind ABI. Its
+    /// lifetime covers every landing pad and ends only at thread teardown.
+    pub unwind_exception: core::cell::UnsafeCell<[u128; 2]>,
+
+    /// Itanium C++ caught-exception pointer and uncaught-exception count.
+    /// Native threads must not use the creator's compiler TLS for this state.
+    pub cxa_eh_globals: core::cell::UnsafeCell<[usize; 2]>,
+
     /// Base address of the owned mapping, including its guard. Zero for a
     /// caller-provided stack, which this implementation must never unmap.
     pub stack_base: usize,
@@ -217,7 +239,7 @@ struct ThreadStartArgs {
 /// The affinity slice must remain valid until startup is published; the user
 /// argument and handle retain their normal thread-lifetime requirements.
 #[allow(unsafe_code)]
-unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
+unsafe extern "C-unwind" fn thread_trampoline(args_raw: usize) -> usize {
     // SAFETY: args_raw is a pointer to ThreadStartArgs that the parent placed
     // on our stack before clone. It's valid until we finish reading it.
     let args = unsafe { &*(args_raw as *const ThreadStartArgs) };
@@ -272,6 +294,22 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // Nothing below reads the parent's affinity buffer. Publish readiness
     // before restoring the mask: a pending signal handler may immediately
     // wait for the creator, which must already be able to return from create.
+    let unwind_boundary: usize;
+    // SAFETY: read this frame's stack pointer without changing machine state.
+    // Publish before signals can run pthread_exit from an application handler.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) unwind_boundary,
+                        options(nostack, nomem, preserves_flags));
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("mov {}, sp", out(reg) unwind_boundary,
+                        options(nostack, nomem, preserves_flags));
+    }
+    handle
+        .unwind_stack_boundary
+        .store(unwind_boundary, Ordering::Relaxed);
     publish_startup(handle, 1);
     // SAFETY: Linux's kernel sigset is exactly one u64 on both supported ISAs.
     // The parent used this same syscall successfully before clone. With valid
@@ -296,7 +334,10 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // Cast the start_routine address back to a function pointer and call it.
     // SAFETY: start_routine_addr was a valid extern "C" fn pointer stored by
     // the parent. arg is the user's argument.
-    let start_fn: unsafe extern "C" fn(usize) -> usize =
+    // The native ABI exit path forces stack unwinding through application
+    // cleanup frames. It stops at the end of this stack before final teardown;
+    // do not insert a nounwind boundary around the application's start call.
+    let start_fn: unsafe extern "C-unwind" fn(usize) -> usize =
         unsafe { core::mem::transmute(start_routine_addr) };
     let retval = unsafe { start_fn(arg) };
 
@@ -748,6 +789,11 @@ pub unsafe fn create_thread_with_startup(
         errno: core::cell::UnsafeCell::new(0),
         cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
         cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
+        cleanup_head: AtomicUsize::new(0),
+        exit_started: AtomicU32::new(0),
+        unwind_stack_boundary: AtomicUsize::new(0),
+        unwind_exception: core::cell::UnsafeCell::new([0; 2]),
+        cxa_eh_globals: core::cell::UnsafeCell::new([0; 2]),
         stack_base,
         stack_total_size,
         stack_addr: stack.address,

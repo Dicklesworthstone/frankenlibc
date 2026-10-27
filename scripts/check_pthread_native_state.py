@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare owned native errno/cancellation settings with live GNU pthreads."""
+"""Compare native errno, cancellation and C/C++ cleanup with live GNU pthreads."""
 import argparse
 import hashlib
 import json
@@ -13,6 +13,13 @@ CASES = (
     "errno-siblings", "errno-signals", "errno-return", "errno-exit",
     "cancel-settings", "cancel-reuse", "cancel-invalid", "cooperative-cancel",
     "cancel-pending-reuse",
+    "cleanup-exit", "cleanup-cancel", "cleanup-reentry", "cleanup-siblings",
+    "cleanup-defer", "cleanup-cancel-reentry", "cleanup-initial", "cleanup-return-reentry",
+)
+CLEANUP_CASES = tuple(case for case in CASES if case.startswith("cleanup-"))
+CPP_CASES = (
+    "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
+    "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
 )
 
 
@@ -34,17 +41,35 @@ def main():
     output = args.out_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = root / "tests/integration/fixture_pthread_native_state.c"
+    cpp_source = root / "tests/integration/fixture_cancel_forced_unwind.cpp"
     binary = output / "fixture_pthread_native_state"
+    exceptions_binary = output / "fixture_pthread_native_state_exceptions"
+    cpp_binary = output / "fixture_pthread_native_unwind"
+    c_frame_object = output / "native_cleanup_c_frame.o"
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("LD_PRELOAD", "LD_AUDIT") and not key.startswith("FRANKENLIBC_")}
-    command = shlex.split(os.environ.get("CC", "cc")) + [
+    c_flags = shlex.split(os.environ.get("CC", "cc")) + [
         "-std=c11", "-O2", "-fno-builtin", "-Wall", "-Wextra", "-Werror",
-        str(source), "-o", str(binary), "-pthread", "-ldl",
     ]
-    compiled = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=60)
-    (output / "compile.log").write_text(compiled.stdout + compiled.stderr)
-    if compiled.returncode:
-        raise SystemExit(f"fixture compilation failed: {output / 'compile.log'}")
+
+    def compile_fixture(name, command):
+        compiled = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=60)
+        log = output / f"compile-{name}.log"
+        log.write_text(compiled.stdout + compiled.stderr)
+        if compiled.returncode:
+            raise SystemExit(f"fixture compilation failed: {log}")
+
+    compile_fixture("c", c_flags + ["-fno-exceptions", str(source), "-o", str(binary),
+                                   "-pthread", "-ldl"])
+    compile_fixture("exceptions", c_flags + ["-fexceptions", str(source), "-o",
+                                            str(exceptions_binary), "-pthread", "-ldl"])
+    compile_fixture("c-frame", c_flags + ["-fno-exceptions", "-c", str(source),
+                                         "-Dmain=frankenlibc_native_state_unused_main",
+                                         "-o", str(c_frame_object)])
+    compile_fixture("cpp", shlex.split(os.environ.get("CXX", "c++")) + [
+        "-std=c++17", "-O2", "-fno-builtin", "-Wall", "-Wextra", "-Werror",
+        str(cpp_source), str(c_frame_object), "-o", str(cpp_binary), "-pthread", "-ldl",
+    ])
     provider = subprocess.run([str(binary), "--provider"], env=environment,
                               capture_output=True, text=True, timeout=15)
     if provider.returncode or provider.stderr:
@@ -53,9 +78,9 @@ def main():
     records = []
     failures = []
 
-    def execute(label, case, expected, extra):
+    def execute(label, case, expected, extra, executable=binary):
         try:
-            run = subprocess.run([str(binary), case, expected],
+            run = subprocess.run([str(executable), case, expected],
                                  env=dict(environment, **extra), capture_output=True,
                                  text=True, timeout=15)
             code, stdout, stderr = run.returncode, run.stdout, run.stderr
@@ -74,33 +99,46 @@ def main():
             negative["stderr"] == "pthread-native-state:provider-mismatch:__errno_location\n"):
         failures.append("provider-negative")
 
-    for case in CASES:
-        reference = execute("gnu", case, host, {})
-        expected = f"pthread-native-state:{case}:PASS\n"
-        if reference["returncode"] or reference["stdout"] != expected or reference["stderr"]:
-            failures.append(f"gnu:{case}")
-        for mode in ("strict", "hardened"):
-            for native in ("0", "1"):
-                label = f"{'native' if native == '1' else 'hosted'}-{mode}"
-                candidate = execute(label, case, str(library), {
-                    "LD_PRELOAD": str(library), "FRANKENLIBC_MODE": mode,
-                    "FRANKENLIBC_THREAD_NATIVE": native, "FRANKENLIBC_RUNTIME_MATH": "off",
-                })
-                passed = (candidate["returncode"] == 0 and candidate["stdout"] == expected
-                          and candidate["stderr"] == "")
-                print(f"{label} {case}: {'PASS' if passed else 'FAIL'}", flush=True)
-                if not passed:
-                    failures.append(f"{label}:{case}")
+    cpp_negative = execute("cpp-provider-negative", CPP_CASES[0], str(library), {}, cpp_binary)
+    if not (cpp_negative["returncode"] == 86 and cpp_negative["stdout"] == "" and
+            cpp_negative["stderr"] == "pthread-native-unwind:provider-mismatch:pthread_create\n"):
+        failures.append("cpp-provider-negative")
 
+    variants = (("", CASES, binary, "pthread-native-state"),
+                ("exceptions-", CLEANUP_CASES, exceptions_binary, "pthread-native-state"),
+                ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind"))
+    for prefix, cases, executable, output_prefix in variants:
+        for case in cases:
+            reference = execute(f"{prefix}gnu", case, host, {}, executable)
+            expected = f"{output_prefix}:{case}:PASS\n"
+            if reference["returncode"] or reference["stdout"] != expected or reference["stderr"]:
+                failures.append(f"{prefix}gnu:{case}")
+            for mode in ("strict", "hardened"):
+                for native in ("0", "1"):
+                    label = f"{prefix}{'native' if native == '1' else 'hosted'}-{mode}"
+                    candidate = execute(label, case, str(library), {
+                        "LD_PRELOAD": str(library), "FRANKENLIBC_MODE": mode,
+                        "FRANKENLIBC_THREAD_NATIVE": native, "FRANKENLIBC_RUNTIME_MATH": "off",
+                    }, executable)
+                    passed = (candidate["returncode"] == 0 and candidate["stdout"] == expected
+                              and candidate["stderr"] == "")
+                    print(f"{label} {case}: {'PASS' if passed else 'FAIL'}", flush=True)
+                    if not passed:
+                        failures.append(f"{label}:{case}")
+
+    gnu_cases = sum(len(cases) for _, cases, _, _ in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
               "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
-              "gnu_provider": host, "gnu_cases": len(CASES),
-              "candidate_cases": 4 * len(CASES), "failures": failures, "runs": records}
+              "cpp_fixture_sha256": sha256(cpp_source), "cpp_binary_sha256": sha256(cpp_binary),
+              "exceptions_binary_sha256": sha256(exceptions_binary),
+              "gnu_provider": host, "gnu_cases": gnu_cases,
+              "candidate_cases": 4 * gnu_cases, "provider_negative_cases": 2,
+              "failures": failures, "runs": records}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
         raise SystemExit("pthread native state: FAIL " + ", ".join(failures))
-    print(f"pthread native state: PASS ({len(CASES)} live GNU cases, "
-          f"{4 * len(CASES)} candidate cases, provider negative)")
+    print(f"pthread native state: PASS ({gnu_cases} live GNU cases, "
+          f"{4 * gnu_cases} candidate cases, two provider negatives)")
 
 
 if __name__ == "__main__":

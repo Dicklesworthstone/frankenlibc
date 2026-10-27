@@ -22,6 +22,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'tests/integration/fixture_pthread_native_state.c'
+      - 'tests/integration/fixture_cancel_forced_unwind.cpp'
       - 'scripts/check_pthread_native_state.py'
   workflow_dispatch:
 
@@ -121,7 +122,7 @@ jobs:
         run: |
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
             bash scripts/check_pthread_extensions_native.sh --key-destructors
-      - name: Compare native errno and cancellation settings against GNU pthreads
+      - name: Compare native errno, cancellation, and C/C++ cleanup against GNU pthreads
         shell: bash
         run: |
           python3 scripts/check_pthread_native_state.py \

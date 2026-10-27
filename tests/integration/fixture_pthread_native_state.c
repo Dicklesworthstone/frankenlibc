@@ -369,6 +369,186 @@ static void cooperative_cancel(void) {
     CHECK(pthread_setcancelstate(original_state, NULL) == 0);
 }
 
+struct cleanup_state {
+    pthread_t thread;
+    int cancel;
+    int reenter;
+    int log[12];
+    int count;
+    _Atomic int ready;
+    _Atomic int release;
+};
+
+struct cleanup_argument {
+    struct cleanup_state *state;
+    int marker;
+};
+
+static struct cleanup_state cleanup_states[2];
+static _Atomic int initial_cleanup_done;
+
+static void record_cleanup(void *argument) {
+    struct cleanup_argument *entry = argument;
+    struct cleanup_state *state = entry->state;
+    CHECK(state->count < (int)(sizeof(state->log) / sizeof(state->log[0])));
+    state->log[state->count++] = entry->marker;
+    CHECK(pthread_getspecific(key) == state);
+    if (state->reenter == 1 && entry->marker == 2) {
+        struct cleanup_argument nested = {state, 4};
+        pthread_cleanup_push(record_cleanup, &nested);
+        pthread_cleanup_pop(1);
+    } else if (state->reenter == 2 && entry->marker == 2) {
+        /* An exit already in progress is not restarted by a pending request
+         * at a cancellation point in application cleanup code. */
+        CHECK(pthread_cancel(pthread_self()) == 0);
+        CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+        pthread_testcancel();
+        state->log[state->count++] = 4;
+    }
+}
+
+static void cleanup_key_destructor(void *argument) {
+    struct cleanup_state *state = argument;
+    CHECK(pthread_getspecific(key) == NULL);
+    if (state->reenter == 3) {
+        CHECK(pthread_cancel(pthread_self()) == 0);
+        CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+        pthread_testcancel();
+    }
+    CHECK(state->count < (int)(sizeof(state->log) / sizeof(state->log[0])));
+    state->log[state->count++] = 9;
+    if (state->reenter == 4) publish(&initial_cleanup_done, 1);
+}
+
+static void *cleanup_worker(void *argument) {
+    struct cleanup_state *state = argument;
+    struct cleanup_argument first = {state, 1};
+    struct cleanup_argument second = {state, 2};
+    struct cleanup_argument popped = {state, 3};
+    CHECK(pthread_setspecific(key, state) == 0);
+    pthread_cleanup_push(record_cleanup, &first);
+    pthread_cleanup_push(record_cleanup, &popped);
+    pthread_cleanup_pop(0);
+    pthread_cleanup_push(record_cleanup, &second);
+    publish(&state->ready, 1);
+    wait_at_least(&state->release, 1);
+    if (state->cancel) {
+        pthread_testcancel();
+        _Exit(92);
+    }
+    if (state->reenter != 3) pthread_exit(state);
+    pthread_cleanup_pop(0);
+    pthread_cleanup_pop(0);
+    return state;
+}
+
+static void cleanup_exit(int cancel, int reenter, int siblings) {
+    CHECK(pthread_key_create(&key, cleanup_key_destructor) == 0);
+    int count = siblings ? 2 : 1;
+    for (int i = 0; i < count; ++i) {
+        struct cleanup_state *state = &cleanup_states[i];
+        state->cancel = cancel;
+        state->reenter = reenter;
+        CHECK(pthread_create(&state->thread, NULL, cleanup_worker, state) == 0);
+        wait_at_least(&state->ready, 1);
+    }
+    for (int i = 0; i < count; ++i) {
+        struct cleanup_state *state = &cleanup_states[i];
+        if (cancel) CHECK(pthread_cancel(state->thread) == 0);
+        publish(&state->release, 1);
+        void *result = NULL;
+        CHECK(pthread_join(state->thread, &result) == 0);
+        if (reenter == 3) {
+            /* GNU permits a new cancellation to interrupt a key destructor
+             * entered after an ordinary start-routine return. Explicit exit
+             * has already entered its unwind protocol and suppresses restart. */
+            CHECK(result == PTHREAD_CANCELED && state->count == 0);
+            continue;
+        }
+        CHECK(result == (cancel ? PTHREAD_CANCELED : (void *)state));
+        CHECK(state->count == (reenter ? 4 : 3));
+        CHECK(state->log[0] == 2);
+        if (reenter) CHECK(state->log[1] == 4);
+        CHECK(state->log[state->count - 2] == 1);
+        CHECK(state->log[state->count - 1] == 9);
+        if (i + 1 < count) CHECK(cleanup_states[i + 1].count == 0);
+    }
+    CHECK(pthread_key_delete(key) == 0);
+}
+
+static void *cleanup_defer_worker(void *argument) {
+    struct cleanup_state *state = argument;
+    struct cleanup_argument first = {state, 1};
+    struct cleanup_argument second = {state, 2};
+    CHECK(pthread_setspecific(key, state) == 0);
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+    pthread_cleanup_push(record_cleanup, &first);
+    pthread_cleanup_push_defer_np(record_cleanup, &second);
+    int type;
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type) == 0);
+    CHECK(type == PTHREAD_CANCEL_DEFERRED);
+    publish(&state->ready, 1);
+    wait_at_least(&state->release, 1);
+    /* GNU's C setjmp macro unregisters before restoring ASYNCHRONOUS. With
+     * -fexceptions the language cleanup frame remains live across the restore.
+     * Both header-selected contracts are checked below against live GNU. */
+    pthread_cleanup_pop_restore_np(0);
+    _Exit(93);
+    pthread_cleanup_pop(0);
+    return NULL;
+}
+
+static void cleanup_defer(void) {
+    CHECK(pthread_key_create(&key, cleanup_key_destructor) == 0);
+    struct cleanup_state *state = &cleanup_states[0];
+    CHECK(pthread_create(&state->thread, NULL, cleanup_defer_worker, state) == 0);
+    wait_at_least(&state->ready, 1);
+    CHECK(pthread_cancel(state->thread) == 0);
+    publish(&state->release, 1);
+    void *result = NULL;
+    CHECK(pthread_join(state->thread, &result) == 0 && result == PTHREAD_CANCELED);
+#ifdef __EXCEPTIONS
+    CHECK(state->count == 3 && state->log[0] == 2 && state->log[1] == 1 && state->log[2] == 9);
+#else
+    CHECK(state->count == 2 && state->log[0] == 1 && state->log[1] == 9);
+#endif
+    CHECK(pthread_key_delete(key) == 0);
+}
+
+static void *observe_initial_cleanup(void *argument) {
+    struct cleanup_state *state = argument;
+    wait_at_least(&initial_cleanup_done, 1);
+    CHECK(state->count == 3 && state->log[0] == 2 && state->log[1] == 1 && state->log[2] == 9);
+    puts("pthread-native-state:cleanup-initial:PASS");
+    fflush(stdout);
+    _Exit(0);
+}
+
+static void cleanup_initial(void) {
+    CHECK(pthread_key_create(&key, cleanup_key_destructor) == 0);
+    struct cleanup_state *state = &cleanup_states[0];
+    state->reenter = 4;
+    CHECK(pthread_setspecific(key, state) == 0);
+    CHECK(pthread_create(&state->thread, NULL, observe_initial_cleanup, state) == 0);
+    struct cleanup_argument first = {state, 1};
+    struct cleanup_argument second = {state, 2};
+    pthread_cleanup_push(record_cleanup, &first);
+    pthread_cleanup_push(record_cleanup, &second);
+    pthread_exit(state);
+    pthread_cleanup_pop(0);
+    pthread_cleanup_pop(0);
+}
+
+/* Linked into the C++ native-unwind probe as an independently compiled C
+ * frame without exception landing pads. Its registered cleanup must run
+ * between the inner and outer C++ destructors, in the same unwind. */
+void frankenlibc_native_cleanup_frame(void (*callback)(void *),
+                                     void (*cleanup)(void *), void *argument) {
+    pthread_cleanup_push(cleanup, argument);
+    callback(argument);
+    pthread_cleanup_pop(0);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--provider")) {
         Dl_info info;
@@ -390,6 +570,14 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "cancel-invalid")) cancel_invalid();
     else if (!strcmp(name, "cancel-pending-reuse")) cancel_pending_reuse();
     else if (!strcmp(name, "cooperative-cancel")) cooperative_cancel();
+    else if (!strcmp(name, "cleanup-exit")) cleanup_exit(0, 0, 0);
+    else if (!strcmp(name, "cleanup-cancel")) cleanup_exit(1, 0, 0);
+    else if (!strcmp(name, "cleanup-reentry")) cleanup_exit(0, 1, 0);
+    else if (!strcmp(name, "cleanup-cancel-reentry")) cleanup_exit(1, 2, 0);
+    else if (!strcmp(name, "cleanup-siblings")) cleanup_exit(1, 1, 1);
+    else if (!strcmp(name, "cleanup-defer")) cleanup_defer();
+    else if (!strcmp(name, "cleanup-initial")) cleanup_initial();
+    else if (!strcmp(name, "cleanup-return-reentry")) cleanup_exit(0, 3, 0);
     else return 2;
     printf("pthread-native-state:%s:PASS\n", name);
     return 0;

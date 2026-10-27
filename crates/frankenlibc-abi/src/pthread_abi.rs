@@ -275,6 +275,9 @@ struct PthreadTlsState {
     threading_test_override_depth: usize,
     thread_cancel_state: c_int,
     thread_cancel_type: c_int,
+    native_cleanup_head: usize,
+    native_exit_started: bool,
+    native_unwind_exception: [u128; 2],
     current_threading_backend: u8,
     current_pthread_self_cache: libc::pthread_t,
 }
@@ -287,6 +290,9 @@ impl PthreadTlsState {
             threading_test_override_depth: 0,
             thread_cancel_state: PTHREAD_CANCEL_ENABLE_STATE,
             thread_cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
+            native_cleanup_head: 0,
+            native_exit_started: false,
+            native_unwind_exception: [0; 2],
             current_threading_backend: THREAD_BACKEND_UNKNOWN,
             current_pthread_self_cache: 0,
         }
@@ -6216,8 +6222,17 @@ fn consume_pending_cancel_for_current_thread() -> bool {
     if !cancel_enabled_for_current_thread() {
         return false;
     }
-    if core_current_thread_handle().is_some() {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the owner keeps the handle live through all cleanup. A
+        // callback may reach another cancellation point, but its current
+        // forced unwind already owns the exit protocol and exception object.
+        if unsafe { (*handle).exit_started.load(Ordering::Relaxed) } != 0 {
+            return false;
+        }
         return core_take_current_cancellation();
+    }
+    if with_pthread_tls(|tls| tls.native_exit_started) {
+        return false;
     }
     let thread_key = current_cancel_key();
     if !cancellation_pending(thread_key) {
@@ -8926,7 +8941,13 @@ pub unsafe extern "C" fn pthread_yield() -> c_int {
 pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
     let tid = core_self_tid();
     if let Some(handle_ptr) = core_handle_for_tid(tid) {
-        unsafe { core_exit_current_thread(handle_ptr, retval as usize) };
+        // SAFETY: this thread owns the live handle until final teardown. The
+        // joiner reads retval only after the kernel clears the thread's tid.
+        unsafe {
+            (*handle_ptr).exit_started.store(1, Ordering::Relaxed);
+            *(*handle_ptr).retval.get() = retval as usize;
+        }
+        unsafe { continue_native_thread_exit() };
     }
 
     if !force_native_threading_enabled()
@@ -8935,7 +8956,8 @@ pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
         unsafe { host_exit(retval) };
     }
 
-    raw_syscall::sys_exit_thread(0);
+    with_pthread_tls(|tls| tls.native_exit_started = true);
+    unsafe { continue_native_thread_exit() };
 }
 
 /// glibc reserved-namespace alias for [`pthread_exit`].
@@ -9305,6 +9327,229 @@ pub(crate) fn host_cancellation_thread() -> bool {
     current_threading_backend() == THREAD_BACKEND_HOST
 }
 
+/// The public GNU pthread header puts four private pointer words after the
+/// machine jump buffer and its (pointer-aligned) saved-mask flag. The first
+/// two words hold our previous entry and the deferred region's saved type.
+/// They belong to libc; the application macro owns the surrounding stack
+/// buffer and invokes its own callback after we restore the jump context.
+#[cfg(target_arch = "x86_64")]
+const CANCEL_BUFFER_PRIVATE_WORD: usize = 9;
+#[cfg(target_arch = "aarch64")]
+const CANCEL_BUFFER_PRIVATE_WORD: usize = 23;
+
+fn native_cleanup_head() -> usize {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: this is the calling native thread's live handle.
+        return unsafe { (*handle).cleanup_head.load(Ordering::Relaxed) };
+    }
+    with_pthread_tls(|tls| tls.native_cleanup_head)
+}
+
+fn set_native_cleanup_head(head: usize) {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: only this live handle's owner mutates its cleanup chain.
+        unsafe { (*handle).cleanup_head.store(head, Ordering::Relaxed) };
+    } else {
+        with_pthread_tls(|tls| tls.native_cleanup_head = head);
+    }
+}
+
+unsafe fn register_native_cleanup(buf: *mut c_void, deferred: bool) {
+    // SAFETY: the caller supplies the live __pthread_unwind_buf_t emitted by
+    // the public pthread_cleanup_push macro. Its private words remain valid
+    // until the matching pop or non-local cleanup transfer.
+    let private = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD) };
+    unsafe { private.write(native_cleanup_head()) };
+    set_native_cleanup_head(buf as usize);
+    if deferred {
+        let mut previous = PTHREAD_CANCEL_DEFERRED_TYPE;
+        // Moving to DEFERRED cannot act on a pending asynchronous request.
+        unsafe { pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED_TYPE, &mut previous) };
+        unsafe { private.add(1).write(previous as usize) };
+    }
+}
+
+unsafe fn unregister_native_cleanup(buf: *mut c_void, restore: bool) {
+    // SAFETY: this is the matching live buffer registered by the macro.
+    let private = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD) };
+    set_native_cleanup_head(unsafe { private.read() });
+    if restore {
+        let previous = unsafe { private.add(1).read() } as c_int;
+        // Remove the frame before restoring ASYNCHRONOUS: a pending request
+        // acts inside setcanceltype and must see only the enclosing handlers.
+        unsafe { pthread_setcanceltype(previous, std::ptr::null_mut()) };
+    }
+}
+
+/// Transfer to one C cleanup buffer after its deeper frames have unwound.
+/// No lock, Rust borrow, or owned temporary may span this non-local transfer.
+unsafe fn transfer_native_cleanup() -> ! {
+    let head = native_cleanup_head();
+    if head != 0 {
+        let buf = head as *mut c_void;
+        // SAFETY: the registration chain contains only this thread's still
+        // live stack buffers. The saved mask flag is zero for cleanup jumps.
+        let previous = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD).read() };
+        set_native_cleanup_head(previous);
+        unsafe { crate::setjmp_abi::longjmp(buf, 1) };
+    }
+    unsafe { finish_native_thread_exit() };
+}
+
+unsafe fn finish_native_thread_exit() -> ! {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the current owner stored its return value before entering
+        // this chain; all handlers have completed before key destruction.
+        let retval = unsafe { *(*handle).retval.get() };
+        unsafe { core_exit_current_thread(handle, retval) };
+    }
+    // The initial thread can select the native backend without a clone-owned
+    // handle. Its ordinary TLS fallback is private because managed children
+    // keep all cleanup state in their own handles.
+    frankenlibc_core::pthread::tls::run_exiting_thread_key_destructors(core_self_tid());
+    raw_syscall::sys_exit_thread(0);
+}
+
+// Native lifecycle owns the exception object and cleanup destination. The
+// normal hybrid artifact already links the platform unwind runtime, whose
+// public Itanium ABI supplies stack walking and language landing pads. The
+// experimental owned-unwind-stub artifact does not implement forced unwinding
+// yet; it retains only the explicit C cleanup-buffer path below.
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[repr(C, align(16))]
+struct NativeUnwindException {
+    exception_class: u64,
+    cleanup: unsafe extern "C" fn(c_int, *mut NativeUnwindException),
+    private: [usize; 2],
+}
+
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+unsafe extern "C-unwind" {
+    fn _Unwind_ForcedUnwind(
+        exception: *mut NativeUnwindException,
+        stop: unsafe extern "C" fn(
+            c_int,
+            c_int,
+            u64,
+            *mut NativeUnwindException,
+            *mut c_void,
+            *mut c_void,
+        ) -> c_int,
+        argument: *mut c_void,
+    ) -> c_int;
+    fn _Unwind_GetCFA(context: *mut c_void) -> usize;
+}
+
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+unsafe extern "C" fn native_unwind_cleanup(_reason: c_int, _exception: *mut NativeUnwindException) {
+    // A language catch may observe cancellation only if it resumes unwinding.
+    // Consuming the foreign exception would abandon the thread exit protocol.
+    std::process::abort();
+}
+
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+unsafe fn native_cleanup_stack_pointer(head: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the registered buffer is live; its machine context was
+        // captured by __sigsetjmp. x86-64 uses the process pointer guard.
+        let saved = unsafe { (head as *const usize).add(6).read() };
+        let guard: usize;
+        unsafe {
+            core::arch::asm!("mov {}, qword ptr fs:[0x30]", out(reg) guard,
+                            options(nostack, readonly, preserves_flags));
+        }
+        saved.rotate_right(17) ^ guard
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: this matches the native __sigsetjmp context in setjmp_abi.
+        let saved = unsafe { (head as *const usize).add(12).read() };
+        saved ^ crate::unistd_abi::__frankenlibc_pointer_guard.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+unsafe extern "C" fn native_unwind_stop(
+    version: c_int,
+    actions: c_int,
+    _exception_class: u64,
+    _exception: *mut NativeUnwindException,
+    context: *mut c_void,
+    _argument: *mut c_void,
+) -> c_int {
+    if version != 1 {
+        return 2; // _URC_FATAL_PHASE2_ERROR
+    }
+    let at_end = actions & 16 != 0; // _UA_END_OF_STACK
+    let cfa = if at_end {
+        0
+    } else {
+        unsafe { _Unwind_GetCFA(context) }
+    };
+    let head = native_cleanup_head();
+    if head != 0 && (at_end || cfa >= unsafe { native_cleanup_stack_pointer(head) }) {
+        // Every deeper C++/C-with-exceptions frame has run its cleanup. Remove
+        // this plain C buffer before transferring to its macro's callback.
+        unsafe { transfer_native_cleanup() };
+    }
+    if at_end {
+        unsafe { finish_native_thread_exit() };
+    }
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the clone trampoline published its own stack pointer before
+        // enabling application signals or calling user code. The application's
+        // outer frame has CFA == boundary and must still run its personality;
+        // only the next frame crosses it. The synthetic clone frame has no
+        // valid caller and must never be submitted to the platform unwinder.
+        let boundary = unsafe { (*handle).unwind_stack_boundary.load(Ordering::Relaxed) };
+        if boundary != 0 && cfa > boundary {
+            unsafe { finish_native_thread_exit() };
+        }
+    }
+    0 // _URC_NO_REASON: allow this frame's language cleanup to run.
+}
+
+/// Start (or restart after a plain C cleanup callback) a native forced unwind.
+/// The exception lives in owned thread storage, never in an unwound frame.
+unsafe fn continue_native_thread_exit() -> ! {
+    #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+    {
+        let storage = if let Some(handle) = core_current_thread_handle() {
+            // SAFETY: only this native thread accesses its exception header.
+            unsafe {
+                (*handle)
+                    .unwind_exception
+                    .get()
+                    .cast::<NativeUnwindException>()
+            }
+        } else {
+            // The cache keeps its cell address stable; release its borrow
+            // before entering any unwinder, personality, or application code.
+            with_pthread_tls(|tls| {
+                std::ptr::from_mut(&mut tls.native_unwind_exception).cast::<NativeUnwindException>()
+            })
+        };
+        // SAFETY: both storage variants have 16-byte alignment and 32 bytes.
+        // A restarted chain has abandoned the previous cursor via longjmp.
+        unsafe {
+            storage.write(NativeUnwindException {
+                exception_class: u64::from_be_bytes(*b"FRNKCAN\0"),
+                cleanup: native_unwind_cleanup,
+                private: [0; 2],
+            });
+            _Unwind_ForcedUnwind(storage, native_unwind_stop, std::ptr::null_mut());
+        }
+        // Returning means malformed unwind data or a violated unwind contract;
+        // never silently skip the remaining cleanup and report successful exit.
+        std::process::abort();
+    }
+    #[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+    unsafe {
+        transfer_native_cleanup()
+    }
+}
+
 /// `__pthread_register_cancel` — C `pthread_cleanup_push` (built without
 /// `-fexceptions`) links its unwind buffer into the thread's cleanup chain
 /// here; a cancellation or `pthread_exit` then runs the handler. On host
@@ -9315,6 +9560,8 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
         && let Some(register) = resolved_thread_register_cancel_raw()
     {
         unsafe { register(buf) };
+    } else if !buf.is_null() {
+        unsafe { register_native_cleanup(buf, false) };
     }
 }
 
@@ -9326,6 +9573,8 @@ pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
         && let Some(unregister) = resolved_thread_unregister_cancel_raw()
     {
         unsafe { unregister(buf) };
+    } else if !buf.is_null() {
+        unsafe { unregister_native_cleanup(buf, false) };
     }
 }
 
@@ -9336,6 +9585,8 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void
         && let Some(register) = resolved_thread_register_cancel_defer_raw()
     {
         unsafe { register(buf) };
+    } else if !buf.is_null() {
+        unsafe { register_native_cleanup(buf, true) };
     }
 }
 
@@ -9346,6 +9597,8 @@ pub unsafe extern "C-unwind" fn __pthread_unregister_cancel_restore(buf: *mut c_
         && let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()
     {
         unsafe { unregister(buf) };
+    } else if !buf.is_null() {
+        unsafe { unregister_native_cleanup(buf, true) };
     }
 }
 
@@ -9383,13 +9636,16 @@ pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr
 
 /// `__pthread_unwind_next` — continue a cancellation unwind to the next
 /// registered cleanup buffer (called from the C `pthread_cleanup_push`
-/// expansion after running a handler). Only glibc's chain exists.
+/// expansion after running a handler). Native handlers have already been
+/// removed before their jump transfer, so continuation uses the owned chain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unwind_next(buf: *mut c_void) {
     if host_cancellation_thread()
         && let Some(unwind_next) = resolved_thread_unwind_next_raw()
     {
         unsafe { unwind_next(buf) };
+    } else if !host_cancellation_thread() {
+        unsafe { continue_native_thread_exit() };
     }
     std::process::abort();
 }

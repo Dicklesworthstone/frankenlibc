@@ -20200,6 +20200,13 @@ std::thread_local! {
 }
 
 fn cxa_eh_globals_ptr() -> *mut CxaEhGlobals {
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        // SAFETY: the calling native thread owns this live handle until all
+        // unwind callbacks and key destructors finish. The cell has the public
+        // Itanium __cxa_eh_globals layout (pointer, unsigned count, padding).
+        return unsafe { (*handle).cxa_eh_globals.get().cast() };
+    }
+
     #[cfg(feature = "owned-tls-cache")]
     {
         CXA_EH_GLOBALS_OWNED_TLS.with(|globals| globals as *mut CxaEhGlobals)
