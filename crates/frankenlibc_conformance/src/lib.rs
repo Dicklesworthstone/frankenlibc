@@ -2400,8 +2400,8 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
             ))
         }
         "clntraw_create" => {
-            // SAFETY: the safe-default client constructor ignores program/version.
-            let ptr = unsafe { frankenlibc_abi::rpc_abi::clntraw_create(0, 0) };
+            // The native in-memory constructor has no caller-owned pointer arguments.
+            let ptr = frankenlibc_abi::rpc_abi::clntraw_create(0, 0);
             Ok(format!(
                 "RETURN_PTR={}",
                 if ptr.is_null() { "NULL" } else { "NONNULL" }

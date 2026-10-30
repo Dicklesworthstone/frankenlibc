@@ -18,6 +18,7 @@ fn write_only_flags() -> OpenFlags {
         binary: false,
         exclusive: false,
         cloexec: false,
+        no_cancel: false,
     }
 }
 

@@ -438,7 +438,7 @@ mod tests {
         );
         assert_eq!(lookup_publickey(image.as_bytes(), b"Nobody"), None);
         for value in [
-            format!("{public}"),
+            public.to_string(),
             format!("{public}:"),
             format!("{public}:xyz"),
             format!("0{public}:11"),

@@ -44,7 +44,7 @@ enum Outcome {
 /// # Safety
 /// `f` must be a real `__fgetws*_chk` and `path` a readable file.
 unsafe fn probe(
-    f: unsafe extern "C" fn(*mut i32, usize, i32, *mut c_void) -> *mut i32,
+    f: unsafe extern "C-unwind" fn(*mut i32, usize, i32, *mut c_void) -> *mut i32,
     path: &std::ffi::CStr,
     claimed_size: usize,
     n: i32,
@@ -112,7 +112,7 @@ fn write_temp(name: &str, content: &str) -> std::ffi::CString {
     std::ffi::CString::new(path.to_str().unwrap()).unwrap()
 }
 
-type ChkFn = unsafe extern "C" fn(*mut i32, usize, i32, *mut c_void) -> *mut i32;
+type ChkFn = unsafe extern "C-unwind" fn(*mut i32, usize, i32, *mut c_void) -> *mut i32;
 
 fn host_chk(name: &std::ffi::CStr) -> ChkFn {
     // SAFETY: libc.so.6 is the process host libc.

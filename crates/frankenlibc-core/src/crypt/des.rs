@@ -236,8 +236,8 @@ pub fn rpc_des_crypt(
     }
     let chained = iv.is_some();
     let mut previous = iv.as_ref().map_or(0, |value| u64::from_be_bytes(**value));
-    for bytes in data.chunks_exact_mut(8) {
-        let input = u64::from_be_bytes(bytes.try_into().expect("eight-byte DES block"));
+    for bytes in data.as_chunks_mut::<8>().0 {
+        let input = u64::from_be_bytes(*bytes);
         let output = if decrypt {
             let plain = encrypt_block(input, &subkeys, &E);
             if chained { plain ^ previous } else { plain }
@@ -310,13 +310,13 @@ pub fn rpc_des_hex_crypt(
     binary
         .try_reserve_exact(length)
         .map_err(|_| RpcDesError::Allocation)?;
-    for pair in secret.chunks_exact(2) {
+    for pair in secret.as_chunks::<2>().0 {
         binary.push(rpc_hex_digit(pair[0]).wrapping_shl(4) | rpc_hex_digit(pair[1]));
     }
     let key = rpc_passwd2des(password);
     rpc_des_crypt(&key, &mut binary, decrypt, Some(&mut [0; 8]))?;
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    for (pair, byte) in secret.chunks_exact_mut(2).zip(binary) {
+    for (pair, byte) in secret.as_chunks_mut::<2>().0.iter_mut().zip(binary) {
         pair[0] = HEX[(byte >> 4) as usize];
         pair[1] = HEX[(byte & 15) as usize];
     }
@@ -535,13 +535,13 @@ mod tests {
         assert_eq!(iv, data[16..]);
         let mut chunked = plaintext;
         let mut chaining = initial_iv;
-        for block in chunked.chunks_exact_mut(8) {
+        for block in chunked.as_chunks_mut::<8>().0 {
             rpc_des_crypt(&key, block, false, Some(&mut chaining)).unwrap();
         }
         assert_eq!(chunked, data);
         assert_eq!(chaining, iv);
         iv = initial_iv;
-        for block in data.chunks_exact_mut(8) {
+        for block in data.as_chunks_mut::<8>().0 {
             rpc_des_crypt(&key, block, true, Some(&mut iv)).unwrap();
         }
         assert_eq!(data, plaintext);

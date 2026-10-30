@@ -36,7 +36,7 @@ use std::ffi::{c_int, c_void};
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 
-type FgetwsChk = unsafe extern "C" fn(*mut c_int, usize, c_int, *mut c_void) -> *mut c_int;
+type FgetwsChk = unsafe extern "C-unwind" fn(*mut c_int, usize, c_int, *mut c_void) -> *mut c_int;
 
 /// Run `action` in a forked child and classify how it ended.
 fn classify(action: impl FnOnce()) -> String {
