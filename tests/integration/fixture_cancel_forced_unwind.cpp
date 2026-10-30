@@ -102,6 +102,13 @@ static void run(const char *name, void *(*fn)(void *)) {
 extern "C" void frankenlibc_native_cleanup_frame(void (*)(void *), void (*)(void *), void *)
     __attribute__((weak));
 
+static pthread_t native_join_target;
+static int native_join_target_value;
+static int native_join_sentinel;
+static std::atomic<int> native_join_started{0};
+using NativeJoin = int (*)(pthread_t, void **);
+static NativeJoin native_alias_join;
+
 struct NativeState {
   pthread_t thread{};
   bool cancel = false;
@@ -113,6 +120,7 @@ struct NativeState {
   bool internal_completed = false;
   bool operation_completed = false;
   sem_t semaphore{};
+  void *join_result = &native_join_sentinel;
   void *eh_globals = nullptr;
   int events[16]{};
   int count = 0;
@@ -157,6 +165,38 @@ static void native_c_cleanup(void *argument) {
   native_event(static_cast<NativeState *>(argument), 4);
 }
 
+static void *native_join_target_worker(void *) {
+  native_join_started.store(1, std::memory_order_release);
+  return &native_join_target_value;
+}
+
+static int native_join_operation(NativeState *state) {
+  const char *point = state->point;
+  if (!std::strcmp(point, "join-alias"))
+    return native_alias_join(native_join_target, &state->join_result);
+  if (!std::strcmp(point, "tryjoin")) {
+    int result;
+    do {
+      result = pthread_tryjoin_np(native_join_target, &state->join_result);
+    } while (result == EBUSY);
+    return result;
+  }
+  if (!std::strcmp(point, "join-timed-null"))
+    return pthread_timedjoin_np(native_join_target, &state->join_result, nullptr);
+  if (!std::strcmp(point, "join-clock-null"))
+    return pthread_clockjoin_np(native_join_target, &state->join_result, CLOCK_MONOTONIC, nullptr);
+  if (!std::strcmp(point, "join-timed") || !std::strncmp(point, "join-clock-", 11)) {
+    clockid_t clock = !std::strcmp(point, "join-clock-mono") ? CLOCK_MONOTONIC : CLOCK_REALTIME;
+    std::timespec deadline{};
+    native_require(clock_gettime(clock, &deadline) == 0, "join deadline clock");
+    deadline.tv_sec += 60;
+    if (!std::strcmp(point, "join-timed"))
+      return pthread_timedjoin_np(native_join_target, &state->join_result, &deadline);
+    return pthread_clockjoin_np(native_join_target, &state->join_result, clock, &deadline);
+  }
+  return pthread_join(native_join_target, &state->join_result);
+}
+
 static void native_inner(void *argument) {
   auto *state = static_cast<NativeState *>(argument);
   NativeGuard guard{state, 1};
@@ -181,16 +221,20 @@ static void native_inner(void *argument) {
         native_require(nanosleep(&zero, nullptr) == 0, "nanosleep result");
       } else if (!std::strcmp(state->point, "sem_wait")) {
         native_require(sem_wait(&state->semaphore) == 0, "ready semaphore result");
+      } else if (!std::strncmp(state->point, "join", 4) ||
+                 !std::strcmp(state->point, "tryjoin")) {
+        native_require(native_join_operation(state) == 0, "target join succeeds");
       } else {
         const std::timespec expired = {0, 0};
         native_require(sem_timedwait(&state->semaphore, &expired) == 0,
                        "ready timed semaphore result");
       }
       state->operation_completed = true;
-      if (!state->disabled)
+      if (!state->disabled && std::strcmp(state->point, "tryjoin"))
         std::_Exit(94); // A pending request must act before any syscall/token effect.
-      native_require(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr) == 0,
-                     "restore cancellation after disabled operation");
+      if (state->disabled)
+        native_require(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr) == 0,
+                       "restore cancellation after disabled operation");
     }
     pthread_testcancel();
     std::_Exit(94);
@@ -232,9 +276,11 @@ static void *native_worker(void *argument) {
   return nullptr;
 }
 
-static int native_provider(const char *expected) {
+static int native_provider(const char *expected, const char *name) {
   const char *names[] = {"pthread_create", "pthread_join", "pthread_exit", "pthread_testcancel",
-                         "read", "write", "nanosleep", "sem_wait", "sem_timedwait", "getpwnam"};
+                         "read", "write", "nanosleep", "sem_wait", "sem_timedwait", "getpwnam",
+                         "pthread_timedjoin_np", "pthread_clockjoin_np", "pthread_tryjoin_np",
+                         std::strstr(name, "join-alias") ? "__pthread_join" : "pthread_join"};
   struct stat wanted{};
   if (stat(expected, &wanted)) return 86;
   for (const char *name : names) {
@@ -247,11 +293,13 @@ static int native_provider(const char *expected) {
       return 86;
     }
   }
+  if (std::strstr(name, "join-alias"))
+    native_alias_join = reinterpret_cast<NativeJoin>(dlsym(RTLD_DEFAULT, "__pthread_join"));
   return 0;
 }
 
 static int native_probe(const char *name, const char *provider) {
-  int checked = native_provider(provider);
+  int checked = native_provider(provider, name);
   if (checked) return checked;
   bool cancel = std::strstr(name, "cancel") != nullptr;
   bool mixed = std::strstr(name, "mixed") != nullptr;
@@ -262,7 +310,17 @@ static int native_probe(const char *name, const char *provider) {
                       std::strstr(name, "-write") ? "write" :
                       std::strstr(name, "-nanosleep") ? "nanosleep" :
                       std::strstr(name, "-sem-timed") ? "sem_timedwait" :
-                      std::strstr(name, "-sem") ? "sem_wait" : nullptr;
+                      std::strstr(name, "-sem") ? "sem_wait" :
+                      std::strstr(name, "-join-alias") ? "join-alias" :
+                      std::strstr(name, "-join-timed-null") ? "join-timed-null" :
+                      std::strstr(name, "-join-timed") ? "join-timed" :
+                      std::strstr(name, "-join-clock-real") ? "join-clock-real" :
+                      std::strstr(name, "-join-clock-mono") ? "join-clock-mono" :
+                      std::strstr(name, "-join-clock-null") ? "join-clock-null" :
+                      std::strstr(name, "-join") ? "join" :
+                      std::strstr(name, "-tryjoin") ? "tryjoin" : nullptr;
+  bool joining = point && (!std::strncmp(point, "join", 4) || !std::strcmp(point, "tryjoin"));
+  bool noncanceling = point && !std::strcmp(point, "tryjoin");
   int count = std::strstr(name, "siblings") ? 2 : 1;
   alarm(12);
   if (point && (!std::strcmp(point, "read") || !std::strcmp(point, "write"))) {
@@ -275,6 +333,11 @@ static int native_probe(const char *name, const char *provider) {
   // control concerns the subsequent internal file I/O, not provider loading.
   if (internal_io)
     native_require(getpwnam("root") != nullptr, "initialize passwd provider before cancellation");
+  if (joining) {
+    native_require(pthread_create(&native_join_target, nullptr, native_join_target_worker, nullptr) == 0,
+                   "create joinable target");
+    while (!native_join_started.load(std::memory_order_acquire)) {}
+  }
   native_require(pthread_key_create(&native_key, native_key_destructor) == 0, "key_create");
   void *parent_globals = abi::__cxa_get_globals();
   for (int i = 0; i < count; ++i) {
@@ -301,9 +364,22 @@ static int native_probe(const char *name, const char *provider) {
     native_require(pthread_join(state->thread, &result) == 0, "join");
     native_require(result == (cancel ? PTHREAD_CANCELED : static_cast<void *>(state)), "exit value");
     if (point) {
-      native_require(state->operation_completed == disabled, "pending cancellation precedes operation");
+      native_require(state->operation_completed == (disabled || noncanceling),
+                     "pending cancellation precedes cancelable operation");
       native_require(state->internal_completed == internal_io, "internal I/O is not a cancellation point");
-      if (!std::strncmp(point, "sem_", 4)) {
+      if (joining) {
+        if (disabled || noncanceling) {
+          native_require(state->join_result == &native_join_target_value,
+                         "noncanceling control really consumes target result");
+        } else {
+          native_require(state->join_result == &native_join_sentinel,
+                         "canceled join leaves result slot untouched");
+          void *target_result = nullptr;
+          native_require(pthread_join(native_join_target, &target_result) == 0 &&
+                         target_result == &native_join_target_value,
+                         "canceled join leaves target joinable by another thread");
+        }
+      } else if (!std::strncmp(point, "sem_", 4)) {
         int tokens = -1;
         native_require(sem_getvalue(&state->semaphore, &tokens) == 0 && tokens == !disabled,
                        "canceled wait must preserve its available token");

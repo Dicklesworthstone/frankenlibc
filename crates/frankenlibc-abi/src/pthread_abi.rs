@@ -2395,7 +2395,11 @@ unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *m
 }
 
 #[allow(unsafe_code)]
-unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
+unsafe fn native_pthread_join(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    caller: usize,
+) -> c_int {
     let thread_key = thread as usize;
     let handle_ptr = thread as *mut ThreadHandle;
     let my_tid = core_self_tid();
@@ -2431,6 +2435,14 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
 
     if !is_managed {
         return libc::ESRCH;
+    }
+
+    if caller != 0 {
+        // SAFETY: validation has released the registry lock, and core join has
+        // not claimed the target or changed retval. Preserve the external
+        // caller through aliases; zero keeps tryjoin non-canceling. This only
+        // delivers pending requests, not interruption after blocking begins.
+        unsafe { cancellation_window(caller, || ()) };
     }
 
     // Call core_join_thread which handles final state transitions and synchronization.
@@ -3936,13 +3948,26 @@ pub unsafe extern "C-unwind" fn pthread_join(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    // SAFETY: preserve the C caller for native cancellation admission; the
+    // common implementation validates the target before consuming it.
+    unsafe { pthread_join_for_caller(thread, retval, caller) }
+}
+
+/// Shared join dispatch retaining the originating caller across aliases and
+/// the NULL-deadline forms of the GNU join extensions.
+unsafe fn pthread_join_for_caller(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    caller: usize,
+) -> c_int {
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_join) = resolved_thread_join_raw()
     {
         return unsafe { host_join(host_thread_handle(thread), retval) };
     }
-    unsafe { native_pthread_join(thread, retval) }
+    unsafe { native_pthread_join(thread, retval, caller) }
 }
 
 /// POSIX `pthread_detach`.
@@ -3983,7 +4008,10 @@ pub unsafe extern "C-unwind" fn __pthread_join(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
-    unsafe { pthread_join(thread, retval) }
+    let caller = core::intrinsics::return_address() as usize;
+    // SAFETY: this alias has the public join contract; retain its external
+    // caller rather than replacing it with an address in this object.
+    unsafe { pthread_join_for_caller(thread, retval, caller) }
 }
 
 /// glibc reserved-namespace alias for [`pthread_detach`].
@@ -8569,9 +8597,21 @@ pub unsafe extern "C-unwind" fn pthread_timedjoin_np(
     retval: *mut *mut c_void,
     abstime: *const libc::timespec,
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    // SAFETY: the common implementation retains the existing deadline/target
+    // validation and admits cancellation before any native join claim.
+    unsafe { pthread_timedjoin_for_caller(thread, retval, abstime, caller) }
+}
+
+unsafe fn pthread_timedjoin_for_caller(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    abstime: *const libc::timespec,
+    caller: usize,
+) -> c_int {
     if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
         if abstime.is_null() {
-            return unsafe { pthread_join(thread, retval) };
+            return unsafe { pthread_join_for_caller(thread, retval, caller) };
         }
         if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {
             return unsafe { host_timedjoin(host_thread_handle(thread), retval, abstime) };
@@ -8580,7 +8620,7 @@ pub unsafe extern "C-unwind" fn pthread_timedjoin_np(
 
     if abstime.is_null() {
         // NULL timeout = blocking join.
-        return unsafe { native_pthread_join(thread, retval) };
+        return unsafe { native_pthread_join(thread, retval, caller) };
     }
     if !absolute_timespec_valid(abstime) {
         return libc::EINVAL;
@@ -8622,13 +8662,19 @@ pub unsafe extern "C-unwind" fn pthread_timedjoin_np(
         }
     };
 
+    if caller != 0 {
+        // SAFETY: deadline, self-join and target checks completed with no lock
+        // held. The wait has not consumed the handle or published a result.
+        unsafe { cancellation_window(caller, || ()) };
+    }
+
     // Wait for TID to be cleared (thread exit) with timeout.
     // The kernel clears tid via CLONE_CHILD_CLEARTID and wakes futex waiters.
     loop {
         let tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
         if tid == 0 {
             // Thread exited. Perform the actual join.
-            return unsafe { native_pthread_join(thread, retval) };
+            return unsafe { native_pthread_join(thread, retval, caller) };
         }
         // Check if deadline has passed.
         let now = match clock_gettime_checked(libc::CLOCK_REALTIME) {
@@ -8718,7 +8764,7 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
     }
 
     // Thread is FINISHED. Perform a full join.
-    unsafe { native_pthread_join(thread, retval) }
+    unsafe { native_pthread_join(thread, retval, 0) }
 }
 
 /// GNU `pthread_clockjoin_np` — clock-specific timed join.
@@ -8732,9 +8778,10 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
     if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
         if abstime.is_null() {
-            return unsafe { pthread_join(thread, retval) };
+            return unsafe { pthread_join_for_caller(thread, retval, caller) };
         }
         if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {
             return unsafe { host_clockjoin(host_thread_handle(thread), retval, clockid, abstime) };
@@ -8742,17 +8789,17 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     }
 
     if abstime.is_null() {
-        return unsafe { native_pthread_join(thread, retval) };
+        return unsafe { native_pthread_join(thread, retval, caller) };
     }
     if clockid == libc::CLOCK_REALTIME {
-        return unsafe { pthread_timedjoin_np(thread, retval, abstime) };
+        return unsafe { pthread_timedjoin_for_caller(thread, retval, abstime, caller) };
     }
     // Convert from the specified clock to CLOCK_REALTIME.
     let real_deadline = match clock_convert_to_realtime(clockid, abstime) {
         Ok(deadline) => deadline,
         Err(err) => return err,
     };
-    unsafe { pthread_timedjoin_np(thread, retval, &real_deadline) }
+    unsafe { pthread_timedjoin_for_caller(thread, retval, &real_deadline, caller) }
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,13 @@ CPP_CASES = (
     "native-cancel-read-disabled", "native-cancel-write-disabled",
     "native-cancel-nanosleep-disabled", "native-cancel-sem-disabled",
     "native-cancel-sem-timed-disabled", "native-cancel-read-internal",
+    "native-cancel-join", "native-cancel-join-alias", "native-cancel-join-timed",
+    "native-cancel-join-timed-null", "native-cancel-join-clock-real",
+    "native-cancel-join-clock-mono", "native-cancel-join-clock-null", "native-mixed-cancel-join",
+    "native-cancel-join-disabled", "native-cancel-join-alias-disabled",
+    "native-cancel-join-timed-disabled", "native-cancel-join-timed-null-disabled",
+    "native-cancel-join-clock-real-disabled", "native-cancel-join-clock-mono-disabled",
+    "native-cancel-join-clock-null-disabled", "native-cancel-tryjoin",
 )
 
 
@@ -83,7 +90,7 @@ def main():
     records = []
     failures = []
 
-    def execute(label, case, expected, extra, executable=binary):
+    def execute(label, case, expected, extra, executable=binary, oracle_for=None):
         try:
             run = subprocess.run([str(executable), case, expected],
                                  env=dict(environment, **extra), capture_output=True,
@@ -95,8 +102,11 @@ def main():
             stderr = (error.stderr or b"").decode(errors="replace") + "\nfixture timeout\n"
         record = {"lane": label, "case": case, "returncode": code,
                   "stdout": stdout, "stderr": stderr}
+        if oracle_for is not None:
+            record["oracle_for"] = oracle_for
         records.append(record)
-        (output / f"{label}-{case}.log").write_text(stdout + stderr)
+        log_case = oracle_for if oracle_for is not None else case
+        (output / f"{label}-{log_case}.log").write_text(stdout + stderr)
         return record
 
     negative = execute("provider-negative", CASES[0], str(library), {})
@@ -114,9 +124,15 @@ def main():
                 ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind"))
     for prefix, cases, executable, output_prefix in variants:
         for case in cases:
-            reference = execute(f"{prefix}gnu", case, host, {}, executable)
+            # __pthread_join is a candidate alias, absent from the GNU export
+            # surface. Compare its behavior to the public GNU contract while
+            # requiring the candidate alias's actual provider in the fixture.
+            oracle_case = case.replace("-join-alias", "-join") if prefix == "cpp-" else case
+            reference = execute(f"{prefix}gnu", oracle_case, host, {}, executable,
+                                oracle_for=case if oracle_case != case else None)
             expected = f"{output_prefix}:{case}:PASS\n"
-            if reference["returncode"] or reference["stdout"] != expected or reference["stderr"]:
+            oracle_expected = f"{output_prefix}:{oracle_case}:PASS\n"
+            if reference["returncode"] or reference["stdout"] != oracle_expected or reference["stderr"]:
                 failures.append(f"{prefix}gnu:{case}")
             for mode in ("strict", "hardened"):
                 for native in ("0", "1"):
