@@ -334,5 +334,10 @@ fn relro_rounding_excludes_partial_tail_and_validates_before_rounding() {
     assert_eq!(relro_pages(&(0x1234..0x1240), 0x3000), Some(0x1000..0x1000));
     assert_eq!(relro_pages(&(0x1234..0x1234), 0x3000), Some(0x1000..0x1000));
     assert!(relro_pages(&(0x1000..0x3001), 0x3000).is_none());
-    assert!(relro_pages(&(0x2000..0x1000), 0x3000).is_none());
+    // This is a malformed address interval, not a reverse iteration request.
+    let reversed = std::ops::Range {
+        start: 0x2000,
+        end: 0x1000,
+    };
+    assert!(relro_pages(&reversed, 0x3000).is_none());
 }

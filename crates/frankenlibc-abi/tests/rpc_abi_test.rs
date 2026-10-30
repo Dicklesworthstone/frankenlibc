@@ -760,7 +760,7 @@ fn user2netname_writes_the_callers_buffer_and_formats_signed_uid_bits() {
 
 #[test]
 fn user2netname_rejects_an_overlong_domain_without_touching_the_buffer() {
-    for tail in [b'd', b'.'] {
+    for tail in *b"d." {
         let mut bytes = vec![b'd'; 238];
         bytes[237] = tail;
         let domain = CString::new(bytes).unwrap();
