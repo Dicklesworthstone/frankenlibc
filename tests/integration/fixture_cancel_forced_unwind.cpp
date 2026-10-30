@@ -8,11 +8,15 @@
 // byte-identical under host glibc and FrankenLibC (strict and hardened).
 #include <cxxabi.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <pwd.h>
+#include <semaphore.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -103,6 +107,12 @@ struct NativeState {
   bool cancel = false;
   bool catch_all = false;
   bool mixed = false;
+  const char *point = nullptr;
+  bool disabled = false;
+  bool internal_io = false;
+  bool internal_completed = false;
+  bool operation_completed = false;
+  sem_t semaphore{};
   void *eh_globals = nullptr;
   int events[16]{};
   int count = 0;
@@ -153,6 +163,35 @@ static void native_inner(void *argument) {
   state->ready.store(1, std::memory_order_release);
   while (!state->release.load(std::memory_order_acquire)) {}
   if (state->cancel) {
+    if (state->point) {
+      if (state->disabled)
+        native_require(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, nullptr) == 0,
+                       "disable pending cancellation");
+      if (state->internal_io) {
+        native_require(getpwnam("root") != nullptr, "internal passwd lookup completes");
+        state->internal_completed = true;
+      }
+      if (!std::strcmp(state->point, "read")) {
+        char byte = 0;
+        native_require(read(pipefd[0], &byte, 1) == 1 && byte == 'R', "read result");
+      } else if (!std::strcmp(state->point, "write")) {
+        native_require(write(pipefd[1], "W", 1) == 1, "write result");
+      } else if (!std::strcmp(state->point, "nanosleep")) {
+        const std::timespec zero = {0, 0};
+        native_require(nanosleep(&zero, nullptr) == 0, "nanosleep result");
+      } else if (!std::strcmp(state->point, "sem_wait")) {
+        native_require(sem_wait(&state->semaphore) == 0, "ready semaphore result");
+      } else {
+        const std::timespec expired = {0, 0};
+        native_require(sem_timedwait(&state->semaphore, &expired) == 0,
+                       "ready timed semaphore result");
+      }
+      state->operation_completed = true;
+      if (!state->disabled)
+        std::_Exit(94); // A pending request must act before any syscall/token effect.
+      native_require(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr) == 0,
+                     "restore cancellation after disabled operation");
+    }
     pthread_testcancel();
     std::_Exit(94);
   }
@@ -194,7 +233,8 @@ static void *native_worker(void *argument) {
 }
 
 static int native_provider(const char *expected) {
-  const char *names[] = {"pthread_create", "pthread_join", "pthread_exit", "pthread_testcancel"};
+  const char *names[] = {"pthread_create", "pthread_join", "pthread_exit", "pthread_testcancel",
+                         "read", "write", "nanosleep", "sem_wait", "sem_timedwait", "getpwnam"};
   struct stat wanted{};
   if (stat(expected, &wanted)) return 86;
   for (const char *name : names) {
@@ -216,8 +256,21 @@ static int native_probe(const char *name, const char *provider) {
   bool cancel = std::strstr(name, "cancel") != nullptr;
   bool mixed = std::strstr(name, "mixed") != nullptr;
   bool catch_all = std::strstr(name, "catch-all") != nullptr;
+  bool disabled = std::strstr(name, "disabled") != nullptr;
+  bool internal_io = std::strstr(name, "internal") != nullptr;
+  const char *point = std::strstr(name, "-read") ? "read" :
+                      std::strstr(name, "-write") ? "write" :
+                      std::strstr(name, "-nanosleep") ? "nanosleep" :
+                      std::strstr(name, "-sem-timed") ? "sem_timedwait" :
+                      std::strstr(name, "-sem") ? "sem_wait" : nullptr;
   int count = std::strstr(name, "siblings") ? 2 : 1;
   alarm(12);
+  if (point && (!std::strcmp(point, "read") || !std::strcmp(point, "write"))) {
+    native_require(pipe(pipefd) == 0, "create observable pipe");
+    native_require(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) == 0, "nonblocking pipe inspection");
+    if (!std::strcmp(point, "read"))
+      native_require(write(pipefd[1], "R", 1) == 1, "seed readable pipe");
+  }
   native_require(pthread_key_create(&native_key, native_key_destructor) == 0, "key_create");
   void *parent_globals = abi::__cxa_get_globals();
   for (int i = 0; i < count; ++i) {
@@ -225,6 +278,11 @@ static int native_probe(const char *name, const char *provider) {
     state->cancel = cancel;
     state->mixed = mixed;
     state->catch_all = catch_all;
+    state->point = point;
+    state->disabled = disabled;
+    state->internal_io = internal_io;
+    if (point && !std::strncmp(point, "sem_", 4))
+      native_require(sem_init(&state->semaphore, 0, 1) == 0, "seed available semaphore");
     native_require(pthread_create(&state->thread, nullptr, native_worker, state) == 0, "create");
     while (!state->ready.load(std::memory_order_acquire)) {}
     native_require(state->eh_globals != parent_globals, "child exception state aliases parent");
@@ -238,6 +296,24 @@ static int native_probe(const char *name, const char *provider) {
     void *result = nullptr;
     native_require(pthread_join(state->thread, &result) == 0, "join");
     native_require(result == (cancel ? PTHREAD_CANCELED : static_cast<void *>(state)), "exit value");
+    if (point) {
+      native_require(state->operation_completed == disabled, "pending cancellation precedes operation");
+      native_require(state->internal_completed == internal_io, "internal I/O is not a cancellation point");
+      if (!std::strncmp(point, "sem_", 4)) {
+        int tokens = -1;
+        native_require(sem_getvalue(&state->semaphore, &tokens) == 0 && tokens == !disabled,
+                       "canceled wait must preserve its available token");
+        native_require(sem_destroy(&state->semaphore) == 0, "destroy semaphore");
+      } else if (!std::strcmp(point, "read") || !std::strcmp(point, "write")) {
+        char byte = 0;
+        errno = 0;
+        ssize_t amount = read(pipefd[0], &byte, 1);
+        bool present = !std::strcmp(point, "read") ? !disabled : disabled;
+        native_require(present ? amount == 1 && byte == (!std::strcmp(point, "read") ? 'R' : 'W')
+                               : amount == -1 && errno == EAGAIN,
+                       "pipe contents expose whether the canceled syscall ran");
+      }
+    }
     const int expected[] = {1, 4, 6, 5, 7, 9};
     native_require(state->count == (mixed ? 6 : 5), "all cleanup frames run exactly once");
     int index = 0;
@@ -248,6 +324,9 @@ static int native_probe(const char *name, const char *provider) {
     if (i + 1 < count) native_require(native_states[i + 1].count == 0, "sibling remains live");
   }
   native_require(pthread_key_delete(native_key) == 0, "key_delete");
+  if (point && (!std::strcmp(point, "read") || !std::strcmp(point, "write"))) {
+    native_require(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close observed pipe");
+  }
   std::printf("pthread-native-unwind:%s:PASS\n", name);
   return 0;
 }

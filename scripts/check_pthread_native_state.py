@@ -20,6 +20,11 @@ CLEANUP_CASES = tuple(case for case in CASES if case.startswith("cleanup-"))
 CPP_CASES = (
     "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
     "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
+    "native-cancel-read", "native-cancel-write", "native-cancel-nanosleep",
+    "native-cancel-sem", "native-cancel-sem-timed", "native-mixed-cancel-read",
+    "native-cancel-read-disabled", "native-cancel-write-disabled",
+    "native-cancel-nanosleep-disabled", "native-cancel-sem-disabled",
+    "native-cancel-sem-timed-disabled", "native-cancel-read-internal",
 )
 
 

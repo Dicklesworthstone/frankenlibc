@@ -6600,6 +6600,22 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
 /// nor the closure has an LSDA and the unwind passes through to the callers.
 #[inline(never)]
 unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() -> R) -> R {
+    // Native threads keep cooperative requests outside the host's TCB. Deliver
+    // an already-pending request before the syscall can consume data, publish
+    // output or acquire a semaphore token. Internal libc I/O must still finish
+    // without unwinding through non-cancelling Rust callers. The shared native
+    // testcancel path preserves disabled cancellation and exit/cleanup guards.
+    // This does not interrupt a native thread already blocked in the kernel.
+    // With no native threads, current_thread_handle exits at its atomic flag
+    // without a TID syscall, allocation or TLS initialization.
+    if caller != 0
+        && core_current_thread_handle().is_some()
+        && !address_is_inside_this_object(caller)
+    {
+        // SAFETY: the registered calling thread owns its cancellation state;
+        // this C-unwind frame holds no resources or partially applied syscall.
+        unsafe { pthread_testcancel() };
+    }
     let set_type = cancellation_window_hook(caller);
     let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;
     if let Some(set) = set_type {
