@@ -3,12 +3,227 @@
 > **Canonical single plan document.** Always revise in place; never create `REALITY_CHECK_BRIDGE_PLAN_v2.md` or parallel plan files.
 > **Original assessment:** 2026-09-08 at commit `3bf05e3a` (`bd-reality-202609-lx578q`).
 > **Second pass:** 2026-09-23 (`bd-rc0923-epic-eeuy4f`).
-> **Current reality check & revision:** 2026-10-23 at commit `a8d0f8957ba33984869597190a3f01c2c241207e`.
+> **Current reality check & revision:** 2026-10-30 at commit `edd6fba82a7920c917b9a723fbaaaa03a19232bf`.
 > **Scope:** Close the remaining gap between FrankenLibC's vision (`README.md`, `AGENTS.md`, `PROPOSED_ARCHITECTURE.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, `FEATURE_PARITY.md`) and executed reality at HEAD across all replacement levels (`L0` → `L1` → `L2` → `L3`).
 
 ---
 
-## Current assessment — 2026-10-23
+## Current assessment — 2026-10-30
+
+**Verdict: FrankenLibC is a substantial experimental L0 interposer. It does not
+yet deliver the full POSIX/GNU, standalone, safety and performance vision.**
+Real implementations and bounded working workloads deserve credit. The missing
+deliverable is one source-qualified release whose behavior, providers, safety
+limits, performance, architecture and installed-package results agree. Neither
+the native-symbol percentage nor the closed-task count measures that delivery.
+
+The October 23 and earlier assessments below are historical. In particular,
+the October 23 ARM-static-smoke diagnosis is superseded by the repaired runner
+and subsequent bounded qualification. Later source also implements native
+thread cleanup/unwinding, cancellation-aware stdio, additional RPC behavior and
+timer callbacks. Those advances must not be described as absent merely because
+old task titles or semantic inventories still say so.
+
+### Audit scope and evidence limits
+
+The full on-disk `AGENTS.md` (1,567 lines), `README.md` (3,993 lines) and applicable
+`/data/projects/AGENTS.md` were read. The porting/architecture plans, parity and
+deployment guides, canonical bridge, subsystem planning material, source paths,
+active task specifications and relevant gates informed the assessment. This is
+a goal-oriented source, evidence and backlog review, not exhaustive behavioral
+verification of every export or historical closure.
+
+The host is Linux/x86_64. The required `sbh check --need 20G` returned **exit 1,
+critical**: 27,420,622,848 available bytes, 4.25% free against a 14% threshold.
+Accordingly, no fresh Rust build, test, clippy, full C-fixture compilation or
+performance campaign was run. No deletion or preflight override was used.
+Current-source compilation and release execution remain **UNPROVEN here**.
+
+Local command output, preserved prior reports and the intake tracker snapshot
+are in `target/conformance/reality-20261030T1934Z/`. These ignored files are local
+reproduction aids. This plan preserves the findings; it does not publish a
+release dossier or promote any replacement level.
+
+### What works, what advanced, and what remains uncertain
+
+1. **Bounded interposition was actually exercised.** The pre-existing October 19
+   `target/release/libfrankenlibc_abi.so`, SHA-256
+   `e70dbad54e23b07bc7e3202ef5d32cfc89ada3bde1261bb3d6ae9808816671db`,
+   passed eight valid-program comparisons: echo, numeric sort, an explicit
+   two-file listing, and Python using ctypes, SQLite and SSL, each in strict
+   and hardened mode. Return codes, stdout and stderr matched live host runs.
+   A separate `LD_DEBUG=bindings` echo run showed candidate bindings, including
+   malloc/free. The library hash stayed unchanged. Its source identity is
+   **unverified**; these results qualify neither HEAD nor the full smoke corpus,
+   repair taxonomy, per-symbol providers or performance budgets.
+2. **The current taxonomy differs from the README.** `support_matrix.json`
+   contains 4,119 rows: 2,419 `Implemented`, **408 `RawSyscall`, 1,274
+   `WrapsHostLibc`**, zero `GlibcCallThrough`, 18 `Stub`. Native classifications
+   are therefore **2,827/4,119 = 68.6%**, not the README's 2,829/68.7%.
+   The matrix and reality snapshot still carry source `67d21fb3…` and an
+   October 19 generation timestamp despite later classification changes.
+   These are classification/source-identity inconsistencies, not 1,274 observed
+   behavioral failures. Review the cfg-aware producer and provider evidence
+   before any promotion or metadata refresh.
+3. **Recent implementation is real but acceptance is incomplete.** Printf
+   registration reaches the native registry, and `printf_size` contains actual
+   formatting. RPC delegates to native client/service modules and now includes
+   AUTH_DES clients and broadcast discovery; server-side DES scope remains
+   explicitly limited. `pthread_abi.rs` contains native cancellation state,
+   cleanup registration and forced unwinding. `stdio_abi.rs` propagates external
+   caller admission through raw read/write cancellation windows. The latest
+   owned-TLS change publishes an initialization owner before allocating, with
+   regression tests in source. None of those tests was freshly compiled here.
+4. **The safety boundary is unchanged by the volume of implementation.**
+   Strict copies, bootstrap/reentry and signal paths bypass parts of the
+   membrane. Hardened allocation ownership, bounds, fingerprints and quarantine
+   support selected repairs; a raw pointer cannot identify its prior generation
+   after address reuse. A completed validation does not protect a subsequent
+   access racing with free. Seven hardened high-frequency ABI families still
+   return before kernel consultation in `runtime_policy::decide`; a separate
+   pointer-validator kernel can run. Liveness is not causal influence.
+5. **Historical evidence remains useful within its scope.** The committed smoke
+   summary is still September 24: 189 pass, zero fail, four skips and one xfail,
+   with contradictory xfail mode assignments. The healing report records 28/28
+   October 19 cases and binary hashes but no source commit. The ARM runner now
+   requires a dynamic artifact and checks providers; closed RC.41/.42 contain
+   bounded QEMU/release receipts. They do not establish fresh HEAD, full ARM
+   workloads, native-hardware performance or standalone operation.
+
+### Fresh gate observations
+
+All checks below retain their original policy and thresholds. A failure is
+reported at the layer actually observed, without turning bookkeeping drift
+into a runtime defect or treating a blocked preflight as a pass.
+
+| Command under `scripts/` | Observed result | Meaning |
+|---|---|---|
+| `check_docs_semantic_claims.sh` | Exit 1; eleven errors | Eight source/file-count claims, the native-taxonomy claim and two overlay status counts disagree. Other semantic subchecks pass despite stale prose. |
+| `check_semantic_contract_drift.sh` | Exit 1; fourteen stale markers plus stale Stub=0 blocker | The 17-entry inventory is stale and representative, not full semantic coverage. Zero untracked keyword findings cannot prove completeness. |
+| `check_support_semantic_overlay_schema.sh` | Exit 1; two snapshot-count mismatches | Nine audited entries / 36 normalized rows pass their other schema predicates; the prior all-green result is obsolete. |
+| `check_replacement_levels.sh` | Exit 1; eight assessment mismatches | L0 wording remains coherent; the structured L1 objective still has five pass and three blocked obligations. |
+| `check_closure_gate.sh` | Exit 1; 19/19 selected, 14/21 post-cutoff accepted | Seven records fail reference/outcome predicates. This alone does not falsify their implementations. |
+| `check_ws8_e2e_standalone_verification.sh --preflight` | Exit 2; six blocked scenarios, zero workloads/tests | Explicit replacement artifacts and package are absent from this invocation. No standalone result. |
+| `check_tooling_dependency_boundary.sh --validate-only` | Exit 0 | Static manifest/feature-boundary validation only. |
+
+The first support-maintenance invocation timed out after 50 seconds while
+deriving the host census; later maintenance stages did not execute. A separate
+longer replay is recorded in the completion checkpoint. The committed report's
+1,079 invalid classifications and 1,190/4,119 fixture linkage are historical
+report values, not fresh detector outcomes or a conformance pass rate.
+
+Closure admission needs both kinds of control. Check 5 still accepts a `PASS`
+regex plus a reference without reading executed results. Conversely, RC.41/.42
+use text such as `source7cbb186c2` and `hash6445…`, which its word-boundary regex
+does not recognize as references. Their retained receipts require inspection,
+not automatic reopening as nonexistent work. Repair this through structured
+identity and real execution evidence; do not broaden a regex until unsupported
+claims pass. The seven current predicate failures are `bd-fr97mh`, RC.33.1,
+RC.33.2, RC.33.3, RC.41, RC.42 and VR.6.2.1.
+
+### Vision checklist and concrete bridge
+
+Prefixes: `RC` = `bd-rc0923-epic-eeuy4f`; `VR` =
+`bd-reality-202609-lx578q`. All original goals remain. Existing implementation
+and companion acceptance tasks are revised in place; no duplicate epic is
+needed for an already-covered gap.
+
+| Testable goal | Current status | Implementation and completion evidence required |
+|---|---|---|
+| V1: valid Linux workloads preserve behavior in both modes | PARTIAL; eight old-artifact passes, current release UNPROVEN | RC.4 builds the actual release and executes the full declared corpus; RC.47 consumes exact providers, outputs, exits, skips/xfails and unchanged timing budgets. |
+| V2: full declared POSIX/GNU behavior, aliases, versions, errno and fenv | PARTIAL | RC.33/.34, .35/.36, .24 and VR.7 finish callback/RPC/cancellation acceptance and remaining contracts; `bd-li7fb3`/`bd-otip6a` retain actual libm accuracy work. Test new native-thread and stdio behavior rather than repeating obsolete no-op diagnoses. |
+| V3: source/configuration-aware symbol and provider census | PARTIAL / rollup FAIL | RC.37/.38 reconcile the 408/1274 change, source identities and producer output across matrix/reality/overlay/replacement reports. Preserve unknowns, conservative cfg handling and row-level before/after evidence. |
+| V4: precise deployed spatial/temporal repair guarantees | PARTIAL | VR.8 tests owned/foreign/interior/quarantined/reused/racing pointers and signal/bootstrap boundaries; positive repairs and documented limitations both need deployed controls. |
+| V5: runtime math changes permitted deployed policy decisions | UNPROVEN by module presence/profiles | VR.4 tests production-cfg signal-to-action effects against matched controls, preserving basic validation and strict behavior; report route-specific cost. |
+| V6: <20 ns strict, <200 ns hardened and named workload budgets | UNPROVEN globally; known open performance work | RC.9, .26 and existing allocator/stdio children profile actual deployed providers. Use live glibc/incumbent/candidate in one invocation, retain losses and tails; undeployed core-model timings cannot qualify ABI malloc. |
+| V7: owned startup, TLS, unwind, thread/FILE/service lifecycle compose | PARTIAL | VR.6/.6.1/.6.2/.6.3 run the declared feature combination through first use, reentry, cleanup, cancellation and teardown. Include latest owned-cache initialization and native unwind paths. |
+| V8: primary-libc process has no host-glibc dependency | UNPROVEN here; preflight BLOCKED | VR.1/VR.6 and `bd-38x82` execute real startup and services with transitive provider/maps isolation and adverse host-provider injection. Direct ELF dependency counts alone are insufficient. |
+| V9: baseline x86 and ARM release execution | PARTIAL; bounded ARM receipt exists | RC.13 and VR.9 replay actual libraries; reuse repaired RC.41/.42. Broader ARM differentials, native hardware and performance remain separate acceptance. |
+| V10: installed package plus full 24-hour reliability | UNPROVEN as one release | VR.9/`bd-38x82.4` install the exact qualified artifact in an isolated root, execute package probes and retain a full-duration soak with resource growth/failure observations. |
+| V11: exhaustive semantic coverage with independent oracles | PARTIAL; representative inventory only | RC.45/.46 map every declared export to reviewed semantics or explicit unknown, then feed discovered behavioral work to VR.7. Inventory completion cannot stand for parity. |
+| V12: coherent claims, executable closure and healthy build targets | FAIL / current Rust health UNPROVEN | RC.39/.40 correct existing guides and reject semantic counterexamples; RC.43/.44 accept genuine stored nonzero results and reject fabricated/unrelated/stale/zero-test evidence. Preserve the existing scratch-target work `bd-blnp4u`. |
+| V13: formal guarantees at their declared strength | DEFERRED | Preserve owner decision `bd-e4phe.1`: all 24 binder obligations are deferred. Matrix arithmetic, monitor names and finite tests are not mechanized system theorems. |
+| V14: asupersync/frankentui tooling executes without runtime leakage | Static boundary PASS; execution UNPROVEN here | Retain existing boundary gate and VR.9 feature-specific execution, with actual nonzero tests and provider/dependency evidence. |
+
+**Would completing all active beads finish the vision? Not demonstrably.** The
+active graph covers the identified engineering goals, including independent
+tests and integrated L1 acceptance. Broad semantic and standalone tasks still
+contain discovery work, and the original formal ambitions have an explicit
+deferred disposition. Satisfying bounded children or closing an inventory cannot
+establish all POSIX/GNU semantics or discharge those theorems. No additional
+untracked product goal was established by this bounded audit; that is narrower
+than proving no unknown gaps exist.
+
+Prioritize user behavior and measured deployed bottlenecks: the current-source
+corpus, cancellation/stdio/RPC/printf correctness, libm accuracy and allocator/sort
+budgets. Census and closure repairs prevent false promotion and can proceed
+independently. Existing documentation corrections need not wait for replacement
+implementation. ARM interpose success does not block independent x86 repairs;
+standalone/package/soak qualification follows working owned components.
+
+### Ambition rounds and plan-space refinement
+
+The unchanged Phase 3a and Phase 5 templates reproduced in the October 20 section
+remain the generation/refinement instructions. Apply them to the existing tasks,
+preserving statuses, owners, scope and companion tests.
+
+**Ambition round 1: make composition the deliverable.** Extend task acceptance
+through real caller callbacks, cancellation, first-use allocation/TLS, resolver
+modules and shutdown, using independently observed output, memory and providers.
+Count actual observable behavior; a constructor token or executed monitor alone
+is insufficient. Keep deterministic controls and explicit unsupported cases.
+
+**Ambition round 2: challenge the evidence consumer.** Bind the complete source
+inputs, features, target, backend and hashes to the producer's command and
+nonzero executed results. Require both fabricated-receipt rejection and genuine
+receipt acceptance, including the ARM reference-format counterexample. Carry
+the same artifact through workload, safety, performance and release acceptance;
+identity integrity does not itself prove semantic truth. Existing mathematical
+obligations remain tied to concrete failure surfaces and their deferred status.
+
+Five refinement passes cover (1) the complete goal-to-existing-task mapping;
+(2) independent positive/negative controls and old-binary limitations;
+(3) dependency usability, including RC.34's RC.33.4 prerequisite and RC.47's six
+companion acceptances plus corpus/sort; (4) safety/performance/proof boundaries
+and recent native implementation credit; and (5) final task/plan consistency
+and graph checks. Results and publication are recorded below after validation.
+
+### Completion checkpoint — 2026-10-30
+
+Intake JSONL contains 7,547 rows: 7,497 closed, 27 in progress, 14 open, five
+blocked and four tombstones. `bv` excludes the tombstones and agrees on 46 active
+records. At least one active task concerns BLAS/XLA, so global task completion
+is not a FrankenLibC delivery percentage. Intake `br --no-db dep cycles --json`
+reports zero cycles; `bv --robot-triage` succeeds and ranks RC.43, .37 and .45
+as its top unclaimed tasks. Graph rank does not replace user-impact priority.
+
+This assessment changes documentation and append-only planning notes. No runtime
+implementation task closes, no taxonomy is promoted, no gate or performance
+threshold is weakened, and unrelated user/agent changes remain intact.
+
+**Final verification:** the longer support-maintenance replay exits 1 and
+confirms the host-delegation census is stale; downstream maintenance stages
+remain unexecuted. Sixteen existing records received append-only notes through
+`br --no-db update`. No statuses, owners, descriptions, acceptance criteria or
+dependencies changed. All 7,547 intake issue IDs and all comment contents remain.
+The current `br` exporter also omits 1,475 machine-local `source_repo_path`
+fields from portable JSONL and renumbers one internal comment ID; the exact
+original paths/IDs remain in `issues.before.jsonl`. The preservation comparison
+records these normalization effects explicitly instead of claiming byte equality.
+
+`br --no-db sync --flush-only` succeeds. Final active-and-archived cycle checking
+reports zero cycles. `bv --robot-triage`, `--robot-insights` and `--robot-plan`
+all succeed; `bv` skips its own cycle computation above 2,000 nodes, so the
+cycle result is from `br`. The fifth refinement pass found no further change
+needed within the reviewed goal/task mapping. That is plan convergence, not
+product completion. `git diff --check` passes. UBS exits 3 because Markdown and
+JSONL are unsupported: **nothing was scanned**, and no scanner pass is claimed.
+No unsupported-language override, fresh Rust compilation or test-result claim
+was substituted. Detailed outputs remain in the run directory named above.
+
+---
+
+## Historical assessment — 2026-10-23
 
 **Verdict: substantial, experimentally useful L0 interposition; the full libc
 vision remains unfinished.** Native behavior, selected hardened repairs, loader
