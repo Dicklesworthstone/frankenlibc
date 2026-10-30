@@ -180,10 +180,9 @@ unsafe fn renew(data: &mut Data, key: &[u8; 8]) -> Result<(), RpcError> {
                 seconds: 5,
                 micros: 0,
             }),
-        ) {
-            if let Ok(local) = clock() {
-                data.offset_micros = i64::from(remote.seconds) * 1_000_000 - local;
-            }
+        ) && let Ok(local) = clock()
+        {
+            data.offset_micros = i64::from(remote.seconds) * 1_000_000 - local;
         }
     }
     data.encrypted_key = encrypted.0;

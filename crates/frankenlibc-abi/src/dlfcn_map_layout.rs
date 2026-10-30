@@ -31,7 +31,7 @@ impl Reservation {
         image_len: usize,
         segments: impl IntoIterator<Item = (u64, u64, u64)>,
     ) -> Option<Self> {
-        if image_len == 0 || image_len % IMAGE_PAGE_SIZE != 0 {
+        if image_len == 0 || !image_len.is_multiple_of(IMAGE_PAGE_SIZE) {
             return None;
         }
         let mut alignment = IMAGE_PAGE_SIZE;
@@ -58,14 +58,18 @@ impl Reservation {
         if !any || reserve_len > isize::MAX as usize {
             return None;
         }
-        Some(Self { image_len, reserve_len, alignment })
+        Some(Self {
+            image_len,
+            reserve_len,
+            alignment,
+        })
     }
 
     /// Partition one owned reservation into whole-page prefix/image/suffix.
     /// The caller may unmap the two unused ranges, but never replace arbitrary
     /// process mappings with MAP_FIXED to obtain the requested alignment.
     pub(super) fn place(&self, reserved_base: usize) -> Option<Placement> {
-        if reserved_base % IMAGE_PAGE_SIZE != 0 {
+        if !reserved_base.is_multiple_of(IMAGE_PAGE_SIZE) {
             return None;
         }
         let reserved_end = reserved_base.checked_add(self.reserve_len)?;

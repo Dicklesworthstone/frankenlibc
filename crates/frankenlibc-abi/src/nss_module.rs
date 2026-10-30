@@ -545,7 +545,9 @@ pub(crate) fn gethostbyname4(
                     ),
                     libc::AF_INET6 => {
                         let mut bytes = [0u8; 16];
-                        for (target, word) in bytes.chunks_exact_mut(4).zip(tuple.address) {
+                        for (target, word) in
+                            bytes.as_chunks_mut::<4>().0.iter_mut().zip(tuple.address)
+                        {
                             target.copy_from_slice(&word.to_ne_bytes());
                         }
                         (IpAddr::V6(Ipv6Addr::from(bytes)), tuple.scope_id)
