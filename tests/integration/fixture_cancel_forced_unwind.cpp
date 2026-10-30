@@ -271,6 +271,10 @@ static int native_probe(const char *name, const char *provider) {
     if (!std::strcmp(point, "read"))
       native_require(write(pipefd[1], "R", 1) == 1, "seed readable pipe");
   }
+  // NSS may initialize through cancellation points on its first lookup. This
+  // control concerns the subsequent internal file I/O, not provider loading.
+  if (internal_io)
+    native_require(getpwnam("root") != nullptr, "initialize passwd provider before cancellation");
   native_require(pthread_key_create(&native_key, native_key_destructor) == 0, "key_create");
   void *parent_globals = abi::__cxa_get_globals();
   for (int i = 0; i < count; ++i) {
