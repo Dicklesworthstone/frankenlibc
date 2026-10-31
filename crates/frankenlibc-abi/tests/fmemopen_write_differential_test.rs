@@ -26,6 +26,151 @@ unsafe extern "C" {
     fn fflush(stream: *mut libc::FILE) -> libc::c_int;
     fn fclose(stream: *mut libc::FILE) -> libc::c_int;
     fn fgetc(stream: *mut libc::FILE) -> libc::c_int;
+    fn fread(ptr: *mut libc::c_void, size: usize, count: usize, stream: *mut libc::FILE) -> usize;
+    fn fgets(ptr: *mut libc::c_char, size: libc::c_int, stream: *mut libc::FILE) -> *mut libc::c_char;
+    fn fscanf(stream: *mut libc::FILE, format: *const libc::c_char, ...) -> libc::c_int;
+    fn setvbuf(
+        stream: *mut libc::FILE,
+        buf: *mut libc::c_char,
+        mode: libc::c_int,
+        size: usize,
+    ) -> libc::c_int;
+}
+
+fn caller_buffer_first_read(native: bool, mode: &str, operation: usize) -> (Vec<u8>, i64, Vec<u8>) {
+    let mode = CString::new(mode).unwrap();
+    let mut backing = *b"12\nold\n!";
+    let mut output = [0u8; 16];
+    unsafe {
+        let stream = if native {
+            fl::fmemopen(backing.as_mut_ptr().cast(), backing.len(), mode.as_ptr())
+        } else {
+            fmemopen(backing.as_mut_ptr().cast(), backing.len(), mode.as_ptr()).cast()
+        };
+        assert!(!stream.is_null(), "fmemopen must open the real backing");
+        backing[..7].copy_from_slice(b"42\nnew\n");
+        let result = match operation {
+            0 => vec![if native { fl::fgetc(stream) } else { fgetc(stream.cast()) } as u8],
+            1 => {
+                let n = if native {
+                    fl::fread(output.as_mut_ptr().cast(), 1, 7, stream)
+                } else {
+                    fread(output.as_mut_ptr().cast(), 1, 7, stream.cast())
+                };
+                output[..n].to_vec()
+            }
+            2 => {
+                let ptr = if native {
+                    fl::fgets(output.as_mut_ptr().cast(), output.len() as i32, stream)
+                } else {
+                    fgets(output.as_mut_ptr().cast(), output.len() as i32, stream.cast())
+                };
+                assert!(!ptr.is_null(), "line read must succeed");
+                std::ffi::CStr::from_ptr(output.as_ptr().cast()).to_bytes().to_vec()
+            }
+            _ => {
+                let mut number = 0_i32;
+                let n = if native {
+                    fl::fscanf(stream, c"%d".as_ptr(), &mut number as *mut i32)
+                } else {
+                    fscanf(stream.cast(), c"%d".as_ptr(), &mut number as *mut i32)
+                };
+                assert_eq!(n, 1, "numeric read must consume the real input");
+                number.to_ne_bytes().to_vec()
+            }
+        };
+        let position = if native { fl::ftell(stream) } else { ftell(stream.cast()) };
+        assert_eq!(if native { fl::fclose(stream) } else { fclose(stream.cast()) }, 0);
+        (result, position, backing.to_vec())
+    }
+}
+
+#[test]
+fn fmemopen_first_read_observes_caller_edits_for_all_reader_paths() {
+    let mut differences = Vec::new();
+    for mode in ["r", "r+"] {
+        for operation in 0..4 {
+            let expected = caller_buffer_first_read(false, mode, operation);
+            let actual = caller_buffer_first_read(true, mode, operation);
+            if actual != expected {
+                differences.push((mode, operation, expected, actual));
+            }
+        }
+    }
+    assert!(differences.is_empty(), "caller-backed reads differ: {differences:?}");
+}
+
+fn caller_buffer_read_trace(native: bool, mode: &str, unbuffered: bool) -> (Vec<u8>, Vec<u8>) {
+    let mode = CString::new(mode).unwrap();
+    let mut backing = *b"abcde";
+    unsafe {
+        let stream = if native {
+            fl::fmemopen(backing.as_mut_ptr().cast(), backing.len(), mode.as_ptr())
+        } else {
+            fmemopen(backing.as_mut_ptr().cast(), backing.len(), mode.as_ptr()).cast()
+        };
+        assert!(!stream.is_null());
+        let buffering = if unbuffered { libc::_IONBF } else { libc::_IOFBF };
+        assert_eq!(if native {
+            fl::setvbuf(stream, std::ptr::null_mut(), buffering, 0)
+        } else {
+            setvbuf(stream.cast(), std::ptr::null_mut(), buffering, 0)
+        }, 0);
+        backing[0] = b'X';
+        let first = if native { fl::fgetc(stream) } else { fgetc(stream.cast()) };
+        backing[1] = b'Y';
+        let second = if native { fl::fgetc(stream) } else { fgetc(stream.cast()) };
+        assert_eq!(if native { fl::fseek(stream, 2, libc::SEEK_SET) }
+                   else { fseek(stream.cast(), 2, libc::SEEK_SET) }, 0);
+        backing[2] = b'Z';
+        let third = if native { fl::fgetc(stream) } else { fgetc(stream.cast()) };
+        assert_eq!(if native { fl::fseek(stream, 0, libc::SEEK_SET) }
+                   else { fseek(stream.cast(), 0, libc::SEEK_SET) }, 0);
+        backing[0] = b'Q';
+        let mut bulk = [0u8; 2];
+        let n = if native { fl::fread(bulk.as_mut_ptr().cast(), 1, 2, stream) }
+                else { fread(bulk.as_mut_ptr().cast(), 1, 2, stream.cast()) };
+        assert_eq!(n, 2);
+        assert_eq!(if native { fl::fclose(stream) } else { fclose(stream.cast()) }, 0);
+        (vec![first as u8, second as u8, third as u8, bulk[0], bulk[1]], backing.to_vec())
+    }
+}
+
+#[test]
+fn fmemopen_buffering_and_repositioning_match_live_storage() {
+    let mut differences = Vec::new();
+    for mode in ["r", "r+"] {
+        for unbuffered in [false, true] {
+            let expected = caller_buffer_read_trace(false, mode, unbuffered);
+            let actual = caller_buffer_read_trace(true, mode, unbuffered);
+            if actual != expected {
+                differences.push((mode, unbuffered, expected, actual));
+            }
+        }
+    }
+    assert!(differences.is_empty(), "buffer/position traces differ: {differences:?}");
+}
+
+#[test]
+fn fmemopen_repeated_flush_and_close_preserve_edits_after_output_flush() {
+    for mode in ["w+", "r+"] {
+        let mode = CString::new(mode).unwrap();
+        let mut expected = [b'Z'; 16];
+        let mut actual = expected;
+        unsafe {
+            let host = fmemopen(expected.as_mut_ptr().cast(), expected.len(), mode.as_ptr());
+            let native = fl::fmemopen(actual.as_mut_ptr().cast(), actual.len(), mode.as_ptr());
+            assert!(!host.is_null() && !native.is_null());
+            assert_eq!(fwrite(c"W".as_ptr().cast(), 1, 1, host), 1);
+            assert_eq!(fl::fwrite(c"W".as_ptr().cast(), 1, 1, native), 1);
+            assert_eq!(fl::fflush(native), fflush(host));
+            expected[3] = b'Q';
+            actual[3] = b'Q';
+            assert_eq!(fl::fflush(native), fflush(host));
+            assert_eq!(fl::fclose(native), fclose(host));
+        }
+        assert_eq!(actual, expected, "already-flushed output must not overwrite caller edits");
+    }
 }
 
 #[test]
