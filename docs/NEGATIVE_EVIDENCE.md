@@ -22189,6 +22189,28 @@ item retains every later colon by construction, exactly matching the former `fie
 
 ## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fread-fmemopen pointer-cursor fast path lands on retry round 2 — old-fl 1t cost HALVED (disjoint distributions), 8t contention collapse 39.1µs→8.5µs/drain (cc-fread-mem-2026-07-11 RESOLVED)
 
+**CURRENT-TREE CORRECTION 2026-10-31 (bd-reality-202609-lx578q.7.5):** these are
+historical self-A/B measurements. The atomic snapshot reader missed caller edits:
+the original deployed artifact failed 15 of 16 new live-GNU memory-stream cases.
+The repair retains the pointer cache but shares a serialized, refill-aware cursor
+with the generic reader and native cookie output. The latency figures below do
+not describe that implementation. No incumbent win or closure of bd-rv2gv6 is
+claimed by this correctness change.
+
+The 2026-10-31 qualification attempt retained the original object (`e018b7fa…`)
+and tested the repaired default release (`1f5e9972…`) with the existing
+`incumbent_coverage_ab --family fread_mem --fl-deepbind --pin-quietest 1`
+example (`365d58fd…`). Both objects resolved separately from live GNU libc
+(`85e64f97…`) and passed all three pre-timing conformance comparisons. Loading
+required the already documented
+`GLIBC_TUNABLES=glibc.rtld.optional_static_tls=1048576`. Neither arm reached a
+qualified timing result: the least-busy selected CPU samples were 30.5% and
+52.3%, above the unchanged 20% quiet gate. A 300-second original-arm attempt and
+45-second diagnostics timed out before the pre-measurement contract. Logs and
+identities remain on vmi1227854 under
+`.rch-target/conformance/fmemopen-bench-diagnostic-20261031/`. This is a
+correctness repair with an unmeasured performance cost, not a new banked win.
+
 - **THE LEVER (unchanged from the banked patch).** `FastFixedMemRead::read_bytes` (atomic bulk
   sibling of `read_byte`; EOF iff request > available) + `try_fread_fast_fixed_mem_by_stream`
   (shares `FGETC_MEM_PTR_CACHE`) + the slow-path populate branch; read-only fmemopen streams only.
@@ -22263,6 +22285,13 @@ item retains every later colon by construction, exactly matching the former `fie
   printf/time/locale/wchar primitive rather than repeating the pooled-worker run.
 
 ## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fgets-fmemopen pointer-cursor line fast path — 1t 1.81x (DISJOINT, decisive CVs UNDER 5%), 8t 90.9µs→20.2µs/drain; the parked "other follow-on" lands (cc-fgets-mem-2026-07-22)
+
+**CURRENT-TREE CORRECTION 2026-10-31 (bd-reality-202609-lx578q.7.5):** the pointer
+cache and line reader remain, but their immutable opening snapshot and atomic
+position have been replaced by the same caller-backed, refill-aware cursor used
+for generic reads. This row records the historical implementation's self-A/B;
+its latency and contention figures are not evidence for the repaired current
+implementation. The original artifact failed the added caller-storage gate.
 
 - **THE LEVER (the fgets sibling of the fread win one commit back).** `FastFixedMemRead::
   read_line` (stop after first `\n` inclusive or at capacity; CAS cursor advance; EOF iff ran
