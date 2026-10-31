@@ -1236,7 +1236,98 @@ static int test_popen_lifecycle(void) {
     return failed != 0;
 }
 
+/* Caller-backed memory must be sampled at refill, never at open, and only
+ * actual output may change it. This lane uses no filesystem objects. */
+static int test_fmemopen_coherence(void) {
+    const char *modes[] = {"r", "r+"};
+    int failed = 0, cases = 0;
+    for (int m = 0; m < 2; ++m) {
+        for (int op = 0; op < 5; ++op) {
+            char backing[] = "12\nold\n!", output[16] = {0};
+            FILE *stream = fmemopen(backing, sizeof(backing) - 1, modes[m]);
+            if (!stream) return 1;
+            memcpy(backing, "42\nnew\n", 7);
+            int bad = 0, number = 0;
+            long expected_position = 0;
+            if (op == 0) {
+                bad = fgetc(stream) != '4'; expected_position = 1;
+            } else if (op == 1) {
+                bad = fread(output, 1, 7, stream) != 7 || memcmp(output, "42\nnew\n", 7);
+                expected_position = 7;
+            } else if (op == 2) {
+                bad = !fgets(output, sizeof(output), stream) || strcmp(output, "42\n");
+                expected_position = 3;
+            } else if (op == 3) {
+                bad = fscanf(stream, "%d", &number) != 1 || number != 42;
+                expected_position = 2;
+                bad |= fgetc(stream) != '\n';
+                ++expected_position;
+            } else {
+                char *line = NULL;
+                size_t capacity = 0;
+                bad = getline(&line, &capacity, stream) != 3 || !line || strcmp(line, "42\n");
+                free(line);
+                expected_position = 3;
+            }
+            bad |= ftell(stream) != expected_position;
+            bad |= fclose(stream) != 0;
+            bad |= memcmp(backing, "42\nnew\n!", 8) != 0;
+            printf("fmemopen-first mode=%s op=%d pass=%d\n", modes[m], op, !bad);
+            failed += bad != 0; ++cases;
+        }
+        for (int unbuffered = 0; unbuffered < 2; ++unbuffered) {
+            char backing[] = "abcde", output[2] = {0};
+            FILE *stream = fmemopen(backing, 5, modes[m]);
+            if (!stream) return 1;
+            int bad = setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0) != 0;
+            backing[0] = 'X';
+            bad |= fgetc(stream) != 'X';
+            backing[1] = 'Y';
+            bad |= fgetc(stream) != (unbuffered ? 'Y' : 'b');
+            bad |= fseek(stream, 2, SEEK_SET) != 0;
+            backing[2] = 'Z';
+            bad |= fgetc(stream) != (unbuffered ? 'Z' : 'c');
+            bad |= fseek(stream, 0, SEEK_SET) != 0;
+            backing[0] = 'Q';
+            bad |= fread(output, 1, 2, stream) != 2 || memcmp(output, "QY", 2);
+            bad |= ungetc('!', stream) != '!';
+            bad |= fgetc(stream) != '!';
+            backing[2] = 'R';
+            bad |= fflush(stream) != 0 || fgetc(stream) != 'R';
+            bad |= fseek(stream, 0, SEEK_END) != 0 || fgetc(stream) != EOF || !feof(stream);
+            bad |= fseek(stream, 0, SEEK_SET) != 0 || feof(stream) != 0;
+            bad |= fclose(stream) != 0 || memcmp(backing, "QYRde", 5);
+            printf("fmemopen-trace mode=%s unbuffered=%d pass=%d\n", modes[m], unbuffered, !bad);
+            failed += bad != 0; ++cases;
+        }
+    }
+    const char *write_modes[] = {"w+", "r+"};
+    for (int m = 0; m < 2; ++m) {
+        char backing[16];
+        memset(backing, 'Z', sizeof(backing));
+        FILE *stream = fmemopen(backing, sizeof(backing), write_modes[m]);
+        if (!stream) return 1;
+        int bad = fwrite("W", 1, 1, stream) != 1 || fflush(stream) != 0;
+        backing[3] = 'Q';
+        bad |= fflush(stream) != 0 || fclose(stream) != 0;
+        bad |= backing[0] != 'W' || backing[3] != 'Q';
+        printf("fmemopen-sync mode=%s pass=%d\n", write_modes[m], !bad);
+        failed += bad != 0; ++cases;
+    }
+    printf("fixture_stdio fmemopen: %s (%d cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", cases, failed);
+    return failed != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "fmemopen") == 0) {
+        const char *symbols[] = {"fmemopen", "fgetc", "fread", "fgets", "__isoc99_fscanf",
+                                 "getline", "fwrite", "fflush", "ftell", "fseek", "ungetc",
+                                 "setvbuf", "feof", "fclose"};
+        if (argc != 3 || check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_fmemopen_coherence();
+    }
     int helper_result = popen_helper(argc, argv);
     if (helper_result >= 0) return helper_result;
     if (argc >= 2 && strcmp(argv[1], "popen") == 0) {

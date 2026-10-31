@@ -1130,8 +1130,7 @@ impl<G> FastRegistryLockResult<G> {
 }
 
 struct FastFixedMemRead {
-    data: Vec<u8>,
-    pos: AtomicUsize,
+    memory: Arc<FixedMemCookie>,
     eof: AtomicBool,
     closed: AtomicBool,
     /// The stream's glibc-layout FILE handle (its id), whose `_flags` EOF bit
@@ -1141,10 +1140,9 @@ struct FastFixedMemRead {
 }
 
 impl FastFixedMemRead {
-    fn new(data: Vec<u8>, handle: usize) -> Self {
+    fn new(memory: Arc<FixedMemCookie>, handle: usize) -> Self {
         Self {
-            data,
-            pos: AtomicUsize::new(0),
+            memory,
             eof: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             handle,
@@ -1172,88 +1170,45 @@ impl FastFixedMemRead {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
-        loop {
-            let pos = self.pos.load(Ordering::Acquire);
-            if pos >= self.data.len() {
-                self.set_eof(true);
-                return None;
-            }
-            if self
-                .pos
-                .compare_exchange_weak(pos, pos + 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                self.set_eof(false);
-                return Some(self.data[pos]);
-            }
-        }
+        let mut byte = [0];
+        let n = self.memory.read_into(&mut byte, None);
+        self.set_eof(n == 0);
+        (n != 0).then_some(byte[0])
     }
 
     /// Bulk sibling of `read_byte` for `fread`: copies up to `dst.len()` bytes from the current
-    /// position into `dst`, advances the atomic cursor by the amount copied, and returns that
+    /// position into `dst`, advances the shared cursor by the amount copied, and returns that
     /// count. `None` iff the cursor is closed (⇒ caller falls through to the pushback-aware slow
     /// path, mirroring `read_byte`). The EOF flag is left exactly as the per-byte `read_byte`
     /// loop would leave it: `true` iff the request exceeded the bytes available (a read that
-    /// reached end-of-buffer), `false` otherwise. Content is immutable (the cursor is registered
-    /// only for read-only mem streams), so the post-CAS copy from `[pos, pos+n)` is always valid
-    /// even under a concurrent reader on the same stream.
+    /// reached end-of-buffer), `false` otherwise. The shared memory cursor
+    /// serializes refill and consumption, including concurrent readers.
     #[inline]
     fn read_bytes(&self, dst: &mut [u8]) -> Option<usize> {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
-        let want = dst.len();
-        loop {
-            let pos = self.pos.load(Ordering::Acquire);
-            let avail = self.data.len().saturating_sub(pos);
-            let n = want.min(avail);
-            if self
-                .pos
-                .compare_exchange_weak(pos, pos + n, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                dst[..n].copy_from_slice(&self.data[pos..pos + n]);
-                self.set_eof(want > avail);
-                return Some(n);
-            }
-        }
+        let n = self.memory.read_into(dst, None);
+        self.set_eof(n < dst.len());
+        Some(n)
     }
 
     /// Line sibling of `read_bytes` for `fgets`: copies bytes from the current position into
     /// `dst`, stopping after the first `\n` (inclusive) or at `dst.len()` bytes, whichever is
-    /// first; advances the atomic cursor by the amount copied and returns it. `None` iff the
+    /// first; advances the shared cursor by the amount copied and returns it. `None` iff the
     /// cursor is closed (⇒ caller falls through to the registry slow path). EOF flag mirrors
     /// the byte-loop `fgets` semantics: set iff the scan ran off the end of the data WITHOUT
     /// finding a newline while more bytes were wanted (this includes the 0-byte read at end,
     /// which is fgets's NULL-return case); a newline stop or a capacity stop leaves it false —
-    /// neither can race a previously-set EOF because a set flag implies pos == data.len(),
-    /// where no newline/capacity stop is reachable. Content is immutable (read-only mem
-    /// streams only), so the post-CAS copy is valid under concurrent readers.
+    /// refill and copying share the same locked cursor as generic cookie reads.
     #[inline]
     fn read_line(&self, dst: &mut [u8]) -> Option<usize> {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
-        let want = dst.len();
-        loop {
-            let pos = self.pos.load(Ordering::Acquire);
-            let avail = self.data.len().saturating_sub(pos);
-            let lim = want.min(avail);
-            let nl = self.data[pos..pos + lim].iter().position(|&b| b == b'\n');
-            let n = match nl {
-                Some(i) => i + 1,
-                None => lim,
-            };
-            if self
-                .pos
-                .compare_exchange_weak(pos, pos + n, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                dst[..n].copy_from_slice(&self.data[pos..pos + n]);
-                self.set_eof(nl.is_none() && want > avail);
-                return Some(n);
-            }
-        }
+        let n = self.memory.read_into(dst, Some(b'\n'));
+        self.set_eof(n < dst.len() && dst.get(n.wrapping_sub(1)) != Some(&b'\n'));
+        Some(n)
     }
 
     #[inline]
@@ -1261,31 +1216,16 @@ impl FastFixedMemRead {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
-        let len = self.data.len();
-        let current = self.pos.load(Ordering::Acquire).min(len);
-        let base = match whence {
-            libc::SEEK_SET => 0i64,
-            libc::SEEK_CUR => current as i64,
-            libc::SEEK_END => len as i64,
-            _ => return None,
-        };
-        let next = base.checked_add(offset)?;
-        if next < 0 || next as usize > len {
-            return None;
-        }
-        let next = next as usize;
-        self.pos.store(next, Ordering::Release);
+        let next = self.memory.inner.lock().cursor.seek(offset, whence)?;
         self.set_eof(false);
         Some(next)
     }
 
     #[inline]
     fn sync_to_stream(&self, stream: &mut StdioStream) {
-        // Read-only fmemopen streams keep their bytes only in this cursor
-        // (bd-rv2gv6); the generic path needs them too.
-        stream.materialize_mem_fixed_data(&self.data);
-        let pos = self.pos.load(Ordering::Acquire).min(self.data.len());
-        let _ = stream.mem_seek(pos as i64, libc::SEEK_SET);
+        // Fast and generic reads share storage and position. Only the generic
+        // stream's observable offset/EOF need catching up after a fast read.
+        stream.set_offset(self.memory.inner.lock().cursor.position() as i64);
         if self.eof.load(Ordering::Acquire) {
             stream.set_eof();
         }
@@ -1314,8 +1254,8 @@ fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
 /// today's probe cost.
 static FIXED_MEM_CURSOR_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-fn register_fast_fixed_mem_read(id: usize, data: Vec<u8>) {
-    let cursor = Arc::new(FastFixedMemRead::new(data, id));
+fn register_fast_fixed_mem_read(id: usize, memory: Arc<FixedMemCookie>) {
+    let cursor = Arc::new(FastFixedMemRead::new(memory, id));
     FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
     let mut map = fast_fixed_mem_reads()
         .lock()
@@ -4322,12 +4262,14 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
     if is_cookie_stream(id) {
         let flushed = unsafe { flush_cookie_stream(id, s) };
         retire_read_window(s);
+        unregister_fast_fixed_mem_read(id);
         drop(s_guard);
         registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove_stream(id);
         let rc = unsafe { cookie_stream_close(id) };
+        maybe_unregister_dynamic_native_stream(stream);
         return if flushed && rc == 0 { 0 } else { libc::EOF };
     }
 
@@ -4338,7 +4280,6 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
         sync_and_unregister_fast_fixed_mem_read(id, s);
         unsafe {
             sync_memstream_to_caller(id, s, true);
-            sync_fmemopen_full(id, s);
             crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
         }
         // Remove sync metadata for open_memstream.
@@ -4348,15 +4289,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
         if let Some(ref mut map) = *sync_guard {
             map.remove(&id);
         }
-        // Remove sync metadata for fmemopen fixed buffers.
-        let mut fixed_guard = mem_fixed_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(ref mut map) = *fixed_guard {
-            map.remove(&id);
-        }
         crate::wchar_abi::unregister_open_wmemstream(id);
-        drop(fixed_guard);
         drop(sync_guard);
         drop(s_guard);
         registry()
@@ -4509,13 +4442,13 @@ pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_
             let mut s_guard = cell.lock();
             let s = &mut *s_guard;
             let ok = if is_cookie_stream(id) {
+                let _ = sync_fast_fixed_mem_read_to_stream(id, s);
                 unsafe { flush_cookie_stream(id, s) }
             } else if s.is_mem_backed() {
                 let flush_ok = s.mem_flush();
                 let _ = sync_fast_fixed_mem_read_to_stream(id, s);
                 unsafe {
                     sync_memstream_to_caller(id, s, false);
-                    sync_fmemopen_full(id, s);
                     crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
                 }
                 flush_ok
@@ -4539,6 +4472,7 @@ pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_
         };
         let mut s = cell.lock();
         let flushed = unsafe { flush_cookie_stream(id, &mut s) };
+        flush_fixed_mem_input(id, &mut s);
         let adverse = !flushed;
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
         return if adverse { libc::EOF } else { 0 };
@@ -4553,7 +4487,6 @@ pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
             unsafe {
                 sync_memstream_to_caller(id, s, false);
-                sync_fmemopen_full(id, s);
                 crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
             }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !flush_ok);
@@ -4607,7 +4540,7 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
     }
     // Pointer-keyed fmemopen read fast path (the write cache above EXCLUDES mem streams, so
     // fmemopen `fgetc` otherwise pays `canonical_stream_id`'s native lock per byte — the 1.4x
-    // per-op floor, ST and MT). MT-safe (atomic cursor). Miss ⇒ falls through and re-caches.
+    // per-op floor, ST and MT). The shared cursor serializes reads and refills.
     if let Some(rc) = try_fgetc_fast_fixed_mem_by_stream(stream) {
         return rc;
     }
@@ -5200,7 +5133,7 @@ pub(crate) unsafe fn fgets_for_caller(
     // Pointer-keyed fmemopen line fast path (the fd cache above EXCLUDES mem streams, so
     // fmemopen `fgets` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
     // registry lock per LINE — and the old mem branch even unregistered the cursor, tearing
-    // down the fgetc/fread fast paths). MT-safe (atomic cursor CAS). Miss ⇒ falls through
+    // down the fgetc/fread fast paths). Reads share the cursor lock. Miss ⇒ falls through
     // and re-caches. size >= 2 is guaranteed here (size <= 0 and size == 1 returned above).
     {
         let max = (size - 1) as usize;
@@ -5247,6 +5180,27 @@ pub(crate) unsafe fn fgets_for_caller(
         return std::ptr::null_mut();
     }
 
+    if let Some(cursor) = fast_fixed_mem_read(id) {
+        if !orient_stream_byte_by_id(id) {
+            return std::ptr::null_mut();
+        }
+        if max == 0 {
+            // SAFETY: fgets with size 1 supplies its single NUL slot.
+            unsafe { *buf = 0 };
+            return buf;
+        }
+        store_fgetc_mem_ptr_cache(stream, &cursor);
+        // SAFETY: fgets requires size writable bytes; max leaves the NUL slot.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), max) };
+        let n = cursor.read_line(dst).unwrap_or(0);
+        if n == 0 {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: n <= max, so the terminator remains inside caller storage.
+        unsafe { *buf.add(n) = 0 };
+        return buf;
+    }
+
     if is_cookie_stream(id) {
         if !stream_exists(id) {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
@@ -5261,20 +5215,19 @@ pub(crate) unsafe fn fgets_for_caller(
         let mut had_error = false;
         let mut reached_eof = false;
         while written < max {
-            let mut byte = [0u8; 1];
-            let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
-            if rc > 0 {
-                unsafe { *buf.add(written) = byte[0] as c_char };
+            let byte = unsafe { fgetc_for_caller(stream, caller) };
+            if byte != libc::EOF {
+                unsafe { *buf.add(written) = byte as c_char };
                 written += 1;
-                if byte[0] == b'\n' {
+                if byte == b'\n' as c_int {
                     break;
                 }
                 continue;
             }
-            if rc == 0 {
-                reached_eof = true;
-            } else {
-                had_error = true;
+            if let Some(cell) = stream_cell(id) {
+                let s = cell.lock();
+                reached_eof = s.is_eof();
+                had_error = s.is_error();
             }
             break;
         }
@@ -5282,8 +5235,6 @@ pub(crate) unsafe fn fgets_for_caller(
         if let Some(cell) = stream_cell(id) {
             let mut s_guard = cell.lock();
             let s = &mut *s_guard;
-            let delta = written.min(i64::MAX as usize) as i64;
-            s.set_offset(s.offset().saturating_add(delta));
             if reached_eof {
                 s.set_eof();
             }
@@ -5334,29 +5285,6 @@ pub(crate) unsafe fn fgets_for_caller(
         return buf;
     }
     if s.is_mem_backed() {
-        // fmemopen line read via the atomic cursor (registered only for read-only mem
-        // streams ⇒ content immutable). Populate the pointer cache so subsequent
-        // `fgets`/`fgetc`/`fread` skip `canonical_stream_id` + `decide` + the registry
-        // lock. Replaces the former `sync_and_unregister` + fill for read-only streams —
-        // that path tore down the cursor on EVERY fgets. Writable mem streams register
-        // no cursor ⇒ old path below unchanged. Byte-identical: same stop-at-newline /
-        // capacity / EOF semantics as the fill loop over the same content snapshot.
-        if let Some(cursor) = fast_fixed_mem_read(id) {
-            store_fgetc_mem_ptr_cache(stream, &cursor);
-            let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
-            let n = cursor.read_line(dst).unwrap_or(0);
-            runtime_policy::observe(
-                ApiFamily::Stdio,
-                decision.profile,
-                runtime_policy::scaled_cost(10, n.max(1)),
-                n == 0,
-            );
-            if n == 0 {
-                return std::ptr::null_mut();
-            }
-            unsafe { *buf.add(n) = 0 };
-            return buf;
-        }
         sync_and_unregister_fast_fixed_mem_read(id, s);
     } else {
         // Cache this non-cookie, non-mem fd stream so subsequent fgets/fgetc/fread hit the
@@ -5690,8 +5618,8 @@ pub(crate) unsafe fn fread_for_caller(
         }
         // Pointer-keyed fmemopen bulk-read fast path (the fd cache above EXCLUDES mem streams,
         // so fmemopen `fread` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
-        // `fast_fixed_mem_reads` map lock per call — the per-op floor, ST and MT). MT-safe (atomic
-        // cursor). Miss ⇒ falls through and re-caches. Mirrors the `fgetc` fast path. `total > 0`
+        // `fast_fixed_mem_reads` map lock per call — the per-op floor, ST and MT). Reads share
+        // the cursor lock. Miss ⇒ falls through and re-caches. Mirrors `fgetc`. `total > 0`
         // ⇒ `size >= 1`, so `n / size` is the complete-element count (as the slow path returns).
         if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
             return n / size;
@@ -5731,13 +5659,9 @@ pub(crate) unsafe fn fread_for_caller(
     }
     let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
 
-    // fmemopen bulk read via the atomic cursor (registered only for read-only mem streams ⇒
-    // content immutable). Populate the pointer cache so subsequent `fread`/`fgetc` skip
-    // `canonical_stream_id` + `decide` + the map lock. Replaces the former `sync_and_unregister`
-    // + `mem_read_into` for read-only streams: the cursor stays alive and `feof`/`ftell`/`fseek`/
-    // `ungetc` sync it (the same invariant `fgetc` relies on). Writable mem streams register no
-    // cursor ⇒ this is skipped and the `s.is_mem_backed()` branch below still handles them.
-    // Byte-identical: reads the same bytes fgetc's cursor reads, over the same content snapshot.
+    // Read-only fmemopen uses the shared refill-aware cursor. Cache it by FILE*
+    // so subsequent reads skip registry lookups; generic cookie reads use the
+    // same position and backing. Pushback operations retire this direct path.
     if let Some(cursor) = fast_fixed_mem_read(id) {
         if !orient_stream_byte_by_id(id) {
             runtime_policy::observe(
@@ -6221,26 +6145,46 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
         {
             let mut s_guard = cell.lock();
             let s = &mut *s_guard;
+            let _ = sync_fast_fixed_mem_read_to_stream(id, s);
             if !unsafe { flush_cookie_stream(id, s) } {
-                unsafe { set_abi_errno(errno::EIO) };
+                if fixed_mem_cookie(id).is_none() {
+                    unsafe { set_abi_errno(errno::EIO) };
+                }
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
                 return -1;
             }
         }
 
         let mut cookie_off = offset;
-        let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, whence) };
+        let mut cookie_whence = whence;
+        if fixed_mem_cookie(id).is_some() && whence == libc::SEEK_CUR {
+            let mut s = cell.lock();
+            let _ = sync_fast_fixed_mem_read_to_stream(id, &mut s);
+            let Some(target) = s.offset().checked_add(offset) else {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return -1;
+            };
+            cookie_off = target;
+            cookie_whence = libc::SEEK_SET;
+        }
+        let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, cookie_whence) };
 
         let mut s_guard = cell.lock();
         let s = &mut *s_guard;
 
         if rc != 0 {
-            s.set_error();
+            if fixed_mem_cookie(id).is_none() {
+                s.set_error();
+            }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return -1;
         }
 
+        let _ = s.prepare_seek();
         s.set_offset(cookie_off);
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            cursor.set_eof(false);
+        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
         return 0;
     }
@@ -6268,7 +6212,6 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
         let flush_ok = s.mem_flush();
         unsafe {
             sync_memstream_to_caller(id, s, false);
-            sync_fmemopen_full(id, s);
             crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
         }
         if !flush_ok {
@@ -6685,7 +6628,12 @@ pub unsafe extern "C-unwind" fn fileno(stream: *mut c_void) -> c_int {
     }
     if let Some(cell) = stream_cell(id) {
         let s = cell.lock();
-        if s.is_mem_backed() { -1 } else { s.fd() }
+        if s.fd() < 0 {
+            unsafe { set_abi_errno(errno::EBADF) };
+            -1
+        } else {
+            s.fd()
+        }
     } else {
         unsafe { set_abi_errno(errno::EBADF) };
         -1
@@ -6744,13 +6692,33 @@ pub unsafe extern "C-unwind" fn setvbuf(
             || (!s.is_mem_backed() && {
                 let keep = _buf.is_null() && !matches!(buf_mode, BufMode::None);
                 let synced = keep || {
-                    let flushed = unsafe { flush_stream(&mut s) };
-                    sync_input_position(&mut s);
-                    flushed
+                    if is_cookie_stream(id) {
+                        let flushed = unsafe { flush_cookie_stream(id, &mut s) };
+                        flush_fixed_mem_input(id, &mut s);
+                        flushed
+                    } else {
+                        let flushed = unsafe { flush_stream(&mut s) };
+                        sync_input_position(&mut s);
+                        flushed
+                    }
                 };
                 synced && s.rebuffer(buf_mode, requested_size, keep)
             });
         if accepted {
+            if let Some(memory) = fixed_mem_cookie(id) {
+                // Direct read-only cursor reads do not mark StdioStream's
+                // buffer as used. An explicit replacement/unbuffering must
+                // still synchronize their position and drop prefetched input.
+                if !_buf.is_null() || matches!(buf_mode, BufMode::None) {
+                    flush_fixed_mem_input(id, &mut s);
+                }
+                let prefetch = if matches!(buf_mode, BufMode::None) {
+                    1
+                } else {
+                    requested_size.max(1)
+                };
+                memory.read_capacity.store(prefetch, Ordering::Release);
+            }
             sync_native_stdio_buffering(stream, buf_mode, _buf, requested_size);
             0
         } else {
@@ -13906,6 +13874,11 @@ pub(crate) unsafe fn read_stream_for_scanf_for_caller(
     let fd = s.fd();
     let cap = limit.min(8192);
     let cookie = is_cookie_stream(id);
+    if cookie {
+        // Scanf stages unconsumed input in StdioStream. Retire the direct
+        // reader first so the next read cannot skip that pushback queue.
+        sync_and_unregister_fast_fixed_mem_read(id, s);
+    }
 
     // Seekable read streams (regular files): read from the true logical
     // position so the post-parse lseek can leave the unparsed tail in place.
@@ -15016,23 +14989,21 @@ pub unsafe extern "C-unwind" fn freopen(
         let mut old_guard = old_cell.lock();
         let old = &mut *old_guard;
         retire_read_window(old);
+        if fixed_mem_cookie(id).is_some() {
+            let _ = unsafe { flush_cookie_stream(id, old) };
+            unregister_fast_fixed_mem_read(id);
+            let _ = unsafe { cookie_stream_close(id) };
+        }
         if old.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, old);
             unsafe {
                 sync_memstream_to_caller(id, old, true);
-                sync_fmemopen_full(id, old);
                 crate::wchar_abi::sync_open_wmemstream_to_caller(id, old);
             }
             let mut sync_guard = mem_sync_registry()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             if let Some(ref mut map) = *sync_guard {
-                map.remove(&id);
-            }
-            let mut fixed_guard = mem_fixed_registry()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if let Some(ref mut map) = *fixed_guard {
                 map.remove(&id);
             }
             crate::wchar_abi::unregister_open_wmemstream(id);
@@ -15428,6 +15399,22 @@ pub(crate) unsafe fn getdelim_for_caller(
     let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
     let buf = &mut scratch.0;
     buf.clear();
+
+    if fixed_mem_cookie(id).is_some() {
+        // The shared memory cursor owns its input window. Reuse the ordinary
+        // byte reader so scanf/ungetc pushback is consumed before that window.
+        loop {
+            let byte = unsafe { fgetc_for_caller(stream, caller) };
+            if byte == libc::EOF {
+                break;
+            }
+            buf.push(byte as u8);
+            if byte as u8 == delim_byte {
+                break;
+            }
+        }
+        return unsafe { getdelim_finish(buf, lineptr, n) };
+    }
 
     // Read the whole line under the stream's OWN lock + the policy decision above (bulk
     // read_until_delim, not per-char fgetc; the ABI layer owns descriptor refill).
@@ -16075,10 +16062,132 @@ pub struct CookieIoFuncs {
     pub close: Option<unsafe extern "C-unwind" fn(*mut c_void) -> c_int>,
 }
 
+/// The buffer lives either in this stream or in storage kept alive by the C
+/// caller. All native accesses share `inner`; callers must synchronize their
+/// own accesses with stream I/O and keep borrowed storage alive until close.
+struct FixedMemCookie {
+    inner: parking_lot::Mutex<FixedMemCookieInner>,
+    read_capacity: AtomicUsize,
+    readable: bool,
+}
+
+struct FixedMemCookieInner {
+    cursor: frankenlibc_core::stdio::file::FixedMemCursor,
+    borrowed: usize,
+    owned: Option<Vec<u8>>,
+}
+
+impl FixedMemCookie {
+    fn read_into(&self, dst: &mut [u8], delimiter: Option<u8>) -> usize {
+        let prefetch = self.read_capacity.load(Ordering::Acquire);
+        let mut inner = self.inner.lock();
+        let FixedMemCookieInner {
+            cursor,
+            borrowed,
+            owned,
+        } = &mut *inner;
+        cursor.read_into(dst, delimiter, prefetch, |start, output| {
+            if let Some(data) = owned {
+                output.copy_from_slice(&data[start..start + output.len()]);
+            } else {
+                // SAFETY: FixedMemCursor bounds each span by the capacity
+                // supplied to fmemopen. Its caller guarantees readable backing
+                // through fclose; only this synchronous copy borrows it.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        (*borrowed as *const u8).add(start),
+                        output.as_mut_ptr(),
+                        output.len(),
+                    );
+                }
+            }
+        })
+    }
+}
+
+unsafe extern "C-unwind" fn fixed_mem_cookie_read(
+    cookie: *mut c_void,
+    dst: *mut c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: the cookie registry owns this Arc through the synchronous
+    // callback, and the stdio reader supplies a writable span of count bytes.
+    let (memory, dst) = unsafe {
+        (
+            &*cookie.cast::<FixedMemCookie>(),
+            std::slice::from_raw_parts_mut(dst.cast(), count),
+        )
+    };
+    if !memory.readable {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    memory.read_into(dst, None) as isize
+}
+
+unsafe extern "C-unwind" fn fixed_mem_cookie_write(
+    cookie: *mut c_void,
+    src: *const c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: the cookie registry owns this Arc and the flush supplies a
+    // readable span that remains valid until this callback returns.
+    let (memory, src) = unsafe {
+        (
+            &*cookie.cast::<FixedMemCookie>(),
+            std::slice::from_raw_parts(src.cast(), count),
+        )
+    };
+    let mut inner = memory.inner.lock();
+    let FixedMemCookieInner {
+        cursor,
+        borrowed,
+        owned,
+    } = &mut *inner;
+    let written = cursor.write(src, |start, bytes| {
+        if let Some(data) = owned {
+            data[start..start + bytes.len()].copy_from_slice(bytes);
+        } else {
+            // SAFETY: the cursor bounds data and terminator writes by the
+            // caller's writable capacity. This stream owns neither the caller
+            // allocation nor bytes outside the committed output span.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    (*borrowed as *mut u8).add(start),
+                    bytes.len(),
+                );
+            }
+        }
+    });
+    if written < count {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+    }
+    written as isize
+}
+
+unsafe extern "C-unwind" fn fixed_mem_cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: the cookie registry owns the state and stdio supplies a live
+    // offset slot for the duration of the callback.
+    let (memory, offset) = unsafe { (&*cookie.cast::<FixedMemCookie>(), &mut *offset) };
+    if let Some(position) = memory.inner.lock().cursor.seek(*offset, whence) {
+        *offset = position as i64;
+        0
+    } else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        -1
+    }
+}
+
 /// Metadata for a cookie-backed stream.
 struct CookieStreamInfo {
     cookie: *mut c_void,
     funcs: CookieIoFuncs,
+    fixed_memory: Option<Arc<FixedMemCookie>>,
 }
 
 // SAFETY: The C caller is responsible for ensuring the cookie and
@@ -16189,6 +16298,13 @@ unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
 /// the caller's bytes are accepted into that buffer, matching stdio's visible
 /// write progress rather than callback timing.
 unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8]) -> usize {
+    let fixed_memory = fixed_mem_cookie(id);
+    if stream.is_appending()
+        && let Some(memory) = &fixed_memory
+    {
+        let end = memory.inner.lock().cursor.content_end();
+        stream.set_offset(end.saturating_add(stream.pending_flush().len()) as i64);
+    }
     let Some(result) = stream.buffer_write(bytes) else {
         return 0;
     };
@@ -16207,7 +16323,11 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
 
     let flushed = unsafe { cookie_write_all(id, &flush_data) };
     if flushed == flush_data.len() {
-        stream.mark_flushed();
+        // StreamBuffer has already retained the unflushed tail after a full
+        // block or line. Native memory streams must keep that tail for fflush.
+        if fixed_memory.is_none() {
+            stream.mark_flushed();
+        }
         stream.set_offset(
             stream
                 .offset()
@@ -16218,6 +16338,11 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
 
     stream.set_error();
     let current = flushed.saturating_sub(flushed_from_buffer).min(bytes.len());
+    if let Some(memory) = fixed_memory {
+        stream.mark_flushed();
+        stream.set_offset(memory.inner.lock().cursor.position() as i64);
+        return current;
+    }
     stream.set_offset(
         stream
             .offset()
@@ -16240,11 +16365,45 @@ unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
     // identifies the live cookie owned by this locked stream.
     let written = unsafe { cookie_stream_write(id, pending.as_ptr(), expected) };
     stream.mark_flushed();
+    if let Some(memory) = fixed_mem_cookie(id) {
+        // A short fixed-buffer flush consumes its available prefix. Discard
+        // staged overflow and expose the resulting position, never replay it.
+        stream.set_offset(memory.inner.lock().cursor.position() as i64);
+    }
     if written == expected as isize {
         true
     } else {
         stream.set_error();
         false
+    }
+}
+
+fn fixed_mem_cookie(id: usize) -> Option<Arc<FixedMemCookie>> {
+    if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return None;
+    }
+    cookie_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()?
+        .get(&id)?
+        .fixed_memory
+        .clone()
+}
+
+fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
+    if let Some(memory) = fixed_mem_cookie(id) {
+        let _ = sync_fast_fixed_mem_read_to_stream(id, stream);
+        let mut inner = memory.inner.lock();
+        if !stream.last_was_write() {
+            let _ = inner.cursor.seek(stream.offset(), libc::SEEK_SET);
+            let eof = stream.is_eof();
+            let _ = stream.prepare_seek();
+            if eof {
+                stream.set_eof();
+            }
+        }
+        inner.cursor.discard_input();
     }
 }
 
@@ -16321,66 +16480,6 @@ static MEM_STREAM_SYNC_PRESENT: AtomicBool = AtomicBool::new(false);
 
 fn mem_sync_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> {
     &MEM_STREAM_SYNC
-}
-
-/// Metadata for fmemopen with a caller-provided fixed buffer.
-struct MemFixedSync {
-    buf: *mut u8,
-    size: usize,
-}
-
-// SAFETY: MemFixedSync holds raw pointers provided by the caller.
-// The caller must keep the buffer valid for the lifetime of the stream.
-unsafe impl Send for MemFixedSync {}
-unsafe impl Sync for MemFixedSync {}
-
-/// Registry of fmemopen fixed-buffer metadata, keyed by stream sentinel ID.
-static MEM_FIXED_SYNC: Mutex<Option<ArtifactHashMap<usize, MemFixedSync>>> = Mutex::new(None);
-
-/// Monotonic "has any `fmemopen` fixed-buffer stream ever been created?" flag
-/// (cookie-pattern twin of `MEM_STREAM_SYNC_PRESENT`). `sync_fmemopen_full` runs
-/// on every mem-backed flush/close but only does work for fmemopen-fixed ids;
-/// without any such stream the lock + lookup is pure waste. Set on `fmemopen`
-/// (Release), loaded with Acquire, never reset (the stream's sentinel id is only
-/// published after the store, so the fast path is correct).
-static MEM_FIXED_SYNC_PRESENT: AtomicBool = AtomicBool::new(false);
-
-fn mem_fixed_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemFixedSync>>> {
-    &MEM_FIXED_SYNC
-}
-
-/// Synchronize the full fmemopen fixed buffer contents to the caller.
-unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
-    // Lock-free fast path: no fmemopen-fixed stream has ever been created, so this
-    // id cannot have fixed-buffer metadata. The id is only published after the
-    // Release store in `fmemopen`, so this Acquire load is correct.
-    if !MEM_FIXED_SYNC_PRESENT.load(Ordering::Acquire) {
-        return;
-    }
-    let guard = mem_fixed_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(ref map) = *guard
-        && let Some(info) = map.get(&id)
-        && let Some(data) = stream.mem_data()
-    {
-        let len = data.len().min(info.size);
-        let copy_len = if stream.is_truncating() && len == info.size && info.size > 0 {
-            info.size - 1
-        } else {
-            len
-        };
-        if copy_len > 0 {
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), info.buf, copy_len);
-            }
-        }
-        if copy_len < info.size && (copy_len > 0 || stream.is_readable()) {
-            unsafe {
-                *info.buf.add(copy_len) = 0;
-            }
-        }
-    }
 }
 
 /// Synchronize open_memstream data to the C caller's pointers.
@@ -16656,51 +16755,47 @@ pub unsafe extern "C" fn fmemopen(
         return std::ptr::null_mut();
     };
 
-    // Prepare the backing buffer.
-    // bd-rv2gv6: for read-only mode, the cursor's shadow is the SOLE copy —
-    // the stream's mem_backing carries NO data (position tracking only via
-    // content_end). For writable modes, single-alloc copy into the stream.
-    let (data, content_len, fast_read_data) = if buf.is_null() {
-        // Internal buffer: zero-initialized, no initial content.
-        (vec![0u8; size], 0usize, None)
-    } else {
-        let slice = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), size) };
-        if open_flags.readable && !open_flags.writable {
-            // Read-only "r": single copy serves as the cursor's shadow.
-            // The stream's mem_backing tracks position only.
-            let shadow = slice.to_vec();
-            let cl = if open_flags.append {
-                shadow.iter().position(|&b| b == 0).unwrap_or(size)
-            } else {
-                size
-            };
-            (Vec::new(), cl, Some(shadow))
+    if size > isize::MAX as usize || (!buf.is_null() && (buf as usize).checked_add(size).is_none())
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    let owned = buf.is_null().then(|| vec![0; size]);
+    let content_len = if open_flags.truncate {
+        0
+    } else if open_flags.append {
+        if buf.is_null() {
+            0
         } else {
-            // Writable modes: single-alloc copy into the stream's buffer.
-            let v = if open_flags.truncate {
-                vec![0u8; size]
-            } else {
-                let mut v = Vec::with_capacity(size);
-                v.extend_from_slice(slice);
-                v
-            };
-            let cl = if open_flags.truncate {
-                0
-            } else if open_flags.append {
-                v.iter().position(|&b| b == 0).unwrap_or(size)
-            } else {
-                size
-            };
-            (v, cl, None)
+            // SAFETY: the caller supplies a readable region of size bytes;
+            // only append mode needs its initial NUL-delimited extent.
+            unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), size) }
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(size)
         }
-    };
-
-    let mut stream = if fast_read_data.is_some() {
-        // bd-rv2gv6 read-only: cursor owns the content; stream tracks position.
-        StdioStream::new_mem_fixed_readonly(content_len, open_flags)
     } else {
-        StdioStream::new_mem_fixed(data, content_len, open_flags)
+        size
     };
+    let memory = Arc::new(FixedMemCookie {
+        inner: parking_lot::Mutex::new(FixedMemCookieInner {
+            cursor: frankenlibc_core::stdio::file::FixedMemCursor::new(
+                size,
+                content_len,
+                open_flags.append,
+            ),
+            borrowed: buf as usize,
+            owned,
+        }),
+        read_capacity: AtomicUsize::new(8192),
+        readable: open_flags.readable,
+    });
+    let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
+    stream.set_offset(if open_flags.append {
+        content_len as i64
+    } else {
+        0
+    });
     // glibc's fmemopen streams are byte-oriented from creation (_mode == -1).
     stream.set_orientation(-1);
     let handle = register_memory_stream_with_native_handle(
@@ -16718,36 +16813,32 @@ pub unsafe extern "C" fn fmemopen(
         return std::ptr::null_mut();
     }
     let id = canonical_stream_id(handle);
-    if let Some(fast_read_data) = fast_read_data {
-        register_fast_fixed_mem_read(id, fast_read_data);
-    }
-
-    // The sync map exists so fl-owned stream contents are written back to the
-    // CALLER's buffer on flush/close — which only makes sense when the stream can
-    // write. A read-only "r" stream never writes through fl, and syncing its
-    // read-only snapshot over the caller's buffer on close would clobber caller
-    // mutations made after fmemopen (glibc never writes for "r" mode either).
-    // bd-rv2gv6: skip the registration entirely for non-writable streams.
-    if !buf.is_null() && open_flags.writable {
-        let mut guard = mem_fixed_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let map = guard.get_or_insert_with(artifact_hash_map);
-        map.insert(
+    let funcs = CookieIoFuncs {
+        read: Some(fixed_mem_cookie_read),
+        write: Some(fixed_mem_cookie_write),
+        seek: Some(fixed_mem_cookie_seek),
+        close: None,
+    };
+    cookie_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(artifact_hash_map)
+        .insert(
             id,
-            MemFixedSync {
-                buf: buf.cast::<u8>(),
-                size,
+            CookieStreamInfo {
+                cookie: Arc::as_ptr(&memory).cast_mut().cast(),
+                funcs,
+                fixed_memory: Some(Arc::clone(&memory)),
             },
         );
-        // Publish before releasing the lock and before the stream id is returned,
-        // so the lock-free fast path in `sync_fmemopen_full` is correct.
-        MEM_FIXED_SYNC_PRESENT.store(true, Ordering::Release);
-        if open_flags.truncate && open_flags.readable && size > 0 {
-            unsafe {
-                *buf.cast::<u8>() = 0;
-            }
-        }
+    COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+    if open_flags.readable && !open_flags.writable {
+        register_fast_fixed_mem_read(id, memory);
+    }
+    if !buf.is_null() && open_flags.truncate && open_flags.readable && size > 0 {
+        // SAFETY: w+ requires writable backing and exposes the initial NUL;
+        // bytes beyond it are untouched until actual output is flushed.
+        unsafe { *buf.cast::<u8>() = 0 };
     }
 
     handle
@@ -16864,7 +16955,14 @@ pub unsafe extern "C" fn fopencookie(
     // Register the cookie info
     let mut cookie_guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
     let map = cookie_guard.get_or_insert_with(artifact_hash_map);
-    map.insert(id, CookieStreamInfo { cookie, funcs });
+    map.insert(
+        id,
+        CookieStreamInfo {
+            cookie,
+            funcs,
+            fixed_memory: None,
+        },
+    );
     // Publish before releasing the lock and before the id is returned, so the
     // lock-free fast path in `is_cookie_stream` is correct (Acquire/Release pair).
     COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);

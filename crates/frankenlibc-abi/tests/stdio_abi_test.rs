@@ -2699,26 +2699,22 @@ fn vsprintf_normalizes_negative_star_width_from_va_list() {
 fn fmemopen_readonly_close_does_not_write_back_caller_buffer() {
     // bd-rv2gv6 regression: closing a read-only "r" fmemopen stream used to copy
     // fl's snapshot over the caller's buffer, clobbering mutations the caller made
-    // after fmemopen (glibc never writes for "r" mode). The sync-map registration
-    // is now writable-only, so caller mutations must survive fclose.
+    // after fmemopen. Reading and closing this stream must preserve those edits.
     let mut buf: [u8; 48] = *b"hello world, this is read-only fmemopen content!";
-    let original = buf;
     let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
-    if stream.is_null() {
-        return;
-    }
-    // Mutate the caller buffer AFTER open; the stream works on its own snapshot.
+    assert!(!stream.is_null());
+    // Mutate before the first refill: the read must observe caller storage.
     buf[0] = b'Z';
     let mut dst = [0u8; 8];
     let n = unsafe { fread(dst.as_mut_ptr().cast(), 1, dst.len(), stream) };
     assert_eq!(n, 8);
+    assert_eq!(&dst, b"Zello wo");
     // Pre-fix this failed: fclose synced the pre-mutation snapshot back.
     assert_eq!(unsafe { fclose(stream) }, 0);
     assert_eq!(
         buf[0], b'Z',
         "read-only fclose must not write back over the caller's buffer"
     );
-    let _ = original;
 }
 
 #[test]

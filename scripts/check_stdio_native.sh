@@ -7,8 +7,9 @@ GLOBALS_ONLY=0
 READ_ERRORS_ONLY=0
 WRITE_ERRORS_ONLY=0
 POPEN_ONLY=0
+FMEMOPEN_ONLY=0
 if [[ "$#" -gt 1 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen]" >&2
   exit 2
 fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
@@ -21,8 +22,10 @@ elif [[ "${1:-}" == "--write-errors" ]]; then
   WRITE_ERRORS_ONLY=1
 elif [[ "${1:-}" == "--popen" ]]; then
   POPEN_ONLY=1
+elif [[ "${1:-}" == "--fmemopen" ]]; then
+  FMEMOPEN_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
@@ -32,6 +35,8 @@ elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2.1"
 elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2"
+elif [[ "${FMEMOPEN_ONLY}" -eq 1 ]]; then
+  BEAD_ID="bd-reality-202609-lx578q.7.5"
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -67,7 +72,7 @@ fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
-if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 ]]; then
+if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 ]]; then
   error_kind=read
   error_mode=fd-errors
   error_cases=112
@@ -82,6 +87,11 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
     error_mode=popen
     error_cases=24
     error_option=--popen
+  elif [[ "${FMEMOPEN_ONLY}" -eq 1 ]]; then
+    error_kind=fmemopen
+    error_mode=fmemopen
+    error_cases=16
+    error_option=--fmemopen
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
   "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \

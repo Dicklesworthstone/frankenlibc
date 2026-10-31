@@ -146,6 +146,135 @@ pub fn flags_to_oflags(flags: &OpenFlags) -> i32 {
 // Memory backing for fmemopen / open_memstream
 // ---------------------------------------------------------------------------
 
+/// Position and input buffering for a fixed, externally owned memory stream.
+///
+/// The ABI supplies bounded copies through closures: this model never borrows
+/// caller memory across calls. Output buffering belongs to `StdioStream`; a
+/// write here represents bytes actually delivered by its flush callback.
+#[derive(Debug)]
+pub struct FixedMemCursor {
+    capacity: usize,
+    position: usize,
+    content_end: usize,
+    append: bool,
+    input_start: usize,
+    input: Vec<u8>,
+}
+
+impl FixedMemCursor {
+    pub fn new(capacity: usize, content_end: usize, append: bool) -> Self {
+        let content_end = content_end.min(capacity);
+        Self {
+            capacity,
+            position: if append { content_end } else { 0 },
+            content_end,
+            append,
+            input_start: 0,
+            input: Vec::new(),
+        }
+    }
+
+    pub fn position(&self) -> usize {
+        self.position
+    }
+
+    pub fn content_end(&self) -> usize {
+        self.content_end
+    }
+
+    pub fn discard_input(&mut self) {
+        self.input.clear();
+    }
+
+    /// A zero-distance seek preserves prefetched input, as on a cookie FILE.
+    /// Other seeks invalidate it. The fixed capacity bounds SEEK_SET/CUR;
+    /// SEEK_END is relative to the current logical extent.
+    pub fn seek(&mut self, offset: i64, whence: i32) -> Option<usize> {
+        let base = match whence {
+            0 => 0,
+            1 => i64::try_from(self.position).ok()?,
+            2 => i64::try_from(self.content_end).ok()?,
+            _ => return None,
+        };
+        let next = usize::try_from(base.checked_add(offset)?).ok()?;
+        if next > self.capacity {
+            return None;
+        }
+        if next != self.position {
+            self.discard_input();
+        }
+        self.position = next;
+        Some(next)
+    }
+
+    /// Copy input, optionally stopping after a delimiter. Only a refill reads
+    /// caller storage in buffered mode; unbuffered reads retain no snapshot.
+    pub fn read_into(
+        &mut self,
+        dst: &mut [u8],
+        delimiter: Option<u8>,
+        prefetch: usize,
+        mut copy_from: impl FnMut(usize, &mut [u8]),
+    ) -> usize {
+        let mut written = 0;
+        while written < dst.len() && self.position < self.content_end {
+            let buffered = self.position.checked_sub(self.input_start);
+            if buffered.is_none_or(|i| i >= self.input.len()) {
+                self.input_start = self.position;
+                let count = prefetch.max(1).min(self.content_end - self.position);
+                self.input.resize(count, 0);
+                copy_from(self.position, &mut self.input);
+            }
+            let start = self.position - self.input_start;
+            let count = (dst.len() - written).min(self.input.len() - start);
+            let bytes = &self.input[start..start + count];
+            let stop = delimiter.and_then(|d| bytes.iter().position(|&b| b == d));
+            let count = stop.map_or(count, |i| i + 1);
+            dst[written..written + count].copy_from_slice(&bytes[..count]);
+            self.position += count;
+            written += count;
+            if stop.is_some() {
+                break;
+            }
+        }
+        written
+    }
+
+    /// Commit one output callback, touching only its byte range and any
+    /// required terminator. Caller edits outside that range remain intact.
+    pub fn write(&mut self, src: &[u8], mut copy_to: impl FnMut(usize, &[u8])) -> usize {
+        self.discard_input();
+        let start = if self.append {
+            self.content_end
+        } else {
+            self.position
+        };
+        let count = src.len().min(self.capacity.saturating_sub(start));
+        let needs_nul = src.last() != Some(&0);
+        // On a short write, there must still be room for the terminator at
+        // the starting position. A one-byte buffer cannot accept "abc".
+        if count == 0
+            || (count < src.len()
+                && self.capacity.saturating_sub(self.position) <= usize::from(needs_nul))
+        {
+            return 0;
+        }
+        copy_to(start, &src[..count]);
+        self.position = start + count;
+        if self.position > self.content_end {
+            self.content_end = self.position;
+            if needs_nul {
+                if self.content_end < self.capacity {
+                    copy_to(self.content_end, &[0]);
+                } else if !self.append {
+                    copy_to(self.capacity - 1, &[0]);
+                }
+            }
+        }
+        count
+    }
+}
+
 /// Memory backing for memory-based stdio streams.
 ///
 /// `Fixed` is for `fmemopen`: a position-tracked buffer with a fixed maximum
@@ -1693,6 +1822,60 @@ impl StdioStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_cursor_refills_and_preserves_only_prefetched_input() {
+        let mut source = *b"abcdef";
+        let mut cursor = FixedMemCursor::new(source.len(), source.len(), false);
+        let mut byte = [0];
+        let read = |cursor: &mut FixedMemCursor, source: &[u8], byte: &mut [u8]| {
+            cursor.read_into(byte, None, 3, |start, dst| {
+                dst.copy_from_slice(&source[start..start + dst.len()]);
+            })
+        };
+        source[0] = b'X';
+        assert_eq!(read(&mut cursor, &source, &mut byte), 1);
+        assert_eq!(byte, *b"X");
+        source[1..].fill(b'Y');
+        assert_eq!(cursor.seek(0, 1), Some(1));
+        let mut tail = [0; 5];
+        assert_eq!(read(&mut cursor, &source, &mut tail), 5);
+        assert_eq!(&tail, b"bcYYY");
+        assert_eq!(cursor.seek(0, 0), Some(0));
+        assert_eq!(read(&mut cursor, &source, &mut byte), 1);
+        assert_eq!(byte, *b"X");
+        assert_eq!(cursor.seek(-1, 0), None);
+        assert_eq!(cursor.seek(i64::MAX, 1), None);
+        assert_eq!(cursor.seek(0, 99), None);
+        assert_eq!(cursor.position(), 1);
+    }
+
+    #[test]
+    fn fixed_cursor_output_preserves_unwritten_storage_and_bounded_seeks() {
+        let mut source = [b'Z'; 8];
+        let mut cursor = FixedMemCursor::new(source.len(), 0, false);
+        assert_eq!(cursor.seek(3, 0), Some(3));
+        assert_eq!(
+            cursor.write(b"AB", |start, bytes| {
+                source[start..start + bytes.len()].copy_from_slice(bytes);
+            }),
+            2
+        );
+        assert_eq!(&source, b"ZZZAB\0ZZ");
+        assert_eq!(cursor.seek(4, 2), None);
+        assert_eq!(cursor.position(), 5);
+        assert_eq!(cursor.seek(3, 2), Some(8));
+        assert_eq!(
+            cursor.write(b"X", |_, _| panic!("full buffer must not be touched")),
+            0
+        );
+        let mut empty = FixedMemCursor::new(0, 0, false);
+        assert_eq!(
+            empty.read_into(&mut [0], None, 1, |_, _| panic!("empty input")),
+            0
+        );
+        assert_eq!(empty.write(b"X", |_, _| panic!("empty output")), 0);
+    }
 
     #[test]
     fn committed_read_window_sets_sticky_byte_orientation() {
