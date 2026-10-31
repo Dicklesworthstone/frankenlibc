@@ -13877,9 +13877,15 @@ pub unsafe extern "C" fn utmpname(file: *const c_char) -> c_int {
 // ---------------------------------------------------------------------------
 
 /// `eventfd_read` — read an eventfd counter.
+/// Like `read`, this is a cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
-    let rc = unsafe { syscall::sys_read(fd, value as *mut u8, 8) };
+pub unsafe extern "C-unwind" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
+    // SAFETY: the caller supplies the output buffer, which the kernel checks.
+    // Only the raw read crosses the cancellation window; no lock or borrow is
+    // held, and the inlined helper retains this entry point's external caller.
+    let rc = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_read(fd, value as *mut u8, 8))
+    };
     match rc {
         Ok(8) => 0,
         Err(e) => {
@@ -13894,10 +13900,15 @@ pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
 }
 
 /// `eventfd_write` — write to an eventfd counter.
+/// Like `write`, this is a cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
+pub unsafe extern "C-unwind" fn eventfd_write(fd: c_int, value: u64) -> c_int {
     let buf = value.to_ne_bytes();
-    let rc = unsafe { syscall::sys_write(fd, buf.as_ptr(), 8) };
+    // SAFETY: buf owns all eight input bytes for the syscall's duration. It
+    // needs no cleanup, and only the raw write crosses the cancellation window.
+    let rc = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_write(fd, buf.as_ptr(), 8))
+    };
     match rc {
         Ok(8) => 0,
         Err(e) => {

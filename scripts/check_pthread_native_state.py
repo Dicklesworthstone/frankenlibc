@@ -32,6 +32,14 @@ CPP_CASES = (
     "native-cancel-join-timed-disabled", "native-cancel-join-timed-null-disabled",
     "native-cancel-join-clock-real-disabled", "native-cancel-join-clock-mono-disabled",
     "native-cancel-join-clock-null-disabled", "native-cancel-tryjoin",
+    "native-cancel-eventfd-read", "native-cancel-eventfd-write",
+    "native-mixed-cancel-eventfd-read", "native-mixed-cancel-eventfd-write",
+    "native-cancel-eventfd-read-disabled", "native-cancel-eventfd-write-disabled",
+)
+HOSTED_CPP_CASES = (
+    "native-cancel-eventfd-read-blocked", "native-cancel-eventfd-write-blocked",
+    "native-mixed-cancel-eventfd-read-blocked", "native-mixed-cancel-eventfd-write-blocked",
+    "native-cancel-eventfd-read-blocked-disabled", "native-cancel-eventfd-write-blocked-disabled",
 )
 
 
@@ -119,10 +127,13 @@ def main():
             cpp_negative["stderr"] == "pthread-native-unwind:provider-mismatch:pthread_create\n"):
         failures.append("cpp-provider-negative")
 
-    variants = (("", CASES, binary, "pthread-native-state"),
-                ("exceptions-", CLEANUP_CASES, exceptions_binary, "pthread-native-state"),
-                ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind"))
-    for prefix, cases, executable, output_prefix in variants:
+    variants = (("", CASES, binary, "pthread-native-state", ("0", "1")),
+                ("exceptions-", CLEANUP_CASES, exceptions_binary, "pthread-native-state", ("0", "1")),
+                ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind", ("0", "1")),
+                # Already-blocked native interruption is a separate open
+                # backend feature. These cases require actual hosted waits.
+                ("cpp-blocked-", HOSTED_CPP_CASES, cpp_binary, "pthread-native-unwind", ("0",)))
+    for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
             # surface. Compare its behavior to the public GNU contract while
@@ -135,7 +146,7 @@ def main():
             if reference["returncode"] or reference["stdout"] != oracle_expected or reference["stderr"]:
                 failures.append(f"{prefix}gnu:{case}")
             for mode in ("strict", "hardened"):
-                for native in ("0", "1"):
+                for native in backends:
                     label = f"{prefix}{'native' if native == '1' else 'hosted'}-{mode}"
                     candidate = execute(label, case, str(library), {
                         "LD_PRELOAD": str(library), "FRANKENLIBC_MODE": mode,
@@ -147,19 +158,20 @@ def main():
                     if not passed:
                         failures.append(f"{label}:{case}")
 
-    gnu_cases = sum(len(cases) for _, cases, _, _ in variants)
+    gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
+    candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
               "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
               "cpp_fixture_sha256": sha256(cpp_source), "cpp_binary_sha256": sha256(cpp_binary),
               "exceptions_binary_sha256": sha256(exceptions_binary),
               "gnu_provider": host, "gnu_cases": gnu_cases,
-              "candidate_cases": 4 * gnu_cases, "provider_negative_cases": 2,
+              "candidate_cases": candidate_cases, "provider_negative_cases": 2,
               "failures": failures, "runs": records}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
         raise SystemExit("pthread native state: FAIL " + ", ".join(failures))
     print(f"pthread native state: PASS ({gnu_cases} live GNU cases, "
-          f"{4 * gnu_cases} candidate cases, two provider negatives)")
+          f"{candidate_cases} candidate cases, two provider negatives)")
 
 
 if __name__ == "__main__":

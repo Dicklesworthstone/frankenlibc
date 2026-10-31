@@ -12,7 +12,9 @@
 #include <pthread.h>
 #include <pwd.h>
 #include <semaphore.h>
+#include <sys/eventfd.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -108,6 +110,8 @@ static int native_join_sentinel;
 static std::atomic<int> native_join_started{0};
 using NativeJoin = int (*)(pthread_t, void **);
 static NativeJoin native_alias_join;
+static int native_event_fd = -1;
+static constexpr eventfd_t native_event_sentinel = 0x1122334455667788ULL;
 
 struct NativeState {
   pthread_t thread{};
@@ -120,12 +124,14 @@ struct NativeState {
   bool internal_completed = false;
   bool operation_completed = false;
   sem_t semaphore{};
+  eventfd_t event_value = native_event_sentinel;
   void *join_result = &native_join_sentinel;
   void *eh_globals = nullptr;
   int events[16]{};
   int count = 0;
   std::atomic<int> ready{0};
   std::atomic<int> release{0};
+  std::atomic<pid_t> tid{0};
 };
 
 static pthread_key_t native_key;
@@ -197,9 +203,36 @@ static int native_join_operation(NativeState *state) {
   return pthread_join(native_join_target, &state->join_result);
 }
 
+static void native_observe_event_wait(NativeState *state) {
+  char path[96];
+  std::snprintf(path, sizeof path, "/proc/self/task/%ld/syscall",
+                static_cast<long>(state->tid.load(std::memory_order_acquire)));
+  std::timespec start{};
+  native_require(clock_gettime(CLOCK_MONOTONIC, &start) == 0, "blocking observation clock");
+  for (;;) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    native_require(fd >= 0, "open thread syscall observation");
+    char line[256]{};
+    ssize_t length = read(fd, line, sizeof line - 1);
+    native_require(close(fd) == 0 && length > 0, "read thread syscall observation");
+    long number = -1;
+    unsigned long argument = 0;
+    long expected = !std::strcmp(state->point, "eventfd-read") ? SYS_read : SYS_write;
+    if (std::sscanf(line, "%ld %lx", &number, &argument) == 2 &&
+        number == expected && argument == static_cast<unsigned long>(native_event_fd))
+      return;
+    std::timespec now{};
+    native_require(clock_gettime(CLOCK_MONOTONIC, &now) == 0, "blocking observation clock");
+    native_require(now.tv_sec - start.tv_sec < 3, "eventfd operation reached blocking syscall");
+    const std::timespec pause = {0, 1000000};
+    native_require(nanosleep(&pause, nullptr) == 0, "blocking observation pause");
+  }
+}
+
 static void native_inner(void *argument) {
   auto *state = static_cast<NativeState *>(argument);
   NativeGuard guard{state, 1};
+  state->tid.store(static_cast<pid_t>(syscall(SYS_gettid)), std::memory_order_release);
   state->ready.store(1, std::memory_order_release);
   while (!state->release.load(std::memory_order_acquire)) {}
   if (state->cancel) {
@@ -211,7 +244,12 @@ static void native_inner(void *argument) {
         native_require(getpwnam("root") != nullptr, "internal passwd lookup completes");
         state->internal_completed = true;
       }
-      if (!std::strcmp(state->point, "read")) {
+      if (!std::strcmp(state->point, "eventfd-read")) {
+        native_require(eventfd_read(native_event_fd, &state->event_value) == 0 &&
+                       state->event_value == 3, "eventfd read result");
+      } else if (!std::strcmp(state->point, "eventfd-write")) {
+        native_require(eventfd_write(native_event_fd, 5) == 0, "eventfd write result");
+      } else if (!std::strcmp(state->point, "read")) {
         char byte = 0;
         native_require(read(pipefd[0], &byte, 1) == 1 && byte == 'R', "read result");
       } else if (!std::strcmp(state->point, "write")) {
@@ -279,6 +317,7 @@ static void *native_worker(void *argument) {
 static int native_provider(const char *expected, const char *name) {
   const char *names[] = {"pthread_create", "pthread_join", "pthread_exit", "pthread_testcancel",
                          "read", "write", "nanosleep", "sem_wait", "sem_timedwait", "getpwnam",
+                         "eventfd", "eventfd_read", "eventfd_write",
                          "pthread_timedjoin_np", "pthread_clockjoin_np", "pthread_tryjoin_np",
                          std::strstr(name, "join-alias") ? "__pthread_join" : "pthread_join"};
   struct stat wanted{};
@@ -305,8 +344,11 @@ static int native_probe(const char *name, const char *provider) {
   bool mixed = std::strstr(name, "mixed") != nullptr;
   bool catch_all = std::strstr(name, "catch-all") != nullptr;
   bool disabled = std::strstr(name, "disabled") != nullptr;
+  bool blocking_event = std::strstr(name, "blocked") != nullptr;
   bool internal_io = std::strstr(name, "internal") != nullptr;
-  const char *point = std::strstr(name, "-read") ? "read" :
+  const char *point = std::strstr(name, "-eventfd-read") ? "eventfd-read" :
+                      std::strstr(name, "-eventfd-write") ? "eventfd-write" :
+                      std::strstr(name, "-read") ? "read" :
                       std::strstr(name, "-write") ? "write" :
                       std::strstr(name, "-nanosleep") ? "nanosleep" :
                       std::strstr(name, "-sem-timed") ? "sem_timedwait" :
@@ -321,8 +363,17 @@ static int native_probe(const char *name, const char *provider) {
                       std::strstr(name, "-tryjoin") ? "tryjoin" : nullptr;
   bool joining = point && (!std::strncmp(point, "join", 4) || !std::strcmp(point, "tryjoin"));
   bool noncanceling = point && !std::strcmp(point, "tryjoin");
+  bool event_io = point && !std::strncmp(point, "eventfd-", 8);
   int count = std::strstr(name, "siblings") ? 2 : 1;
   alarm(12);
+  if (event_io) {
+    native_event_fd = eventfd(blocking_event ? 0 : 3,
+                             EFD_CLOEXEC | (blocking_event ? 0 : EFD_NONBLOCK));
+    native_require(native_event_fd >= 0, "create observable event counter");
+    if (blocking_event && !std::strcmp(point, "eventfd-write"))
+      native_require(eventfd_write(native_event_fd, ~eventfd_t{0} - 1) == 0,
+                     "saturate blocking event counter");
+  }
   if (point && (!std::strcmp(point, "read") || !std::strcmp(point, "write"))) {
     native_require(pipe(pipefd) == 0, "create observable pipe");
     native_require(fcntl(pipefd[0], F_SETFL, O_NONBLOCK) == 0, "nonblocking pipe inspection");
@@ -358,8 +409,22 @@ static int native_probe(const char *name, const char *provider) {
   }
   for (int i = 0; i < count; ++i) {
     NativeState *state = &native_states[i];
-    if (cancel) native_require(pthread_cancel(state->thread) == 0, "cancel");
+    if (cancel && !blocking_event)
+      native_require(pthread_cancel(state->thread) == 0, "cancel");
     state->release.store(1, std::memory_order_release);
+    if (blocking_event) {
+      native_observe_event_wait(state);
+      native_require(pthread_cancel(state->thread) == 0, "cancel blocked event I/O");
+      if (disabled) {
+        if (!std::strcmp(point, "eventfd-read")) {
+          native_require(eventfd_write(native_event_fd, 3) == 0, "release disabled event read");
+        } else {
+          eventfd_t value = 0;
+          native_require(eventfd_read(native_event_fd, &value) == 0 &&
+                         value == ~eventfd_t{0} - 1, "release disabled event write");
+        }
+      }
+    }
     void *result = nullptr;
     native_require(pthread_join(state->thread, &result) == 0, "join");
     native_require(result == (cancel ? PTHREAD_CANCELED : static_cast<void *>(state)), "exit value");
@@ -367,7 +432,23 @@ static int native_probe(const char *name, const char *provider) {
       native_require(state->operation_completed == (disabled || noncanceling),
                      "pending cancellation precedes cancelable operation");
       native_require(state->internal_completed == internal_io, "internal I/O is not a cancellation point");
-      if (joining) {
+      if (event_io) {
+        native_require(state->event_value ==
+                       (disabled && !std::strcmp(point, "eventfd-read") ? 3 : native_event_sentinel),
+                       "canceled event read preserves output slot");
+        native_require(fcntl(native_event_fd, F_SETFL, O_NONBLOCK) == 0,
+                       "nonblocking event counter inspection");
+        eventfd_t expected = !std::strcmp(point, "eventfd-read") ?
+                             (disabled || blocking_event ? 0 : 3) :
+                             (disabled ? (blocking_event ? 5 : 8) :
+                              (blocking_event ? ~eventfd_t{0} - 1 : 3));
+        eventfd_t value = native_event_sentinel;
+        errno = 0;
+        int rc = eventfd_read(native_event_fd, &value);
+        native_require(expected ? rc == 0 && value == expected :
+                                  rc == -1 && errno == EAGAIN && value == native_event_sentinel,
+                       "counter state exposes whether canceled event I/O ran");
+      } else if (joining) {
         if (disabled || noncanceling) {
           native_require(state->join_result == &native_join_target_value,
                          "noncanceling control really consumes target result");
@@ -404,6 +485,8 @@ static int native_probe(const char *name, const char *provider) {
     if (i + 1 < count) native_require(native_states[i + 1].count == 0, "sibling remains live");
   }
   native_require(pthread_key_delete(native_key) == 0, "key_delete");
+  if (event_io)
+    native_require(close(native_event_fd) == 0, "close observed event counter");
   if (point && (!std::strcmp(point, "read") || !std::strcmp(point, "write"))) {
     native_require(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close observed pipe");
   }
