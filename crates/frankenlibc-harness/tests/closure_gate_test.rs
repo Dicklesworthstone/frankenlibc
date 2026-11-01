@@ -914,3 +914,143 @@ fn support_report_uses_explicit_rch_source_over_stale_worker_git() {
         "CONTROL live compiled producer + stale Git: caller source retained; malformed provenance rejected"
     );
 }
+
+#[test]
+fn cargo_receipt_binds_named_artifact_and_rebuilds_backdated_source() {
+    let mut f = EvidenceFixture::new("n + 1");
+    let root = workspace_root();
+    let manifest = f.dir.join("Cargo.toml");
+    // A separate workspace and target directory avoid recursively taking the
+    // parent Cargo build lock. No dependencies, network, or cleanup are needed.
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"closure-behavior\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+         [workspace]\n[features]\ndefault = []\n\
+         [[test]]\nname = \"behavior\"\npath = \"behavior.rs\"\n",
+    )
+    .unwrap();
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{lock:?}");
+    let build = vec![
+        "cargo".to_owned(),
+        "test".to_owned(),
+        "--offline".to_owned(),
+        "--locked".to_owned(),
+        "--no-run".to_owned(),
+        "--message-format=json".to_owned(),
+        "-Zchecksum-freshness".to_owned(),
+        "--config".to_owned(),
+        "build.fingerprint=\"content\"".to_owned(),
+        "--manifest-path".to_owned(),
+        manifest.to_str().unwrap().to_owned(),
+        "--target-dir".to_owned(),
+        f.dir.join("cargo-target").to_str().unwrap().to_owned(),
+        "--test".to_owned(),
+        "behavior".to_owned(),
+    ];
+    let output = Command::new(&build[0])
+        .args(&build[1..])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    std::fs::write(f.dir.join("discovery.stdout"), &output.stdout).unwrap();
+    std::fs::write(f.dir.join("discovery.stderr"), &output.stderr).unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let artifact: Value = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|v| v["reason"] == "compiler-artifact" && v["target"]["name"] == "behavior")
+        .expect("Cargo must identify the executable it built");
+    let binary = artifact["executable"].as_str().unwrap();
+    let contract = &mut f.matrix["entries"][0]["row"]["closure_evidence"];
+    contract["configuration"]["features"] = json!(["default"]);
+    contract["gate"]["build_command"] = json!(build);
+    contract["gate"]["command"] = json!([binary, "--test-threads=1"]);
+    contract["gate"]["artifacts"] = json!([binary]);
+    for input in [
+        root.join("Cargo.toml"),
+        root.join("Cargo.lock"),
+        root.join("rust-toolchain.toml"),
+        root.join(".cargo/config.toml"),
+        manifest,
+        f.dir.join("Cargo.lock"),
+    ] {
+        let rel = input.strip_prefix(&root).unwrap().to_str().unwrap();
+        contract["source"]["files"][rel] = json!(digest(&std::fs::read(&input).unwrap()));
+    }
+    f.save();
+    EvidenceFixture::assert_result(f.record(), true, "RECORDED");
+    f.close_now();
+    EvidenceFixture::assert_result(
+        f.gate(&[]),
+        true,
+        "executed_unit; retained results verified",
+    );
+    f.bead["status"] = json!("in_progress");
+    f.bead.as_object_mut().unwrap().remove("closed_at");
+    let good_contract = f.matrix["entries"][0]["row"]["closure_evidence"].clone();
+    f.matrix["entries"][0]["row"]["closure_evidence"]["gate"]["command"] = json!(["/bin/true"]);
+    f.matrix["entries"][0]["row"]["closure_evidence"]["gate"]["artifacts"] = json!(["/bin/true"]);
+    f.save();
+    EvidenceFixture::assert_result(
+        f.gate(&[
+            "--record",
+            "bd-isolated-result",
+            f.dir.join("unrelated-run").to_str().unwrap(),
+        ]),
+        false,
+        "artifact_not_reported_by_build",
+    );
+
+    f.matrix["entries"][0]["row"]["closure_evidence"] = good_contract;
+    let source = f.dir.join("behavior.rs");
+    let bad = std::fs::read_to_string(&source)
+        .unwrap()
+        .replace("n + 1", "n - 1");
+    std::fs::write(&source, &bad).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000)),
+        )
+        .unwrap();
+    assert!(
+        std::fs::metadata(&source).unwrap().modified().unwrap()
+            < std::fs::metadata(binary).unwrap().modified().unwrap()
+    );
+    let rel = source.strip_prefix(&root).unwrap().to_str().unwrap();
+    f.matrix["entries"][0]["row"]["closure_evidence"]["source"]["files"][rel] =
+        json!(digest(bad.as_bytes()));
+    f.save();
+    EvidenceFixture::assert_result(
+        f.gate(&[
+            "--record",
+            "bd-isolated-result",
+            f.dir.join("backdated-run").to_str().unwrap(),
+        ]),
+        false,
+        "execution_failed",
+    );
+    let stdout = std::fs::read_to_string(f.dir.join("backdated-run/execution.stdout")).unwrap();
+    assert!(stdout.contains("test result: FAILED. 0 passed; 2 failed;"));
+    let build_stdout = std::fs::read_to_string(f.dir.join("backdated-run/build.stdout")).unwrap();
+    assert!(build_stdout.lines().any(|line| {
+        serde_json::from_str::<Value>(line).is_ok_and(|v| {
+            v["reason"] == "compiler-artifact"
+                && v["target"]["name"] == "behavior"
+                && v["fresh"] == false
+        })
+    }));
+    println!(
+        "CONTROL Cargo: 2 real tests admitted; unrelated executable rejected; same-size backdated wrong source rebuilt and both assertions failed"
+    );
+}

@@ -132,6 +132,13 @@ def contract_for(bid):
             require('--test' in build and cfg['profile'] == 'test' and cfg['features'] == [],
                     'wrong_build_configuration')
         else:
+            require('--message-format=json' in build, 'cargo_build_requires_artifact_messages')
+            require('-Zchecksum-freshness' in build or any(
+                build[i:i + 2] == ['-Z', 'checksum-freshness'] for i in range(len(build) - 1)),
+                'cargo_build_requires_content_freshness')
+            require('--config=build.fingerprint="content"' in build or any(
+                build[i:i + 2] == ['--config', 'build.fingerprint="content"']
+                for i in range(len(build) - 1)), 'cargo_build_requires_content_fingerprint')
             profile = build[build.index('--profile') + 1] if '--profile' in build else (
                 'release' if '--release' in build else 'test' if build[1] == 'test' else 'dev')
             features = build[build.index('--features') + 1].replace(',', ' ').split() if '--features' in build else []
@@ -265,7 +272,20 @@ def verify(bid, receipt_path):
 
     build = None
     if gate.get('build_command'):
-        build, _ = phase('build', gate['build_command'])
+        build, build_stdout = phase('build', gate['build_command'])
+        if pathlib.Path(gate['build_command'][0]).name == 'cargo':
+            messages = [json.loads(line) for line in build_stdout.splitlines() if line.strip()]
+            produced = [m for m in messages if m.get('reason') == 'compiler-artifact']
+            reported = {str(path(p).resolve()) for m in produced for p in m.get('filenames', [])}
+            require(all(str(path(p).resolve()) in reported for p in gate['artifacts']),
+                    'artifact_not_reported_by_build')
+            if contract['evidence_class'] == 'executed_unit':
+                target = gate['build_command'][gate['build_command'].index('--test') + 1]
+                require(any(m.get('target', {}).get('name') == target and
+                            'test' in m.get('target', {}).get('kind', []) and
+                            m.get('executable') and
+                            path(m['executable']).resolve() == path(gate['command'][0]).resolve()
+                            for m in produced), 'executed_binary_not_produced_by_named_target')
     execution, stdout = phase('execution', gate['command'])
     if build:
         require(timestamp(build['finished_at']) <= timestamp(execution['started_at']), 'build_after_execution')

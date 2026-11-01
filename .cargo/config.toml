@@ -13,3 +13,12 @@
 # after unloading extensions). glibc's own malloc avoids dynamic TLS for the
 # same reason.
 rustflags = ["-Z", "threads=4", "-Cllvm-args=-enable-tlsdesc"]
+# The feature gate alone leaves the pinned Cargo's default at "mtime".
+fingerprint = "content"
+
+[unstable]
+# RCH preserves source mtimes. A newer cached binary can otherwise survive a
+# changed, older-dated transfer (RC.43: the new label tests were never built).
+# The pinned nightly supports content checks for Rust compiler inputs. Cargo
+# build-script input freshness still needs separate source/output bindings.
+checksum-freshness = true
