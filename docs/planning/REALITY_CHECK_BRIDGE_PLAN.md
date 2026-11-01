@@ -66,6 +66,19 @@ filesystem entries were explicitly filtered. External-file transliteration,
 the extended wchar domain, performance and independent review remain
 unqualified. The native-ownership classifications and L0 status are unchanged.
 
+String precision now bounds input reads before rendering (`cd3970184`,
+`bd-reality-202609-lx578q.7.9`). The general narrow `%s`, wide `%s`, and narrow
+`%ls` paths previously scanned past valid unterminated arrays even after their
+precision was satisfied. A frozen 256-case protected-page matrix covers both
+argument types, four buffer APIs, two locales and both registration states.
+Fresh solo replay reproduced 168 original SIGSEGV cases per mode and zero
+candidate faults or output differences. The existing GNU printf gate, 151 Rust
+tests, 480,000 string-formatting comparisons and 72 callback-unwind cases
+passed; workspace check and strict Clippy also passed. Seven inherited ignores
+and two explicitly filtered filesystem-cleanup tests remain disclosed. This
+repairs the tested valid input spans; it does not establish universal pointer
+safety, broader locale/extended-wchar behavior or performance qualification.
+
 ## Current assessment — 2026-10-30
 
 **Verdict: FrankenLibC is a substantial experimental L0 interposer. It does not

@@ -1262,50 +1262,50 @@
       "text": "StartupCheckpoint::FallbackHost,"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:2550",
-      "line": 2550,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:2540",
+      "line": 2540,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "pub fn stdio_may_delegate_to_host_for_tests(stream: *mut c_void) -> bool {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3037",
-      "line": 3037,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3027",
+      "line": 3027,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_cached(slot, symbol)"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3732",
-      "line": 3732,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3722",
+      "line": 3722,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_raw(\"dlsym\").is_some_and(|address| {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3853",
-      "line": 3853,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3843",
+      "line": 3843,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3857",
-      "line": 3857,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3847",
+      "line": 3847,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3859",
-      "line": 3859,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3849",
+      "line": 3849,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3861",
-      "line": 3861,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3851",
+      "line": 3851,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };"
@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 120,
-    "source_tree_sha256": "5ed399593a7fdcd299a12f384c9f27536e440acb2c0ead8337c5398a3fc09ce9",
+    "source_tree_sha256": "4d5863104240a9e44f466a70f49808561d59224418e86e25da631e870f99c224",
     "version": 16
   },
   "module_census": [
@@ -3134,10 +3134,10 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "7d553d834beaf0deded4a84cc3474f0496ec8b3897712668a5de3b4e52906e16",
+        "support_matrix_sha256": "5935c9e22204e22f8bfafac8bba44383bf1422e10c585c3b51e35bfaae1c6bd5",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9100,
+      "function_count": 9099,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -13009,7 +13009,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 17838,
+      "resolved_call_edge_count": 17842,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1660,
@@ -13859,38 +13859,38 @@
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3732",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3722",
           "expression": "crate::host_resolve::resolve_host_symbol_raw(\"dlsym\").is_some_and(|address| {",
-          "function_id": "stdio_abi::stdio_symbols_are_interposed@3710",
+          "function_id": "stdio_abi::stdio_symbols_are_interposed@3700",
           "host_symbol": "dlsym",
-          "line": 3732,
+          "line": 3722,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3853",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3843",
           "expression": "let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {",
-          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3843",
+          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3833",
           "host_symbol": "dlsym",
-          "line": 3853,
+          "line": 3843,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
           "delegation_kind": "host_dlsym_helper",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3859",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3849",
           "expression": "let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };",
-          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3843",
+          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3833",
           "host_symbol": "dlsym",
-          "line": 3859,
+          "line": 3849,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
           "delegation_kind": "host_dlsym_helper",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3861",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3851",
           "expression": "resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };",
-          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3843",
+          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3833",
           "host_symbol": "dlsym",
-          "line": 3861,
+          "line": 3851,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
@@ -15174,10 +15174,10 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "7d553d834beaf0deded4a84cc3474f0496ec8b3897712668a5de3b4e52906e16",
+        "support_matrix_sha256": "5935c9e22204e22f8bfafac8bba44383bf1422e10c585c3b51e35bfaae1c6bd5",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9088,
+      "function_count": 9087,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -19304,7 +19304,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17636,
+      "resolved_call_edge_count": 17640,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 592,
@@ -20486,7 +20486,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
-      "sha256": "3ee545810938c77b776766da146a3adaa02cfb1feb79713a163a7e21c07dc143"
+      "sha256": "2b727347fd8ebc43713ca83b70c18435ed98c7deff9ec854011888d62234c0f2"
     },
     {
       "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
@@ -20522,7 +20522,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "9ad9e96e63c2cfd1a60a449cf5e31f7ab73a96a556e3fd8bfcb138de75d9907b"
+      "sha256": "46f4df388c7bd3fd31a4e16009e5d5a4a6f421edf894adea9ab9a5b599e9b313"
     }
   ],
   "summary": {

@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-01T14:21:07Z",
-  "source_commit": "d74c63a4e4e35aca256d19501ffffb75dee05eb3",
-  "source_generated_at_utc": "2026-11-01T14:16:11Z",
-  "newest_abi_commit": "d74c63a4e4e35aca256d19501ffffb75dee05eb3",
-  "newest_abi_commit_time": "2026-11-01T09:13:05-05:00",
+  "generated_at": "2026-11-01T15:30:04Z",
+  "source_commit": "cd397018485fc2776af3ee7625100cb85ee885c3",
+  "source_generated_at_utc": "2026-11-01T15:22:42Z",
+  "newest_abi_commit": "cd397018485fc2776af3ee7625100cb85ee885c3",
+  "newest_abi_commit_time": "2026-11-01T10:21:35-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 3034,
@@ -64,7 +64,7 @@
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
     "promotion_proof_symbol_count": 256,
-    "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
+    "promotion_triage_manifest_path": "/data/projects/frankenlibc/target/conformance/support_matrix_promotion_triage.v1.json",
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "44aeb5e783088701902783a550ae23274bbb8e3b07986d836248561889930031",
+        "artifact_sha256": "8eecc1bf9099f39a03aa026bd80e46eb33d5892aa118b823b509b2d72419dc6b",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 16,
-        "source_tree_sha256": "5ed399593a7fdcd299a12f384c9f27536e440acb2c0ead8337c5398a3fc09ce9"
+        "source_tree_sha256": "4d5863104240a9e44f466a70f49808561d59224418e86e25da631e870f99c224"
       }
     },
     "summary": {

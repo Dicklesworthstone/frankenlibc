@@ -1380,8 +1380,15 @@ static int gnu_precision_span_cell(unsigned registered, unsigned locale,
     else if (api == 2) rc = swprintf(output.text.wide, 64, wide_formats[kind][test], __VA_ARGS__); \
     else rc = call_vswprintf(output.text.wide, 64, wide_formats[kind][test], __VA_ARGS__); \
 } while (0)
-    if (test >= 5) PRECISION_SPAN_CALL(precision, input, &count.value);
-    else PRECISION_SPAN_CALL(input);
+    if (kind) {
+        const wchar_t *wide_input = input;
+        if (test >= 5) PRECISION_SPAN_CALL(precision, wide_input, &count.value);
+        else PRECISION_SPAN_CALL(wide_input);
+    } else {
+        const char *narrow_input = input;
+        if (test >= 5) PRECISION_SPAN_CALL(precision, narrow_input, &count.value);
+        else PRECISION_SPAN_CALL(narrow_input);
+    }
 #undef PRECISION_SPAN_CALL
     int error = errno;
     REG_CHECK(munmap(mapping, (size_t)page_size * 2) == 0);
