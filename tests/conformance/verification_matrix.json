@@ -161,10 +161,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 119,
-    "total_entries": 119,
+    "total_critique_beads": 120,
+    "total_entries": 120,
     "by_coverage_status": {
-      "complete": 42,
+      "complete": 43,
       "partial": 1,
       "missing": 76
     },
@@ -176,8 +176,8 @@
         "missing": 18
       },
       "P1": {
-        "total": 44,
-        "complete": 23,
+        "total": 45,
+        "complete": 24,
         "partial": 0,
         "missing": 21
       },
@@ -190,8 +190,8 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 119,
-        "complete": 43,
+        "required": 120,
+        "complete": 44,
         "partial": 0,
         "missing": 76
       },
@@ -234,8 +234,8 @@
         "missing": 19
       },
       "e2e": {
-        "total": 16,
-        "complete": 7,
+        "total": 17,
+        "complete": 8,
         "partial": 1,
         "missing": 8
       },
@@ -341,6 +341,116 @@
     }
   },
   "entries": [
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.43",
+      "title": "[RC-1020] Bind closure acceptance to stored executed nonzero results rather than PASS prose",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "CodexGapCloser",
+      "labels": ["critique", "verification"],
+      "obligations": {
+        "unit_tests": {"required": true, "scope": "Actual closure gate positive and planted negative controls"},
+        "e2e_scripts": {"required": false, "scope": ""},
+        "structured_logs": {"required": false, "scope": "Cargo JSONL build trace and explicit receipt phases retained"},
+        "perf_evidence": {"required": false, "scope": ""},
+        "conformance_fixtures": {"required": false, "scope": ""},
+        "golden_artifacts": {"required": false, "scope": ""}
+      },
+      "coverage": {
+        "unit_tests": {"status": "complete", "artifacts": "/data/tmp/frankenlibc-closure-43a57ca6c-20261101/record/receipt.json"},
+        "e2e_scripts": {"status": "not_required"},
+        "structured_logs": {"status": "not_required"},
+        "perf_evidence": {"status": "not_required"},
+        "conformance_fixtures": {"status": "not_required"},
+        "golden_artifacts": {"status": "not_required"}
+      },
+      "coverage_summary": {"overall": "complete", "required": 1, "complete": 1, "partial": 0, "missing": 0},
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.43",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": ["cargo test -Zchecksum-freshness --locked -p frankenlibc-harness --test closure_gate_test"],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "Genuine nonzero execution admitted; fabricated, zero, wrong source/config/artifact and failed results rejected",
+          "Backdated changed source is rebuilt with content fingerprints",
+          "Lower evidence classes require explicit Bead labels; unsupported higher claims remain unproven"
+        ],
+        "log_schema_refs": [],
+        "artifact_paths": [
+          "/data/tmp/frankenlibc-closure-43a57ca6c-20261101/record/receipt.json",
+          "/data/tmp/frankenlibc-closure-43a57ca6c-20261101/record/build.stdout",
+          "/data/tmp/frankenlibc-closure-43a57ca6c-20261101/record/execution.stdout"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "RCH worker hz3: separate build and execution exit0 on source43a57ca6c, 14 passed/0 failed, followed by fresh solo replay and scoped admission exit0. Original receipt SHA391c303223c2ba51a88fcb78b075f42225f0cff62487ac099a43859fd8c7fd25; source snapshots, executable and artifacts retained alongside it. Unit evidence for closure/build tooling only; no libc ABI, independent-review, performance or replacement-level credit. Run admission on hz3 with the retained Beads snapshot override; missing remote artifacts remain unproven on other runners. Full workspace fmt remains red in seven inherited files; changed-source fmt, full compiler check and strict Clippy pass.",
+        "closure_evidence": {
+          "behavior": "Closure gate consumes actual nonzero results bound to source, named build artifact and evidence class",
+          "acceptance_sha256": "049e3e191e060cc4d3eb312addef14282c86b1866c66e18095fb3bba86c90ff3",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "source": {
+            "commit": "43a57ca6c9408d38a6fe37bc80445bcc550df610",
+            "files": {
+              "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+              "scripts/check_support_reality_regeneration.sh": "5695d79488277b5f34dddafe3ea8d407c7b0de40fc5907b6429dc9f0016a8ac4",
+              "crates/frankenlibc-harness/tests/closure_gate_test.rs": "30567ecc02319ff4c00d742cd66c34a8e01b41590c648803d3d1da353d351774",
+              "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "support_matrix.json": "5935c9e22204e22f8bfafac8bba44383bf1422e10c585c3b51e35bfaae1c6bd5",
+              "tests/conformance/reality_report.v1.json": "c454b17eced9f5b9f5dc83f2c59b29bd6b0793bea1023d0ac67ac0921d8bda77",
+              "tests/conformance/support_reality_regeneration.v1.json": "c47aa555a1ebddd9cddf69ca21ddf6afc9763a5b9e5cac34c45849cc2eef8140",
+              "crates/frankenlibc-harness/src/report.rs": "c59eed3ce2cc7bc5dfdc5deb0142cfcb8ed8d17719ed2d4c32610f3fffef5bec",
+              "crates/frankenlibc-harness/src/bin/harness.rs": "b6bb668df0c2d2cce1e4f4eeee1b820646017ad651e88fb4ba2c1783caeef62f"
+            }
+          },
+          "behavior_paths": [
+            "scripts/check_closure_gate.sh",
+            "scripts/check_support_reality_regeneration.sh",
+            "tests/conformance/closure_evidence_schema.json",
+            ".cargo/config.toml"
+          ],
+          "test_paths": ["crates/frankenlibc-harness/tests/closure_gate_test.rs"],
+          "configuration": {"architecture": "x86_64", "mode": "strict", "profile": "test", "features": ["default"]},
+          "not_before": "2026-11-01T21:58:00Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-harness/f7fe24e3f9ab0396/out/closure_gate_test-f7fe24e3f9ab0396",
+              "--test-threads=1"
+            ],
+            "environment": {"FRANKENLIBC_MODE": "strict"},
+            "build_command": [
+              "cargo", "test", "-Zchecksum-freshness", "-j1", "--locked",
+              "-p", "frankenlibc-harness", "--test", "closure_gate_test",
+              "--no-run", "--message-format=json", "--config", "build.fingerprint=\"content\""
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-harness/f7fe24e3f9ab0396/out/closure_gate_test-f7fe24e3f9ab0396",
+              "/data/projects/frankenlibc/.rch-target/debug/harness"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "actual_gate_consumes_nonzero_results_and_rejects_receipt_corruption",
+              "actual_gate_rejects_wrong_live_source_and_build_configuration",
+              "actual_gate_rejects_zero_tests_compile_failure_and_wrong_implementation",
+              "actual_gate_distinguishes_compiled_from_executed_evidence",
+              "actual_gate_keeps_source_checks_and_historical_exemptions_explicit",
+              "support_report_uses_explicit_rch_source_over_stale_worker_git",
+              "cargo_receipt_binds_named_artifact_and_rebuilds_backdated_source"
+            ]
+          }
+        },
+        "result_receipts": [
+          "/data/tmp/frankenlibc-closure-43a57ca6c-20261101/record/receipt.json",
+          "/data/tmp/frankenlibc-closure-43a57ca6c-20261101/replay/receipt.json"
+        ]
+      }
+    },
     {
       "bead_id": "bd-10pq",
       "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
