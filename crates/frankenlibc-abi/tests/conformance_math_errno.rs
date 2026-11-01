@@ -29,6 +29,23 @@ use std::ffi::c_int;
 const EDOM: c_int = 33;
 const ERANGE: c_int = 34;
 
+type Unary64 = unsafe extern "C" fn(f64) -> f64;
+type Unary32 = unsafe extern "C" fn(f32) -> f32;
+
+// The deployed provider-bound C fixture independently checks both widths
+// against GNU, including NaNs, valid infinities and poles. The last field says
+// whether +infinity belongs to the mathematical domain; -infinity does not.
+const DOMAIN_FAMILIES: [(&str, Unary64, Unary32, f64, bool); 8] = [
+    ("acos", fa::acos, fa::acosf, 0.5, false),
+    ("asin", fa::asin, fa::asinf, 0.5, false),
+    ("acosh", fa::acosh, fa::acoshf, 2.0, true),
+    ("atanh", fa::atanh, fa::atanhf, 0.5, false),
+    ("log", fa::log, fa::logf, 2.0, true),
+    ("log2", fa::log2, fa::log2f, 2.0, true),
+    ("log10", fa::log10, fa::log10f, 2.0, true),
+    ("log1p", fa::log1p, fa::log1pf, 0.5, true),
+];
+
 fn name(e: c_int) -> &'static str {
     match e {
         0 => "0",
@@ -42,6 +59,113 @@ fn clr() {
 }
 fn rd() -> c_int {
     unsafe { *errno_abi::__errno_location() }
+}
+
+#[test]
+fn infinite_domain_errors_set_errno_in_both_widths() {
+    let mut checked = 0;
+    for (label, double, float, _, positive_infinity_valid) in DOMAIN_FAMILIES {
+        for x in [f64::NEG_INFINITY, f64::INFINITY] {
+            if x.is_sign_positive() && positive_infinity_valid {
+                continue;
+            }
+            for initial in [0, libc::E2BIG] {
+                // SAFETY: errno is thread-local, and these scalar math calls
+                // have no pointer or allocation preconditions.
+                unsafe { errno_abi::set_abi_errno(initial) };
+                let result = unsafe { double(x) };
+                assert_eq!(rd(), EDOM, "{label}({x}), initial errno={initial}");
+                assert!(result.is_nan(), "{label}({x}) must be NaN");
+
+                // SAFETY: same scalar calling contract at f32 width.
+                unsafe { errno_abi::set_abi_errno(initial) };
+                let result = unsafe { float(x as f32) };
+                assert_eq!(rd(), EDOM, "{label}f({x}), initial errno={initial}");
+                assert!(result.is_nan(), "{label}f({x}) must be NaN");
+                checked += 2;
+            }
+        }
+    }
+    assert_eq!(checked, 44);
+    println!("infinite domain errors: {checked} errno/result observations");
+}
+
+#[test]
+fn domain_controls_preserve_existing_errno() {
+    for (label, double, float, finite, positive_infinity_valid) in DOMAIN_FAMILIES {
+        for initial in [0, libc::E2BIG] {
+            for (x64, x32) in [
+                (f64::NAN, f32::NAN),
+                (-f64::NAN, -f32::NAN),
+                (
+                    f64::from_bits(0x7ff4_0000_0000_0123),
+                    f32::from_bits(0x7fa0_0123),
+                ),
+                (
+                    f64::from_bits(0xfff4_0000_0000_0123),
+                    f32::from_bits(0xffa0_0123),
+                ),
+            ] {
+                // SAFETY: scalar inputs, including NaNs, are valid ABI values.
+                unsafe { errno_abi::set_abi_errno(initial) };
+                assert!(unsafe { double(x64) }.is_nan(), "{label}({x64})");
+                assert_eq!(rd(), initial, "{label}(NaN) must preserve errno");
+                // SAFETY: same scalar calling contract at f32 width.
+                unsafe { errno_abi::set_abi_errno(initial) };
+                assert!(unsafe { float(x32) }.is_nan(), "{label}f({x32})");
+                assert_eq!(rd(), initial, "{label}f(NaN) must preserve errno");
+            }
+            // SAFETY: each finite control is in the named function's domain.
+            unsafe { errno_abi::set_abi_errno(initial) };
+            assert!(unsafe { double(finite) }.is_finite(), "{label}({finite})");
+            assert_eq!(rd(), initial, "{label}(valid finite) must preserve errno");
+            // SAFETY: the exact f32 narrowing stays in the same valid domain.
+            unsafe { errno_abi::set_abi_errno(initial) };
+            assert!(unsafe { float(finite as f32) }.is_finite());
+            assert_eq!(rd(), initial, "{label}f(valid finite) must preserve errno");
+            if positive_infinity_valid {
+                // SAFETY: +infinity is explicitly valid for this family.
+                unsafe { errno_abi::set_abi_errno(initial) };
+                assert_eq!(unsafe { double(f64::INFINITY) }, f64::INFINITY);
+                assert_eq!(rd(), initial, "{label}(+inf) must preserve errno");
+                // SAFETY: same scalar calling contract at f32 width.
+                unsafe { errno_abi::set_abi_errno(initial) };
+                assert_eq!(unsafe { float(f32::INFINITY) }, f32::INFINITY);
+                assert_eq!(rd(), initial, "{label}f(+inf) must preserve errno");
+            }
+        }
+    }
+}
+
+#[test]
+fn domain_aliases_share_infinity_errno() {
+    for (label, double32x, double64, float32) in [
+        (
+            "acos",
+            fa::acosf32x as Unary64,
+            fa::acosf64 as Unary64,
+            fa::acosf32 as Unary32,
+        ),
+        ("asin", fa::asinf32x, fa::asinf64, fa::asinf32),
+        ("acosh", fa::acoshf32x, fa::acoshf64, fa::acoshf32),
+        ("atanh", fa::atanhf32x, fa::atanhf64, fa::atanhf32),
+        ("log", fa::logf32x, fa::logf64, fa::logf32),
+        ("log2", fa::log2f32x, fa::log2f64, fa::log2f32),
+        ("log10", fa::log10f32x, fa::log10f64, fa::log10f32),
+        ("log1p", fa::log1pf32x, fa::log1pf64, fa::log1pf32),
+    ] {
+        for f in [double32x, double64] {
+            clr();
+            // SAFETY: these aliases accept a scalar f64 and must report the
+            // same negative-infinity domain error as the primary entrypoint.
+            assert!(unsafe { f(f64::NEG_INFINITY) }.is_nan(), "{label} alias");
+            assert_eq!(rd(), EDOM, "{label} double alias");
+        }
+        clr();
+        // SAFETY: the f32 alias has the same scalar contract.
+        assert!(unsafe { float32(f32::NEG_INFINITY) }.is_nan());
+        assert_eq!(rd(), EDOM, "{label} float alias");
+    }
 }
 
 #[test]

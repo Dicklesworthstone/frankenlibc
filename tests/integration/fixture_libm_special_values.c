@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char *names[] = {
     "acos", "acosh", "asin", "asinh", "atan", "atanh", "cbrt", "ceil", "cos", "cosh", "erf",
@@ -177,7 +178,108 @@ static void exp10_range(void) {
     }
 }
 
-int main(void) {
+/* A separate mode checks errno as well as the domain/pole result class and
+ * exception flags. Verify both providers before collecting observations: a
+ * passing host fallback must not qualify an interposed implementation. */
+static int same_provider(void *address, const char *expected) {
+    Dl_info info;
+    struct stat actual_stat, expected_stat;
+    if (!address || !dladdr(address, &info) || !info.dli_fname ||
+        stat(info.dli_fname, &actual_stat) || stat(expected, &expected_stat) ||
+        actual_stat.st_dev != expected_stat.st_dev ||
+        actual_stat.st_ino != expected_stat.st_ino) {
+        fprintf(stderr, "domain-errno: wrong or missing provider: %s\n", expected);
+        return 0;
+    }
+    return 1;
+}
+
+static int domain_errno(const char *math_provider, const char *errno_provider) {
+    static const char *functions[] = {
+        "acos", "asin", "acosh", "atanh", "log", "log2", "log10", "log1p"
+    };
+    static const uint64_t inputs64[] = {
+        0x7ff0000000000000ull, 0xfff0000000000000ull,
+        0x7ff8000000000123ull, 0xfff8000000000123ull,
+        0x7ff4000000000123ull, 0xfff4000000000123ull,
+        0x0000000000000000ull, 0x8000000000000000ull,
+        0x3ff0000000000000ull, 0xbff0000000000000ull,
+        0x4000000000000000ull, 0xc000000000000000ull,
+        0x3fe0000000000000ull, 0xbfe0000000000000ull
+    };
+    static const uint32_t inputs32[] = {
+        0x7f800000u, 0xff800000u, 0x7fc00123u, 0xffc00123u,
+        0x7fa00123u, 0xffa00123u, 0x00000000u, 0x80000000u,
+        0x3f800000u, 0xbf800000u, 0x40000000u, 0xc0000000u,
+        0x3f000000u, 0xbf000000u
+    };
+    static const int initial_errnos[] = {0, E2BIG};
+    if (!dlopen("libm.so.6", RTLD_NOW | RTLD_GLOBAL)) {
+        fprintf(stderr, "domain-errno: cannot load host libm\n");
+        return 90;
+    }
+    if (!same_provider(dlsym(RTLD_DEFAULT, "__errno_location"), errno_provider)) {
+        return 91;
+    }
+    for (unsigned n = 0; n < sizeof functions / sizeof *functions; ++n) {
+        char float_name[32];
+        snprintf(float_name, sizeof float_name, "%sf", functions[n]);
+        double (*df)(double) = (double (*)(double))dlsym(RTLD_DEFAULT, functions[n]);
+        float (*ff)(float) = (float (*)(float))dlsym(RTLD_DEFAULT, float_name);
+        if (!same_provider((void *)df, math_provider) ||
+            !same_provider((void *)ff, math_provider)) {
+            return 91;
+        }
+        for (unsigned e = 0; e < sizeof initial_errnos / sizeof *initial_errnos; ++e) {
+            for (unsigned i = 0; i < sizeof inputs64 / sizeof *inputs64; ++i) {
+                double x;
+                uint64_t bits;
+                memcpy(&x, &inputs64[i], sizeof x);
+                feclearexcept(FE_ALL_EXCEPT);
+                errno = initial_errnos[e];
+                double result = df(x);
+                int observed_errno = errno;
+                int flags = fetestexcept(FE_INVALID | FE_DIVBYZERO);
+                memcpy(&bits, &result, sizeof bits);
+                uint64_t magnitude = bits & 0x7fffffffffffffffull;
+                int kind = magnitude > 0x7ff0000000000000ull ? 3 :
+                           magnitude == 0x7ff0000000000000ull ? 2 :
+                           magnitude == 0 ? 1 : 0;
+                printf("errno64 %-8s %016llx initial=%d result=%d errno=%d invalid=%d pole=%d\n",
+                       functions[n], (unsigned long long)inputs64[i], initial_errnos[e],
+                       kind, observed_errno, !!(flags & FE_INVALID), !!(flags & FE_DIVBYZERO));
+            }
+            for (unsigned i = 0; i < sizeof inputs32 / sizeof *inputs32; ++i) {
+                float x;
+                uint32_t bits;
+                memcpy(&x, &inputs32[i], sizeof x);
+                feclearexcept(FE_ALL_EXCEPT);
+                errno = initial_errnos[e];
+                float result = ff(x);
+                int observed_errno = errno;
+                int flags = fetestexcept(FE_INVALID | FE_DIVBYZERO);
+                memcpy(&bits, &result, sizeof bits);
+                uint32_t magnitude = bits & 0x7fffffffu;
+                int kind = magnitude > 0x7f800000u ? 3 :
+                           magnitude == 0x7f800000u ? 2 :
+                           magnitude == 0 ? 1 : 0;
+                printf("errno32 %-8s %08x initial=%d result=%d errno=%d invalid=%d pole=%d\n",
+                       float_name, inputs32[i], initial_errnos[e], kind, observed_errno,
+                       !!(flags & FE_INVALID), !!(flags & FE_DIVBYZERO));
+            }
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--domain-errno") == 0) {
+        return domain_errno(argv[2], argv[3]);
+    }
+    if (argc != 1) {
+        fprintf(stderr, "usage: %s [--domain-errno MATH_PROVIDER ERRNO_PROVIDER]\n", argv[0]);
+        return 2;
+    }
     doubles();
     floats();
     min_max();

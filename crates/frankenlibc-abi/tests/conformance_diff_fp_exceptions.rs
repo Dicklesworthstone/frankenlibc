@@ -151,6 +151,9 @@ fn fp_exception_and_value_parity_vs_glibc() {
         log(f64::NEG_INFINITY)
     );
     chk!("log2(0)", fl::log2(0.0), log2(0.0));
+    chk!("log2(-0)", fl::log2(-0.0), log2(-0.0));
+    chk!("log10(0)", fl::log10(0.0), log10(0.0));
+    chk!("log10(-0)", fl::log10(-0.0), log10(-0.0));
     chk!("log10(-2)", fl::log10(-2.0), log10(-2.0));
     chk!("exp(1000)", fl::exp(1000.0), exp(1000.0));
     chk!("pow(0,-1)", fl::pow(0.0, -1.0), pow(0.0, -1.0));
@@ -192,6 +195,8 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chkf!("logf(-1)", fl::logf(-1.0), logf(-1.0));
     chkf!("log2f(0)", fl::log2f(0.0), log2f(0.0));
     chkf!("log2f(-1)", fl::log2f(-1.0), log2f(-1.0));
+    chkf!("log10f(0)", fl::log10f(0.0), log10f(0.0));
+    chkf!("log10f(-0)", fl::log10f(-0.0), log10f(-0.0));
     chkf!("log10f(-2)", fl::log10f(-2.0), log10f(-2.0));
     chkf!("sqrtf(-1)", fl::sqrtf(-1.0), sqrtf(-1.0));
     chkf!("acosf(2)", fl::acosf(2.0), acosf(2.0));
