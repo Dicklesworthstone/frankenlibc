@@ -8011,6 +8011,7 @@ impl ExtensionBuffer {
         ap: *mut c_void,
         wide: bool,
         entry_errno: c_int,
+        wide_capacity: Option<usize>,
     ) -> Option<Self> {
         let mut buffer = Self {
             state: Box::new(ExtensionBufferState {
@@ -8032,6 +8033,14 @@ impl ExtensionBuffer {
             unsafe { open_memstream(&mut buffer.state.data, &mut buffer.state.len) }
         };
         if buffer.stream.is_null() {
+            return None;
+        }
+        if let Some(capacity) = wide_capacity
+            && !crate::wchar_abi::limit_open_wmemstream(buffer.stream, capacity)
+        {
+            // SAFETY: fail closed if the newly created wide stream lost its
+            // registry entry; the buffer owner still closes and frees it.
+            unsafe { set_abi_errno(errno::EINVAL) };
             return None;
         }
         // Memstream construction is an implementation detail, not the entry
@@ -8091,7 +8100,7 @@ unsafe fn registered_snprintf(
         return -1;
     }
     let Some(buffer) =
-        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno) })
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
     else {
         return -1;
     };
@@ -8147,7 +8156,7 @@ unsafe fn registered_asprintf(
         return -1;
     }
     let Some(mut buffer) =
-        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno) })
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
     else {
         return -1;
     };
@@ -8172,7 +8181,7 @@ unsafe fn registered_dprintf(
         return -1;
     }
     let Some(buffer) =
-        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno) })
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
     else {
         return -1;
     };
@@ -8201,31 +8210,33 @@ pub(crate) unsafe fn registered_swprintf(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let Some(buffer) = (unsafe { ExtensionBuffer::format(bytes, ap, true, entry_errno) }) else {
-        return -1;
-    };
     let capacity = if runtime_policy::strict_passthrough_active() {
         size
     } else {
         known_remaining(dst as usize)
             .map_or(size, |n| size.min(n / std::mem::size_of::<libc::wchar_t>()))
     };
-    if capacity != 0 {
-        let len = buffer.state.len.min(capacity - 1);
-        // SAFETY: the wide memstream publishes len initialized wchar_t values;
-        // the destination copy and terminator fit the admitted capacity.
-        unsafe {
-            if len != 0 {
-                std::ptr::copy_nonoverlapping(buffer.state.data.cast::<libc::wchar_t>(), dst, len);
-            }
-            *dst.add(len) = 0;
+    if capacity == 0 {
+        return -1;
+    }
+    let Some(buffer) =
+        (unsafe { ExtensionBuffer::format(bytes, ap, true, entry_errno, Some(capacity)) })
+    else {
+        return -1;
+    };
+    let len = buffer.state.len.min(capacity - 1);
+    // SAFETY: the wide memstream publishes len initialized wchar_t values;
+    // the destination copy and terminator fit the admitted nonzero capacity.
+    unsafe {
+        if len != 0 {
+            std::ptr::copy_nonoverlapping(buffer.state.data.cast::<libc::wchar_t>(), dst, len);
         }
+        *dst.add(len) = 0;
     }
     if buffer.state.len >= capacity {
-        if buffer.result >= 0 && capacity != 0 {
-            // Preserve the ordinary GNU wide-buffer truncation contract.
-            unsafe { set_abi_errno(errno::E2BIG) };
-        }
+        // An actual failed write already set E2BIG. Filling the buffer exactly
+        // still runs later %n directives and leaves errno unchanged, even
+        // though the final terminator makes the public result negative.
         -1
     } else {
         buffer.result

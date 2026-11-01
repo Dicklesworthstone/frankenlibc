@@ -290,7 +290,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-register gnu-register-wide; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-register gnu-register-wide gnu-register-wide-bounds; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -304,10 +304,34 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: incomplete unknown-conversion oracle (${rows}/3000 rows)" >&2
     exit 1
   fi
-  if [[ "${scenario}" == gnu-register* ]] &&
-     [[ "$(grep -Ec '^reg:complete:(narrow|wide)$' "${oracle_stdout}")" -ne 1 ]]; then
-    echo "FAIL: GNU registration oracle did not complete ${scenario}" >&2
+  if [[ "${scenario}" == gnu-register* ]]; then
+    completion=narrow
+    if [[ "${scenario}" == gnu-register-wide ]]; then
+      completion=wide
+    elif [[ "${scenario}" == gnu-register-wide-bounds ]]; then
+      completion=wide-bounds
+    fi
+    if [[ "$(grep -xc "reg:complete:${completion}" "${oracle_stdout}")" -ne 1 ]]; then
+      echo "FAIL: GNU registration oracle did not complete ${scenario}" >&2
+      exit 1
+    fi
+  fi
+  if [[ "${scenario}" == gnu-register-wide-bounds ]] &&
+     [[ "$(grep -c '^reg:wide-bounds:' "${oracle_stdout}")" -ne 80 ]]; then
+    echo "FAIL: incomplete wide registration boundary oracle" >&2
     exit 1
+  fi
+  if [[ "${scenario}" == gnu-register-wide-bounds ]]; then
+    negative_status=0
+    env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="${LIB}" \
+      "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" \
+      >"${OUT_DIR}/${scenario}.wrong-provider.stdout.log" \
+      2>"${OUT_DIR}/${scenario}.wrong-provider.stderr.log" || negative_status=$?
+    if [[ "${negative_status}" -ne 91 ]] ||
+       ! grep -q 'FAIL: wrong provider' "${OUT_DIR}/${scenario}.wrong-provider.stderr.log"; then
+      echo "FAIL: wide registration boundary probe accepted the wrong provider" >&2
+      exit 1
+    fi
   fi
   if [[ "${scenario}" == *rounding ]] &&
      [[ "$(grep -Ec '^round-thread:[0-3]:0$' "${oracle_stdout}")" -ne 4 ]]; then
@@ -356,7 +380,7 @@ done
 
 if [[ "${GNU_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":10,"gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
+{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":10,"wide_registration_boundary_cases_per_mode":80,"wide_registration_boundary_provider_negative":"pass","gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
 JSON
   echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection and 10 original printf cases per mode; full stdio gate not run)"
   exit 0

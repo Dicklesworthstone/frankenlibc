@@ -1176,6 +1176,58 @@ static int gnu_registration_combined_fallback(void) {
     return 0;
 }
 
+static volatile unsigned reg_boundary_calls;
+static volatile unsigned reg_boundary_writer;
+
+static int reg_boundary_print(FILE *stream, const struct printf_info *info,
+                              const void *const *args) {
+    ++reg_boundary_calls;
+    if (reg_boundary_writer == 1)
+        return fputws(L"0123456789abcdefghij", stream) == EOF ? -1 : 20;
+    if (reg_boundary_writer == 2)
+        return fwprintf(stream, L"0123456789abcdefghij");
+    if (reg_boundary_writer == 3)
+        return fputwc(L'\u03a9', stream) == WEOF ? -1 : 1;
+    return reg_letter(stream, info, args);
+}
+
+static int gnu_registration_wide_bounds(void) {
+    static const size_t capacities[] = { 0, 1, 2, 3, 4, 5, 6, 16, 64 };
+    alarm(20);
+    reg_setup();
+    REG_CHECK(check_gnu_provider("fputwc") == 0 && check_gnu_provider("fputws") == 0);
+    REG_CHECK(register_printf_specifier('K', reg_boundary_print, reg_noargs) == 0);
+    const wchar_t *fmt = L"ab%Kcd%n";
+    for (unsigned writer = 0; writer < 4; ++writer) {
+        reg_boundary_writer = writer;
+        int expected = writer == 1 || writer == 2 ? 24 : 5;
+        for (int variant = 0; variant < 2; ++variant) {
+            for (size_t index = 0; index <= sizeof capacities / sizeof capacities[0]; ++index) {
+                int null_buffer = index == sizeof capacities / sizeof capacities[0];
+                size_t capacity = null_buffer ? 0 : capacities[index];
+                wchar_t buffer[64];
+                for (size_t i = 0; i < 64; ++i) buffer[i] = 0x5a5a;
+                int count = -777;
+                reg_boundary_calls = 0;
+                errno = EDOM;
+                int rc = variant
+                    ? call_vswprintf(null_buffer ? NULL : buffer, capacity, fmt, &count)
+                    : swprintf(null_buffer ? NULL : buffer, capacity, fmt, &count);
+                int error = errno;
+                if (capacity > (size_t)expected)
+                    REG_CHECK(rc == expected && count == expected && reg_boundary_calls == 1);
+                printf("reg:wide-bounds:%u:%i:%zu:%i:%i:%i:%i:%u:",
+                       writer, variant, capacity, null_buffer, rc, error, count, reg_boundary_calls);
+                for (size_t i = 0; i < 64; ++i) printf("%08x", (unsigned)buffer[i]);
+                putchar('\n');
+            }
+        }
+    }
+    puts("reg:complete:wide-bounds");
+    alarm(0);
+    return 0;
+}
+
 static int gnu_registration_wide(void) {
     alarm(20);
     reg_setup();
@@ -1218,6 +1270,7 @@ static int gnu_registration_wide(void) {
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-wide-bounds") == 0) return gnu_registration_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-combined-fallback") == 0) return gnu_registration_combined_fallback();
     if (argc == 2 && strcmp(argv[1], "--gnu-types") == 0) return gnu_types();
     if (argc == 2 && strcmp(argv[1], "--gnu-size") == 0) return gnu_sizes();

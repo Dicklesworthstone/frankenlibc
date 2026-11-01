@@ -76,7 +76,10 @@ unsafe fn bounded_cstr_bytes<'a>(ptr: *const u8) -> Option<&'a [u8]> {
 struct WideMemStreamSync {
     buf_loc: *mut *mut u32,
     size_loc: *mut usize,
+    remaining_output: Option<usize>,
 }
+
+static WIDE_MEM_STREAMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 // SAFETY: These raw pointers are only dereferenced while holding the registry
 // mutex, and POSIX requires the caller-provided buf/size locations to remain
@@ -87,6 +90,41 @@ fn wide_memstream_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, Wid
     static REGISTRY: OnceLock<Mutex<Option<ArtifactHashMap<usize, WideMemStreamSync>>>> =
         OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(Some(artifact_hash_map())))
+}
+
+/// A registered swprintf uses the same wide stream as callbacks, with its
+/// caller's capacity enforced before output can reach a later directive.
+pub(crate) fn limit_open_wmemstream(stream: *mut c_void, capacity: usize) -> bool {
+    let id = crate::stdio_abi::stream_id_from_handle(stream);
+    let mut guard = wide_memstream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let Some(info) = guard.as_mut().and_then(|map| map.get_mut(&id)) else {
+        return false;
+    };
+    info.remaining_output = Some(capacity);
+    true
+}
+
+/// None means a normal FILE; Some((n, bounded)) describes a wide memory stream
+/// and grants at most the requested wide characters.
+/// A zero-sized reservation queries the bound without consuming it. Never
+/// hold this registry lock while executing an I/O operation or user callback.
+pub(crate) fn reserve_wide_output(stream: *mut c_void, requested: usize) -> Option<(usize, bool)> {
+    if WIDE_MEM_STREAMS.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        return None;
+    }
+    let id = crate::stdio_abi::stream_id_from_handle(stream);
+    let mut guard = wide_memstream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let info = guard.as_mut()?.get_mut(&id)?;
+    let Some(remaining) = info.remaining_output.as_mut() else {
+        return Some((requested, false));
+    };
+    let granted = requested.min(*remaining);
+    *remaining -= granted;
+    Some((granted, true))
 }
 
 fn decode_wmemstream_bytes(data: &[u8]) -> Vec<u32> {
@@ -143,8 +181,10 @@ pub(crate) fn unregister_open_wmemstream(id: usize) {
     let mut guard = wide_memstream_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    if let Some(ref mut map) = *guard {
-        map.remove(&id);
+    if let Some(ref mut map) = *guard
+        && map.remove(&id).is_some()
+    {
+        WIDE_MEM_STREAMS.fetch_sub(1, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -6142,10 +6182,24 @@ pub(crate) unsafe fn fputwc_for_caller(
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
+    let memory_output = reserve_wide_output(stream, 1);
+    if memory_output == Some((0, true)) {
+        // SAFETY: exhaustion is local to this bounded formatting stream.
+        unsafe { set_abi_errno(libc::E2BIG) };
+        return WEOF_VALUE;
+    }
 
     super::stdio_abi::with_wide_io_active(|| {
         let mut bytes = [0u8; 6];
-        let Some(encoded_len) = codec::wctomb(wc, &mut bytes) else {
+        // A wide memory stream stores wchar_t values, not external text in
+        // the active locale. Its private UTF-8 backing must preserve Unicode
+        // even when the caller's external-file codec is the C locale's ASCII.
+        let encoded = if memory_output.is_some() {
+            wchar_core::wctomb(wc, &mut bytes)
+        } else {
+            codec::wctomb(wc, &mut bytes)
+        };
+        let Some(encoded_len) = encoded else {
             // A wide char the C.UTF-8 encoder cannot represent (a surrogate, or a
             // value above U+7FFFFFFF). glibc's wide-stdio gconv substitutes the
             // single byte '?' and reports SUCCESS (returns `wc`, leaves errno) —
@@ -6359,7 +6413,9 @@ unsafe fn fputws_impl(
         // Gate the bulk path on wlen >= 16: below the measured crossover the per-char loop is
         // faster (the stack-buffer + wcstombs setup exceeds a handful of fast fputc calls; wn=8
         // was 7% slower). At wlen>=16 bulk wins decisively (wn=64: 9.4x). Strict improvement.
-        if (16..=max_wchars).contains(&wlen) {
+        if (16..=max_wchars).contains(&wlen)
+            && !reserve_wide_output(stream, 0).is_some_and(|(_, bounded)| bounded)
+        {
             let mut buf = [0u8; CAP];
             // SAFETY: `ws` is valid for `wlen` wide chars (NUL found at `wlen`).
             let src = unsafe { std::slice::from_raw_parts(ws as *const u32, wlen) };
@@ -8926,8 +8982,10 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         WideMemStreamSync {
             buf_loc: bufp,
             size_loc: sizep,
+            remaining_output: None,
         },
     );
+    WIDE_MEM_STREAMS.fetch_add(1, std::sync::atomic::Ordering::Release);
 
     handle
 }
