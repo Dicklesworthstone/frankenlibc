@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "bead": "bd-2bu",
-  "generated_at_utc": "2026-10-19T21:41:00Z",
-  "source_commit": "67d21fb34b2e40e376c47906ec1be9c39530d8b5",
+  "generated_at_utc": "2026-11-01T02:31:00Z",
+  "source_commit": "c65b99563cfc04d56234782a5362dff59f8d5851",
   "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
   "levels": [
     {
@@ -67,7 +67,7 @@
     {
       "level": "L1",
       "name": "Hardened Interpose",
-      "description": "LD_PRELOAD with hardened mode active. Implemented plus RawSyscall is the native classified surface; WrapsHostLibc is the explicit host-backed interpose subset for startup, loader, threading, stdio, math, and related compatibility wrappers. Stubs and opaque GlibcCallThrough rows are eliminated, but L1 remains host-glibc-dependent and is not a standalone replacement claim.",
+      "description": "LD_PRELOAD with hardened mode active. Implemented plus RawSyscall is the native classified surface; WrapsHostLibc is the explicit host-backed interpose subset for startup, loader, threading, stdio, math, and related compatibility wrappers. L1 requires eliminating deterministic-failure stubs and opaque GlibcCallThrough rows; it remains host-glibc-dependent and is not a standalone replacement claim.",
       "deployment": "FRANKENLIBC_MODE=hardened LD_PRELOAD=libfrankenlibc_abi.so",
       "host_glibc_required": true,
       "gate_criteria": {
@@ -299,12 +299,12 @@
   "current_level": "L0",
   "current_assessment": {
     "total_symbols": 4119,
-    "implemented": 2419,
-    "raw_syscall": 410,
-    "native": 2829,
-    "wraps_host_libc": 1272,
+    "implemented": 2415,
+    "raw_syscall": 408,
+    "native": 2823,
+    "wraps_host_libc": 1278,
     "glibc_callthrough": 0,
-    "callthrough": 1272,
+    "callthrough": 1278,
     "stub": 18,
     "implemented_pct": 59,
     "raw_syscall_pct": 10,
@@ -327,7 +327,7 @@
       "malloc_abi": 11,
       "math_abi": 510,
       "process_abi": 5,
-      "pthread_abi": 28,
+      "pthread_abi": 32,
       "pwd_abi": 8,
       "resolv_abi": 7,
       "rpc_abi": 26,
@@ -339,7 +339,7 @@
       "stdlib_abi": 60,
       "string_abi": 36,
       "time_abi": 6,
-      "unistd_abi": 69,
+      "unistd_abi": 71,
       "wchar_abi": 54
     },
     "wraps_host_libc_breakdown": {
@@ -356,7 +356,7 @@
       "malloc_abi": 11,
       "math_abi": 510,
       "process_abi": 5,
-      "pthread_abi": 28,
+      "pthread_abi": 32,
       "pwd_abi": 8,
       "resolv_abi": 7,
       "rpc_abi": 26,
@@ -368,7 +368,7 @@
       "stdlib_abi": 60,
       "string_abi": 36,
       "time_abi": 6,
-      "unistd_abi": 69,
+      "unistd_abi": 71,
       "wchar_abi": 54
     },
     "glibc_callthrough_breakdown": {},

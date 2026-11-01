@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-10-14T02:18:00Z",
+  "generated_at_utc": "2026-11-01T02:31:00Z",
   "purpose": "Overlay semantic contract classes on top of support_matrix.json status labels. The support taxonomy answers whether an exported symbol has a native/raw-syscall implementation class; this overlay records representative cases where that status is not equivalent to full POSIX/GNU/glibc semantic parity.",
   "support_matrix_snapshot": {
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2419,
-      "RawSyscall": 410,
-      "WrapsHostLibc": 1272,
+      "Implemented": 2415,
+      "RawSyscall": 408,
+      "WrapsHostLibc": 1278,
       "GlibcCallThrough": 0,
       "Stub": 18
     }
@@ -47,7 +47,7 @@
       "semantic_class": "limited_bootstrap",
       "source_path": "crates/frankenlibc-core/src/elf/mod.rs",
       "source_line": 129,
-      "evidence": "RelocationSupport keeps a Stub variant described as documented deterministic behavior even while exported-symbol status counts report Stub=0.",
+      "evidence": "RelocationSupport keeps a Stub variant for documented deterministic behavior. Per-relocation coverage is separate from the exported-symbol status counts.",
       "required_followup": "Add per-relocation support coverage and gate any README replacement claims on relocation class coverage, not only exported-symbol taxonomy."
     },
     {
@@ -61,12 +61,12 @@
         "__pthread_cleanup_routine",
         "__pthread_unwind_next"
       ],
-      "support_matrix_status": "Implemented",
-      "semantic_class": "compat_noop",
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
+      "semantic_class": "proof_gap",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 6316,
-      "evidence": "Cancellation register/unregister helpers are documented no-op stubs and __pthread_unwind_next aborts.",
-      "required_followup": "Split implemented symbol presence from cancellation semantics; add cancellation cleanup/unwind fixtures before any L1 replacement promotion."
+      "source_line": 9621,
+      "evidence": "Registration helpers maintain native cleanup chains on native threading backends and delegate to GNU private helpers on the hosted backend. __pthread_cleanup_routine executes its enabled callback; __pthread_unwind_next resumes the native or hosted unwind. Existing deployed C/C++ regressions exercise deferred cleanup and pending-before-entry cancellation. These paths are no longer no-ops, but already-blocked native interruption and full asynchronous cancellation remain unproved.",
+      "required_followup": "Keep the five conditional host wrappers distinct from the native cleanup callback. Close the remaining native interruption and asynchronous cancellation gaps with deployed provider-checked fixtures before any broader semantic or replacement claim (bd-reality-202609-lx578q.7 and RC.24)."
     },
     {
       "id": "sem-libcrypt-des",
@@ -156,13 +156,13 @@
   "audited_summary": {
     "entries": 9,
     "by_semantic_class": {
-      "compat_noop": 3,
+      "compat_noop": 2,
       "deterministic_fallback": 1,
       "limited_bootstrap": 4,
       "unsupported_platform_contract": 1,
-      "proof_gap": 0,
+      "proof_gap": 1,
       "full_semantics": 0
     },
-    "blocked_claim": "The current support taxonomy can honestly say there are zero rows with status Stub. It cannot honestly say there are zero no-op, fallback, bootstrap, unsupported, or under-proven semantic surfaces."
+    "blocked_claim": "The current support taxonomy contains 18 explicit Stub rows. The representative semantic inventory also retains no-op, fallback, bootstrap, unsupported, and under-proven surfaces; it is not exhaustive and cannot establish full replacement parity."
   }
 }

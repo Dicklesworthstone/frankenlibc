@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-10-19T21:41:00Z",
-  "source_commit": "67d21fb34b2e40e376c47906ec1be9c39530d8b5",
+  "generated_at_utc": "2026-11-01T02:31:00Z",
+  "source_commit": "c65b99563cfc04d56234782a5362dff59f8d5851",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
@@ -18244,15 +18244,17 @@
     },
     {
       "symbol": "__pthread_register_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Registers a native cleanup buffer on native threading backends; delegates to the GNU private cancellation helper when the calling thread uses the host backend"
     },
     {
       "symbol": "__pthread_register_cancel_defer",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Registers a deferred native cleanup buffer on native threading backends; delegates to the GNU private cancellation helper when the calling thread uses the host backend"
     },
     {
       "symbol": "__pthread_rwlock_destroy",
@@ -18307,15 +18309,17 @@
     },
     {
       "symbol": "__pthread_unregister_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Unregisters a native cleanup buffer on native threading backends; delegates to the GNU private cancellation helper when the calling thread uses the host backend"
     },
     {
       "symbol": "__pthread_unregister_cancel_restore",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Unregisters a native cleanup buffer and restores its cancellation type on native threading backends; delegates to the GNU private cancellation helper when the calling thread uses the host backend"
     },
     {
       "symbol": "__pthread_unwind_next",
@@ -33218,22 +33222,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2419,
+    "implemented": 2415,
     "raw_syscall": 408,
-    "wraps_host_libc": 1274,
+    "wraps_host_libc": 1278,
     "glibc_call_through": 0,
     "stub": 18
   },
-  "implemented": 2419,
+  "implemented": 2415,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 18,
   "counts": {
-    "implemented": 2419,
+    "implemented": 2415,
     "raw_syscall": 408,
     "glibc_call_through": 0,
     "stub": 18,
-    "wraps_host_libc": 1274
+    "wraps_host_libc": 1278
   },
-  "wraps_host_libc": 1274
+  "wraps_host_libc": 1278
 }

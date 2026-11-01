@@ -19,7 +19,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 15
+DETECTOR_VERSION = 16
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -45,12 +45,17 @@ THREAD_RAW_SYMBOLS = {
     "equal": "pthread_equal",
     "exit": "pthread_exit",
     "join": "pthread_join",
+    "register_cancel": "__pthread_register_cancel",
+    "register_cancel_defer": "__pthread_register_cancel_defer",
     "self": "pthread_self",
     "setcancelstate": "pthread_setcancelstate",
     "setcanceltype": "pthread_setcanceltype",
     "testcancel": "pthread_testcancel",
     "timedjoin_np": "pthread_timedjoin_np",
     "tryjoin_np": "pthread_tryjoin_np",
+    "unregister_cancel": "__pthread_unregister_cancel",
+    "unregister_cancel_restore": "__pthread_unregister_cancel_restore",
+    "unwind_next": "__pthread_unwind_next",
 }
 
 FUNCTION_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\b")
@@ -116,6 +121,7 @@ class CfgProfile:
     flags: frozenset[str]
     values: tuple[tuple[str, str], ...]
     target_features: frozenset[str]
+    target_atomics: frozenset[str]
 
     @property
     def value_map(self) -> dict[str, str]:
@@ -127,6 +133,7 @@ class CfgProfile:
             "features": sorted(self.features),
             "flags": sorted(self.flags),
             "target_features": sorted(self.target_features),
+            "target_atomics": sorted(self.target_atomics),
             "values": dict(self.values),
         }
 
@@ -153,6 +160,9 @@ CFG_PROFILES = (
         features=frozenset(),
         flags=frozenset({"unix"}),
         target_features=frozenset({"fxsr", "sse", "sse2", "x87"}),
+        # rustc nightly-2026-08-31 --print cfg --target x86_64-unknown-linux-gnu.
+        # This predicate is multi-valued, like target_feature, not a scalar.
+        target_atomics=frozenset({"8", "16", "32", "64", "ptr"}),
         values=(
             ("target_arch", "x86_64"),
             ("target_endian", "little"),
@@ -168,6 +178,7 @@ CFG_PROFILES = (
         features=frozenset({"standalone"}),
         flags=frozenset({"unix"}),
         target_features=frozenset({"fxsr", "sse", "sse2", "x87"}),
+        target_atomics=frozenset({"8", "16", "32", "64", "ptr"}),
         values=(
             ("target_arch", "x86_64"),
             ("target_endian", "little"),
@@ -273,6 +284,8 @@ def evaluate_cfg(expr: CfgExpr, profile: CfgProfile) -> bool | None:
             return value_map[expr.name] == expr.value
         if expr.name == "target_feature":
             return expr.value in profile.target_features
+        if expr.name == "target_has_atomic":
+            return expr.value in profile.target_atomics
         # All other unmodelled key/value predicates are unknown and must
         # survive the source filter with a blocking diagnostic.
         return None
@@ -2569,6 +2582,14 @@ fn baseline_target_feature_is_retained() {}
 
 #[cfg(target_feature = "avx2")]
 fn unavailable_target_feature_is_removed() {}
+#[cfg(target_has_atomic = "64")]
+fn atomic_u64_is_retained() {}
+#[cfg(target_has_atomic = "ptr")]
+fn atomic_pointer_is_retained() {}
+#[cfg(target_has_atomic = "128")]
+fn unavailable_atomic_u128_is_removed() {}
+#[cfg(not(all(target_pointer_width = "64", target_endian = "little", target_has_atomic = "64")))]
+fn unsupported_semaphore_layout_is_removed() {}
 
 #[cfg(foo(bar))]
 fn unknown_predicate_is_retained() {}
@@ -2639,6 +2660,22 @@ fn malformed_predicate_is_retained() {}
         "unavailable target feature evaluated true",
     )
     require(
+        "fn atomic_u64_is_retained" in standalone,
+        "baseline u64 atomic support evaluated false",
+    )
+    require(
+        "fn atomic_pointer_is_retained" in standalone,
+        "baseline pointer atomic support evaluated false",
+    )
+    require(
+        "fn unavailable_atomic_u128_is_removed" not in standalone,
+        "unavailable u128 atomic support was retained",
+    )
+    require(
+        "fn unsupported_semaphore_layout_is_removed" not in standalone,
+        "known supported semaphore layout was left cfg-ambiguous",
+    )
+    require(
         "fn unknown_predicate_is_retained" in standalone
         and any(
             diagnostic.reason == "unsupported_cfg_predicate"
@@ -2675,6 +2712,66 @@ fn malformed_predicate_is_retained() {}
     require(
         len(interpose_diagnostics) == len(standalone_diagnostics) == 4,
         "cfg diagnostics changed unexpectedly across profiles",
+    )
+    private_pthread_source = r'''
+#[unsafe(no_mangle)]
+pub extern "C" fn __pthread_register_cancel() {
+    resolved_thread_register_cancel_raw();
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn __pthread_register_cancel_defer() {
+    resolved_thread_register_cancel_defer_raw();
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn __pthread_unregister_cancel() {
+    resolved_thread_unregister_cancel_raw();
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn __pthread_unregister_cancel_restore() {
+    resolved_thread_unregister_cancel_restore_raw();
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn __pthread_unwind_next() {
+    resolved_thread_unwind_next_raw();
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn unrelated_private_pthread_caller() {
+    resolved_thread_register_cancel_raw();
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn private_pthread_lexical_noise() {
+    // resolved_thread_unregister_cancel_raw();
+    let _text = "resolved_thread_register_cancel_raw()";
+}
+'''
+    private_pthread_graph = analyze_host_dependencies(
+        parse_functions(fake_path, private_pthread_source),
+        root,
+        same_symbol_only=True,
+        include_libc_calls=False,
+    )
+    private_pthread_rows = {
+        row["symbol"]: row for row in private_pthread_graph["symbol_rows"]
+    }
+    for symbol in (
+        "__pthread_register_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_unregister_cancel",
+        "__pthread_unregister_cancel_restore",
+        "__pthread_unwind_next",
+    ):
+        require(
+            symbol in private_pthread_rows
+            and private_pthread_rows[symbol]["host_symbols"] == [symbol],
+            f"private pthread accessor lost its exact host symbol: {symbol}",
+        )
+    require(
+        "unrelated_private_pthread_caller" not in private_pthread_rows,
+        "an unrelated export was classified as same-symbol delegation",
+    )
+    require(
+        "private_pthread_lexical_noise" not in private_pthread_rows,
+        "comments or strings created private pthread host evidence",
     )
     graph_source = r'''
 #[unsafe(no_mangle)]

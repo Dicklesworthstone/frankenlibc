@@ -8,6 +8,30 @@
 
 ---
 
+## Execution update — 2026-11-01
+
+The October 30 assessment below remains the audit baseline. Subsequent work
+compiled and exercised the pending-cancellation syscall, native-join and eventfd
+repairs, then closed the caller-storage `fmemopen` repair (`bd-reality-202609-lx578q.7.1`
+through `.7.5`, runtime source through `c65b99563`). The final stdio acceptance
+executed 302 ABI tests, 46 core stdio tests, 144 GNU references and 288 native
+C fixture cases. Workspace check and strict Clippy passed; eight inherited
+formatting failures remain. Timing qualification remains open because both
+baseline and candidate rejected the available noisy worker conditions.
+
+RC.37 is in progress. Two bounded detector repairs now preserve GNU private
+pthread symbol names and model the pinned x86-64 compiler's atomic cfg values.
+The scanner self-test grew from 40 to 51 checks, with both original defects
+observed red. Fresh derivation adds five same-symbol host paths and removes none.
+Four cancellation registration labels were conservatively changed to host-backed;
+no native promotion was made. The recorded matrix now contains 2,415 Implemented,
+408 RawSyscall, 1,278 WrapsHostLibc and 18 Stub rows. Fresh maintenance rejects
+1,085 classifications, including 18 stale stub/source labels; its hardcoded stub
+annotation self-test also remains red. The broader standalone census retains
+592 host-dependent exports, one unknown call edge and incomplete matrix coverage.
+These findings keep RC.37, its dependent adversarial task and replacement
+promotion open. The current level is still L0.
+
 ## Current assessment — 2026-10-30
 
 **Verdict: FrankenLibC is a substantial experimental L0 interposer. It does not
