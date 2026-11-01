@@ -52,6 +52,20 @@ passed. The direct `%d`/`%ls` paths remain in place. Latency of count-store
 formats is unqualified, and unrelated wide-format semantics remain outside
 this repair's claim. No taxonomy or replacement-level promotion follows.
 
+Wide formatting now checks narrow `%s` arguments in the caller's locale before
+decoding the renderer's internal transport (`d74c63a4e`,
+`bd-reality-202609-lx578q.7.8`). Precision stops conversion before an invalid
+suffix; wide literals and arguments remain representable in wide buffers and
+native wide memory streams under `C`. The frozen 400-case matrix covers four
+entrypoints, two locales and both registration states. A fresh solo replay
+reproduced 128 original mismatches per mode and zero candidate mismatches in
+strict and hardened modes. The existing GNU printf gate, 134 Rust tests
+(including 240,000 narrow-string comparisons) and 72 callback-unwind cases
+passed. Seven inherited ignores remain; two unrelated tests that delete
+filesystem entries were explicitly filtered. External-file transliteration,
+the extended wchar domain, performance and independent review remain
+unqualified. The native-ownership classifications and L0 status are unchanged.
+
 ## Current assessment — 2026-10-30
 
 **Verdict: FrankenLibC is a substantial experimental L0 interposer. It does not
