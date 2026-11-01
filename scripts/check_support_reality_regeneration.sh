@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACT="${SUPPORT_REALITY_REGEN_CONTRACT:-${ROOT}/tests/conformance/support_reality_regeneration.v1.json}"
 SUPPORT_MATRIX="${SUPPORT_REALITY_SUPPORT_MATRIX:-${ROOT}/support_matrix.json}"
 REALITY_REPORT="${SUPPORT_REALITY_REPORT:-${ROOT}/tests/conformance/reality_report.v1.json}"
-OUT_DIR="${ROOT}/target/conformance"
+OUT_DIR="${SUPPORT_REALITY_OUT_DIR:-${ROOT}/target/conformance}"
 REPORT="${OUT_DIR}/support_reality_regeneration.report.json"
 LOG="${OUT_DIR}/support_reality_regeneration.log.jsonl"
 TRACE_ID="bd-0agsk.3::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
@@ -86,6 +86,16 @@ def load_json(path: pathlib.Path):
 
 
 def git_head() -> str:
+    # RCH can retain an older worker .git while transferring newer source
+    # bytes. The caller's explicit build identity takes precedence over that
+    # stale metadata; malformed declared provenance must fail closed.
+    rch_source = os.environ.get("RCH_BUILD_SOURCE", "")
+    if rch_source:
+        candidate = rch_source.removesuffix("-dirty")
+        if len(candidate) in {40, 64} and all(char in "0123456789abcdef" for char in candidate):
+            return candidate
+        raise RuntimeError("RCH_BUILD_SOURCE must be a full object ID with optional -dirty suffix")
+
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
@@ -96,13 +106,6 @@ def git_head() -> str:
     if result.returncode == 0:
         return result.stdout.strip()
 
-    # RCH transfers the source tree without .git and injects the exact build
-    # provenance through Cargo's environment. Preserve that evidence instead
-    # of making remote gate execution depend on repository metadata.
-    rch_source = os.environ.get("RCH_BUILD_SOURCE", "")
-    candidate = rch_source.split("-", 1)[0]
-    if len(candidate) in {40, 64} and all(char in "0123456789abcdef" for char in candidate):
-        return candidate
     raise RuntimeError(
         "cannot resolve source commit from Git or a full RCH_BUILD_SOURCE object ID"
     )

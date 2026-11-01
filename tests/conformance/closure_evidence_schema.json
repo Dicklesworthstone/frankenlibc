@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "bead": "bd-4rl",
-  "description": "Closure evidence requirements for critique beads. Every critique bead closed after the gate is established must satisfy these evidence requirements.",
+  "description": "Legacy critique matrix requirements plus direct retained-result admission for all non-epic beads closed from 2026-10-15. Missing execution contracts are unproven, not inferred from closure prose.",
   "evidence_requirements": {
     "matrix_entry": {
       "required": true,
@@ -26,6 +26,29 @@
       "required": true,
       "description": "row.close_blockers must be empty (all obligations met)"
     }
+  },
+  "executed_results": {
+    "cutoff": "2026-10-15T00:00:00Z",
+    "supported_classes": ["source", "compiled", "executed_unit"],
+    "class_meanings": {
+      "source": "Actual named source/schema check for a bead explicitly labeled docs-only; no compilation or runtime credit.",
+      "compiled": "Successful build and named static check for a bead explicitly labeled compile-only; no runtime credit.",
+      "executed_unit": "Separate successful build and execution of the bound libtest binary, with nonzero passed count and every required test observed.",
+      "deployed_abi": "Requires direct provider-bound ABI observations; not admitted by the unit-result evaluator.",
+      "standalone": "Requires direct loader and host-independence observations; not implied by deployed/unit results.",
+      "measured_performance": "Requires paired live incumbent measurements in the same invocation; not implied by execution.",
+      "mechanized_theorem": "Requires checked theorem and assumptions; hashes and passing tests are not a proof."
+    },
+    "contract_location": "verification_matrix.entries[].row.closure_evidence",
+    "receipt_location": "verification_matrix.entries[].row.result_receipts[]",
+    "contract_fields": ["behavior", "acceptance_sha256", "claim_class", "evidence_class", "source.commit", "source.files", "behavior_paths", "test_paths", "configuration", "not_before", "gate"],
+    "configuration_fields": ["architecture", "mode", "profile", "features"],
+    "gate_fields": ["command", "environment", "build_command", "artifacts", "result_format", "required_tests"],
+    "receipt_fields": ["schema_version", "bead_id", "contract", "runner_architecture", "source_files", "artifacts", "artifact_files", "executable_sha256", "build", "execution"],
+    "result_fields": ["command", "exit_code", "started_at", "finished_at", "stdout", "stderr", "stdout_sha256", "stderr_sha256", "executed_cases"],
+    "owner_approved_deferrals": {},
+    "trust_boundary": "The gate invokes the declared command and consumes stored output, not closure prose. The matrix binds behavior, acceptance text, source files, configuration and named tests. Review of test adequacy and class selection remains necessary. Receipts are integrity records, not independent attestations; a malicious editor able to replace both contracts and outputs is outside this check's trust boundary. Unsupported higher evidence classes stay unproven rather than inheriting unit credit.",
+    "retirement_condition": "Retire this extension when tracker/CI natively enforces equivalent direct executed-result admission; preserve retained history under repository file-retention rules."
   },
   "legacy_exempt": [
     "bd-130",
