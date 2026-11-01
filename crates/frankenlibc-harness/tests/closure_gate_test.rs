@@ -754,6 +754,13 @@ fn actual_gate_distinguishes_compiled_from_executed_evidence() {
     EvidenceFixture::assert_result(f.gate(&[]), true, "compiled; retained results verified");
     let receipt: Value = serde_json::from_slice(&std::fs::read(&f.receipt).unwrap()).unwrap();
     assert!(receipt["execution"]["executed_cases"].is_null());
+    f.bead["labels"] = json!([]);
+    f.save();
+    EvidenceFixture::assert_result(
+        f.gate(&[]),
+        false,
+        "lower_evidence_class_requires_explicit_bead_label",
+    );
     f.matrix["entries"][0]["row"]["closure_evidence"]["claim_class"] = json!("executed_unit");
     f.save();
     EvidenceFixture::assert_result(f.gate(&[]), false, "claim_class_mismatch");
@@ -801,6 +808,14 @@ fn actual_gate_keeps_source_checks_and_historical_exemptions_explicit() {
         f.save();
         EvidenceFixture::assert_result(f.gate(&[]), true, "source; retained results verified");
     }
+    f.bead["labels"] = json!([]);
+    f.save();
+    EvidenceFixture::assert_result(
+        f.gate(&[]),
+        false,
+        "lower_evidence_class_requires_explicit_bead_label",
+    );
+    f.bead["labels"] = json!(["docs-only"]);
     f.matrix["entries"][0]["row"]["closure_evidence"]["claim_class"] = json!("executed_unit");
     f.save();
     EvidenceFixture::assert_result(f.gate(&[]), false, "claim_class_mismatch");

@@ -124,6 +124,9 @@ def contract_for(bid):
         require(isinstance(build, list) and all(isinstance(v, str) and v for v in build),
                 'invalid_build_command')
         require(pathlib.Path(build[0]).name in ('cargo', 'rustc'), 'unsupported_build_compiler')
+        if kind == 'executed_unit' and pathlib.Path(build[0]).name == 'cargo':
+            require(len(build) > 1 and build[1] == 'test' and '--no-run' in build,
+                    'build_is_not_separate_test_compilation')
         require('--target' not in build and '--all-features' not in build, 'unsupported_build_configuration')
         if pathlib.Path(build[0]).name == 'rustc':
             require('--test' in build and cfg['profile'] == 'test' and cfg['features'] == [],
@@ -155,8 +158,6 @@ def contract_for(bid):
             require(cfg['profile'] == 'test' and cfg['features'] == [], 'wrong_build_configuration')
             require('--target' not in build, 'cross_target_requires_direct_evaluator')
         elif compiler == 'cargo':
-            require(len(build) > 1 and build[1] == 'test' and '--no-run' in build,
-                    'build_is_not_separate_test_compilation')
             require('--test' in build, 'build_requires_named_test_target')
             target = build[build.index('--test') + 1]
             require(any(pathlib.Path(p).stem == target for p in contract['test_paths']),
