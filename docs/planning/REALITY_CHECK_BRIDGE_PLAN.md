@@ -32,6 +32,16 @@ annotation self-test also remains red. The broader standalone census retains
 These findings keep RC.37, its dependent adversarial task and replacement
 promotion open. The current level is still L0.
 
+The registered wide-formatting path now enforces the caller's capacity while
+callbacks write (`543c44c2d`, `bd-reality-202609-lx578q.7.6`). A fresh solo replay
+compared the original and candidate libraries with live GNU libc on the same
+80 boundary cases: the original differed on 70 cases per mode, while the
+candidate matched all 80 in both strict and hardened modes. The existing GNU
+printf driver and 72 C++ callback-unwind cases also passed. Native wide memory
+streams preserve Unicode independently of the external-file locale codec.
+This is bounded behavior evidence, not independent review, performance
+qualification or a change to native-ownership classifications.
+
 ## Current assessment — 2026-10-30
 
 **Verdict: FrankenLibC is a substantial experimental L0 interposer. It does not

@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-01T02:37:51Z",
-  "source_commit": "c65b99563cfc04d56234782a5362dff59f8d5851",
-  "source_generated_at_utc": "2026-11-01T02:31:00Z",
-  "newest_abi_commit": "c65b99563cfc04d56234782a5362dff59f8d5851",
-  "newest_abi_commit_time": "2026-10-31T12:35:48-04:00",
+  "generated_at": "2026-11-01T05:47:54Z",
+  "source_commit": "543c44c2dbdf217d8ff781a0523b2b963b890c79",
+  "source_generated_at_utc": "2026-11-01T05:44:00Z",
+  "newest_abi_commit": "543c44c2dbdf217d8ff781a0523b2b963b890c79",
+  "newest_abi_commit_time": "2026-11-01T01:42:31-04:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 3034,
@@ -68,13 +68,13 @@
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": -4,
-      "RawSyscall": -2,
+      "Implemented": 0,
+      "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": 6
+      "WrapsHostLibc": 0
     },
-    "native_coverage_pct_delta": -0.16,
-    "reclassified_symbol_count": 6,
+    "native_coverage_pct_delta": 0.04,
+    "reclassified_symbol_count": 0,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -94,7 +94,7 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 6,
+      "total_reclassified": 0,
       "violations": []
     },
     "fixture_coverage_ratchet": {
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "33b6ddb09e1313377ae355dfd9b7d3de2053e63daea79c7e0967d580af8deeb8",
+        "artifact_sha256": "69510ef0d1a45bc317d967d2fbaf87063bad5a6caafbc9a8023cb3de8c74a94b",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 16,
-        "source_tree_sha256": "518b31918b2d492493bfc875b9ffda8811b83ef3eeea471c4659352db889f251"
+        "source_tree_sha256": "e4dae574e87cfbd7f8422abf51b65054124654ac9a71cae7dad14b0e18c09ed8"
       }
     },
     "summary": {
@@ -50943,134 +50943,7 @@
     "yperr_string": "Implemented",
     "ypprot_err": "Implemented"
   },
-  "reclassified_symbols": [
-    {
-      "symbol": "__pthread_register_cancel",
-      "module": "pthread_abi",
-      "previous_status": "Implemented",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__pthread_register_cancel_defer",
-      "module": "pthread_abi",
-      "previous_status": "Implemented",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__pthread_unregister_cancel",
-      "module": "pthread_abi",
-      "previous_status": "Implemented",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__pthread_unregister_cancel_restore",
-      "module": "pthread_abi",
-      "previous_status": "Implemented",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "mq_notify",
-      "module": "unistd_abi",
-      "previous_status": "RawSyscall",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 0,
-      "hardened_fixture_count": 0,
-      "strict_conformance": null,
-      "hardened_conformance": null,
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "timer_create",
-      "module": "unistd_abi",
-      "previous_status": "RawSyscall",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 0,
-      "hardened_fixture_count": 0,
-      "strict_conformance": null,
-      "hardened_conformance": null,
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    }
-  ],
+  "reclassified_symbols": [],
   "status_validation_issues": [
     {
       "symbol": "_Exit",
