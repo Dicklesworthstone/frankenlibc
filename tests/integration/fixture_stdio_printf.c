@@ -22,6 +22,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <wchar.h>
 
@@ -1314,6 +1317,122 @@ static int gnu_wide_bounds(void) {
     return 0;
 }
 
+/* Each valid precision-limited input ends at a protected page. A separate
+ * child per cell records a read fault without losing the remaining cases. */
+static int gnu_precision_span_cell(unsigned registered, unsigned locale,
+                                   unsigned kind, unsigned test, unsigned api) {
+    struct rlimit core_limit = { 0, 0 };
+    REG_CHECK(setrlimit(RLIMIT_CORE, &core_limit) == 0);
+    alarm(5);
+    long page_size = sysconf(_SC_PAGESIZE);
+    REG_CHECK(page_size > 0);
+    unsigned char *mapping = mmap(NULL, (size_t)page_size * 2,
+                                  PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REG_CHECK(mapping != MAP_FAILED);
+    unsigned char *end = mapping + page_size;
+    REG_CHECK(mprotect(end, (size_t)page_size, PROT_NONE) == 0);
+    size_t length = test == 0 ? 0 : test == 1 ? 1 : test == 7 ? 4 : 3;
+    const void *input;
+    if (kind) {
+        wchar_t *wide = (wchar_t *)end - length;
+        if (length) {
+            wide[0] = test == 1 ? (locale ? L'\u00e9' : L'A') : L'a';
+            for (size_t i = 1; i < length; ++i) wide[i] = i == 3 ? 0 : L'a' + (wchar_t)i;
+        }
+        input = wide;
+    } else {
+        if (test == 1 && locale) length = 2;
+        unsigned char *bytes = end - length;
+        if (length) {
+            if (test == 1 && locale) { bytes[0] = 0xc3; bytes[1] = 0xa9; }
+            else {
+                bytes[0] = test == 1 ? 'A' : 'a';
+                for (size_t i = 1; i < length; ++i) bytes[i] = i == 3 ? 0 : (unsigned char)('a' + i);
+            }
+        }
+        input = bytes;
+    }
+    static const char *formats[2][8] = {
+        { "[%.0s]", "[%.1s]", "[%.3s]", "[%8.3s]", "[%-8.3s]",
+          "[%.*s]%n", "[%2$.*1$s]%3$n", "[%.*s]%n" },
+        { "[%.0ls]", "[%.1ls]", "[%.3ls]", "[%8.3ls]", "[%-8.3ls]",
+          "[%.*ls]%n", "[%2$.*1$ls]%3$n", "[%.*ls]%n" }
+    };
+    static const wchar_t *wide_formats[2][8] = {
+        { L"[%.0s]", L"[%.1s]", L"[%.3s]", L"[%8.3s]", L"[%-8.3s]",
+          L"[%.*s]%n", L"[%2$.*1$s]%3$n", L"[%.*s]%n" },
+        { L"[%.0ls]", L"[%.1ls]", L"[%.3ls]", L"[%8.3ls]", L"[%-8.3ls]",
+          L"[%.*ls]%n", L"[%2$.*1$ls]%3$n", L"[%.*ls]%n" }
+    };
+    struct {
+        unsigned char before[8];
+        union { char bytes[64]; wchar_t wide[64]; } text;
+        unsigned char after[8];
+    } output;
+    memset(&output, 0x5a, sizeof output);
+    struct { int before, value, after; } count = { 0x12345678, -77, 0x23456789 };
+    int precision = test == 7 ? -1 : 3;
+    int rc;
+    errno = EDOM;
+#define PRECISION_SPAN_CALL(...) do { \
+    if (api == 0) rc = snprintf(output.text.bytes, 64, formats[kind][test], __VA_ARGS__); \
+    else if (api == 1) rc = call_vsnprintf(output.text.bytes, 64, formats[kind][test], __VA_ARGS__); \
+    else if (api == 2) rc = swprintf(output.text.wide, 64, wide_formats[kind][test], __VA_ARGS__); \
+    else rc = call_vswprintf(output.text.wide, 64, wide_formats[kind][test], __VA_ARGS__); \
+} while (0)
+    if (test >= 5) PRECISION_SPAN_CALL(precision, input, &count.value);
+    else PRECISION_SPAN_CALL(input);
+#undef PRECISION_SPAN_CALL
+    int error = errno;
+    REG_CHECK(munmap(mapping, (size_t)page_size * 2) == 0);
+    printf("precision:span:%u:%u:%u:%u:%u:result:%d:%d:%08x:%d:%08x:",
+           registered, locale, kind, test, api, rc, error,
+           (unsigned)count.before, count.value, (unsigned)count.after);
+    const unsigned char *raw = (const unsigned char *)&output;
+    for (size_t i = 0; i < sizeof output; ++i) printf("%02x", raw[i]);
+    putchar('\n');
+    REG_CHECK(fflush(stdout) == 0);
+    return 0;
+}
+
+static int gnu_precision_spans(void) {
+    static const char *providers[] = {
+        "snprintf", "vsnprintf", "swprintf", "vswprintf", "setlocale", "register_printf_specifier"
+    };
+    for (size_t i = 0; i < sizeof providers / sizeof providers[0]; ++i)
+        REG_CHECK(check_gnu_provider(providers[i]) == 0);
+    alarm(45);
+    unsigned failures = 0;
+    for (unsigned registered = 0; registered < 2; ++registered) {
+        if (registered) REG_CHECK(register_printf_specifier('Q', NULL, NULL) == 0);
+        for (unsigned locale = 0; locale < 2; ++locale) {
+            REG_CHECK(setlocale(LC_ALL, locale ? "C.UTF-8" : "C") != NULL);
+            for (unsigned kind = 0; kind < 2; ++kind)
+                for (unsigned test = 0; test < 8; ++test)
+                    for (unsigned api = 0; api < 4; ++api) {
+                        REG_CHECK(fflush(stdout) == 0);
+                        pid_t child = fork();
+                        REG_CHECK(child >= 0);
+                        if (child == 0) _exit(gnu_precision_span_cell(registered, locale, kind, test, api));
+                        int status;
+                        pid_t waited;
+                        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+                        REG_CHECK(waited == child);
+                        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                            printf("precision:span:%u:%u:%u:%u:%u:failure:%d:%d\n",
+                                   registered, locale, kind, test, api,
+                                   WIFSIGNALED(status) ? WTERMSIG(status) : 0,
+                                   WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+                            ++failures;
+                        }
+                    }
+        }
+    }
+    puts("precision:complete:spans");
+    alarm(0);
+    return failures ? 1 : 0;
+}
+
 /* Wide text is not multibyte input. Exercise both paths before and after GNU
  * registration, with actual locale selection and independently owned FILEs. */
 static int gnu_wide_locale(void) {
@@ -1447,6 +1566,7 @@ static int gnu_registration_wide(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--gnu-precision-spans") == 0) return gnu_precision_spans();
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-locale") == 0) return gnu_wide_locale();
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-bounds") == 0) return gnu_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();

@@ -290,7 +290,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-register gnu-register-wide gnu-register-wide-bounds; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -333,7 +333,13 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: incomplete wide locale oracle" >&2
     exit 1
   fi
-  if [[ "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale ]]; then
+  if [[ "${scenario}" == gnu-precision-spans ]] &&
+     { [[ "$(grep -c '^precision:span:' "${oracle_stdout}")" -ne 256 ]] ||
+       [[ "$(grep -xc 'precision:complete:spans' "${oracle_stdout}")" -ne 1 ]]; }; then
+    echo "FAIL: incomplete precision input-span oracle" >&2
+    exit 1
+  fi
+  if [[ "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
     negative_status=0
     env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="${LIB}" \
       "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" \
@@ -392,7 +398,7 @@ done
 
 if [[ "${GNU_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":10,"ordinary_wide_boundary_cases_per_mode":408,"wide_locale_cases_per_mode":400,"wide_registration_boundary_cases_per_mode":80,"wide_registration_boundary_provider_negative":"pass","gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
+{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":10,"ordinary_wide_boundary_cases_per_mode":408,"wide_locale_cases_per_mode":400,"precision_input_span_cases_per_mode":256,"wide_registration_boundary_cases_per_mode":80,"wide_registration_boundary_provider_negative":"pass","gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
 JSON
   echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection and 10 original printf cases per mode; full stdio gate not run)"
   exit 0

@@ -5741,21 +5741,74 @@ unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
 // beyond the next call rendering correctly, which the second test covers.
 // Mutation-checked: emitting '?' instead of U+FFFD here fails the first test.
 
-/// Validate only the narrow `%s` characters consumed by a wide printf.
+/// Read only the narrow `%s` characters consumed by a wide printf.
 /// Precision counts wide characters, so an invalid suffix after that limit
 /// must remain unexamined. This is the locale conversion boundary; subsequent
 /// wide rendering carries internal UTF-8, including wide-origin text that the
 /// caller's multibyte locale need not represent.
-pub(crate) fn printf_multibyte_prefix(
-    bytes: &[u8],
+///
+/// # Safety
+/// Input is readable through NUL or the complete characters required by the
+/// precision. No byte after a satisfied precision needs to be accessible.
+pub(crate) unsafe fn printf_multibyte_prefix(
+    bytes: *const u8,
     limit: Option<usize>,
 ) -> Option<(usize, usize)> {
+    let Some(limit) = limit else {
+        // Keep the existing page-safe string scan for unbounded input.
+        // SAFETY: absent a precision, the caller supplies a terminated string.
+        let bytes = unsafe { super::stdio_abi::c_str_bytes(bytes.cast()) };
+        let mut consumed = 0;
+        let mut count = 0;
+        while consumed < bytes.len() {
+            let (_, advance) = codec::mbtowc(&bytes[consumed..])?;
+            consumed += advance;
+            count += 1;
+        }
+        return Some((consumed, count));
+    };
+    let available = if super::runtime_policy::strict_passthrough_active() {
+        None
+    } else {
+        known_remaining(bytes as usize)
+    };
     let mut consumed = 0;
     let mut count = 0;
-    while consumed < bytes.len() && limit.is_none_or(|n| count < n) {
-        let (_, advance) = codec::mbtowc(&bytes[consumed..])?;
-        consumed += advance;
-        count += 1;
+    while count < limit && available.is_none_or(|n| consumed < n) {
+        // SAFETY: precision is not yet satisfied; the caller promises the next
+        // character or terminator is readable, subject to a known heap bound.
+        let first = unsafe { *bytes.add(consumed) };
+        if first == 0 {
+            break;
+        }
+        let mut sequence = [0; 6];
+        sequence[0] = first;
+        let mut len = 1;
+        loop {
+            use frankenlibc_core::string::wchar::Utf8Step;
+            match codec::utf8_decode_step(&sequence[..len]) {
+                Utf8Step::Char { len: advance, .. } => {
+                    consumed += advance;
+                    count += 1;
+                    break;
+                }
+                Utf8Step::Invalid => return None,
+                Utf8Step::Incomplete => {
+                    let offset = consumed.checked_add(len)?;
+                    if len == sequence.len() || available.is_some_and(|n| offset >= n) {
+                        return None;
+                    }
+                    // SAFETY: only a still-incomplete, required character asks
+                    // for another byte, never a completed precision or NUL.
+                    let next = unsafe { *bytes.add(offset) };
+                    if next == 0 {
+                        return None;
+                    }
+                    sequence[len] = next;
+                    len += 1;
+                }
+            }
+        }
     }
     Some((consumed, count))
 }

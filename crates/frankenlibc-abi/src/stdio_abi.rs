@@ -782,37 +782,23 @@ unsafe fn strict_scan_single_string_from(
     *end = p;
     1
 }
-/// Largest length `<= limit` that lands on a UTF-8 character boundary. Used to
-/// apply `%ls` precision as a BYTE cap on the multibyte output without ever
-/// splitting (writing a partial) multibyte character, per C99 §7.19.6.1.
-fn utf8_byte_limit(bytes: &[u8], limit: usize) -> usize {
-    if limit >= bytes.len() {
-        return bytes.len();
-    }
-    let mut cut = limit;
-    // A UTF-8 continuation byte is `0b10xxxxxx`; back up off any partial char.
-    while cut > 0 && (bytes[cut] & 0b1100_0000) == 0b1000_0000 {
-        cut -= 1;
-    }
-    cut
-}
-
-/// Read a NUL-terminated wide string (`wchar_t*`, `u32` on Linux x86_64) and
-/// encode it as UTF-8 (the C.UTF-8 multibyte form), taking at most `limit` WIDE
-/// characters when provided (callers that need byte-precision pass `None` and
-/// truncate the result with [`utf8_byte_limit`]).
+/// Encode wide input as UTF-8, stopping at NUL, a wide-character limit, or a
+/// byte precision. A precision-bounded array need not have a terminator; stop
+/// before reading its next character once the output budget is exhausted.
 /// Returns `(utf8_bytes, wide_char_count)`.
-unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, usize) {
+unsafe fn wide_cstr_to_utf8(
+    ptr: *const u32,
+    limit: Option<usize>,
+    byte_limit: Option<usize>,
+) -> (Vec<u8>, usize) {
     let mut out = Vec::new();
     let mut i = 0usize;
     loop {
-        if let Some(n) = limit
-            && i >= n
-        {
+        if limit.is_some_and(|n| i >= n) || byte_limit.is_some_and(|n| out.len() >= n) {
             break;
         }
-        // SAFETY: caller guarantees a NUL-terminated wide string; we stop at the
-        // terminator (and at `limit` wide chars when set).
+        // SAFETY: the caller supplies readable wide characters until NUL or
+        // precision is satisfied. Both limits are checked before this read.
         let wc = unsafe { *ptr.add(i) };
         if wc == 0 {
             break;
@@ -820,7 +806,11 @@ unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, 
         match char::from_u32(wc) {
             Some(c) => {
                 let mut b = [0u8; 4];
-                out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+                let encoded = c.encode_utf8(&mut b).as_bytes();
+                if byte_limit.is_some_and(|n| encoded.len() > n.saturating_sub(out.len())) {
+                    break;
+                }
+                out.extend_from_slice(encoded);
             }
             // Invalid wide char (surrogate / > U+10FFFF): glibc would error the
             // whole call; we stop the conversion here (rare in practice).
@@ -9102,7 +9092,7 @@ pub(crate) unsafe fn render_segments(
                                     _ => None,
                                 };
                                 let (utf8, wide_count) =
-                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
+                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, limit, None) };
                                 if let Width::Fixed(w) = width_spec.width {
                                     let extra = utf8.len().saturating_sub(wide_count);
                                     width_spec.width = Width::Fixed(w + extra);
@@ -9111,13 +9101,18 @@ pub(crate) unsafe fn render_segments(
                             } else {
                                 // Narrow printf: precision and field width are BYTE
                                 // counts on the multibyte output (C99 §7.19.6.1).
-                                // Convert the whole string, cap bytes without
-                                // splitting a multibyte char, pad by bytes.
-                                let (mut utf8, _) =
-                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, None) };
-                                if let Precision::Fixed(p) = resolved_spec.precision {
-                                    utf8.truncate(utf8_byte_limit(&utf8, p));
-                                }
+                                // Bound conversion itself: the array need not
+                                // continue beyond the precision, and a character
+                                // that cannot fit is never partially emitted.
+                                let byte_limit = match resolved_spec.precision {
+                                    Precision::Fixed(n) => Some(n),
+                                    _ => None,
+                                };
+                                // SAFETY: the conversion stops before reading
+                                // beyond the precision-bounded wide array.
+                                let (utf8, _) = unsafe {
+                                    wide_cstr_to_utf8(ptr as *const u32, None, byte_limit)
+                                };
                                 format_str(&utf8, &width_spec, &mut buf);
                             }
                         } else if wide_output {
@@ -9128,18 +9123,21 @@ pub(crate) unsafe fn render_segments(
                             // char) and inflate the byte width by the multibyte
                             // overhead so `format_str`'s byte padding lands on
                             // wide-column boundaries after the caller decodes back.
-                            let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
                             let limit = match resolved_spec.precision {
                                 Precision::Fixed(n) => Some(n),
                                 _ => None,
                             };
+                            // SAFETY: decode only the characters needed by the
+                            // precision; no NUL or lookahead is needed afterward.
                             let Some((byte_count, wide_count)) =
-                                crate::wchar_abi::printf_multibyte_prefix(s_bytes, limit)
+                                (unsafe { crate::wchar_abi::printf_multibyte_prefix(ptr, limit) })
                             else {
                                 frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
                                 break;
                             };
-                            let utf8 = &s_bytes[..byte_count];
+                            // SAFETY: the decoder read exactly these bytes, and
+                            // the surrounding branch established a nonnull ptr.
+                            let utf8 = unsafe { std::slice::from_raw_parts(ptr, byte_count) };
                             let mut width_spec = resolved_spec;
                             width_spec.precision = Precision::None;
                             if let Width::Fixed(w) = width_spec.width {
@@ -9148,7 +9146,29 @@ pub(crate) unsafe fn render_segments(
                             }
                             format_str(utf8, &width_spec, &mut buf);
                         } else {
-                            let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
+                            let s_bytes = if let Precision::Fixed(precision) =
+                                resolved_spec.precision
+                            {
+                                let bound = if runtime_policy::strict_passthrough_active() {
+                                    precision
+                                } else {
+                                    known_remaining(ptr as usize)
+                                        .map_or(precision, |n| precision.min(n))
+                                };
+                                // SAFETY: printf permits a nonterminated array
+                                // when precision bounds the read. This scanner
+                                // stops at NUL or that bound, including zero.
+                                let (len, _) = unsafe {
+                                    crate::string_abi::scan_c_string_nul_or_bound(ptr.cast(), bound)
+                                };
+                                // SAFETY: only bytes read by the bounded scan
+                                // enter this slice; ptr is nonnull in this arm.
+                                unsafe { std::slice::from_raw_parts(ptr, len) }
+                            } else {
+                                // SAFETY: without precision the caller supplies
+                                // a NUL-terminated string, as before.
+                                unsafe { c_str_bytes(ptr.cast()) }
+                            };
                             format_str(s_bytes, &resolved_spec, &mut buf);
                         }
                     }
