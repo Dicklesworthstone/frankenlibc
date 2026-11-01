@@ -5741,34 +5741,28 @@ unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
 // beyond the next call rendering correctly, which the second test covers.
 // Mutation-checked: emitting '?' instead of U+FFFD here fails the first test.
 
-/// Convert narrow bytes to wide chars, writing into a `wchar_t` buffer.
-///
-/// Returns `Some(written)` (not counting the NUL), or `None` when the ACTIVE
-/// LOCALE cannot convert a byte — which the caller must turn into `-1` with
-/// `EILSEQ`.
-///
-/// ## This used to be lossy, and that was a measured divergence
-///
-/// It decoded UTF-8 unconditionally through `decode_utf8_lossy`, answering
-/// U+FFFD for anything unconvertible. That is wrong in two directions at once,
-/// probed against glibc 2.42 with `swprintf(buf, 64, L"%s", narrow)`:
-///
-/// ```text
-///   LC_ALL=C        "hello"      rc= 5  errno=0      "hello"
-///   LC_ALL=C        "caf\xc3\xa9"  rc=-1  errno=EILSEQ  (fl produced "café")
-///   LC_ALL=C        "a\x80b"      rc=-1  errno=EILSEQ  (fl produced "a\u{fffd}b")
-///   LC_ALL=C.UTF-8  "caf\xc3\xa9"  rc= 4  errno=0      "café"
-///   LC_ALL=C.UTF-8  "a\x80b"      rc=-1  errno=EILSEQ  (fl produced "a\u{fffd}b")
-/// ```
-///
-/// So the old behaviour silently SUCCEEDED on two inputs the incumbent
-/// rejects, and in the C locale it also produced characters the locale cannot
-/// represent. Substituting a replacement character for a conversion failure is
-/// the worst option available: the caller gets a plausible string and no
-/// indication that its data was mangled.
-///
-/// Routing through `codec` fixes both, because `codec` already honours
-/// `LC_CTYPE` — ASCII-only under `C`, RFC 3629 UTF-8 under `C.UTF-8`.
+/// Validate only the narrow `%s` characters consumed by a wide printf.
+/// Precision counts wide characters, so an invalid suffix after that limit
+/// must remain unexamined. This is the locale conversion boundary; subsequent
+/// wide rendering carries internal UTF-8, including wide-origin text that the
+/// caller's multibyte locale need not represent.
+pub(crate) fn printf_multibyte_prefix(
+    bytes: &[u8],
+    limit: Option<usize>,
+) -> Option<(usize, usize)> {
+    let mut consumed = 0;
+    let mut count = 0;
+    while consumed < bytes.len() && limit.is_none_or(|n| count < n) {
+        let (_, advance) = codec::mbtowc(&bytes[consumed..])?;
+        consumed += advance;
+        count += 1;
+    }
+    Some((consumed, count))
+}
+
+/// Decode the wide renderer's internal transport into a bounded wchar buffer.
+/// Narrow arguments have already passed the locale codec at their conversion;
+/// wide literals and wide arguments must not be converted through it again.
 fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> Option<usize> {
     if dst.is_null() || n == 0 {
         // Just count the wide chars that would be produced.
@@ -5780,7 +5774,7 @@ fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> Optio
     while i < narrow.len() && written < max_chars {
         // `None` here is a genuine EILSEQ, not "ran out of room": the room
         // check is the loop condition above.
-        let (cp, advance) = codec::mbtowc(&narrow[i..])?;
+        let (cp, advance) = wchar_core::mbtowc(&narrow[i..])?;
         // SAFETY: `written < max_chars <= n - 1`, so this and the terminator
         // below are both inside the caller's buffer.
         unsafe { *dst.add(written) = cp as libc::wchar_t };
@@ -5791,7 +5785,7 @@ fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> Optio
     // because glibc reports EILSEQ for a bad byte past the truncation point
     // rather than silently succeeding on a short buffer.
     while i < narrow.len() {
-        let (_, advance) = codec::mbtowc(&narrow[i..])?;
+        let (_, advance) = wchar_core::mbtowc(&narrow[i..])?;
         i += advance;
     }
     // SAFETY: `written <= n - 1`.
@@ -5799,13 +5793,12 @@ fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> Optio
     Some(written)
 }
 
-/// Count how many wide chars a narrow byte slice would produce, or `None` if
-/// the active locale cannot convert it.
+/// Count wide characters in internal transport, independently of LC_CTYPE.
 fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
     let mut count = 0usize;
     let mut i = 0usize;
     while i < narrow.len() {
-        let (_, advance) = codec::mbtowc(&narrow[i..])?;
+        let (_, advance) = wchar_core::mbtowc(&narrow[i..])?;
         count += 1;
         i += advance;
     }
@@ -5815,7 +5808,7 @@ fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
 /// Shared tail for the `swprintf` family: widen `rendered` into `s`, honouring
 /// the buffer bound, and report glibc's return value.
 ///
-/// Returns `-1` with `EILSEQ` when the locale cannot convert the rendered
+/// Returns `-1` with `EILSEQ` when internal transport cannot decode the rendered
 /// bytes, and `-1` with `E2BIG` when the output simply did not fit — two
 /// different failures that share a return value, which is why they are
 /// distinguished here rather than at each call site.
@@ -6569,6 +6562,9 @@ pub unsafe extern "C-unwind" fn swprintf(
         super::stdio_abi::render_wprintf("swprintf", &segments, arg_buf.as_ptr(), extract_count)
     };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
+        // GNU publishes the completed prefix and a terminator on a buffer
+        // conversion failure; the failing conversion itself emits nothing.
+        let _ = finish_swprintf(&rendered, s, n);
         unsafe { set_abi_errno(errno) };
         return -1;
     }
@@ -6728,6 +6724,8 @@ pub unsafe extern "C-unwind" fn vswprintf(
         super::stdio_abi::render_wprintf("vswprintf", &segments, arg_buf.as_ptr(), extract_count)
     };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
+        // Keep the same prefix-on-error contract as the variadic entrypoint.
+        let _ = finish_swprintf(&rendered, s, n);
         unsafe { set_abi_errno(errno) };
         return -1;
     }

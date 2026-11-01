@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <float.h>
 #include <limits.h>
+#include <locale.h>
 #include <stdint.h>
 #include <pthread.h>
 #include <sched.h>
@@ -1313,6 +1314,99 @@ static int gnu_wide_bounds(void) {
     return 0;
 }
 
+/* Wide text is not multibyte input. Exercise both paths before and after GNU
+ * registration, with actual locale selection and independently owned FILEs. */
+static int gnu_wide_locale(void) {
+    static const char *locales[] = { "C", "C.UTF-8" };
+    static const wchar_t *formats[] = {
+        L"\u03a9\U00010400", L"%ls", L"[%8.2ls]", L"%lc:%C",
+        L"\u03a9=%d:%.1f", L"%ls:%s", L"%s", L"%s", L"[%s]",
+        L"%.1s", L"[%5.1s]", L"%.0s", L"%.1s", L"%.2s",
+        L"%ls:%s%n", L"%ls:%s%n", L"%ls:%.1f", L"%%:%s", L"%s",
+        L"%ls", L"%lc", L"%s", L"%6.3s", L"%6.4s", L"%ls"
+    };
+    static const char *providers[] = {
+        "swprintf", "vswprintf", "fwprintf", "vfwprintf", "open_wmemstream",
+        "fclose", "free", "setlocale", "register_printf_specifier"
+    };
+    alarm(30);
+    for (size_t i = 0; i < sizeof providers / sizeof providers[0]; ++i)
+        REG_CHECK(check_gnu_provider(providers[i]) == 0);
+    for (unsigned registered = 0; registered < 2; ++registered) {
+        if (registered) REG_CHECK(register_printf_specifier('Q', NULL, NULL) == 0);
+        for (unsigned locale = 0; locale < 2; ++locale) {
+            REG_CHECK(setlocale(LC_ALL, locales[locale]) != NULL);
+            for (unsigned test = 0; test < sizeof formats / sizeof formats[0]; ++test) {
+                for (unsigned api = 0; api < 4; ++api) {
+                    struct { unsigned char before[8]; wchar_t text[64]; unsigned char after[8]; } output;
+                    memset(&output, 0xa5, sizeof output);
+                    for (unsigned i = 0; i < 64; ++i) output.text[i] = 0x5a5a;
+                    struct { int before, value, after; } count = { 0x12345678, -77, 0x23456789 };
+                    wchar_t *allocated = NULL;
+                    size_t size = SIZE_MAX;
+                    FILE *stream = NULL;
+                    if (api >= 2) {
+                        size = 0;
+                        stream = open_wmemstream(&allocated, &size);
+                        REG_CHECK(stream != NULL);
+                    }
+                    const wchar_t *format = formats[test];
+                    int rc = -99;
+                    errno = EDOM;
+#define WIDE_LOCALE_CALL(...) do { \
+    if (api == 0) rc = swprintf(output.text, 64, format, __VA_ARGS__); \
+    else if (api == 1) rc = call_vswprintf(output.text, 64, format, __VA_ARGS__); \
+    else if (api == 2) rc = fwprintf(stream, format, __VA_ARGS__); \
+    else rc = reg_vfwprintf(stream, format, __VA_ARGS__); \
+} while (0)
+                    switch (test) {
+                    case 1: WIDE_LOCALE_CALL(L"caf\u00e9\U00010400"); break;
+                    case 2: WIDE_LOCALE_CALL(L"\u03a9\U00010400x"); break;
+                    case 3: WIDE_LOCALE_CALL((wint_t)L'\u03a9', (wint_t)0x10400); break;
+                    case 4: WIDE_LOCALE_CALL(42, 1.5); break;
+                    case 5: WIDE_LOCALE_CALL(L"\u03a9", "tail"); break;
+                    case 6: case 22: case 23: WIDE_LOCALE_CALL("caf\xc3\xa9"); break;
+                    case 7: case 8: case 9: case 10: WIDE_LOCALE_CALL("a\x80" "b"); break;
+                    case 11: WIDE_LOCALE_CALL("\x80"); break;
+                    case 12: case 13: WIDE_LOCALE_CALL("\xc3\xa9\x80"); break;
+                    case 14: WIDE_LOCALE_CALL(L"\u03a9", "\xc3\xa9", &count.value); break;
+                    case 15: WIDE_LOCALE_CALL(L"\u03a9", "tail", &count.value); break;
+                    case 16: WIDE_LOCALE_CALL(L"\u03a9", 1.5); break;
+                    case 17: WIDE_LOCALE_CALL("ASCII"); break;
+                    case 18: WIDE_LOCALE_CALL("\xc3"); break;
+                    case 19: WIDE_LOCALE_CALL(L""); break;
+                    case 20: WIDE_LOCALE_CALL((wint_t)0); break;
+                    case 21: WIDE_LOCALE_CALL((const char *)NULL); break;
+                    case 24: WIDE_LOCALE_CALL((const wchar_t *)NULL); break;
+                    default: WIDE_LOCALE_CALL(0);
+                    }
+#undef WIDE_LOCALE_CALL
+                    int error = errno;
+                    if (api >= 2) {
+                        REG_CHECK(fclose(stream) == 0 && allocated != NULL && size < 64);
+                        memcpy(output.text, allocated, (size + 1) * sizeof(wchar_t));
+                        free(allocated);
+                    }
+                    if (test == 17) REG_CHECK(rc == 7);
+                    if (test == 15 && registered) REG_CHECK(rc == 6 && count.value == 6);
+                    printf("wide:locale:%u:%u:%u:%u:%d:%d:%zu:%08x:%d:%08x:",
+                           registered, locale, test, api, rc, error, size,
+                           (unsigned)count.before, count.value, (unsigned)count.after);
+                    for (size_t i = 0; i < sizeof output.before; ++i) printf("%02x", output.before[i]);
+                    putchar(':');
+                    for (unsigned i = 0; i < 64; ++i) printf("%08x", (unsigned)output.text[i]);
+                    putchar(':');
+                    for (size_t i = 0; i < sizeof output.after; ++i) printf("%02x", output.after[i]);
+                    putchar('\n');
+                }
+            }
+        }
+    }
+    puts("wide:complete:locale");
+    alarm(0);
+    return 0;
+}
+
 static int gnu_registration_wide(void) {
     alarm(20);
     reg_setup();
@@ -1353,6 +1447,7 @@ static int gnu_registration_wide(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--gnu-wide-locale") == 0) return gnu_wide_locale();
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-bounds") == 0) return gnu_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();

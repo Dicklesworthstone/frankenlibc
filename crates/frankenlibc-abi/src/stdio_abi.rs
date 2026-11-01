@@ -782,47 +782,6 @@ unsafe fn strict_scan_single_string_from(
     *end = p;
     1
 }
-/// Take at most `limit` WIDE CHARACTERS (Unicode scalar values) from the leading
-/// VALID-UTF-8 prefix of `bytes`, returning `(utf8_of_those_chars, char_count)`.
-/// Used by WIDE printf `%s`, where the `char*` multibyte content converts to wide
-/// characters and precision/width count wide characters, not bytes (C99). Decoding
-/// stops at the first invalid byte (glibc would error the conversion there).
-fn utf8_take_chars(bytes: &[u8], limit: Option<usize>) -> (Vec<u8>, usize) {
-    let valid_up_to = match core::str::from_utf8(bytes) {
-        Ok(_) => bytes.len(),
-        Err(e) => e.valid_up_to(),
-    };
-    // The prefix up to `valid_up_to` is guaranteed valid UTF-8.
-    let valid = core::str::from_utf8(&bytes[..valid_up_to]).unwrap_or("");
-    match limit {
-        // No precision: hand back EVERY byte, including any the decode could not
-        // use. Returning only the valid prefix DROPPED the offending bytes, so
-        // the caller's conversion never saw them and reported success on a
-        // silently shortened string — glibc fails the whole call.
-        //
-        // Measured on glibc 2.42, `swprintf(buf, 64, L"%s", "a\x80b")`:
-        //     LC_ALL=C        rc=-1 EILSEQ      fl answered rc=1, "a"
-        //     LC_ALL=C.UTF-8  rc=-1 EILSEQ
-        //
-        // This is the quiet direction of wrong: a caller testing `rc < 0` sees
-        // success and a plausible short string, and loses everything from the
-        // bad byte on with nothing to branch on. The count stays the count of
-        // DECODABLE characters — it only feeds field-width inflation, and the
-        // conversion downstream is about to fail anyway. (bd-ncirhf)
-        None => (bytes.to_vec(), valid.chars().count()),
-        Some(p) => match valid.char_indices().nth(p) {
-            // The precision is satisfied inside the valid prefix. Bytes past it
-            // are never examined, which is also what glibc does: precision caps
-            // how much of the string is converted at all.
-            Some((cut, _)) => (bytes[..cut].to_vec(), valid[..cut].chars().count()),
-            // Ran out of DECODABLE input before reaching the precision, so the
-            // bad bytes are inside the region the conversion must cover. Keep
-            // them, for the same reason as the unlimited arm.
-            None => (bytes.to_vec(), valid.chars().count()),
-        },
-    }
-}
-
 /// Largest length `<= limit` that lands on a UTF-8 character boundary. Used to
 /// apply `%ls` precision as a BYTE cap on the multibyte output without ever
 /// splitting (writing a partial) multibyte character, per C99 §7.19.6.1.
@@ -7656,6 +7615,42 @@ unsafe fn extension_write(
     }
 }
 
+/// Buffer native wide output until success, flushing before a user callback.
+/// GNU discards pending output on a public wide memory stream when a native
+/// multibyte conversion fails. Bounded swprintf sinks instead publish their
+/// prefix immediately, so capacity and reached count stores remain observable.
+struct ExtensionOutput {
+    stream: *mut c_void,
+    wide: bool,
+    caller: usize,
+    pending: Option<Vec<u8>>,
+}
+
+impl ExtensionOutput {
+    unsafe fn write(&mut self, bytes: &[u8]) -> Result<usize, c_int> {
+        if let Some(pending) = self.pending.as_mut() {
+            let text = std::str::from_utf8(bytes).map_err(|_| errno::EILSEQ)?;
+            pending
+                .try_reserve(bytes.len())
+                .map_err(|_| errno::ENOMEM)?;
+            pending.extend_from_slice(bytes);
+            Ok(text.chars().count())
+        } else {
+            // SAFETY: the owner retains the live FILE and original caller.
+            unsafe { extension_write(self.stream, bytes, self.wide, self.caller) }
+        }
+    }
+
+    unsafe fn flush(&mut self) -> Result<(), c_int> {
+        if let Some(pending) = self.pending.as_mut() {
+            // SAFETY: pending owns these bytes and the FILE stays live.
+            unsafe { extension_write(self.stream, pending, self.wide, self.caller) }?;
+            pending.clear();
+        }
+        Ok(())
+    }
+}
+
 unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize) {
     let size = match spec.length {
         LengthMod::Hh => 1,
@@ -7798,11 +7793,21 @@ unsafe fn extension_format_stream(
         return c_int::try_from(unsafe { extension_write(stream, bytes, wide, caller) }?)
             .map_err(|_| errno::EOVERFLOW);
     }
+    let mut output = ExtensionOutput {
+        stream,
+        wide,
+        caller,
+        pending: (wide
+            && crate::wchar_abi::reserve_wide_output(stream, 0)
+                .is_some_and(|(_, bounded)| !bounded))
+        .then(Vec::new),
+    };
     let mut count = 0usize;
     for segment in plan.segments {
         let emitted = match segment {
             ExtensionSegment::Literal(literal) => {
-                unsafe { extension_write(stream, literal, wide, caller) }?
+                // SAFETY: the formatter owns the live, oriented FILE lock.
+                unsafe { output.write(literal) }?
             }
             ExtensionSegment::Spec(mut spec) => {
                 let unregistered = spec.native.is_unknown_conversion()
@@ -7836,6 +7841,10 @@ unsafe fn extension_format_stream(
                 };
                 let custom_result =
                     if let Some(conversion) = spec.conversion.filter(|c| c.render != 0) {
+                        // The callback receives the real FILE with all preceding
+                        // native output visible, including recursive formatting.
+                        // SAFETY: the formatter still owns the live FILE lock.
+                        unsafe { output.flush() }?;
                         let pointers: Vec<*const c_void> = args
                             [spec.first_arg..spec.first_arg + spec.arg_count]
                             .iter()
@@ -7874,14 +7883,8 @@ unsafe fn extension_format_stream(
                                 &HealingAction::UpgradeToSafeVariant,
                                 RepairLogContext::new(0, Some(pointer)),
                             );
-                            unsafe {
-                                extension_write(
-                                    stream,
-                                    &bytes[spec.raw_start..spec.raw_end],
-                                    wide,
-                                    caller,
-                                )
-                            }?
+                            // SAFETY: the FILE and original format remain live.
+                            unsafe { output.write(&bytes[spec.raw_start..spec.raw_end]) }?
                         } else if spec.native.stores_count() {
                             if let Some(arg) = args.get(spec.first_arg) {
                                 unsafe {
@@ -7897,7 +7900,8 @@ unsafe fn extension_format_stream(
                             // for unknown conversions, omitting length modifiers.
                             let spelling =
                                 extension_unknown_conversion(&spec.native, &spec.info, wide);
-                            unsafe { extension_write(stream, &spelling, wide, caller) }?
+                            // SAFETY: spelling and the locked FILE remain live.
+                            unsafe { output.write(&spelling) }?
                         } else if spec.native.is_errno_message() {
                             // Every %m in one call uses errno from function entry,
                             // even if a registered callback changes it mid-format.
@@ -7905,7 +7909,8 @@ unsafe fn extension_format_stream(
                                 crate::string_abi::rendered_strerror_message(entry_errno);
                             let mut rendered = Vec::new();
                             format_str(message.as_bytes(), &spec.native, &mut rendered);
-                            unsafe { extension_write(stream, &rendered, wide, caller) }?
+                            // SAFETY: rendered and the locked FILE remain live.
+                            unsafe { output.write(&rendered) }?
                         } else {
                             let mut segments = FormatSegments::new();
                             segments.push(FormatSegment::Spec(spec.native));
@@ -7927,7 +7932,8 @@ unsafe fn extension_format_stream(
                             if let Some(error) = take_render_failure() {
                                 return Err(error);
                             }
-                            unsafe { extension_write(stream, &rendered, wide, caller) }?
+                            // SAFETY: rendered and the locked FILE remain live.
+                            unsafe { output.write(&rendered) }?
                         }
                     }
                 }
@@ -7938,6 +7944,8 @@ unsafe fn extension_format_stream(
             .filter(|n| *n <= c_int::MAX as usize)
             .ok_or(errno::EOVERFLOW)?;
     }
+    // SAFETY: the FILE lock outlives this final write and pending owns its bytes.
+    unsafe { output.flush() }?;
     Ok(count as c_int)
 }
 
@@ -9125,14 +9133,20 @@ pub(crate) unsafe fn render_segments(
                                 Precision::Fixed(n) => Some(n),
                                 _ => None,
                             };
-                            let (utf8, wide_count) = utf8_take_chars(s_bytes, limit);
+                            let Some((byte_count, wide_count)) =
+                                crate::wchar_abi::printf_multibyte_prefix(s_bytes, limit)
+                            else {
+                                frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
+                                break;
+                            };
+                            let utf8 = &s_bytes[..byte_count];
                             let mut width_spec = resolved_spec;
                             width_spec.precision = Precision::None;
                             if let Width::Fixed(w) = width_spec.width {
                                 let extra = utf8.len().saturating_sub(wide_count);
                                 width_spec.width = Width::Fixed(w + extra);
                             }
-                            format_str(&utf8, &width_spec, &mut buf);
+                            format_str(utf8, &width_spec, &mut buf);
                         } else {
                             let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
                             format_str(s_bytes, &resolved_spec, &mut buf);
