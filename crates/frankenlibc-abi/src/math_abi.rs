@@ -643,7 +643,9 @@ pub unsafe extern "C" fn tan(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asin(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::asin);
-    if x.is_finite() && x.abs() > 1.0 {
+    // Infinities are outside the domain too. Only NaN propagation leaves
+    // errno unchanged; excluding every non-finite input loses EDOM at ±inf.
+    if !x.is_nan() && x.abs() > 1.0 {
         set_domain_errno();
     }
     // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
@@ -657,7 +659,7 @@ pub unsafe extern "C" fn asin(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acos(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::acos);
-    if x.is_finite() && x.abs() > 1.0 {
+    if !x.is_nan() && x.abs() > 1.0 {
         set_domain_errno();
     }
     // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
@@ -728,7 +730,7 @@ pub unsafe extern "C" fn asinh(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acosh(x: f64) -> f64 {
     let out = unary_entry(x, 7, frankenlibc_core::math::acosh);
-    if x.is_finite() && x < 1.0 {
+    if !x.is_nan() && x < 1.0 {
         set_domain_errno();
     }
     out
@@ -737,7 +739,7 @@ pub unsafe extern "C" fn acosh(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanh(x: f64) -> f64 {
     let out = unary_entry(x, 7, frankenlibc_core::math::atanh);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x.abs() > 1.0 {
             set_domain_errno();
         } else if x.abs() == 1.0 {
@@ -777,7 +779,7 @@ pub unsafe extern "C" fn expm1(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < 0.0 {
             set_domain_errno();
         } else if x == 0.0 {
@@ -790,7 +792,7 @@ pub unsafe extern "C" fn log(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log2);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < 0.0 {
             set_domain_errno();
         } else if x == 0.0 {
@@ -803,7 +805,7 @@ pub unsafe extern "C" fn log2(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log10);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < 0.0 {
             set_domain_errno();
         } else if x == 0.0 {
@@ -820,7 +822,7 @@ pub unsafe extern "C" fn log10(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log1p(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::log1p);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < -1.0 {
             set_domain_errno();
         } else if x == -1.0 {
@@ -1698,7 +1700,7 @@ pub unsafe extern "C" fn tanf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::asinf);
-    if x.is_finite() && !(-1.0..=1.0).contains(&x) {
+    if !x.is_nan() && !(-1.0..=1.0).contains(&x) {
         set_domain_errno();
     }
     out
@@ -1707,7 +1709,7 @@ pub unsafe extern "C" fn asinf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acosf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::acosf);
-    if x.is_finite() && !(-1.0..=1.0).contains(&x) {
+    if !x.is_nan() && !(-1.0..=1.0).contains(&x) {
         set_domain_errno();
     }
     out
@@ -1737,7 +1739,7 @@ pub unsafe extern "C" fn expf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::logf);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < 0.0 {
             set_domain_errno();
         } else if x == 0.0 {
@@ -1750,7 +1752,7 @@ pub unsafe extern "C" fn logf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::log2f);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < 0.0 {
             set_domain_errno();
         } else if x == 0.0 {
@@ -1763,7 +1765,7 @@ pub unsafe extern "C" fn log2f(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::log10f);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < 0.0 {
             set_domain_errno();
         } else if x == 0.0 {
@@ -1875,7 +1877,7 @@ pub unsafe extern "C" fn asinhf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acoshf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::acoshf);
-    if x.is_finite() && x < 1.0 {
+    if !x.is_nan() && x < 1.0 {
         set_domain_errno();
     }
     out
@@ -1884,7 +1886,7 @@ pub unsafe extern "C" fn acoshf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanhf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 5, frankenlibc_core::math::atanhf);
-    if x.is_finite() {
+    if !x.is_nan() {
         if !(-1.0..=1.0).contains(&x) {
             set_domain_errno();
         } else if x == 1.0 || x == -1.0 {
@@ -1921,7 +1923,7 @@ pub unsafe extern "C" fn expm1f(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log1pf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 6, frankenlibc_core::math::log1pf);
-    if x.is_finite() {
+    if !x.is_nan() {
         if x < -1.0 {
             set_domain_errno();
         } else if x == -1.0 {

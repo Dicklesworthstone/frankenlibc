@@ -1243,8 +1243,8 @@ super::avx2_fma_dispatch! {
     /// benchmark's inputs). glibc's FMA build fuses a product into its users when
     /// every user is an add in the same block, including the twice-used `p` near
     /// 1; reproduced exactly (measured: 0 differences / 3M vs 1334 with
-    /// single-use-only fusion). Zero, negatives, inf and nan keep the libm path
-    /// and its FE/errno behavior.
+    /// single-use-only fusion). Negative, inf and nan inputs keep the libm
+    /// path; zeros explicitly raise the pole exception before returning -inf.
     #[inline]
     pub fn log2(x: f64) -> f64 => log2_body;
 }
@@ -1286,8 +1286,13 @@ fn log2_body(x: f64) -> f64 {
     let mut ix = ix;
     if top.wrapping_sub(0x0010) >= 0x7ff0 - 0x0010 {
         // x < 0x1p-1022, inf or nan.
-        if ix << 1 == 0 || (top & 0x8000) != 0 || (top & 0x7ff0) == 0x7ff0 {
-            // ±0, negative, inf, nan: libm's values and FE/errno behavior.
+        if ix << 1 == 0 {
+            // A constant -inf loses FE_DIVBYZERO in the deployed library.
+            // Keep the hardware division observable for either sign of zero.
+            return core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64);
+        }
+        if (top & 0x8000) != 0 || (top & 0x7ff0) == 0x7ff0 {
+            // Negative, inf, nan: preserve libm's values and exception flags.
             return libm::log2(x);
         }
         // Subnormal: normalize and continue on the main path. The exponent
@@ -1331,7 +1336,8 @@ fn log2_body(x: f64) -> f64 {
 /// log10(x) = k*log10(2)_lo + log(m)/ln(10) + k*log10(2)_hi. Verified against
 /// glibc with a C harness before porting: 0 differences / 3M finite inputs
 /// incl. subnormals. Plain (unfused) arithmetic: glibc builds this function
-/// without FMA. Zero, negatives, inf and nan keep libm's values and flags.
+/// without FMA. Negative, inf and nan inputs keep libm's values and flags;
+/// zeros explicitly raise the pole exception before returning -inf.
 #[inline]
 pub fn log10(x: f64) -> f64 {
     const TWO54: f64 = 1.801_439_850_948_198_4e16;
@@ -1342,6 +1348,10 @@ pub fn log10(x: f64) -> f64 {
     #[allow(clippy::excessive_precision)]
     const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
     if !(x > 0.0 && x.is_finite()) {
+        if x == 0.0 {
+            // The f32 log10f route widens through this function as well.
+            return core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64);
+        }
         return libm::log10(x);
     }
     let mut x = x;
