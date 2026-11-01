@@ -6513,7 +6513,7 @@ pub unsafe extern "C-unwind" fn swprintf(
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
-    if format.is_null() {
+    if format.is_null() || n == 0 {
         return -1;
     }
     if super::stdio_abi::printf_extensions_active() {
@@ -6544,6 +6544,23 @@ pub unsafe extern "C-unwind" fn swprintf(
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
     let segments = parse_format_string(fmt_narrow.as_bytes());
+    if segments
+        .iter()
+        .any(|segment| matches!(segment, FormatSegment::Spec(spec) if spec.stores_count()))
+    {
+        // Count stores are observable during formatting. Use the existing
+        // incremental wide sink so exhaustion stops before an unreachable %n,
+        // while an exact fill still reaches the count directives GNU executes.
+        // The direct formats above contain no count stores and keep their path.
+        return unsafe {
+            super::stdio_abi::registered_swprintf(
+                s,
+                n,
+                fmt_narrow.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+            )
+        };
+    }
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
@@ -6686,7 +6703,7 @@ pub unsafe extern "C-unwind" fn vswprintf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
-    if format.is_null() {
+    if format.is_null() || n == 0 {
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
@@ -6695,6 +6712,14 @@ pub unsafe extern "C-unwind" fn vswprintf(
         return unsafe { super::stdio_abi::registered_swprintf(s, n, fmt_narrow.as_bytes(), ap) };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
+    if segments
+        .iter()
+        .any(|segment| matches!(segment, FormatSegment::Spec(spec) if spec.stores_count()))
+    {
+        // Match swprintf's incremental ordering for ordinary count directives,
+        // even when no GNU conversion has been registered in this process.
+        return unsafe { super::stdio_abi::registered_swprintf(s, n, fmt_narrow.as_bytes(), ap) };
+    }
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };

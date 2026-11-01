@@ -14,6 +14,7 @@
 #include <sched.h>
 #include <stdatomic.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <printf.h>
 #include <math.h>
@@ -1228,6 +1229,90 @@ static int gnu_registration_wide_bounds(void) {
     return 0;
 }
 
+/* Ordinary formatting must stop before an unreachable %n even when no GNU
+ * conversion has ever been registered in this process. Keep each count slot's
+ * unused bytes and the whole destination visible to catch oversized stores. */
+static int gnu_wide_bounds(void) {
+    static const size_t capacities[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 64 };
+    static const wchar_t *formats[] = {
+        L"%nabcdef%n", L"ab%hhncd%hhnEF%hhn", L"ab%hncd%hnEF%hn",
+        L"ab%ncd%nEF%n", L"ab%lncd%lnEF%ln", L"ab%llncd%llnEF%lln",
+        L"ab%jncd%jnEF%jn", L"ab%zncd%znEF%zn", L"ab%tncd%tnEF%tn",
+        L"\u03a9\u03b2%n\U00010400cd%n", L"ab%2$n%1$*3$d%4$n",
+        L"ab%n%s%nZ", L"ab%n%ls%nZ", L"ab%n%.1f%nZ",
+        L"ab%n%lc%nZ", L"ab%n%m%nZ", L"%3$*1$.*2$f%4$n"
+    };
+    union Count {
+        signed char hh; short h; int i; long l; long long ll;
+        intmax_t j; ssize_t z; ptrdiff_t t;
+    };
+    alarm(20);
+    REG_CHECK(check_gnu_provider("swprintf") == 0 && check_gnu_provider("vswprintf") == 0);
+    for (unsigned test = 0; test < sizeof formats / sizeof formats[0]; ++test) {
+        for (int variant = 0; variant < 2; ++variant) {
+            for (size_t index = 0; index <= sizeof capacities / sizeof capacities[0]; ++index) {
+                int null_buffer = index == sizeof capacities / sizeof capacities[0];
+                size_t capacity = null_buffer ? 0 : capacities[index];
+                wchar_t buffer[64];
+                for (size_t i = 0; i < 64; ++i) buffer[i] = 0x5a5a;
+                struct { unsigned char before[8]; union Count values[3]; unsigned char after[8]; } counts;
+                memset(&counts, 0xa5, sizeof counts);
+                for (unsigned i = 0; i < 3; ++i) {
+                    switch (test) {
+                    case 1: counts.values[i].hh = -77; break;
+                    case 2: counts.values[i].h = -77; break;
+                    case 4: counts.values[i].l = -77; break;
+                    case 5: counts.values[i].ll = -77; break;
+                    case 6: counts.values[i].j = -77; break;
+                    case 7: counts.values[i].z = -77; break;
+                    case 8: counts.values[i].t = -77; break;
+                    default: counts.values[i].i = -77;
+                    }
+                }
+                wchar_t *destination = null_buffer ? NULL : buffer;
+                const wchar_t *format = formats[test];
+                int rc = -99;
+                errno = EDOM;
+#define WIDE_BOUND_CALL(...) do { \
+    rc = variant ? call_vswprintf(destination, capacity, format, __VA_ARGS__) \
+                 : swprintf(destination, capacity, format, __VA_ARGS__); \
+} while (0)
+#define WIDE_COUNT_ARGS(field) &counts.values[0].field, &counts.values[1].field, &counts.values[2].field
+                switch (test) {
+                case 1: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(hh)); break;
+                case 2: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(h)); break;
+                case 4: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(l)); break;
+                case 5: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(ll)); break;
+                case 6: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(j)); break;
+                case 7: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(z)); break;
+                case 8: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(t)); break;
+                case 10: WIDE_BOUND_CALL(42, &counts.values[0].i, 4, &counts.values[1].i); break;
+                case 11: WIDE_BOUND_CALL(&counts.values[0].i, "tail", &counts.values[1].i); break;
+                case 12: WIDE_BOUND_CALL(&counts.values[0].i, L"\u03a9\U00010400", &counts.values[1].i); break;
+                case 13: WIDE_BOUND_CALL(&counts.values[0].i, 1.5, &counts.values[1].i); break;
+                case 14: WIDE_BOUND_CALL(&counts.values[0].i, (wint_t)L'\u03a9', &counts.values[1].i); break;
+                case 16: WIDE_BOUND_CALL(7, 2, 1.25, &counts.values[0].i); break;
+                default: WIDE_BOUND_CALL(WIDE_COUNT_ARGS(i));
+                }
+#undef WIDE_COUNT_ARGS
+#undef WIDE_BOUND_CALL
+                int error = errno;
+                if (test == 0 && capacity == 64)
+                    REG_CHECK(rc == 6 && counts.values[0].i == 0 && counts.values[1].i == 6);
+                printf("wide:bounds:%u:%i:%zu:%i:%i:%i:", test, variant, capacity, null_buffer, rc, error);
+                const unsigned char *bytes = (const unsigned char *)&counts;
+                for (size_t i = 0; i < sizeof counts; ++i) printf("%02x", bytes[i]);
+                putchar(':');
+                for (size_t i = 0; i < 64; ++i) printf("%08x", (unsigned)buffer[i]);
+                putchar('\n');
+            }
+        }
+    }
+    puts("wide:complete:bounds");
+    alarm(0);
+    return 0;
+}
+
 static int gnu_registration_wide(void) {
     alarm(20);
     reg_setup();
@@ -1268,6 +1353,7 @@ static int gnu_registration_wide(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--gnu-wide-bounds") == 0) return gnu_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide-bounds") == 0) return gnu_registration_wide_bounds();
