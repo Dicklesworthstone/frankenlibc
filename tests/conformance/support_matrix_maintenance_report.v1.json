@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-01T05:47:54Z",
-  "source_commit": "543c44c2dbdf217d8ff781a0523b2b963b890c79",
-  "source_generated_at_utc": "2026-11-01T05:44:00Z",
-  "newest_abi_commit": "543c44c2dbdf217d8ff781a0523b2b963b890c79",
-  "newest_abi_commit_time": "2026-11-01T01:42:31-04:00",
+  "generated_at": "2026-11-01T06:38:35Z",
+  "source_commit": "544f82f5c6a8f6c63f58d1a81318cea3a98819c0",
+  "source_generated_at_utc": "2026-11-01T06:33:00Z",
+  "newest_abi_commit": "544f82f5c6a8f6c63f58d1a81318cea3a98819c0",
+  "newest_abi_commit_time": "2026-11-01T01:32:06-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 3034,
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "69510ef0d1a45bc317d967d2fbaf87063bad5a6caafbc9a8023cb3de8c74a94b",
+        "artifact_sha256": "a1b750b2f9ce982d8e4f932e2f974e152b930de9c4aefb64aa3e46f9fda891ef",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 16,
-        "source_tree_sha256": "e4dae574e87cfbd7f8422abf51b65054124654ac9a71cae7dad14b0e18c09ed8"
+        "source_tree_sha256": "58aa71a672dfff4fde009b47b4fa5df23db446005ef8f17caf1589a22b95cfde"
       }
     },
     "summary": {

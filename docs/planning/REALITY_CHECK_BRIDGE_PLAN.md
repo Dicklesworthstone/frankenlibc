@@ -42,6 +42,16 @@ streams preserve Unicode independently of the external-file locale codec.
 This is bounded behavior evidence, not independent review, performance
 qualification or a change to native-ownership classifications.
 
+Ordinary `swprintf` and `vswprintf` count directives now use that same bounded
+sink (`544f82f5c`, `bd-reality-202609-lx578q.7.7`). The frozen 408-case matrix
+compares reached count writes, errno and every guarded output byte. A fresh
+solo replay reproduced 302 original mismatches per mode and zero candidate
+mismatches in strict and hardened modes. The full GNU printf driver, 131 Rust
+tests and 72 callback-unwind cases passed; workspace check and strict Clippy
+passed. The direct `%d`/`%ls` paths remain in place. Latency of count-store
+formats is unqualified, and unrelated wide-format semantics remain outside
+this repair's claim. No taxonomy or replacement-level promotion follows.
+
 ## Current assessment — 2026-10-30
 
 **Verdict: FrankenLibC is a substantial experimental L0 interposer. It does not

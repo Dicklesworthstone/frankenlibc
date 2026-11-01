@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 120,
-    "source_tree_sha256": "e4dae574e87cfbd7f8422abf51b65054124654ac9a71cae7dad14b0e18c09ed8",
+    "source_tree_sha256": "58aa71a672dfff4fde009b47b4fa5df23db446005ef8f17caf1589a22b95cfde",
     "version": 16
   },
   "module_census": [
@@ -3134,7 +3134,7 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "605b77ca92997fd525c96868651685e2b22386bc1c5cb170e2df45f25ae4fc88",
+        "support_matrix_sha256": "25742171d26557f509d3926d295fba3bf65eae96b55b6147d6170d8438615dfa",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 9098,
@@ -13009,7 +13009,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 17836,
+      "resolved_call_edge_count": 17838,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1660,
@@ -15174,7 +15174,7 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "605b77ca92997fd525c96868651685e2b22386bc1c5cb170e2df45f25ae4fc88",
+        "support_matrix_sha256": "25742171d26557f509d3926d295fba3bf65eae96b55b6147d6170d8438615dfa",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 9086,
@@ -19304,7 +19304,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17634,
+      "resolved_call_edge_count": 17636,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 592,
@@ -20522,7 +20522,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "99e7a29dc99064f628c2845ec5f41f0ffcec862570c6a2f6b734c8467d9325a8"
+      "sha256": "588e72bd2ef84a1d76b1490148230e2d2fc3976f2aba4a41909a422a6afd44df"
     }
   ],
   "summary": {
