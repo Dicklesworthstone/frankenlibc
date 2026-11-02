@@ -210,11 +210,83 @@ static int restartable_state(const char *provider, int isolation) {
     return 0;
 }
 
+static long source_offset(const char *current, const char *start) {
+    return current ? (long)(current - start) : -1;
+}
+
+static int string_state(const char *provider) {
+    typedef size_t (*wide_fn)(wchar_t *, const char *, size_t, mbstate_t *);
+    typedef size_t (*string_fn)(wchar_t *, const char **, size_t, mbstate_t *);
+    typedef size_t (*bounded_fn)(wchar_t *, const char **, size_t, size_t, mbstate_t *);
+    typedef int (*initial_fn)(const mbstate_t *);
+    typedef int *(*errno_fn)(void);
+    typedef char *(*locale_fn)(int, const char *);
+    wide_fn wide = (wide_fn)state_symbol("mbrtowc", provider);
+    string_fn convert = (string_fn)state_symbol("mbsrtowcs", provider);
+    bounded_fn bounded = (bounded_fn)state_symbol("mbsnrtowcs", provider);
+    initial_fn initial = (initial_fn)state_symbol("mbsinit", provider);
+    errno_fn error = (errno_fn)state_symbol("__errno_location", provider);
+    locale_fn locale = (locale_fn)state_symbol("setlocale", provider);
+    if (!wide || !convert || !bounded || !initial || !error || !locale)
+        return 91;
+    if (!locale(LC_ALL, "C.UTF-8"))
+        return 92;
+    const char *input[] = {"AZ", "\xc3\xa9Z", "\xe2\x82\xacZ", "\xf0\x9f\x99\x82Z"};
+    const size_t width[] = {1, 2, 3, 4};
+    for (int kind = 0; kind < 2; ++kind) {
+        for (int sample = 0; sample < 4; ++sample) {
+            for (size_t split = 0; split < width[sample]; ++split) {
+                const char *start = input[sample] + split;
+                size_t remaining = strlen(start) + 1;
+                const size_t windows[] = {0, 1, remaining};
+                for (int window = 0; window < (kind ? 3 : 1); ++window) {
+                    for (int count = 0; count < 2; ++count) {
+                        for (size_t capacity = 0; capacity < 4; ++capacity) {
+                            for (int saved = 0; saved < 2; ++saved) {
+                                mbstate_t state = {0};
+                                if (split && wide(NULL, input[sample], split, &state) != (size_t)-2)
+                                    return 93;
+                                wchar_t out[4] = {0x1234, 0x1234, 0x1234, 0x1234};
+                                const char *src = start;
+                                *error() = saved ? E2BIG : 0;
+                                size_t r = kind ? bounded(count ? NULL : out, &src, windows[window], capacity, &state)
+                                    : convert(count ? NULL : out, &src, capacity, &state);
+                                int e = *error();
+                                int state_initial = !!initial(&state);
+                                long offset = source_offset(src, start);
+                                /* Sizing must leave the original stream usable. For write
+                                 * calls, finish from the actual returned source/state. */
+                                if (count) src = start;
+                                wchar_t next[4] = {0x1234, 0x1234, 0x1234, 0x1234};
+                                size_t again = (size_t)-4;
+                                int next_error = saved ? E2BIG : 0;
+                                if (src && r != (size_t)-1) {
+                                    *error() = saved ? E2BIG : 0;
+                                    again = convert(next, &src, 3, &state);
+                                    next_error = *error();
+                                }
+                                printf("string kind=%d sample=%d split=%zu window=%d count=%d cap=%zu saved=%d ret=%zu off=%ld errno=%d initial=%d out=%x,%x,%x,%x again=%zu next_off=%ld next_errno=%d next_initial=%d next=%x,%x,%x,%x\n",
+                                       kind, sample, split, window, count, capacity, saved, r, offset, e, state_initial,
+                                       (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3],
+                                       again, source_offset(src, start), next_error, !!initial(&state),
+                                       (unsigned)next[0], (unsigned)next[1], (unsigned)next[2], (unsigned)next[3]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--restartable-state") == 0)
         return restartable_state(argv[2], 0);
     if (argc == 3 && strcmp(argv[1], "--state-isolation") == 0)
         return restartable_state(argv[2], 1);
+    if (argc == 3 && strcmp(argv[1], "--string-state") == 0)
+        return string_state(argv[2]);
     if (argc != 1)
         return 90;
     setlocale(LC_ALL, "C");
