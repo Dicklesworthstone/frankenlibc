@@ -207,6 +207,55 @@ jobs:
           done
           test "$failed" -eq 0
 
+      # Explicit-state tests missed discarded implicit UTF-8 state and shared
+      # UTF-16 encoder/decoder state (.7.12). Check the deployed providers too.
+      - name: Check deployed restartable multibyte state
+        run: |
+          library="${FRANKENLIBC_SMOKE_LIB_PATH:-$PWD/target/release/libfrankenlibc_abi.so}"
+          out="${FRANKENLIBC_MULTIBYTE_STATE_OUT:-artifacts/ci/multibyte-state}"
+          mkdir -p "$(dirname "$out")"
+          mkdir "$out"
+          cc -O2 -Wall -Wextra -Werror -std=c11 -fno-builtin \
+            tests/integration/fixture_langinfo_time_mbrtowc_null.c -o "$out/probe" -ldl
+          host="$(cc -print-file-name=libc.so.6)"
+          test -f "$library"
+          test -f "$host"
+          cc --version > "$out/compiler.txt" 2>&1
+          printf '%s\n' "${GITHUB_SHA:-${RCH_BUILD_SOURCE:-unknown}}" > "$out/source-revision.txt"
+          sha256sum .github/workflows/ci.yml tests/integration/fixture_langinfo_time_mbrtowc_null.c \
+            "$library" "$host" "$out/probe" > "$out/inputs.sha256"
+          failed=0
+          for matrix in restartable-state:156 state-isolation:35; do
+            option="${matrix%:*}"
+            rows="${matrix#*:}"
+            matrix_out="$out/$option"
+            mkdir "$matrix_out"
+            env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT -u FRANKENLIBC_MODE \
+              "$out/probe" "--$option" "$host" \
+              > "$matrix_out/gnu.stdout" 2> "$matrix_out/gnu.stderr"
+            test "$(wc -l < "$matrix_out/gnu.stdout")" -eq "$rows"
+            for mode in strict hardened; do
+              if env -u LD_LIBRARY_PATH -u LD_AUDIT \
+                FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+                "$out/probe" "--$option" "$library" \
+                > "$matrix_out/$mode.stdout" 2> "$matrix_out/$mode.stderr"; then
+                rc=0
+              else
+                rc=$?
+              fi
+              printf '%s\n' "$rc" > "$matrix_out/$mode.exit_code"
+              if [[ "$rc" -ne 0 ]] || [[ "$(wc -l < "$matrix_out/$mode.stdout")" -ne "$rows" ]] || \
+                ! cmp "$matrix_out/gnu.stdout" "$matrix_out/$mode.stdout" || \
+                ! cmp "$matrix_out/gnu.stderr" "$matrix_out/$mode.stderr"; then
+                echo "FAIL: deployed multibyte state matrix ($option, $mode)" >&2
+                failed=1
+              else
+                echo "PASS: deployed multibyte state matrix ($option, $mode), $rows rows"
+              fi
+            done
+          done
+          test "$failed" -eq 0
+
       # The release artifact targets baseline x86-64 (bd-rc0923-epic-eeuy4f.13):
       # non-baseline instructions only in dispatch-guarded functions, and the C
       # fixture suite plus real programs run on emulated CPUs without AVX
@@ -257,6 +306,7 @@ jobs:
           path: |
             artifacts/ci/release-*.log
             artifacts/ci/math-domain/**
+            artifacts/ci/multibyte-state/**
             artifacts/ci/replacement-guard-interpose.log
             target/conformance/release_claim_evidence_gate.report.json
             target/conformance/release_claim_evidence_gate.log.jsonl

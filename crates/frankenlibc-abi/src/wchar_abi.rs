@@ -4375,14 +4375,20 @@ pub unsafe extern "C" fn mbrtowc(
 ) -> usize {
     const MB_INCOMPLETE: usize = usize::MAX - 1;
 
-    // s == NULL resets the conversion state: it is mbrtowc(NULL, "", 1, ps), so
-    // `pwc` is NOT written (glibc leaves it; gnulib test-mbrtowc checks).
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::Wide, |state| {
+            // SAFETY: state is private to this function on the current thread;
+            // the input/output retain the caller's ordinary conversion contract.
+            unsafe { mbrtowc(pwc, s, n, state) }
+        });
+    }
+
+    // A NULL source means conversion of NUL without storing a wide character.
+    // Feeding it through the same engine also reports EILSEQ when a pending
+    // prefix cannot be completed by that NUL, rather than silently losing it.
     if s.is_null() {
-        if !ps.is_null() {
-            // SAFETY: ps is a valid mbstate_t per the C contract.
-            unsafe { mbstate_partial_clear(ps) };
-        }
-        return 0;
+        // SAFETY: the literal has one readable NUL; state remains caller-owned.
+        return unsafe { mbrtowc(std::ptr::null_mut(), c"".as_ptr(), 1, ps) };
     }
     if n == 0 {
         return MB_INCOMPLETE;
@@ -8576,6 +8582,12 @@ pub unsafe extern "C" fn mbsinit(ps: *const c_void) -> c_int {
 /// Wraps `mbrtowc` with NULL destination.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mbrlen(s: *const c_char, n: usize, ps: *mut c_void) -> usize {
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::Length, |state| {
+            // SAFETY: state is mbrlen's own live internal conversion state.
+            unsafe { mbrtowc(std::ptr::null_mut(), s, n, state) }
+        });
+    }
     unsafe { mbrtowc(std::ptr::null_mut(), s, n, ps) }
 }
 
@@ -8591,15 +8603,21 @@ pub unsafe extern "C" fn mbsnrtowcs(
     if src.is_null() || unsafe { (*src).is_null() } {
         return 0;
     }
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::BoundedString, |state| {
+            // SAFETY: the string converter must not borrow mbrtowc's implicit
+            // state for its internal scalar calls. All buffers remain caller-owned.
+            unsafe { mbsnrtowcs(dst, src, nms, len, state) }
+        });
+    }
     let mut s = unsafe { *src };
     let mut written = 0usize;
     let mut consumed = 0usize;
     // The SIMD ASCII fast path is valid only from an INITIAL conversion state.
     // If a partial multibyte sequence is pending (from an earlier nms-truncated
     // call), the next byte must be a continuation (>= 0x80); an ASCII byte there
-    // is EILSEQ, which only the scalar `mbrtowc` detects. With `ps == NULL` fl
-    // keeps no partial across calls (see `mbrtowc`), so the state is always
-    // initial; with `ps != NULL` the partial-count byte ([0]) is 0 when initial.
+    // is EILSEQ, which only the scalar `mbrtowc` detects. Both the caller's
+    // state and this function's internal state have a zero count when initial.
     // After any complete character the state returns to initial.
     // SAFETY: when non-null, `ps` is a valid `mbstate_t` (>= 8 bytes) per the C
     // contract, so byte 0 (the mbrtowc partial count) is readable.
@@ -9173,37 +9191,40 @@ pub unsafe extern "C-unwind" fn putwchar_unlocked(wc: u32) -> u32 {
 // C11 uchar.h — char16_t / char32_t conversion
 // ===========================================================================
 
-#[cfg(feature = "owned-tls-cache")]
-static C16_SURROGATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
-    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+// C11 7.28.1 and 7.29.6.3 give each restartable entrypoint its own internal
+// mbstate_t when ps is NULL. Keep the whole state, not only a UTF-16 surrogate:
+// split UTF-8 input must resume too, and encoding must not clobber decoding.
+enum MultibyteState {
+    Wide,
+    Length,
+    Utf32,
+    Utf16,
+    Utf16Encode,
+    BoundedString,
+}
 
-// Thread-local storage for UTF-16 surrogate pair state (mbrtoc16).
+#[cfg(feature = "owned-tls-cache")]
+static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 6]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 6]);
+
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static C16_SURROGATE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static MULTIBYTE_STATES: std::cell::RefCell<[[u8; 8]; 6]> =
+        const { std::cell::RefCell::new([[0; 8]; 6]) };
 }
 
 #[inline]
-fn c16_surrogate_get() -> u32 {
+fn with_implicit_mbstate(which: MultibyteState, f: impl FnOnce(*mut c_void) -> usize) -> usize {
+    // The nested converter is always given an explicit non-null state. It
+    // neither reborrows this storage nor calls user callbacks, and the state
+    // pointer cannot escape through the scalar return value.
     #[cfg(feature = "owned-tls-cache")]
     {
-        C16_SURROGATE_OWNED_TLS.with(|pending| *pending)
+        MULTIBYTE_STATES_OWNED_TLS.with(|states| f(states[which as usize].as_mut_ptr().cast()))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        C16_SURROGATE.with(|cell| cell.get())
-    }
-}
-
-#[inline]
-fn c16_surrogate_set(value: u32) {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        C16_SURROGATE_OWNED_TLS.with(|pending| *pending = value);
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        C16_SURROGATE.with(|cell| cell.set(value));
+        MULTIBYTE_STATES.with(|states| f(states.borrow_mut()[which as usize].as_mut_ptr().cast()))
     }
 }
 
@@ -9216,27 +9237,19 @@ fn c16_surrogate_set(value: u32) {
 /// two never overlap *in practice* because a pending surrogate only exists
 /// AFTER a complete character has decoded (cleared partial), and a UTF-16 stream
 /// only ever decodes <=4-byte UTF-8 (partial <= 3 bytes, never reaching [4..6]).
-/// When `ps` is null we fall back to the thread-local, matching glibc's internal
-/// static state for that case.
+/// A null caller state has already been replaced with this entrypoint's own
+/// internal state before reaching this helper.
 #[inline]
 unsafe fn c16_pending_get(ps: *const c_void) -> u32 {
-    if ps.is_null() {
-        return c16_surrogate_get();
-    }
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
     let raw = unsafe { (ps as *const u8).add(6).cast::<u16>().read_unaligned() };
     raw as u32
 }
 
 /// Store (or clear, with `value == 0`) the pending UTF-16 surrogate for a
-/// stream — in the caller's `mbstate_t` when `ps` is non-null, else the
-/// thread-local fallback. See [`c16_pending_get`].
+/// stream, after resolving any implicit state. See [`c16_pending_get`].
 #[inline]
 unsafe fn c16_pending_set(ps: *mut c_void, value: u32) {
-    if ps.is_null() {
-        c16_surrogate_set(value);
-        return;
-    }
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
     unsafe {
         (ps as *mut u8)
@@ -9296,6 +9309,13 @@ pub unsafe extern "C" fn mbrtoc32(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::Utf32, |state| {
+            // SAFETY: state is private to mbrtoc32 and the buffers retain the
+            // original caller's conversion preconditions.
+            unsafe { mbrtoc32(pc32, s, n, state) }
+        });
+    }
     let mut wc: libc::wchar_t = 0;
     let dst = if pc32.is_null() {
         &mut wc as *mut libc::wchar_t
@@ -9309,6 +9329,22 @@ pub unsafe extern "C" fn mbrtoc32(
 /// Handles UTF-16 surrogate pairs via thread-local state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn c16rtomb(s: *mut c_char, c16: u16, ps: *mut c_void) -> usize {
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::Utf16Encode, |state| {
+            // SAFETY: state is c16rtomb's own live internal conversion state.
+            unsafe { c16rtomb(s, c16, state) }
+        });
+    }
+    // NULL output ignores c16 and resets the encoder, including a pending high
+    // surrogate. In the supported C/UTF-8 encodings the reset emits one NUL.
+    if s.is_null() {
+        // SAFETY: ps is a live explicit or internal eight-byte mbstate_t.
+        unsafe {
+            mbstate_partial_clear(ps);
+            c16_pending_set(ps, 0);
+        }
+        return 1;
+    }
     let pending = unsafe { c16_pending_get(ps) };
 
     if pending != 0 {
@@ -9349,6 +9385,12 @@ pub unsafe extern "C" fn mbrtoc16(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::Utf16, |state| {
+            // SAFETY: state is mbrtoc16's own live internal conversion state.
+            unsafe { mbrtoc16(pc16, s, n, state) }
+        });
+    }
     // s == NULL is mbrtoc16(NULL, "", 1, ps): nothing is stored (as mbrtowc).
     let pc16 = if s.is_null() {
         std::ptr::null_mut()
