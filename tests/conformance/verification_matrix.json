@@ -164,8 +164,8 @@
     "total_critique_beads": 125,
     "total_entries": 125,
     "by_coverage_status": {
-      "complete": 47,
-      "partial": 2,
+      "complete": 48,
+      "partial": 1,
       "missing": 76
     },
     "by_priority": {
@@ -177,8 +177,8 @@
       },
       "P1": {
         "total": 50,
-        "complete": 28,
-        "partial": 1,
+        "complete": 29,
+        "partial": 0,
         "missing": 21
       },
       "P2": {
@@ -191,8 +191,8 @@
     "by_obligation_type": {
       "unit_tests": {
         "required": 125,
-        "complete": 48,
-        "partial": 1,
+        "complete": 49,
+        "partial": 0,
         "missing": 76
       },
       "e2e_scripts": {
@@ -235,8 +235,8 @@
       },
       "e2e": {
         "total": 20,
-        "complete": 10,
-        "partial": 2,
+        "complete": 11,
+        "partial": 1,
         "missing": 8
       },
       "math": {
@@ -345,7 +345,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.14",
       "title": "Stop multibyte string conversion at destination capacity",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
@@ -380,7 +380,7 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
+          "status": "complete",
           "artifacts": "/data/tmp/frankenlibc-capacity-20261102/unit/record/receipt.json"
         },
         "e2e_scripts": {
@@ -401,16 +401,16 @@
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 2,
-        "complete": 1,
-        "partial": 1,
+        "complete": 2,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.14",
         "stream": "e2e",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_c_locale_codec",
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --features owned-tls-cache --test conformance_diff_c_locale_codec",
@@ -432,12 +432,8 @@
           "vmi1167313:/data/tmp/frankenlibc-capacity-20261102/fresh-solo/report.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "pending_actual_unit_capture",
-          "pending_workspace_checks",
-          "pending_paired_regeneration"
-        ],
-        "notes": "Actual release cf70ab5a15df386a72ccf5ee85430286590ccf3e2ba3c7334c5753d95551c17a matches all2880 capacity observations in strict+hardened; retained original43179f9d... still124/2880. Prior156+35+640/default21 all exact in both modes,8 wrong-provider arms91/0. Exact44-line CI body2e7d35bc1b336671a30cb52242e1e343177aaa21d96aeb3ccd584c12045e348b passes fixed0/rejects original1 in first and fresh solo runs. Native first report SHAde580b5b325310ed800fc2fdd7ba82560e68894acb7ab56a9f720511eedfb54f; fresh SHAb206e4a9230be7917b5307da3e7987b57e3c3047165b392ce6d88f9c5f8b729a.17 bound inputs equal efb6eccb22aa98a96e2a0d0b4d267f1598ea0399 except ignored Cargo.lock is captured separately (16 tracked). Actual default22tests,owned5,core46 and two200000-case fuzz targets pass; full fmt0/UBS0critical. Unit receipt, full check/Clippy and paired-source regeneration pending. Scalar reference changes separately reviewed in fresh solo pass against GNU capacity results; identical old/new SIMD comparison assertions and case grids, no regenerated golden. No independent reviewer, performance or full locale/POSIX/safety/standalone/hosted-CI promotion.",
+        "close_blockers": [],
+        "notes": "Actual release cf70ab5a15df386a72ccf5ee85430286590ccf3e2ba3c7334c5753d95551c17a matches all2880 capacity observations in strict+hardened; retained original43179f9d... still124/2880. Prior156+35+640/default21 all exact in both modes,8 wrong-provider arms91/0. Exact44-line CI body2e7d35bc1b336671a30cb52242e1e343177aaa21d96aeb3ccd584c12045e348b passes fixed0/rejects original1 in first and fresh solo runs. Native first report SHAde580b5b325310ed800fc2fdd7ba82560e68894acb7ab56a9f720511eedfb54f; fresh SHAb206e4a9230be7917b5307da3e7987b57e3c3047165b392ce6d88f9c5f8b729a.17 bound inputs equal efb6eccb22aa98a96e2a0d0b4d267f1598ea0399 except ignored Cargo.lock is captured separately (16 tracked). Actual default22tests,owned5,core46 and two200000-case fuzz targets pass; full fmt0/UBS0critical. Actual unit receipt SHA99be00ce3075f9e66bba26e8d75c595cfebe4f38e2e940477a0263b9078f60a2: build0/execution0; test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out. Full workspace all-targets --keep-going compiler check0 at16:52:18Z; strictClippy0 at16:43:43Z, full fmt0, UBS publication0critical/514warnings/1346info. Paired regeneration actual0 at16:56:21Z uses retained compiled producer43a57ca6c (unchanged harness source, not a newly rebuilt harness). Actual scoped admission PASS1/1 at16:58:16Z. Closed only after full acceptance, fresh SOLO verification and separate gate review; no independent reviewer, broader parents remain open. Scalar reference changes separately reviewed in fresh solo pass against GNU capacity results; identical old/new SIMD comparison assertions and case grids, no regenerated golden. No independent reviewer, performance or full locale/POSIX/safety/standalone/hosted-CI promotion.",
         "closure_evidence": {
           "behavior": "Stop bounded mbstowcs/wcstombs conversion at output capacity while preserving sizing and encoding errors",
           "acceptance_sha256": "722aee300bc5b9af92640494b696e1206efcc8541e8c8601b54de023e1d084d8",
@@ -517,7 +513,9 @@
             ]
           }
         },
-        "result_receipts": []
+        "result_receipts": [
+          "/data/tmp/frankenlibc-capacity-20261102/unit/record/receipt.json"
+        ]
       }
     },
     {
