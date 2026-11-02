@@ -225,7 +225,7 @@ jobs:
           sha256sum .github/workflows/ci.yml tests/integration/fixture_langinfo_time_mbrtowc_null.c \
             "$library" "$host" "$out/probe" > "$out/inputs.sha256"
           failed=0
-          for matrix in restartable-state:156 state-isolation:35 string-state:640; do
+          for matrix in restartable-state:156 state-isolation:35 string-state:640 conversion-capacity:2880; do
             option="${matrix%:*}"
             rows="${matrix#*:}"
             matrix_out="$out/$option"

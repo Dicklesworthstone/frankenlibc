@@ -3633,11 +3633,13 @@ mod codec {
         }
         let mut count = 0usize;
         for &b in src {
-            if b >= 0x80 {
-                return None;
-            }
+            // A full destination ends conversion before the next character
+            // is examined. Sizing uses mbs_decoded_len instead of this path.
             if count == dest.len() {
                 return Some(count);
+            }
+            if b >= 0x80 {
+                return None;
             }
             dest[count] = u32::from(b);
             if b == 0 {
@@ -3658,11 +3660,13 @@ mod codec {
         }
         let mut count = 0usize;
         for &wc in src {
-            if wc >= 0x80 {
-                return None;
-            }
+            // No next character is converted once all output bytes are used.
+            // Count-only requests have their separate whole-input validator.
             if count == dest.len() {
                 return Some(count);
+            }
+            if wc >= 0x80 {
+                return None;
             }
             dest[count] = wc as u8;
             if wc == 0 {

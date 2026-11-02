@@ -286,20 +286,16 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         di += LANES;
     }
 
-    while si < src.len() {
+    // Stop before decoding a character that cannot be stored. An invalid tail
+    // after an exhausted destination is outside this conversion's input.
+    while si < src.len() && di < dest.len() {
         if src[si] == 0 {
             // NUL terminator
-            if di < dest.len() {
-                dest[di] = 0;
-            }
+            dest[di] = 0;
             return Some(di);
         }
         let (wc, n) = mbtowc(&src[si..])?;
-        if di < dest.len() {
-            dest[di] = wc;
-        } else {
-            return Some(di);
-        }
+        dest[di] = wc;
         si += n;
         di += 1;
     }
@@ -481,6 +477,7 @@ pub fn wcs_encoded_len(src: &[u32]) -> Option<usize> {
 pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     let mut si = 0usize;
     let mut di = 0usize;
+    let mut encoded = [0u8; 6];
 
     // SIMD ASCII fast path — the inverse of mbstowcs's. Every wide char wc with
     // 0 < wc < 0x80 encodes to the single byte `wc as u8`, exactly as wctomb
@@ -509,20 +506,20 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         di += LANES;
     }
 
-    while si < src.len() {
+    while si < src.len() && di < dest.len() {
         if src[si] == 0 {
             // NUL terminator
-            if di < dest.len() {
-                dest[di] = 0;
-            }
+            dest[di] = 0;
             return Some(di);
         }
-        let remaining = if di < dest.len() {
-            dest.len() - di
-        } else {
+        // Validate into a full-character scratch buffer first: insufficient
+        // destination capacity is a normal stop, not an encoding error. Never
+        // store a partial character in the caller's output.
+        let n = wctomb(src[si], &mut encoded)?;
+        if n > dest.len() - di {
             return Some(di);
-        };
-        let n = wctomb(src[si], &mut dest[di..di + remaining])?;
+        }
+        dest[di..di + n].copy_from_slice(&encoded[..n]);
         di += n;
         si += 1;
     }
@@ -697,47 +694,41 @@ mod tests {
         assert_eq!(wcstombs(&mut [], &[0xd800, 0]), Some(0));
     }
 
-    // Pure scalar reference: the original mbstowcs loop, with no SIMD fast path.
-    // Used to prove the vectorised mbstowcs is byte-for-byte isomorphic.
+    // Scalar reference with the bounded-output contract: do not decode after
+    // filling dest. The live GNU capacity matrix checks that contract separately
+    // from these SIMD/scalar equivalence comparisons.
     fn mbstowcs_scalar_reference(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         let mut si = 0usize;
         let mut di = 0usize;
-        while si < src.len() {
+        while si < src.len() && di < dest.len() {
             if src[si] == 0 {
-                if di < dest.len() {
-                    dest[di] = 0;
-                }
+                dest[di] = 0;
                 return Some(di);
             }
             let (wc, n) = mbtowc(&src[si..])?;
-            if di < dest.len() {
-                dest[di] = wc;
-            } else {
-                return Some(di);
-            }
+            dest[di] = wc;
             si += n;
             di += 1;
         }
         Some(di)
     }
 
-    // Pure scalar reference for wcstombs (no SIMD fast path).
+    // Scalar reference for wcstombs (no SIMD fast path). Whole characters that
+    // cannot fit end conversion; unrepresentable ones still report an error.
     fn wcstombs_scalar_reference(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         let mut si = 0usize;
         let mut di = 0usize;
-        while si < src.len() {
+        let mut encoded = [0u8; 6];
+        while si < src.len() && di < dest.len() {
             if src[si] == 0 {
-                if di < dest.len() {
-                    dest[di] = 0;
-                }
+                dest[di] = 0;
                 return Some(di);
             }
-            let remaining = if di < dest.len() {
-                dest.len() - di
-            } else {
+            let n = wctomb(src[si], &mut encoded)?;
+            if n > dest.len() - di {
                 return Some(di);
-            };
-            let n = wctomb(src[si], &mut dest[di..di + remaining])?;
+            }
+            dest[di..di + n].copy_from_slice(&encoded[..n]);
             di += n;
             si += 1;
         }
