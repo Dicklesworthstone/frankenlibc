@@ -36,22 +36,28 @@ struct Outcome {
     out: Vec<u32>, // wide chars (mbsn) or bytes-as-u32 (wcsn)
 }
 
-fn ensure_locale() -> bool {
+fn ensure_locale() {
     let utf8 = c"C.UTF-8";
     // SAFETY: standard libc locale switch for this single-threaded test.
     // fl needs the same locale, not just the oracle. `setlocale` below is a
     // link-time symbol, so in a debug test it binds GLIBC's and moves the
-    // oracle alone; fl has started in POSIX C since b5aef5e3a. Set fl's first,
-    // unconditionally -- if the host switch then fails the arm skips anyway.
+    // oracle alone; fl has started in POSIX C since b5aef5e3a.
     // SAFETY: same NUL-terminated locale name, same category, as below.
-    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr()) };
-    !unsafe { setlocale(libc::LC_ALL, utf8.as_ptr()) }.is_null()
+    assert!(
+        !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr()) }.is_null()
+    );
+    assert!(!unsafe { setlocale(libc::LC_ALL, utf8.as_ptr()) }.is_null());
 }
 
 fn run_mbsn(input: &[u8], nms: usize, dst_null: bool, len: usize, use_fl: bool) -> Outcome {
     let buf = input.to_vec();
     let start = buf.as_ptr() as *const libc::c_char;
     let mut src = start;
+    // Every matrix cell is an independent string, so both providers need the
+    // same fresh initial state. Reusing only fl's implicit state carries a
+    // truncated prefix (or unspecified error state) into the next input.
+    // A zero-filled, eight-byte aligned object holds mbstate_t on this ABI.
+    let mut st = [0u64; 1];
     let mut wide = vec![0u32; len.max(1) + 4];
     let dst = if dst_null {
         std::ptr::null_mut()
@@ -66,13 +72,12 @@ fn run_mbsn(input: &[u8], nms: usize, dst_null: bool, len: usize, use_fl: bool) 
                 &mut src as *mut *const libc::c_char,
                 nms,
                 len,
-                std::ptr::null_mut(),
+                st.as_mut_ptr().cast(),
             )
         }
     } else {
-        let mut st: libc::mbstate_t = unsafe { std::mem::zeroed() };
         // SAFETY: as above.
-        unsafe { mbsnrtowcs(dst, &mut src, nms, len, &mut st) }
+        unsafe { mbsnrtowcs(dst, &mut src, nms, len, st.as_mut_ptr().cast()) }
     };
     let rc_i = if rc == usize::MAX { -1 } else { rc as i64 };
     let src_off = src_offset(dst_null, src, start, rc_i);
@@ -115,7 +120,7 @@ fn run_wcsn(input: &[u32], nwc: usize, dst_null: bool, len: usize, use_fl: bool)
             )
         }
     } else {
-        let mut st: libc::mbstate_t = unsafe { std::mem::zeroed() };
+        let mut st = [0u64; 1];
         // SAFETY: as above.
         unsafe {
             wcsnrtombs(
@@ -123,7 +128,7 @@ fn run_wcsn(input: &[u32], nwc: usize, dst_null: bool, len: usize, use_fl: bool)
                 &mut src as *mut *const u32 as *mut *const libc::wchar_t,
                 nwc,
                 len,
-                &mut st,
+                st.as_mut_ptr().cast(),
             )
         }
     };
@@ -147,11 +152,9 @@ fn run_wcsn(input: &[u32], nwc: usize, dst_null: bool, len: usize, use_fl: bool)
 }
 
 fn src_offset<T>(dst_null: bool, src: *const T, start: *const T, rc: i64) -> Option<isize> {
-    if dst_null {
-        Some(0)
-    } else if src.is_null() {
+    if src.is_null() {
         None
-    } else if rc < 0 {
+    } else if rc < 0 && !dst_null {
         Some(-1) // non-NULL on error; exact byte is a glibc quirk (bd-2g7oyh.185)
     } else {
         Some(unsafe { src.offset_from(start) })
@@ -160,10 +163,7 @@ fn src_offset<T>(dst_null: bool, src: *const T, start: *const T, rc: i64) -> Opt
 
 #[test]
 fn mbsnrtowcs_matches_host_glibc() {
-    if !ensure_locale() {
-        eprintln!("C.UTF-8 unavailable; skipping");
-        return;
-    }
+    ensure_locale();
     let inputs: &[&[u8]] = &[
         b"\0",
         b"abc\0",
@@ -200,10 +200,7 @@ fn mbsnrtowcs_matches_host_glibc() {
 
 #[test]
 fn wcsnrtombs_matches_host_glibc() {
-    if !ensure_locale() {
-        eprintln!("C.UTF-8 unavailable; skipping");
-        return;
-    }
+    ensure_locale();
     let inputs: &[&[u32]] = &[
         &[0],
         &[0x41, 0x42, 0],
