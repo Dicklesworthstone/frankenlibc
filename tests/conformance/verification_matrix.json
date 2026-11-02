@@ -514,7 +514,9 @@
             ]
           }
         },
-        "result_receipts": []
+      "result_receipts": [
+        "/data/tmp/frankenlibc-math128-domain-20261102/unit/record/receipt.json"
+      ]
       }
     },
     {
