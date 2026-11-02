@@ -191,14 +191,14 @@
     "by_obligation_type": {
       "unit_tests": {
         "required": 126,
-        "complete": 49,
-        "partial": 1,
+        "complete": 50,
+        "partial": 0,
         "missing": 76
       },
       "e2e_scripts": {
         "required": 65,
-        "complete": 23,
-        "partial": 1,
+        "complete": 24,
+        "partial": 0,
         "missing": 41
       },
       "structured_logs": {
@@ -380,12 +380,12 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
-          "artifacts": "pending actual source-bound execution"
+          "status": "complete",
+          "artifacts": "vmi1152480:/data/tmp/frankenlibc-singlechar-20261102/unit-literal/record/receipt.json"
         },
         "e2e_scripts": {
-          "status": "partial",
-          "artifacts": "pending actual source-bound execution"
+          "status": "complete",
+          "artifacts": "vmi1167313:/data/tmp/frankenlibc-singlechar-20261102/fresh-solo/report.json; ci-labelled/fixed and original streams"
         },
         "structured_logs": {
           "status": "not_required"
@@ -403,8 +403,8 @@
       "coverage_summary": {
         "overall": "partial",
         "required": 2,
-        "complete": 0,
-        "partial": 2,
+        "complete": 2,
+        "partial": 0,
         "missing": 0
       },
       "row": {
@@ -426,23 +426,23 @@
         ],
         "log_schema_refs": [],
         "artifact_paths": [
+          "/data/tmp/frankenlibc-singlechar-20261102/unit-literal/record/receipt.json",
           "/data/tmp/frankenlibc-singlechar-20261102/unit/record/receipt.json",
           "vmi1167313:/data/tmp/frankenlibc-singlechar-20261102/candidate/report.json",
           "vmi1167313:/data/tmp/frankenlibc-singlechar-20261102/fresh-solo/report.json"
         ],
         "perf_proof_refs": [],
         "close_blockers": [
-          "pending_actual_source_bound_unit_receipt",
-          "pending_deployed_native_fresh_solo_and_required_checks"
+          "pending_final_workspace_compiler_and_strict_clippy"
         ],
-        "notes": "Frozen original release cf70ab5a... differs402/1788 in both modes and wrong-provider controls91/0; previous3732 native rows unchanged. Runtime source cut f82fc5d7ee75a2dcdae6650ca24027766a4ad1d3. Initial default seven-test execution passed before formatting-only edits; final compiled receipt, owned TLS, frozen deployed release, fresh solo and full compiler/lint checks remain pending. No independent reviewer, performance or full POSIX/safety/standalone promotion.",
+        "notes": "Runtime f82fc5d7ee75a2dcdae6650ca24027766a4ad1d3 / release8f20ffc499b0222fd6da9b95d5cea1f0843d3cd2d4e4698d792fd0be877c3a06: fixed0/1788 vs original402/1788 in each mode, prior3732 rows exact, ten provider controls91/0. First/fresh native reports SHAea760cd71a378aee350cd8a3c4600986f559b52226df9472c0ffb89de839488a /841c744070d1cb1705779c61b01cef940992fdf32f38041d83b3e3cc1864118d. Exact44-line CI body22a174... fixed0/original1; manual source-revision field was unknown, so explicit-source-labelled rerun is pending, not silently promoted. Default and owned regression runs each24tests passed, fresh solo each7tests passed. Actual source-bound unit receipt SHA6afadc1015a67198b64b1f85febf107502e8a38f7bb97a2ef79355002ffdd5e8: build0/execution0, seven executed cases, execution stdout SHAe83268a6e19dc6b7bc3d56a84d1ba10d50592f17fa6bdd2cd039e755e6774c45. Source inputs17,16 tracked plus ignored Cargo.lock captured separately. Full workspace --all-targets --keep-going check0 at17:42:38Z; fmt0; UBS0critical/262warnings/1300info. StrictClippy, labelled CI and paired consumer remain pending. Fresh solo review, no independent reviewer; no perf/formal/universal-safety/standalone or hosted-CI claim. Final strictClippy found manual_c_str_literals in the NEW test at366; corrected only the NUL input expression to typed C literal in bda50253e921149cfee41073e6c84f686236fd75. No assertions/cases/controls changed. Runtime ABI/core, native fixture and CI bytes still equal f82; native evidence and source-derived support reports remain bound to f82. Final unit receipt now requires bda source and new test hash; old f82 receipt retained as historical evidence, not admitted for final test bytes. Compiler/fmt/unit checks rerun; original Clippy limit137 and lint diagnostic retained, no suppression. Final literal-source receipt ACTUALLY recorded on vmi1152480 at18:12:52Z: SHAecdee5bf886916c0b27e9917b34c588a337e4efb1ff8a98c9c4aaa988adf49a6, sourcebda50253e921149cfee41073e6c84f686236fd75, build0/execution0/seven cases, executable9470405e649ac6f8f1d0d81da592dc512af5fe87658ead64295729a36d98af76, stdout1a9f2e9c6ffc5a1fa64d145690d2837b01d1ebf40d48c2fe239d540d00f58d35. Old source-f82 receipt retained on hz3; current receipt/admission require vmi1152480 context. Final formatting0 and fresh default/owned each7 tests0 after typed-literal correction. Runtime/C/CI source remains byte-identical to f82; no native rerun or count inflation for a test-only syntax correction.",
         "closure_evidence": {
           "behavior": "Preserve legacy conversion errors, NUL handling and independent resumable mbtowc state",
           "acceptance_sha256": "b33774088a9dd0c4e3440104b78047558671b61fd6de392696fcf766b002c412",
           "claim_class": "executed_unit",
           "evidence_class": "executed_unit",
           "source": {
-            "commit": "f82fc5d7ee75a2dcdae6650ca24027766a4ad1d3",
+            "commit": "bda50253e921149cfee41073e6c84f686236fd75",
             "files": {
               "crates/frankenlibc-abi/src/wchar_abi.rs": "d33cf9babed41d715a904ab91bffa1811df41f7f23a6550de885afb56eeed391",
               "crates/frankenlibc-abi/src/errno_abi.rs": "b6336d7fc7e3a2ef33365ce2860997d6ac61e92d5f25cce19510a205340e7835",
@@ -460,7 +460,7 @@
               "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
               "crates/frankenlibc-core/Cargo.toml": "09d217439b597e7239feccd783faa0b78c7d40f323bfa67576e55777ac547b82",
               "tools/stdio_synth/src/lib.rs": "5839f91ed774274572aa493019ea7169f5c843a379507dd74dfd8f23ad897950",
-              "crates/frankenlibc-abi/tests/conformance_diff_c_locale_codec.rs": "7414affe87b10f12b371342b4eaff0e2a493e34016cd3477ebb39e70b764467c"
+              "crates/frankenlibc-abi/tests/conformance_diff_c_locale_codec.rs": "46513f94d16b321f2c93668a05f953216896a2cc9ba39d9bd98c3036771cdb1e"
             }
           },
           "behavior_paths": [
@@ -477,7 +477,7 @@
               "default"
             ]
           },
-          "not_before": "2026-11-02T17:25:15Z",
+          "not_before": "2026-11-02T18:07:53Z",
           "gate": {
             "command": [
               "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/6839814ee224b989/out/conformance_diff_c_locale_codec-6839814ee224b989",
@@ -515,7 +515,10 @@
               "legacy_split_state_reset_and_isolation_match_glibc"
             ]
           }
-        }
+        },
+        "result_receipts": [
+          "/data/tmp/frankenlibc-singlechar-20261102/unit-literal/record/receipt.json"
+        ]
       }
     },
     {
