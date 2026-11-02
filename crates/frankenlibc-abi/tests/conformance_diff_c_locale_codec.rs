@@ -87,6 +87,9 @@ type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *const c_char;
 type NlLanginfoFn = unsafe extern "C" fn(c_int) -> *const c_char;
 type MbCurMaxFn = unsafe extern "C" fn() -> usize;
 type MbtowcFn = unsafe extern "C" fn(*mut u32, *const u8, usize) -> c_int;
+type MblenFn = unsafe extern "C" fn(*const u8, usize) -> c_int;
+type MbrtowcFn =
+    unsafe extern "C" fn(*mut libc::wchar_t, *const c_char, usize, *mut std::ffi::c_void) -> usize;
 type WctombFn = unsafe extern "C" fn(*mut u8, u32) -> c_int;
 type MbstowcsFn = unsafe extern "C" fn(*mut u32, *const u8, usize) -> usize;
 type WcstombsFn = unsafe extern "C" fn(*mut u8, *const u32, usize) -> usize;
@@ -107,6 +110,8 @@ struct Host {
     nl_langinfo: NlLanginfoFn,
     mb_cur_max: MbCurMaxFn,
     mbtowc: MbtowcFn,
+    mblen: MblenFn,
+    mbrtowc: MbrtowcFn,
     wctomb: WctombFn,
     mbstowcs: MbstowcsFn,
     wcstombs: WcstombsFn,
@@ -124,6 +129,8 @@ fn host() -> &'static Host {
                 nl_langinfo: host_fn(c"nl_langinfo", fl_nl_langinfo as *const ()),
                 mb_cur_max: host_fn(c"__ctype_get_mb_cur_max", fl_mb_cur_max as *const ()),
                 mbtowc: host_fn(c"mbtowc", fl_mbtowc as *const ()),
+                mblen: host_fn(c"mblen", frankenlibc_abi::wchar_abi::mblen as *const ()),
+                mbrtowc: host_fn(c"mbrtowc", frankenlibc_abi::wchar_abi::mbrtowc as *const ()),
                 wctomb: host_fn(c"wctomb", fl_wctomb as *const ()),
                 mbstowcs: host_fn(
                     c"mbstowcs",
@@ -227,6 +234,165 @@ fn save_locale() -> LocaleRestore {
         // SAFETY: non-null and NUL-terminated.
         Some(unsafe { CStr::from_ptr(saved) }.to_owned())
     })
+}
+
+#[test]
+fn legacy_single_character_boundaries_and_errno_match_glibc() {
+    let _lock = locale_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = save_locale();
+    let inputs: &[&[u8]] = &[
+        b"",
+        b"",
+        b"A",
+        b"\x7f",
+        b"\x80",
+        b"\xff",
+        b"\xc3\xa9",
+        b"\xe2\x82\xac",
+        b"\xf0\x9f\x99\x82",
+        b"\xc3",
+        b"\xe2\x82",
+        b"\xc3A",
+        b"\xed\xa0\x80",
+        b"\xf4\x90\x80\x80",
+    ];
+    let mut observed = 0;
+    for locale in [c"C", c"POSIX", c"C.UTF-8"] {
+        let (fl_name, host_name) = select_both(locale);
+        assert_eq!(fl_name, host_name);
+        for (sample, bytes) in inputs.iter().enumerate() {
+            let mut input = [0u8; 8];
+            input[..bytes.len()].copy_from_slice(bytes);
+            let source = if sample == 0 {
+                std::ptr::null()
+            } else {
+                input.as_ptr()
+            };
+            for n in 0..7 {
+                for kind in 0..3 {
+                    for saved in [0, libc::E2BIG] {
+                        let mut results = Vec::new();
+                        for (length, wide, error) in [
+                            (host().mblen, host().mbtowc, host_errno_location()),
+                            (
+                                frankenlibc_abi::wchar_abi::mblen as MblenFn,
+                                fl_mbtowc as MbtowcFn,
+                                frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn,
+                            ),
+                        ] {
+                            let mut wc = 0x1234;
+                            let out = if kind == 2 {
+                                std::ptr::null_mut()
+                            } else {
+                                &mut wc
+                            };
+                            // SAFETY: exact resolved signatures, eight initialized input
+                            // bytes, a writable output, or documented NULL/reset arguments.
+                            unsafe {
+                                length(std::ptr::null(), 0);
+                                wide(std::ptr::null_mut(), std::ptr::null(), 0);
+                                *error() = saved;
+                                let r = if kind == 0 {
+                                    length(source, n)
+                                } else {
+                                    wide(out, source, n)
+                                };
+                                results.push((r, *error(), wc));
+                            }
+                        }
+                        assert_eq!(
+                            results[0], results[1],
+                            "{locale:?} sample={sample} n={n} kind={kind} saved={saved}"
+                        );
+                        observed += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(observed, 1764, "the declared matrix must actually execute");
+}
+
+#[test]
+fn legacy_split_state_reset_and_isolation_match_glibc() {
+    let _lock = locale_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = save_locale();
+    let (fl_name, host_name) = select_both(c"C.UTF-8");
+    assert_eq!(fl_name, host_name);
+    let mut observed = 0;
+    for input in [b"\xc3\xa9".as_slice(), b"\xe2\x82\xac", b"\xf0\x9f\x99\x82"] {
+        for split in 1..input.len() {
+            for discard in [false, true] {
+                for saved in [0, libc::E2BIG] {
+                    let mut results = Vec::new();
+                    for (length, wide, restart, error) in [
+                        (
+                            host().mblen,
+                            host().mbtowc,
+                            host().mbrtowc,
+                            host_errno_location(),
+                        ),
+                        (
+                            frankenlibc_abi::wchar_abi::mblen as MblenFn,
+                            fl_mbtowc as MbtowcFn,
+                            frankenlibc_abi::wchar_abi::mbrtowc as MbrtowcFn,
+                            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn,
+                        ),
+                    ] {
+                        let mut sequence = Vec::new();
+                        // SAFETY: NULL source resets the legacy stream without output.
+                        unsafe { wide(std::ptr::null_mut(), std::ptr::null(), 0) };
+                        for phase in 0..10 {
+                            let mut wc = 0x1234;
+                            let out = if discard {
+                                std::ptr::null_mut()
+                            } else {
+                                &mut wc
+                            };
+                            // SAFETY: inputs are live through their stated bounds, outputs
+                            // are writable locals, and the implicit streams finish or reset.
+                            unsafe {
+                                *error() = saved;
+                                let r = match phase {
+                                    0 | 7 => wide(out, input.as_ptr(), split) as i64,
+                                    1 => length(input.as_ptr(), split) as i64,
+                                    2 => restart(
+                                        out.cast(),
+                                        c"\xc2".as_ptr(),
+                                        1,
+                                        std::ptr::null_mut(),
+                                    ) as i64,
+                                    3 => wide(out, b"A".as_ptr(), 0) as i64,
+                                    4 => wide(out, b"\0".as_ptr(), 0) as i64,
+                                    5 => wide(out, input[split..].as_ptr(), input.len() - split)
+                                        as i64,
+                                    6 => restart(
+                                        out.cast(),
+                                        c"\xa3".as_ptr(),
+                                        1,
+                                        std::ptr::null_mut(),
+                                    ) as i64,
+                                    8 => wide(out, std::ptr::null(), 0) as i64,
+                                    _ => wide(out, b"A".as_ptr(), 1) as i64,
+                                };
+                                sequence.push((r, *error(), wc));
+                            }
+                        }
+                        results.push(sequence);
+                    }
+                    assert_eq!(
+                        results[0], results[1],
+                        "input={input:x?} split={split} discard={discard} saved={saved}"
+                    );
+                    observed += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(
+        observed, 24,
+        "each split, output and saved-errno arm must execute"
+    );
 }
 
 #[test]

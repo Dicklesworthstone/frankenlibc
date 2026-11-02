@@ -3749,6 +3749,12 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
     if s.is_null() {
         return 0; // state query: stateless encoding (returns 0)
     }
+    // GNU's nonrestartable conversions recognize a readable terminator even
+    // with n == 0. The restartable interfaces instead return incomplete there.
+    // SAFETY: a non-null source points to a readable character per the ABI.
+    if unsafe { *s } == 0 {
+        return 0;
+    }
     if n == 0 {
         // Zero bytes cannot constitute a complete multibyte character.
         return -1;
@@ -3757,7 +3763,19 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
     match codec::mblen(slice) {
         Some(0) => 0,
         Some(len) => len as c_int,
-        None => -1,
+        None => {
+            // The legacy return folds invalid and incomplete into -1, but
+            // only malformed input sets EILSEQ. A short valid prefix leaves
+            // errno alone, including when the caller supplied n == 0 above.
+            if matches!(
+                codec::utf8_decode_step(slice),
+                wchar_core::Utf8Step::Invalid
+            ) {
+                // SAFETY: errno is this thread's ABI error slot.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+            }
+            -1
+        }
     }
 }
 
@@ -3768,31 +3786,31 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
 /// POSIX `mbtowc` — convert multibyte character to wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mbtowc(pwc: *mut u32, s: *const u8, n: usize) -> c_int {
-    if s.is_null() {
-        return 0; // state query: stateless encoding (returns 0)
-    }
-    if n == 0 {
-        // Zero bytes cannot constitute a complete multibyte character.
-        return -1;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(s, n) };
-    if !slice.is_empty() && slice[0] == 0 {
-        if !pwc.is_null() {
-            unsafe { *pwc = 0 };
+    let result = with_implicit_mbstate(MultibyteState::LegacyWide, |state| {
+        if s.is_null() {
+            // Unlike mbrtowc(NULL source), the legacy call resets its state.
+            // SAFETY: the slot is private, initialized mbstate_t storage.
+            unsafe { mbstate_partial_clear(state) };
+            return 0;
         }
-        return 0;
-    }
-    match codec::mbtowc(slice) {
-        Some((wc, len)) => {
+        // A terminator bypasses the decoder, even with a pending prefix or
+        // n == 0; it does not reset that prefix. Only NULL source resets it.
+        // SAFETY: the ABI requires a readable character at non-null s.
+        if unsafe { *s } == 0 {
             if !pwc.is_null() {
-                unsafe { *pwc = wc };
+                // SAFETY: a non-null output points to writable wchar_t.
+                unsafe { *pwc = 0 };
             }
-            len as c_int
+            return 0;
         }
-        None => {
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            -1
-        }
+        // SAFETY: input/output have the ordinary conversion contract, and the
+        // explicit private slot keeps this stream apart from mbrtowc's state.
+        unsafe { mbrtowc(pwc.cast(), s.cast(), n, state) }
+    });
+    if result >= usize::MAX - 1 {
+        -1
+    } else {
+        result as c_int
     }
 }
 
@@ -9254,16 +9272,17 @@ enum MultibyteState {
     Utf16Encode,
     BoundedString,
     String,
+    LegacyWide,
 }
 
 #[cfg(feature = "owned-tls-cache")]
-static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 7]> =
-    crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 7]);
+static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 8]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 8]);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static MULTIBYTE_STATES: std::cell::RefCell<[[u8; 8]; 7]> =
-        const { std::cell::RefCell::new([[0; 8]; 7]) };
+    static MULTIBYTE_STATES: std::cell::RefCell<[[u8; 8]; 8]> =
+        const { std::cell::RefCell::new([[0; 8]; 8]) };
 }
 
 #[inline]

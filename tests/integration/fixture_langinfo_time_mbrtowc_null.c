@@ -339,6 +339,89 @@ static int conversion_capacity(const char *provider) {
     return 0;
 }
 
+static int singlechar_state(const char *provider) {
+    typedef int (*length_fn)(const char *, size_t);
+    typedef int (*wide_fn)(wchar_t *, const char *, size_t);
+    typedef size_t (*restart_fn)(wchar_t *, const char *, size_t, mbstate_t *);
+    typedef int *(*errno_fn)(void);
+    typedef char *(*locale_fn)(int, const char *);
+    length_fn length = (length_fn)state_symbol("mblen", provider);
+    wide_fn wide = (wide_fn)state_symbol("mbtowc", provider);
+    restart_fn restart = (restart_fn)state_symbol("mbrtowc", provider);
+    errno_fn error = (errno_fn)state_symbol("__errno_location", provider);
+    locale_fn locale = (locale_fn)state_symbol("setlocale", provider);
+    if (!length || !wide || !restart || !error || !locale)
+        return 91;
+    const char *locales[] = {"C", "POSIX", "C.UTF-8"};
+    const char inputs[][8] = {
+        "", "", "A", "\x7f", "\x80", "\xff", "\xc3\xa9", "\xe2\x82\xac",
+        "\xf0\x9f\x99\x82", "\xc3", "\xe2\x82", "\xc3" "A",
+        "\xed\xa0\x80", "\xf4\x90\x80\x80"
+    };
+    for (int selected = 0; selected < 3; ++selected) {
+        if (!locale(LC_ALL, locales[selected]))
+            return 92;
+        for (int sample = 0; sample < 14; ++sample) {
+            const char *input = sample ? inputs[sample] : NULL;
+            for (size_t n = 0; n < 7; ++n) {
+                for (int kind = 0; kind < 3; ++kind) {
+                    for (int saved = 0; saved < 2; ++saved) {
+                        wchar_t wc = 0x1234;
+                        length(NULL, 0);
+                        wide(NULL, NULL, 0);
+                        *error() = saved ? E2BIG : 0;
+                        int r = kind ? wide(kind == 2 ? NULL : &wc, input, n) : length(input, n);
+                        int e = *error();
+                        printf("single locale=%d sample=%d n=%zu kind=%d saved=%d ret=%d errno=%d out=%x\n",
+                               selected, sample, n, kind, saved, r, e, (unsigned)wc);
+                    }
+                }
+            }
+        }
+    }
+    const char *characters[] = {"\xc3\xa9", "\xe2\x82\xac", "\xf0\x9f\x99\x82"};
+    const size_t sizes[] = {2, 3, 4};
+    for (int sample = 0; sample < 3; ++sample) {
+        for (size_t split = 1; split < sizes[sample]; ++split) {
+            for (int discard = 0; discard < 2; ++discard) {
+                for (int saved = 0; saved < 2; ++saved) {
+                    wide(NULL, NULL, 0);
+                    length(NULL, 0);
+                    printf("single-state sample=%d split=%zu discard=%d saved=%d", sample, split, discard, saved);
+                    for (int phase = 0; phase < 10; ++phase) {
+                        wchar_t wc = 0x1234;
+                        wchar_t *out = discard ? NULL : &wc;
+                        *error() = saved ? E2BIG : 0;
+                        long r;
+                        if (phase == 0 || phase == 7)
+                            r = wide(out, characters[sample], split);
+                        else if (phase == 1)
+                            r = length(characters[sample], split);
+                        else if (phase == 2)
+                            r = (long)restart(out, "\xc2", 1, NULL);
+                        else if (phase == 3)
+                            r = wide(out, "A", 0);
+                        else if (phase == 4)
+                            r = wide(out, "", 0);
+                        else if (phase == 5)
+                            r = wide(out, characters[sample] + split, sizes[sample] - split);
+                        else if (phase == 6)
+                            r = (long)restart(out, "\xa3", 1, NULL);
+                        else if (phase == 8)
+                            r = wide(out, NULL, 0);
+                        else
+                            r = wide(out, "A", 1);
+                        int e = *error();
+                        printf(" p%d=%ld,%d,%x", phase, r, e, (unsigned)wc);
+                    }
+                    putchar('\n');
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--restartable-state") == 0)
         return restartable_state(argv[2], 0);
@@ -348,6 +431,8 @@ int main(int argc, char **argv) {
         return string_state(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--conversion-capacity") == 0)
         return conversion_capacity(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--singlechar-state") == 0)
+        return singlechar_state(argv[2]);
     if (argc != 1)
         return 90;
     setlocale(LC_ALL, "C");
