@@ -345,7 +345,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.11",
       "title": "Correct binary128 inverse-trig domain errno and invalid exceptions",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
