@@ -650,6 +650,53 @@ pub fn wcwidth(wc: u32) -> i32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn bounded_conversion_decode_stops_before_malformed_tail() {
+        for prefix in [0, 1, 16] {
+            for tail in [b"\xff\0".as_slice(), b"\xe2\x82\0".as_slice()] {
+                let mut input = vec![b'A'; prefix];
+                input.extend_from_slice(tail);
+                let mut output = [0x1234; 32];
+                assert_eq!(mbstowcs(&mut output[..prefix], &input), Some(prefix));
+                assert!(output[..prefix].iter().all(|&c| c == u32::from(b'A')));
+                assert!(output[prefix..].iter().all(|&c| c == 0x1234));
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_conversion_encode_stops_before_character_that_cannot_fit() {
+        for (wc, width) in [
+            (0xe9, 2),
+            (0x20ac, 3),
+            (0x1f642, 4),
+            (0x20_0000, 5),
+            (0x400_0000, 6),
+        ] {
+            for prefix in [0, 1, 16] {
+                let mut input = vec![u32::from(b'A'); prefix];
+                input.extend_from_slice(&[wc, 0]);
+                for remaining in 0..width {
+                    let mut output = [0x5a; 32];
+                    assert_eq!(
+                        wcstombs(&mut output[..prefix + remaining], &input),
+                        Some(prefix)
+                    );
+                    assert!(output[..prefix].iter().all(|&b| b == b'A'));
+                    assert!(output[prefix..].iter().all(|&b| b == 0x5a));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_conversion_still_reports_errors_with_available_space() {
+        assert_eq!(mbstowcs(&mut [0x1234; 1], b"\xff\0"), None);
+        assert_eq!(wcstombs(&mut [0x5a; 1], &[0xd800, 0]), None);
+        assert_eq!(mbstowcs(&mut [], b"\xff\0"), Some(0));
+        assert_eq!(wcstombs(&mut [], &[0xd800, 0]), Some(0));
+    }
+
     // Pure scalar reference: the original mbstowcs loop, with no SIMD fast path.
     // Used to prove the vectorised mbstowcs is byte-for-byte isomorphic.
     fn mbstowcs_scalar_reference(dest: &mut [u32], src: &[u8]) -> Option<usize> {

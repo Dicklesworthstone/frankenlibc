@@ -88,6 +88,8 @@ type NlLanginfoFn = unsafe extern "C" fn(c_int) -> *const c_char;
 type MbCurMaxFn = unsafe extern "C" fn() -> usize;
 type MbtowcFn = unsafe extern "C" fn(*mut u32, *const u8, usize) -> c_int;
 type WctombFn = unsafe extern "C" fn(*mut u8, u32) -> c_int;
+type MbstowcsFn = unsafe extern "C" fn(*mut u32, *const u8, usize) -> usize;
+type WcstombsFn = unsafe extern "C" fn(*mut u8, *const u32, usize) -> usize;
 
 /// `CODESET` is `_NL_CTYPE_CODESET_NAME` on Linux.
 const CODESET: c_int = 14;
@@ -106,6 +108,8 @@ struct Host {
     mb_cur_max: MbCurMaxFn,
     mbtowc: MbtowcFn,
     wctomb: WctombFn,
+    mbstowcs: MbstowcsFn,
+    wcstombs: WcstombsFn,
 }
 
 fn host() -> &'static Host {
@@ -121,6 +125,14 @@ fn host() -> &'static Host {
                 mb_cur_max: host_fn(c"__ctype_get_mb_cur_max", fl_mb_cur_max as *const ()),
                 mbtowc: host_fn(c"mbtowc", fl_mbtowc as *const ()),
                 wctomb: host_fn(c"wctomb", fl_wctomb as *const ()),
+                mbstowcs: host_fn(
+                    c"mbstowcs",
+                    frankenlibc_abi::wchar_abi::mbstowcs as *const (),
+                ),
+                wcstombs: host_fn(
+                    c"wcstombs",
+                    frankenlibc_abi::wchar_abi::wcstombs as *const (),
+                ),
             }
         }
     })
@@ -374,4 +386,136 @@ fn switching_between_locales_moves_the_codec_both_ways() {
             );
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CapacityResult {
+    returned: usize,
+    error: c_int,
+    wide: [u32; 32],
+    bytes: [u8; 32],
+}
+
+fn capacity_result(
+    ours: bool,
+    encode: bool,
+    input: &[u8],
+    wide_input: &[u32],
+    capacity: usize,
+    count_only: bool,
+    saved_errno: c_int,
+) -> CapacityResult {
+    let (decode, encode_fn, errno) = if ours {
+        (
+            frankenlibc_abi::wchar_abi::mbstowcs as MbstowcsFn,
+            frankenlibc_abi::wchar_abi::wcstombs as WcstombsFn,
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn,
+        )
+    } else {
+        (host().mbstowcs, host().wcstombs, host_errno_location())
+    };
+    let mut wide = [0x1234; 32];
+    let mut bytes = [0x5a; 32];
+    // SAFETY: both sources have a live NUL terminator; both initialized output
+    // arrays fit every capacity. Null output requests sizing without writes.
+    let (returned, error) = unsafe {
+        *errno() = saved_errno;
+        let returned = if encode {
+            encode_fn(
+                if count_only {
+                    std::ptr::null_mut()
+                } else {
+                    bytes.as_mut_ptr()
+                },
+                wide_input.as_ptr(),
+                capacity,
+            )
+        } else {
+            decode(
+                if count_only {
+                    std::ptr::null_mut()
+                } else {
+                    wide.as_mut_ptr()
+                },
+                input.as_ptr(),
+                capacity,
+            )
+        };
+        (returned, *errno())
+    };
+    CapacityResult {
+        returned,
+        error,
+        wide,
+        bytes,
+    }
+}
+
+#[test]
+fn string_conversion_capacity_matches_live_gnu() {
+    let _lock = locale_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = save_locale();
+    let samples: [(&[u8], u32); 5] = [
+        (b"", 0),
+        ("é".as_bytes(), 0xe9),
+        ("🙂".as_bytes(), 0x1f642),
+        (&[0xff], 0xd800),
+        (&[0xe2, 0x82], 0x8000_0000),
+    ];
+    let mut checked = 0;
+    let mut differences = 0;
+    let mut examples = Vec::new();
+    for (locale, expected_max) in [(c"C", 1), (c"POSIX", 1), (c"C.UTF-8", 6)] {
+        let (ours, gnu) = select_both(locale);
+        assert_eq!(ours, gnu);
+        // SAFETY: scalar charset queries; both live providers were selected.
+        assert_eq!(unsafe { fl_mb_cur_max() }, expected_max);
+        assert_eq!(unsafe { (host().mb_cur_max)() }, expected_max);
+        for encode in [false, true] {
+            for (sample, &(suffix, unit)) in samples.iter().enumerate() {
+                for prefix in [0, 1, 16] {
+                    let mut input = vec![b'A'; prefix];
+                    input.extend_from_slice(suffix);
+                    input.push(0);
+                    let mut wide_input = vec![u32::from(b'A'); prefix];
+                    wide_input.push(unit);
+                    wide_input.push(0);
+                    for capacity in [0, 1, 2, 3, 4, 6, 16, 24] {
+                        for count_only in [false, true] {
+                            for saved_errno in [0, libc::E2BIG] {
+                                let ours = capacity_result(
+                                    true,
+                                    encode,
+                                    &input,
+                                    &wide_input,
+                                    capacity,
+                                    count_only,
+                                    saved_errno,
+                                );
+                                let gnu = capacity_result(
+                                    false,
+                                    encode,
+                                    &input,
+                                    &wide_input,
+                                    capacity,
+                                    count_only,
+                                    saved_errno,
+                                );
+                                checked += 1;
+                                if ours != gnu {
+                                    differences += 1;
+                                    if examples.len() < 12 {
+                                        examples.push(format!("{locale:?} encode={encode} sample={sample} prefix={prefix} capacity={capacity} count={count_only} errno={saved_errno}: fl={ours:?} GNU={gnu:?}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 2880);
+    eprintln!("capacity comparisons={checked} differences={differences}");
+    assert_eq!(differences, 0, "{}", examples.join("\n"));
 }
