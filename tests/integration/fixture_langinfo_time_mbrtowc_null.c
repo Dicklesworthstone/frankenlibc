@@ -280,6 +280,65 @@ static int string_state(const char *provider) {
     return 0;
 }
 
+static int conversion_capacity(const char *provider) {
+    typedef size_t (*decode_fn)(wchar_t *, const char *, size_t);
+    typedef size_t (*encode_fn)(char *, const wchar_t *, size_t);
+    typedef char *(*locale_fn)(int, const char *);
+    typedef int *(*errno_fn)(void);
+    typedef size_t (*max_fn)(void);
+    decode_fn decode = (decode_fn)state_symbol("mbstowcs", provider);
+    encode_fn encode = (encode_fn)state_symbol("wcstombs", provider);
+    locale_fn locale = (locale_fn)state_symbol("setlocale", provider);
+    errno_fn error = (errno_fn)state_symbol("__errno_location", provider);
+    max_fn max_width = (max_fn)state_symbol("__ctype_get_mb_cur_max", provider);
+    if (!decode || !encode || !locale || !error || !max_width)
+        return 91;
+    const char *locales[] = {"C", "POSIX", "C.UTF-8"};
+    const char *suffixes[] = {"", "\xc3\xa9", "\xf0\x9f\x99\x82", "\xff", "\xe2\x82"};
+    const wchar_t units[] = {0, 0xe9, 0x1f642, 0xd800, (wchar_t)0x80000000u};
+    const size_t prefixes[] = {0, 1, 16};
+    const size_t capacities[] = {0, 1, 2, 3, 4, 6, 16, 24};
+    for (int selected = 0; selected < 3; ++selected) {
+        if (!locale(LC_ALL, locales[selected]))
+            return 92;
+        if (max_width() != (selected == 2 ? 6u : 1u))
+            return 94;
+        for (int kind = 0; kind < 2; ++kind) {
+            for (int sample = 0; sample < 5; ++sample) {
+                for (int prefix = 0; prefix < 3; ++prefix) {
+                    char input[32] = {0};
+                    wchar_t wide_input[32] = {0};
+                    for (size_t i = 0; i < prefixes[prefix]; ++i) {
+                        input[i] = 'A';
+                        wide_input[i] = L'A';
+                    }
+                    memcpy(input + prefixes[prefix], suffixes[sample], strlen(suffixes[sample]) + 1);
+                    wide_input[prefixes[prefix]] = units[sample];
+                    for (int cap = 0; cap < 8; ++cap) {
+                        for (int count = 0; count < 2; ++count) {
+                            for (int saved = 0; saved < 2; ++saved) {
+                                wchar_t wide[32];
+                                char bytes[32];
+                                for (int i = 0; i < 32; ++i) wide[i] = 0x1234;
+                                memset(bytes, 0x5a, sizeof bytes);
+                                *error() = saved ? E2BIG : 0;
+                                size_t r = kind ? encode(count ? NULL : bytes, wide_input, capacities[cap])
+                                    : decode(count ? NULL : wide, input, capacities[cap]);
+                                int e = *error();
+                                printf("capacity locale=%d kind=%d sample=%d prefix=%zu cap=%zu count=%d saved=%d ret=%zu errno=%d out=",
+                                       selected, kind, sample, prefixes[prefix], capacities[cap], count, saved, r, e);
+                                for (int i = 0; i < 32; ++i)
+                                    printf("%x%s", kind ? (unsigned char)bytes[i] : (unsigned)wide[i], i == 31 ? "\n" : ",");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--restartable-state") == 0)
         return restartable_state(argv[2], 0);
@@ -287,6 +346,8 @@ int main(int argc, char **argv) {
         return restartable_state(argv[2], 1);
     if (argc == 3 && strcmp(argv[1], "--string-state") == 0)
         return string_state(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--conversion-capacity") == 0)
+        return conversion_capacity(argv[2]);
     if (argc != 1)
         return 90;
     setlocale(LC_ALL, "C");
