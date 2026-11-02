@@ -17,10 +17,18 @@ use frankenlibc_abi::wchar_abi as fl;
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 
-type StringFn = unsafe extern "C" fn(*mut libc::wchar_t, *mut *const c_char, usize, *mut c_void) -> usize;
-type BoundedFn = unsafe extern "C" fn(*mut libc::wchar_t, *mut *const c_char, usize, usize, *mut c_void) -> usize;
+type StringFn =
+    unsafe extern "C" fn(*mut libc::wchar_t, *mut *const c_char, usize, *mut c_void) -> usize;
+type BoundedFn = unsafe extern "C" fn(
+    *mut libc::wchar_t,
+    *mut *const c_char,
+    usize,
+    usize,
+    *mut c_void,
+) -> usize;
 type WideFn = unsafe extern "C" fn(*mut libc::wchar_t, *const c_char, usize, *mut c_void) -> usize;
-type EncodeFn = unsafe extern "C" fn(*mut c_char, *mut *const libc::wchar_t, usize, *mut c_void) -> usize;
+type EncodeFn =
+    unsafe extern "C" fn(*mut c_char, *mut *const libc::wchar_t, usize, *mut c_void) -> usize;
 type ErrnoFn = unsafe extern "C" fn() -> *mut c_int;
 type InitialFn = unsafe extern "C" fn(*const c_void) -> c_int;
 
@@ -45,9 +53,15 @@ fn host() -> &'static Host {
                 bounded: dlsym_oracle::host_fn(c"mbsnrtowcs", fl::mbsnrtowcs as *const ()),
                 wide: dlsym_oracle::host_fn(c"mbrtowc", fl::mbrtowc as *const ()),
                 encode: dlsym_oracle::host_fn(c"wcsrtombs", fl::wcsrtombs as *const ()),
-                errno: dlsym_oracle::host_fn(c"__errno_location", frankenlibc_abi::errno_abi::__errno_location as *const ()),
+                errno: dlsym_oracle::host_fn(
+                    c"__errno_location",
+                    frankenlibc_abi::errno_abi::__errno_location as *const (),
+                ),
                 initial: dlsym_oracle::host_fn(c"mbsinit", fl::mbsinit as *const ()),
-                locale: dlsym_oracle::host_fn(c"setlocale", frankenlibc_abi::locale_abi::setlocale as *const ()),
+                locale: dlsym_oracle::host_fn(
+                    c"setlocale",
+                    frankenlibc_abi::locale_abi::setlocale as *const (),
+                ),
             }
         }
     })
@@ -75,7 +89,10 @@ fn with_utf8<F: FnOnce() -> R, R>(f: F) -> R {
     // fl starts in the C locale, as glibc does; this arm tests UTF-8
     // behaviour, so BOTH libraries must be moved. Setting only the host
     // would compare an ASCII fl against a UTF-8 glibc.
-    assert!(!unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) }.is_null());
+    assert!(
+        !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) }
+            .is_null()
+    );
     let result = f();
     if let Some(s) = saved_str {
         unsafe { (host().locale)(libc::LC_ALL, s.as_ptr()) };
@@ -156,8 +173,9 @@ fn diff_mbsrtowcs_dst_null_returns_required_len() {
         let mut lc_src = input.as_ptr() as *const c_char;
         let fl_n =
             unsafe { fl::mbsrtowcs(std::ptr::null_mut(), &mut fl_src, 100, std::ptr::null_mut()) };
-        let lc_n =
-            unsafe { (host().string)(std::ptr::null_mut(), &mut lc_src, 100, std::ptr::null_mut()) };
+        let lc_n = unsafe {
+            (host().string)(std::ptr::null_mut(), &mut lc_src, 100, std::ptr::null_mut())
+        };
         assert_eq!(fl_n, lc_n, "mbsrtowcs(NULL dst): fl={fl_n} lc={lc_n}");
         assert_eq!(fl_n, 7);
     });
@@ -291,28 +309,58 @@ fn offset(source: *const c_char, start: *const c_char, length: usize) -> Option<
     }
     let address = source as usize;
     let base = start as usize;
-    assert!((base..=base + length).contains(&address), "source escaped input");
+    assert!(
+        (base..=base + length).contains(&address),
+        "source escaped input"
+    );
     Some(address - base)
 }
 
 fn string_case(ours: bool, bytes: &[u8], case: &StringCase) -> (StringStep, Option<StringStep>) {
-    let string = if ours { fl::mbsrtowcs as StringFn } else { host().string };
-    let bounded = if ours { fl::mbsnrtowcs as BoundedFn } else { host().bounded };
-    let wide = if ours { fl::mbrtowc as WideFn } else { host().wide };
-    let initial = if ours { fl::mbsinit as InitialFn } else { host().initial };
-    let errno = if ours { frankenlibc_abi::errno_abi::__errno_location as ErrnoFn } else { host().errno };
+    let string = if ours {
+        fl::mbsrtowcs as StringFn
+    } else {
+        host().string
+    };
+    let bounded = if ours {
+        fl::mbsnrtowcs as BoundedFn
+    } else {
+        host().bounded
+    };
+    let wide = if ours {
+        fl::mbrtowc as WideFn
+    } else {
+        host().wide
+    };
+    let initial = if ours {
+        fl::mbsinit as InitialFn
+    } else {
+        host().initial
+    };
+    let errno = if ours {
+        frankenlibc_abi::errno_abi::__errno_location as ErrnoFn
+    } else {
+        host().errno
+    };
     let mut state = [0u64; 1];
     let ps = state.as_mut_ptr().cast();
     if case.split != 0 {
         // SAFETY: split is inside a valid multibyte character; state is an
         // aligned, zero-initialized eight-byte object. No output is requested.
-        assert_eq!(unsafe { wide(std::ptr::null_mut(), bytes.as_ptr().cast(), case.split, ps) }, usize::MAX - 1);
+        assert_eq!(
+            unsafe { wide(std::ptr::null_mut(), bytes.as_ptr().cast(), case.split, ps) },
+            usize::MAX - 1
+        );
     }
     let tail = &bytes[case.split..];
     let start = tail.as_ptr().cast::<c_char>();
     let mut src = start;
     let mut output = [0x1234; 4];
-    let dst = if case.count { std::ptr::null_mut() } else { output.as_mut_ptr() };
+    let dst = if case.count {
+        std::ptr::null_mut()
+    } else {
+        output.as_mut_ptr()
+    };
     // SAFETY: input is NUL-terminated; window is within the input; destination
     // fits every requested capacity; state and source pointer remain live.
     let (returned, error, is_initial) = unsafe {
@@ -350,13 +398,16 @@ fn string_case(ours: bool, bytes: &[u8], case: &StringCase) -> (StringStep, Opti
         let returned = string(output.as_mut_ptr(), &mut src, 3, ps);
         (returned, *errno(), initial(ps) != 0)
     };
-    (first, Some(StringStep {
-        returned,
-        source_offset: offset(src, start, tail.len()),
-        error,
-        initial: is_initial,
-        output,
-    }))
+    (
+        first,
+        Some(StringStep {
+            returned,
+            source_offset: offset(src, start, tail.len()),
+            error,
+            initial: is_initial,
+            output,
+        }),
+    )
 }
 
 #[test]
@@ -366,21 +417,35 @@ fn mbsrtowcs_diff_coverage_report() {
         let mut differences = 0;
         let mut examples = Vec::new();
         for bounded in [false, true] {
-            for (bytes, width) in [(b"AZ\0".as_slice(), 1), ("éZ\0".as_bytes(), 2), ("€Z\0".as_bytes(), 3), ("🙂Z\0".as_bytes(), 4)] {
+            for (bytes, width) in [
+                (b"AZ\0".as_slice(), 1),
+                ("éZ\0".as_bytes(), 2),
+                ("€Z\0".as_bytes(), 3),
+                ("🙂Z\0".as_bytes(), 4),
+            ] {
                 for split in 0..width {
                     let windows = [0, 1, bytes.len() - split];
                     for &window in &windows[..if bounded { 3 } else { 1 }] {
                         for count in [false, true] {
                             for capacity in 0..4 {
                                 for saved_errno in [0, libc::E2BIG] {
-                                    let case = StringCase { bounded, split, window, count, capacity, saved_errno };
+                                    let case = StringCase {
+                                        bounded,
+                                        split,
+                                        window,
+                                        count,
+                                        capacity,
+                                        saved_errno,
+                                    };
                                     let f = string_case(true, bytes, &case);
                                     let g = string_case(false, bytes, &case);
                                     checked += 1;
                                     if f != g {
                                         differences += 1;
                                         if examples.len() < 20 {
-                                            examples.push(format!("{bytes:x?} {case:?}: fl={f:?} GNU={g:?}"));
+                                            examples.push(format!(
+                                                "{bytes:x?} {case:?}: fl={f:?} GNU={g:?}"
+                                            ));
                                         }
                                     }
                                 }
