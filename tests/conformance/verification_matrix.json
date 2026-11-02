@@ -164,8 +164,8 @@
     "total_critique_beads": 124,
     "total_entries": 124,
     "by_coverage_status": {
-      "complete": 46,
-      "partial": 2,
+      "complete": 47,
+      "partial": 1,
       "missing": 76
     },
     "by_priority": {
@@ -177,8 +177,8 @@
       },
       "P1": {
         "total": 49,
-        "complete": 27,
-        "partial": 1,
+        "complete": 28,
+        "partial": 0,
         "missing": 21
       },
       "P2": {
@@ -235,8 +235,8 @@
       },
       "e2e": {
         "total": 19,
-        "complete": 9,
-        "partial": 2,
+        "complete": 10,
+        "partial": 1,
         "missing": 8
       },
       "math": {
@@ -345,7 +345,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.13",
       "title": "Resume multibyte string conversion and preserve sizing state",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
@@ -401,7 +401,7 @@
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 2,
         "complete": 2,
         "partial": 0,
@@ -410,7 +410,7 @@
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.13",
         "stream": "e2e",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_mbsrtowcs",
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --features owned-tls-cache --test conformance_diff_mbsrtowcs"
@@ -430,10 +430,8 @@
           "vmi1167313:/data/tmp/frankenlibc-mbsrt-20261102/fresh-solo/report.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "pending_full_workspace_checks"
-        ],
-        "notes": "Actual deployed release43179f9d91359b03fc4ace5d5b46d02485d7c9864172089870c1b3edab975280:0/640 per mode; original7e663a96... remains412/640. Previous156+35/default21 exact in both modes, wrong providers91/0. Exact44-line CI body SHA8518bf9bfd584e1bed9ce3ede434f81fbb2dd50672f0dab1a9be3c11c14cdc22 passes fixed0 and rejects original1. Fresh solo report SHAba7da54a6446a2a04e16eef0c1df329b3508bd40180cd4684103394801cb085e; first4a592c81a63d285aacb8d3d44a335aa3440998c2a095e3f90e5de0f9d0059a7e. Actual default unit receipt SHA888597011e797c08a031b8c6c2f716c47e4daa1d4034b1aaec3dee325925c5c1: build0/execution0; test result: ok.7passed,0failed/ignored/filtered.17 tracked bound inputs equal c4f9ca511dbc292514b038c17ae17a9297731867; ignored Cargo.lock separately captured. Native and owned-TLS results separately executed, not certified by executed_unit receipt. No independent review or performance/full locale/POSIX/safety/standalone/hosted-CI claim. Full workspace checks remain pending.",
+        "close_blockers": [],
+        "notes": "Actual deployed release43179f9d91359b03fc4ace5d5b46d02485d7c9864172089870c1b3edab975280:0/640 per mode; original7e663a96... remains412/640. Previous156+35/default21 exact in both modes, wrong providers91/0. Exact44-line CI body SHA8518bf9bfd584e1bed9ce3ede434f81fbb2dd50672f0dab1a9be3c11c14cdc22 passes fixed0 and rejects original1. Fresh solo report SHAba7da54a6446a2a04e16eef0c1df329b3508bd40180cd4684103394801cb085e; first4a592c81a63d285aacb8d3d44a335aa3440998c2a095e3f90e5de0f9d0059a7e. Actual default unit receipt SHA888597011e797c08a031b8c6c2f716c47e4daa1d4034b1aaec3dee325925c5c1: build0/execution0; test result: ok.7passed,0failed/ignored/filtered.17 tracked bound inputs equal c4f9ca511dbc292514b038c17ae17a9297731867; ignored Cargo.lock separately captured. Native and owned-TLS results separately executed, not certified by executed_unit receipt. No independent review or performance/full locale/POSIX/safety/standalone/hosted-CI claim. Full workspace --all-targets --keep-going compiler check0 at04:44:19Z and final source repeat0 at04:53:02Z; full strictClippy0 at04:47:43Z, final changed-tests strictClippy0 at04:45:04Z, full fmt0 at04:38:03Z. Actual unit scoped admission PASS1/1 at04:40:58Z; paired regeneration0 at04:41:51Z using retained compiled producer43a57ca6c (unchanged harness source, not a newly rebuilt harness). UBS0critical; no gate weakened. Closed after fresh SOLO verification; parent and broad classification/proof repair items remain open.",
         "closure_evidence": {
           "behavior": "Resume caller multibyte string state and preserve bounded count-only source/state",
           "acceptance_sha256": "092a6f3dbe015bd2f65ea4aab9f1af7f711d5794dbb51e5afa57ea9bd129cd0d",
