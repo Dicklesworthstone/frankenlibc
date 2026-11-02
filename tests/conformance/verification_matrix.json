@@ -161,11 +161,11 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 123,
-    "total_entries": 123,
+    "total_critique_beads": 124,
+    "total_entries": 124,
     "by_coverage_status": {
       "complete": 46,
-      "partial": 1,
+      "partial": 2,
       "missing": 76
     },
     "by_priority": {
@@ -176,9 +176,9 @@
         "missing": 18
       },
       "P1": {
-        "total": 48,
+        "total": 49,
         "complete": 27,
-        "partial": 0,
+        "partial": 1,
         "missing": 21
       },
       "P2": {
@@ -190,15 +190,15 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 123,
+        "required": 124,
         "complete": 47,
-        "partial": 0,
+        "partial": 1,
         "missing": 76
       },
       "e2e_scripts": {
-        "required": 62,
+        "required": 63,
         "complete": 21,
-        "partial": 0,
+        "partial": 1,
         "missing": 41
       },
       "structured_logs": {
@@ -234,9 +234,9 @@
         "missing": 19
       },
       "e2e": {
-        "total": 18,
+        "total": 19,
         "complete": 9,
-        "partial": 1,
+        "partial": 2,
         "missing": 8
       },
       "math": {
@@ -341,6 +341,184 @@
     }
   },
   "entries": [
+    {
+      "bead_id": "bd-reality-202609-lx578q.7.13",
+      "title": "Resume multibyte string conversion and preserve sizing state",
+      "priority": 1,
+      "status": "in_progress",
+      "assignee": "CodexGapCloser",
+      "labels": [
+        "conformance",
+        "critique",
+        "verification"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Actual default and owned-TLS live GNU string conversion regressions, seven compiled/executed tests"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "640 frozen string-state observations per mode, prior191/default21 controls, original412 differences and exact CI body"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": "Actual command streams and native summaries retained; no runtime telemetry claim"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": "No performance claim"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": "Live GNU comparison in the existing native fixture"
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": "No golden regeneration"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "partial",
+          "artifacts": "/data/tmp/frankenlibc-mbsrt-20261102/unit/record/receipt.json"
+        },
+        "e2e_scripts": {
+          "status": "partial",
+          "artifacts": "vmi1167313:/data/tmp/frankenlibc-mbsrt-20261102/candidate/report.json"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "partial",
+        "required": 2,
+        "complete": 0,
+        "partial": 2,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.7.13",
+        "stream": "e2e",
+        "status": "partial",
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_mbsrtowcs",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --features owned-tls-cache --test conformance_diff_mbsrtowcs"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_MODE=strict LD_PRELOAD=/data/tmp/frankenlibc-mbsrt-20261102/candidate/candidate.so /data/tmp/frankenlibc-mbsrt-20261102/candidate/probe --string-state /data/tmp/frankenlibc-mbsrt-20261102/candidate/candidate.so",
+          "FRANKENLIBC_MODE=hardened LD_PRELOAD=/data/tmp/frankenlibc-mbsrt-20261102/candidate/candidate.so /data/tmp/frankenlibc-mbsrt-20261102/candidate/probe --string-state /data/tmp/frankenlibc-mbsrt-20261102/candidate/candidate.so"
+        ],
+        "expected_assertions": [
+          "Resumed mbsrtowcs consumes the pending prefix and correctly advances output/source; bounded sizing leaves source and state intact for actual subsequent conversion",
+          "Candidate matches all640 frozen native observations per mode; retained original differs412/640; wrong provider rejects91 before rows; previous191/default21 outputs unchanged"
+        ],
+        "log_schema_refs": [],
+        "artifact_paths": [
+          "/data/tmp/frankenlibc-mbsrt-20261102/unit/record/receipt.json",
+          "vmi1167313:/data/tmp/frankenlibc-mbsrt-20261102/candidate/report.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [
+          "pending_actual_unit_capture",
+          "pending_native_release_and_fresh_solo",
+          "pending_workspace_checks"
+        ],
+        "notes": "Actual original Rust7-test invocation failed6pass/1fail and412/640 differences. Fixed default and owned-TLS each7pass and0/640. Actual native qualification, retained unit receipt and full workspace checks remain pending. No independent reviewer, performance, full locale/POSIX, standalone or safety promotion.",
+        "closure_evidence": {
+          "behavior": "Resume caller multibyte string state and preserve bounded count-only source/state",
+          "acceptance_sha256": "092a6f3dbe015bd2f65ea4aab9f1af7f711d5794dbb51e5afa57ea9bd129cd0d",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "source": {
+            "commit": "c4f9ca511dbc292514b038c17ae17a9297731867",
+            "files": {
+              "crates/frankenlibc-abi/src/wchar_abi.rs": "3c1a30410fbd1733ffde25eb6fdb6782b79745d4681cc4cc89e5a6b00b27c273",
+              "crates/frankenlibc-abi/src/errno_abi.rs": "b6336d7fc7e3a2ef33365ce2860997d6ac61e92d5f25cce19510a205340e7835",
+              "crates/frankenlibc-abi/src/locale_abi.rs": "4cd7dcb5d717a2e0f167d482aa657106cd0010789f49adac23847f220e872afa",
+              "crates/frankenlibc-abi/src/owned_tls_cache.rs": "d7e880ad53805ec8a7ccdf7ac7f8be86d2ce9767772c63faf75e6aa50e2b35dc",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "aecd86c1290490380f333c7f1b937d2b1f00375263a723197a0d5bb445f0b8ca",
+              "crates/frankenlibc-abi/tests/conformance_diff_mbsrtowcs.rs": "e40e495fd364c3643777c11379d0358a42ee00be2581b99555181d48d02f840c",
+              "crates/frankenlibc-abi/tests/n_bounded_wchar_differential_probe.rs": "e37f71760c3ac8459ffe491d7b88734a4b339575fb7ac1637b845d2a60bd3905",
+              "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
+              "crates/frankenlibc-core/src/string/wchar.rs": "613bb23ff40984be152b218b0a024783bbb3aa98b671cc40087f4224bb0c1cd8",
+              "tests/integration/fixture_langinfo_time_mbrtowc_null.c": "84c8d7bf53743f99db7ad75132a7a7a2fcec98c4083484d229bcf4db6202339a",
+              ".github/workflows/ci.yml": "f94bf3708de220f2842f050898732a7e5759fd797bb730b186f448d724364d39",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
+              "crates/frankenlibc-core/Cargo.toml": "09d217439b597e7239feccd783faa0b78c7d40f323bfa67576e55777ac547b82",
+              "tools/stdio_synth/src/lib.rs": "5839f91ed774274572aa493019ea7169f5c843a379507dd74dfd8f23ad897950"
+            }
+          },
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/wchar_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/conformance_diff_mbsrtowcs.rs"
+          ],
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-02T04:35:00Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/e9b6aca9309bb845/out/conformance_diff_mbsrtowcs-e9b6aca9309bb845",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "conformance_diff_mbsrtowcs",
+              "--no-run",
+              "--message-format=json",
+              "--config",
+              "build.fingerprint=\"content\""
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/e9b6aca9309bb845/out/conformance_diff_mbsrtowcs-e9b6aca9309bb845"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "diff_mbsrtowcs_ascii_only",
+              "diff_mbsrtowcs_dst_null_returns_required_len",
+              "diff_mbsrtowcs_with_cjk",
+              "diff_wcsrtombs_ascii_round_trip",
+              "diff_wcsrtombs_invalid_codepoint_rejected",
+              "diff_wcsrtombs_with_cjk_emoji",
+              "mbsrtowcs_diff_coverage_report"
+            ]
+          }
+        },
+        "result_receipts": []
+      }
+    },
     {
       "bead_id": "bd-reality-202609-lx578q.7.12",
       "title": "Preserve restartable multibyte implicit state and UTF16 encoder isolation",
