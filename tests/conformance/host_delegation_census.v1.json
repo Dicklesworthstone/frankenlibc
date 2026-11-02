@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 120,
-    "source_tree_sha256": "54bc7e6a2a0a1c08c5067b52c418c101eb83e61c0d9bb83c236df48e81130feb",
+    "source_tree_sha256": "3e333b0f593e409220cc786ef96c46ae1b3a4849b657458e662f5ada8da7d727",
     "version": 16
   },
   "module_census": [
@@ -3134,7 +3134,7 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "4dab72120593c7fd0bd120e44dcedbf1ea9abde49b4d38fbc1523a64881ea520",
+        "support_matrix_sha256": "d13fc8227519bbb2fbb4caacecdba42f4d61413f4a5b9bf1fc3c29b0f555c8d5",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 9100,
@@ -15174,7 +15174,7 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "4dab72120593c7fd0bd120e44dcedbf1ea9abde49b4d38fbc1523a64881ea520",
+        "support_matrix_sha256": "d13fc8227519bbb2fbb4caacecdba42f4d61413f4a5b9bf1fc3c29b0f555c8d5",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 9088,
@@ -20522,7 +20522,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "3c1a30410fbd1733ffde25eb6fdb6782b79745d4681cc4cc89e5a6b00b27c273"
+      "sha256": "29f7251dff4c38662808ad3093d4c033202589e20fdc950f583c7ad857baf9dc"
     }
   ],
   "summary": {
