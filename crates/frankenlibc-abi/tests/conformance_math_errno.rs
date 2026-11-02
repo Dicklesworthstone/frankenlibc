@@ -20,6 +20,7 @@
 //! (f64 fdim, scalbn/ldexp/scalbln scaling). powf-overflow-under-healing is a
 //! known separate concern and is intentionally not asserted here.
 #![cfg(target_os = "linux")]
+#![feature(f128)]
 #![allow(unsafe_code)]
 
 use frankenlibc_abi::errno_abi;
@@ -31,6 +32,81 @@ const ERANGE: c_int = 34;
 
 type Unary64 = unsafe extern "C" fn(f64) -> f64;
 type Unary32 = unsafe extern "C" fn(f32) -> f32;
+
+#[cfg(target_arch = "x86_64")]
+type Unary128 = unsafe extern "C" fn(f128) -> f128;
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    fn feclearexcept(excepts: c_int) -> c_int;
+    fn fetestexcept(excepts: c_int) -> c_int;
+}
+
+// These are the x86 fenv flag encodings, as in the deployed C probe. Keep the
+// binary128 flag tests architecture-scoped without restricting the old tests.
+#[cfg(target_arch = "x86_64")]
+fn check_inverse_trig128(x: f128, expected_errno: c_int, expected_invalid: c_int) {
+    for (label, f) in [
+        ("acosf128", fa::acosf128 as Unary128),
+        ("asinf128", fa::asinf128 as Unary128),
+    ] {
+        for initial in [0, libc::E2BIG] {
+            // SAFETY: clear only valid x86 fenv flags and set thread-local errno;
+            // the inverse-trig entrypoint accepts every scalar binary128 value.
+            let (result, observed_errno, flags) = unsafe {
+                assert_eq!(feclearexcept(0x3f), 0);
+                errno_abi::set_abi_errno(initial);
+                let result = f(x);
+                let observed_errno = rd();
+                let flags = fetestexcept(0x05); // INVALID | DIVBYZERO
+                (result, observed_errno, flags)
+            };
+            assert_eq!(
+                observed_errno,
+                if expected_errno == 0 {
+                    initial
+                } else {
+                    expected_errno
+                },
+                "{label}({:#034x}), initial errno={initial}",
+                x.to_bits()
+            );
+            assert_eq!(flags, expected_invalid, "{label}({:#034x})", x.to_bits());
+            if expected_errno == EDOM || x.is_nan() {
+                assert!(result.is_nan(), "{label} must return NaN");
+            } else {
+                assert!(result.is_finite(), "{label} valid control must be finite");
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn binary128_inverse_trig_domain_errno_and_invalid() {
+    for x in [f128::INFINITY, f128::NEG_INFINITY, 2.0, -2.0] {
+        check_inverse_trig128(x, EDOM, 1);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn binary128_inverse_trig_nan_flags_preserve_errno() {
+    for sign in [0, 1_u128 << 127] {
+        for (quiet, invalid) in [(1_u128 << 111, 0), (1_u128 << 110, 1)] {
+            let x = f128::from_bits(sign | (0x7fff_u128 << 112) | quiet | 0x123);
+            check_inverse_trig128(x, 0, invalid);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn binary128_inverse_trig_valid_inputs_preserve_errno() {
+    for x in [0.0, -0.0, 1.0, -1.0, 0.5, -0.5] {
+        check_inverse_trig128(x, 0, 0);
+    }
+}
 
 // The deployed provider-bound C fixture independently checks both widths
 // against GNU, including NaNs, valid infinities and poles. The last field says

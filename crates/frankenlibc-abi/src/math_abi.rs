@@ -9710,8 +9710,27 @@ pub unsafe extern "C" fn acosf64(x: f64) -> f64 {
 pub unsafe extern "C" fn acosf64x(x: f64) -> f64 {
     unsafe { acos(x) }
 }
+
+#[inline]
+fn report_inverse_trig_f128_errors(x: f128) {
+    // Classify bits so quiet NaNs leave errno and exception flags alone.
+    // Binary128 software arithmetic quiets signaling NaNs without raising the
+    // hardware flag, so use the existing observable invalid operation here.
+    let magnitude = x.to_bits() & !(1_u128 << 127);
+    let infinity = 0x7fff_u128 << 112;
+    let domain_error = magnitude > (0x3fff_u128 << 112) && magnitude <= infinity;
+    let signaling_nan = magnitude > infinity && magnitude & (1_u128 << 111) == 0;
+    if domain_error {
+        set_domain_errno();
+    }
+    if domain_error || signaling_nan {
+        pi_fn_raise_invalid_f64();
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acosf128(x: f128) -> f128 {
+    report_inverse_trig_f128_errors(x);
     acos_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9762,6 +9781,7 @@ pub unsafe extern "C" fn asinf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinf128(x: f128) -> f128 {
+    report_inverse_trig_f128_errors(x);
     asin_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

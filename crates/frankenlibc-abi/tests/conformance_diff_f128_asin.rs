@@ -9,9 +9,8 @@
 
 use frankenlibc_abi::math_abi as ma;
 
-unsafe extern "C" {
-    fn asinf128(x: f128) -> f128;
-}
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
@@ -68,10 +67,16 @@ fn values() -> Vec<f128> {
 
 #[test]
 fn f128_asin_matches_glibc() {
+    // SAFETY: binary128 prototype matches GNU; the existing resolver verifies
+    // the provider and refuses the FrankenLibC function's own address.
+    let host: unsafe extern "C" fn(f128) -> f128 =
+        unsafe { dlsym_oracle::host_fn(c"asinf128", ma::asinf128 as *const ()) };
     let mut mism = Vec::new();
     let mut n = 0u64;
     for &x in &values() {
-        let g = unsafe { asinf128(x) }.to_bits();
+        // SAFETY: both providers accept every scalar binary128 value.
+        let g = unsafe { host(x) }.to_bits();
+        // SAFETY: same scalar contract for the candidate.
         let f = unsafe { ma::asinf128(x) }.to_bits();
         n += 1;
         if g != f {

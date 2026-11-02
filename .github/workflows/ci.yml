@@ -175,29 +175,35 @@ jobs:
           printf '%s\n' "${GITHUB_SHA:-${RCH_BUILD_SOURCE:-unknown}}" > "$out/source-revision.txt"
           sha256sum .github/workflows/ci.yml tests/integration/fixture_libm_special_values.c \
             "$library" "$host_math" "$host_errno" "$out/probe" > "$out/inputs.sha256"
-          env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT -u FRANKENLIBC_MODE \
-            "$out/probe" --domain-errno "$host_math" "$host_errno" \
-            > "$out/gnu.stdout" 2> "$out/gnu.stderr"
-          test "$(wc -l < "$out/gnu.stdout")" -eq 448
           failed=0
-          for mode in strict hardened; do
-            if env -u LD_LIBRARY_PATH -u LD_AUDIT \
-              FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
-              "$out/probe" --domain-errno "$library" "$library" \
-              > "$out/$mode.stdout" 2> "$out/$mode.stderr"; then
-              rc=0
-            else
-              rc=$?
-            fi
-            printf '%s\n' "$rc" > "$out/$mode.exit_code"
-            if [[ "$rc" -ne 0 ]] || [[ "$(wc -l < "$out/$mode.stdout")" -ne 448 ]] || \
-              ! cmp "$out/gnu.stdout" "$out/$mode.stdout" || \
-              ! cmp "$out/gnu.stderr" "$out/$mode.stderr"; then
-              echo "FAIL: deployed math domain matrix ($mode)" >&2
-              failed=1
-            else
-              echo "PASS: deployed math domain matrix ($mode), 448 rows"
-            fi
+          for matrix in domain-errno:448 domain-errno-128:56; do
+            option="${matrix%:*}"
+            rows="${matrix#*:}"
+            matrix_out="$out/$option"
+            mkdir "$matrix_out"
+            env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT -u FRANKENLIBC_MODE \
+              "$out/probe" "--$option" "$host_math" "$host_errno" \
+              > "$matrix_out/gnu.stdout" 2> "$matrix_out/gnu.stderr"
+            test "$(wc -l < "$matrix_out/gnu.stdout")" -eq "$rows"
+            for mode in strict hardened; do
+              if env -u LD_LIBRARY_PATH -u LD_AUDIT \
+                FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+                "$out/probe" "--$option" "$library" "$library" \
+                > "$matrix_out/$mode.stdout" 2> "$matrix_out/$mode.stderr"; then
+                rc=0
+              else
+                rc=$?
+              fi
+              printf '%s\n' "$rc" > "$matrix_out/$mode.exit_code"
+              if [[ "$rc" -ne 0 ]] || [[ "$(wc -l < "$matrix_out/$mode.stdout")" -ne "$rows" ]] || \
+                ! cmp "$matrix_out/gnu.stdout" "$matrix_out/$mode.stdout" || \
+                ! cmp "$matrix_out/gnu.stderr" "$matrix_out/$mode.stderr"; then
+                echo "FAIL: deployed math domain matrix ($option, $mode)" >&2
+                failed=1
+              else
+                echo "PASS: deployed math domain matrix ($option, $mode), $rows rows"
+              fi
+            done
           done
           test "$failed" -eq 0
 

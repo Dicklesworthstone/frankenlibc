@@ -272,12 +272,73 @@ static int domain_errno(const char *math_provider, const char *errno_provider) {
     return 0;
 }
 
+static int domain_errno128(const char *math_provider, const char *errno_provider) {
+#if defined(__SIZEOF_FLOAT128__) && __SIZEOF_FLOAT128__ == 16
+    static const char *functions[] = {"acosf128", "asinf128"};
+    static const uint64_t inputs[][2] = {
+        {0x7fff000000000000ull, 0}, {0xffff000000000000ull, 0},
+        {0x7fff800000000000ull, 0x123}, {0xffff800000000000ull, 0x123},
+        {0x7fff400000000000ull, 0x123}, {0xffff400000000000ull, 0x123},
+        {0x0000000000000000ull, 0}, {0x8000000000000000ull, 0},
+        {0x3fff000000000000ull, 0}, {0xbfff000000000000ull, 0},
+        {0x4000000000000000ull, 0}, {0xc000000000000000ull, 0},
+        {0x3ffe000000000000ull, 0}, {0xbffe000000000000ull, 0}
+    };
+    static const int initial_errnos[] = {0, E2BIG};
+    if (!dlopen("libm.so.6", RTLD_NOW | RTLD_GLOBAL)) {
+        fprintf(stderr, "domain-errno-128: cannot load host libm\n");
+        return 90;
+    }
+    if (!same_provider(dlsym(RTLD_DEFAULT, "__errno_location"), errno_provider)) {
+        return 91;
+    }
+    for (unsigned n = 0; n < sizeof functions / sizeof *functions; ++n) {
+        __float128 (*f)(__float128) =
+            (__float128 (*)(__float128))dlsym(RTLD_DEFAULT, functions[n]);
+        if (!same_provider((void *)f, math_provider)) {
+            return 91;
+        }
+        for (unsigned e = 0; e < sizeof initial_errnos / sizeof *initial_errnos; ++e) {
+            for (unsigned i = 0; i < sizeof inputs / sizeof *inputs; ++i) {
+                unsigned __int128 input = ((unsigned __int128)inputs[i][0] << 64) | inputs[i][1];
+                __float128 x;
+                unsigned __int128 bits;
+                memcpy(&x, &input, sizeof x);
+                feclearexcept(FE_ALL_EXCEPT);
+                errno = initial_errnos[e];
+                __float128 result = f(x);
+                int observed_errno = errno;
+                int flags = fetestexcept(FE_INVALID | FE_DIVBYZERO);
+                memcpy(&bits, &result, sizeof bits);
+                unsigned __int128 magnitude = bits & ~((unsigned __int128)1 << 127);
+                unsigned __int128 infinity = (unsigned __int128)0x7fff << 112;
+                int kind = magnitude > infinity ? 3 : magnitude == infinity ? 2 :
+                           magnitude == 0 ? 1 : 0;
+                printf("errno128 %-8s %016llx%016llx initial=%d result=%d errno=%d invalid=%d pole=%d\n",
+                       functions[n], (unsigned long long)inputs[i][0],
+                       (unsigned long long)inputs[i][1], initial_errnos[e], kind,
+                       observed_errno, !!(flags & FE_INVALID), !!(flags & FE_DIVBYZERO));
+            }
+        }
+    }
+    return 0;
+#else
+    (void)math_provider;
+    (void)errno_provider;
+    fprintf(stderr, "domain-errno-128: binary128 compiler support required\n");
+    return 92;
+#endif
+}
+
 int main(int argc, char **argv) {
     if (argc == 4 && strcmp(argv[1], "--domain-errno") == 0) {
         return domain_errno(argv[2], argv[3]);
     }
+    if (argc == 4 && strcmp(argv[1], "--domain-errno-128") == 0) {
+        return domain_errno128(argv[2], argv[3]);
+    }
     if (argc != 1) {
-        fprintf(stderr, "usage: %s [--domain-errno MATH_PROVIDER ERRNO_PROVIDER]\n", argv[0]);
+        fprintf(stderr, "usage: %s [--domain-errno[-128] MATH_PROVIDER ERRNO_PROVIDER]\n", argv[0]);
         return 2;
     }
     doubles();
