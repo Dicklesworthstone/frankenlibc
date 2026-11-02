@@ -363,7 +363,7 @@ fn legacy_split_state_reset_and_isolation_match_glibc() {
                                         std::ptr::null_mut(),
                                     ) as i64,
                                     3 => wide(out, b"A".as_ptr(), 0) as i64,
-                                    4 => wide(out, b"\0".as_ptr(), 0) as i64,
+                                    4 => wide(out, c"".as_ptr().cast(), 0) as i64,
                                     5 => wide(out, input[split..].as_ptr(), input.len() - split)
                                         as i64,
                                     6 => restart(
