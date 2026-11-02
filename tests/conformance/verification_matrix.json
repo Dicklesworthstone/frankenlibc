@@ -164,8 +164,8 @@
     "total_critique_beads": 122,
     "total_entries": 122,
     "by_coverage_status": {
-      "complete": 44,
-      "partial": 2,
+      "complete": 45,
+      "partial": 1,
       "missing": 76
     },
     "by_priority": {
@@ -177,8 +177,8 @@
       },
       "P1": {
         "total": 47,
-        "complete": 25,
-        "partial": 1,
+        "complete": 26,
+        "partial": 0,
         "missing": 21
       },
       "P2": {
@@ -191,8 +191,8 @@
     "by_obligation_type": {
       "unit_tests": {
         "required": 122,
-        "complete": 45,
-        "partial": 1,
+        "complete": 46,
+        "partial": 0,
         "missing": 76
       },
       "e2e_scripts": {
@@ -241,8 +241,8 @@
       },
       "math": {
         "total": 19,
-        "complete": 12,
-        "partial": 1,
+        "complete": 13,
+        "partial": 0,
         "missing": 6
       },
       "perf": {
@@ -381,7 +381,7 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
+          "status": "complete",
           "artifacts": "/data/tmp/frankenlibc-math128-domain-20261102/unit/record/receipt.json"
         },
         "e2e_scripts": {
@@ -402,16 +402,16 @@
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 2,
-        "complete": 1,
-        "partial": 1,
+        "complete": 2,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.11",
         "stream": "math",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_math_errno"
         ],
@@ -431,10 +431,8 @@
           "vmi1153651:/data/tmp/frankenlibc-math128-domain-20261102/baseline/report.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit_receipt"
-        ],
-        "notes": "Native release2cc60b14acb44c7031c436f26ebb2b360ca6d80ee0430a4a242d3677a1a88789 directly executes the frozen56-case matrix in both modes,0 differences; original7c5bdfa... has24/mode. Fresh solo report SHA2e05beae1442985c3d1ee4219974d0937cab493ab241d9312d213ee54bd021a7; first report bf4b3a777412f70aab26af1c80e4bcbecf509c2fa74415b46a1f0b7a56bffdf3. Native proof is separately observed, not granted by the executed-unit evaluator.15 tracked bound files match e2a5c4917; ignored Cargo.lock is separately captured in the16-input map. Build label948a4218b-dirty corresponds to those subsequently committed source bytes. No independent review, hosted-job pass, full-binary128 or performance claim. Unit receipt pending actual capture.",
+        "close_blockers": [],
+        "notes": "Native release2cc60b14acb44c7031c436f26ebb2b360ca6d80ee0430a4a242d3677a1a88789 directly executes the frozen56-case matrix in both modes,0 differences; original7c5bdfa... has24/mode. Fresh solo report SHA2e05beae1442985c3d1ee4219974d0937cab493ab241d9312d213ee54bd021a7; first report bf4b3a777412f70aab26af1c80e4bcbecf509c2fa74415b46a1f0b7a56bffdf3. Native proof is separately observed, not granted by the executed-unit evaluator.15 tracked bound files match e2a5c4917; ignored Cargo.lock is separately captured in the16-input map. Build label948a4218b-dirty corresponds to those subsequently committed source bytes. No independent review, hosted-job pass, full-binary128 or performance claim. Actual unit receipt SHA97a2e304d9bf28d65599d54547bd9049b239c76724d8cbdd3176a3b7ebd15936: separately compiled and executed7 tests,0 failed/ignored/filtered; actual admission PASS1/1.",
         "closure_evidence": {
           "behavior": "Binary128 inverse-trig ABI sets domain errno and hardware invalid flags while preserving signaling/quiet NaN errno and valid-input behavior",
           "acceptance_sha256": "add17a42f737a944e65a3885f601dbc88a1c4da0a7cc328e065d0490af2c30ea",
