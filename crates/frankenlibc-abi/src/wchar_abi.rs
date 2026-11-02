@@ -4485,7 +4485,7 @@ pub unsafe extern "C" fn mbsrtowcs(
     dst: *mut libc::wchar_t,
     src: *mut *const std::ffi::c_char,
     len: usize,
-    _ps: *mut std::ffi::c_void,
+    ps: *mut std::ffi::c_void,
 ) -> usize {
     if src.is_null() {
         // SAFETY: setting thread-local errno through libc ABI helper.
@@ -4498,6 +4498,13 @@ pub unsafe extern "C" fn mbsrtowcs(
     if src_ptr.is_null() {
         return 0;
     }
+    if ps.is_null() {
+        return with_implicit_mbstate(MultibyteState::String, |state| {
+            // SAFETY: this entrypoint owns the internal state; the caller's
+            // source and destination remain live throughout the nested call.
+            unsafe { mbsrtowcs(dst, src, len, state) }
+        });
+    }
 
     let src_len = match unsafe { scan_known_multibyte_string(src_ptr) } {
         Some(src_len) => src_len,
@@ -4508,6 +4515,16 @@ pub unsafe extern "C" fn mbsrtowcs(
         }
     };
     let src_len_with_nul = src_len.saturating_add(1);
+    // The SIMD decoder below starts at a character boundary. A caller may
+    // instead supply a prefix saved by mbrtowc; resume that prefix through the
+    // bounded decoder, including its count-only state snapshot. Keep the
+    // existing validated initial-state fast paths for ordinary strings.
+    // SAFETY: ps is a live mbstate_t; byte zero records the pending byte count.
+    if unsafe { *ps.cast::<u8>() != 0 } {
+        // SAFETY: the scan established the readable source length through NUL;
+        // destination and state satisfy the public converter's contract.
+        return unsafe { mbsnrtowcs(dst, src, src_len_with_nul, len, ps) };
+    }
     // SAFETY: bounded by strlen + NUL.
     let src_bytes = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, src_len_with_nul) };
 
@@ -8610,6 +8627,37 @@ pub unsafe extern "C" fn mbsnrtowcs(
             unsafe { mbsnrtowcs(dst, src, nms, len, state) }
         });
     }
+    if dst.is_null() {
+        // Sizing must leave both the caller's source and conversion state
+        // unchanged, including a pending prefix. Decode using private copies
+        // rather than restoring caller memory after the conversion.
+        // SAFETY: src and ps are live caller objects; mbstate_t occupies eight
+        // bytes on the supported ABI. The copies outlive the entire decoder.
+        let mut source = unsafe { *src };
+        let mut state = unsafe { ps.cast::<[u8; 8]>().read_unaligned() };
+        // SAFETY: private pointer/state storage is valid and the source window
+        // has the same validity required by the public entrypoint.
+        return unsafe {
+            mbsnrtowcs_convert(dst, &mut source, nms, len, state.as_mut_ptr().cast())
+        };
+    }
+    // SAFETY: source, destination and explicit state meet the caller contract.
+    unsafe { mbsnrtowcs_convert(dst, src, nms, len, ps) }
+}
+
+/// Decode with writable source/state cursors. The ABI wrapper snapshots these
+/// cursors for count-only calls; write calls retain the streaming postconditions.
+///
+/// # Safety
+/// `src` and non-null `ps` must be live writable objects; `*src` must provide the
+/// readable input window. A non-null `dst` must contain `len` writable wide chars.
+unsafe fn mbsnrtowcs_convert(
+    dst: *mut libc::wchar_t,
+    src: *mut *const c_char,
+    nms: usize,
+    len: usize,
+    ps: *mut c_void,
+) -> usize {
     let mut s = unsafe { *src };
     let mut written = 0usize;
     let mut consumed = 0usize;
@@ -8621,7 +8669,7 @@ pub unsafe extern "C" fn mbsnrtowcs(
     // After any complete character the state returns to initial.
     // SAFETY: when non-null, `ps` is a valid `mbstate_t` (>= 8 bytes) per the C
     // contract, so byte 0 (the mbrtowc partial count) is readable.
-    let mut state_initial = ps.is_null() || unsafe { *(ps as *const u8) == 0 };
+    let mut state_initial = unsafe { *(ps as *const u8) == 0 };
 
     while consumed < nms && (dst.is_null() || written < len) {
         let remaining = nms - consumed;
@@ -9201,16 +9249,17 @@ enum MultibyteState {
     Utf16,
     Utf16Encode,
     BoundedString,
+    String,
 }
 
 #[cfg(feature = "owned-tls-cache")]
-static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 6]> =
-    crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 6]);
+static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 7]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 7]);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static MULTIBYTE_STATES: std::cell::RefCell<[[u8; 8]; 6]> =
-        const { std::cell::RefCell::new([[0; 8]; 6]) };
+    static MULTIBYTE_STATES: std::cell::RefCell<[[u8; 8]; 7]> =
+        const { std::cell::RefCell::new([[0; 8]; 7]) };
 }
 
 #[inline]
