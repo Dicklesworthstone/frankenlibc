@@ -639,15 +639,15 @@
       "text": "let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\")?;"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10959",
-      "line": 10959,
+      "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10979",
+      "line": 10979,
       "module": "math_abi",
       "path": "crates/frankenlibc-abi/src/math_abi.rs",
       "text": "let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\")?;"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10960",
-      "line": 10960,
+      "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10980",
+      "line": 10980,
       "module": "math_abi",
       "path": "crates/frankenlibc-abi/src/math_abi.rs",
       "text": "let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\")?;"
@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 120,
-    "source_tree_sha256": "d492d11611150f91741019d2072b1c6d5dfb29a4c6667d1fc24fa7bf4e8ca72a",
+    "source_tree_sha256": "9d675ef971ef6d4557ea2ba4988ba028b6a14a9d4edcb0efb507d875afacb0e4",
     "version": 16
   },
   "module_census": [
@@ -3134,10 +3134,10 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "d69e855f2cf4c8cdc83ffd1eca83e5a935a653ff730a2bde09adb3448b6ddd47",
+        "support_matrix_sha256": "a4d79d4f90d3818f85c41ee21cdd8925092d45de2c7948248369c5346fcde824",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9099,
+      "function_count": 9100,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -13009,7 +13009,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 17842,
+      "resolved_call_edge_count": 17846,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1660,
@@ -13499,20 +13499,20 @@
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10959",
+          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10979",
           "expression": "let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\")?;",
-          "function_id": "math_abi::host_fmaf128@10953",
+          "function_id": "math_abi::host_fmaf128@10973",
           "host_symbol": "dlopen",
-          "line": 10959,
+          "line": 10979,
           "path": "crates/frankenlibc-abi/src/math_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10960",
+          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10980",
           "expression": "let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\")?;",
-          "function_id": "math_abi::host_fmaf128@10953",
+          "function_id": "math_abi::host_fmaf128@10973",
           "host_symbol": "dlsym",
-          "line": 10960,
+          "line": 10980,
           "path": "crates/frankenlibc-abi/src/math_abi.rs"
         },
         {
@@ -15174,10 +15174,10 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "d69e855f2cf4c8cdc83ffd1eca83e5a935a653ff730a2bde09adb3448b6ddd47",
+        "support_matrix_sha256": "a4d79d4f90d3818f85c41ee21cdd8925092d45de2c7948248369c5346fcde824",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9087,
+      "function_count": 9088,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -19304,7 +19304,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17640,
+      "resolved_call_edge_count": 17644,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 592,
@@ -19623,20 +19623,20 @@
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10959",
+          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10979",
           "expression": "let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\")?;",
-          "function_id": "math_abi::host_fmaf128@10953",
+          "function_id": "math_abi::host_fmaf128@10973",
           "host_symbol": "dlopen",
-          "line": 10959,
+          "line": 10979,
           "path": "crates/frankenlibc-abi/src/math_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10960",
+          "evidence": "crates/frankenlibc-abi/src/math_abi.rs:10980",
           "expression": "let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\")?;",
-          "function_id": "math_abi::host_fmaf128@10953",
+          "function_id": "math_abi::host_fmaf128@10973",
           "host_symbol": "dlsym",
-          "line": 10960,
+          "line": 10980,
           "path": "crates/frankenlibc-abi/src/math_abi.rs"
         },
         {
@@ -20310,7 +20310,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/math_abi.rs",
-      "sha256": "da31408007bcb61d9867e5d698c6f3a4af2b747b07c9b273ba65922f8a32f88f"
+      "sha256": "797de57ba93e54fbad8fcf514f872cb8ffd794579e048305b39e707b5d1f0ed0"
     },
     {
       "path": "crates/frankenlibc-abi/src/math_exports.rs",

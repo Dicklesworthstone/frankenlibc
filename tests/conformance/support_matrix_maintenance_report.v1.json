@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-02T00:07:33Z",
-  "source_commit": "f1a0095c5cf6eb6d16fe519b75766c71d125121f",
-  "source_generated_at_utc": "2026-11-02T00:04:00Z",
-  "newest_abi_commit": "f1a0095c5cf6eb6d16fe519b75766c71d125121f",
-  "newest_abi_commit_time": "2026-11-01T18:53:12-05:00",
+  "generated_at": "2026-11-02T01:55:03Z",
+  "source_commit": "e2a5c49173492d6cd64e7e866196f6c998e2505d",
+  "source_generated_at_utc": "2026-11-02T01:52:00Z",
+  "newest_abi_commit": "e2a5c49173492d6cd64e7e866196f6c998e2505d",
+  "newest_abi_commit_time": "2026-11-01T20:38:33-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 3034,
@@ -36,7 +36,7 @@
     "native_coverage_pct": 68.5
   },
   "trend": {
-    "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
+    "baseline_report_path": "/data/tmp/frankenlibc-math128-domain-data-original-20261102/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
     "promotion_proof_manifest_path": "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/iconv_locale_bootstrap_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/search_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pthread_mutex_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/string_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/fortify_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/unistd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json",
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "28a33c2d780c3bd4929d04830d535b7f098cd8f46dfb7b213a4add58f049ebf3",
+        "artifact_sha256": "1d053241e555783db781d9ccdca574542c32e850229e36c72d7b3a34314a91f9",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 16,
-        "source_tree_sha256": "d492d11611150f91741019d2072b1c6d5dfb29a4c6667d1fc24fa7bf4e8ca72a"
+        "source_tree_sha256": "9d675ef971ef6d4557ea2ba4988ba028b6a14a9d4edcb0efb507d875afacb0e4"
       }
     },
     "summary": {

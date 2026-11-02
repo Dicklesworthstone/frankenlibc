@@ -161,11 +161,11 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 121,
-    "total_entries": 121,
+    "total_critique_beads": 122,
+    "total_entries": 122,
     "by_coverage_status": {
       "complete": 44,
-      "partial": 1,
+      "partial": 2,
       "missing": 76
     },
     "by_priority": {
@@ -176,9 +176,9 @@
         "missing": 18
       },
       "P1": {
-        "total": 46,
+        "total": 47,
         "complete": 25,
-        "partial": 0,
+        "partial": 1,
         "missing": 21
       },
       "P2": {
@@ -190,14 +190,14 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 121,
+        "required": 122,
         "complete": 45,
-        "partial": 0,
+        "partial": 1,
         "missing": 76
       },
       "e2e_scripts": {
-        "required": 60,
-        "complete": 19,
+        "required": 61,
+        "complete": 20,
         "partial": 0,
         "missing": 41
       },
@@ -240,9 +240,9 @@
         "missing": 8
       },
       "math": {
-        "total": 18,
+        "total": 19,
         "complete": 12,
-        "partial": 0,
+        "partial": 1,
         "missing": 6
       },
       "perf": {
@@ -341,6 +341,182 @@
     }
   },
   "entries": [
+    {
+      "bead_id": "bd-reality-202609-lx578q.7.11",
+      "title": "Correct binary128 inverse-trig domain errno and invalid exceptions",
+      "priority": 1,
+      "status": "in_progress",
+      "assignee": "CodexGapCloser",
+      "labels": [
+        "conformance",
+        "critique",
+        "math",
+        "verification"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Actual x86_64 binary128 domain, signaling/quiet NaN and valid-input regressions"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "Typed provider-bound56-row native matrix in both modes, original and wrong-provider controls; existing448-row/default regressions"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": "Retained actual command/result JSON and both streams; no runtime telemetry claim"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": "Live GNU C comparison covered by native execution"
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": "No golden regeneration"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "partial",
+          "artifacts": "/data/tmp/frankenlibc-math128-domain-20261102/unit/record/receipt.json"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "vmi1167313:/data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/report.json; vmi1153651:/data/tmp/frankenlibc-math128-domain-20261102/baseline/report.json"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "partial",
+        "required": 2,
+        "complete": 1,
+        "partial": 1,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.7.11",
+        "stream": "math",
+        "status": "partial",
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_math_errno"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_MODE=strict LD_PRELOAD=/data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/candidate.so /data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/fixture --domain-errno-128 /data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/candidate.so /data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/candidate.so",
+          "FRANKENLIBC_MODE=hardened LD_PRELOAD=/data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/candidate.so /data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/fixture --domain-errno-128 /data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/candidate.so /data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/candidate.so"
+        ],
+        "expected_assertions": [
+          "Binary128 invalid-domain inputs set EDOM and raise FE_INVALID; signaling NaNs raise FE_INVALID without changing errno; quiet NaNs and valid controls retain behavior",
+          "Both candidate modes56/0 native differences; retained original56/24 per mode; wrong math/errno provider rejects91/0 rows",
+          "Existing448-row matrix and145-line default fixture still match live GNU"
+        ],
+        "log_schema_refs": [],
+        "artifact_paths": [
+          "/data/tmp/frankenlibc-math128-domain-20261102/unit/record/receipt.json",
+          "vmi1167313:/data/tmp/frankenlibc-math128-domain-20261102/fresh-solo/report.json",
+          "vmi1153651:/data/tmp/frankenlibc-math128-domain-20261102/baseline/report.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [
+          "missing_unit_receipt"
+        ],
+        "notes": "Native release2cc60b14acb44c7031c436f26ebb2b360ca6d80ee0430a4a242d3677a1a88789 directly executes the frozen56-case matrix in both modes,0 differences; original7c5bdfa... has24/mode. Fresh solo report SHA2e05beae1442985c3d1ee4219974d0937cab493ab241d9312d213ee54bd021a7; first report bf4b3a777412f70aab26af1c80e4bcbecf509c2fa74415b46a1f0b7a56bffdf3. Native proof is separately observed, not granted by the executed-unit evaluator.15 tracked bound files match e2a5c4917; ignored Cargo.lock is separately captured in the16-input map. Build label948a4218b-dirty corresponds to those subsequently committed source bytes. No independent review, hosted-job pass, full-binary128 or performance claim. Unit receipt pending actual capture.",
+        "closure_evidence": {
+          "behavior": "Binary128 inverse-trig ABI sets domain errno and hardware invalid flags while preserving signaling/quiet NaN errno and valid-input behavior",
+          "acceptance_sha256": "add17a42f737a944e65a3885f601dbc88a1c4da0a7cc328e065d0490af2c30ea",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "source": {
+            "commit": "e2a5c49173492d6cd64e7e866196f6c998e2505d",
+            "files": {
+              "crates/frankenlibc-abi/src/math_abi.rs": "797de57ba93e54fbad8fcf514f872cb8ffd794579e048305b39e707b5d1f0ed0",
+              "crates/frankenlibc-abi/src/errno_abi.rs": "b6336d7fc7e3a2ef33365ce2860997d6ac61e92d5f25cce19510a205340e7835",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "aecd86c1290490380f333c7f1b937d2b1f00375263a723197a0d5bb445f0b8ca",
+              "crates/frankenlibc-core/src/math/exp.rs": "2f4a55a9b3a0f722f84a08dff51239dd20e2967f65f4a1825fb52758805a3d3b",
+              "crates/frankenlibc-abi/tests/conformance_math_errno.rs": "3f040fb9a7696af1b096db28573a82e910d2773df8549bfc532c4644ecfee8c3",
+              "crates/frankenlibc-abi/tests/conformance_diff_f128_asin.rs": "9e5a67c3db0d0dc724014c8d1fde1e47655f0b9c461c87a979dd595c049cbec0",
+              "crates/frankenlibc-abi/tests/conformance_diff_f128_acos.rs": "01ca711dc99952659dc017d449a826ce9dfdb9a1c9ffdaa144e573e840e8c291",
+              "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
+              "tests/integration/fixture_libm_special_values.c": "23bb9e34e2e9234f0e9d6059f110018acf9b750e81b5a2bcc59b4fcba5c53f3a",
+              ".github/workflows/ci.yml": "dedb46e407baf40613d8f97bab60e1214d999e15c8c865ddd8e4b09b2702e472",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
+              "crates/frankenlibc-core/Cargo.toml": "09d217439b597e7239feccd783faa0b78c7d40f323bfa67576e55777ac547b82"
+            }
+          },
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/math_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/conformance_math_errno.rs"
+          ],
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-02T01:50:00Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/921aa4087803b083/out/conformance_math_errno-921aa4087803b083",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "conformance_math_errno",
+              "--no-run",
+              "--message-format=json",
+              "--config",
+              "build.fingerprint=\"content\""
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/921aa4087803b083/out/conformance_math_errno-921aa4087803b083"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "binary128_inverse_trig_domain_errno_and_invalid",
+              "binary128_inverse_trig_nan_flags_preserve_errno",
+              "binary128_inverse_trig_valid_inputs_preserve_errno",
+              "domain_aliases_share_infinity_errno",
+              "domain_controls_preserve_existing_errno",
+              "infinite_domain_errors_set_errno_in_both_widths",
+              "math_errno_matches_glibc"
+            ]
+          }
+        },
+        "result_receipts": []
+      }
+    },
     {
       "bead_id": "bd-reality-202609-lx578q.7.10",
       "title": "Correct math domain errno and logarithm pole flags for infinity and signed zero",
