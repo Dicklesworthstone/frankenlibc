@@ -123,7 +123,10 @@ impl Mapping {
     fn allocate(object: &LoadedObject, image_len: usize) -> Option<Self> {
         let layout = map_layout::Reservation::new(
             image_len,
-            object.program_headers.iter().filter(|header| header.is_load())
+            object
+                .program_headers
+                .iter()
+                .filter(|header| header.is_load())
                 .map(|header| (header.p_vaddr, header.p_offset, header.p_align)),
         )?;
         // Reserve inaccessible address space first. A larger PT_LOAD alignment
@@ -131,11 +134,19 @@ impl Mapping {
         // another mapping. Excess prefix/suffix pages are returned to the OS.
         let base = unsafe {
             raw_syscall::sys_mmap(
-                std::ptr::null_mut(), layout.reserve_len, libc::PROT_NONE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0,
+                std::ptr::null_mut(),
+                layout.reserve_len,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
             )
-        }.ok()?;
-        let mut mapping = Self { base: base as usize, len: layout.reserve_len };
+        }
+        .ok()?;
+        let mut mapping = Self {
+            base: base as usize,
+            len: layout.reserve_len,
+        };
         let placement = layout.place(mapping.base)?;
         if placement.prefix != 0 {
             // SAFETY: the checked placement partitions our owned reservation
@@ -155,9 +166,12 @@ impl Mapping {
         // installs segment permissions, inaccessible holes and final RELRO.
         unsafe {
             raw_syscall::sys_mprotect(
-                mapping.base as *mut u8, mapping.len, libc::PROT_READ | libc::PROT_WRITE,
+                mapping.base as *mut u8,
+                mapping.len,
+                libc::PROT_READ | libc::PROT_WRITE,
             )
-        }.ok()?;
+        }
+        .ok()?;
         Some(mapping)
     }
 }

@@ -541,4 +541,3 @@ pub(crate) unsafe fn secret_is_set() -> c_int {
     };
     c_int::from(status.is_ok() && result.status == KEY_SUCCESS && result.network.private[0] != 0)
 }
-

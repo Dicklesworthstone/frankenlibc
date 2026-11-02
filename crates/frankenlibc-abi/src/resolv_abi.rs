@@ -2873,7 +2873,8 @@ fn module_addrinfo_lookup(
     name: &[u8],
     family: c_int,
     flags: c_int,
-) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<crate::nss_module::AddrInfoEntry, c_int> {
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<crate::nss_module::AddrInfoEntry, c_int>
+{
     use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
 
     if family == libc::AF_UNSPEC
@@ -2883,7 +2884,11 @@ fn module_addrinfo_lookup(
     }
     let convert = |entry: crate::nss_module::HostEntry| crate::nss_module::AddrInfoEntry {
         canonical_name: Some(entry.canonical_name.unwrap_or(entry.name)),
-        addresses: entry.addresses.into_iter().map(|address| (address, 0)).collect(),
+        addresses: entry
+            .addresses
+            .into_iter()
+            .map(|address| (address, 0))
+            .collect(),
     };
     if family == libc::AF_INET {
         return crate::nss_module::gethostbyname(service, name, libc::AF_INET).map(convert);
@@ -3282,7 +3287,9 @@ pub unsafe extern "C" fn getaddrinfo(
                 match answer {
                     Ok(HostAnswer::Module(entry)) => {
                         let name = if canonname.is_some() {
-                            entry.canonical_name.and_then(|name| std::ffi::CString::new(name).ok())
+                            entry
+                                .canonical_name
+                                .and_then(|name| std::ffi::CString::new(name).ok())
                         } else {
                             None
                         };
@@ -3293,8 +3300,11 @@ pub unsafe extern "C" fn getaddrinfo(
                         } else {
                             // Family-specific hostent results have no scope.
                             // Retain the existing IPv4-mapped selection policy.
-                            let plain: Vec<_> =
-                                entry.addresses.into_iter().map(|(address, _)| address).collect();
+                            let plain: Vec<_> = entry
+                                .addresses
+                                .into_iter()
+                                .map(|(address, _)| address)
+                                .collect();
                             address_policy
                                 .select(&plain)
                                 .into_iter()

@@ -68,7 +68,10 @@ fn auth_sys_decodes_all_groups_and_unaligned_machine() {
     let mut data = words(&[1234, 3, 0x61626300, 501, 20, 16]);
     data.extend(words(&(0..16).collect::<Vec<_>>()));
     let c = decode_system_credential(&data, SystemCredentialPolicy::ExactIdentity).unwrap();
-    assert_eq!((c.stamp, c.machine, c.uid, c.gid), (1234, b"abc".as_slice(), 501, 20));
+    assert_eq!(
+        (c.stamp, c.machine, c.uid, c.gid),
+        (1234, b"abc".as_slice(), 501, 20)
+    );
     assert_eq!(c.group_count, 16);
     assert_eq!(c.groups, std::array::from_fn(|i| i as u32));
 }
@@ -81,7 +84,10 @@ fn every_truncated_auth_sys_is_rejected() {
         SystemCredentialPolicy::Glibc,
     ] {
         for n in 0..data.len() {
-            assert!(decode_system_credential(&data[..n], policy).is_err(), "prefix {n}");
+            assert!(
+                decode_system_credential(&data[..n], policy).is_err(),
+                "prefix {n}"
+            );
         }
         assert!(decode_system_credential(&data, policy).is_ok());
     }
@@ -89,8 +95,12 @@ fn every_truncated_auth_sys_is_rejected() {
 
 #[test]
 fn malformed_auth_sys_cannot_masquerade_as_a_shorter_identity() {
-    for data in [words(&[1,256]), words(&[1,0,2,3,17]),
-                 words(&[1,3,0x61006200,2,3,0]), words(&[1,0,2,3,0,99])] {
+    for data in [
+        words(&[1, 256]),
+        words(&[1, 0, 2, 3, 17]),
+        words(&[1, 3, 0x61006200, 2, 3, 0]),
+        words(&[1, 0, 2, 3, 0, 99]),
+    ] {
         assert!(decode_system_credential(&data, SystemCredentialPolicy::ExactIdentity).is_err());
     }
 }

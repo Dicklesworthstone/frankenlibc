@@ -89,7 +89,9 @@ pub fn decode_system_credential(
     bytes: &[u8],
     policy: SystemCredentialPolicy,
 ) -> Result<SystemCredential<'_>, DecodeError> {
-    if bytes.len() > MAX_AUTH_BYTES { return Err(DecodeError::AuthenticationTooLong); }
+    if bytes.len() > MAX_AUTH_BYTES {
+        return Err(DecodeError::AuthenticationTooLong);
+    }
     let mut input = Cursor { bytes, position: 0 };
     let stamp = input.word()?;
     let length = input.word()? as usize;
@@ -113,11 +115,20 @@ pub fn decode_system_credential(
         return Err(DecodeError::AuthenticationTooLong);
     }
     let mut groups = [0; 16];
-    for group in &mut groups[..group_count] { *group = input.word()?; }
+    for group in &mut groups[..group_count] {
+        *group = input.word()?;
+    }
     if policy == SystemCredentialPolicy::ExactIdentity && input.position != bytes.len() {
         return Err(DecodeError::InvalidDiscriminant);
     }
-    Ok(SystemCredential { stamp, machine, uid, gid, groups, group_count })
+    Ok(SystemCredential {
+        stamp,
+        machine,
+        uid,
+        gid,
+        groups,
+        group_count,
+    })
 }
 
 /// Emit a success/error reply envelope. The caller appends XDR results after

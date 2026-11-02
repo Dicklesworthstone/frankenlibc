@@ -695,7 +695,10 @@ fn scoped_named_addresses(
         }
     };
     if rc != 0 {
-        assert!(head.is_null(), "failed lookup published a partial addrinfo list");
+        assert!(
+            head.is_null(),
+            "failed lookup published a partial addrinfo list"
+        );
         return Err(rc);
     }
     assert!(!head.is_null());
@@ -1235,14 +1238,15 @@ fn hosts_modules_tuple_lookup_matches_glibc() {
         );
         if host {
             unsafe extern "C" {
-                fn __nss_configure_lookup(
-                    database: *const c_char,
-                    sources: *const c_char,
-                ) -> c_int;
+                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char)
+                -> c_int;
             }
             let sources = CString::new(std::env::var("FLTEST_TUPLE_SOURCES").unwrap()).unwrap();
             // SAFETY: this child owns its process-local hosts configuration.
-            assert_eq!(unsafe { __nss_configure_lookup(c"hosts".as_ptr(), sources.as_ptr()) }, 0);
+            assert_eq!(
+                unsafe { __nss_configure_lookup(c"hosts".as_ptr(), sources.as_ptr()) },
+                0
+            );
         }
         let scenario = std::env::var("FLTEST_TUPLE_SCENARIO").unwrap();
         match scenario.as_str() {
@@ -1263,7 +1267,11 @@ fn hosts_modules_tuple_lookup_matches_glibc() {
                 }
             }
             "legacy" | "family" => {
-                let family = if scenario == "family" { libc::AF_INET } else { libc::AF_UNSPEC };
+                let family = if scenario == "family" {
+                    libc::AF_INET
+                } else {
+                    libc::AF_UNSPEC
+                };
                 let mut addresses = vec![
                     (Ipv4Addr::new(192, 0, 2, 41).into(), 0),
                     (Ipv4Addr::new(192, 0, 2, 42).into(), 0),
@@ -1334,7 +1342,10 @@ fn hosts_modules_tuple_lookup_matches_glibc() {
                 .env("FLTEST_STATUS", status)
                 .env("FLTEST_TRACE", "1")
                 .env("FRANKENLIBC_MODE", mode)
-                .env("FLTEST_REQUIRE_TUPLE_HEAD_RESET", if provider == "fl" { "1" } else { "0" })
+                .env(
+                    "FLTEST_REQUIRE_TUPLE_HEAD_RESET",
+                    if provider == "fl" { "1" } else { "0" },
+                )
                 .env_remove("FLTEST_TUPLE_SHAPE");
             let output = run_child(child, &label);
             let trace = String::from_utf8_lossy(&output.stderr);
@@ -1352,7 +1363,10 @@ fn hosts_modules_tuple_lookup_matches_glibc() {
                 assert!(!trace.contains(":gethostbyname4_r("), "{label}: {trace}");
             }
             if scenario == "tuple" {
-                assert!(trace.contains(":gethostbyname4_r_ERANGE("), "{label}: {trace}");
+                assert!(
+                    trace.contains(":gethostbyname4_r_ERANGE("),
+                    "{label}: {trace}"
+                );
             }
             if scenario == "legacy" || scenario == "family" {
                 assert!(
@@ -1405,7 +1419,10 @@ fn hosts_modules_tuple_defensive_results() {
                 .env("FRANKENLIBC_MODE", mode);
             let output = run_child(child, &label);
             let trace = String::from_utf8_lossy(&output.stderr);
-            assert!(trace.contains("fltesttupleonly:gethostbyname4_r("), "{label}: {trace}");
+            assert!(
+                trace.contains("fltesttupleonly:gethostbyname4_r("),
+                "{label}: {trace}"
+            );
             assert!(
                 trace.contains(&format!("gethostbyname4_r_shape({shape})")),
                 "malformed fixture was not exercised: {label}: {trace}"
