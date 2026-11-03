@@ -24,6 +24,9 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "__read_chk" => checked::__read_chk as *const (),
         "__pread_chk" => checked::__pread_chk as *const (),
         "__pread64_chk" => checked::__pread64_chk as *const (),
+        "__getcwd_chk" => checked::__getcwd_chk as *const (),
+        "__readlink_chk" => checked::__readlink_chk as *const (),
+        "__readlinkat_chk" => checked::__readlinkat_chk as *const (),
         "__recv_chk" => checked::__recv_chk as *const (),
         "__recvfrom_chk" => checked::__recvfrom_chk as *const (),
         "__poll_chk" => checked::__poll_chk as *const (),
@@ -54,6 +57,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     let introduced = match name {
         "__explicit_bzero_chk" => "GLIBC_2.25",
         "__fdelt_chk" => "GLIBC_2.15",
+        "__readlinkat_chk" => "GLIBC_2.5",
         "__poll_chk" | "__ppoll_chk" => "GLIBC_2.16",
         "__open_2"
         | "__open64_2"
@@ -67,6 +71,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         | "__read_chk"
         | "__pread_chk"
         | "__pread64_chk"
+        | "__getcwd_chk"
+        | "__readlink_chk"
         | "__recv_chk"
         | "__recvfrom_chk"
         | "__fgets_chk"

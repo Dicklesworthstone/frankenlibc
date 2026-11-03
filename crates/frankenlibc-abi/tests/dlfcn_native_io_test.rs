@@ -8,7 +8,8 @@ use std::sync::atomic::AtomicI32;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::{
-    dlfcn_abi as dl, errno_abi as errno, io_abi as io, malloc_abi as malloc, unistd_abi as unistd,
+    dlfcn_abi as dl, errno_abi as errno, fortify_abi as checked, io_abi as io,
+    malloc_abi as malloc, unistd_abi as unistd,
 };
 use frankenlibc_core::elf::ElfLoader;
 
@@ -251,7 +252,7 @@ __attribute__((destructor)) static void finalize(void) {
 }
 "#;
 
-fn symbols() -> [(&'static str, &'static str, *const ()); 55] {
+fn symbols() -> [(&'static str, &'static str, *const ()); 58] {
     [
         (
             "__errno_location",
@@ -332,6 +333,21 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 55] {
         ("readlink", "GLIBC_2.2.5", unistd::readlink as *const ()),
         ("readlinkat", "GLIBC_2.4", unistd::readlinkat as *const ()),
         ("free", "GLIBC_2.2.5", malloc::free as *const ()),
+        (
+            "__getcwd_chk",
+            "GLIBC_2.4",
+            checked::__getcwd_chk as *const (),
+        ),
+        (
+            "__readlink_chk",
+            "GLIBC_2.4",
+            checked::__readlink_chk as *const (),
+        ),
+        (
+            "__readlinkat_chk",
+            "GLIBC_2.5",
+            checked::__readlinkat_chk as *const (),
+        ),
     ]
 }
 
@@ -585,7 +601,7 @@ fn pathname_protocols(name: &str, got: bool) {
     assert_eq!(result, 0, "C pathname protocol line; counts={counts:?}");
     assert_eq!(
         counts,
-        [31, if repairs { 21 } else { 22 }, u32::from(repairs)]
+        [34, if repairs { 21 } else { 22 }, u32::from(repairs)]
     );
     println!(
         "{provider} pathname protocol: counts={counts:?}; retained {:?}",

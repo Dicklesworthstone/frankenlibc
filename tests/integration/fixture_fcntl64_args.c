@@ -183,6 +183,10 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
 }
 #undef META_CHECK
 
+extern char *__getcwd_chk(char *, size_t, size_t);
+extern ssize_t __readlink_chk(const char *, char *, size_t, size_t);
+extern ssize_t __readlinkat_chk(int, const char *, char *, size_t, size_t);
+
 void *flc_path_function(unsigned index) {
     switch (index) {
         case 0: return (void *)creat64;
@@ -194,6 +198,9 @@ void *flc_path_function(unsigned index) {
         case 6: return (void *)readlink;
         case 7: return (void *)readlinkat;
         case 8: return (void *)free;
+        case 9: return (void *)__getcwd_chk;
+        case 10: return (void *)__readlink_chk;
+        case 11: return (void *)__readlinkat_chk;
         default: return NULL;
     }
 }
@@ -218,6 +225,7 @@ int flc_path_protocol(const char *directory, const char *file, const char *link,
     PATH_CHECK(getcwd(bytes, sizeof bytes) == bytes && strcmp(bytes, directory) == 0);
     PATH_CHECK(memcmp(bytes + length + 1, guard + length + 1, sizeof bytes - length - 1) == 0); counts[0]++;
     PATH_CHECK(getcwd(bytes, length + 1) == bytes && strcmp(bytes, directory) == 0); counts[0]++;
+    PATH_CHECK(__getcwd_chk(bytes, sizeof bytes, sizeof bytes) == bytes && strcmp(bytes, directory) == 0); counts[0]++;
     for (unsigned i = 0; i < 2; i++) {
         char *allocated = getcwd(NULL, i ? sizeof bytes : 0);
         int correct = allocated && strcmp(allocated, directory) == 0;
@@ -269,6 +277,13 @@ int flc_path_protocol(const char *directory, const char *file, const char *link,
         }
     }
     errno = 0; PATH_CHECK(readlinkat(-1, "link", bytes, sizeof bytes) == -1 && errno == EBADF); counts[1]++;
+    for (unsigned api = 0; api < 2; api++) {
+        memcpy(bytes, guard, sizeof bytes);
+        ssize_t n = api ? __readlinkat_chk(dir, "link", bytes, 4, sizeof bytes)
+                        : __readlink_chk(link, bytes, 4, sizeof bytes);
+        PATH_CHECK(n == 4 && memcmp(bytes, "data", 4) == 0);
+        PATH_CHECK(memcmp(bytes + 4, guard + 4, sizeof bytes - 4) == 0); counts[0]++;
+    }
     int out = creat64(created, 0600); PATH_CHECK(out >= 0);
     PATH_CHECK(write(out, "new", 3) == 3 && close(out) == 0);
     out = open(created, O_RDONLY); PATH_CHECK(out >= 0);
@@ -284,7 +299,7 @@ int flc_path_protocol(const char *directory, const char *file, const char *link,
         free(allocated); PATH_CHECK(correct); counts[0]++;
     }
     errno = 0; PATH_CHECK(getcwd(bytes, 1) == NULL && errno == ERANGE); counts[1]++;
-    PATH_CHECK(counts[0] == 31 && counts[1] == (repairs ? 21u : 22u) && counts[2] == (unsigned)repairs);
+    PATH_CHECK(counts[0] == 34 && counts[1] == (repairs ? 21u : 22u) && counts[2] == (unsigned)repairs);
 done:
     if (saved >= 0) {
         if (restore(saved) != 0) result = __LINE__;
@@ -321,9 +336,9 @@ static int path_provider(void) {
     struct stat provider, actual;
     const char *pin = getenv("FLC_PATH_EXPECT_PROVIDER");
     if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &provider, 0) != 0) return 42;
-    for (unsigned i = 0; i < 10; i++) {
+    for (unsigned i = 0; i < 13; i++) {
         Dl_info info;
-        void *symbol = i == 9 ? (void *)__errno_location : flc_path_function(i);
+        void *symbol = i == 12 ? (void *)__errno_location : flc_path_function(i);
         if (!dladdr(symbol, &info) || !info.dli_fname ||
             syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) != 0 ||
             provider.st_dev != actual.st_dev || provider.st_ino != actual.st_ino) return 42;
@@ -596,6 +611,19 @@ static int allocation_contract(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--path-overflow") == 0) {
+        int provider = path_provider();
+        if (provider) return provider;
+        char bytes[4];
+        size_t requested = (size_t)strtoul(argv[3], NULL, 10);
+        switch (atoi(argv[2])) {
+            case 0: (void)__getcwd_chk(bytes, requested, sizeof bytes); break;
+            case 1: (void)__readlink_chk("/proc/self/exe", bytes, requested, sizeof bytes); break;
+            case 2: (void)__readlinkat_chk(AT_FDCWD, "/proc/self/exe", bytes, requested, sizeof bytes); break;
+            default: return 2;
+        }
+        return 43; /* A checked overflow must never return. */
+    }
     if (argc == 5 && strcmp(argv[1], "--path-edges") == 0) {
         int provider = path_provider();
         return provider ? provider : path_edges(argv[2], argv[3], argv[4]);
