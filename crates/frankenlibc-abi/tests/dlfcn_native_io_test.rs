@@ -574,7 +574,7 @@ fn pathname_protocols(name: &str, got: bool) {
     // restore callback and retained deep descriptor outlive the invocation.
     let (run, restore): (Run, Restore) = unsafe {
         (
-            std::mem::transmute(api.symbol(handle, c"flc_path_protocol")),
+            std::mem::transmute::<*mut c_void, Run>(api.symbol(handle, c"flc_path_protocol")),
             dlsym_oracle::host_fn(c"fchdir", unistd::fchdir as *const ()),
         )
     };

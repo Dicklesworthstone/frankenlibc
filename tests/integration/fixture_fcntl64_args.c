@@ -616,12 +616,14 @@ int main(int argc, char **argv) {
         if (provider) return provider;
         char bytes[4];
         size_t requested = (size_t)strtoul(argv[3], NULL, 10);
+        ssize_t returned;
         switch (atoi(argv[2])) {
-            case 0: (void)__getcwd_chk(bytes, requested, sizeof bytes); break;
-            case 1: (void)__readlink_chk("/proc/self/exe", bytes, requested, sizeof bytes); break;
-            case 2: (void)__readlinkat_chk(AT_FDCWD, "/proc/self/exe", bytes, requested, sizeof bytes); break;
+            case 0: returned = __getcwd_chk(bytes, requested, sizeof bytes) != NULL; break;
+            case 1: returned = __readlink_chk("/proc/self/exe", bytes, requested, sizeof bytes); break;
+            case 2: returned = __readlinkat_chk(AT_FDCWD, "/proc/self/exe", bytes, requested, sizeof bytes); break;
             default: return 2;
         }
+        fprintf(stderr, "checked operation unexpectedly returned: %zd\n", returned);
         return 43; /* A checked overflow must never return. */
     }
     if (argc == 5 && strcmp(argv[1], "--path-edges") == 0) {
