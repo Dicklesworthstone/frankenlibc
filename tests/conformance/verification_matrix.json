@@ -17986,12 +17986,12 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
-          "artifacts": "vmi1152480:/data/tmp/frankenlibc-posix-allocation-20261103/after/report.json; exact committed-source receipt pending"
+          "status": "complete",
+          "artifacts": "vmi1152480:/data/tmp/frankenlibc-posix-allocation-20261103/after/report.json; final-record/record/receipt.json SHA9d6d9edc25ea32e60ff473d1316c5391d1fd55411acb0d0199cb1a26c2dea06b, actual compiler0/execution0/1nonzero case, separate admission0"
         },
         "e2e_scripts": {
-          "status": "partial",
-          "artifacts": "vmi1152480:/data/tmp/frankenlibc-posix-allocation-20261103/c-before/report.json; actual GNU0/native1, fixedrelease pending"
+          "status": "complete",
+          "artifacts": "vmi1152480:/data/tmp/frankenlibc-posix-allocation-20261103/{c-before,c-final}/report.json, real release-C GNU/native parity and4provider42 negatives bothmodes"
         },
         "structured_logs": {
           "status": "not_required"
@@ -18007,21 +18007,30 @@
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 2,
-        "complete": 0,
-        "partial": 2,
+        "complete": 2,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.21",
         "stream": "e2e",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test dlfcn_native_io_test --config 'build.fingerprint=\"content\"' -- --test-threads=1 --nocapture",
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_posix_fallocate --config 'build.fingerprint=\"content\"' -- --test-threads=1 --nocapture"
         ],
-        "e2e_cmds": [],
+        "e2e_cmds": [
+          "env FRANKENLIBC_MODE=strict FLC_LOCKF_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=strict FLC_LOCKF_EXPECT_PROVIDER=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=strict FLC_LOCKF_EXPECT_PROVIDER=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=strict FLC_LOCKF_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=hardened FLC_LOCKF_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=hardened FLC_LOCKF_EXPECT_PROVIDER=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=hardened FLC_LOCKF_EXPECT_PROVIDER=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe",
+          "env FRANKENLIBC_MODE=hardened FLC_LOCKF_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-posix-allocation-20261103/c-final/candidate.so /data/tmp/frankenlibc-posix-allocation-20261103/c-final/probe"
+        ],
         "expected_assertions": [
           "Both actual aliases match distinct live GNU functions for400predeclared cases and24positive allocations per mode",
           "Existing bytes preserved, extended bytes zero, file sizes match and3open-file positions remain3; pipe data unchanged",
@@ -18040,16 +18049,13 @@
           "vmi1167313:/data/tmp/frankenlibc-posix-allocation-20261103/workspace-check/report.json",
           "hz4:/data/tmp/frankenlibc-posix-allocation-20261103/metadata-final/report.json",
           "vmi1152480:/data/tmp/frankenlibc-posix-allocation-20261103/final-record/record/receipt.json",
-          "/data/tmp/frankenlibc-posix-allocation-ubs-20261103.json"
+          "/data/tmp/frankenlibc-posix-allocation-ubs-20261103.json",
+          "vmi1152480:/data/tmp/frankenlibc-posix-allocation-20261103/final-record/admit.stdout",
+          "https://github.com/Dicklesworthstone/frankenlibc/actions/runs/41680049693"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "required_checks",
-          "final_release_replay",
-          "exact_source_receipt_and_admission",
-          "publication"
-        ],
-        "notes": "Original actually compiled0/ran:8parent passed1failed,64mismatches/mode; new400cases and24positive observations reached. Original C GNU0/native1 after400cases and24successes bothmodes. Fixed actual9native I/O+14fallback parent tests/mode all0,492inputs unchanged; no distinct-case credit for repeated modes/child summaries. Preserve14fallback assertions; only cleanup deleted from test execution, fresh collision-resistant create_new inputs retained. Runtime only removes premature EINVAL, preserves policy/metrics/EOPNOTSUPP dispatch. Metadata producer0 on normally selectedhz4 after3651pressure103 refusal, allclassifications/summaries/dependencies unchanged; onlyactualhash/2line anchors. UBS65critical unchangedcount,620warning/4109info across3files; no new critical within newtest, reviewed rawfds/storage/errno lifetimes; no suppression/clean-scan claim. Expectedfmt1 manually corrected, sbhusage2 thenactual20G1 retained under standingremoteexception. FinalC/checks/receipt/admission/publication pending; original acceptance unchanged; SOLO, no independentattestation/globalCI/performance/fullreplacement claim.",
+        "close_blockers": [],
+        "notes": "The shared POSIX allocation entry now preserves raw-kernel descriptor/range error precedence by removing premature userspace EINVAL; both aliases retain policy/metrics and EOPNOTSUPP-only emulation. Original actual native target8passed1failed/64mismatches per mode across400cases,24positive cases reached; actual deployed C GNU0/native1 bothmodes. Fixed native I/O9passed plus all14existing fallback/dispatch tests per mode,0failed0ignored0filtered;23unique parent tests repeated across2modes, no inflated independent-case credit. Existing fallback assertions unchanged; only file-deleting cleanup removed, create_new and unique paths retain fresh diagnostic inputs. Final release sourcea63cafe1d2eebe856f3152ae0def7c5fb80f127f build0/110.06s, candidate87805dba7bcf133a797d5bf8f2c064d82bc15d9ef5a8bba7a3380abdd470fc1d, Cprobe c0b6a1097ef6ef1f81fd38aee5a0e2ee1c26238c798bf585414b3f2a3bdc38df. Both actual imports posix_fallocate@GLIBC_2.2.5/posix_fallocate64@GLIBC_2.2.5 observed; GNU/candidate stdout+stderr identical bothmodes for400allocation observations/24successes plus all originalfcntl/lockf probes,4wrong-provider negatives42. GNU library SHA85e64f97e348786a8fb4d9f3d52fec289e2fb86bba20f0731dfe61990525e0f7 observed after the replay, not claimed as a before/after host hash check. Exact492input receipt9d6d9edc25ea32e60ff473d1316c5391d1fd55411acb0d0199cb1a26c2dea06b: actual compiler0/execution0, test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out. Executable048994cd833f3a0f5aad9a46d46eba1f3e6370c4cba1c0419aa0b5ca82ec9f74, actual Cargo artifact features default/testprofile; separate --admit0/POST_TOTAL1/POST_PASS1/POST_FAIL0. All492source inputs unchanged, original acceptance hash0c561ae772c10395d4b45189f7d41eda65b285ffd4b8eec7aba95afe3e969304 unchanged. Full workspacecheck/alltargets/keep-going0/591.23s, strictClippy0/1121.67s, fmt0/52.83s. All5canonical source metadata gates0 onhz4, four semantic/docs reports explicitly sourcea63cafe..., census/self-test51 actual0. Real producer delta onlysourcehashes and2line anchors, no classification/dependency/count changes; preserve4730unknown/full0/18Stub/L0 and historical1085invalid/1190linked/2929unlinked. UBS65critical unchangedcount/620warning/4109info across3files, no newcritical in newtest; manually reviewed rawfd/storage/errno/seek lifetimes, no suppression/clean-scan claim. Retained expectedfmt1 manually corrected; initial sbhCLI2 corrected to actual20G1 under standingremoteexception;3651critical-memory admission103 refused, normal scheduler selectedhz4, no localfallback/fleet/lock/cache overrides or compiled downloads. All135previous matrix rows/schema unchanged. Root-created runtime edits committed by external helper11ede754c, sourcebindinga63cafe1d; no independent verification credited to helper. Three worksheets3278 and older bounded CASS contexts retained, fresh SOLO acceptance review follows. GitHub41680049693 queued at17:10Z, no globalCI-green/performance/universal-safety/fullreplacement claim. Bead staysinprogress pending normal complete-evidence publication and closure; parent7/37/44 remainopen and14blocked.",
         "result_receipts": [
           "/data/tmp/frankenlibc-posix-allocation-20261103/final-record/record/receipt.json"
         ],
