@@ -16,7 +16,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <uchar.h>
+#include <unistd.h>
 #include <wchar.h>
 
 static void *state_symbol(const char *name, const char *provider) {
@@ -422,6 +426,139 @@ static int singlechar_state(const char *provider) {
     return 0;
 }
 
+static int conversion_footprint(const char *provider, int raw) {
+    typedef size_t (*decode_fn)(wchar_t *, const char *, size_t);
+    typedef size_t (*encode_fn)(char *, const wchar_t *, size_t);
+    typedef size_t (*restart_decode_fn)(wchar_t *, const char **, size_t, mbstate_t *);
+    typedef size_t (*restart_encode_fn)(char *, const wchar_t **, size_t, mbstate_t *);
+    typedef size_t (*bounded_decode_fn)(wchar_t *, const char **, size_t, size_t, mbstate_t *);
+    typedef size_t (*bounded_encode_fn)(char *, const wchar_t **, size_t, size_t, mbstate_t *);
+    typedef int (*initial_fn)(const mbstate_t *);
+    typedef int *(*errno_fn)(void);
+    typedef char *(*locale_fn)(int, const char *);
+    decode_fn decode = (decode_fn)state_symbol("mbstowcs", provider);
+    encode_fn encode = (encode_fn)state_symbol("wcstombs", provider);
+    restart_decode_fn restart_decode = (restart_decode_fn)state_symbol("mbsrtowcs", provider);
+    restart_encode_fn restart_encode = (restart_encode_fn)state_symbol("wcsrtombs", provider);
+    bounded_decode_fn bounded_decode = (bounded_decode_fn)state_symbol("mbsnrtowcs", provider);
+    bounded_encode_fn bounded_encode = (bounded_encode_fn)state_symbol("wcsnrtombs", provider);
+    initial_fn initial = (initial_fn)state_symbol("mbsinit", provider);
+    errno_fn error = (errno_fn)state_symbol("__errno_location", provider);
+    locale_fn locale = (locale_fn)state_symbol("setlocale", provider);
+    if (!decode || !encode || !restart_decode || !restart_encode ||
+        !bounded_decode || !bounded_encode || !initial || !error || !locale)
+        return 91;
+    const char *locales[] = {"C", "POSIX", "C.UTF-8"};
+    const size_t lengths[] = {1, 8, 31, 64, 0, 1, 8, 31};
+    const char *characters[] = {"\xc3\xa9", "\xe2\x82\xac", "\xf0\x9f\x99\x82"};
+    const wchar_t units[] = {0xe9, 0x20ac, 0x1f642};
+    const size_t widths[] = {2, 3, 4};
+    const long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0)
+        return 95;
+    const struct rlimit core_limit = {0, 0};
+    if (setrlimit(RLIMIT_CORE, &core_limit))
+        return 95;
+    struct footprint_result {
+        size_t ret;
+        int error, initial;
+        long cursor;
+        wchar_t wide[96];
+        unsigned char bytes[96];
+    };
+    for (int selected = 0; selected < 3; ++selected) {
+        if (!locale(LC_ALL, locales[selected]))
+            return 92;
+        for (int scenario = 0; scenario < 21; ++scenario) {
+            for (int route = 0; route < 8; ++route) {
+                int wide_input = route == 1 || route == 4 || route == 5 || route == 7;
+                for (int saved = 0; saved < 2; ++saved) {
+                    int channel[2];
+                    if (pipe(channel)) return 95;
+                    pid_t pid = fork();
+                    if (pid < 0) return 95;
+                    if (pid == 0) {
+                        close(channel[0]);
+                        alarm(5);
+                        unsigned char *base = mmap(NULL, (size_t)page * 3,
+                            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                        if (base == MAP_FAILED || mprotect(base + page * 2, (size_t)page, PROT_NONE))
+                            _exit(95);
+                        int mixed = scenario >= 9;
+                        int cross = scenario >= 12 && scenario < 18;
+                        int count = scenario >= 15 && scenario < 18;
+                        int short_output = scenario >= 18;
+                        int sample = mixed ? (scenario - 9) % 3 : 0;
+                        int terminated = (scenario >= 5 && scenario < 9) || cross;
+                        int readable_nul = terminated || (mixed && !raw);
+                        size_t ascii = mixed ? 3 : scenario ? lengths[scenario - 1] : 0;
+                        size_t elements = ascii + (mixed ? (wide_input ? 1 : widths[sample]) : 0)
+                            + (readable_nul ? 1 : 0);
+                        size_t elem = wide_input ? sizeof(wchar_t) : 1;
+                        unsigned char *source = cross ? base + page - 4 * elem
+                            : base + page * 2 - elements * elem;
+                        for (size_t i = 0; i < ascii; ++i) {
+                            if (wide_input) ((wchar_t *)source)[i] = L'A';
+                            else source[i] = 'A';
+                        }
+                        if (mixed) {
+                            if (wide_input) ((wchar_t *)source)[ascii] = units[sample];
+                            else memcpy(source + ascii, characters[sample], widths[sample]);
+                        }
+                        if (readable_nul) {
+                            if (wide_input) ((wchar_t *)source)[elements - 1] = 0;
+                            else source[elements - 1] = 0;
+                        }
+                        size_t capacity = ascii + (mixed ? (wide_input ? widths[sample] : 1) : 0)
+                            + (terminated ? 1 : 0);
+                        if (short_output) capacity = wide_input ? ascii + widths[sample] - 1 : ascii;
+                        if (count) capacity = sample == 0 ? 0 : sample == 1 ? 1 : 7;
+                        struct footprint_result r = {0};
+                        for (int i = 0; i < 96; ++i) r.wide[i] = 0x1234;
+                        memset(r.bytes, 0x5a, sizeof r.bytes);
+                        const char *narrow = (const char *)source;
+                        const wchar_t *wide = (const wchar_t *)source;
+                        mbstate_t state = {0};
+                        mbstate_t *ps = route == 3 || route == 5 ? NULL : &state;
+                        *error() = saved ? E2BIG : 0;
+                        if (route == 0) r.ret = decode(count ? NULL : r.wide, narrow, capacity);
+                        else if (route == 1) r.ret = encode(count ? NULL : (char *)r.bytes, wide, capacity);
+                        else if (route < 4) r.ret = restart_decode(count ? NULL : r.wide, &narrow, capacity, ps);
+                        else if (route < 6) r.ret = restart_encode(count ? NULL : (char *)r.bytes, &wide, capacity, ps);
+                        else if (route == 6) r.ret = bounded_decode(count ? NULL : r.wide, &narrow, elements, capacity, ps);
+                        else r.ret = bounded_encode(count ? NULL : (char *)r.bytes, &wide, elements, capacity, ps);
+                        r.error = *error();
+                        /* Error-state contents are unspecified; implicit state is not inspectable. */
+                        r.initial = route < 2 || !ps || r.ret == (size_t)-1 ? -1 : !!initial(ps);
+                        r.cursor = route < 2 ? -2 : source_offset(wide_input ? (const char *)wide : narrow,
+                                                                  (const char *)source);
+                        if (write(channel[1], &r, sizeof r) != (ssize_t)sizeof r)
+                            _exit(96);
+                        _exit(0);
+                    }
+                    close(channel[1]);
+                    int status;
+                    if (waitpid(pid, &status, 0) != pid) return 95;
+                    struct footprint_result r;
+                    ssize_t got = read(channel[0], &r, sizeof r);
+                    close(channel[0]);
+                    printf("footprint locale=%d scenario=%d route=%d saved=%d ", selected, scenario, route, saved);
+                    if (WIFSIGNALED(status)) {
+                        printf("signal=%d\n", WTERMSIG(status));
+                        continue;
+                    }
+                    if (!WIFEXITED(status) || WEXITSTATUS(status) || got != (ssize_t)sizeof r)
+                        return 95;
+                    printf("ret=%zu errno=%d cursor=%ld initial=%d out=", r.ret, r.error, r.cursor, r.initial);
+                    for (int i = 0; i < 96; ++i)
+                        printf("%x%s", wide_input ? r.bytes[i] : (unsigned)r.wide[i], i == 95 ? "\n" : ",");
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--restartable-state") == 0)
         return restartable_state(argv[2], 0);
@@ -433,6 +570,10 @@ int main(int argc, char **argv) {
         return conversion_capacity(argv[2]);
     if (argc == 3 && strcmp(argv[1], "--singlechar-state") == 0)
         return singlechar_state(argv[2]);
+    if (argc == 3 && strcmp(argv[1], "--conversion-footprint") == 0)
+        return conversion_footprint(argv[2], 0);
+    if (argc == 3 && strcmp(argv[1], "--conversion-footprint-raw") == 0)
+        return conversion_footprint(argv[2], 1);
     if (argc != 1)
         return 90;
     setlocale(LC_ALL, "C");

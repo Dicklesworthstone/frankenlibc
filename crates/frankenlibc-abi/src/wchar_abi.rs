@@ -230,6 +230,145 @@ unsafe fn scan_known_wide_string(ptr: *const u32) -> Option<usize> {
     if terminated { Some(len) } else { None }
 }
 
+/// A complete known allocation inside the current page can keep the existing
+/// whole-string SIMD path. Foreign and cross-page buffers need output-bounded
+/// windows: their unused tail need not be readable.
+fn conversion_needs_windows(address: usize) -> bool {
+    let page_remaining = WIDE_SCAN_PAGE - (address & (WIDE_SCAN_PAGE - 1));
+    known_remaining(address).is_none_or(|remaining| remaining > page_remaining)
+}
+
+/// Convert a write-limited multibyte source without an unbounded NUL prescan.
+///
+/// # Safety
+/// The caller supplies live source/cursor/state objects and `len` writable
+/// destination elements. Source bytes needed before NUL, error or output
+/// exhaustion are readable; `ps` is non-null and holds a valid mbstate_t.
+unsafe fn decode_string_windows(
+    dst: *mut libc::wchar_t,
+    src: *mut *const c_char,
+    len: usize,
+    ps: *mut c_void,
+) -> usize {
+    let mut written = 0;
+    // SAFETY: source/state objects satisfy the helper's caller contract.
+    let mut pending_start = unsafe { *src };
+    while written < len {
+        // SAFETY: src points to a live cursor; completed conversions return below.
+        let current = unsafe { *src };
+        let page_remaining = WIDE_SCAN_PAGE - (current as usize & (WIDE_SCAN_PAGE - 1));
+        let source_bound = known_remaining(current as usize);
+        // One input byte produces at most one wide character. This byte budget
+        // cannot reach a later page just to fill unused output slots. A split
+        // UTF-8 character resumes through the existing bounded decoder/state.
+        let window = page_remaining.min(len - written);
+        let window = source_bound.map_or(window, |bound| window.min(bound));
+        if window == 0 {
+            // SAFETY: errno is the current thread's ABI slot.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+        // SAFETY: the bounded scan stays in the current readable page and stops
+        // at NUL. Known allocation extents further restrict that window.
+        let (bytes, terminated) = unsafe { scan_c_string(current, Some(window)) };
+        let readable = bytes + usize::from(terminated);
+        // SAFETY: ps is a live non-null state; its first byte is the prefix count.
+        let had_pending = unsafe { *ps.cast::<u8>() != 0 };
+        if !had_pending {
+            pending_start = current;
+        }
+        // SAFETY: scan established this source window; the destination suffix
+        // and explicit state remain live. No implicit-state borrow is nested.
+        let count = unsafe { mbsnrtowcs(dst.add(written), src, readable, len - written, ps) };
+        // SAFETY: the bounded converter updates this caller-owned cursor.
+        let next = unsafe { *src };
+        if count == usize::MAX {
+            if had_pending && next == current {
+                // Internal windows must not move the reported error position
+                // into a character whose prefix began in an earlier window.
+                // SAFETY: pending_start is a saved cursor into the same input.
+                unsafe { *src = pending_start };
+            }
+            return usize::MAX;
+        }
+        written += count;
+        if next.is_null() || written == len {
+            return written;
+        }
+        // SAFETY: the decoder's private prefix count is at most five bytes.
+        let pending = usize::from(unsafe { *ps.cast::<u8>() });
+        if pending != 0 && count != 0 {
+            // A newly pending character follows a completed character from
+            // this window, so all of its prefix bytes belong to this call.
+            // SAFETY: these bytes were consumed by the bounded decoder.
+            pending_start = unsafe { next.sub(pending) };
+        }
+        if !terminated && source_bound == Some(readable) {
+            // Preserve the tracked-source exhaustion error when more output
+            // was requested. Exact output exhaustion returned normally above.
+            // SAFETY: errno is the current thread's ABI slot.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+    }
+    written
+}
+
+/// Write-limited wide conversion using the existing whole-character encoder.
+///
+/// # Safety
+/// Source/cursor and `len` destination bytes are live. The source is readable
+/// through NUL, an encoding error or the last character needed for the output.
+unsafe fn encode_string_windows(
+    dst: *mut c_char,
+    src: *mut *const libc::wchar_t,
+    len: usize,
+    ps: *mut c_void,
+) -> usize {
+    let mut written = 0;
+    while written < len {
+        // SAFETY: src points to a live cursor; a NUL cursor returns below.
+        let current = unsafe { *src };
+        let page_remaining = WIDE_SCAN_PAGE - (current as usize & (WIDE_SCAN_PAGE - 1));
+        let source_bound = known_remaining(current as usize).map(bytes_to_wchars);
+        let window = (page_remaining / std::mem::size_of::<u32>()).min(len - written);
+        let window = source_bound.map_or(window, |bound| window.min(bound));
+        if window == 0 {
+            // SAFETY: errno is the current thread's ABI slot.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+        // SAFETY: the bounded NUL scan cannot reach a later page; source
+        // alignment and any known allocation extent bound the wide window.
+        let (chars, terminated) = unsafe { scan_w_string(current.cast(), Some(window)) };
+        let readable = chars + usize::from(terminated);
+        // SAFETY: the scan established this readable source window and the
+        // output suffix is writable. The encoder never splits a character.
+        let count = unsafe { wcsnrtombs(dst.add(written), src, readable, len - written, ps) };
+        if count == usize::MAX {
+            return usize::MAX;
+        }
+        written += count;
+        // SAFETY: src is the live cursor updated by the bounded encoder.
+        let next = unsafe { *src };
+        if next.is_null() || written == len {
+            return written;
+        }
+        // A whole character can need more bytes than remain in the output.
+        // In that case the encoder stopped before the end of this window.
+        // SAFETY: readable elements belong to the scanned source window.
+        if next != unsafe { current.add(readable) } {
+            return written;
+        }
+        if !terminated && source_bound == Some(readable) {
+            // SAFETY: preserve the tracked-source exhaustion error.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+    }
+    written
+}
+
 unsafe fn bounded_wide_len(ptr: *const u32) -> usize {
     let bound = known_remaining(ptr as usize).map(bytes_to_wchars);
     let (len, _) = unsafe { scan_w_string(ptr, bound) };
@@ -3849,6 +3988,19 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
     if src.is_null() {
         return usize::MAX; // (size_t)-1
     }
+    if !dst.is_null() {
+        if n == 0 {
+            return 0;
+        }
+        if conversion_needs_windows(src as usize) {
+            let mut source = src.cast::<c_char>();
+            let mut state = [0u8; 8];
+            // SAFETY: local cursor/state are live; caller owns both buffers.
+            return unsafe {
+                decode_string_windows(dst.cast(), &mut source, n, state.as_mut_ptr().cast())
+            };
+        }
+    }
     let src_len = match unsafe { scan_known_multibyte_string(src.cast()) } {
         Some(src_len) => src_len,
         None => {
@@ -3892,6 +4044,19 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
 pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> usize {
     if src.is_null() {
         return usize::MAX;
+    }
+    if !dst.is_null() {
+        if n == 0 {
+            return 0;
+        }
+        if conversion_needs_windows(src as usize) {
+            let mut source = src.cast::<libc::wchar_t>();
+            // SAFETY: local cursor is live; caller owns both buffers. This
+            // encoder is stateless in the supported ASCII/UTF-8 locales.
+            return unsafe {
+                encode_string_windows(dst.cast(), &mut source, n, std::ptr::null_mut())
+            };
+        }
     }
     let wlen = match unsafe { scan_known_wide_string(src) } {
         Some(wlen) => wlen,
@@ -4520,12 +4685,20 @@ pub unsafe extern "C" fn mbsrtowcs(
     if src_ptr.is_null() {
         return 0;
     }
+    if !dst.is_null() && len == 0 {
+        return 0;
+    }
     if ps.is_null() {
         return with_implicit_mbstate(MultibyteState::String, |state| {
             // SAFETY: this entrypoint owns the internal state; the caller's
             // source and destination remain live throughout the nested call.
             unsafe { mbsrtowcs(dst, src, len, state) }
         });
+    }
+
+    if !dst.is_null() && conversion_needs_windows(src_ptr as usize) {
+        // SAFETY: caller supplies live cursors/buffers and ps is non-null here.
+        return unsafe { decode_string_windows(dst, src, len, ps) };
     }
 
     let src_len = match unsafe { scan_known_multibyte_string(src_ptr) } {
@@ -4645,6 +4818,15 @@ pub unsafe extern "C" fn wcsrtombs(
     let src_ptr = unsafe { *src };
     if src_ptr.is_null() {
         return 0;
+    }
+    if !dst.is_null() {
+        if len == 0 {
+            return 0;
+        }
+        if conversion_needs_windows(src_ptr as usize) {
+            // SAFETY: caller supplies the source cursor and writable output.
+            return unsafe { encode_string_windows(dst, src, len, _ps) };
+        }
     }
 
     let src_len = match unsafe { scan_known_wide_string(src_ptr as *const u32) } {

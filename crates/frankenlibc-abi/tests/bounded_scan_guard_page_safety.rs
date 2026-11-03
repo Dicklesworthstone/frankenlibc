@@ -208,6 +208,166 @@ type WideLen = unsafe extern "C" fn(*const u32, usize) -> usize;
 type WideCmp = unsafe extern "C" fn(*const u32, *const u32, usize) -> c_int;
 type WideCpy = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
 
+type DecodeString = unsafe extern "C" fn(*mut u32, *const u8, usize) -> usize;
+type EncodeString = unsafe extern "C" fn(*mut u8, *const u32, usize) -> usize;
+type DecodeRestart = unsafe extern "C" fn(
+    *mut libc::wchar_t,
+    *mut *const c_char,
+    usize,
+    *mut std::ffi::c_void,
+) -> usize;
+type EncodeRestart = unsafe extern "C" fn(
+    *mut c_char,
+    *mut *const libc::wchar_t,
+    usize,
+    *mut std::ffi::c_void,
+) -> usize;
+type SelectLocale = unsafe extern "C" fn(c_int, *const c_char) -> *const c_char;
+type ErrorLocation = unsafe extern "C" fn() -> *mut c_int;
+
+fn check_conversion_read_bounds(wide_input: bool) {
+    use frankenlibc_abi::{errno_abi, locale_abi, wchar_abi};
+    // SAFETY: every signature matches its named C declaration. The oracle
+    // resolver rejects an address equal to FrankenLibC's own definition.
+    let host: (
+        DecodeString,
+        EncodeString,
+        DecodeRestart,
+        EncodeRestart,
+        SelectLocale,
+        ErrorLocation,
+    ) = unsafe {
+        (
+            host_fn(c"mbstowcs", wchar_abi::mbstowcs as *const ()),
+            host_fn(c"wcstombs", wchar_abi::wcstombs as *const ()),
+            host_fn(c"mbsrtowcs", wchar_abi::mbsrtowcs as *const ()),
+            host_fn(c"wcsrtombs", wchar_abi::wcsrtombs as *const ()),
+            host_fn(c"setlocale", locale_abi::setlocale as *const ()),
+            host_fn(
+                c"__errno_location",
+                errno_abi::__errno_location as *const (),
+            ),
+        )
+    };
+    let ours = (
+        wchar_abi::mbstowcs as DecodeString,
+        wchar_abi::wcstombs as EncodeString,
+        wchar_abi::mbsrtowcs as DecodeRestart,
+        wchar_abi::wcsrtombs as EncodeRestart,
+        locale_abi::setlocale as SelectLocale,
+        errno_abi::__errno_location as ErrorLocation,
+    );
+    let mut observed = 0;
+    for locale in [c"C", c"POSIX", c"C.UTF-8"] {
+        for capacity in [0, 1, 8, 31, 64] {
+            for route in 0..3 {
+                for (provider, functions) in [("GNU", host), ("FrankenLibC", ours)] {
+                    let result = probe_in_child(|guard| {
+                        let elem = if wide_input { 4 } else { 1 };
+                        // SAFETY: the prefix is inside this child's readable
+                        // page. At zero capacity the pointer is in PROT_NONE.
+                        let source = unsafe { guard.sub(capacity * elem) };
+                        for i in 0..capacity {
+                            // SAFETY: each written character fits below guard.
+                            unsafe {
+                                if wide_input {
+                                    source.cast::<u32>().add(i).write(u32::from(b'A'));
+                                } else {
+                                    source.add(i).write(b'A');
+                                }
+                            }
+                        }
+                        (source, move |input: *const u8| {
+                            let mut wide = [0x1234u32; 80];
+                            let mut bytes = [0x5au8; 80];
+                            let mut state = [0u8; 8];
+                            let mut narrow_cursor = input.cast::<c_char>();
+                            let mut wide_cursor = input.cast::<libc::wchar_t>();
+                            let ps = if route == 2 {
+                                std::ptr::null_mut()
+                            } else {
+                                state.as_mut_ptr().cast()
+                            };
+                            // SAFETY: locale is a C literal, outputs are live
+                            // arrays, and the input contains exactly capacity
+                            // ASCII characters before the inaccessible page.
+                            // The resource limit affects only this test child.
+                            unsafe {
+                                let limit = libc::rlimit {
+                                    rlim_cur: 0,
+                                    rlim_max: 0,
+                                };
+                                if libc::setrlimit(libc::RLIMIT_CORE, &limit) != 0 {
+                                    return FIXTURE_BASE as u8;
+                                }
+                                if (functions.4)(libc::LC_ALL, locale.as_ptr()).is_null() {
+                                    return FIXTURE_BASE as u8;
+                                }
+                                *(functions.5)() = libc::E2BIG;
+                                let r = match (wide_input, route) {
+                                    (false, 0) => (functions.0)(wide.as_mut_ptr(), input, capacity),
+                                    (true, 0) => {
+                                        (functions.1)(bytes.as_mut_ptr(), input.cast(), capacity)
+                                    }
+                                    (false, _) => (functions.2)(
+                                        wide.as_mut_ptr().cast(),
+                                        &mut narrow_cursor,
+                                        capacity,
+                                        ps,
+                                    ),
+                                    (true, _) => (functions.3)(
+                                        bytes.as_mut_ptr().cast(),
+                                        &mut wide_cursor,
+                                        capacity,
+                                        ps,
+                                    ),
+                                };
+                                if r != capacity || *(functions.5)() != libc::E2BIG {
+                                    return 1;
+                                }
+                            }
+                            let output_ok = if wide_input {
+                                bytes[..capacity].iter().all(|&b| b == b'A')
+                                    && bytes[capacity..].iter().all(|&b| b == 0x5a)
+                            } else {
+                                wide[..capacity].iter().all(|&wc| wc == u32::from(b'A'))
+                                    && wide[capacity..].iter().all(|&wc| wc == 0x1234)
+                            };
+                            let cursor_ok = route == 0
+                                || if wide_input {
+                                    wide_cursor.cast::<u8>() == guard
+                                } else {
+                                    narrow_cursor.cast::<u8>() == guard
+                                };
+                            if output_ok && cursor_ok { 0 } else { 2 }
+                        })
+                    });
+                    assert_eq!(
+                        result,
+                        Outcome::Code(0),
+                        "{provider} locale={locale:?} wide={wide_input} route={route} capacity={capacity}"
+                    );
+                    observed += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(
+        observed, 90,
+        "all provider, locale, route and bound arms must execute"
+    );
+}
+
+#[test]
+fn multibyte_string_write_limits_stop_before_guard() {
+    check_conversion_read_bounds(false);
+}
+
+#[test]
+fn wide_string_write_limits_stop_before_guard() {
+    check_conversion_read_bounds(true);
+}
+
 /// Every bound each arm is probed with.
 const BOUNDS: [usize; 8] = [4, 8, 16, 31, 32, 63, 128, 4096];
 

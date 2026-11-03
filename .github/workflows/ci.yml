@@ -225,7 +225,7 @@ jobs:
           sha256sum .github/workflows/ci.yml tests/integration/fixture_langinfo_time_mbrtowc_null.c \
             "$library" "$host" "$out/probe" > "$out/inputs.sha256"
           failed=0
-          for matrix in restartable-state:156 state-isolation:35 string-state:640 conversion-capacity:2880 singlechar-state:1788; do
+          for matrix in restartable-state:156 state-isolation:35 string-state:640 conversion-capacity:2880 singlechar-state:1788 conversion-footprint:1008; do
             option="${matrix%:*}"
             rows="${matrix#*:}"
             matrix_out="$out/$option"
@@ -251,6 +251,25 @@ jobs:
                 failed=1
               else
                 echo "PASS: deployed multibyte state matrix ($option, $mode), $rows rows"
+              fi
+              if [[ "$option" == "conversion-footprint" ]]; then
+                if env -u LD_LIBRARY_PATH -u LD_AUDIT \
+                  FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+                  "$out/probe" --conversion-footprint-raw "$library" \
+                  > "$matrix_out/$mode.raw.stdout" 2> "$matrix_out/$mode.raw.stderr"; then
+                  raw_rc=0
+                else
+                  raw_rc=$?
+                fi
+                printf '%s\n' "$raw_rc" > "$matrix_out/$mode.raw.exit_code"
+                if [[ "$raw_rc" -ne 0 ]] || [[ "$(wc -l < "$matrix_out/$mode.raw.stdout")" -ne "$rows" ]] || \
+                  ! cmp "$matrix_out/$mode.stdout" "$matrix_out/$mode.raw.stdout" || \
+                  ! cmp "$matrix_out/$mode.stderr" "$matrix_out/$mode.raw.stderr"; then
+                  echo "FAIL: bounded conversion NUL-padding invariant ($mode)" >&2
+                  failed=1
+                else
+                  echo "PASS: bounded conversion NUL-padding invariant ($mode), $rows rows"
+                fi
               fi
             done
           done
