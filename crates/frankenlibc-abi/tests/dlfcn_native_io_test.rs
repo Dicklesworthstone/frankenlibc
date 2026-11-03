@@ -1247,9 +1247,7 @@ fn native_descriptor_exec_plt_and_got_replace_images() {
                     std::mem::transmute::<*mut c_void, FdExecute>(
                         host_api.symbol(host_handle, name),
                     ),
-                    std::mem::transmute::<*mut c_void, FdExecute>(
-                        native_api.symbol(handle, name),
-                    ),
+                    std::mem::transmute::<*mut c_void, FdExecute>(native_api.symbol(handle, name)),
                 )
             };
             for form in 0..4 {
