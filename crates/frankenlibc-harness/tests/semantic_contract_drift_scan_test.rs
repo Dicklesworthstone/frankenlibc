@@ -270,6 +270,46 @@ fn stale_inventory_marker_fails_with_stable_signature() {
 }
 
 #[test]
+fn moved_function_anchor_fails_even_when_the_surface_digest_is_refreshed() {
+    let root = workspace_root();
+    let mut inventory =
+        load_json(&root.join("tests/conformance/semantic_contract_inventory.v1.json"));
+    let row = &mut inventory["entries"][0];
+    let source = std::fs::read_to_string(root.join(row["source_path"].as_str().unwrap())).unwrap();
+    assert!(source.contains(row["line_marker"].as_str().unwrap()));
+    // Far outside the existing scanner's 80-line radius; preserve that threshold.
+    row["source_line"] = serde_json::json!(source.lines().count() + 1000);
+    let path = unique_temp_path("semantic-contract-moved-anchor.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&inventory).unwrap()).unwrap();
+    let refreshed = Command::new(root.join("scripts/check_semantic_contract_inventory.sh"))
+        .arg("--refresh-surface")
+        .current_dir(&root)
+        .env("FLC_SEMANTIC_INVENTORY_ARTIFACT", &path)
+        .output()
+        .expect("inventory gate should execute");
+    let refresh_report = parse_stdout_report(&refreshed);
+    assert_eq!(refreshed.status.code(), Some(1));
+    assert_eq!(
+        refresh_report["checks"]["exhaustive_export_surface"],
+        "pass"
+    );
+    assert_eq!(refresh_report["checks"]["source_markers"], "fail");
+    let output = run_gate_with_env(&[("FLC_SEMANTIC_DRIFT_INVENTORY", &path)]);
+    std::fs::write(path.with_extension("stdout"), &output.stdout).unwrap();
+    std::fs::write(path.with_extension("stderr"), &output.stderr).unwrap();
+    let report = parse_stdout_report(&output);
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert_eq!(report["checks"]["exhaustive_export_surface"], "pass");
+    assert_eq!(report["checks"]["inventory_marker_freshness"], "fail");
+    assert!(report["errors"].as_array().unwrap().iter().any(|error| {
+        error
+            .as_str()
+            .unwrap_or_default()
+            .contains("stale line_marker")
+    }));
+}
+
+#[test]
 fn stale_zero_stub_claim_and_removed_semantic_blocker_are_rejected() {
     let root = workspace_root();
     let canonical = load_json(&root.join("tests/conformance/support_semantic_overlay.v1.json"));

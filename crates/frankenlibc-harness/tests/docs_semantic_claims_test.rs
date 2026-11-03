@@ -174,11 +174,11 @@ fn gate_passes_current_docs_and_emits_report_and_log() {
     );
     assert_eq!(
         report["summary"]["semantic_parity_blocker_count"].as_u64(),
-        Some(17)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["taxonomy_semantic_conflict_count"].as_u64(),
-        Some(17)
+        Some(19)
     );
     assert_eq!(report["summary"]["forbidden_claim_count"].as_u64(), Some(0));
 
@@ -293,7 +293,7 @@ fn stale_overlay_taxonomy_counts_fails() {
     .expect("failed to write stale overlay fixture");
 
     let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_OVERLAY", &stale)]);
-    let _ = std::fs::remove_file(&stale);
+    // Retain the adversarial fixture with the gate evidence.
     assert!(
         !output.status.success(),
         "stale semantic overlay status_counts should fail:\nstdout={}\nstderr={}",
@@ -311,4 +311,88 @@ fn stale_overlay_taxonomy_counts_fails() {
             .unwrap_or_default()
             .contains("does not match support_matrix.json")
     }));
+}
+
+#[test]
+fn declared_source_identity_survives_a_worker_without_matching_git_metadata() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let absent_git = unique_temp_path("docs-semantic-absent-git");
+    let source = "6188b9db38dd0a6bf8673fc40e70b0a90a531cf5";
+    for declared in [source.to_string(), format!("{source}-dirty")] {
+        let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
+            .current_dir(&root)
+            .env("GIT_DIR", &absent_git)
+            .env("RCH_BUILD_SOURCE", &declared)
+            .output()
+            .expect("docs gate should execute");
+        let report = parse_stdout_report(&output);
+        assert!(output.status.success(), "{declared}: {report}");
+        assert_eq!(report["checks"]["source_identity"], "pass");
+        assert_eq!(report["source_commit"], source);
+        let events =
+            std::fs::read_to_string(root.join("target/conformance/docs_semantic_claims.log.jsonl"))
+                .unwrap();
+        for event in events.lines() {
+            let event: serde_json::Value = serde_json::from_str(event).unwrap();
+            assert_eq!(event["source_commit"], source);
+        }
+    }
+}
+
+#[test]
+fn malformed_declared_source_fails_instead_of_using_worker_head() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    for declared in [
+        "",
+        "6188b9db",
+        "g188b9db38dd0a6bf8673fc40e70b0a90a531cf5",
+        "6188b9db38dd0a6bf8673fc40e70b0a90a531cf5-dirty-dirty",
+    ] {
+        let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
+            .current_dir(&root)
+            .env("RCH_BUILD_SOURCE", declared)
+            .output()
+            .expect("docs gate should execute");
+        let report = parse_stdout_report(&output);
+        assert_eq!(output.status.code(), Some(1), "{declared}: {report}");
+        assert_eq!(report["checks"]["source_identity"], "fail");
+        assert_eq!(report["source_commit"], "unknown");
+    }
+}
+
+#[test]
+fn undeclared_source_requires_an_observed_git_head() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&root)
+        .output()
+        .expect("git should execute");
+    assert!(head.status.success());
+    let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
+        .current_dir(&root)
+        .env_remove("RCH_BUILD_SOURCE")
+        .output()
+        .expect("docs gate should execute");
+    let report = parse_stdout_report(&output);
+    assert!(output.status.success(), "{report}");
+    assert_eq!(report["checks"]["source_identity"], "pass");
+    assert_eq!(
+        report["source_commit"].as_str(),
+        Some(String::from_utf8_lossy(&head.stdout).trim())
+    );
+
+    let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
+        .current_dir(&root)
+        .env_remove("RCH_BUILD_SOURCE")
+        .env("GIT_DIR", unique_temp_path("docs-semantic-absent-git"))
+        .output()
+        .expect("docs gate should execute");
+    let report = parse_stdout_report(&output);
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert_eq!(report["checks"]["source_identity"], "fail");
+    assert_eq!(report["source_commit"], "unknown");
 }

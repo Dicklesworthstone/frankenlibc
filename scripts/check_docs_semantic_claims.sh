@@ -66,21 +66,30 @@ def file_sha256(path):
     except Exception:
         return None
 
-def git_head():
+def source_identity():
+    declared = os.environ.get("RCH_BUILD_SOURCE")
+    if declared is not None:
+        commit = declared.removesuffix("-dirty")
+        if re.fullmatch(r"[0-9a-f]{40}", commit):
+            return commit, None
+        return "unknown", "RCH_BUILD_SOURCE must be a full source object ID, optionally followed by -dirty"
     try:
-        return subprocess.check_output(
+        commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-    except Exception:
-        return "unknown"
+        if re.fullmatch(r"[0-9a-f]{40}", commit):
+            return commit, None
+        return "unknown", "git HEAD did not report a full source object ID"
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return "unknown", f"source identity unavailable: {exc}"
 
 artifact = load_json(artifact_path, "artifact") or {}
 inputs = artifact.get("inputs", {})
 evidence_refs = sorted(str(value) for value in inputs.values())
-source_commit = git_head()
+source_commit, source_identity_error = source_identity()
 trace_seed = "|".join(
     [
         artifact.get("bead", "bd-bp8fl.1.4"),
@@ -118,6 +127,13 @@ def fail(rule, message, doc_surface="", symbol_or_section="", previous_claim="",
         failure_signature=failure_signature or rule,
         status="fail",
     )
+
+if source_identity_error:
+    checks["source_identity"] = "fail"
+    fail("source_identity", source_identity_error, failure_signature="unproven_source_identity")
+else:
+    checks["source_identity"] = "pass"
+    event("source_identity", generated_claim=source_commit)
 
 def env_path(name, key):
     override = os.environ.get(name)

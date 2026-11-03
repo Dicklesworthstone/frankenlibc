@@ -177,10 +177,19 @@ fn summary_counts_match_entries_and_sources_are_linked() -> TestResult {
             failure(format!("{} should be readable: {error}", source.display()))
         })?;
         let marker = json_str(&row["line_marker"], "entry line_marker")?;
+        let line = row["source_line"]
+            .as_u64()
+            .and_then(|line| usize::try_from(line).ok())
+            .and_then(|line| line.checked_sub(1))
+            .ok_or_else(|| failure(format!("{id}: invalid source_line")))?;
         ensure(
-            source_text.contains(marker),
+            !marker.is_empty()
+                && source_text
+                    .lines()
+                    .nth(line)
+                    .is_some_and(|text| text.contains(marker)),
             format!(
-                "{id}: source {} missing marker {marker:?}",
+                "{id}: source {} missing marker {marker:?} at recorded line",
                 source.display()
             ),
         )?;
@@ -512,4 +521,199 @@ fn actual_gate_rejects_incomplete_stale_and_promoted_export_groups() -> TestResu
         observed += 1;
     }
     ensure(observed == 10, "all planted negative controls must execute")
+}
+
+#[test]
+fn refreshed_surface_cannot_hide_a_stale_source_line() -> TestResult {
+    let root = workspace_root()?;
+    let mut inventory =
+        load_json(&root.join("tests/conformance/semantic_contract_inventory.v1.json"))?;
+    let row = &mut inventory["entries"][0];
+    let source = std::fs::read_to_string(root.join(json_str(&row["source_path"], "source")?))?;
+    let marker = json_str(&row["line_marker"], "marker")?;
+    ensure(source.contains(marker), "original marker must exist")?;
+    ensure(
+        !source.lines().next().unwrap_or_default().contains(marker),
+        "fixture requires a different first line",
+    )?;
+    row["source_line"] = 1.into();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let retained = std::env::temp_dir().join(format!(
+        "frankenlibc-semantic-stale-line-{stamp}-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&retained, serde_json::to_vec_pretty(&inventory)?)?;
+    let output = Command::new(root.join("scripts/check_semantic_contract_inventory.sh"))
+        .arg("--refresh-surface")
+        .current_dir(&root)
+        .env("FLC_SEMANTIC_INVENTORY_ARTIFACT", &retained)
+        .output()?;
+    std::fs::write(retained.with_extension("stdout"), &output.stdout)?;
+    std::fs::write(retained.with_extension("stderr"), &output.stderr)?;
+    ensure(
+        output.status.code() == Some(1),
+        "stale source line must fail",
+    )?;
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    ensure(
+        report["checks"]["exhaustive_export_surface"] == "pass",
+        "fixture must have fresh export/source/contract digests",
+    )?;
+    ensure(
+        report["checks"]["source_markers"] == "fail",
+        format!("stale line must fail its own check: {report}"),
+    )
+}
+
+#[test]
+fn unannotated_fallback_off_platform_dead_branch_and_missing_alias_stay_unknown() -> TestResult {
+    let root = workspace_root()?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let retained = std::env::temp_dir().join(format!(
+        "frankenlibc-semantic-source-cases-{stamp}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&retained)?;
+    let source = r#"
+#[unsafe(no_mangle)]
+pub extern "C" fn constant_result() -> i32 { 0 }
+#[cfg(target_os = "windows")]
+#[unsafe(no_mangle)]
+pub extern "C" fn platform_enosys() -> i32 { -38 }
+#[unsafe(no_mangle)]
+pub extern "C" fn dead_branch() -> i32 { if false { return -1; } 7 }
+"#;
+    let support = serde_json::json!({"symbols": [
+        {"symbol": "constant_result", "status": "Implemented"},
+        {"symbol": "platform_enosys", "status": "Implemented"},
+        {"symbol": "dead_branch", "status": "Implemented"},
+        {"symbol": "missing_alias", "status": "Implemented"}
+    ]});
+    let contracts = serde_json::json!({"entries": [{
+        "id": "reviewed-unsupported-platform-case",
+        "symbols": ["platform_enosys"],
+        "semantic_class": "unsupported_platform_contract",
+        "current_behavior": "This fixture returns -ENOSYS only on Windows; Linux has no provider."
+    }]});
+    let support_path = retained.join("support.json");
+    let contract_path = retained.join("contracts.json");
+    std::fs::write(&support_path, serde_json::to_vec(&support)?)?;
+    std::fs::write(&contract_path, serde_json::to_vec(&contracts)?)?;
+    let mut surfaces = Vec::new();
+    for (name, prefix) in [
+        ("original", ""),
+        (
+            "moved",
+            "\n\n// Independently move the same declarations.\n",
+        ),
+    ] {
+        let fixture = retained.join(name);
+        let src = fixture.join("src");
+        std::fs::create_dir_all(&src)?;
+        std::fs::write(src.join("lib.rs"), "pub mod fixture_abi;\n")?;
+        std::fs::write(src.join("fixture_abi.rs"), format!("{prefix}{source}"))?;
+        std::fs::write(
+            fixture.join("libc.map"),
+            "GLIBC_2.2.5 { global: constant_result; platform_enosys; dead_branch; missing_alias; local: *; };\n",
+        )?;
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(r#"import importlib.util,json,pathlib,sys
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('semantic_fixture_census',sys.argv[1])
+module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+root=pathlib.Path(sys.argv[2])
+print(json.dumps(module.build_semantic_export_surface(root,root/'src',root/'libc.map',json.loads(pathlib.Path(sys.argv[3]).read_text()),json.loads(pathlib.Path(sys.argv[4]).read_text()))))
+"#)
+            .arg(root.join("scripts/generate_host_delegation_census.py"))
+            .arg(&fixture)
+            .arg(&support_path)
+            .arg(&contract_path)
+            .output()?;
+        std::fs::write(fixture.join("surface.json"), &output.stdout)?;
+        std::fs::write(fixture.join("stderr"), &output.stderr)?;
+        ensure(
+            output.status.success(),
+            String::from_utf8_lossy(&output.stderr),
+        )?;
+        let surface: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        ensure(
+            surface["summary"]["declared_symbol_count"] == 4,
+            "four declared candidates",
+        )?;
+        ensure(
+            surface["summary"]["raw_source_symbol_count"] == 3,
+            "missing alias has no body",
+        )?;
+        ensure(
+            surface["summary"]["unknown_semantics_count"] == 4,
+            "all four remain unknown",
+        )?;
+        ensure(
+            surface["summary"]["full_semantics_count"] == 0,
+            "no behavioral proof",
+        )?;
+        ensure(
+            surface["summary"]["unqualified_configuration_count"] == 2,
+            "off-platform and missing alias lack Linux providers",
+        )?;
+        let groups = json_array(&surface["groups"], "fixture groups")?;
+        for symbol in [
+            "constant_result",
+            "platform_enosys",
+            "dead_branch",
+            "missing_alias",
+        ] {
+            let group = groups
+                .iter()
+                .find(|group| {
+                    group["symbols"]
+                        .as_array()
+                        .is_some_and(|symbols| symbols.iter().any(|s| s == symbol))
+                })
+                .ok_or_else(|| failure(format!("lost {symbol}")))?;
+            ensure(
+                group["semantic_status"] == "unknown",
+                "body/label is not semantic qualification",
+            )?;
+            ensure(
+                group["backend_review"] == "unreviewed",
+                "no provider was executed",
+            )?;
+            ensure(
+                !json_str(&group["next_action"], "next action")?.is_empty(),
+                "unknown needs follow-up",
+            )?;
+            let profiles = json_array(&group["function_profiles"], "function profiles")?;
+            ensure(
+                profiles.len()
+                    == if matches!(symbol, "constant_result" | "dead_branch") {
+                        2
+                    } else {
+                        0
+                    },
+                format!("wrong provider profiles for {symbol}"),
+            )?;
+            if symbol == "platform_enosys" {
+                ensure(
+                    group["contract_ids"]
+                        == serde_json::json!(["reviewed-unsupported-platform-case"]),
+                    "limited contract remains linked without full promotion",
+                )?;
+            }
+        }
+        surfaces.push(surface);
+    }
+    ensure(
+        surfaces[0]["groups"] == surfaces[1]["groups"],
+        "moving a function must retain declared membership and unknown status",
+    )?;
+    ensure(
+        surfaces[0]["source_tree_sha256"] != surfaces[1]["source_tree_sha256"],
+        "moving a function must invalidate source identity",
+    )
 }

@@ -190,8 +190,15 @@ for row in entries:
         source_errors.append(f"{row.get('id')}: missing source {source}")
         continue
     text = source.read_text(encoding="utf-8")
-    if marker not in text:
-        source_errors.append(f"{row.get('id')}: marker not found: {marker}")
+    lines = text.splitlines()
+    line = row.get("source_line")
+    if (
+        type(line) is not int
+        or not 1 <= line <= len(lines)
+        or not marker
+        or marker not in lines[line - 1]
+    ):
+        source_errors.append(f"{row.get('id')}: marker not found at source_line {line}: {marker}")
     evidence = row.get("evidence_artifacts", [])
     if (
         row.get("source_path") not in evidence
