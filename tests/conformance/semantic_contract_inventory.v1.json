@@ -547,7 +547,7 @@
       "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 8,
       "crates/frankenlibc-abi/src/setjmp_abi.rs": 1
     },
-    "blocked_claim": "Any Stub count, including zero, is not full semantic parity; exhaustive declared-export accounting preserves unknown behavior and configuration as unresolved."
+    "blocked_claim": "Any Stub count, including zero, is not full semantic parity; exhaustive declared-export accounting preserves unknown behavior and configuration as unresolved. Stub=0 in support_matrix.json is compatible with this inventory only as a symbol-presence taxonomy."
   },
   "export_surface": {
     "scope": "Declared function/data candidates, version-script globals and support rows. Unresolved assembly or uncovered configurations stay unqualified; not a dynamic-symbol or behavioral proof.",
