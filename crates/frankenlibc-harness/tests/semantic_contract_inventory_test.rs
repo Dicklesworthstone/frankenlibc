@@ -618,7 +618,7 @@ pub extern "C" fn dead_branch() -> i32 { if false { return -1; } 7 }
         std::fs::write(src.join("fixture_abi.rs"), format!("{prefix}{source}"))?;
         std::fs::write(
             fixture.join("libc.map"),
-            "GLIBC_2.2.5 { global: constant_result; platform_enosys; dead_branch; missing_alias; local: *; };\n",
+            "GLIBC_2.2.5 {\n    global:\n        constant_result;\n        platform_enosys;\n        dead_branch;\n        missing_alias;\n    local:\n        *;\n};\n",
         )?;
         let output = Command::new("python3")
             .arg("-c")
