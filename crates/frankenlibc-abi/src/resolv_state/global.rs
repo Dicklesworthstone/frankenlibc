@@ -96,12 +96,13 @@ pub unsafe fn mkquery(
     name: *const c_char,
     class: c_int,
     kind: c_int,
-    data: *const c_void,
-    datalen: c_int,
-    newrr: *const c_void,
+    record: (*const c_void, c_int, *const c_void),
     buffer: *mut c_void,
     capacity: c_int,
 ) -> c_int {
+    // Keep the optional record inputs together in this internal Rust API;
+    // the public C entry point retains its original argument list.
+    let (data, datalen, newrr) = record;
     if name.is_null()
         || capacity < DNS_HEADER_SIZE as c_int
         || !fits(buffer as usize, capacity.max(0) as usize)

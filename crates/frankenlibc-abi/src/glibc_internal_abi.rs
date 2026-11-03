@@ -1456,7 +1456,13 @@ pub unsafe extern "C" fn __res_mkquery(
     // SAFETY: the shared boundary validates the caller's strings and output.
     unsafe {
         crate::resolv_state::global::mkquery(
-            op, dname, class, typ, data, datalen, newrr, buf, buflen,
+            op,
+            dname,
+            class,
+            typ,
+            (data, datalen, newrr),
+            buf,
+            buflen,
         )
     }
 }
