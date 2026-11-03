@@ -123,10 +123,26 @@ for row in entries:
     for field in required_fields:
         if field not in row:
             errors.append(f"{row_id}: missing field {field}")
+    if row.get("semantic_class") not in artifact.get("semantic_contract_classes", {}):
+        errors.append(f"{row_id}: unrecognized semantic class cannot establish parity")
+    if row.get("review_status") != "source_observed_semantics_unqualified":
+        errors.append(f"{row_id}: source observation cannot be promoted to qualified semantics")
 if not any("missing field" in err for err in errors):
     checks["entry_schema"] = "pass"
 else:
     checks["entry_schema"] = "fail"
+
+policy = artifact.get("claim_policy", {}) if isinstance(artifact, dict) else {}
+if (
+    policy.get("support_matrix_stub_zero_is_not_full_parity") is True
+    and policy.get("full_replacement_claim_requires_exhaustive_inventory") is True
+    and policy.get("readme_feature_parity_release_notes_may_advance_without_machine_evidence") is False
+    and not any("promoted to qualified" in err or "unrecognized semantic class" in err for err in errors)
+):
+    checks["semantic_claim_boundary"] = "pass"
+else:
+    checks["semantic_claim_boundary"] = "fail"
+    errors.append("semantic_claim_boundary: unknown/source-only entries cannot establish full semantic parity")
 
 ids = [row.get("id") for row in entries]
 if len(ids) == len(set(ids)):
@@ -176,20 +192,26 @@ for row in entries:
     text = source.read_text(encoding="utf-8")
     if marker not in text:
         source_errors.append(f"{row.get('id')}: marker not found: {marker}")
+    evidence = row.get("evidence_artifacts", [])
+    if not evidence or any(not isinstance(item, str) or not (root / item).is_file() for item in evidence):
+        source_errors.append(f"{row.get('id')}: missing referenced evidence artifact")
 if source_errors:
     checks["source_markers"] = "fail"
     errors.extend(source_errors)
 else:
     checks["source_markers"] = "pass"
 
-try:
-    source_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        text=True,
-    ).strip()
-except Exception:
-    source_commit = "unknown"
+source_commit = os.environ.get("RCH_BUILD_SOURCE", "").removesuffix("-dirty")
+if source_commit:
+    if len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit):
+        errors.append("invalid declared RCH_BUILD_SOURCE")
+else:
+    try:
+        source_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+    except Exception:
+        source_commit = "unknown"
 
 status = "pass" if not errors else "fail"
 report = {

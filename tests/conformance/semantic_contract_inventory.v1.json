@@ -1,9 +1,9 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.1.1",
-  "source_commit": "current",
-  "generated_at_utc": "2026-05-01T17:18:00Z",
-  "purpose": "Executable inventory of exported or subsystem-visible contracts whose current implementation is link-compatible but not full POSIX, GNU, or glibc semantics. This extends support_semantic_overlay.v1.json from representative drift into a countable backlog input.",
+  "source_commit": "2ad4ce6720fecb5e869235c73e02e294ad7d35d0",
+  "generated_at_utc": "2026-11-03T04:21:32Z",
+  "purpose": "Inventory every declared export as an explicit semantic unknown, with representative source-observed limitations retained as obligations. Inventory completeness is not semantic review, runtime execution, dynamic-symbol availability or replacement readiness.",
   "source_artifacts": {
     "seed_overlay": "tests/conformance/support_semantic_overlay.v1.json",
     "support_matrix": "support_matrix.json",
@@ -30,15 +30,18 @@
       "symbols": [],
       "module": "frankenlibc-core::elf",
       "source_path": "crates/frankenlibc-core/src/elf/mod.rs",
-      "source_line": 129,
+      "source_line": 147,
       "line_marker": "Documented stub with deterministic behavior",
       "support_matrix_status": "not_symbol_level",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "documented_stub_class",
-      "current_behavior": "RelocationSupport includes Stub and Unsupported variants even though exported-symbol taxonomy reports Stub=0.",
+      "current_behavior": "RelocationSupport contains Stub and Unsupported variants. Exported-symbol taxonomy, currently including18Stub rows, does not prove per-relocation support.",
       "user_risk": "A release claim based only on exported symbols can overstate loader readiness for binaries that need relocation classes outside the phase-1 subset.",
-      "required_followup": "Gate replacement claims on per-relocation class coverage and fixture execution, not only exported-symbol status counts.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Gate replacement claims on per-relocation class coverage and fixture execution, not only exported-symbol status counts. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-pthread-cancel-private",
@@ -54,66 +57,95 @@
       ],
       "module": "frankenlibc-abi::pthread_abi",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 6555,
-      "line_marker": "cancellation cleanup registration (no-op stub)",
-      "support_matrix_status": "Implemented",
-      "semantic_class": "compat_noop",
-      "contract_kind": "mixed_noop_abort",
-      "current_behavior": "Registration and cleanup helpers are no-op compatibility hooks; __pthread_unwind_next aborts instead of performing glibc cancellation unwinding.",
+      "source_line": 9621,
+      "line_marker": "pub unsafe extern \"C-unwind\" fn __pthread_register_cancel(",
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
+      "semantic_class": "proof_gap",
+      "contract_kind": "host_or_native_cleanup_unwind",
+      "current_behavior": "Registration/cleanup route through the host cancellation chain for host threads or through owned registration and forced unwind for native threads. This is no longer a no-op; exact cancellation/unwind behavior remains profile- and thread-origin-specific, with full semantics unreviewed here.",
       "user_risk": "Thread-cancellation consumers can link but cleanup/unwind behavior is not semantically equivalent.",
-      "required_followup": "Add cancellation cleanup and unwind fixtures before any L1 replacement promotion.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Add cancellation cleanup and unwind fixtures before any L1 replacement promotion. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/integration/fixture_pthread_cancel.c",
+        "tests/integration/fixture_cancel_forced_unwind.cpp"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-libcrypt-des",
       "seed_overlay_id": "sem-libcrypt-des",
       "surface": "obsolete libcrypt DES helpers",
-      "symbols": ["encrypt", "encrypt_r", "setkey", "setkey_r"],
+      "symbols": [
+        "encrypt",
+        "encrypt_r",
+        "setkey",
+        "setkey_r"
+      ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 7586,
+      "source_line": 9500,
       "line_marker": "DES is obsolete and unsupported",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
       "contract_kind": "obsolete_noop",
       "current_behavior": "DES block and key-schedule helpers are no-op compatibility stubs.",
       "user_risk": "Legacy crypt callers that expect DES mutation can silently receive no transformation.",
-      "required_followup": "Keep the no-op contract explicit in fixtures or implement DES semantics before counting this family as crypt parity.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Keep the no-op contract explicit in fixtures or implement DES semantics before counting this family as crypt parity. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-nss-files-plugin",
       "seed_overlay_id": "sem-nss-files-plugin",
       "surface": "NSS files module private plugin entries",
-      "symbols": ["_nss_files_end*", "_nss_files_set*", "_nss_files_get*_r", "_nss_files_parse_*"],
+      "symbols": [
+        "_nss_files_end*",
+        "_nss_files_set*",
+        "_nss_files_get*_r",
+        "_nss_files_parse_*"
+      ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9311,
+      "source_line": 11442,
       "line_marker": "_nss_files_endXX NSS plugin",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
-      "semantic_class": "deterministic_fallback",
+      "semantic_class": "limited_bootstrap",
       "contract_kind": "nss_fallthrough_stub",
-      "current_behavior": "Files plugin entries return SUCCESS or NOTFOUND/ENOENT style deterministic results without opening full NSS backing stores.",
+      "current_behavior": "Many files-plugin iteration hooks return deterministic SUCCESS/NOTFOUND/ENOENT fallbacks; protocol/service entries also have native iteration paths. The wildcard family is mixed and does not establish full NSS backend/module semantics.",
       "user_risk": "NSS module consumers can link while module iteration, parsing, and backend fallthrough are only approximated.",
-      "required_followup": "Add exhaustive NSS private-entry inventory and fixtures that distinguish bootstrap behavior from files/compat/hesiod/systemd backend semantics.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Add exhaustive NSS private-entry inventory and fixtures that distinguish bootstrap behavior from files/compat/hesiod/systemd backend semantics. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-nss-configure-lookup",
       "seed_overlay_id": "sem-nss-configure-lookup",
       "surface": "NSS lookup configuration internals",
-      "symbols": ["__nss_configure_lookup", "__nss_next", "__nss_next2", "__nss_lookup_function"],
+      "symbols": [
+        "__nss_configure_lookup",
+        "__nss_next",
+        "__nss_next2",
+        "__nss_lookup_function"
+      ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 1462,
+      "source_line": 2101,
       "line_marker": "instead of glibc's NSS module system",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "native_files_bootstrap",
       "current_behavior": "NSS dispatch internals are collapsed into native file parsing and UNAVAIL/null fallbacks rather than glibc's module chain.",
       "user_risk": "Programs relying on nsswitch module ordering, dynamic services, or fallback-name dispatch can observe divergence.",
-      "required_followup": "Gate NSS maturity on nsswitch ordering, module loading, backend fallthrough, concurrency, and cache-coherence fixtures.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Gate NSS maturity on nsswitch ordering, module loading, backend fallthrough, concurrency, and cache-coherence fixtures. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-stdio-vtable-helpers",
@@ -129,86 +161,121 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 3499,
+      "source_line": 4331,
       "line_marker": "native file overflow bridge",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "native_stream_bridge_libio_model_limited",
       "current_behavior": "Narrow libio-style helpers and public wide helper entrypoints route through native _IO/wide stream paths; full glibc FILE/_wide_data object-model semantics remain outside the phase-1 bridge.",
       "user_risk": "Programs that rely on deep libio buffer internals, codecvt state, or indirect vtable behavior can still observe divergence even though the public helper roundtrips are native.",
-      "required_followup": "Gate full libio parity on FILE/_wide_data buffer-state, codecvt/locale, and indirect vtable fixture coverage beyond public helper roundtrips.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Gate full libio parity on FILE/_wide_data buffer-state, codecvt/locale, and indirect vtable fixture coverage beyond public helper roundtrips. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-historical-linux-syscalls",
       "seed_overlay_id": "sem-historical-linux-syscalls",
       "surface": "removed or unsupported historical syscall wrappers",
-      "symbols": ["__sysctl", "bdflush", "create_module", "get_kernel_syms", "query_module"],
+      "symbols": [
+        "__sysctl",
+        "bdflush",
+        "create_module",
+        "get_kernel_syms",
+        "query_module"
+      ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4662,
+      "source_line": 5691,
       "line_marker": "bdflush: deprecated Linux syscall",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "unsupported_platform_contract",
       "contract_kind": "removed_linux_enosys",
       "current_behavior": "Removed or unsupported Linux interfaces deliberately return ENOSYS-style contracts.",
       "user_risk": "Legacy binaries get a deterministic unavailable result, not historical kernel behavior.",
-      "required_followup": "Keep these rows explicit as unsupported platform contracts and exclude them from behavior-complete replacement claims.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Keep these rows explicit as unsupported platform contracts and exclude them from behavior-complete replacement claims. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-malloc-debug-hooks",
       "seed_overlay_id": "sem-malloc-debug-hooks",
       "surface": "malloc debug hook compatibility",
-      "symbols": ["mcheck", "mcheck_pedantic", "mcheck_check_all", "mtrace", "muntrace"],
+      "symbols": [
+        "mcheck",
+        "mcheck_pedantic",
+        "mcheck_check_all",
+        "mtrace",
+        "muntrace"
+      ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 19307,
+      "source_line": 22843,
       "line_marker": "Malloc debug stubs",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
       "contract_kind": "membrane_substituted_noop",
       "current_behavior": "mcheck and mtrace setup/teardown hooks are accepted as safe no-ops while mprobe delegates to allocator metadata.",
       "user_risk": "Programs expecting glibc mcheck/mtrace reporting do not receive those diagnostics.",
-      "required_followup": "Track these as membrane-substituted compatibility contracts with explicit tests and exclude them from glibc debug-hook parity counts.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Track these as membrane-substituted compatibility contracts with explicit tests and exclude them from glibc debug-hook parity counts. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-argp-help-family",
       "seed_overlay_id": "sem-argp-help-family",
       "surface": "GNU argp help and reporting helpers",
-      "symbols": ["argp_help", "argp_usage", "argp_error", "argp_failure", "argp_state_help"],
+      "symbols": [
+        "argp_help",
+        "argp_usage",
+        "argp_error",
+        "argp_failure",
+        "argp_state_help"
+      ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21901,
-      "line_marker": "bounded formatted parsing diagnostic",
+      "source_line": 27011,
+      "line_marker": "pub unsafe extern \"C\" fn argp_help(",
       "support_matrix_status": "Implemented",
-      "semantic_class": "limited_bootstrap",
-      "contract_kind": "gnu_argp_partial_help",
-      "current_behavior": "argp_help prints bounded literal usage/doc sections to supplied streams, argp_state_help bridges state.root_argp/name into the same renderer without process exit, argp_usage renders standard usage through state.err_stream without process exit, and argp_error/failure render bounded printf-style diagnostics to state.err_stream/state.out_stream when a non-null state stream is available while null-state fixture rows remain deterministic no-ops.",
+      "semantic_class": "proof_gap",
+      "contract_kind": "native_argp_render_and_exit",
+      "current_behavior": "argp_help/state_help use the native tree renderer, filters and caller streams; state_help/usage can exit according to flags. Existing source is broader than the historical literal/no-exit subset; full GNU behavior remains unqualified by this inventory.",
       "user_risk": "Command-line programs can still lose option-table help, child-parser/filter behavior, full parser callback diagnostics, and argp-triggered process exits while appearing link-compatible.",
-      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, complete state stream selection, and process-exit behavior before claiming complete GNU argp parity.",
-      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
+      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, complete state stream selection, and process-exit behavior before claiming complete GNU argp parity. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/integration/fixture_argp.c"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-pthread-priority-protocol",
       "seed_overlay_id": null,
       "surface": "pthread regular-mutex priority-ceiling helpers",
-      "symbols": ["pthread_mutex_getprioceiling", "pthread_mutex_setprioceiling"],
+      "symbols": [
+        "pthread_mutex_getprioceiling",
+        "pthread_mutex_setprioceiling"
+      ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 291,
-      "line_marker": "native regular-mutex contract",
+      "source_line": 321,
+      "line_marker": "// pthread_mutex_getprioceiling: the ceiling of a PRIO_PROTECT mutex; EINVAL otherwise.",
       "support_matrix_status": "Implemented",
-      "semantic_class": "unsupported_platform_contract",
-      "contract_kind": "priority_protocol_regular_mutex_einval",
-      "current_behavior": "Regular-mutex priority-ceiling get/set return EINVAL without writing out-parameters; mutexattr priority-ceiling get/set are native managed-attribute round trips covered outside this blocker.",
+      "semantic_class": "proof_gap",
+      "contract_kind": "native_regular_mutex_priority_protocol",
+      "current_behavior": "Regular-mutex get/set dispatch to native PRIO_PROTECT helpers; non-PROTECT EINVAL is one branch, not the whole API. Managed attribute roundtrips remain outside this historical blocker. Full scheduler/protocol parity remains unreviewed here.",
       "user_risk": "Realtime pthread users can link, but PRIO_PROTECT mutex priority-ceiling behavior remains unavailable for regular mutex objects.",
-      "required_followup": "Add POSIX PRIO_PROTECT mutex fixtures if priority-protocol mutex semantics are implemented; keep mutexattr priority-ceiling round trips out of unsupported semantic blockers.",
+      "required_followup": "Add POSIX PRIO_PROTECT mutex fixtures if priority-protocol mutex semantics are implemented; keep mutexattr priority-ceiling round trips out of unsupported semantic blockers. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
       "evidence_artifacts": [
         "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
         "crates/frankenlibc-abi/tests/pthread_abi_test.rs"
-      ]
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-profiling-hooks",
@@ -225,15 +292,18 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4368,
-      "line_marker": "no-op stub",
-      "support_matrix_status": "Implemented",
-      "semantic_class": "compat_noop",
-      "contract_kind": "profiling_noop",
-      "current_behavior": "Instrumentation hooks are accepted as no-ops or success-no-ops because profiling data is unused.",
+      "source_line": 5381,
+      "line_marker": "pub unsafe extern \"C\" fn __fentry__()",
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
+      "semantic_class": "proof_gap",
+      "contract_kind": "mixed_profiling_contracts",
+      "current_behavior": "Entry hooks such as __fentry__ remain no-ops. This does not establish that every profiling API is a no-op; profil/monstartup/control/cleanup require separate source and behavior review. All listed symbols remain semantic blockers.",
       "user_risk": "Profiling-enabled binaries can start, but gprof-style data collection is absent.",
-      "required_followup": "Add a replacement-level decision: either document profiling as unsupported or implement compatible profiling output.",
-      "evidence_artifacts": ["crates/frankenlibc-abi/src/glibc_internal_abi.rs"]
+      "required_followup": "Add a replacement-level decision: either document profiling as unsupported or implement compatible profiling output. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-gconv-private-internals",
@@ -252,15 +322,18 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 7744,
+      "source_line": 9510,
       "line_marker": "__gconv_open",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "iconv_internal_bootstrap",
-      "current_behavior": "Private gconv step-chain APIs expose safe-default descriptors, null databases, and public-iconv-adjacent behavior rather than glibc module internals.",
+      "current_behavior": "Private gconv spec/open/close helpers use native iconv handles; cache lookup can expose a validated system cache, while alias/modules databases return null. Step-chain/module internals remain partial and profile-specific.",
       "user_risk": "Programs reaching GLIBC_PRIVATE gconv internals can link but may not observe glibc cache/module/transliteration semantics.",
-      "required_followup": "Gate iconv maturity on codec-table coverage, transliteration fixtures, gconv cache behavior, and replacement-level policy.",
-      "evidence_artifacts": ["tests/conformance/iconv_codec_scope_ledger.v1.json"]
+      "required_followup": "Gate iconv maturity on codec-table coverage, transliteration fixtures, gconv cache behavior, and replacement-level policy. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "tests/conformance/iconv_codec_scope_ledger.v1.json"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-nis-yp-failsafe",
@@ -277,15 +350,18 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 8082,
+      "source_line": 10213,
       "line_marker": "NIS / Yellow Pages is dead infrastructure",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
       "contract_kind": "nis_no_domain_fallback",
       "current_behavior": "NIS runtime calls collapse to no-domain or unreachable deterministic errors instead of contacting NIS services.",
       "user_risk": "Legacy network identity consumers can link but will not resolve NIS records.",
-      "required_followup": "Keep this as an explicit unsupported/failsafe replacement-level decision, with fixtures for errno/status stability.",
-      "evidence_artifacts": ["crates/frankenlibc-abi/src/unistd_abi.rs"]
+      "required_followup": "Keep this as an explicit unsupported/failsafe replacement-level decision, with fixtures for errno/status stability. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/unistd_abi.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-nis-xdr-failsafe",
@@ -300,49 +376,73 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9245,
+      "source_line": 11376,
       "line_marker": "Without a real NIS backend",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
       "contract_kind": "xdr_false_fallback",
       "current_behavior": "NIS XDR helpers fail closed with XDR_FALSE instead of serializing real NIS protocol structures.",
       "user_risk": "RPC/NIS protocol consumers can link but cannot perform real encode/decode operations.",
-      "required_followup": "Either implement XDR structures or mark this family as link-only for replacement-level claims.",
-      "evidence_artifacts": ["crates/frankenlibc-abi/src/unistd_abi.rs"]
+      "required_followup": "Either implement XDR structures or mark this family as link-only for replacement-level claims. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/unistd_abi.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-async-resolver-partial",
       "seed_overlay_id": null,
       "surface": "asynchronous resolver compatibility surface",
-      "symbols": ["getaddrinfo_a", "gai_cancel", "gai_error", "gai_suspend"],
+      "symbols": [
+        "getaddrinfo_a",
+        "gai_cancel",
+        "gai_error",
+        "gai_suspend"
+      ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 24931,
-      "line_marker": "Since all resolution is synchronous and `getaddrinfo_a` is unimplemented",
+      "source_line": 30916,
+      "line_marker": "/// GNU asynchronous name/service resolution using the native resolver.",
       "support_matrix_status": "Implemented",
-      "semantic_class": "limited_bootstrap",
-      "contract_kind": "synchronous_resolver_subset",
-      "current_behavior": "Degenerate synchronous request shapes are supported, while true async resolver work is treated as unsupported with ENOSYS/EAI_SYSTEM paths.",
+      "semantic_class": "proof_gap",
+      "contract_kind": "native_queued_async_resolver",
+      "current_behavior": "getaddrinfo_a submits native queued requests; GAI_WAIT waits with a cancellation point, while gai_error/cancel/suspend observe native identities/status. It is no longer an unconditional synchronous/ENOSYS subset. Full notification/lifetime/resolver parity remains unreviewed here.",
       "user_risk": "Programs expecting background getaddrinfo_a requests do not receive asynchronous behavior.",
-      "required_followup": "Add strict/hardened async resolver fixtures for pending, canceled, done, invalid, and timeout paths before parity promotion.",
-      "evidence_artifacts": ["crates/frankenlibc-abi/tests/conformance_diff_getaddrinfo.rs"]
+      "required_followup": "Add strict/hardened async resolver fixtures for pending, canceled, done, invalid, and timeout paths before parity promotion. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/tests/conformance_diff_getaddrinfo.rs",
+        "tests/integration/fixture_gai_async.c",
+        "tests/integration/fixture_gai_async_blocked.c"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-setjmp-phase1",
       "seed_overlay_id": null,
       "surface": "setjmp/longjmp phase-1 metadata contract",
-      "symbols": ["setjmp", "_setjmp", "sigsetjmp", "longjmp", "_longjmp", "siglongjmp"],
+      "symbols": [
+        "setjmp",
+        "_setjmp",
+        "sigsetjmp",
+        "longjmp",
+        "_longjmp",
+        "siglongjmp"
+      ],
       "module": "frankenlibc-abi::setjmp_abi",
       "source_path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
       "source_line": 3,
       "line_marker": "Phase-1 contract:",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
-      "contract_kind": "metadata_capture_restore_subset",
-      "current_behavior": "Capture entrypoints write deterministic metadata, while restore entrypoints validate metadata and terminate explicitly until true stack transfer is implemented in the unsafe backend stage.",
+      "contract_kind": "debug_metadata_release_native_transfer",
+      "current_behavior": "Debug/test uses the historical metadata capture/restore model; release x86_64/aarch64 has native assembly capture and stack transfer. The Phase-1 header alone is not the release contract. Target/profile stack, mask and unwind behavior remains separately reviewable.",
       "user_risk": "Programs can link setjmp-family symbols, but full non-local stack transfer semantics are not yet replacement-complete.",
-      "required_followup": "Gate setjmp parity promotion on backend stack-transfer fixtures, signal-mask restoration cases, and process-level longjmp behavior evidence.",
-      "evidence_artifacts": ["crates/frankenlibc-abi/src/setjmp_abi.rs"]
+      "required_followup": "Keep debug metadata and release native transfer distinct; execute stack/register/signal-mask cases on each supported target/profile before full nonlocal-jump parity. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/setjmp_abi.rs",
+        "crates/frankenlibc-abi/tests/setjmp_abi_test.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     },
     {
       "id": "sem-cxx-abi-fail-stop",
@@ -356,36 +456,85 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 16207,
+      "source_line": 19598,
       "line_marker": "__cxa_pure_virtual",
       "support_matrix_status": "Implemented",
       "semantic_class": "abort_only",
       "contract_kind": "fail_stop_abort",
       "current_behavior": "C++ ABI violation hooks write diagnostics or directly abort, matching fail-stop linkage needs but not implementing a full C++ runtime.",
       "user_risk": "C++ binaries can resolve these hooks, but exception/runtime semantics still depend on the surrounding C++ runtime.",
-      "required_followup": "Keep abort-only hooks separate from libc semantic parity and cover them with process-exit fixtures if replacement claims mention C++ runtime compatibility.",
-      "evidence_artifacts": ["crates/frankenlibc-abi/src/unistd_abi.rs"]
+      "required_followup": "Keep abort-only hooks separate from libc semantic parity and cover them with process-exit fixtures if replacement claims mention C++ runtime compatibility. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/unistd_abi.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
+    },
+    {
+      "id": "sem-remote-command-fallback",
+      "surface": "remote command fallback",
+      "symbols": [
+        "rcmd",
+        "rcmd_af",
+        "rexec",
+        "rexec_af"
+      ],
+      "module": "frankenlibc-abi::glibc_internal_abi",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 7172,
+      "line_marker": "// rcmd/rcmd_af: rsh remote command",
+      "support_matrix_status": "WrapsHostLibc",
+      "semantic_class": "deterministic_fallback",
+      "contract_kind": "declared_unconditional_error",
+      "current_behavior": "All four declared remote-command entrypoints currently return -1 with ENOSYS, regardless of otherwise valid arguments. The source disables them; this is not full GNU remote-command behavior.",
+      "user_risk": "Declared symbols can link while valid positive behavior is unavailable.",
+      "required_followup": "Qualify the declared GNU contract and owner policy, then implement and execute bounded local-server success/error cases under bd-reality-202609-lx578q.7 without assuming reserved-port helpers implement the remote protocol.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
+    },
+    {
+      "id": "sem-internal-float-formatter",
+      "surface": "internal float formatter",
+      "symbols": [
+        "__printf_fp"
+      ],
+      "module": "frankenlibc-abi::glibc_internal_abi",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 4384,
+      "line_marker": "pub unsafe extern \"C\" fn __printf_fp(",
+      "support_matrix_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "contract_kind": "declared_unconditional_error",
+      "current_behavior": "The exported internal floating formatter currently ignores its arguments and returns -1. Native public printf behavior does not qualify this distinct internal entrypoint.",
+      "user_risk": "Declared symbols can link while valid positive behavior is unavailable.",
+      "required_followup": "Review the GLIBC_PRIVATE argument/FILE contract and add real provider-bound float-format cases under bd-reality-202609-lx578q.7 before claiming this helper is implemented semantically.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+      ],
+      "review_status": "source_observed_semantics_unqualified"
     }
   ],
   "summary": {
-    "entry_count": 17,
+    "entry_count": 19,
     "seed_overlay_entries": 9,
     "seed_overlay_covered": 9,
-    "new_entries": 8,
+    "new_entries": 10,
     "by_semantic_class": {
-      "compat_noop": 4,
-      "deterministic_fallback": 3,
-      "limited_bootstrap": 7,
-      "unsupported_platform_contract": 2,
+      "limited_bootstrap": 6,
+      "proof_gap": 5,
+      "compat_noop": 2,
+      "unsupported_platform_contract": 1,
+      "deterministic_fallback": 4,
       "abort_only": 1
     },
     "by_source_path": {
-      "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 6,
-      "crates/frankenlibc-abi/src/unistd_abi.rs": 8,
+      "crates/frankenlibc-core/src/elf/mod.rs": 1,
       "crates/frankenlibc-abi/src/pthread_abi.rs": 1,
-      "crates/frankenlibc-abi/src/setjmp_abi.rs": 1,
-      "crates/frankenlibc-core/src/elf/mod.rs": 1
+      "crates/frankenlibc-abi/src/unistd_abi.rs": 8,
+      "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 8,
+      "crates/frankenlibc-abi/src/setjmp_abi.rs": 1
     },
-    "blocked_claim": "Stub=0 in support_matrix.json is compatible with this inventory only as a symbol-presence taxonomy. It is not evidence of full semantic replacement readiness."
+    "blocked_claim": "Any Stub count, including zero, is not full semantic parity; exhaustive declared-export accounting preserves unknown behavior and configuration as unresolved."
   }
 }

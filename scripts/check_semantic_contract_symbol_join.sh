@@ -21,6 +21,8 @@ mkdir -p "${OUT_DIR}"
 python3 - "${ROOT}" "${ARTIFACT}" "${INVENTORY}" "${SUPPORT_MATRIX}" "${VERSION_SCRIPT}" "${ABI_SRC}" "${REPORT}" "${LOG}" <<'PY'
 import json
 import hashlib
+import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -60,35 +62,15 @@ def file_sha256(path):
         return None
 
 def parse_version_script(text):
-    version_nodes_by_symbol = {}
-    current_node = None
-    in_global = False
-    for raw_line in text.splitlines():
-        line = re.sub(r"/\*.*?\*/", "", raw_line).strip()
-        if not line:
-            continue
-        node_match = re.match(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*\{", line)
-        if node_match:
-            current_node = node_match.group(1)
-            in_global = False
-            continue
-        if current_node and line.startswith("global:"):
-            in_global = True
-            continue
-        if current_node and line.startswith("local:"):
-            in_global = False
-            continue
-        if current_node and line.startswith("};"):
-            current_node = None
-            in_global = False
-            continue
-        if current_node and in_global:
-            symbol_match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*;", line)
-            if symbol_match:
-                version_nodes_by_symbol.setdefault(symbol_match.group(1), []).append(
-                    current_node
-                )
-    return {symbol: sorted(set(nodes)) for symbol, nodes in version_nodes_by_symbol.items()}
+    return source_census.parse_version_script(text)
+
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location(
+    "semantic_source_census", root / "scripts/generate_host_delegation_census.py"
+)
+source_census = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = source_census
+spec.loader.exec_module(source_census)
 
 def join_schema_fields(schema):
     fields = set()
@@ -235,19 +217,23 @@ else:
     errors.append("support_matrix.json must expose a non-empty symbols array")
 
 abi_symbols = set()
+export_surface = None
 if abi_src.exists():
-    for source_path in sorted(abi_src.glob("*.rs")):
-        text = source_path.read_text(encoding="utf-8", errors="ignore")
-        for match in re.finditer(
-            r'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)',
-            text,
-        ):
-            abi_symbols.add(match.group(1))
-        for match in re.finditer(
-            r"\b[A-Za-z_][A-Za-z0-9_]*!\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)",
-            text,
-        ):
-            abi_symbols.add(match.group(1))
+    try:
+        export_surface = source_census.build_semantic_export_surface(
+            root, abi_src, version_script_path, support, inventory
+        )
+        for group in export_surface["groups"]:
+            if group["source_modules"]:
+                abi_symbols.update(group["symbols"])
+        if inventory.get("export_surface") != export_surface:
+            errors.append("exhaustive_export_surface: inventory does not match current declared exports/profiles/unknowns")
+            checks["exhaustive_export_surface"] = "fail"
+        else:
+            checks["exhaustive_export_surface"] = "pass"
+    except Exception as exc:
+        errors.append(f"exhaustive_export_surface: {exc}")
+        checks["exhaustive_export_surface"] = "fail"
     checks["abi_source_symbols_loaded"] = "pass" if abi_symbols else "fail"
     if not abi_symbols:
         errors.append(f"no ABI symbols discovered under {abi_src}")
@@ -598,15 +584,17 @@ if summary_actual["conflicting_exact_symbol_join_count"] == 0:
 else:
     checks["conflicting_symbol_rows"] = "fail"
 
-try:
-    source_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        text=True,
-        stderr=subprocess.DEVNULL,
-    ).strip()
-except Exception:
-    source_commit = "unknown"
+source_commit = os.environ.get("RCH_BUILD_SOURCE", "").removesuffix("-dirty")
+if source_commit:
+    if len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit):
+        errors.append("invalid declared RCH_BUILD_SOURCE")
+else:
+    try:
+        source_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+    except Exception:
+        source_commit = "unknown"
 
 status = "pass" if not errors else "fail"
 report = {
@@ -617,6 +605,7 @@ report = {
     "join_schema": artifact.get("join_schema", {}) if isinstance(artifact, dict) else {},
     "freshness_metadata": artifact_freshness,
     "summary": summary_actual,
+    "export_surface_summary": export_surface.get("summary", {}) if export_surface else {},
     "row_join_summaries": row_join_summaries,
     "resolved_symbol_join_rows": resolved_symbol_join_rows,
     "errors": errors,

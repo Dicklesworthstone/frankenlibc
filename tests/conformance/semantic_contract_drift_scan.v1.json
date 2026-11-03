@@ -12,8 +12,13 @@
     "readme": "README.md",
     "feature_parity": "FEATURE_PARITY.md"
   },
-  "source_scan_roots": ["crates/frankenlibc-abi/src", "crates/frankenlibc-core/src"],
-  "source_scan_suffixes": [".rs"],
+  "source_scan_roots": [
+    "crates/frankenlibc-abi/src",
+    "crates/frankenlibc-core/src"
+  ],
+  "source_scan_suffixes": [
+    ".rs"
+  ],
   "source_marker_radius_lines": 80,
   "scanner_rules": [
     {
@@ -39,32 +44,54 @@
     {
       "id": "abi_export_input_presence",
       "description": "The ABI version script and joined symbol artifact must remain present as scanner inputs."
+    },
+    {
+      "id": "exhaustive_export_surface",
+      "description": "Every declared source/map/support name is present once in an exact-profile explicit-unknown group; omissions, stale inputs and semantic promotions fail."
     }
   ],
   "contract_terms": [
     {
       "id": "compat_noop",
-      "patterns": ["no-op", "noop"]
+      "patterns": [
+        "no-op",
+        "noop"
+      ]
     },
     {
       "id": "deterministic_fallback",
-      "patterns": ["fallback", "safe-default"]
+      "patterns": [
+        "fallback",
+        "safe-default"
+      ]
     },
     {
       "id": "unsupported_platform_contract",
-      "patterns": ["unsupported", "enosys", "not implemented"]
+      "patterns": [
+        "unsupported",
+        "enosys",
+        "not implemented"
+      ]
     },
     {
       "id": "limited_bootstrap",
-      "patterns": ["bootstrap", "phase-1"]
+      "patterns": [
+        "bootstrap",
+        "phase-1"
+      ]
     },
     {
       "id": "abort_only",
-      "patterns": ["abort-only", "fail-stop"]
+      "patterns": [
+        "abort-only",
+        "fail-stop"
+      ]
     },
     {
       "id": "stub",
-      "patterns": ["stub"]
+      "patterns": [
+        "stub"
+      ]
     }
   ],
   "annotation_markers": [
@@ -119,7 +146,11 @@
       "kind": "allowlisted",
       "command": "FLC_SEMANTIC_DRIFT_ARTIFACT=<fixture-with-explicit-allowlist> scripts/check_semantic_contract_drift.sh",
       "expected_status": "pass",
-      "required_allowlist_fields": ["symbol", "file_path", "evidence_reason"]
+      "required_allowlist_fields": [
+        "symbol",
+        "file_path",
+        "evidence_reason"
+      ]
     }
   ],
   "claim_blocking_policy": {
@@ -134,11 +165,11 @@
     ]
   },
   "expected_current_summary": {
-    "tracked_inventory_entries": 17,
-    "semantic_parity_blocker_count": 17,
+    "tracked_inventory_entries": 19,
+    "semantic_parity_blocker_count": 19,
     "untracked_contract_annotation_count": 0,
     "allowed_false_positive_count": 0,
-    "support_matrix_stub_count": 0,
+    "support_matrix_stub_count": 18,
     "docs_with_semantic_overlay_reference": 2
   }
 }

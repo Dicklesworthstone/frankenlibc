@@ -2504,11 +2504,13 @@ def build_semantic_export_surface(
     configuration-unqualified candidates, not as observed dynamic exports.
     """
     source_files = sorted(abi_source_dir.glob("*.rs"))
+    if not source_files or not (abi_source_dir / "lib.rs").is_file():
+        raise ValueError("semantic export inventory requires the live ABI module root")
     raw_modules: dict[str, set[str]] = {}
     memberships: dict[str, set[str]] = {}
     for path in source_files:
         for function in parse_functions(path):
-            if function.is_exported_abi and function.is_call_graph_item:
+            if function.is_exported_abi:
                 raw_modules.setdefault(function.exported_symbol, set()).add(function.module)
     profile_counts = {}
     for profile in CFG_PROFILES:
@@ -2520,14 +2522,18 @@ def build_semantic_export_surface(
         symbols = set()
         for path, text in filtered.items():
             for function in parse_functions(path, text):
-                if function.is_exported_abi and function.is_call_graph_item:
+                if function.is_exported_abi:
                     symbol = function.exported_symbol
+                    if symbol in symbols:
+                        raise ValueError(f"duplicate semantic export in {profile.name}: {symbol}")
                     symbols.add(symbol)
                     memberships.setdefault(symbol, set()).add(profile.name)
                     raw_modules.setdefault(symbol, set()).add(function.module)
         profile_counts[profile.name] = len(symbols)
     versions = parse_version_script(version_script.read_text(encoding="utf-8"))
     support_rows = support.get("symbols", [])
+    if not versions or not support_rows:
+        raise ValueError("semantic export inventory requires version and support declarations")
     support_by_symbol = {row["symbol"]: row for row in support_rows}
     if len(support_by_symbol) != len(support_rows):
         raise ValueError("duplicate support symbols in semantic export inputs")
