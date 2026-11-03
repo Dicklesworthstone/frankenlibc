@@ -526,44 +526,38 @@ fn metadata_protocol(api: Api, got: bool) {
     let data = fixture.pathname("data");
     let link = fixture.pathname("link");
     let missing = fixture.pathname("missing");
-    type Stat = unsafe extern "C" fn(*const c_char, *mut libc::stat) -> c_int;
+    type Reference = unsafe extern "C" fn(c_int, *const c_char, *mut libc::stat, c_int) -> c_int;
     type Run = unsafe extern "C" fn(
         *const c_char,
         *const c_char,
         *const c_char,
         *const c_char,
-        *const libc::stat,
+        Reference,
         *mut u32,
     ) -> c_int;
     // SAFETY: the signatures match the GNU declarations and the C fixture.
-    // The distinct host providers populate all three expected structures;
-    // plugin calls receive live paths and writable counters for the call.
+    // The distinct GNU fstatat provider captures a fresh reference after each
+    // query, including symlink atime changes caused by preceding traversal.
+    // Plugin calls receive live paths and writable counters for the call.
     unsafe {
-        let host_stat: Stat = dlsym_oracle::host_fn(c"stat", unistd::stat as *const ());
-        let host_lstat: Stat = dlsym_oracle::host_fn(c"lstat", unistd::lstat as *const ());
-        // Resolve the link once before capturing its atime: path traversal
-        // itself can update that timestamp on the first metadata query.
-        let mut expected: [libc::stat; 3] = std::mem::zeroed();
-        assert_eq!(host_stat(link.as_ptr(), &mut expected[0]), 0);
-        assert_eq!(host_stat(data.as_ptr(), &mut expected[0]), 0);
-        assert_eq!(host_lstat(link.as_ptr(), &mut expected[1]), 0);
-        assert_eq!(host_stat(directory.as_ptr(), &mut expected[2]), 0);
+        let reference: Reference = dlsym_oracle::host_fn(c"fstatat", unistd::fstatat as *const ());
         let handle = api.open(&fixture.path);
         addresses(api, handle);
         let run =
             std::mem::transmute::<*mut c_void, Run>(api.symbol(handle, c"flc_metadata_protocol"));
         let mut counts = [0_u32; 2];
+        let result = run(
+            directory.as_ptr(),
+            data.as_ptr(),
+            link.as_ptr(),
+            missing.as_ptr(),
+            reference,
+            counts.as_mut_ptr(),
+        );
         assert_eq!(
-            run(
-                directory.as_ptr(),
-                data.as_ptr(),
-                link.as_ptr(),
-                missing.as_ptr(),
-                expected.as_ptr(),
-                counts.as_mut_ptr(),
-            ),
-            0,
-            "shared C metadata protocol line"
+            result, 0,
+            "shared C metadata protocol line; native={}, completed={counts:?}",
+            api.native,
         );
         assert_eq!(counts, [34, 13], "positive/error domain must execute");
         api.close(handle);

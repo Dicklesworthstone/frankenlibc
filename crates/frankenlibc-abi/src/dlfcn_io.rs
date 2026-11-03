@@ -1,4 +1,4 @@
-//! Descriptor and errno frontends for natively loaded plugins.
+//! Descriptor, file metadata and errno frontends for natively loaded plugins.
 //!
 //! Reuse the existing ABI implementations, including their cancellation,
 //! membrane, descriptor-offset tracking and errno behavior. In particular,
@@ -33,12 +33,19 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pipe2" | "dup3" => "GLIBC_2.9",
         _ => "GLIBC_2.2.5",
     };
-    let supported = if name == "fcntl64" {
-        // The exported large-file alias postdates both architecture baselines.
+    let supported = if matches!(name, "fcntl64" | "statx") {
+        // These public interfaces postdate both architecture baselines.
         "GLIBC_2.28"
     } else if name == "execveat" {
         // Added after both architecture baselines.
         "GLIBC_2.34"
+    } else if matches!(
+        name,
+        "stat" | "fstat" | "lstat" | "fstatat" | "stat64" | "fstat64" | "lstat64" | "fstatat64"
+    ) {
+        // Modern public stat entrypoints replaced the older __*xstat ABI on
+        // both x86-64 and AArch64 in glibc 2.33.
+        "GLIBC_2.33"
     } else if cfg!(target_arch = "aarch64") {
         "GLIBC_2.17"
     } else {
@@ -92,6 +99,15 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "posix_fallocate64" => unistd::posix_fallocate64 as *const (),
         "fexecve" => unistd::fexecve as *const (),
         "execveat" => unistd::execveat as *const (),
+        "stat" => unistd::stat as *const (),
+        "fstat" => unistd::fstat as *const (),
+        "lstat" => unistd::lstat as *const (),
+        "fstatat" => unistd::fstatat as *const (),
+        "stat64" => unistd::stat64 as *const (),
+        "fstat64" => unistd::fstat64 as *const (),
+        "lstat64" => unistd::lstat64 as *const (),
+        "fstatat64" => unistd::fstatat64 as *const (),
+        "statx" => unistd::statx as *const (),
         _ => return None,
     };
     Some(address as usize as u64)

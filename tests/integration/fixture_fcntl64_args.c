@@ -22,7 +22,7 @@
 #include <unistd.h>
 
 /* One protocol is compiled into both the native plugin and the deployed C
-   executable. The caller supplies independently captured GNU/kernel metadata. */
+   executable. The caller supplies an independent live GNU/kernel oracle. */
 extern int narrow_stat(const char *, struct stat *) __asm__("stat");
 extern int narrow_fstat(int, struct stat *) __asm__("fstat");
 extern int narrow_lstat(const char *, struct stat *) __asm__("lstat");
@@ -78,15 +78,27 @@ static int metadata_equal(const struct stat *a, const struct stat *b) {
         a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
 }
 
+typedef int (*metadata_reference)(int, const char *, struct stat *, int);
+static int metadata_matches(const struct stat *out, const char *path,
+                             metadata_reference reference) {
+    struct stat expected;
+    return reference(AT_FDCWD, path, &expected, AT_SYMLINK_NOFOLLOW) == 0 &&
+        metadata_equal(out, &expected);
+}
+
 #define META_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
 int flc_metadata_protocol(const char *directory, const char *file, const char *link, const char *missing,
-                          const struct stat expected[3], unsigned counts[2]) {
+                          metadata_reference reference, unsigned counts[2]) {
+    counts[0] = counts[1] = 0;
+    struct stat expected[3];
+    const char *reference_paths[] = {file, link, directory};
+    for (unsigned i = 0; i < 3; i++)
+        META_CHECK(reference(AT_FDCWD, reference_paths[i], &expected[i], AT_SYMLINK_NOFOLLOW) == 0);
     int fd = open(file, O_RDONLY), dir = open(directory, O_RDONLY | O_DIRECTORY);
     META_CHECK(fd >= 0 && dir >= 0);
     META_CHECK(expected[0].st_size > INT32_MAX && S_ISREG(expected[0].st_mode));
     META_CHECK(S_ISLNK(expected[1].st_mode) && S_ISDIR(expected[2].st_mode));
     META_CHECK(lseek(fd, 17, SEEK_SET) == 17);
-    counts[0] = counts[1] = 0;
     for (unsigned api = 0; api < 8; api++) {
         unsigned family = api % 4;
         for (unsigned item = 0; item < 3; item++) {
@@ -95,7 +107,8 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
             struct stat out = {0};
             errno = 1234;
             META_CHECK(metadata_call(api, AT_FDCWD, fd, path, &out, 0) == 0);
-            META_CHECK(errno == 1234 && metadata_equal(&out, &expected[which]));
+            META_CHECK(errno == 1234);
+            META_CHECK(metadata_matches(&out, reference_paths[which], reference));
             counts[0]++;
         }
         struct stat out, untouched;
@@ -110,12 +123,13 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
         if (family == 3) {
             errno = 1234;
             META_CHECK(metadata_call(api, dir, fd, "data", &out, 0) == 0);
-            META_CHECK(errno == 1234 && metadata_equal(&out, &expected[0]));
+            META_CHECK(errno == 1234);
+            META_CHECK(metadata_matches(&out, file, reference));
             counts[0]++;
             META_CHECK(metadata_call(api, dir, fd, "link", &out, AT_SYMLINK_NOFOLLOW) == 0);
-            META_CHECK(metadata_equal(&out, &expected[1])); counts[0]++;
+            META_CHECK(metadata_matches(&out, link, reference)); counts[0]++;
             META_CHECK(metadata_call(api, fd, fd, "", &out, AT_EMPTY_PATH) == 0);
-            META_CHECK(metadata_equal(&out, &expected[0])); counts[0]++;
+            META_CHECK(metadata_matches(&out, file, reference)); counts[0]++;
             out = untouched; errno = 0;
             META_CHECK(metadata_call(api, dir, fd, "data", &out, INT_MIN) == -1 && errno == EINVAL);
             META_CHECK(memcmp(&out, &untouched, sizeof out) == 0); counts[1]++;
@@ -130,11 +144,16 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
         memset(&extended, 0, sizeof extended); errno = 1234;
         META_CHECK(statx(base, path, flags, STATX_BASIC_STATS, &extended) == 0 && errno == 1234);
         META_CHECK((extended.stx_mask & STATX_BASIC_STATS) == STATX_BASIC_STATS);
-        const struct stat *want = &expected[which];
+        struct stat current;
+        META_CHECK(reference(AT_FDCWD, reference_paths[which], &current, AT_SYMLINK_NOFOLLOW) == 0);
+        const struct stat *want = &current;
         META_CHECK(extended.stx_ino == want->st_ino && extended.stx_size == (uint64_t)want->st_size);
         META_CHECK(extended.stx_mode == want->st_mode && extended.stx_nlink == want->st_nlink);
         META_CHECK(extended.stx_uid == want->st_uid && extended.stx_gid == want->st_gid);
+        META_CHECK(extended.stx_blksize == want->st_blksize && extended.stx_blocks == (uint64_t)want->st_blocks);
         META_CHECK(extended.stx_dev_major == major(want->st_dev) && extended.stx_dev_minor == minor(want->st_dev));
+        META_CHECK(extended.stx_rdev_major == major(want->st_rdev) && extended.stx_rdev_minor == minor(want->st_rdev));
+        META_CHECK(extended.stx_atime.tv_sec == want->st_atim.tv_sec && extended.stx_atime.tv_nsec == want->st_atim.tv_nsec);
         META_CHECK(extended.stx_mtime.tv_sec == want->st_mtim.tv_sec && extended.stx_mtime.tv_nsec == want->st_mtim.tv_nsec);
         META_CHECK(extended.stx_ctime.tv_sec == want->st_ctim.tv_sec && extended.stx_ctime.tv_nsec == want->st_ctim.tv_nsec);
         counts[0]++;
@@ -158,6 +177,10 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
 #undef META_CHECK
 
 #ifndef FLC_STAT_PLUGIN
+static int metadata_kernel_reference(int dir, const char *path, struct stat *out, int flags) {
+    return (int)syscall(SYS_newfstatat, dir, path, out, flags);
+}
+
 static const char *err(int r) { return r < 0 ? strerrorname_np(errno) : "ok"; }
 
 /* Keep both real GNU symbol imports despite the large-file redirect. */
@@ -371,7 +394,7 @@ static int allocation_contract(void) {
 
 int main(int argc, char **argv) {
     if (argc == 5 && strcmp(argv[1], "--metadata") == 0) {
-        struct stat expected[3], provider, actual;
+        struct stat provider, actual;
         const char *pin = getenv("FLC_STAT_EXPECT_PROVIDER");
         if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &provider, 0) != 0) return 42;
         for (unsigned i = 0; i < 10; i++) {
@@ -381,14 +404,10 @@ int main(int argc, char **argv) {
                 syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) != 0 ||
                 provider.st_dev != actual.st_dev || provider.st_ino != actual.st_ino) return 42;
         }
-        if (syscall(SYS_newfstatat, AT_FDCWD, argv[4], &expected[0], 0) != 0 ||
-            syscall(SYS_newfstatat, AT_FDCWD, argv[3], &expected[0], 0) != 0 ||
-            syscall(SYS_newfstatat, AT_FDCWD, argv[4], &expected[1], AT_SYMLINK_NOFOLLOW) != 0 ||
-            syscall(SYS_newfstatat, AT_FDCWD, argv[2], &expected[2], 0) != 0) return 2;
         unsigned counts[2];
         char missing[PATH_MAX];
         if (snprintf(missing, sizeof missing, "%s/missing", argv[2]) >= (int)sizeof missing) return 2;
-        int result = flc_metadata_protocol(argv[2], argv[3], argv[4], missing, expected, counts);
+        int result = flc_metadata_protocol(argv[2], argv[3], argv[4], missing, metadata_kernel_reference, counts);
         printf("metadata protocol: line=%d success=%u errors=%u\n", result, counts[0], counts[1]);
         return result ? 1 : 0;
     }
