@@ -7,17 +7,167 @@
 // F_SETFL/F_SETFD set garbage, F_DUPFD returned the wrong descriptor.
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 static const char *err(int r) { return r < 0 ? strerrorname_np(errno) : "ok"; }
 
+/* Keep both real GNU symbol imports despite the large-file redirect. */
+extern int narrow_lockf(int, int, off_t) __asm__("lockf");
+typedef int (*lock_function)(int, int, off_t);
+
+#define CHECK(condition) do { if (!(condition)) { \
+    fprintf(stderr, "lockf contract failed at line %d\n", __LINE__); return 1; \
+} } while (0)
+
+static int check_lock_provider(void) {
+    const char *expected = getenv("FLC_LOCKF_EXPECT_PROVIDER");
+    if (!expected) return 0;
+    struct stat want, got;
+    if (stat(expected, &want) != 0) return 42;
+    const void *symbols[] = {(const void *)narrow_lockf, (const void *)lockf,
+                             (const void *)__errno_location};
+    for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++) {
+        Dl_info info;
+        if (!dladdr(symbols[i], &info) || !info.dli_fname ||
+            stat(info.dli_fname, &got) != 0 || got.st_dev != want.st_dev ||
+            got.st_ino != want.st_ino) {
+            fprintf(stderr, "lockf provider mismatch\n");
+            return 42;
+        }
+    }
+    return 0;
+}
+
+static int clear_locks(int fd) {
+    struct flock lock = {.l_type = F_UNLCK, .l_whence = SEEK_SET};
+    return fcntl(fd, F_SETLK, &lock);
+}
+
+static int lockf_contract(void) {
+    char path[] = "/tmp/fl_lockf_retained_XXXXXX";
+    int fd = mkstemp(path), ends[2];
+    CHECK(fd >= 0 && write(fd, "0123456789abcdef", 16) == 16);
+    int ro = open(path, O_RDONLY);
+    CHECK(ro >= 0 && pipe(ends) == 0 && write(ends[1], "q", 1) == 1);
+    int closed = dup(ends[0]);
+    CHECK(closed >= 0 && close(closed) == 0);
+    int descriptors[] = {fd, ro, ends[0], ends[1], -1, closed};
+    int commands[] = {-1, F_ULOCK, F_LOCK, F_TLOCK, F_TEST, 4, INT_MIN, INT_MAX};
+    off_t lengths[] = {-3, 0, 4};
+    lock_function functions[] = {narrow_lockf, lockf};
+    size_t cases = 0;
+    for (size_t a = 0; a < 2; a++) {
+        for (size_t d = 0; d < 6; d++) {
+            for (size_t c = 0; c < 8; c++) {
+                for (size_t l = 0; l < 3; l++) {
+                    CHECK(clear_locks(fd) == 0 && lseek(fd, 7, SEEK_SET) == 7);
+                    CHECK(lseek(ro, 7, SEEK_SET) == 7);
+                    errno = 0;
+                    int rc = functions[a](descriptors[d], commands[c], lengths[l]);
+                    int error = rc < 0 ? errno : 0;
+                    printf("lockf/%zu fd=%zu cmd=%d len=%lld rc=%d errno=%s pos=%lld/%lld\n",
+                           a, d, commands[c], (long long)lengths[l], rc,
+                           error ? strerrorname_np(error) : "ok",
+                           (long long)lseek(fd, 0, SEEK_CUR), (long long)lseek(ro, 0, SEEK_CUR));
+                    cases++;
+                }
+            }
+        }
+    }
+    CHECK(cases == 288 && clear_locks(fd) == 0);
+
+    size_t conflicts = 0;
+    for (int exclusive = 0; exclusive < 2; exclusive++) {
+        int ready[2], release[2];
+        CHECK(pipe(ready) == 0 && pipe(release) == 0);
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (child == 0) {
+            close(ready[0]); close(release[1]);
+            struct flock lock = {.l_type = exclusive ? F_WRLCK : F_RDLCK,
+                                 .l_whence = SEEK_SET, .l_start = 7, .l_len = 4};
+            if (fcntl(fd, F_SETLK, &lock) != 0 || write(ready[1], "r", 1) != 1) _exit(2);
+            char byte;
+            if (read(release[0], &byte, 1) != 0) _exit(3);
+            _exit(0);
+        }
+        close(ready[1]); close(release[0]);
+        char byte;
+        CHECK(read(ready[0], &byte, 1) == 1 && byte == 'r');
+        for (size_t a = 0; a < 2; a++) {
+            for (int test = 0; test < 2; test++) {
+                int cmd = test ? F_TEST : F_TLOCK;
+                CHECK(lseek(fd, 7, SEEK_SET) == 7);
+                errno = 0;
+                int rc = functions[a](fd, cmd, 4), error = rc < 0 ? errno : 0;
+                printf("lockf/%zu holder=%s cmd=%d rc=%d errno=%s\n", a,
+                       exclusive ? "write" : "read", cmd, rc,
+                       error ? strerrorname_np(error) : "ok");
+                CHECK((rc == 0) == (!exclusive && test));
+                CHECK(lseek(fd, 0, SEEK_CUR) == 7);
+                conflicts++;
+            }
+        }
+        close(release[1]); close(ready[0]);
+        int status;
+        CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
+    CHECK(conflicts == 8);
+
+    size_t ranges = 0;
+    for (size_t a = 0; a < 2; a++) {
+        for (size_t l = 0; l < 3; l++) {
+            CHECK(clear_locks(fd) == 0 && lseek(fd, 7, SEEK_SET) == 7);
+            CHECK(functions[a](fd, F_TLOCK, lengths[l]) == 0);
+            int reply[2];
+            CHECK(pipe(reply) == 0);
+            pid_t child = fork();
+            CHECK(child >= 0);
+            if (child == 0) {
+                close(reply[0]);
+                struct flock query = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+                if (fcntl(fd, F_GETLK, &query) != 0 ||
+                    write(reply[1], &query, sizeof query) != (ssize_t)sizeof query) _exit(4);
+                _exit(0);
+            }
+            close(reply[1]);
+            struct flock query;
+            CHECK(read(reply[0], &query, sizeof query) == (ssize_t)sizeof query);
+            close(reply[0]);
+            int status;
+            CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+            off_t start = lengths[l] < 0 ? 7 + lengths[l] : 7;
+            off_t size = lengths[l] < 0 ? -lengths[l] : lengths[l];
+            CHECK(query.l_type == F_WRLCK && query.l_start == start && query.l_len == size && query.l_pid == getpid());
+            CHECK(lseek(fd, 0, SEEK_CUR) == 7);
+            printf("lockf/%zu range=%lld/%lld holder_is_parent=1\n", a, (long long)start, (long long)size);
+            ranges++;
+        }
+    }
+    char bytes[16], byte;
+    struct stat metadata;
+    CHECK(ranges == 6 && clear_locks(fd) == 0);
+    CHECK(pread(fd, bytes, sizeof bytes, 0) == (ssize_t)sizeof bytes && memcmp(bytes, "0123456789abcdef", sizeof bytes) == 0);
+    CHECK(fstat(fd, &metadata) == 0 && metadata.st_size == (off_t)sizeof bytes);
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'q');
+    CHECK(close(fd) == 0 && close(ro) == 0 && close(ends[0]) == 0 && close(ends[1]) == 0);
+    printf("lockf contract: %zu descriptor cases, %zu conflicts, %zu ranges passed\n", cases, conflicts, ranges);
+    /* Retain both uniquely named test inputs for diagnosis. */
+    return 0;
+}
+
 int main(void) {
+    int provider = check_lock_provider();
+    if (provider) return provider;
     char path[] = "/tmp/fl_fcntl64_XXXXXX";
     int fd = mkstemp(path);
     if (write(fd, "0123456789", 10) != 10) return 1;
@@ -65,6 +215,5 @@ int main(void) {
     pipe(p);
     printf("F_SETPIPE_SZ on a pipe: %d, F_GETPIPE_SZ: %d\n", fcntl(p[0], F_SETPIPE_SZ, 131072), fcntl(p[0], F_GETPIPE_SZ));
     printf("bad fd: %s\n", err(fcntl(999, F_SETFL, 0)));
-    unlink(path);
-    return 0;
+    return lockf_contract();
 }
