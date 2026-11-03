@@ -144,6 +144,16 @@ pub fn valid_msg_flags(flags: i32) -> bool {
     flags & !MSG_KNOWN_MASK == 0
 }
 
+/// Visit every GNU reserved TCP port once, descending and wrapping at 512.
+///
+/// Clamp the signed caller seed before converting it to a network port.
+/// Socket creation, binding and errno handling belong to the ABI boundary.
+#[inline]
+pub fn reserved_port_candidates(seed: i32) -> impl Iterator<Item = u16> {
+    let start = seed.clamp(512, 1023) as u16;
+    (512..=start).rev().chain((start + 1..=1023).rev())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -151,6 +161,28 @@ pub fn valid_msg_flags(flags: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserved_port_wraps_at_the_floor() {
+        let ports: Vec<_> = reserved_port_candidates(512).collect();
+        assert_eq!(&ports[..4], &[512, 1023, 1022, 1021]);
+        assert_eq!(ports.len(), 512);
+        assert_eq!(ports.last(), Some(&513));
+    }
+
+    #[test]
+    fn reserved_port_clamps_signed_seeds_before_conversion() {
+        for seed in [i32::MIN, -1, 0, 511] {
+            let ports: Vec<_> = reserved_port_candidates(seed).collect();
+            assert_eq!(ports.first(), Some(&512), "seed {seed}");
+            assert_eq!(ports.len(), 512);
+        }
+        for seed in [1024, 65536, i32::MAX] {
+            let ports: Vec<_> = reserved_port_candidates(seed).collect();
+            assert_eq!(ports.first(), Some(&1023), "seed {seed}");
+            assert_eq!(ports.len(), 512);
+        }
+    }
 
     // -- Address family validation ------------------------------------------
 

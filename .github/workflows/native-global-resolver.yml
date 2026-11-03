@@ -1,4 +1,4 @@
-name: Native global resolver
+name: Native global resolver and reserved ports
 
 on:
   push:
@@ -10,8 +10,11 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/tests/global_resolver_test.rs'
+      - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
+      - 'crates/frankenlibc-core/src/socket/mod.rs'
       - 'scripts/integrate_global_resolver.py'
       - 'tests/conformance/global_resolver_abi.c'
+      - 'tests/conformance/rresvport_abi.c'
   workflow_dispatch:
 
 permissions:
@@ -89,6 +92,53 @@ jobs:
           sha256sum "$RUNNER_TEMP/global-resolver" target/release/libfrankenlibc_abi.so tests/conformance/global_resolver_abi.c > artifacts/global-resolver/binaries-and-oracle-sha256.txt
           python3 scripts/integrate_global_resolver.py > artifacts/global-resolver/source-after-sha256.txt
           cmp artifacts/global-resolver/source-sha256.txt artifacts/global-resolver/source-after-sha256.txt
+          git diff --exit-code
+      - name: Check the complete reserved-port candidate cycle
+        run: |
+          out=artifacts/global-resolver/reserved-port
+          mkdir -p "$out"
+          cargo test --locked -p frankenlibc-core --lib socket::tests::reserved_port_ -- --nocapture 2>&1 | tee "$out/core.log"
+          grep -Eq 'test result: ok\. 2 passed;' "$out/core.log"
+          cargo test --locked -p frankenlibc-abi --test glibc_internal_abi_test reserved_port_ -- --nocapture 2>&1 | tee "$out/abi.log"
+          grep -Eq 'test result: ok\. 2 passed;' "$out/abi.log"
+      - name: Exercise reserved-port bindings and kernel errors with privilege
+        run: |
+          unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT FLC_RRESVPORT_CONTROL
+          out=artifacts/global-resolver/reserved-port
+          probe="$RUNNER_TEMP/rresvport-abi"
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/rresvport_abi.c -ldl -o "$probe"
+          host="$(ldd "$probe" | awk '/libc\.so/{print $3; exit}')"
+          test -f "$host"
+          readelf --dyn-syms --wide "$probe" > "$out/caller-symbols.log"
+          grep -Fq 'rresvport@GLIBC_2.2.5' "$out/caller-symbols.log"
+          grep -Fq 'rresvport_af@GLIBC_2.2.5' "$out/caller-symbols.log"
+          expect_port_rejection() {
+            local label="$1" reason="$2"; shift 2
+            local status=0
+            "$@" > "$out/reject-$label.stdout" 2> "$out/reject-$label.stderr" || status=$?
+            printf '%s\n' "$status" > "$out/reject-$label.exit_code"
+            test "$status" -eq 42
+            grep -Fq "FAIL: $reason" "$out/reject-$label.stderr"
+          }
+          for mode in strict hardened; do
+            sudo timeout 90 env "FRANKENLIBC_MODE=$mode" "$probe" --host "$host" > "$out/host-$mode.stdout" 2> "$out/host-$mode.stderr"
+            grep -Fq '28 host-glibc reserved-port cases passed' "$out/host-$mode.stdout"
+            sudo timeout 90 env "FRANKENLIBC_MODE=$mode" "$probe" "$library" "$library" > "$out/candidate-$mode.stdout" 2> "$out/candidate-$mode.stderr"
+            grep -Fq '28 candidate reserved-port cases passed' "$out/candidate-$mode.stdout"
+            sudo timeout 90 env "LD_PRELOAD=$library" "FRANKENLIBC_MODE=$mode" "$probe" "$library" "$library" --linked > "$out/preload-$mode.stdout" 2> "$out/preload-$mode.stderr"
+            grep -Fq '28 candidate reserved-port cases passed' "$out/preload-$mode.stdout"
+            expect_port_rejection "unpreloaded-$mode" provider_mismatch sudo timeout 90 env "FRANKENLIBC_MODE=$mode" "$probe" "$library" "$library" --linked
+            for label in host candidate; do
+              provider=--host
+              pin="$host"
+              if [[ "$label" == candidate ]]; then provider="$library"; pin="$library"; fi
+              expect_port_rejection "$label-$mode-missing" missing_case_result sudo timeout 90 env "FRANKENLIBC_MODE=$mode" FLC_RRESVPORT_CONTROL=missing_result "$probe" "$provider" "$pin"
+              expect_port_rejection "$label-$mode-corrupt" port_result_mismatch sudo timeout 90 env "FRANKENLIBC_MODE=$mode" FLC_RRESVPORT_CONTROL=corrupt_port "$probe" "$provider" "$pin"
+            done
+          done
+          expect_port_rejection wrong-provider provider_mismatch sudo timeout 90 "$probe" --host "$library"
+          sha256sum "$probe" "$library" "$host" tests/conformance/rresvport_abi.c crates/frankenlibc-core/src/socket/mod.rs crates/frankenlibc-abi/src/glibc_internal_abi.rs > "$out/source-and-providers-sha256.txt"
           git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()

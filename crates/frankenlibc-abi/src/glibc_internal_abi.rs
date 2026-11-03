@@ -7133,68 +7133,87 @@ pub unsafe extern "C" fn rpmatch(response: *const c_char) -> c_int {
 // rresvport: reserve a privileged port for RPC (like bindresvport but returns socket)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rresvport(port: *mut c_int) -> c_int {
-    unsafe { rresvport_af(port, libc::AF_INET) }
+    // SAFETY: forward the caller's port pointer and its ABI preconditions.
+    unsafe { rresvport_af(port, libc::AF_INET as libc::sa_family_t) }
 }
 
 // rresvport_af: reserve a privileged port for the given address family
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
+pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: libc::sa_family_t) -> c_int {
+    let af = c_int::from(af);
+    if !matches!(af, libc::AF_INET | libc::AF_INET6) {
+        // SAFETY: errno is the current thread's writable ABI cell.
+        unsafe { set_abi_errno(libc::EAFNOSUPPORT) };
+        return -1;
+    }
     let sock_type = libc::SOCK_STREAM;
     let fd = match raw_syscall::sys_socket(af, sock_type, 0) {
         Ok(fd) => fd,
         Err(e) => {
+            // SAFETY: errno is the current thread's writable ABI cell.
             unsafe { crate::errno_abi::set_abi_errno(e) };
             return -1;
         }
     };
-    // Start from the provided port, or 1023 if null/0
+    // Preserve the existing null-pointer fallback; a non-null ABI argument
+    // points to a live int. The core clamps its signed value without truncation.
     let start_port = if port.is_null() {
-        1023u16
+        1023
     } else {
-        let p = unsafe { *port } as u16;
-        if p == 0 || p > 1023 { 1023u16 } else { p }
+        // SAFETY: the caller supplies a readable/writable int at non-null port.
+        unsafe { *port }
     };
-    // Try ports from start_port down to 512
-    for p in (512..=start_port).rev() {
-        let rc = match af {
-            libc::AF_INET => {
-                let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-                addr.sin_family = libc::AF_INET as u16;
-                addr.sin_port = p.to_be();
-                unsafe {
-                    crate::socket_abi::bind(
-                        fd,
-                        &addr as *const _ as *const libc::sockaddr,
-                        std::mem::size_of::<libc::sockaddr_in>() as u32,
-                    )
-                }
+    for p in frankenlibc_core::socket::reserved_port_candidates(start_port) {
+        let rc = if af == libc::AF_INET {
+            let addr = libc::sockaddr_in {
+                sin_family: libc::AF_INET as u16,
+                sin_port: p.to_be(),
+                sin_addr: libc::in_addr { s_addr: 0 },
+                sin_zero: [0; 8],
+            };
+            // SAFETY: addr is a complete, aligned IPv4 sockaddr, live for bind.
+            unsafe {
+                crate::socket_abi::bind(
+                    fd,
+                    &addr as *const _ as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in>() as u32,
+                )
             }
-            libc::AF_INET6 => {
-                let mut addr: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
-                addr.sin6_family = libc::AF_INET6 as u16;
-                addr.sin6_port = p.to_be();
-                unsafe {
-                    crate::socket_abi::bind(
-                        fd,
-                        &addr as *const _ as *const libc::sockaddr,
-                        std::mem::size_of::<libc::sockaddr_in6>() as u32,
-                    )
-                }
-            }
-            _ => {
-                let _ = raw_syscall::sys_close(fd);
-                unsafe { crate::errno_abi::set_abi_errno(libc::EAFNOSUPPORT) };
-                return -1;
+        } else {
+            let addr = libc::sockaddr_in6 {
+                sin6_family: libc::AF_INET6 as u16,
+                sin6_port: p.to_be(),
+                sin6_flowinfo: 0,
+                sin6_addr: libc::in6_addr { s6_addr: [0; 16] },
+                sin6_scope_id: 0,
+            };
+            // SAFETY: af was checked above; addr is a complete live IPv6 sockaddr.
+            unsafe {
+                crate::socket_abi::bind(
+                    fd,
+                    &addr as *const _ as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in6>() as u32,
+                )
             }
         };
         if rc == 0 {
             if !port.is_null() {
+                // SAFETY: the caller supplies a writable int at non-null port.
                 unsafe { *port = p as c_int };
             }
             return fd;
         }
+        // SAFETY: bind recorded its error in this thread's valid errno cell.
+        let error = unsafe { *crate::errno_abi::__errno_location() };
+        if error != libc::EADDRINUSE {
+            let _ = raw_syscall::sys_close(fd);
+            // SAFETY: restore the actual bind error after releasing our socket.
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
     }
     let _ = raw_syscall::sys_close(fd);
+    // SAFETY: all 512 candidates were occupied; errno is this thread's ABI cell.
     unsafe { crate::errno_abi::set_abi_errno(libc::EAGAIN) };
     -1
 }

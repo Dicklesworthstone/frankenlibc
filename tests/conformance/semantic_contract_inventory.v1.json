@@ -331,7 +331,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 9371,
+      "source_line": 9390,
       "line_marker": "__gconv_open",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -615,10 +615,10 @@
         }
       }
     },
-    "source_tree_sha256": "9f6bacf0f3d0b5b9913519febc4d5c7601c4820d14f684f7c54352539fa00c69",
+    "source_tree_sha256": "67d2e7f4397ea7db1ab74177ba4668bd9a401eb8ae8998eec87fed138012f6fe",
     "version_script_sha256": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
     "support_rows_sha256": "94eee3f8ca4b9dc4d03ae3aceaa24474dacc9090ec349759d0ebd8dbf89b2b47",
-    "contract_rows_sha256": "69a819a57c919766b93da4aa0b07f35166a313794a00a085585ac911a2ab4775",
+    "contract_rows_sha256": "53aabdcc34de012f6070d5197f174282756a24877719c2e01ebf7b92a371d83a",
     "summary": {
       "declared_symbol_count": 4730,
       "raw_source_symbol_count": 4720,

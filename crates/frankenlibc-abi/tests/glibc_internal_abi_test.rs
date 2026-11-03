@@ -170,6 +170,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     revoke,
     rexec,
     rexec_af,
+    rresvport_af,
     ruserok,
     ruserok_af,
     ruserpass,
@@ -1525,6 +1526,50 @@ fn parse_printf_format_no_value_positions_preserve_holes() {
         1
     );
     assert_eq!(types, [PA_INT, -77, -77, -77, -77]);
+}
+
+// ===========================================================================
+// Reserved-port search and unsupported-family contracts
+// ===========================================================================
+
+#[test]
+fn reserved_port_candidates_cover_every_port_from_every_seed() {
+    let expected: std::collections::BTreeSet<u16> = (512..=1023).collect();
+    for seed in 512..=1023 {
+        let ports: Vec<_> = frankenlibc_core::socket::reserved_port_candidates(seed).collect();
+        assert_eq!(ports.len(), 512, "seed {seed}");
+        assert_eq!(ports.first().copied(), Some(seed as u16));
+        assert_eq!(
+            ports
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected
+        );
+        for adjacent in ports.windows(2) {
+            if adjacent[0] == 512 {
+                assert_eq!(adjacent[1], 1023);
+            } else {
+                assert_eq!(adjacent[1] + 1, adjacent[0]);
+            }
+        }
+    }
+}
+
+#[test]
+fn reserved_port_rejects_noninternet_families() {
+    for family in [libc::AF_UNSPEC, libc::AF_UNIX, libc::AF_NETLINK, 65535] {
+        let mut port = 512;
+        // SAFETY: port is a live writable int; errno belongs to this thread.
+        let (result, error) = unsafe {
+            *__errno_location() = 0;
+            let result = rresvport_af(&mut port, family as libc::sa_family_t);
+            (result, *__errno_location())
+        };
+        assert_eq!(result, -1, "family {family}");
+        assert_eq!(error, libc::EAFNOSUPPORT, "family {family}");
+        assert_eq!(port, 512);
+    }
 }
 
 // ===========================================================================
