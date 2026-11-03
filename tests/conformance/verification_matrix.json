@@ -18632,7 +18632,7 @@
         },
         "e2e_scripts": {
           "required": true,
-          "scope": "Actualrelease C24fexecve cases/16replacements/16errors/12execveat positives perprovider/mode, including emptychroot/active syscallfault controls,4wrong-provider negatives and original200spawn regression"
+          "scope": "24 fexecve policy cases (16 replacements,8 denials),16 separate invalid-argument cases and12 execveat replacements per provider/mode; actual empty chroot/syscall controls,4 wrong-provider negatives and original200spawn regression"
         },
         "structured_logs": {
           "required": false,
@@ -18654,11 +18654,11 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "vmi1152480:/data/tmp/frankenlibc-fexecve-20261103/{after/report.json,final-record/record/receipt.json,final-record/admit.stdout,fresh-strict.stdout,fresh-hardened.stdout}; actual493input compiler0/named1passed/admit0, full11bothmodes replay0"
+          "artifacts": "vmi1149989:/data/tmp/frankenlibc-fexecve-20261103/final-record-typed/{record/receipt.json,admit.stdout,fresh-strict.stdout,fresh-hardened.stdout}; actual compiler0, named1passed, admission0, full11bothmodes"
         },
         "e2e_scripts": {
           "status": "complete",
-          "artifacts": "vmi1152480:/data/tmp/frankenlibc-fexecve-20261103/{c-before-retry,c-final}/report.json; GNU/native byteparity, actualemptychroot/activefilters,4provider42 controls, original200spawn regressionbothmodes"
+          "artifacts": "vmi1149989:/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/report.json; live GNU/native byte parity, actual empty chroot, syscall controls, four provider42 negatives and original200spawn regression"
         },
         "structured_logs": {
           "status": "not_required"
@@ -18683,11 +18683,26 @@
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.22",
         "stream": "e2e",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
-          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test dlfcn_native_io_test --config 'build.fingerprint=\"content\"' -- --test-threads=1 --nocapture"
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test dlfcn_native_io_test --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
+          "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/3866d4532bcf30c0/out/dlfcn_native_io_test-3866d4532bcf30c0 --test-threads=1 --nocapture",
+          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/3866d4532bcf30c0/out/dlfcn_native_io_test-3866d4532bcf30c0 --test-threads=1 --nocapture"
         ],
-        "e2e_cmds": [],
+        "e2e_cmds": [
+          "env FRANKENLIBC_MODE=strict FLC_FDEXEC_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=strict FLC_FDEXEC_EXPECT_PROVIDER=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=strict FLC_FDEXEC_EXPECT_PROVIDER=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=strict FLC_FDEXEC_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=strict FLC_FDEXEC_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe",
+          "env FRANKENLIBC_MODE=strict FLC_FDEXEC_EXPECT_PROVIDER=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe",
+          "env FRANKENLIBC_MODE=hardened FLC_FDEXEC_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=hardened FLC_FDEXEC_EXPECT_PROVIDER=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=hardened FLC_FDEXEC_EXPECT_PROVIDER=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=hardened FLC_FDEXEC_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe --fd-exec /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/payload /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/jail",
+          "env FRANKENLIBC_MODE=hardened FLC_FDEXEC_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe",
+          "env FRANKENLIBC_MODE=hardened FLC_FDEXEC_EXPECT_PROVIDER=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/candidate.so /data/tmp/frankenlibc-fexecve-20261103/c-final-typed/probe"
+        ],
         "expected_assertions": [
           "Original runtime compiles and fails exposing gates with nonzero tests before repair; repaired full11native I/O parent tests pass both modes",
           "Real descriptor ELF image replacement verifies argv/env, CLOEXEC closure or inherited fd/O_PATH flags and offset; direct32comparisons with12successes",
@@ -18708,15 +18723,20 @@
           "vmi1152480:/data/tmp/frankenlibc-fexecve-20261103/final-record/record/receipt.json",
           "vmi1152480:/data/tmp/frankenlibc-fexecve-20261103/final-record/admit.stdout",
           "vmi1167313:/data/tmp/frankenlibc-fexecve-20261103/workspace-check/report.json",
-          "hz4:/data/tmp/frankenlibc-fexecve-20261103/metadata-final/report.json"
+          "hz4:/data/tmp/frankenlibc-fexecve-20261103/metadata-final/report.json",
+          "vmi1167313:/data/tmp/frankenlibc-fexecve-20261103/clippy-fixed/report.json",
+          "vmi1167313:/data/tmp/frankenlibc-fexecve-20261103/workspace-check-fixed/report.json",
+          "vmi1149989:/data/tmp/frankenlibc-fexecve-20261103/final-record-typed/record/receipt.json",
+          "hz4:/data/tmp/frankenlibc-fexecve-20261103/ubs-rust-details-typed/findings.jsonl",
+          "vmi1149989:/data/tmp/frankenlibc-fexecve-20261103/c-final-typed/report.json",
+          "vmi1149989:/data/tmp/frankenlibc-fexecve-20261103/final-record-typed/admit.stdout",
+          "vmi1153651:/data/tmp/frankenlibc-fexecve-20261103/metadata-final-typed/report.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "Strict fullworkspace Clippy result and complete-evidence publication/fulfilled closure pending"
-        ],
-        "notes": "Original native target3passed8failed and24direct mismatches per mode; originalreleaseGNU0/native13 bothmodes. Repaired full11target and freshSOLO replay each11passed0failed0ignored0filtered strict+hardened,32directcomparisons/12actualreplacements and32nativePLT/GOT replacements/mode. Release sourcec73e098f9d44f0e7770388bd203c9ddb3f33f65f compiled0/160.45s;24fexecve/16replacements/16errors/12execveat cases perprovider/mode, actualemptychroot/staticELF andrawfiltercontrols. FullGNU/native stdout+stderr byteequal,4wrongprovider42 controls, old200spawn failed0/slow=no/ENOENT1. Candidate57530f404fc43e2af1e6945b1b1a8d20967f095d76bb75495628b261a0741e78;probe c516270a87357d7486c3cdce9734b15aaa3ca847de1a53b62e1ccee4ccd363b9;payload2d420b1b47c23db048a1e5fb4300c3b4ecb6a00f5919020429e5ad21c595025b. Exact493input receipt2b85745be1ee7929df3f3720f60f9153a3abd714ed9bc14e271fe3ad79dfe887 compiler0/execution0/named1passed10filtered, separateadmit0 POST_TOTAL1/PASS1/FAIL0, executableac22dc17debfe87aed666382b16e0266971900af43d16aad43839d652c906012. Actualtestprofile/defaultfeatures/hardened, acceptance5aab9f34cd351113aa2db428845ff12ad7cde1d17d55b35fec532e537d8e6b3c and all493inputsunchanged. Foursemantic/docs source_commit reports exactc73 andall5canonicalgates0 including census58selfchecks. Alltargetworkspacecheck--keep-going0/433.80s andfmt0/37.41s on identicalruntime bytes before sourcecommit; strictClippy pending. Metadata producer changes onlydemonstratedhashes/2anchors/20lineidentifiers/actualcall-edge+1 perprofile, README121ABI Rustfiles226478lines. Preserve4730unknown/full0/18Stub/L0 and allunresolvedbroaderreadiness. UBSv5.5 rawscanexit1/2critical137warning197info/4files retained; existingRustanalyzer detail completed3files/2critical, unchangedpublicSIG_ERR/SIG_HOLD comparisons falselyclassifiedsecret, notsuppressed. WrapperignoredKEEP_TEMP andremovedprivatescratch; stoppedusingafterdiscovery, allcitedlogs/results retained. InitialCprobecompilecollision, staleanchorrefresh, unsupportedUBSflag and metadataKeyError retained/corrected, no fakegreen. Threeworksheets3283/3288/currenthonestycomment, freshSOLO noindependentattestation; scanner4minute detour frozen. No solverproofclaim (existing noSMTsolver warning), no newperformance/standalone/globalCI claim. All136prior matrixrows/schema unchanged. Sourcec73published/verifiedmain+mirror whileBeadstillopen; finalClippy/evidence publication precedes closure; parent7/37/44open14blocked.",
+        "close_blockers": [],
+        "notes": "fexecve now calls the existing execveat helper with AT_EMPTY_PATH. It falls back through procfs only on ENOSYS, renders the descriptor on the stack, and matches GNU invalid-argument and missing-procfs errors. Both execution interfaces bind to actual native ABI functions with their supported versions. Original exposing tests compiled and failed in both modes: 3 passed and 8 failed, with 24 direct mismatches out of 32 comparisons. The original release probe failed with exit13 while GNU passed. The initial repair c73 had full11 and actual release successes; those results and its receipt remain historical to c73. Strict Clippy later found two missing transmute annotations (exit101,1300.43s); explicit types were added and an observed formatter layout difference applied manually. No lint or assertion was relaxed. Final source 70556773f2988bcfcf30db74bc219f92764d3f26 includes those edits. The final full suite and fresh SOLO replay each pass all11 parent tests in strict and hardened modes. Each mode includes32 direct GNU comparisons with12 real image replacements, and32 actual native PLT/GOT replacements. Isolated child summaries, repeated modes and workers are not independent extra tests. The release matrix covers24 descriptor/policy fexecve cases (16 replacements,8 expected denials),16 separate invalid-argument cases and12 successful execveat cases per provider and mode. Full GNU/native stdout and stderr match, including actual empty-chroot execution with no procfs and independently checked active syscall fault injection. All4 wrong-provider controls return42. The original200-spawn regression passes for both providers in both modes. Final release build took 1098.74 seconds. Candidate SHA256 0149de95da1b8bc909f51d2a42b39aad671f2b15cb62779d9805514b20e7fb6b; probe c516270a87357d7486c3cdce9734b15aaa3ca847de1a53b62e1ccee4ccd363b9; static payload 2d420b1b47c23db048a1e5fb4300c3b4ecb6a00f5919020429e5ad21c595025b. Payload has no ELF interpreter, and actual imports require fexecve@GLIBC_2.2.5 and execveat@GLIBC_2.34. The worker GNU library hash matches the original worker; its actual before-run hash was observed separately, and the release controller records the after-run hash. Receipt SHA256 548152662406d275e82c16a0c8261fb9ac42da2ba74178d0e19ffcb5dd5f0817 binds493 inputs, source 70556773f2988bcfcf30db74bc219f92764d3f26, original acceptance5aab9f34cd351113aa2db428845ff12ad7cde1d17d55b35fec532e537d8e6b3c, actual default features and test profile on x86_64 in hardened mode. Compiler and execution exit0; named test result1passed,0failed,10filtered. The named test executes32 native replacements. Executable SHA256 5d507b35e561d6013067224adc96f0c35822a1d8721857e0e8689f0e4087e1b7. Separate admission returns0/POST_TOTAL1/PASS1/FAIL0. All493 inputs remain unchanged through the fresh replay. Full workspace/all-targets/keep-going check passed after the substantive annotation edit in395.56s; only formatter layout changed afterward. Full formatting then passed on the final705 source. Full workspace/all-targets/keep-going Clippy with -D warnings passed in 944.94s. All5 canonical metadata gates pass with4 semantic/docs reports explicitly bound to705; current census stdout shows58 self-checks. The previously copied51 count is corrected in3290. Metadata producers changed only demonstrated hashes,2 anchors, line identifiers and1 resolved call edge per profile. README reports the actual121 ABI Rust files/226478 lines;4730 unknown semantics,0 full semantics,18 Stub entries andL0 remain. UBS 5.5 original full scan remains nonclean:2 critical/137 warnings/197 informational findings over4 files. After the typing edits, retained detailed Rust analysis completed3 files with2 critical/137 warnings/169 informational findings and no analyzer errors. Both critical findings are unchanged public SIG_ERR/SIG_HOLD comparisons misclassified as secret comparisons; they are not suppressed. The old wrapper ignored KEEP_TEMP and removed private scratch; it was not invoked after this was discovered. All cited reports, failures, binaries and receipts are retained. Failed compiler/probe/format attempts, unsupported scanner option, incorrect helper path, SSH/namespace initialization failures and normal admission refusals are retained. Worker115 reached critical disk pressure; no cleanup, fleet/lock/cache override or local fallback was used. Compilation and replay moved to normally admitted workers. No timeout was widened. The first no-run build on the final worker took587.26s; no execution credit was assigned to that build alone. Worksheets3283/3288/3289, correction3290 and later execution comments document the bounded audit, its late timing, copied count and avoidable scanner detour. Verification is SOLO, without independent attestation. Existing no-SMT-solver and nix future-incompatibility diagnostics remain disclosed, with no solver-proof claim. All136 earlier matrix rows and schema remain unchanged. No performance, standalone or global-CI promotion is made. Parent.7, classification.37 and historical.44 remain open, and CI backend.14 remains blocked. Complete evidence is published before bounded closure; the bead remains in_progress until normal publication and branch-ref verification finish.",
         "result_receipts": [
-          "/data/tmp/frankenlibc-fexecve-20261103/final-record/record/receipt.json"
+          "/data/tmp/frankenlibc-fexecve-20261103/final-record-typed/record/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Execute fd-backed ELF through native fexecve/execveat, preserve GNU fallback/errors and bind real native plugin interfaces",
@@ -18732,7 +18752,7 @@
             "tests/integration/fixture_spawn_concurrent_fork.c"
           ],
           "source": {
-            "commit": "c73e098f9d44f0e7770388bd203c9ddb3f33f65f",
+            "commit": "70556773f2988bcfcf30db74bc219f92764d3f26",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -18866,7 +18886,7 @@
               "crates/frankenlibc-abi/src/wchar_abi.rs": "e023b9a9ab3f6c6e21c8a429c2e83cf6077ceb87102d8baf6088db0de5e4a23d",
               "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
               "crates/frankenlibc-abi/tests/conformance_diff_posix_fallocate.rs": "67e2fee832390a7375b7a96f4deffb12f2fbebf950ce21fbe7702264525a7af0",
-              "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs": "d88c4ab17153cb8424b481e7ef42fddef437e4f5f651bf6930aa0570a57284d3",
+              "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs": "7412c61788ec35c5252bcb8c571c142f1e53419ca4f5114a196dc9711c14ecff",
               "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs": "237951ddb20b684430569d1bfbab55e3351d80b4c1f19b37f28d67cc9eaa99a1",
               "crates/frankenlibc-abi/tests/global_resolver_test.rs": "0e6400d0dd96e664cca77fedfd9cc1f261b381453155ff6ca6271cd9f9fc4727",
               "crates/frankenlibc-core/Cargo.toml": "09d217439b597e7239feccd783faa0b78c7d40f323bfa67576e55777ac547b82",
@@ -19237,7 +19257,7 @@
               "default"
             ]
           },
-          "not_before": "2026-11-03T18:11:14.604292+00:00",
+          "not_before": "2026-11-03T18:49:17.167570+00:00",
           "gate": {
             "command": [
               "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/3866d4532bcf30c0/out/dlfcn_native_io_test-3866d4532bcf30c0",
