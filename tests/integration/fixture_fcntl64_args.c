@@ -183,7 +183,203 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
 }
 #undef META_CHECK
 
+void *flc_path_function(unsigned index) {
+    switch (index) {
+        case 0: return (void *)creat64;
+        case 1: return (void *)access;
+        case 2: return (void *)faccessat;
+        case 3: return (void *)getcwd;
+        case 4: return (void *)chdir;
+        case 5: return (void *)fchdir;
+        case 6: return (void *)readlink;
+        case 7: return (void *)readlinkat;
+        case 8: return (void *)free;
+        default: return NULL;
+    }
+}
+
+/* Restore through the independent caller even if the implementation under
+   test fails. Tests run in a child because cwd is process-wide. */
+typedef int (*path_restore)(int);
+#define PATH_CHECK(condition) do { if (!(condition)) { result = __LINE__; goto done; } } while (0)
+int flc_path_protocol(const char *directory, const char *file, const char *link,
+                      const char *missing, const char *created, int deep,
+                      const char *deep_name, int repairs, path_restore restore,
+                      unsigned counts[3]) {
+    int result = 0, saved = open(".", O_RDONLY | O_DIRECTORY);
+    int dir = open(directory, O_RDONLY | O_DIRECTORY), fd = open(file, O_RDONLY);
+    counts[0] = counts[1] = counts[2] = 0;
+    char bytes[8192], guard[8192];
+    memset(guard, 0xA5, sizeof guard);
+    PATH_CHECK(saved >= 0 && dir >= 0 && fd >= 0);
+    PATH_CHECK(chdir(directory) == 0); counts[0]++;
+    size_t length = strlen(directory);
+    memcpy(bytes, guard, sizeof bytes);
+    PATH_CHECK(getcwd(bytes, sizeof bytes) == bytes && strcmp(bytes, directory) == 0);
+    PATH_CHECK(memcmp(bytes + length + 1, guard + length + 1, sizeof bytes - length - 1) == 0); counts[0]++;
+    PATH_CHECK(getcwd(bytes, length + 1) == bytes && strcmp(bytes, directory) == 0); counts[0]++;
+    for (unsigned i = 0; i < 2; i++) {
+        char *allocated = getcwd(NULL, i ? sizeof bytes : 0);
+        int correct = allocated && strcmp(allocated, directory) == 0;
+        free(allocated); PATH_CHECK(correct); counts[0]++;
+    }
+    errno = 0; PATH_CHECK(getcwd(bytes, 0) == NULL && errno == EINVAL); counts[1]++;
+    memcpy(bytes, guard, sizeof bytes); errno = 0;
+    PATH_CHECK(getcwd(bytes, 1) == NULL && errno == ERANGE && memcmp(bytes, guard, sizeof bytes) == 0); counts[1]++;
+    errno = 0; PATH_CHECK(getcwd(NULL, 1) == NULL && errno == ERANGE); counts[1]++;
+    PATH_CHECK(fchdir(saved) == 0); counts[0]++;
+    PATH_CHECK(fchdir(dir) == 0); counts[0]++;
+    errno = 0; PATH_CHECK(chdir(file) == -1 && errno == ENOTDIR); counts[1]++;
+    errno = 0; PATH_CHECK(chdir(missing) == -1 && errno == ENOENT); counts[1]++;
+    errno = 0; PATH_CHECK(fchdir(fd) == -1 && errno == ENOTDIR); counts[1]++;
+    errno = 0; PATH_CHECK(fchdir(-1) == -1 && errno == EBADF); counts[1]++;
+    PATH_CHECK(getcwd(bytes, sizeof bytes) == bytes && strcmp(bytes, directory) == 0);
+    const int modes[] = {F_OK, R_OK, W_OK};
+    for (unsigned i = 0; i < 3; i++) { PATH_CHECK(access(file, modes[i]) == 0); counts[0]++; }
+    errno = 0; PATH_CHECK(access(file, X_OK) == -1 && errno == EACCES); counts[1]++;
+    errno = 0; PATH_CHECK(access(missing, F_OK) == -1 && errno == ENOENT); counts[1]++;
+    errno = 0;
+    if (repairs) { PATH_CHECK(access(file, INT_MIN) == 0); counts[2]++; }
+    else { PATH_CHECK(access(file, INT_MIN) == -1 && errno == EINVAL); counts[1]++; }
+    const int flags[] = {0, AT_EACCESS, AT_SYMLINK_NOFOLLOW};
+    for (unsigned i = 0; i < 3; i++) for (unsigned j = 0; j < 3; j++) {
+        PATH_CHECK(faccessat(dir, "data", modes[i], flags[j]) == 0); counts[0]++;
+    }
+    PATH_CHECK(faccessat(dir, "link", X_OK, AT_SYMLINK_NOFOLLOW) == 0); counts[0]++;
+    errno = 0; PATH_CHECK(faccessat(-1, "data", F_OK, 0) == -1 && errno == EBADF); counts[1]++;
+    errno = 0; PATH_CHECK(faccessat(dir, "missing", F_OK, 0) == -1 && errno == ENOENT); counts[1]++;
+    errno = 0; PATH_CHECK(faccessat(dir, "data", F_OK, INT_MIN) == -1 && errno == EINVAL); counts[1]++;
+    errno = 0; PATH_CHECK(faccessat(dir, "data", INT_MIN, 0) == -1 && errno == EINVAL); counts[1]++;
+    const size_t sizes[] = {1, 4, 32};
+    for (unsigned api = 0; api < 2; api++) {
+        for (unsigned i = 0; i < 3; i++) {
+            memcpy(bytes, guard, sizeof bytes); errno = 1234;
+            ssize_t n = api ? readlinkat(dir, "link", bytes, sizes[i]) : readlink(link, bytes, sizes[i]);
+            size_t want = sizes[i] < 4 ? sizes[i] : 4;
+            PATH_CHECK(n == (ssize_t)want && errno == 1234 && memcmp(bytes, "data", want) == 0);
+            PATH_CHECK(memcmp(bytes + want, guard + want, sizeof bytes - want) == 0); counts[0]++;
+        }
+        const char *paths[] = {api ? "link" : link, api ? "data" : file, api ? "missing" : missing};
+        const int errors[] = {EINVAL, EINVAL, ENOENT};
+        for (unsigned i = 0; i < 3; i++) {
+            memcpy(bytes, guard, sizeof bytes); errno = 0;
+            ssize_t n = api ? readlinkat(dir, paths[i], bytes, i ? sizeof bytes : 0)
+                            : readlink(paths[i], bytes, i ? sizeof bytes : 0);
+            PATH_CHECK(n == -1 && errno == errors[i] && memcmp(bytes, guard, sizeof bytes) == 0); counts[1]++;
+        }
+    }
+    errno = 0; PATH_CHECK(readlinkat(-1, "link", bytes, sizeof bytes) == -1 && errno == EBADF); counts[1]++;
+    int out = creat64(created, 0600); PATH_CHECK(out >= 0);
+    PATH_CHECK(write(out, "new", 3) == 3 && close(out) == 0);
+    out = open(created, O_RDONLY); PATH_CHECK(out >= 0);
+    ssize_t n = read(out, bytes, sizeof bytes);
+    int closed = close(out);
+    PATH_CHECK(n == 3 && memcmp(bytes, "new", 3) == 0 && closed == 0); counts[0]++;
+    PATH_CHECK(fchdir(deep) == 0); counts[0]++;
+    length = strlen(deep_name); PATH_CHECK(length > PATH_MAX && length + 1 < sizeof bytes);
+    PATH_CHECK(getcwd(bytes, sizeof bytes) == bytes && strcmp(bytes, deep_name) == 0); counts[0]++;
+    for (unsigned i = 0; i < 2; i++) {
+        char *allocated = getcwd(NULL, i ? sizeof bytes : 0);
+        int correct = allocated && strcmp(allocated, deep_name) == 0;
+        free(allocated); PATH_CHECK(correct); counts[0]++;
+    }
+    errno = 0; PATH_CHECK(getcwd(bytes, 1) == NULL && errno == ERANGE); counts[1]++;
+    PATH_CHECK(counts[0] == 31 && counts[1] == (repairs ? 21u : 22u) && counts[2] == (unsigned)repairs);
+done:
+    if (saved >= 0) {
+        if (restore(saved) != 0) result = __LINE__;
+        close(saved);
+    }
+    if (dir >= 0) close(dir);
+    if (fd >= 0) close(fd);
+    return result;
+}
+#undef PATH_CHECK
+
 #ifndef FLC_STAT_PLUGIN
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <stddef.h>
+#include <sys/prctl.h>
+
+static int path_kernel_restore(int fd) { return (int)syscall(SYS_fchdir, fd); }
+
+/* Fault injection into one child's faccessat2 only; other errors must never
+   be hidden by an unconditional fallback. This is not a security sandbox. */
+static int path_filter(int error) {
+    struct sock_filter code[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_faccessat2, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (unsigned)error),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
+    };
+    struct sock_fprog program = {(unsigned short)(sizeof code / sizeof *code), code};
+    return prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program);
+}
+
+static int path_provider(void) {
+    struct stat provider, actual;
+    const char *pin = getenv("FLC_PATH_EXPECT_PROVIDER");
+    if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &provider, 0) != 0) return 42;
+    for (unsigned i = 0; i < 10; i++) {
+        Dl_info info;
+        void *symbol = i == 9 ? (void *)__errno_location : flc_path_function(i);
+        if (!dladdr(symbol, &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) != 0 ||
+            provider.st_dev != actual.st_dev || provider.st_ino != actual.st_ino) return 42;
+    }
+    return 0;
+}
+
+static int path_edges(const char *jail, const char *file, const char *missing) {
+    struct edge { int setup, result, error; };
+    int failures = 0;
+    char *warm = getcwd(NULL, 0);
+    if (!warm) return 2;
+    free(warm);
+    for (unsigned i = 0; i < 6; i++) {
+        int ends[2];
+        if (pipe(ends) != 0) return 2;
+        pid_t child = fork();
+        if (child < 0) { close(ends[0]); close(ends[1]); return 2; }
+        if (child == 0) {
+            close(ends[0]);
+            struct edge out = {0, 0, 0};
+            if (i < 3) {
+                out.setup = chroot(jail);
+                if (!out.setup) {
+                    char bytes[8192]; errno = 0;
+                    char *answer = getcwd(i == 0 ? bytes : NULL, i == 1 ? 0 : sizeof bytes);
+                    out.error = errno; out.result = answer != NULL;
+                    if (i != 0) free(answer);
+                }
+            } else {
+                out.setup = path_filter(i == 5 ? EACCES : ENOSYS);
+                if (!out.setup) {
+                    errno = 0;
+                    out.result = faccessat(AT_FDCWD, i == 4 ? missing : file, F_OK, 0);
+                    out.error = errno;
+                }
+            }
+            ssize_t sent = write(ends[1], &out, sizeof out);
+            _exit(sent == sizeof out ? 0 : 2);
+        }
+        close(ends[1]);
+        struct edge out = {0, 0, 0};
+        ssize_t received = read(ends[0], &out, sizeof out);
+        close(ends[0]);
+        int status = 0;
+        if (waitpid(child, &status, 0) != child || received != sizeof out ||
+            !WIFEXITED(status) || WEXITSTATUS(status) != 0 || out.setup) return 2;
+        int correct = i < 3 ? out.result == 0 && out.error == ENOENT
+                    : i == 3 ? out.result == 0
+                    : out.result == -1 && out.error == (i == 4 ? ENOENT : EACCES);
+        printf("path edge %u: result=%d error=%d correct=%d\n", i, out.result, out.error, correct);
+        failures += !correct;
+    }
+    return failures ? 1 : 0;
+}
+
 static int metadata_kernel_reference(int dir, const char *path, struct stat *out, int flags) {
     return (int)syscall(SYS_newfstatat, dir, path, out, flags);
 }
@@ -400,6 +596,23 @@ static int allocation_contract(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 5 && strcmp(argv[1], "--path-edges") == 0) {
+        int provider = path_provider();
+        return provider ? provider : path_edges(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 8 && strcmp(argv[1], "--paths") == 0) {
+        int provider = path_provider();
+        if (provider) return provider;
+        char missing[PATH_MAX];
+        if (snprintf(missing, sizeof missing, "%s/missing", argv[2]) >= (int)sizeof missing) return 2;
+        unsigned counts[3];
+        const char *repairs = getenv("FLC_PATH_REPAIRS");
+        int result = flc_path_protocol(argv[2], argv[3], argv[4], missing, argv[7],
+                                       atoi(argv[5]), argv[6], repairs && strcmp(repairs, "1") == 0,
+                                       path_kernel_restore, counts);
+        printf("pathname protocol: line=%d success=%u errors=%u repairs=%u\n", result, counts[0], counts[1], counts[2]);
+        return result ? 1 : 0;
+    }
     if (argc == 5 && strcmp(argv[1], "--metadata") == 0) {
         struct stat provider, actual;
         const char *pin = getenv("FLC_STAT_EXPECT_PROVIDER");

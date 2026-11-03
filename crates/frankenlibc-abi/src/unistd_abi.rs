@@ -919,6 +919,16 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
         }
         match unsafe { syscall::sys_getcwd(alloc as *mut u8, alloc_size) } {
             Ok(_) => {
+                // Linux can return "(unreachable)..." when cwd is outside
+                // the process root. GNU getcwd requires an absolute path.
+                // SAFETY: successful getcwd initialized at least its first
+                // byte in this nonempty owned allocation; free consumes it.
+                if unsafe { *alloc } != b'/' as c_char {
+                    unsafe { crate::malloc_abi::free(alloc.cast()) };
+                    unsafe { set_abi_errno(errno::ENOENT) };
+                    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+                    return std::ptr::null_mut();
+                }
                 runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
                 return alloc;
             }
@@ -968,6 +978,13 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
     let effective_size = tracked_output_capacity(buf, size);
     match unsafe { syscall::sys_getcwd(buf as *mut u8, effective_size) } {
         Ok(_) => {
+            // SAFETY: syscall success initialized the first byte of the
+            // caller's writable buffer. Reject Linux's unreachable prefix.
+            if unsafe { *buf } != b'/' as c_char {
+                unsafe { set_abi_errno(errno::ENOENT) };
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+                return std::ptr::null_mut();
+            }
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
             buf
         }
@@ -2389,7 +2406,17 @@ pub unsafe extern "C" fn faccessat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_faccessat2(dirfd, path as *const u8, amode, flags) } {
+    // Older kernels (and syscall filters) may lack faccessat2. The original
+    // syscall has identical semantics only when no flags were requested.
+    // Never mask real permission failures or silently discard flag semantics.
+    // SAFETY: both calls borrow the same caller-provided NUL-terminated path.
+    let result = unsafe { syscall::sys_faccessat2(dirfd, path as *const u8, amode, flags) };
+    let result = if result == Err(errno::ENOSYS) && flags == 0 {
+        unsafe { syscall::sys_faccessat(dirfd, path as *const u8, amode) }
+    } else {
+        result
+    };
+    let rc = match result {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

@@ -7,7 +7,9 @@ use std::process::Command;
 use std::sync::atomic::AtomicI32;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use frankenlibc_abi::{dlfcn_abi as dl, errno_abi as errno, io_abi as io, unistd_abi as unistd};
+use frankenlibc_abi::{
+    dlfcn_abi as dl, errno_abi as errno, io_abi as io, malloc_abi as malloc, unistd_abi as unistd,
+};
 use frankenlibc_core::elf::ElfLoader;
 
 #[path = "common/dlsym_oracle.rs"]
@@ -177,6 +179,8 @@ uintptr_t io_thread_errno(int *arrived, int marker) {
 
 void *io_function(unsigned index) {
     extern void *flc_metadata_function(unsigned);
+    extern void *flc_path_function(unsigned);
+    if (index >= 46) return flc_path_function(index - 46);
     switch (index) {
         case 0: return (void *)__errno_location;
         case 1: return (void *)open;
@@ -247,7 +251,7 @@ __attribute__((destructor)) static void finalize(void) {
 }
 "#;
 
-fn symbols() -> [(&'static str, &'static str, *const ()); 46] {
+fn symbols() -> [(&'static str, &'static str, *const ()); 55] {
     [
         (
             "__errno_location",
@@ -319,6 +323,15 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 46] {
         ("lstat64", "GLIBC_2.33", unistd::lstat64 as *const ()),
         ("fstatat64", "GLIBC_2.33", unistd::fstatat64 as *const ()),
         ("statx", "GLIBC_2.28", unistd::statx as *const ()),
+        ("creat64", "GLIBC_2.2.5", unistd::creat64 as *const ()),
+        ("access", "GLIBC_2.2.5", unistd::access as *const ()),
+        ("faccessat", "GLIBC_2.4", unistd::faccessat as *const ()),
+        ("getcwd", "GLIBC_2.2.5", unistd::getcwd as *const ()),
+        ("chdir", "GLIBC_2.2.5", unistd::chdir as *const ()),
+        ("fchdir", "GLIBC_2.2.5", unistd::fchdir as *const ()),
+        ("readlink", "GLIBC_2.2.5", unistd::readlink as *const ()),
+        ("readlinkat", "GLIBC_2.4", unistd::readlinkat as *const ()),
+        ("free", "GLIBC_2.2.5", malloc::free as *const ()),
     ]
 }
 
@@ -479,6 +492,116 @@ fn addresses(api: Api, handle: *mut c_void) {
             assert_eq!(actual, unsafe { dlsym_oracle::host_addr(&name, expected) });
         }
     }
+}
+
+fn pathname_protocols(name: &str, got: bool) {
+    use std::os::fd::AsRawFd;
+
+    let Ok(provider) = std::env::var("FRANKENLIBC_PATH_CHILD") else {
+        let retained = std::env::temp_dir().join(format!(
+            "frankenlibc-path-parents-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&retained).unwrap();
+        for provider in ["host", "native"] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env("FRANKENLIBC_PATH_CHILD", provider)
+                .output()
+                .unwrap();
+            std::fs::write(retained.join(format!("{provider}.stdout")), &output.stdout).unwrap();
+            std::fs::write(retained.join(format!("{provider}.stderr")), &output.stderr).unwrap();
+            assert!(
+                output.status.success(),
+                "{provider}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        println!("pathname host/native protocol passed; retained {retained:?}");
+        return;
+    };
+    assert!(matches!(provider.as_str(), "host" | "native"));
+    let api = Api::new(provider == "native");
+    let fixture = Fixture::new(got);
+    std::fs::write(fixture.dir.join("data"), b"data").unwrap();
+    std::os::unix::fs::symlink("data", fixture.dir.join("link")).unwrap();
+    let mut deep = std::fs::File::open(&fixture.dir).unwrap();
+    let component = "d".repeat(200);
+    let mut deep_name = fixture.dir.clone();
+    for _ in 0..24 {
+        let child = PathBuf::from(format!("/proc/self/fd/{}", deep.as_raw_fd())).join(&component);
+        std::fs::create_dir(&child).unwrap();
+        deep = std::fs::File::open(&child).unwrap();
+        deep_name.push(&component);
+    }
+    let handle = api.open(&fixture.path);
+    addresses(api, handle);
+    type Restore = unsafe extern "C" fn(c_int) -> c_int;
+    type Run = unsafe extern "C" fn(
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        c_int,
+        *const c_char,
+        c_int,
+        Restore,
+        *mut u32,
+    ) -> c_int;
+    // SAFETY: both signatures match the C fixture. The independent GNU
+    // restore callback and retained deep descriptor outlive the invocation.
+    let (run, restore): (Run, Restore) = unsafe {
+        (
+            std::mem::transmute(api.symbol(handle, c"flc_path_protocol")),
+            dlsym_oracle::host_fn(c"fchdir", unistd::fchdir as *const ()),
+        )
+    };
+    let directory = CString::new(fixture.dir.as_os_str().as_bytes()).unwrap();
+    let deep_name = CString::new(deep_name.as_os_str().as_bytes()).unwrap();
+    let repairs = api.native && std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened");
+    let mut counts = [0; 3];
+    // SAFETY: all paths are live NUL-terminated strings; counts is writable
+    // storage for three unsigned integers. The child owns cwd changes.
+    let result = unsafe {
+        run(
+            directory.as_ptr(),
+            fixture.pathname("data").as_ptr(),
+            fixture.pathname("link").as_ptr(),
+            fixture.pathname("missing").as_ptr(),
+            fixture.pathname("created").as_ptr(),
+            deep.as_raw_fd(),
+            deep_name.as_ptr(),
+            c_int::from(repairs),
+            restore,
+            counts.as_mut_ptr(),
+        )
+    };
+    assert_eq!(result, 0, "C pathname protocol line; counts={counts:?}");
+    assert_eq!(
+        counts,
+        [31, if repairs { 21 } else { 22 }, u32::from(repairs)]
+    );
+    println!(
+        "{provider} pathname protocol: counts={counts:?}; retained {:?}",
+        fixture.dir
+    );
+    api.close(handle);
+}
+
+#[test]
+fn native_pathname_plt_protocol() {
+    pathname_protocols("native_pathname_plt_protocol", false);
+}
+
+#[test]
+fn native_pathname_got_protocol() {
+    pathname_protocols("native_pathname_got_protocol", true);
 }
 
 fn protocols(api: Api, got: bool) {

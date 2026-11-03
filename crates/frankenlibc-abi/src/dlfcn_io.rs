@@ -1,4 +1,4 @@
-//! Descriptor, file metadata and errno frontends for natively loaded plugins.
+//! Descriptor, pathname, file metadata and errno frontends for native plugins.
 //!
 //! Reuse the existing ABI implementations, including their cancellation,
 //! membrane, descriptor-offset tracking and errno behavior. In particular,
@@ -29,7 +29,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     // The newer *at and pipe2/dup3 interfaces predate AArch64's baseline,
     // but have their own compatibility versions on x86-64.
     let introduced = match name {
-        "openat" | "openat64" => "GLIBC_2.4",
+        "openat" | "openat64" | "faccessat" | "readlinkat" => "GLIBC_2.4",
         "pipe2" | "dup3" => "GLIBC_2.9",
         _ => "GLIBC_2.2.5",
     };
@@ -64,6 +64,14 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "openat" => unistd::openat as *const (),
         "openat64" => unistd::openat64 as *const (),
         "creat" => unistd::creat as *const (),
+        "creat64" => unistd::creat64 as *const (),
+        "access" => unistd::access as *const (),
+        "faccessat" => unistd::faccessat as *const (),
+        "getcwd" => unistd::getcwd as *const (),
+        "chdir" => unistd::chdir as *const (),
+        "fchdir" => unistd::fchdir as *const (),
+        "readlink" => unistd::readlink as *const (),
+        "readlinkat" => unistd::readlinkat as *const (),
         "read" => unistd::read as *const (),
         "write" => unistd::write as *const (),
         "close" => unistd::close as *const (),
