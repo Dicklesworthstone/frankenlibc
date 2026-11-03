@@ -1244,8 +1244,12 @@ fn native_descriptor_exec_plt_and_got_replace_images() {
             // checks above forbid host fallback for the native fixture.
             let (host, native): (FdExecute, FdExecute) = unsafe {
                 (
-                    std::mem::transmute(host_api.symbol(host_handle, name)),
-                    std::mem::transmute(native_api.symbol(handle, name)),
+                    std::mem::transmute::<*mut c_void, FdExecute>(
+                        host_api.symbol(host_handle, name),
+                    ),
+                    std::mem::transmute::<*mut c_void, FdExecute>(
+                        native_api.symbol(handle, name),
+                    ),
                 )
             };
             for form in 0..4 {
