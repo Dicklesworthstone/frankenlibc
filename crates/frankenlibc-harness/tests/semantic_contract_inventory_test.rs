@@ -337,7 +337,7 @@ fn declared_surface_covers_both_census_profiles_without_semantic_promotion() -> 
         "source inventory is not full semantic review",
     )?;
     ensure(
-        surface["source_tree_sha256"] == census["detector"]["source_tree_sha256"],
+        surface["census_source_tree_sha256"] == census["detector"]["source_tree_sha256"],
         "profile comparison requires the same source tree",
     )?;
     let groups = json_array(&surface["groups"], "export groups")?;

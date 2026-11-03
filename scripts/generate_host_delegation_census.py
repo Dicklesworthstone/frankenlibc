@@ -2528,7 +2528,7 @@ def build_semantic_export_surface(
     Raw declarations outside the two production profiles remain visible as
     configuration-unqualified candidates, not as observed dynamic exports.
     """
-    source_files = sorted(abi_source_dir.glob("*.rs"))
+    source_files = sorted(abi_source_dir.rglob("*.rs"))
     if not source_files or not (abi_source_dir / "lib.rs").is_file():
         raise ValueError("semantic export inventory requires the live ABI module root")
     raw_modules: dict[str, set[str]] = {}
@@ -2646,6 +2646,9 @@ def build_semantic_export_surface(
         "semantic_review_complete": False,
         "profiles": {profile.name: profile.to_json() for profile in CFG_PROFILES},
         "source_tree_sha256": source_tree_sha256(source_files, root),
+        "census_source_tree_sha256": source_tree_sha256(
+            sorted(abi_source_dir.glob("*.rs")), root
+        ),
         "version_script_sha256": file_sha256(version_script),
         "support_rows_sha256": hashlib.sha256(
             json.dumps(support_rows, sort_keys=True).encode()
