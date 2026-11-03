@@ -6,15 +6,23 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARTIFACT="${ROOT}/tests/conformance/semantic_contract_inventory.v1.json"
-SEED="${ROOT}/tests/conformance/support_semantic_overlay.v1.json"
+ARTIFACT="${FLC_SEMANTIC_INVENTORY_ARTIFACT:-${ROOT}/tests/conformance/semantic_contract_inventory.v1.json}"
+SEED="${FLC_SEMANTIC_INVENTORY_SEED:-${ROOT}/tests/conformance/support_semantic_overlay.v1.json}"
+REFRESH=0
+if [[ $# -eq 1 && "$1" == "--refresh-surface" ]]; then
+    REFRESH=1
+elif [[ $# -ne 0 ]]; then
+    echo "usage: $0 [--refresh-surface]" >&2
+    exit 2
+fi
 OUT_DIR="${ROOT}/target/conformance"
 REPORT="${OUT_DIR}/semantic_contract_inventory.report.json"
 LOG="${OUT_DIR}/semantic_contract_inventory.log.jsonl"
 
 mkdir -p "${OUT_DIR}"
 
-python3 - "${ROOT}" "${ARTIFACT}" "${SEED}" "${REPORT}" "${LOG}" <<'PY'
+python3 - "${ROOT}" "${ARTIFACT}" "${SEED}" "${REPORT}" "${LOG}" "${REFRESH}" <<'PY'
+import importlib.util
 import json
 import os
 import subprocess
@@ -27,6 +35,7 @@ artifact_path = Path(sys.argv[2])
 seed_path = Path(sys.argv[3])
 report_path = Path(sys.argv[4])
 log_path = Path(sys.argv[5])
+refresh_surface = sys.argv[6] == "1"
 
 errors = []
 checks = {}
@@ -41,6 +50,37 @@ def load_json(path):
 
 artifact = load_json(artifact_path)
 seed = load_json(seed_path)
+support = load_json(root / "support_matrix.json")
+
+# Reuse the cfg/attribute/generated-export parser used by the host census.
+# Presence, taxonomy and nearby tests never establish semantic parity here.
+surface = None
+try:
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location(
+        "semantic_source_census", root / "scripts/generate_host_delegation_census.py"
+    )
+    source_census = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = source_census
+    spec.loader.exec_module(source_census)
+    surface = source_census.build_semantic_export_surface(
+        root,
+        root / "crates/frankenlibc-abi/src",
+        root / "crates/frankenlibc-abi/version_scripts/libc.map",
+        support,
+        artifact,
+    )
+    if refresh_surface:
+        artifact["export_surface"] = surface
+        artifact_path.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+    if artifact.get("export_surface") != surface:
+        errors.append("exhaustive_export_surface: missing, stale, incomplete or promoted export groups; review inputs then --refresh-surface")
+        checks["exhaustive_export_surface"] = "fail"
+    else:
+        checks["exhaustive_export_surface"] = "pass"
+except Exception as exc:
+    errors.append(f"exhaustive_export_surface: {exc}")
+    checks["exhaustive_export_surface"] = "fail"
 
 if artifact is None or seed is None:
     checks["json_parse"] = "fail"
@@ -147,7 +187,6 @@ try:
         ["git", "rev-parse", "HEAD"],
         cwd=root,
         text=True,
-        stderr=subprocess.DEVNULL,
     ).strip()
 except Exception:
     source_commit = "unknown"
@@ -163,6 +202,8 @@ report = {
     "seed_overlay_covered": len(inventory_seed_ids & seed_ids),
     "semantic_class_counts": dict(class_counts),
     "source_path_counts": dict(source_counts),
+    "export_surface_summary": surface.get("summary", {}) if surface else {},
+    "semantic_review_complete": False,
     "errors": errors,
     "artifact_refs": [
         "tests/conformance/semantic_contract_inventory.v1.json",
