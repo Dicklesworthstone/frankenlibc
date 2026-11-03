@@ -69,6 +69,13 @@ int io_file_protocol(const char *directory, const char *pathname) {
     return 0;
 }
 
+int io_fexecve_execute(int fd, char *const argv[], char *const envp[]) {
+    return fexecve(fd, argv, envp);
+}
+int io_execveat_execute(int fd, char *const argv[], char *const envp[]) {
+    return execveat(fd, "", argv, envp, AT_EMPTY_PATH);
+}
+
 int io_descriptor_protocol(const char *pathname) {
     int fd = open(pathname, O_CREAT | O_TRUNC | O_RDWR, 0600); CHECK(fd >= 0);
     /* Exercise genuinely variadic calls with no argument, an integer, and
@@ -205,6 +212,8 @@ void *io_function(unsigned index) {
         case 32: return (void *)posix_fadvise64;
         case 33: return (void *)posix_fallocate;
         case 34: return (void *)posix_fallocate64;
+        case 35: return (void *)fexecve;
+        case 36: return (void *)execveat;
         default: return 0;
     }
 }
@@ -237,7 +246,7 @@ __attribute__((destructor)) static void finalize(void) {
 }
 "#;
 
-fn symbols() -> [(&'static str, &'static str, *const ()); 35] {
+fn symbols() -> [(&'static str, &'static str, *const ()); 37] {
     [
         (
             "__errno_location",
@@ -298,6 +307,8 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 35] {
             "GLIBC_2.2.5",
             unistd::posix_fallocate64 as *const (),
         ),
+        ("fexecve", "GLIBC_2.2.5", unistd::fexecve as *const ()),
+        ("execveat", "GLIBC_2.34", unistd::execveat as *const ()),
     ]
 }
 
@@ -511,7 +522,12 @@ fn io_runtime_dynamic_versions_match_direct_providers() {
                     );
                     assert_eq!(error, 0);
                 }
-                for rejected in [c"GLIBC_2.34", c"FRANKENLIBC_IO_MISSING_VERSION"] {
+                let wrong = if name.as_bytes() == b"execveat" {
+                    c"GLIBC_2.2.5"
+                } else {
+                    c"GLIBC_2.34"
+                };
+                for rejected in [wrong, c"FRANKENLIBC_IO_MISSING_VERSION"] {
                     let mut error = -1;
                     assert!(
                         unsafe { dynamic(name.as_ptr(), rejected.as_ptr(), &mut error) }.is_null()
@@ -1129,6 +1145,320 @@ fn posix_fallocate_aliases_match_host_ranges_and_errors() {
     println!(
         "posix allocation contract: {observations} comparisons, {successes} successes passed; retained {dir:?}"
     );
+}
+
+#[test]
+fn fexecve_matches_host_for_descriptor_execution() {
+    let f = FdExecFixture::new();
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    // SAFETY: the resolver checks that these GNU addresses differ from ours;
+    // the signatures are the exact LP64 C interfaces used by the fixture.
+    let (host, host_errno): (FdExecute, Errno) = unsafe {
+        (
+            dlsym_oracle::host_fn(c"fexecve", unistd::fexecve as *const ()),
+            dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()),
+        )
+    };
+    let mut transcript = String::new();
+    let mut mismatches = Vec::new();
+    let mut cases = 0;
+    let mut successes = 0;
+    for form in 0..4 {
+        for policy in 0..4 {
+            let expected = f.observe(host, host_errno, form, policy, 0);
+            expected.check(
+                form,
+                if policy == 3 {
+                    Some(libc::EACCES)
+                } else {
+                    None
+                },
+            );
+            let actual = f.observe(unistd::fexecve, errno::__errno_location, form, policy, 0);
+            transcript.push_str(&format!(
+                "form={form} policy={policy}: GNU={expected:?} native={actual:?}\n"
+            ));
+            if actual != expected {
+                mismatches.push(format!(
+                    "form={form} policy={policy}: {actual:?} != {expected:?}"
+                ));
+            }
+            successes += usize::from(policy != 3);
+            cases += 1;
+        }
+        for invalid in 1..=4 {
+            let expected = f.observe(host, host_errno, form, 0, invalid);
+            expected.check(
+                form,
+                Some(if invalid == 4 {
+                    libc::EBADF
+                } else {
+                    libc::EINVAL
+                }),
+            );
+            let actual = f.observe(unistd::fexecve, errno::__errno_location, form, 0, invalid);
+            transcript.push_str(&format!(
+                "form={form} invalid={invalid}: GNU={expected:?} native={actual:?}\n"
+            ));
+            if actual != expected {
+                mismatches.push(format!(
+                    "form={form} invalid={invalid}: {actual:?} != {expected:?}"
+                ));
+            }
+            cases += 1;
+        }
+    }
+    std::fs::write(f.dir.join("direct-observations.txt"), transcript).unwrap();
+    assert_eq!((cases, successes), (32, 12));
+    assert!(
+        mismatches.is_empty(),
+        "{} descriptor-exec mismatches:\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+    println!(
+        "fd exec direct: {cases} comparisons, {successes} image replacements passed; retained {:?}",
+        f.dir
+    );
+}
+
+#[test]
+fn native_descriptor_exec_plt_and_got_replace_images() {
+    let f = FdExecFixture::new();
+    let host_api = Api::new(false);
+    let host_fixture = Fixture::new(false);
+    let host_handle = host_api.open(&host_fixture.path);
+    // SAFETY: the lookup is the exact GNU errno interface, not our own provider.
+    let host_errno: unsafe extern "C" fn() -> *mut c_int =
+        unsafe { dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()) };
+    let mut cases = 0;
+    let mut transcript = String::new();
+    for got in [false, true] {
+        let native_api = Api::new(true);
+        let native_fixture = Fixture::new(got);
+        let handle = native_api.open(&native_fixture.path);
+        addresses(native_api, handle);
+        for name in [c"io_fexecve_execute", c"io_execveat_execute"] {
+            // SAFETY: both fixture exports have FdExecute's exact signature.
+            // The host fixture resolves GNU imports; native handle/address
+            // checks above forbid host fallback for the native fixture.
+            let (host, native): (FdExecute, FdExecute) = unsafe {
+                (
+                    std::mem::transmute(host_api.symbol(host_handle, name)),
+                    std::mem::transmute(native_api.symbol(handle, name)),
+                )
+            };
+            for form in 0..4 {
+                for policy in 0..2 {
+                    let expected = f.observe(host, host_errno, form, policy, 0);
+                    let actual = f.observe(native, errno::__errno_location, form, policy, 0);
+                    expected.check(form, None);
+                    actual.check(form, None);
+                    transcript.push_str(&format!("got={got} name={name:?} form={form} policy={policy}: GNU={expected:?} native={actual:?}\n"));
+                    assert_eq!(actual, expected);
+                    cases += 1;
+                }
+            }
+        }
+        native_api.close(handle);
+    }
+    host_api.close(host_handle);
+    std::fs::write(f.dir.join("native-observations.txt"), transcript).unwrap();
+    assert_eq!(cases, 32);
+    println!(
+        "native fd exec: {cases} actual PLT/GOT image replacements passed; retained {:?}",
+        f.dir
+    );
+}
+
+type FdExecute = unsafe extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int;
+
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+struct FdExecObservation {
+    status: c_int,
+    returned: c_int,
+    result: c_int,
+    error: c_int,
+    stage: c_int,
+    flags: c_int,
+    position: libc::c_long,
+    output: [u8; 64],
+}
+impl FdExecObservation {
+    fn check(&self, form: c_int, error: Option<c_int>) {
+        assert_eq!(
+            self.stage, 0,
+            "kernel fixture precondition failed: {self:?}"
+        );
+        assert_eq!(self.flags, form & 1, "parent CLOEXEC changed");
+        assert_eq!(
+            self.position,
+            if form & 2 != 0 { -1 } else { 7 },
+            "parent position changed"
+        );
+        if let Some(error) = error {
+            assert_eq!(
+                (self.status, self.returned, self.result, self.error),
+                (0, 1, -1, error)
+            );
+            assert_eq!(self.output, [0; 64]);
+        } else {
+            assert_eq!(
+                (self.status, self.returned, self.result, self.error),
+                (37 << 8, 0, 0, 0)
+            );
+            assert_eq!(&self.output[..19], b"FD_EXEC_PAYLOAD_OK\n");
+            assert!(self.output[19..].iter().all(|&b| b == 0));
+        }
+    }
+}
+
+type FdObserve = unsafe extern "C" fn(
+    FdExecute,
+    unsafe extern "C" fn() -> *mut c_int,
+    *const c_char,
+    *const c_char,
+    c_int,
+    c_int,
+    c_int,
+    *mut FdExecObservation,
+) -> c_int;
+
+struct FdExecFixture {
+    dir: PathBuf,
+    payload: CString,
+    api: Api,
+    handle: *mut c_void,
+    observe_fn: FdObserve,
+}
+impl FdExecFixture {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "frankenlibc-fd-exec-retained-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/integration/fixture_spawn_concurrent_fork.c");
+        let payload = dir.join("payload");
+        let library = dir.join("protocol.so");
+        for (name, flags, output) in [
+            (
+                "payload",
+                vec![
+                    "-DFLC_FDEXEC_STATIC_PAYLOAD",
+                    "-ffreestanding",
+                    "-fno-stack-protector",
+                    "-fno-pie",
+                    "-no-pie",
+                    "-nostdlib",
+                    "-static",
+                ],
+                &payload,
+            ),
+            (
+                "protocol",
+                vec![
+                    "-DFLC_FDEXEC_LIBRARY",
+                    "-shared",
+                    "-fPIC",
+                    "-pthread",
+                    "-ldl",
+                ],
+                &library,
+            ),
+        ] {
+            let args = Command::new("gcc")
+                .args(["-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin"])
+                .args(flags)
+                .arg(&source)
+                .arg("-o")
+                .arg(output)
+                .output()
+                .unwrap();
+            std::fs::write(dir.join(format!("{name}.build.stdout")), &args.stdout).unwrap();
+            std::fs::write(dir.join(format!("{name}.build.stderr")), &args.stderr).unwrap();
+            assert!(
+                args.status.success(),
+                "gcc {name}: {}",
+                String::from_utf8_lossy(&args.stderr)
+            );
+        }
+        let headers = Command::new("readelf")
+            .args(["-l", "--wide"])
+            .arg(&payload)
+            .output()
+            .unwrap();
+        std::fs::write(dir.join("payload.headers"), &headers.stdout).unwrap();
+        assert!(headers.status.success());
+        assert!(
+            !String::from_utf8_lossy(&headers.stdout).contains("INTERP"),
+            "proc-free payload must have no interpreter"
+        );
+        let api = Api::new(false);
+        let handle = api.open(&library);
+        // SAFETY: the C fixture's observed struct and callback types exactly
+        // match their repr(C)/extern-C definitions above and outlive each call.
+        let observe_fn: FdObserve =
+            unsafe { std::mem::transmute(api.symbol(handle, c"fl_fdexec_observe")) };
+        let payload = CString::new(payload.as_os_str().as_bytes()).unwrap();
+        Self {
+            dir,
+            payload,
+            api,
+            handle,
+            observe_fn,
+        }
+    }
+    fn observe(
+        &self,
+        execute: FdExecute,
+        error_slot: unsafe extern "C" fn() -> *mut c_int,
+        form: c_int,
+        policy: c_int,
+        invalid: c_int,
+    ) -> FdExecObservation {
+        let mut out = FdExecObservation {
+            status: 0,
+            returned: 0,
+            result: 0,
+            error: 0,
+            stage: 0,
+            flags: 0,
+            position: 0,
+            output: [0; 64],
+        };
+        // SAFETY: callbacks remain loaded, the filename is NUL-terminated,
+        // output is writable repr(C) storage, and this unprivileged profile
+        // uses only policies 0..4 (no chroot). The fixture waits for its child.
+        assert_eq!(
+            unsafe {
+                (self.observe_fn)(
+                    execute,
+                    error_slot,
+                    self.payload.as_ptr(),
+                    std::ptr::null(),
+                    form,
+                    policy,
+                    invalid,
+                    &mut out,
+                )
+            },
+            0,
+            "descriptor-exec fixture setup"
+        );
+        out
+    }
+}
+impl Drop for FdExecFixture {
+    fn drop(&mut self) {
+        self.api.close(self.handle);
+    }
 }
 
 #[test]

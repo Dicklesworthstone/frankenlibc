@@ -23127,36 +23127,80 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
 
 /// POSIX `fexecve` — execute file by fd.
 ///
-/// Native implementation: builds `/proc/self/fd/<fd>` path and delegates to `execve` syscall.
+/// Uses `execveat(AT_EMPTY_PATH)` so descriptor execution needs no procfs.
+/// Only an unavailable syscall falls back to `/proc/self/fd/<fd>`, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fexecve(
     fd: c_int,
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    if fd < 0 {
-        unsafe { set_abi_errno(libc::EBADF) };
+    if fd < 0 || argv.is_null() || envp.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    // Build /proc/self/fd/<fd> path
+    // SAFETY: the empty path is terminated; the kernel validates the fd and
+    // reads the caller-provided, terminated argv/envp vectors under exec's
+    // normal C ABI preconditions. No caller memory is dereferenced here.
+    match unsafe {
+        syscall::sys_execveat(
+            fd,
+            c"".as_ptr().cast(),
+            argv.cast(),
+            envp.cast(),
+            libc::AT_EMPTY_PATH,
+        )
+    } {
+        Ok(()) => unreachable!("execveat only returns on failure"),
+        Err(libc::ENOSYS) => {}
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    }
+
+    // The nonnegative C int needs at most ten decimal digits. Render on the
+    // stack: descriptor execution must not allocate while falling back.
     let mut buf = [0u8; 64];
     let prefix = b"/proc/self/fd/";
     buf[..prefix.len()].copy_from_slice(prefix);
-    let fd_str = format!("{fd}");
-    let fd_bytes = fd_str.as_bytes();
-    buf[prefix.len()..prefix.len() + fd_bytes.len()].copy_from_slice(fd_bytes);
-    // NUL terminate (already 0-initialized)
-    let path = buf.as_ptr() as *const c_char;
-    match unsafe {
-        syscall::sys_execve(
-            path as *const u8,
-            argv as *const *const u8,
-            envp as *const *const u8,
-        )
-    } {
+    let mut digits = [0u8; 10];
+    let mut start = digits.len();
+    let mut remaining = fd as u32;
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+        if remaining == 0 {
+            break;
+        }
+    }
+    let digits = &digits[start..];
+    buf[prefix.len()..prefix.len() + digits.len()].copy_from_slice(digits);
+    // SAFETY: buf has a trailing NUL and remains live throughout the syscall;
+    // the caller vectors have the same preconditions as the execveat attempt.
+    match unsafe { syscall::sys_execve(buf.as_ptr(), argv.cast(), envp.cast()) } {
         Ok(()) => unreachable!("execve only returns on failure"),
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
+        Err(error) => {
+            let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: the literal is terminated and stat is writable storage
+            // of the kernel's LP64 stat layout. Its contents are never read.
+            let proc_status = unsafe {
+                syscall::sys_newfstatat(
+                    libc::AT_FDCWD,
+                    c"/proc/self/fd".as_ptr().cast(),
+                    stat.as_mut_ptr().cast(),
+                    0,
+                )
+            };
+            // glibc reports syscall unavailability when the legacy fallback
+            // also lacks procfs; otherwise preserve execve's original error.
+            let error = if proc_status == Err(libc::ENOENT) {
+                libc::ENOSYS
+            } else {
+                error
+            };
+            unsafe { set_abi_errno(error) };
             -1
         }
     }

@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 121,
-    "source_tree_sha256": "571c6cc35772322295844fe888671c73cce695638ec27b2cbe96b8acaf279623",
+    "source_tree_sha256": "c8a067dcf21a5e1212ec8cac22195fb70d78002b9ee29970d7a12b5c782136ff",
     "version": 16
   },
   "module_census": [
@@ -13094,7 +13094,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18056,
+      "resolved_call_edge_count": 18057,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1681,
@@ -14307,11 +14307,11 @@
             "unistd_abi::new@20645",
             "unistd_abi::new@20861",
             "unistd_abi::new@21754",
-            "unistd_abi::new@24087",
-            "unistd_abi::new@24543",
-            "unistd_abi::new@24762",
-            "unistd_abi::new@28276",
-            "unistd_abi::new@28562"
+            "unistd_abi::new@24131",
+            "unistd_abi::new@24587",
+            "unistd_abi::new@24806",
+            "unistd_abi::new@28320",
+            "unistd_abi::new@28606"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16311",
           "id": "interpose-release-linux-x86_64:unistd_abi:addmntent:16263:unknown:001",
@@ -14356,11 +14356,11 @@
             "unistd_abi::new@20645",
             "unistd_abi::new@20861",
             "unistd_abi::new@21754",
-            "unistd_abi::new@24087",
-            "unistd_abi::new@24543",
-            "unistd_abi::new@24762",
-            "unistd_abi::new@28276",
-            "unistd_abi::new@28562"
+            "unistd_abi::new@24131",
+            "unistd_abi::new@24587",
+            "unistd_abi::new@24806",
+            "unistd_abi::new@28320",
+            "unistd_abi::new@28606"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:21956",
           "id": "interpose-release-linux-x86_64:unistd_abi:fts_build_children_list:21948:unknown:001",
@@ -14382,11 +14382,11 @@
             "unistd_abi::new@20645",
             "unistd_abi::new@20861",
             "unistd_abi::new@21754",
-            "unistd_abi::new@24087",
-            "unistd_abi::new@24543",
-            "unistd_abi::new@24762",
-            "unistd_abi::new@28276",
-            "unistd_abi::new@28562"
+            "unistd_abi::new@24131",
+            "unistd_abi::new@24587",
+            "unistd_abi::new@24806",
+            "unistd_abi::new@28320",
+            "unistd_abi::new@28606"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22090",
           "id": "interpose-release-linux-x86_64:unistd_abi:fts_read:22055:unknown:001",
@@ -14408,11 +14408,11 @@
             "unistd_abi::new@20645",
             "unistd_abi::new@20861",
             "unistd_abi::new@21754",
-            "unistd_abi::new@24087",
-            "unistd_abi::new@24543",
-            "unistd_abi::new@24762",
-            "unistd_abi::new@28276",
-            "unistd_abi::new@28562"
+            "unistd_abi::new@24131",
+            "unistd_abi::new@24587",
+            "unistd_abi::new@24806",
+            "unistd_abi::new@28320",
+            "unistd_abi::new@28606"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16208",
           "id": "interpose-release-linux-x86_64:unistd_abi:getmntent_r_for_caller:16198:unknown:001",
@@ -19474,7 +19474,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17849,
+      "resolved_call_edge_count": 17850,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 592,
@@ -20392,7 +20392,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/dlfcn_io.rs",
-      "sha256": "7257745581010630a35327ce2e4b8bca40487e2c85a277e499d8d19000195f8b"
+      "sha256": "5e0b6be126403e13bdba1b03deacf85764874c119b9252a2a02584528753c36f"
     },
     {
       "path": "crates/frankenlibc-abi/src/dlfcn_lifecycle.rs",
@@ -20788,7 +20788,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "sha256": "9c6730f6797e46e9b827b91ab74a7d4a86751730d82ac0475da66c421e035836"
+      "sha256": "ff4fff92b55675f95d2c8ac711cd20e48e75962101c854d16ee3aa0b048a3589"
     },
     {
       "path": "crates/frankenlibc-abi/src/util.rs",

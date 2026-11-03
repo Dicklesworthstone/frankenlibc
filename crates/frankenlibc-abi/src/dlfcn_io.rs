@@ -36,6 +36,9 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     let supported = if name == "fcntl64" {
         // The exported large-file alias postdates both architecture baselines.
         "GLIBC_2.28"
+    } else if name == "execveat" {
+        // Added after both architecture baselines.
+        "GLIBC_2.34"
     } else if cfg!(target_arch = "aarch64") {
         "GLIBC_2.17"
     } else {
@@ -87,6 +90,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "posix_fadvise64" => unistd::posix_fadvise64 as *const (),
         "posix_fallocate" => unistd::posix_fallocate as *const (),
         "posix_fallocate64" => unistd::posix_fallocate64 as *const (),
+        "fexecve" => unistd::fexecve as *const (),
+        "execveat" => unistd::execveat as *const (),
         _ => return None,
     };
     Some(address as usize as u64)

@@ -247,7 +247,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 26812,
+      "source_line": 26856,
       "line_marker": "pub unsafe extern \"C\" fn argp_help(",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -411,7 +411,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 30717,
+      "source_line": 30761,
       "line_marker": "/// GNU asynchronous name/service resolution using the native resolver.",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -615,10 +615,10 @@
         }
       }
     },
-    "source_tree_sha256": "571c6cc35772322295844fe888671c73cce695638ec27b2cbe96b8acaf279623",
+    "source_tree_sha256": "c8a067dcf21a5e1212ec8cac22195fb70d78002b9ee29970d7a12b5c782136ff",
     "version_script_sha256": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
     "support_rows_sha256": "2a5959cdc7bba469d56ee7d8e5c0e561851e6cf9e77343719b266d8547e48f48",
-    "contract_rows_sha256": "906fee91fd4a631b0877e8115989978dbf034d2c455381fda557be3da5fb747b",
+    "contract_rows_sha256": "bb571607e2cde05eab29188144faa5af2bc49e3a2682263f00add32fe950429e",
     "summary": {
       "declared_symbol_count": 4730,
       "raw_source_symbol_count": 4720,
