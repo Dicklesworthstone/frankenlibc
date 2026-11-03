@@ -13931,18 +13931,11 @@ pub(crate) unsafe fn lockf_cp(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int 
         return -1;
     }
 
-    let start = match syscall::sys_lseek(fd, 0, unistd_core::SEEK_CUR) {
-        Ok(pos) => pos,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-            return -1;
-        }
-    };
-
+    // Let fcntl resolve SEEK_CUR rather than pre-seeking, which rejects valid
+    // nonseekable locks and masks invalid-command errors.
+    // SAFETY: flock contains only integer fields, so an all-zero value is valid.
     let mut lock: libc::flock = unsafe { std::mem::zeroed() };
-    lock.l_whence = libc::SEEK_SET as libc::c_short;
-    lock.l_start = start as libc::off_t;
+    lock.l_whence = libc::SEEK_CUR as libc::c_short;
     lock.l_len = len;
 
     let rc = match cmd {
@@ -13971,7 +13964,7 @@ pub(crate) unsafe fn lockf_cp(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int 
             }
         }
         LOCKF_TEST => {
-            lock.l_type = libc::F_WRLCK as libc::c_short;
+            lock.l_type = libc::F_RDLCK as libc::c_short;
             match unsafe {
                 crate::pthread_abi::at_cancellation_point(|| {
                     syscall::sys_fcntl(fd, libc::F_GETLK, (&mut lock as *mut libc::flock) as usize)

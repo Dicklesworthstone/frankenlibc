@@ -702,13 +702,25 @@ fn lockf_aliases_match_host_locks_and_errors() {
         lock.l_whence = libc::SEEK_SET as _;
         if role == "probe" {
             lock.l_type = libc::F_WRLCK as _;
-            assert_eq!(unsafe { fcntl(file.as_raw_fd(), libc::F_GETLK, &mut lock) }, 0);
-            println!("LOCKF_RANGE={},{},{},{}", lock.l_type, lock.l_start, lock.l_len, lock.l_pid);
+            // SAFETY: the live fd and initialized flock satisfy F_GETLK.
+            assert_eq!(
+                unsafe { fcntl(file.as_raw_fd(), libc::F_GETLK, &mut lock) },
+                0
+            );
+            println!(
+                "LOCKF_RANGE={},{},{},{}",
+                lock.l_type, lock.l_start, lock.l_len, lock.l_pid
+            );
         } else {
             assert!(matches!(role.as_str(), "read" | "write"));
-            lock.l_type = (if role == "read" { libc::F_RDLCK } else { libc::F_WRLCK }) as _;
+            lock.l_type = (if role == "read" {
+                libc::F_RDLCK
+            } else {
+                libc::F_WRLCK
+            }) as _;
             lock.l_start = 7;
             lock.l_len = 4;
+            // SAFETY: F_SETLK consumes the initialized request synchronously.
             assert_eq!(unsafe { fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) }, 0);
             println!("LOCKF_READY");
             std::io::stdout().flush().unwrap();
@@ -722,19 +734,33 @@ fn lockf_aliases_match_host_locks_and_errors() {
     let dir = std::env::temp_dir().join(format!(
         "frankenlibc-lockf-retained-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir(&dir).unwrap();
     let path = dir.join("data");
     let mut file = std::fs::OpenOptions::new()
-        .create_new(true).read(true).write(true).open(&path).unwrap();
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
     file.write_all(b"0123456789abcdef").unwrap();
     let readonly = std::fs::File::open(&path).unwrap();
     let mut ends = [-1; 2];
     // SAFETY: ends has room for both new descriptors, immediately owned below.
     assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
-    let (reader, writer) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
-    assert_eq!(unsafe { libc::write(writer.as_raw_fd(), c"q".as_ptr().cast(), 1) }, 1);
+    // SAFETY: successful pipe returned two distinct, exclusively owned fds.
+    let (reader, writer) =
+        unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+    // SAFETY: writer is live and the constant has at least one readable byte.
+    assert_eq!(
+        unsafe { libc::write(writer.as_raw_fd(), c"q".as_ptr().cast(), 1) },
+        1
+    );
+    // SAFETY: duplicate a live fd, then close only the new owned duplicate.
     let closed = unsafe { libc::dup(reader.as_raw_fd()) };
     assert!(closed >= 0);
     assert_eq!(unsafe { libc::close(closed) }, 0);
@@ -746,8 +772,11 @@ fn lockf_aliases_match_host_locks_and_errors() {
         let mut lock: libc::flock = unsafe { std::mem::zeroed() };
         lock.l_type = libc::F_UNLCK as _;
         lock.l_whence = libc::SEEK_SET as _;
+        // SAFETY: file remains open and lock specifies a whole-file unlock.
         assert_eq!(unsafe { fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) }, 0);
+        // SAFETY: both seeks operate on live regular-file descriptors.
         assert_eq!(unsafe { seek(file.as_raw_fd(), 7, libc::SEEK_SET) }, 7);
+        // SAFETY: readonly is live; seeking does not require write access.
         assert_eq!(unsafe { seek(readonly.as_raw_fd(), 7, libc::SEEK_SET) }, 7);
     };
     let mut mismatches = Vec::new();
@@ -757,9 +786,12 @@ fn lockf_aliases_match_host_locks_and_errors() {
         ("lockf64", unistd::lockf64 as Lock, host64),
     ] {
         for (kind, fd) in [
-            ("regular", file.as_raw_fd()), ("readonly", readonly.as_raw_fd()),
-            ("pipe-reader", reader.as_raw_fd()), ("pipe-writer", writer.as_raw_fd()),
-            ("invalid", -1), ("closed", closed),
+            ("regular", file.as_raw_fd()),
+            ("readonly", readonly.as_raw_fd()),
+            ("pipe-reader", reader.as_raw_fd()),
+            ("pipe-writer", writer.as_raw_fd()),
+            ("invalid", -1),
+            ("closed", closed),
         ] {
             for command in [-1, 0, 1, 2, 3, 4, c_int::MIN, c_int::MAX] {
                 for length in [-3, 0, 4] {
@@ -772,13 +804,19 @@ fn lockf_aliases_match_host_locks_and_errors() {
                             *slot = 0;
                             let rc = function(fd, command, length);
                             let error = if rc < 0 { *slot } else { 0 };
-                            (rc, error, seek(file.as_raw_fd(), 0, libc::SEEK_CUR),
-                                seek(readonly.as_raw_fd(), 0, libc::SEEK_CUR))
+                            (
+                                rc,
+                                error,
+                                seek(file.as_raw_fd(), 0, libc::SEEK_CUR),
+                                seek(readonly.as_raw_fd(), 0, libc::SEEK_CUR),
+                            )
                         };
                         results.push(result);
                     }
                     if results[0] != results[1] {
-                        mismatches.push(format!("{name}/{kind} cmd={command} len={length}: {results:?}"));
+                        mismatches.push(format!(
+                            "{name}/{kind} cmd={command} len={length}: {results:?}"
+                        ));
                     }
                     observations += 1;
                 }
@@ -790,23 +828,40 @@ fn lockf_aliases_match_host_locks_and_errors() {
 
     let child = |role: &str| {
         let mut command = Command::new(std::env::current_exe().unwrap());
-        command.args(["--exact", "lockf_aliases_match_host_locks_and_errors", "--nocapture"])
-            .env("FRANKENLIBC_LOCKF_CHILD", role).env("FRANKENLIBC_LOCKF_PATH", &path);
+        command
+            .args([
+                "--exact",
+                "lockf_aliases_match_host_locks_and_errors",
+                "--nocapture",
+            ])
+            .env("FRANKENLIBC_LOCKF_CHILD", role)
+            .env("FRANKENLIBC_LOCKF_PATH", &path);
         command
     };
     let mut conflicts = 0;
     for role in ["read", "write"] {
-        let mut holder = child(role).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut holder = child(role)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
         let mut output = std::io::BufReader::new(holder.stdout.take().unwrap());
         let mut transcript = String::new();
         loop {
             let mut line = String::new();
-            assert_ne!(output.read_line(&mut line).unwrap(), 0, "helper never acquired lock");
+            assert_ne!(
+                output.read_line(&mut line).unwrap(),
+                0,
+                "helper never acquired lock"
+            );
             transcript.push_str(&line);
-            if line.contains("LOCKF_READY") { break; }
+            if line.contains("LOCKF_READY") {
+                break;
+            }
         }
         for (name, native, oracle) in [
-            ("lockf", unistd::lockf as Lock, host), ("lockf64", unistd::lockf64 as Lock, host64),
+            ("lockf", unistd::lockf as Lock, host),
+            ("lockf64", unistd::lockf64 as Lock, host64),
         ] {
             for command in [libc::F_TEST, libc::F_TLOCK] {
                 let mut results = Vec::new();
@@ -836,21 +891,53 @@ fn lockf_aliases_match_host_locks_and_errors() {
 
     let mut ranges = 0;
     for (name, native, oracle) in [
-        ("lockf", unistd::lockf as Lock, host), ("lockf64", unistd::lockf64 as Lock, host64),
+        ("lockf", unistd::lockf as Lock, host),
+        ("lockf64", unistd::lockf64 as Lock, host64),
     ] {
         for length in [-3, 0, 4] {
             for (provider, function) in [("host", oracle), ("native", native)] {
                 reset();
                 // SAFETY: uncontended live regular file, lock length is valid.
-                assert_eq!(unsafe { function(file.as_raw_fd(), libc::F_TLOCK, length) }, 0);
+                assert_eq!(
+                    unsafe { function(file.as_raw_fd(), libc::F_TLOCK, length) },
+                    0
+                );
                 let output = child("probe").output().unwrap();
-                std::fs::write(dir.join(format!("range-{name}-{length}-{provider}.stdout")), &output.stdout).unwrap();
-                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                std::fs::write(
+                    dir.join(format!("range-{name}-{length}-{provider}.stdout")),
+                    &output.stdout,
+                )
+                .unwrap();
+                std::fs::write(
+                    dir.join(format!("range-{name}-{length}-{provider}.stderr")),
+                    &output.stderr,
+                )
+                .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 let text = String::from_utf8(output.stdout).unwrap();
-                let raw = text.split_once("LOCKF_RANGE=").unwrap().1.lines().next().unwrap();
+                let raw = text
+                    .split_once("LOCKF_RANGE=")
+                    .unwrap()
+                    .1
+                    .lines()
+                    .next()
+                    .unwrap();
                 let fields: Vec<i64> = raw.split(',').map(|v| v.parse().unwrap()).collect();
-                let (start, size) = if length < 0 { (7 + length, -length) } else { (7, length) };
-                assert_eq!(fields, [libc::F_WRLCK as i64, start, size, std::process::id() as i64], "{name}/{provider}");
+                let (start, size) = if length < 0 {
+                    (7 + length, -length)
+                } else {
+                    (7, length)
+                };
+                assert_eq!(
+                    fields,
+                    [libc::F_WRLCK as i64, start, size, std::process::id() as i64],
+                    "{name}/{provider}"
+                );
+                // SAFETY: file is still open and querying its offset is read-only.
                 assert_eq!(unsafe { seek(file.as_raw_fd(), 0, libc::SEEK_CUR) }, 7);
                 ranges += 1;
             }
@@ -864,9 +951,20 @@ fn lockf_aliases_match_host_locks_and_errors() {
     assert_eq!(file.metadata().unwrap().len(), 16);
     let mut byte = 0u8;
     // SAFETY: reader is live and byte supplies one writable byte.
-    assert_eq!(unsafe { libc::read(reader.as_raw_fd(), (&raw mut byte).cast(), 1) }, 1);
+    assert_eq!(
+        unsafe { libc::read(reader.as_raw_fd(), (&raw mut byte).cast(), 1) },
+        1
+    );
     assert_eq!(byte, b'q');
-    assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "{} mismatches:\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+    println!(
+        "lockf contract: {observations} comparisons, {conflicts} conflicts, {ranges} ranges passed; retained {dir:?}"
+    );
 }
 
 #[test]

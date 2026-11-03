@@ -212,7 +212,7 @@ int main(void) {
     printf("F_OFD_SETLK: %s\n", err(fcntl(fd, F_OFD_SETLK, &ofd)));
     printf("F_SETPIPE_SZ on a file: %s\n", err(fcntl(fd, F_SETPIPE_SZ, 65536)));
     int p[2];
-    pipe(p);
+    CHECK(pipe(p) == 0);
     printf("F_SETPIPE_SZ on a pipe: %d, F_GETPIPE_SZ: %d\n", fcntl(p[0], F_SETPIPE_SZ, 131072), fcntl(p[0], F_GETPIPE_SZ));
     printf("bad fd: %s\n", err(fcntl(999, F_SETFL, 0)));
     return lockf_contract();
