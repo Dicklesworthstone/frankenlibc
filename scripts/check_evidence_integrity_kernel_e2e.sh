@@ -220,9 +220,13 @@ def chain_hash(row):
 
 
 raw_rows = [json.loads(line) for line in src.read_text().splitlines() if line.strip()]
+# This scenario builds a synthetic CURRENT-state fixture, not a replay of the
+# actual journal. Historical snapshot integrity is tested by the ledger's
+# committed-history regression; keep one fixture entry per current artifact.
+current_rows = {row["artifact_path"]: row for row in raw_rows}
 out = []
 prev = ZERO
-for row in raw_rows:
+for row in current_rows.values():
     artifact = pathlib.Path(row["artifact_path"])
     if not artifact.is_absolute():
         artifact = root / artifact
@@ -400,16 +404,23 @@ PY
 scenario_freshness() {
     begin_scenario freshness "a divergent artifact trips the anytime-valid e-process alarm"
 
-    # Four ledger rows that each claim a hash the on-disk artifact cannot match.
+    # Four distinct current artifacts, each with an impossible hash. Repeating
+    # one artifact's history must not fabricate four independent observations.
     local divergent="$SANDBOX/divergent_ledger.jsonl"
     python3 - "$divergent" <<'PY'
 import json, sys
 rows = []
-for index in range(4):
+artifacts = [
+    "tests/conformance/freshness_state_schema.v1.json",
+    "tests/conformance/reality_report.v1.json",
+    "tests/conformance/proof_obligations_binder.v1.json",
+    "tests/conformance/hard_parts_truth_table.v1.json",
+]
+for index, artifact in enumerate(artifacts):
     rows.append({
         "schema_version": "evidence_ledger_entry.v1",
         "entry_index": index,
-        "artifact_path": "tests/conformance/freshness_state_schema.v1.json",
+        "artifact_path": artifact,
         "artifact_hash": "0" * 64,  # divergent by construction
         "source_commit": "0" * 40,
         "generator_command": "e2e divergent feed",

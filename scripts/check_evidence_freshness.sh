@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import pathlib
 import subprocess
 import sys
@@ -43,6 +44,13 @@ def now_utc() -> str:
 
 
 def git_head() -> str:
+    declared = os.environ.get("RCH_BUILD_SOURCE")
+    if declared is not None:
+        revision = declared.removesuffix("-dirty")
+        if len(revision) == 40 and all(ch in "0123456789abcdef" for ch in revision):
+            return revision
+        add_error("invalid_source_commit", "RCH_BUILD_SOURCE must be a full source object ID")
+        return "unknown"
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     except Exception:
@@ -161,12 +169,13 @@ if state == "alarm":
         f"artifact divergence e-value {e_value:.6g} crossed alarm threshold {ALARM_E}",
     )
 
+source_commit = git_head()
 status = "fail" if errors else "pass"
 failure_signature = errors[0]["failure_signature"] if errors else "none"
 report = {
     "schema_version": REPORT_SCHEMA,
     "generated_at_utc": now_utc(),
-    "source_commit": git_head(),
+    "source_commit": source_commit,
     "ledger": rel(LEDGER),
     "status": status,
     "failure_signature": failure_signature,

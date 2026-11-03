@@ -151,7 +151,12 @@ fn checker_rejects_divergent_artifact_with_alarm() -> TestResult {
     // silently stopped tripping the alarm once the WS-0 ledger grew past one
     // entry. Per-artifact staleness is still caught exactly by the ledger
     // chain gate; this test exercises the divergence-rate alarm specifically.
-    let divergent_count = rows.len();
+    let divergent_count = rows
+        .iter()
+        .filter_map(|row| row["artifact_path"].as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let journal_count = rows.len();
     for row in &mut rows {
         row["artifact_hash"] = Value::String("0".repeat(64));
     }
@@ -162,6 +167,14 @@ fn checker_rejects_divergent_artifact_with_alarm() -> TestResult {
     let report = load_json(&report_path)?;
     assert_eq!(report["status"], "fail");
     assert_eq!(report["state"], "alarm");
+    assert_eq!(
+        report["ledger_entry_count"].as_u64(),
+        Some(journal_count as u64)
+    );
+    assert_eq!(
+        report["observations"].as_u64(),
+        Some(divergent_count as u64)
+    );
     assert_eq!(report["divergences"].as_u64(), Some(divergent_count as u64));
     assert!(failure_signatures(&report).contains("evidence_freshness_alarm"));
     assert!(

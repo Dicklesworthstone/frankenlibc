@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -41,6 +42,7 @@ FAILURE_PRIORITY = [
     "ledger_unreadable",
     "malformed_ledger_row",
     "ledger_index_gap",
+    "invalid_source_commit",
     "ledger_prev_chain_mismatch",
     "missing_ledger_artifact",
     "artifact_hash_mismatch",
@@ -69,6 +71,13 @@ def now_utc() -> str:
 
 
 def git_head() -> str:
+    declared = os.environ.get("RCH_BUILD_SOURCE")
+    if declared is not None:
+        revision = declared.removesuffix("-dirty")
+        if len(revision) == 40 and all(ch in "0123456789abcdef" for ch in revision):
+            return revision
+        add_error("invalid_source_commit", "RCH_BUILD_SOURCE must be a full source object ID")
+        return "unknown"
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     except Exception:
@@ -157,9 +166,13 @@ def snapshot_hash(row: dict[str, Any], index: int, revision: Any) -> str | None:
 
 def revision_bindings(rows: list[dict[str, Any]]) -> dict[int, str]:
     bindings: dict[int, str] = {}
+    snapshots_started = False
     for index, row in enumerate(rows):
         if row.get("schema_version") != SNAPSHOT_SCHEMA:
+            if snapshots_started and row.get("schema_version") == SCHEMA:
+                add_error("ledger_snapshot_invalid", f"entry[{index}] cannot downgrade a snapshot journal to v1")
             continue
+        snapshots_started = True
         revision = row.get("artifact_revision")
         if not is_hex(revision, 40):
             add_error("ledger_snapshot_invalid", f"entry[{index}].artifact_revision must be git hex40")
@@ -260,12 +273,13 @@ head_chain = ZERO_HASH
 for index, row in enumerate(rows):
     head_chain = validate_row(row, index, ZERO_HASH if index == 0 else head_chain, revisions, latest)
 
+source_commit = git_head()
 status = "fail" if errors else "pass"
 failure_signature = primary_signature() if errors else "none"
 report = {
     "schema_version": REPORT_SCHEMA,
     "generated_at_utc": now_utc(),
-    "source_commit": git_head(),
+    "source_commit": source_commit,
     "ledger": rel(LEDGER),
     "status": status,
     "failure_signature": failure_signature,
