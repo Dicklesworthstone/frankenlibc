@@ -19390,15 +19390,17 @@
           "vmi1152480:/data/tmp/frankenlibc-stat-native-20261103/workspace-check/report.json",
           "vmi1167313:/data/tmp/frankenlibc-stat-native-20261103/workspace-clippy/report.json",
           "vmi1156319:/data/tmp/frankenlibc-stat-native-20261103/metadata-final/report.json",
-          "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/final-record/record/receipt.json"
+          "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/final-record/record/receipt.json",
+          "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/final-record-stable/record/receipt.json",
+          "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/c-stable/report.json"
         ],
         "perf_proof_refs": [],
         "close_blockers": [
           "Final source receipt/admission, fresh acceptance replay, release and compiler gates, evidence publication pending"
         ],
-        "notes": "Bound modern metadata integration only. Corrected original actual GNU positives then native host-fallback failures are observed. The first original probes failed on a stale test atime snapshot and are retained as probe failures, not runtime RED. Runtime source1d1756698; final source4e5d67f6e73bdd2a51c68bc66ab38c2eb5744123 adds only3actual producer hashes to canonical metadata. First full13 bothmode pass preceded final diagnostic formatting/comment/early-counter initialization and stronger statx field assertions; final receipt/replay still pending. Required checks and deployed release are running. Broad parents remain open. SOLO verification, no independent attestation.",
+        "notes": "Bound modern metadata integration only. Corrected original actual GNU positives then native host-fallback failures are observed. The first original probes failed on a stale test atime snapshot and are retained as probe failures, not runtime RED. Runtime source1d1756698; final source4e5d67f6e73bdd2a51c68bc66ab38c2eb5744123 adds only3actual producer hashes to canonical metadata. First full13 bothmode pass preceded final diagnostic formatting/comment/early-counter initialization and stronger statx field assertions; final receipt/replay still pending. Required checks and deployed release are running. Broad parents remain open. SOLO verification, no independent attestation. Final fresh review found the per-observation oracle could conceal an implementation mutating file metadata. Source7d3bdb4458e0465076a9af10e8d8429cafccb992 strengthens only the shared C test: every original field except traversal-updated atime must remain invariant, while all returned fields including atime still match live reference exactly. No runtime source changed;4e5 receipt remains historical and is not retargeted. New final source receipt and strengthened deployed C replay pending.",
         "result_receipts": [
-          "/data/tmp/frankenlibc-stat-native-20261103/final-record/record/receipt.json"
+          "/data/tmp/frankenlibc-stat-native-20261103/final-record-stable/record/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Native PLT/GOT plugin metadata queries use actual stat/fstat/lstat/fstatat and64/statx providers with live GNU field/error/offset comparisons and correct symbol versions",
@@ -19414,7 +19416,7 @@
             "tests/integration/fixture_fcntl64_args.c"
           ],
           "source": {
-            "commit": "4e5d67f6e73bdd2a51c68bc66ab38c2eb5744123",
+            "commit": "7d3bdb4458e0465076a9af10e8d8429cafccb992",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -19895,7 +19897,7 @@
               "tests/conformance/semantic_contract_symbol_join.v1.json": "43752c7661f0c07ed316d93b8c42cbb5f8a19b0d2531b09ee7cb09bc0efc8bf1",
               "tests/conformance/support_semantic_overlay.v1.json": "1ec91ad5b10ced74d8536a840f1ce26289e422da09a6ee68a99c57fea1717ad7",
               "tests/conformance/symbol_universe_normalization.v1.json": "8684a78d23a328b36766bd556cd93ef5e484bfb2fdaf0409e106a6f7efd54448",
-              "tests/integration/fixture_fcntl64_args.c": "ec809de50d608c3fbb7b4568b867800f8bff33cf6234b40f971926a529bdfca7",
+              "tests/integration/fixture_fcntl64_args.c": "2a7f062bc11d11141664d2145ff2d47e06034a0a42488a3e205274f03c647775",
               "tests/integration/fixture_lseek_sparse.c": "7bc38a55ef5c07827de4d5dff4d3e8e09c00c89adbac1a6fcabb7e5fd571e786",
               "tools/stdio_synth/Cargo.toml": "a178438ba72e430465fa4ca49aaf1cb9b8261fa1a89e5720a848123f26dafbcc",
               "tools/stdio_synth/src/compress.rs": "f82687d675548b316e8033c2e978b5ba1fd9c1df6808455d9b874b0df1cb782f",
@@ -19919,7 +19921,7 @@
               "default"
             ]
           },
-          "not_before": "2026-11-03T20:13:49.331771+00:00",
+          "not_before": "2026-11-03T20:20:28.470674+00:00",
           "gate": {
             "command": [
               "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/3866d4532bcf30c0/out/dlfcn_native_io_test-3866d4532bcf30c0",
