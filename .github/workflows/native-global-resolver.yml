@@ -68,17 +68,19 @@ jobs:
             grep -Fq '23 candidate global resolver cases passed' "artifacts/global-resolver/candidate-$mode.log"
           done
           expect_rejection() {
-            local reason="$1"; shift
+            local label="$1" reason="$2"; shift 2
             local status=0
-            "$@" > "artifacts/global-resolver/reject-$reason.log" 2>&1 || status=$?
+            "$@" > "artifacts/global-resolver/reject-$label.log" 2>&1 || status=$?
             test "$status" -eq 42
-            grep -Fq "FAIL: $reason" "artifacts/global-resolver/reject-$reason.log"
+            grep -Fq "FAIL: $reason" "artifacts/global-resolver/reject-$label.log"
           }
-          expect_rejection provider_mismatch timeout 90 "$RUNNER_TEMP/global-resolver" --host "$PWD/target/release/libfrankenlibc_abi.so"
-          for provider in --host "$PWD/target/release/libfrankenlibc_abi.so"; do
+          expect_rejection wrong-provider provider_mismatch timeout 90 "$RUNNER_TEMP/global-resolver" --host "$PWD/target/release/libfrankenlibc_abi.so"
+          for label in host candidate; do
+            provider=--host
+            if [[ "$label" == candidate ]]; then provider="$PWD/target/release/libfrankenlibc_abi.so"; fi
             for mode in strict hardened; do
-              expect_rejection missing_case_result env FRANKENLIBC_MODE="$mode" FLC_GLOBAL_RESOLVER_CONTROL=missing_result timeout 90 "$RUNNER_TEMP/global-resolver" "$provider"
-              expect_rejection response_marker_mismatch env FRANKENLIBC_MODE="$mode" FLC_GLOBAL_RESOLVER_CONTROL=corrupt_reply timeout 90 "$RUNNER_TEMP/global-resolver" "$provider"
+              expect_rejection "$label-$mode-missing" missing_case_result env FRANKENLIBC_MODE="$mode" FLC_GLOBAL_RESOLVER_CONTROL=missing_result timeout 90 "$RUNNER_TEMP/global-resolver" "$provider"
+              expect_rejection "$label-$mode-corrupt" response_marker_mismatch env FRANKENLIBC_MODE="$mode" FLC_GLOBAL_RESOLVER_CONTROL=corrupt_reply timeout 90 "$RUNNER_TEMP/global-resolver" "$provider"
             done
           done
           sha256sum "$RUNNER_TEMP/global-resolver" target/release/libfrankenlibc_abi.so tests/conformance/global_resolver_abi.c > artifacts/global-resolver/binaries-and-oracle-sha256.txt

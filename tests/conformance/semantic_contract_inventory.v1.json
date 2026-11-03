@@ -615,11 +615,10 @@
         }
       }
     },
-    "source_tree_sha256": "ae51ee8303cb1d58650696f09d911d24a3134dbbb5ab42872d67b92e60b834e4",
-    "census_source_tree_sha256": "c4c8d655cdc12b40e8f2f117eafcae3b32186380f868bdf89f98bdbfe03c34d3",
+    "source_tree_sha256": "b46a349e087a73574edb155c8523969132dbb467d599173e7c6d4189232efae9",
     "version_script_sha256": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
     "support_rows_sha256": "94eee3f8ca4b9dc4d03ae3aceaa24474dacc9090ec349759d0ebd8dbf89b2b47",
-    "contract_rows_sha256": "a4ec45ba0dec8d1dab88417165645fa4c84a6833eca220d0fa3d609126993635",
+    "contract_rows_sha256": "bb9cfdb7183d7ede8e1fe015b65cc3f0803d5886aa30a606a160727b71179a3c",
     "summary": {
       "declared_symbol_count": 4730,
       "raw_source_symbol_count": 4720,
