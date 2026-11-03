@@ -80,10 +80,14 @@ static int metadata_equal(const struct stat *a, const struct stat *b) {
 
 typedef int (*metadata_reference)(int, const char *, struct stat *, int);
 static int metadata_matches(const struct stat *out, const char *path,
-                             metadata_reference reference) {
+                             metadata_reference reference, const struct stat *initial) {
     struct stat expected;
-    return reference(AT_FDCWD, path, &expected, AT_SYMLINK_NOFOLLOW) == 0 &&
-        metadata_equal(out, &expected);
+    if (reference(AT_FDCWD, path, &expected, AT_SYMLINK_NOFOLLOW) != 0) return 0;
+    /* Traversal may update atime. Every other original field is invariant;
+       the implementation must not mutate metadata and then report its change. */
+    struct stat stable = *initial;
+    stable.st_atim = expected.st_atim;
+    return metadata_equal(out, &expected) && metadata_equal(&expected, &stable);
 }
 
 #define META_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
@@ -108,7 +112,7 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
             errno = 1234;
             META_CHECK(metadata_call(api, AT_FDCWD, fd, path, &out, 0) == 0);
             META_CHECK(errno == 1234);
-            META_CHECK(metadata_matches(&out, reference_paths[which], reference));
+            META_CHECK(metadata_matches(&out, reference_paths[which], reference, &expected[which]));
             counts[0]++;
         }
         struct stat out, untouched;
@@ -124,12 +128,12 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
             errno = 1234;
             META_CHECK(metadata_call(api, dir, fd, "data", &out, 0) == 0);
             META_CHECK(errno == 1234);
-            META_CHECK(metadata_matches(&out, file, reference));
+            META_CHECK(metadata_matches(&out, file, reference, &expected[0]));
             counts[0]++;
             META_CHECK(metadata_call(api, dir, fd, "link", &out, AT_SYMLINK_NOFOLLOW) == 0);
-            META_CHECK(metadata_matches(&out, link, reference)); counts[0]++;
+            META_CHECK(metadata_matches(&out, link, reference, &expected[1])); counts[0]++;
             META_CHECK(metadata_call(api, fd, fd, "", &out, AT_EMPTY_PATH) == 0);
-            META_CHECK(metadata_matches(&out, file, reference)); counts[0]++;
+            META_CHECK(metadata_matches(&out, file, reference, &expected[0])); counts[0]++;
             out = untouched; errno = 0;
             META_CHECK(metadata_call(api, dir, fd, "data", &out, INT_MIN) == -1 && errno == EINVAL);
             META_CHECK(memcmp(&out, &untouched, sizeof out) == 0); counts[1]++;
@@ -146,6 +150,9 @@ int flc_metadata_protocol(const char *directory, const char *file, const char *l
         META_CHECK((extended.stx_mask & STATX_BASIC_STATS) == STATX_BASIC_STATS);
         struct stat current;
         META_CHECK(reference(AT_FDCWD, reference_paths[which], &current, AT_SYMLINK_NOFOLLOW) == 0);
+        struct stat stable = expected[which];
+        stable.st_atim = current.st_atim;
+        META_CHECK(metadata_equal(&current, &stable));
         const struct stat *want = &current;
         META_CHECK(extended.stx_ino == want->st_ino && extended.stx_size == (uint64_t)want->st_size);
         META_CHECK(extended.stx_mode == want->st_mode && extended.stx_nlink == want->st_nlink);
