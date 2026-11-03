@@ -16415,10 +16415,8 @@ pub unsafe extern "C" fn sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::
 }
 
 // ---------------------------------------------------------------------------
-// Resolver bootstrap/query surface — Implemented (native DNS over UDP)
-// Uses frankenlibc_core::resolv::{ResolverConfig, DnsMessage, DnsHeader}
-// to build wire-format queries, send them to nameservers from resolv.conf,
-// and return raw DNS response bytes to the caller.
+// Legacy resolver queries share the caller's public per-thread resolver state.
+// Cached configuration below remains available to the host/address lookup APIs.
 // ---------------------------------------------------------------------------
 
 /// Cached resolver config (parsed from /etc/resolv.conf on first use).
@@ -16432,129 +16430,15 @@ pub(crate) static RESOLV_CONFIG: std::sync::LazyLock<
     }
 });
 
-/// Send a DNS query to the configured nameservers and return the raw response.
-///
-/// On success, copies the response into `answer[..anslen]` and returns the
-/// number of bytes written. On failure, returns -1 with errno set.
-unsafe fn dns_query_raw(
-    dname: &[u8],
-    class: c_int,
-    type_: c_int,
-    answer: *mut u8,
-    anslen: c_int,
-) -> c_int {
-    use frankenlibc_core::resolv::dns::{DNS_MAX_UDP_SIZE, DnsHeader};
-    use std::net::UdpSocket;
-
-    let config = &*RESOLV_CONFIG;
-
-    if answer.is_null() || anslen <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-
-    // Build the DNS wire-format query.
-    // Transaction ID: use lower 16 bits of a simple counter for uniqueness.
-    static TX_COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(1);
-    let tx_id = TX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-    // AD is derived from the resolver configuration, not pinned: glibc
-    // sets it only when resolv.conf carries `trust-ad` (bd-b275vh).
-    let mut header = DnsHeader::new_query_with_trust_ad(tx_id, config.trust_ad);
-    header.qdcount = 1;
-
-    let Some(qname) = frankenlibc_core::resolv::dns::encode_domain_name(dname) else {
-        unsafe { set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    };
-
-    // Build query packet: header + question (qname + qtype + qclass)
-    let query_len = 12 + qname.len() + 4;
-    let mut query_buf = vec![0u8; query_len];
-    let _ = header.encode(&mut query_buf);
-    let mut pos = 12;
-    query_buf[pos..pos + qname.len()].copy_from_slice(&qname);
-    pos += qname.len();
-    query_buf[pos..pos + 2].copy_from_slice(&(type_ as u16).to_be_bytes());
-    pos += 2;
-    query_buf[pos..pos + 2].copy_from_slice(&(class as u16).to_be_bytes());
-
-    let timeout = config.query_timeout();
-    let mut recv_buf = vec![0u8; DNS_MAX_UDP_SIZE.max(anslen as usize)];
-
-    // Try each nameserver up to `attempts` times.
-    for _attempt in 0..config.attempts {
-        for ns in &config.nameservers {
-            let dest = std::net::SocketAddr::new(*ns, frankenlibc_core::resolv::config::DNS_PORT);
-
-            // Bind to any local address matching the nameserver's address family.
-            let bind_addr = if ns.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
-            let sock = match UdpSocket::bind(bind_addr) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let _ = sock.set_read_timeout(Some(timeout));
-            let _ = sock.set_write_timeout(Some(timeout));
-
-            if sock.send_to(&query_buf, dest).is_err() {
-                continue;
-            }
-
-            match sock.recv_from(&mut recv_buf) {
-                Ok((n, _)) => {
-                    if n < 12 {
-                        continue;
-                    }
-                    // Verify transaction ID matches.
-                    let resp_id = u16::from_be_bytes([recv_buf[0], recv_buf[1]]);
-                    if resp_id != tx_id {
-                        continue;
-                    }
-                    // Check QR bit (response).
-                    if (recv_buf[2] & 0x80) == 0 {
-                        continue;
-                    }
-                    // Check RCODE.
-                    let rcode = recv_buf[3] & 0x0f;
-                    if rcode != 0 {
-                        // Map DNS error codes to h_errno-style reporting.
-                        let h_err = match rcode {
-                            1 => errno::EINVAL, // FORMERR
-                            2 => errno::EIO,    // SERVFAIL
-                            3 => errno::ENOENT, // NXDOMAIN → HOST_NOT_FOUND
-                            _ => errno::EIO,
-                        };
-                        unsafe { set_abi_errno(h_err) };
-                        return -1;
-                    }
-                    // Copy response to caller's buffer.
-                    let copy_len = n.min(anslen as usize);
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(recv_buf.as_ptr(), answer, copy_len);
-                    }
-                    return copy_len as c_int;
-                }
-                Err(_) => continue, // Timeout or network error, try next
-            }
-        }
-    }
-
-    // All attempts exhausted.
-    unsafe { set_abi_errno(errno::ETIMEDOUT) };
-    -1
-}
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_init() -> c_int {
-    // Force lazy initialization of the resolver config.
-    let _ = &*RESOLV_CONFIG;
-    0
+    // SAFETY: the shared boundary initializes this thread's public state.
+    unsafe { crate::resolv_state::global::init() }
 }
 
 /// `res_query` — send a DNS query and return the raw response.
 ///
-/// Native implementation using our DNS protocol stack and /etc/resolv.conf.
-/// Queries the name as given (no search domain appending).
+/// Uses the caller's current nameservers, flags, timeouts and error slots.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_query(
     dname: *const c_char,
@@ -16563,21 +16447,13 @@ pub unsafe extern "C" fn res_query(
     answer: *mut u8,
     anslen: c_int,
 ) -> c_int {
-    if dname.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    let Some(name_bytes) = (unsafe { read_c_string_bytes(dname) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    };
-    unsafe { dns_query_raw(&name_bytes, class, type_, answer, anslen) }
+    // SAFETY: the shared boundary validates the caller's strings and output.
+    unsafe { crate::resolv_state::global::query(dname, class, type_, answer.cast(), anslen) }
 }
 
 /// `res_search` — send a DNS query using the search domain list.
 ///
-/// Tries the name as absolute first if it has enough dots (per ndots config),
-/// then appends each search domain from /etc/resolv.conf in turn.
+/// The caller's public search list, ndots and search flags are authoritative.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_search(
     dname: *const c_char,
@@ -16586,58 +16462,8 @@ pub unsafe extern "C" fn res_search(
     answer: *mut u8,
     anslen: c_int,
 ) -> c_int {
-    if dname.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    let Some(name_bytes) = (unsafe { read_c_string_bytes(dname) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    };
-    let name_str = match std::str::from_utf8(&name_bytes) {
-        Ok(s) => s,
-        Err(_) => {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            return -1;
-        }
-    };
-
-    let config = &*RESOLV_CONFIG;
-
-    // If the name has enough dots, try it as absolute first.
-    if config.should_try_absolute_first(name_str) {
-        let rc = unsafe { dns_query_raw(&name_bytes, class, type_, answer, anslen) };
-        if rc > 0 {
-            return rc;
-        }
-    }
-
-    // Try appending each search domain.
-    for domain in &config.search {
-        let mut fqdn = Vec::with_capacity(name_bytes.len() + 1 + domain.len());
-        fqdn.extend_from_slice(&name_bytes);
-        if !name_bytes.ends_with(b".") {
-            fqdn.push(b'.');
-        }
-        fqdn.extend_from_slice(domain.as_bytes());
-
-        let rc = unsafe { dns_query_raw(&fqdn, class, type_, answer, anslen) };
-        if rc > 0 {
-            return rc;
-        }
-    }
-
-    // If we haven't tried absolute yet, try now as last resort.
-    if !config.should_try_absolute_first(name_str) {
-        let rc = unsafe { dns_query_raw(&name_bytes, class, type_, answer, anslen) };
-        if rc > 0 {
-            return rc;
-        }
-    }
-
-    // All attempts failed.
-    unsafe { set_abi_errno(errno::ENOENT) };
-    -1
+    // SAFETY: the shared boundary snapshots state and validates caller spans.
+    unsafe { crate::resolv_state::global::search(dname, class, type_, answer.cast(), anslen) }
 }
 
 // MOVED: `resolver_bootstrap_tests::res_init_reports_success` now lives in

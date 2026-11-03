@@ -5,6 +5,8 @@
 //! The registry owns only storage allocated by init; it never owns caller
 //! overrides, socket descriptors, or locks held across a DNS exchange.
 
+pub mod global;
+
 use std::collections::BTreeMap;
 use std::ffi::{c_char, c_int, c_ulong, c_void};
 use std::io::ErrorKind;
@@ -197,7 +199,7 @@ fn random_id() -> Result<u16, c_int> {
     Ok(u16::from_ne_bytes(bytes))
 }
 
-fn initial_config() -> (ResolverConfig, c_ulong) {
+fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
     let mut content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
     if let Some(options) = std::env::var_os("RES_OPTIONS") {
         content.extend_from_slice(b"\noptions ");
@@ -207,12 +209,42 @@ fn initial_config() -> (ResolverConfig, c_ulong) {
     // EDNS is a public res_state option, not part of the address-only
     // ResolverConfig. Read it from the same fresh file/environment snapshot.
     // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
-    let edns0 = content.split(|&byte| byte == b'\n').any(|line| {
+    let mut edns0 = false;
+    let mut explicit_timing = [false; 2];
+    for line in content.split(|&byte| byte == b'\n') {
         let mut words = line
             .split(u8::is_ascii_whitespace)
             .filter(|word| !word.is_empty());
-        words.next() == Some(b"options".as_slice()) && words.any(|word| word.starts_with(b"edns0"))
-    });
+        if words.next() != Some(b"options".as_slice()) {
+            continue;
+        }
+        for word in words {
+            edns0 |= word.starts_with(b"edns0");
+            for (index, prefix) in [b"timeout:".as_slice(), b"attempts:".as_slice()]
+                .into_iter()
+                .enumerate()
+            {
+                if let Some(value) = word.strip_prefix(prefix) {
+                    // Match the core config parser: a leading '+' is valid,
+                    // while empty, negative, nondecimal and overflowing values
+                    // do not override the legacy caller's nonzero timing.
+                    let digits = value.strip_prefix(b"+").unwrap_or(value);
+                    let valid = !digits.is_empty()
+                        && digits
+                            .iter()
+                            .try_fold(0u32, |number, &byte| {
+                                if byte.is_ascii_digit() {
+                                    number.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+                                } else {
+                                    None
+                                }
+                            })
+                            .is_some();
+                    explicit_timing[index] |= valid;
+                }
+            }
+        }
+    }
     let mut config = ResolverConfig::parse(&content);
     if let Some(domain) = std::env::var_os("LOCALDOMAIN") {
         config.search = domain
@@ -223,19 +255,31 @@ fn initial_config() -> (ResolverConfig, c_ulong) {
             .collect();
         config.domain = config.search.first().cloned();
     }
-    (config, if edns0 { RES_USE_EDNS0 } else { 0 })
+    (
+        config,
+        if edns0 { RES_USE_EDNS0 } else { 0 },
+        explicit_timing,
+    )
 }
 
 /// Initialize a caller-owned state from a fresh configuration read. Never
 /// reuse the process-global LazyLock: explicit reinitialization must see edits.
 pub unsafe fn init(pointer: *mut c_void) -> c_int {
+    // SAFETY: this entry has the same caller-owned-state preconditions.
+    unsafe { init_impl(pointer, false) }
+}
+
+// The legacy global initializer preserves established options and nonzero
+// timing unless the current configuration explicitly overrides that timing.
+// Reentrant initialization starts fresh; both consume one config snapshot.
+unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
     // SAFETY: this function's caller supplies the C state described above.
     let state = match unsafe { checked_state(pointer) } {
         Ok(state) => state,
         Err(error) => return fail(error),
     };
-    let (config, extended_options) = initial_config();
-    let id = if state.id == 0 {
+    let (config, extended_options, explicit_timing) = initial_config();
+    let id = if legacy_global || state.id == 0 {
         match random_id() {
             Ok(id) => id,
             Err(error) => return fail(error),
@@ -244,10 +288,24 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
         state.id
     };
     let mut next = State::zeroed();
-    next.retrans = config.timeout as c_int;
-    next.retry = config.attempts as c_int;
+    next.retrans = if legacy_global && state.retrans != 0 && !explicit_timing[0] {
+        state.retrans
+    } else {
+        config.timeout as c_int
+    };
+    next.retry = if legacy_global && state.retry != 0 && !explicit_timing[1] {
+        state.retry
+    } else {
+        config.attempts as c_int
+    };
     next.id = id;
-    next.options = RES_INIT | RES_DEFAULT | extended_options;
+    next.options = RES_INIT
+        | extended_options
+        | if legacy_global && state.options & RES_INIT != 0 {
+            state.options
+        } else {
+            RES_DEFAULT
+        };
     if config.use_vc {
         next.options |= RES_USEVC;
     }
