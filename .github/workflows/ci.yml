@@ -234,6 +234,11 @@ jobs:
               "$out/probe" "--$option" "$host" \
               > "$matrix_out/gnu.stdout" 2> "$matrix_out/gnu.stderr"
             test "$(wc -l < "$matrix_out/gnu.stdout")" -eq "$rows"
+            if [[ "$option" == "conversion-footprint" ]] &&
+              grep -q ' signal=' "$matrix_out/gnu.stdout"; then
+              echo "FAIL: GNU conversion footprint contains a signaled child" >&2
+              exit 1
+            fi
             for mode in strict hardened; do
               if env -u LD_LIBRARY_PATH -u LD_AUDIT \
                 FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
