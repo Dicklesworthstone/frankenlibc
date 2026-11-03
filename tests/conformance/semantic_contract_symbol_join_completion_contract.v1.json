@@ -43,7 +43,7 @@
       "scripts/check_semantic_contract_symbol_join.sh:629",
       "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs:49",
       "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs:192",
-      "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs:323",
+      "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs:324",
       "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs:361"
     ],
     "join_policy": {
