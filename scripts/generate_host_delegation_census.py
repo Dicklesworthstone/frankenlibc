@@ -1658,7 +1658,11 @@ def qualified_target_module(
     prefix = parts[:-1]
     if prefix == ["self"]:
         return caller_module, True
-    if prefix == ["super"] or prefix == ["crate"]:
+    if prefix == ["super"]:
+        if module_aliases is not None and f"{caller_module}::super" in module_aliases:
+            return module_aliases[f"{caller_module}::super"], True
+        return "lib", True
+    if prefix == ["crate"]:
         return "lib", True
     if len(prefix) == 1 and prefix[0] in known_modules:
         return prefix[0], True
@@ -1673,10 +1677,15 @@ def qualified_target_module(
     if len(prefix) >= 2 and prefix[0] == "self":
         return caller_module, True
     if len(prefix) >= 3 and prefix[0] in {"crate", "super"}:
-        if prefix[1] in known_modules:
-            return prefix[1], True
-        if module_aliases is not None and prefix[1] in module_aliases:
-            return module_aliases[prefix[1]], True
+        # Do not silently drop a nested component and attribute a global
+        # wrapper to the similarly named reentrant function in its parent.
+        nested = "::".join(prefix[1:])
+        if prefix[0] == "super" and module_aliases is not None:
+            parent = module_aliases.get(f"{caller_module}::super", "lib")
+            if parent != "lib":
+                nested = f"{parent}::{nested}"
+        if module_aliases is not None and nested in module_aliases:
+            return module_aliases[nested], True
         return None, True
     if prefix[0] in {"crate", "self", "super"}:
         return None, True
@@ -2189,15 +2198,24 @@ def module_declarations(
     declarations: list[tuple[str, Path]] = []
     for match in MODULE_DECL_RE.finditer(mask):
         module_name = match.group(1)
-        source_name = f"{module_name}.rs"
+        explicit_path = None
         preceding = [span for span in attrs if span[1] <= match.start()]
         if preceding and only_trivia(mask, preceding[-1][1], match.start()):
             path_match = PATH_ATTRIBUTE_RE.search(text[preceding[-1][0] : preceding[-1][1]])
             if path_match is not None:
-                source_name = path_match.group(1)
-        source_path = path.parent / source_name
-        if not source_path.is_file():
-            source_path = abi_source_dir / source_name
+                explicit_path = path_match.group(1)
+        if explicit_path is not None:
+            source_path = path.parent / explicit_path
+        else:
+            # Rust's outlined children live beneath the containing module:
+            # lib.rs -> foo.rs, foo.rs -> foo/bar.rs, foo/mod.rs -> foo/bar.rs.
+            directory = path.parent
+            if path.name not in {"lib.rs", "main.rs", "mod.rs"}:
+                directory = directory / path.stem
+            source_path = directory / f"{module_name}.rs"
+            alternative = directory / module_name / "mod.rs"
+            if not source_path.is_file() and alternative.is_file():
+                source_path = alternative
         declarations.append((module_name, source_path))
     return declarations
 
@@ -2225,9 +2243,9 @@ def profile_source_view(
         active_paths = set(source_files)
     else:
         active_paths = {lib_path}
-        pending = deque([lib_path])
+        pending = deque([(lib_path, "")])
         while pending:
-            parent = pending.popleft()
+            parent, parent_module = pending.popleft()
             for module_name, source_path in module_declarations(
                 parent, filtered[parent], abi_source_dir
             ):
@@ -2242,9 +2260,14 @@ def profile_source_view(
                     )
                     continue
                 module_alias_candidates.setdefault(module_name, set()).add(source_path.stem)
+                full_module = "::".join(part for part in (parent_module, module_name) if part)
+                module_alias_candidates.setdefault(full_module, set()).add(source_path.stem)
+                module_alias_candidates.setdefault(f"{source_path.stem}::super", set()).add(
+                    parent.stem
+                )
                 if source_path not in active_paths:
                     active_paths.add(source_path)
-                    pending.append(source_path)
+                    pending.append((source_path, full_module))
 
     module_aliases = {
         alias: next(iter(targets)) if len(targets) == 1 else None
@@ -2646,9 +2669,6 @@ def build_semantic_export_surface(
         "semantic_review_complete": False,
         "profiles": {profile.name: profile.to_json() for profile in CFG_PROFILES},
         "source_tree_sha256": source_tree_sha256(source_files, root),
-        "census_source_tree_sha256": source_tree_sha256(
-            sorted(abi_source_dir.glob("*.rs")), root
-        ),
         "version_script_sha256": file_sha256(version_script),
         "support_rows_sha256": hashlib.sha256(
             json.dumps(support_rows, sort_keys=True).encode()
@@ -2673,7 +2693,7 @@ def build_semantic_export_surface(
 
 
 def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
-    source_files = sorted(abi_source_dir.glob("*.rs"))
+    source_files = sorted(abi_source_dir.rglob("*.rs"))
     functions: list[FunctionInfo] = []
     for path in source_files:
         functions.extend(parse_functions(path))
@@ -2826,6 +2846,54 @@ fn malformed_predicate_is_retained() {}
         checks += 1
         if not condition:
             raise AssertionError(message)
+
+    abi_dir = root / "crates/frankenlibc-abi/src"
+    require(
+        module_declarations(abi_dir / "lib.rs", "mod resolv_state;", abi_dir)
+        == [("resolv_state", abi_dir / "resolv_state.rs")],
+        "crate-root module source was not resolved",
+    )
+    require(
+        module_declarations(abi_dir / "resolv_state.rs", "pub mod global;", abi_dir)
+        == [("global", abi_dir / "resolv_state/global.rs")],
+        "nested non-mod.rs child escaped its containing module directory",
+    )
+    require(
+        module_declarations(abi_dir / "resolv_state/mod.rs", "pub mod global;", abi_dir)
+        == [("global", abi_dir / "resolv_state/global.rs")],
+        "mod.rs child source was not resolved",
+    )
+    require(
+        module_declarations(
+            abi_dir / "resolv_state.rs", '#[path = "math_abi.rs"]\nmod renamed;', abi_dir
+        )
+        == [("renamed", abi_dir / "math_abi.rs")],
+        "explicit path must remain relative to the source file directory",
+    )
+    nested_aliases = {
+        "resolv_state::global": "global",
+        "global::super": "resolv_state",
+    }
+    require(
+        qualified_target_module(
+            "unistd_abi", ["crate", "resolv_state", "global", "query"],
+            {"resolv_state", "global"}, nested_aliases,
+        ) == ("global", True),
+        "nested wrapper call was incorrectly attributed to its parent query",
+    )
+    require(
+        qualified_target_module(
+            "global", ["super", "init_impl"], {"resolv_state", "global"}, nested_aliases
+        ) == ("resolv_state", True),
+        "nested super call did not resolve to its actual parent",
+    )
+    require(
+        qualified_target_module(
+            "unistd_abi", ["crate", "resolv_state", "missing", "query"],
+            {"resolv_state", "global"}, nested_aliases,
+        ) == (None, True),
+        "missing nested source was silently resolved to a parent function",
+    )
 
     require(len(interpose.splitlines()) == len(source.splitlines()), "interpose line count moved")
     require(len(standalone.splitlines()) == len(source.splitlines()), "standalone line count moved")
