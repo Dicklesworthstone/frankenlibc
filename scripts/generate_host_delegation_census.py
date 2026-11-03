@@ -2508,10 +2508,23 @@ def build_semantic_export_surface(
         raise ValueError("semantic export inventory requires the live ABI module root")
     raw_modules: dict[str, set[str]] = {}
     memberships: dict[str, set[str]] = {}
+    # Both profiles share most source text. Cache only exact text/path matches
+    # within this invocation, retaining every duplicate declaration for checks.
+    export_cache: dict[tuple[Path, str], list[tuple[str, str]]] = {}
+
+    def exports(path: Path, text: str) -> list[tuple[str, str]]:
+        key = (path, hashlib.sha256(text.encode()).hexdigest())
+        if key not in export_cache:
+            export_cache[key] = [
+                (function.exported_symbol, function.module)
+                for function in parse_functions(path, text)
+                if function.is_exported_abi
+            ]
+        return export_cache[key]
+
     for path in source_files:
-        for function in parse_functions(path):
-            if function.is_exported_abi:
-                raw_modules.setdefault(function.exported_symbol, set()).add(function.module)
+        for symbol, module in exports(path, path.read_text(encoding="utf-8")):
+            raw_modules.setdefault(symbol, set()).add(module)
     profile_counts = {}
     for profile in CFG_PROFILES:
         filtered, _, diagnostics = profile_source_view(
@@ -2521,14 +2534,12 @@ def build_semantic_export_surface(
             raise ValueError(f"unresolved semantic export cfg: {[d.to_json() for d in diagnostics]}")
         symbols = set()
         for path, text in filtered.items():
-            for function in parse_functions(path, text):
-                if function.is_exported_abi:
-                    symbol = function.exported_symbol
-                    if symbol in symbols:
-                        raise ValueError(f"duplicate semantic export in {profile.name}: {symbol}")
-                    symbols.add(symbol)
-                    memberships.setdefault(symbol, set()).add(profile.name)
-                    raw_modules.setdefault(symbol, set()).add(function.module)
+            for symbol, module in exports(path, text):
+                if symbol in symbols:
+                    raise ValueError(f"duplicate semantic export in {profile.name}: {symbol}")
+                symbols.add(symbol)
+                memberships.setdefault(symbol, set()).add(profile.name)
+                raw_modules.setdefault(symbol, set()).add(module)
         profile_counts[profile.name] = len(symbols)
     versions = parse_version_script(version_script.read_text(encoding="utf-8"))
     support_rows = support.get("symbols", [])
