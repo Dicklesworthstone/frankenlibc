@@ -135,6 +135,8 @@ int io_descriptor_protocol(const char *pathname) {
 
 int io_error_protocol(const char *pathname) {
     char bytes[4] = {11, 22, 33, 44};
+    errno = 0; CHECK(lockf(-1, 123456, 1) == -1 && errno == EINVAL);
+    errno = 0; CHECK(lockf64(-1, 123456, 1) == -1 && errno == EINVAL);
     errno = 0; CHECK(fcntl(-1, F_GETFD) == -1 && errno == EBADF);
     errno = 0; CHECK(fcntl64(-1, F_GETFL) == -1 && errno == EBADF);
     errno = 1234; CHECK(posix_fadvise(-1, 0, 1, POSIX_FADV_NORMAL) == EBADF && errno == 1234);
@@ -664,6 +666,207 @@ fn lseek_aliases_match_host_errors_without_repositioning() {
         mismatches.len(),
         mismatches.join("\n")
     );
+}
+
+#[test]
+fn lockf_aliases_match_host_locks_and_errors() {
+    use std::io::{BufRead, Read, Write};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::fs::FileExt;
+    use std::process::Stdio;
+
+    type Lock = unsafe extern "C-unwind" fn(c_int, c_int, libc::off_t) -> c_int;
+    type Fcntl = unsafe extern "C-unwind" fn(c_int, c_int, ...) -> c_int;
+    type Seek = unsafe extern "C" fn(c_int, i64, c_int) -> i64;
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    // SAFETY: signatures match the GNU interfaces, and each lookup rejects
+    // an address belonging to the native implementation being compared.
+    let (host, host64, fcntl, seek, host_errno): (Lock, Lock, Fcntl, Seek, Errno) = unsafe {
+        (
+            dlsym_oracle::host_fn(c"lockf", unistd::lockf as *const ()),
+            dlsym_oracle::host_fn(c"lockf64", unistd::lockf64 as *const ()),
+            dlsym_oracle::host_fn(c"fcntl", io::fcntl as *const ()),
+            dlsym_oracle::host_fn(c"lseek", unistd::lseek as *const ()),
+            dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()),
+        )
+    };
+    if let Ok(role) = std::env::var("FRANKENLIBC_LOCKF_CHILD") {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(std::env::var_os("FRANKENLIBC_LOCKF_PATH").unwrap())
+            .unwrap();
+        // SAFETY: flock is fully initialized and lives through each fcntl;
+        // queries/sets operate on this child's live regular-file descriptor.
+        let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+        lock.l_whence = libc::SEEK_SET as _;
+        if role == "probe" {
+            lock.l_type = libc::F_WRLCK as _;
+            assert_eq!(unsafe { fcntl(file.as_raw_fd(), libc::F_GETLK, &mut lock) }, 0);
+            println!("LOCKF_RANGE={},{},{},{}", lock.l_type, lock.l_start, lock.l_len, lock.l_pid);
+        } else {
+            assert!(matches!(role.as_str(), "read" | "write"));
+            lock.l_type = (if role == "read" { libc::F_RDLCK } else { libc::F_WRLCK }) as _;
+            lock.l_start = 7;
+            lock.l_len = 4;
+            assert_eq!(unsafe { fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) }, 0);
+            println!("LOCKF_READY");
+            std::io::stdout().flush().unwrap();
+            // Closing the parent's stdin pipe releases the helper naturally;
+            // no forced termination or filesystem cleanup is necessary.
+            std::io::stdin().read_to_end(&mut Vec::new()).unwrap();
+        }
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-lockf-retained-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("data");
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true).read(true).write(true).open(&path).unwrap();
+    file.write_all(b"0123456789abcdef").unwrap();
+    let readonly = std::fs::File::open(&path).unwrap();
+    let mut ends = [-1; 2];
+    // SAFETY: ends has room for both new descriptors, immediately owned below.
+    assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+    let (reader, writer) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+    assert_eq!(unsafe { libc::write(writer.as_raw_fd(), c"q".as_ptr().cast(), 1) }, 1);
+    let closed = unsafe { libc::dup(reader.as_raw_fd()) };
+    assert!(closed >= 0);
+    assert_eq!(unsafe { libc::close(closed) }, 0);
+    // SAFETY: each provider returns its writable errno cell for this thread.
+    let (host_slot, native_slot) = unsafe { (host_errno(), errno::__errno_location()) };
+    let reset = || {
+        // SAFETY: the initialized lock request unlocks only this process's
+        // locks on its retained test file; neither seek changes its contents.
+        let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+        lock.l_type = libc::F_UNLCK as _;
+        lock.l_whence = libc::SEEK_SET as _;
+        assert_eq!(unsafe { fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) }, 0);
+        assert_eq!(unsafe { seek(file.as_raw_fd(), 7, libc::SEEK_SET) }, 7);
+        assert_eq!(unsafe { seek(readonly.as_raw_fd(), 7, libc::SEEK_SET) }, 7);
+    };
+    let mut mismatches = Vec::new();
+    let mut observations = 0;
+    for (name, native, oracle) in [
+        ("lockf", unistd::lockf as Lock, host),
+        ("lockf64", unistd::lockf64 as Lock, host64),
+    ] {
+        for (kind, fd) in [
+            ("regular", file.as_raw_fd()), ("readonly", readonly.as_raw_fd()),
+            ("pipe-reader", reader.as_raw_fd()), ("pipe-writer", writer.as_raw_fd()),
+            ("invalid", -1), ("closed", closed),
+        ] {
+            for command in [-1, 0, 1, 2, 3, 4, c_int::MIN, c_int::MAX] {
+                for length in [-3, 0, 4] {
+                    let mut results = Vec::new();
+                    for (function, slot) in [(oracle, host_slot), (native, native_slot)] {
+                        reset();
+                        // SAFETY: all descriptors are live test resources or
+                        // deliberately invalid; lockf takes no caller pointer.
+                        let result = unsafe {
+                            *slot = 0;
+                            let rc = function(fd, command, length);
+                            let error = if rc < 0 { *slot } else { 0 };
+                            (rc, error, seek(file.as_raw_fd(), 0, libc::SEEK_CUR),
+                                seek(readonly.as_raw_fd(), 0, libc::SEEK_CUR))
+                        };
+                        results.push(result);
+                    }
+                    if results[0] != results[1] {
+                        mismatches.push(format!("{name}/{kind} cmd={command} len={length}: {results:?}"));
+                    }
+                    observations += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(observations, 288);
+    reset();
+
+    let child = |role: &str| {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", "lockf_aliases_match_host_locks_and_errors", "--nocapture"])
+            .env("FRANKENLIBC_LOCKF_CHILD", role).env("FRANKENLIBC_LOCKF_PATH", &path);
+        command
+    };
+    let mut conflicts = 0;
+    for role in ["read", "write"] {
+        let mut holder = child(role).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut output = std::io::BufReader::new(holder.stdout.take().unwrap());
+        let mut transcript = String::new();
+        loop {
+            let mut line = String::new();
+            assert_ne!(output.read_line(&mut line).unwrap(), 0, "helper never acquired lock");
+            transcript.push_str(&line);
+            if line.contains("LOCKF_READY") { break; }
+        }
+        for (name, native, oracle) in [
+            ("lockf", unistd::lockf as Lock, host), ("lockf64", unistd::lockf64 as Lock, host64),
+        ] {
+            for command in [libc::F_TEST, libc::F_TLOCK] {
+                let mut results = Vec::new();
+                for (function, slot) in [(oracle, host_slot), (native, native_slot)] {
+                    // SAFETY: the regular file and errno cells remain live;
+                    // both operations are nonblocking against the helper.
+                    results.push(unsafe {
+                        *slot = 0;
+                        let rc = function(file.as_raw_fd(), command, 4);
+                        (rc, if rc < 0 { *slot } else { 0 })
+                    });
+                }
+                assert_eq!(results[0].0 == 0, role == "read" && command == libc::F_TEST);
+                if results[0] != results[1] {
+                    mismatches.push(format!("{name}/{role} cmd={command}: {results:?}"));
+                }
+                conflicts += 1;
+            }
+        }
+        drop(holder.stdin.take());
+        output.read_to_string(&mut transcript).unwrap();
+        let status = holder.wait().unwrap();
+        std::fs::write(dir.join(format!("holder-{role}.stdout")), &transcript).unwrap();
+        assert!(status.success(), "holder {role}: {status}: {transcript}");
+    }
+    assert_eq!(conflicts, 8);
+
+    let mut ranges = 0;
+    for (name, native, oracle) in [
+        ("lockf", unistd::lockf as Lock, host), ("lockf64", unistd::lockf64 as Lock, host64),
+    ] {
+        for length in [-3, 0, 4] {
+            for (provider, function) in [("host", oracle), ("native", native)] {
+                reset();
+                // SAFETY: uncontended live regular file, lock length is valid.
+                assert_eq!(unsafe { function(file.as_raw_fd(), libc::F_TLOCK, length) }, 0);
+                let output = child("probe").output().unwrap();
+                std::fs::write(dir.join(format!("range-{name}-{length}-{provider}.stdout")), &output.stdout).unwrap();
+                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                let text = String::from_utf8(output.stdout).unwrap();
+                let raw = text.split_once("LOCKF_RANGE=").unwrap().1.lines().next().unwrap();
+                let fields: Vec<i64> = raw.split(',').map(|v| v.parse().unwrap()).collect();
+                let (start, size) = if length < 0 { (7 + length, -length) } else { (7, length) };
+                assert_eq!(fields, [libc::F_WRLCK as i64, start, size, std::process::id() as i64], "{name}/{provider}");
+                assert_eq!(unsafe { seek(file.as_raw_fd(), 0, libc::SEEK_CUR) }, 7);
+                ranges += 1;
+            }
+        }
+    }
+    assert_eq!(ranges, 12);
+    reset();
+    let mut bytes = [0; 16];
+    assert_eq!(file.read_at(&mut bytes, 0).unwrap(), bytes.len());
+    assert_eq!(&bytes, b"0123456789abcdef");
+    assert_eq!(file.metadata().unwrap().len(), 16);
+    let mut byte = 0u8;
+    // SAFETY: reader is live and byte supplies one writable byte.
+    assert_eq!(unsafe { libc::read(reader.as_raw_fd(), (&raw mut byte).cast(), 1) }, 1);
+    assert_eq!(byte, b'q');
+    assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
 }
 
 #[test]
