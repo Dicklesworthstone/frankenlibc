@@ -968,6 +968,170 @@ fn lockf_aliases_match_host_locks_and_errors() {
 }
 
 #[test]
+fn posix_fallocate_aliases_match_host_ranges_and_errors() {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::fs::FileExt;
+
+    type Allocate = unsafe extern "C" fn(c_int, i64, i64) -> c_int;
+    type Seek = unsafe extern "C" fn(c_int, i64, c_int) -> i64;
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    // SAFETY: these GNU signatures are exact on LP64. The resolver rejects
+    // an address belonging to the native implementation before any call.
+    let (host, host64, seek, host_errno): (Allocate, Allocate, Seek, Errno) = unsafe {
+        (
+            dlsym_oracle::host_fn(c"posix_fallocate", unistd::posix_fallocate as *const ()),
+            dlsym_oracle::host_fn(c"posix_fallocate64", unistd::posix_fallocate64 as *const ()),
+            dlsym_oracle::host_fn(c"lseek", unistd::lseek as *const ()),
+            dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()),
+        )
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-posix-allocation-retained-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let directory = std::fs::File::open(&dir).unwrap();
+    let mut resources = Vec::new();
+    for name in ["host", "native"] {
+        let path = dir.join(name);
+        let file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let readonly = std::fs::File::open(&path).unwrap();
+        let append = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let mut ends = [-1; 2];
+        // SAFETY: ends provides space for two new descriptors, owned below.
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+        // SAFETY: successful pipe returned two distinct, exclusively owned fds.
+        let (reader, writer) =
+            unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+        // SAFETY: writer is live and the constant provides one readable byte.
+        assert_eq!(
+            unsafe { libc::write(writer.as_raw_fd(), c"q".as_ptr().cast(), 1) },
+            1
+        );
+        resources.push((file, readonly, append, reader, writer));
+    }
+    // Close only a fresh duplicate after all other fd setup, avoiding reuse.
+    // SAFETY: the source descriptor is live; close consumes only its duplicate.
+    let closed = unsafe { libc::dup(directory.as_raw_fd()) };
+    assert!(closed >= 0);
+    assert_eq!(unsafe { libc::close(closed) }, 0);
+    // SAFETY: both providers return this thread's writable errno cell.
+    let slots = unsafe { [host_errno(), errno::__errno_location()] };
+    let seed = b"0123456789abcdef";
+    let mut mismatches = Vec::new();
+    let mut observations = 0;
+    let mut successes = 0;
+    for (name, oracle, native) in [
+        ("posix_fallocate", host, unistd::posix_fallocate as Allocate),
+        (
+            "posix_fallocate64",
+            host64,
+            unistd::posix_fallocate64 as Allocate,
+        ),
+    ] {
+        for kind in 0..8 {
+            for offset in [-1, 0, 7, 31, i64::MIN] {
+                for length in [-1, 0, 1, 4, i64::MIN] {
+                    let mut results = Vec::new();
+                    for (index, function) in [oracle, native].into_iter().enumerate() {
+                        let (file, readonly, append, reader, writer) = &resources[index];
+                        file.set_len(seed.len() as u64).unwrap();
+                        file.write_all_at(seed, 0).unwrap();
+                        for fd in [file.as_raw_fd(), readonly.as_raw_fd(), append.as_raw_fd()] {
+                            // SAFETY: every fd is an open regular-file description.
+                            assert_eq!(unsafe { seek(fd, 3, libc::SEEK_SET) }, 3);
+                        }
+                        let fd = [
+                            file.as_raw_fd(),
+                            readonly.as_raw_fd(),
+                            append.as_raw_fd(),
+                            reader.as_raw_fd(),
+                            writer.as_raw_fd(),
+                            directory.as_raw_fd(),
+                            -1,
+                            closed,
+                        ][kind];
+                        // SAFETY: descriptors are live test resources or deliberately
+                        // invalid, and allocation takes no caller pointer. Capture
+                        // errno immediately; these interfaces return errors directly.
+                        let (rc, error) = unsafe {
+                            *slots[index] = 0x3bad;
+                            let rc = function(fd, offset, length);
+                            (rc, *slots[index])
+                        };
+                        let size = file.metadata().unwrap().len();
+                        assert!(size <= 35);
+                        let mut bytes = vec![0; size as usize];
+                        file.read_exact_at(&mut bytes, 0).unwrap();
+                        assert!(
+                            bytes.starts_with(seed),
+                            "{name}/{index}: existing data changed"
+                        );
+                        assert!(bytes[seed.len()..].iter().all(|&b| b == 0));
+                        let expected_size = if rc == 0 {
+                            16.max(offset + length) as u64
+                        } else {
+                            16
+                        };
+                        assert_eq!(size, expected_size, "{name}/{index}");
+                        // SAFETY: all three regular-file descriptions remain live.
+                        let positions = unsafe {
+                            [
+                                seek(file.as_raw_fd(), 0, libc::SEEK_CUR),
+                                seek(readonly.as_raw_fd(), 0, libc::SEEK_CUR),
+                                seek(append.as_raw_fd(), 0, libc::SEEK_CUR),
+                            ]
+                        };
+                        assert_eq!(positions, [3; 3], "allocation must not reposition");
+                        assert_eq!(error, 0x3bad, "{name}/{index}: errno changed");
+                        results.push((rc, error, positions, bytes));
+                    }
+                    successes += usize::from(results[0].0 == 0);
+                    if results[0] != results[1] {
+                        mismatches.push(format!(
+                            "{name}/fd-kind={kind} offset={offset} len={length}: {results:?}"
+                        ));
+                    }
+                    observations += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(observations, 400);
+    assert_eq!(successes, 24, "positive file allocations must execute");
+    for (_, _, _, reader, _) in &resources {
+        let mut byte = 0u8;
+        // SAFETY: each live pipe reader supplies one queued byte into byte.
+        assert_eq!(
+            unsafe { libc::read(reader.as_raw_fd(), (&raw mut byte).cast(), 1) },
+            1
+        );
+        assert_eq!(byte, b'q', "allocation must not consume pipe data");
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{} mismatches:\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+    println!(
+        "posix allocation contract: {observations} comparisons, {successes} successes passed; retained {dir:?}"
+    );
+}
+
+#[test]
 fn io_runtime_errno_isolated_between_native_calling_threads() {
     isolated(
         "io_runtime_errno_isolated_between_native_calling_threads",

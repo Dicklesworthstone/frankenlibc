@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,9 +24,11 @@ static const char *err(int r) { return r < 0 ? strerrorname_np(errno) : "ok"; }
 /* Keep both real GNU symbol imports despite the large-file redirect. */
 extern int narrow_lockf(int, int, off_t) __asm__("lockf");
 typedef int (*lock_function)(int, int, off_t);
+extern int narrow_posix_fallocate(int, off_t, off_t) __asm__("posix_fallocate");
+typedef int (*allocate_function)(int, off_t, off_t);
 
 #define CHECK(condition) do { if (!(condition)) { \
-    fprintf(stderr, "lockf contract failed at line %d\n", __LINE__); return 1; \
+    fprintf(stderr, "fd contract failed at line %d\n", __LINE__); return 1; \
 } } while (0)
 
 static int check_lock_provider(void) {
@@ -34,6 +37,7 @@ static int check_lock_provider(void) {
     struct stat want, got;
     if (stat(expected, &want) != 0) return 42;
     const void *symbols[] = {(const void *)narrow_lockf, (const void *)lockf,
+                             (const void *)narrow_posix_fallocate, (const void *)posix_fallocate,
                              (const void *)__errno_location};
     for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++) {
         Dl_info info;
@@ -165,6 +169,67 @@ static int lockf_contract(void) {
     return 0;
 }
 
+static int allocation_contract(void) {
+    char path[] = "/tmp/fl_posix_alloc_retained_XXXXXX";
+    const char seed[] = "0123456789abcdef";
+    int fd = mkstemp(path), ends[2];
+    CHECK(fd >= 0);
+    int ro = open(path, O_RDONLY), append = open(path, O_WRONLY | O_APPEND);
+    int directory = open("/tmp", O_RDONLY | O_DIRECTORY);
+    CHECK(ro >= 0 && append >= 0 && directory >= 0 && pipe(ends) == 0);
+    CHECK(write(ends[1], "q", 1) == 1);
+    int closed = dup(directory);
+    CHECK(closed >= 0 && close(closed) == 0);
+    int descriptors[] = {fd, ro, append, ends[0], ends[1], directory, -1, closed};
+    off_t offsets[] = {-1, 0, 7, 31, INT64_MIN};
+    off_t lengths[] = {-1, 0, 1, 4, INT64_MIN};
+    allocate_function functions[] = {narrow_posix_fallocate, posix_fallocate};
+    size_t cases = 0, successes = 0;
+    for (size_t a = 0; a < 2; a++) {
+        for (size_t d = 0; d < 8; d++) {
+            for (size_t o = 0; o < 5; o++) {
+                for (size_t l = 0; l < 5; l++) {
+                    CHECK(ftruncate(fd, 16) == 0 && pwrite(fd, seed, 16, 0) == 16);
+                    CHECK(lseek(fd, 3, SEEK_SET) == 3 && lseek(ro, 3, SEEK_SET) == 3 && lseek(append, 3, SEEK_SET) == 3);
+                    errno = 0x3bad;
+                    int rc = functions[a](descriptors[d], offsets[o], lengths[l]);
+                    int error = errno;
+                    CHECK(rc >= 0 && error == 0x3bad);
+                    struct stat metadata;
+                    CHECK(fstat(fd, &metadata) == 0 && metadata.st_size >= 16 && metadata.st_size <= 35);
+                    unsigned char bytes[35];
+                    ssize_t count = pread(fd, bytes, sizeof bytes, 0);
+                    CHECK(count == metadata.st_size && memcmp(bytes, seed, 16) == 0);
+                    for (ssize_t i = 16; i < count; i++) CHECK(bytes[i] == 0);
+                    off_t expected = 16;
+                    if (rc == 0) {
+                        CHECK(offsets[o] >= 0 && lengths[l] > 0);
+                        off_t end = offsets[o] + lengths[l];
+                        if (end > expected) expected = end;
+                        successes++;
+                    }
+                    CHECK(metadata.st_size == expected);
+                    CHECK(lseek(fd, 0, SEEK_CUR) == 3 && lseek(ro, 0, SEEK_CUR) == 3 && lseek(append, 0, SEEK_CUR) == 3);
+                    printf("posix allocation/%zu fd=%zu off=%lld len=%lld rc=%d errno=%d size=%lld data=",
+                           a, d, (long long)offsets[o], (long long)lengths[l], rc, error, (long long)metadata.st_size);
+                    for (ssize_t i = 0; i < count; i++) printf("%02x", bytes[i]);
+                    putchar('\n');
+                    cases++;
+                }
+            }
+        }
+    }
+    CHECK(cases == 400 && successes == 24);
+    CHECK(narrow_posix_fallocate(-1, -1, -1) == EBADF);
+    CHECK(posix_fallocate(-1, -1, -1) == EBADF);
+    char byte;
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'q');
+    CHECK(close(fd) == 0 && close(ro) == 0 && close(append) == 0 && close(directory) == 0);
+    CHECK(close(ends[0]) == 0 && close(ends[1]) == 0);
+    printf("posix allocation contract: %zu cases, %zu successes passed\n", cases, successes);
+    return 0;
+}
+
 int main(void) {
     int provider = check_lock_provider();
     if (provider) return provider;
@@ -215,5 +280,6 @@ int main(void) {
     CHECK(pipe(p) == 0);
     printf("F_SETPIPE_SZ on a pipe: %d, F_GETPIPE_SZ: %d\n", fcntl(p[0], F_SETPIPE_SZ, 131072), fcntl(p[0], F_GETPIPE_SZ));
     printf("bad fd: %s\n", err(fcntl(999, F_SETFL, 0)));
-    return lockf_contract();
+    CHECK(lockf_contract() == 0);
+    return allocation_contract();
 }

@@ -14134,10 +14134,8 @@ pub unsafe extern "C" fn posix_fallocate(
     offset: libc::off_t,
     len: libc::off_t,
 ) -> c_int {
-    if offset < 0 || len < 0 {
-        return libc::EINVAL;
-    }
-
+    // Preserve kernel descriptor/range error precedence: a bad fd with a
+    // negative range returns EBADF rather than a userspace EINVAL.
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, len as usize, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {

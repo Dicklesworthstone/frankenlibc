@@ -32,10 +32,14 @@ fn temp_path(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut p = std::env::temp_dir();
     p.push(format!(
-        "fl-posix-fallocate-{}-{}-{}.tmp",
+        "fl-posix-fallocate-{}-{}-{}-{}.tmp",
         std::process::id(),
         tag,
-        n
+        n,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     p
 }
@@ -50,10 +54,9 @@ struct Shape {
 
 fn build_file(path: &std::path::Path, shape: &Shape) {
     let mut f = std::fs::OpenOptions::new()
-        .create(true)
+        .create_new(true)
         .read(true)
         .write(true)
-        .truncate(true)
         .open(path)
         .expect("create temp file");
     for (off, bytes) in &shape.segments {
@@ -117,9 +120,6 @@ fn assert_parity(tag: &str, shape: Shape, offset: i64, len: i64) {
         emul_bytes, glibc_bytes,
         "[{tag}] content mismatch after fallocate(offset={offset}, len={len})"
     );
-
-    let _ = std::fs::remove_file(&glibc_path);
-    let _ = std::fs::remove_file(&emul_path);
 }
 
 #[test]
@@ -226,7 +226,6 @@ fn zero_length_extends_via_truncate() {
         bytes[100..].iter().all(|&b| b == 0),
         "extension zero-filled"
     );
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -254,7 +253,6 @@ fn zero_length_within_is_noop() {
     let bytes = read_all(&path);
     assert_eq!(bytes.len(), 500, "len==0 within must not shrink or grow");
     assert!(bytes.iter().all(|&b| b == 0x11), "content unchanged");
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -338,8 +336,6 @@ fn semantic_contract_holds() {
     assert_eq!(unsafe { internal_fallocate_emulate(fd, 0, 100) }, 0);
     f.sync_all().expect("sync");
     assert_eq!(read_all(&path).len(), 4000, "file must never shrink");
-
-    let _ = std::fs::remove_file(&path);
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +391,6 @@ fn dispatch_on_eopnotsupp_runs_the_emulation() {
         bytes[100..].iter().all(|&b| b == 0),
         "allocated range zero-filled"
     );
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -413,7 +408,6 @@ fn dispatch_returns_other_errnos_unchanged() {
             100,
             "errno {errno} must not trigger the emulation"
         );
-        let _ = std::fs::remove_file(&path);
     }
 }
 
@@ -429,7 +423,6 @@ fn dispatch_on_success_is_zero_and_inert() {
         100,
         "a successful syscall must not re-run the emulation"
     );
-    let _ = std::fs::remove_file(&path);
 }
 
 /// The remaining seam: the exported C entry point feeding the live syscall
@@ -479,7 +472,4 @@ fn exported_entry_point_matches_glibc() {
         // SAFETY: fd is valid.
         unsafe { libc::posix_fallocate(glibc_file.as_raw_fd(), -1, 16) }
     });
-
-    let _ = std::fs::remove_file(&glibc_path);
-    let _ = std::fs::remove_file(&fl_path);
 }
