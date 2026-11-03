@@ -176,6 +176,7 @@ uintptr_t io_thread_errno(int *arrived, int marker) {
 }
 
 void *io_function(unsigned index) {
+    extern void *flc_metadata_function(unsigned);
     switch (index) {
         case 0: return (void *)__errno_location;
         case 1: return (void *)open;
@@ -214,7 +215,7 @@ void *io_function(unsigned index) {
         case 34: return (void *)posix_fallocate64;
         case 35: return (void *)fexecve;
         case 36: return (void *)execveat;
-        default: return 0;
+        default: return flc_metadata_function(index - 37);
     }
 }
 void *io_dynamic(const char *name, const char *version, int *error) {
@@ -246,7 +247,7 @@ __attribute__((destructor)) static void finalize(void) {
 }
 "#;
 
-fn symbols() -> [(&'static str, &'static str, *const ()); 37] {
+fn symbols() -> [(&'static str, &'static str, *const ()); 46] {
     [
         (
             "__errno_location",
@@ -309,6 +310,15 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 37] {
         ),
         ("fexecve", "GLIBC_2.2.5", unistd::fexecve as *const ()),
         ("execveat", "GLIBC_2.34", unistd::execveat as *const ()),
+        ("stat", "GLIBC_2.33", unistd::stat as *const ()),
+        ("fstat", "GLIBC_2.33", unistd::fstat as *const ()),
+        ("lstat", "GLIBC_2.33", unistd::lstat as *const ()),
+        ("fstatat", "GLIBC_2.33", unistd::fstatat as *const ()),
+        ("stat64", "GLIBC_2.33", unistd::stat64 as *const ()),
+        ("fstat64", "GLIBC_2.33", unistd::fstat64 as *const ()),
+        ("lstat64", "GLIBC_2.33", unistd::lstat64 as *const ()),
+        ("fstatat64", "GLIBC_2.33", unistd::fstatat64 as *const ()),
+        ("statx", "GLIBC_2.28", unistd::statx as *const ()),
     ]
 }
 
@@ -386,6 +396,7 @@ impl Fixture {
             "-nostdlib",
             "-O2",
             "-fno-builtin",
+            "-DFLC_STAT_PLUGIN",
             "-Wl,--hash-style=both",
         ]);
         if got {
@@ -393,6 +404,10 @@ impl Fixture {
         }
         let output = command
             .arg(&source)
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/integration/fixture_fcntl64_args.c"
+            ))
             .arg("-o")
             .arg(&path)
             .output()
@@ -501,6 +516,74 @@ fn io_runtime_got_file_and_descriptor_protocols() {
         protocols(api, true)
     });
 }
+
+fn metadata_protocol(api: Api, got: bool) {
+    let fixture = Fixture::new(got);
+    let file = std::fs::File::create(fixture.dir.join("data")).unwrap();
+    file.set_len(0x1_0000_0025).unwrap();
+    std::os::unix::fs::symlink("data", fixture.dir.join("link")).unwrap();
+    let directory = CString::new(fixture.dir.as_os_str().as_bytes()).unwrap();
+    let data = fixture.pathname("data");
+    let link = fixture.pathname("link");
+    let missing = fixture.pathname("missing");
+    type Stat = unsafe extern "C" fn(*const c_char, *mut libc::stat) -> c_int;
+    type Run = unsafe extern "C" fn(
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const libc::stat,
+        *mut u32,
+    ) -> c_int;
+    // SAFETY: the signatures match the GNU declarations and the C fixture.
+    // The distinct host providers populate all three expected structures;
+    // plugin calls receive live paths and writable counters for the call.
+    unsafe {
+        let host_stat: Stat = dlsym_oracle::host_fn(c"stat", unistd::stat as *const ());
+        let host_lstat: Stat = dlsym_oracle::host_fn(c"lstat", unistd::lstat as *const ());
+        // Resolve the link once before capturing its atime: path traversal
+        // itself can update that timestamp on the first metadata query.
+        let mut expected: [libc::stat; 3] = std::mem::zeroed();
+        assert_eq!(host_stat(link.as_ptr(), &mut expected[0]), 0);
+        assert_eq!(host_stat(data.as_ptr(), &mut expected[0]), 0);
+        assert_eq!(host_lstat(link.as_ptr(), &mut expected[1]), 0);
+        assert_eq!(host_stat(directory.as_ptr(), &mut expected[2]), 0);
+        let handle = api.open(&fixture.path);
+        addresses(api, handle);
+        let run =
+            std::mem::transmute::<*mut c_void, Run>(api.symbol(handle, c"flc_metadata_protocol"));
+        let mut counts = [0_u32; 2];
+        assert_eq!(
+            run(
+                directory.as_ptr(),
+                data.as_ptr(),
+                link.as_ptr(),
+                missing.as_ptr(),
+                expected.as_ptr(),
+                counts.as_mut_ptr(),
+            ),
+            0,
+            "shared C metadata protocol line"
+        );
+        assert_eq!(counts, [34, 13], "positive/error domain must execute");
+        api.close(handle);
+    }
+}
+
+#[test]
+fn io_runtime_plt_metadata_matches_host() {
+    isolated("io_runtime_plt_metadata_matches_host", |api| {
+        metadata_protocol(api, false)
+    });
+}
+
+#[test]
+fn io_runtime_got_metadata_matches_host() {
+    isolated("io_runtime_got_metadata_matches_host", |api| {
+        metadata_protocol(api, true)
+    });
+}
+
 #[test]
 fn io_runtime_dynamic_versions_match_direct_providers() {
     isolated(
@@ -544,6 +627,25 @@ fn io_runtime_dynamic_versions_match_direct_providers() {
                         error, 1,
                         "fcntl64 must not inherit fcntl's baseline version"
                     );
+                }
+                if matches!(
+                    name.to_bytes(),
+                    b"stat"
+                        | b"fstat"
+                        | b"lstat"
+                        | b"fstatat"
+                        | b"stat64"
+                        | b"fstat64"
+                        | b"lstat64"
+                        | b"fstatat64"
+                        | b"statx"
+                ) {
+                    let mut error = -1;
+                    assert!(
+                        unsafe { dynamic(name.as_ptr(), c"GLIBC_2.2.5".as_ptr(), &mut error) }
+                            .is_null()
+                    );
+                    assert_eq!(error, 1, "modern metadata must reject the old baseline");
                 }
             }
             api.close(h);
