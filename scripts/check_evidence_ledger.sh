@@ -24,6 +24,7 @@ LEDGER = pathlib.Path(sys.argv[2])
 REPORT = pathlib.Path(sys.argv[3])
 
 SCHEMA = "evidence_ledger_entry.v1"
+SNAPSHOT_SCHEMA = "evidence_ledger_entry.v2"
 REPORT_SCHEMA = "evidence_ledger_check_report.v1"
 ZERO_HASH = "0" * 64
 CHAIN_FIELDS = [
@@ -43,6 +44,8 @@ FAILURE_PRIORITY = [
     "ledger_prev_chain_mismatch",
     "missing_ledger_artifact",
     "artifact_hash_mismatch",
+    "ledger_snapshot_invalid",
+    "ledger_snapshot_unavailable",
     "ledger_chain_hash_mismatch",
 ]
 
@@ -93,6 +96,9 @@ def sha256_file(path: pathlib.Path) -> str:
 
 def chain_hash(row: dict[str, Any]) -> str:
     payload = {field: row.get(field) for field in CHAIN_FIELDS}
+    if row.get("schema_version") == SNAPSHOT_SCHEMA:
+        payload["artifact_revision"] = row.get("artifact_revision")
+        payload["superseded_revisions"] = row.get("superseded_revisions")
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -121,10 +127,68 @@ def load_rows() -> list[dict[str, Any]]:
     return rows
 
 
-def validate_row(row: dict[str, Any], index: int, expected_prev: str) -> str:
+def snapshot_hash(row: dict[str, Any], index: int, revision: Any) -> str | None:
+    artifact_path = row.get("artifact_path")
+    if not is_hex(revision, 40) or not isinstance(artifact_path, str):
+        add_error("ledger_snapshot_invalid", f"entry[{index}] needs a full snapshot revision and relative artifact path")
+        return None
+    parts = pathlib.PurePosixPath(artifact_path)
+    if parts.is_absolute() or ".." in parts.parts or not parts.parts:
+        add_error("ledger_snapshot_invalid", f"entry[{index}] snapshot path must stay inside the repository")
+        return None
+    try:
+        kind = subprocess.run(["git", "cat-file", "-t", revision], cwd=ROOT,
+                              capture_output=True, check=False)
+        if kind.returncode or kind.stdout.strip() != b"commit":
+            add_error("ledger_snapshot_unavailable", f"entry[{index}] snapshot revision is not an available commit: {revision}")
+            return None
+        result = subprocess.run(
+            ["git", "cat-file", "blob", f"{revision}:{artifact_path}"],
+            cwd=ROOT, capture_output=True, check=False,
+        )
+    except OSError as exc:
+        add_error("ledger_snapshot_unavailable", f"entry[{index}] cannot read Git snapshot: {exc}")
+        return None
+    if result.returncode:
+        add_error("ledger_snapshot_unavailable", f"entry[{index}] cannot read committed snapshot {revision}:{artifact_path}")
+        return None
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def revision_bindings(rows: list[dict[str, Any]]) -> dict[int, str]:
+    bindings: dict[int, str] = {}
+    for index, row in enumerate(rows):
+        if row.get("schema_version") != SNAPSHOT_SCHEMA:
+            continue
+        revision = row.get("artifact_revision")
+        if not is_hex(revision, 40):
+            add_error("ledger_snapshot_invalid", f"entry[{index}].artifact_revision must be git hex40")
+        else:
+            bindings[index] = revision
+        previous = row.get("superseded_revisions")
+        if not isinstance(previous, list):
+            add_error("ledger_snapshot_invalid", f"entry[{index}].superseded_revisions must be a list")
+            continue
+        for binding in previous:
+            if not isinstance(binding, dict):
+                add_error("ledger_snapshot_invalid", f"entry[{index}] historical binding must be an object")
+                continue
+            target, revision = binding.get("entry_index"), binding.get("artifact_revision")
+            if (type(target) is not int or not 0 <= target < index
+                    or rows[target].get("schema_version") != SCHEMA
+                    or rows[target].get("artifact_path") != row.get("artifact_path")
+                    or target in bindings or not is_hex(revision, 40)):
+                add_error("ledger_snapshot_invalid", f"entry[{index}] historical binding must uniquely name an earlier v1 entry for the same artifact")
+                continue
+            bindings[target] = revision
+    return bindings
+
+
+def validate_row(row: dict[str, Any], index: int, expected_prev: str,
+                 revisions: dict[int, str], latest: dict[str, int]) -> str:
     context = f"entry[{index}]"
-    if row.get("schema_version") != SCHEMA:
-        add_error("malformed_ledger_row", f"{context}.schema_version must be {SCHEMA}")
+    if row.get("schema_version") not in (SCHEMA, SNAPSHOT_SCHEMA):
+        add_error("malformed_ledger_row", f"{context}.schema_version must be {SCHEMA} or {SNAPSHOT_SCHEMA}")
     if row.get("entry_index") != index:
         add_error("ledger_index_gap", f"{context}.entry_index must be {index}")
 
@@ -142,9 +206,22 @@ def validate_row(row: dict[str, Any], index: int, expected_prev: str) -> str:
 
     if not is_hex(row.get("artifact_hash"), 64):
         add_error("malformed_ledger_row", f"{context}.artifact_hash must be hex64")
-    elif artifact is not None:
-        actual = sha256_file(artifact)
-        if actual != row["artifact_hash"]:
+    else:
+        # The original v1 chain bytes are immutable. A later registration can
+        # bind their historical bytes to a committed snapshot without rewriting
+        # them. Never accept an unchecked historical hash or missing Git object.
+        revision = revisions.get(index)
+        historical = isinstance(artifact_path, str) and latest.get(artifact_path) != index
+        if historical and revision is None:
+            add_error("ledger_snapshot_invalid", f"{context} superseded entry has no committed snapshot binding")
+        actual = snapshot_hash(row, index, revision) if revision is not None else None
+        if actual is not None and actual != row["artifact_hash"]:
+            add_error("artifact_hash_mismatch", f"{context} committed snapshot expected {row['artifact_hash']}, got {actual}")
+        if artifact is not None and not historical:
+            actual = sha256_file(artifact)
+        elif historical or revision is not None:
+            actual = None
+        if actual is not None and actual != row["artifact_hash"]:
             add_error(
                 "artifact_hash_mismatch",
                 f"{context}.artifact_hash for {rel(artifact)} expected {row['artifact_hash']}, got {actual}",
@@ -176,9 +253,12 @@ def validate_row(row: dict[str, Any], index: int, expected_prev: str) -> str:
 
 
 rows = load_rows()
+revisions = revision_bindings(rows)
+latest = {row["artifact_path"]: index for index, row in enumerate(rows)
+          if isinstance(row.get("artifact_path"), str)}
 head_chain = ZERO_HASH
 for index, row in enumerate(rows):
-    head_chain = validate_row(row, index, ZERO_HASH if index == 0 else head_chain)
+    head_chain = validate_row(row, index, ZERO_HASH if index == 0 else head_chain, revisions, latest)
 
 status = "fail" if errors else "pass"
 failure_signature = primary_signature() if errors else "none"
@@ -190,6 +270,8 @@ report = {
     "status": status,
     "failure_signature": failure_signature,
     "checked_entry_count": len(rows),
+    "current_artifact_count": len(latest),
+    "committed_snapshot_count": len(revisions),
     "head_chain_hash": head_chain,
     "errors": errors,
 }

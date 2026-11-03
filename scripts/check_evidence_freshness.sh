@@ -124,9 +124,20 @@ def observe_row(row: dict[str, Any], index: int) -> bool:
 
 
 rows = load_rows()
+# A journal records superseded versions as well as current artifacts. Count
+# each current artifact once: historical hashes neither create false alarms
+# nor dilute a real divergence with repeated clean observations.
+latest: dict[str, tuple[int, dict[str, Any]]] = {}
+invalid_rows: list[tuple[int, dict[str, Any]]] = []
+for index, row in enumerate(rows):
+    if isinstance(row.get("artifact_path"), str):
+        latest[row["artifact_path"]] = (index, row)
+    else:
+        invalid_rows.append((index, row))
+current_rows = sorted([*latest.values(), *invalid_rows])
 log_e = 0.0
 divergences = 0
-for index, row in enumerate(rows):
+for index, row in current_rows:
     diverged = observe_row(row, index)
     if diverged:
         divergences += 1
@@ -134,8 +145,8 @@ for index, row in enumerate(rows):
     else:
         log_e += CLEAN_DELTA
 
-e_value = math.exp(log_e) if rows else 1.0
-if len(rows) < WARMUP:
+e_value = math.exp(log_e) if current_rows else 1.0
+if len(current_rows) < WARMUP:
     state = "calibrating"
 elif e_value >= ALARM_E:
     state = "alarm"
@@ -159,7 +170,8 @@ report = {
     "ledger": rel(LEDGER),
     "status": status,
     "failure_signature": failure_signature,
-    "observations": len(rows),
+    "observations": len(current_rows),
+    "ledger_entry_count": len(rows),
     "divergences": divergences,
     "e_value": e_value,
     "state": state,
