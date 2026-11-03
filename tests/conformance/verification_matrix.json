@@ -228,10 +228,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 129,
-    "total_entries": 129,
+    "total_critique_beads": 130,
+    "total_entries": 130,
     "by_coverage_status": {
-      "complete": 52,
+      "complete": 53,
       "partial": 1,
       "missing": 76
     },
@@ -249,22 +249,22 @@
         "missing": 21
       },
       "P2": {
-        "total": 42,
-        "complete": 5,
+        "total": 43,
+        "complete": 6,
         "partial": 0,
         "missing": 37
       }
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 129,
-        "complete": 53,
+        "required": 130,
+        "complete": 54,
         "partial": 0,
         "missing": 76
       },
       "e2e_scripts": {
-        "required": 68,
-        "complete": 27,
+        "required": 69,
+        "complete": 28,
         "partial": 0,
         "missing": 41
       },
@@ -319,8 +319,8 @@
         "missing": 15
       },
       "stubs": {
-        "total": 14,
-        "complete": 5,
+        "total": 15,
+        "complete": 6,
         "partial": 0,
         "missing": 9
       },
@@ -14648,6 +14648,369 @@
         },
         "result_receipts": [
           "/data/tmp/frankenlibc-legacy-resolver-20261103/final-record-current/record/receipt.json"
+        ]
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.46",
+      "title": "[RC-1020 tests] Verify semantic unknowns, fallback detection and drift controls",
+      "priority": 2,
+      "status": "closed",
+      "assignee": "CodexGapCloser",
+      "labels": [
+        "conformance",
+        "verification"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Compile/execute docs9, drift7, inventory8 and join5 with original default features; independent planted source/gate controls, no runtime semantic inference"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "Actual semantic/docs gates plus fresh GNU/candidate resolver23-case provider/mode/error replay and actual LD_PRELOAD"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": "Existing gate JSONL events retained within source-bound execution evidence; no new runtime logging or schema work"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": "No runtime, performance, golden or full conformance claim"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": "No new reference-capture fixture or full conformance claim; actual existing C replay accounted for as e2e evidence"
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": "No runtime, performance, golden or full conformance claim"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "vmi1152480:/data/tmp/frankenlibc-semantic-verification-20261103/final-record/record/receipt.json; build0, executed8/8 nonzero/no filters,299.65s;21 unchanged companion tests observed separately"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "vmi1227854:/data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/report.json;16 commands valid; SHAa0508a015f57c86c6ee5bcbc961e78700c39c80b8eb43f24f3be37bc6ae4d163"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.46",
+        "stream": "stubs",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-harness --test docs_semantic_claims_test --test semantic_contract_inventory_test --test semantic_contract_symbol_join_test --test semantic_contract_drift_scan_test --no-fail-fast --config build.fingerprint=\"content\" -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_semantic_contract_inventory.sh",
+          "bash scripts/check_semantic_contract_symbol_join.sh",
+          "bash scripts/check_semantic_contract_drift.sh",
+          "bash scripts/check_docs_semantic_claims.sh",
+          "cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/global_resolver_abi.c -pthread -ldl -lresolv -o /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe",
+          "env FRANKENLIBC_MODE=strict timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host",
+          "env FRANKENLIBC_MODE=strict FLC_GLOBAL_RESOLVER_CONTROL=missing_result timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host",
+          "env FRANKENLIBC_MODE=strict FLC_GLOBAL_RESOLVER_CONTROL=corrupt_reply timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host",
+          "env FRANKENLIBC_MODE=strict timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=strict FLC_GLOBAL_RESOLVER_CONTROL=missing_result timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=strict FLC_GLOBAL_RESOLVER_CONTROL=corrupt_reply timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=hardened timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host",
+          "env FRANKENLIBC_MODE=hardened FLC_GLOBAL_RESOLVER_CONTROL=missing_result timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host",
+          "env FRANKENLIBC_MODE=hardened FLC_GLOBAL_RESOLVER_CONTROL=corrupt_reply timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host",
+          "env FRANKENLIBC_MODE=hardened timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=hardened FLC_GLOBAL_RESOLVER_CONTROL=missing_result timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=hardened FLC_GLOBAL_RESOLVER_CONTROL=corrupt_reply timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "timeout 90 /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe --host /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=strict timeout 90 env LD_PRELOAD=/data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so FRANKENLIBC_MODE=strict /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so",
+          "env FRANKENLIBC_MODE=hardened timeout 90 env LD_PRELOAD=/data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so FRANKENLIBC_MODE=hardened /data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/probe /data/tmp/frankenlibc-legacy-resolver-20261103/release-tuple/candidate.so"
+        ],
+        "expected_assertions": [
+          "4730 declared candidates remain explicit unknowns with next actions; full semantics0; source membership and review qualification are distinct",
+          "Unannotated constant fallback, off-platform ENOSYS, dead branch, moved declarations and missing alias remain unknown; source relocation changes source digest",
+          "Actual gates reject refreshed stale source anchors, missing exports, semantic/backend promotions, stale Stub=0 claims, missing evidence and malformed/unavailable source identity",
+          "Docs gate uses valid declared source identity instead of stale worker HEAD; original6 docs controls retained, current19 blockers checked",
+          "Separate real GNU/candidate resolver providers execute23 positive/error cases each per mode; missing/corrupt response and wrong-provider controls fail; actual preload two-mode execution passes"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "vmi1152480:/data/tmp/frankenlibc-semantic-verification-20261103/docs-baseline/report.json",
+          "vmi1227854:/data/tmp/frankenlibc-semantic-verification-20261103/baseline/report.json",
+          "vmi1227854:/data/tmp/frankenlibc-semantic-verification-20261103/fixed-baseline/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-semantic-verification-20261103/unit-final/report.json",
+          "vmi1227854:/data/tmp/frankenlibc-semantic-verification-20261103/c-oracle/report.json",
+          "vmi1167313:/data/tmp/frankenlibc-semantic-verification-20261103/workspace-check/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-semantic-verification-20261103/final-record/record/receipt.json",
+          "vmi1152480:/data/tmp/frankenlibc-semantic-verification-20261103/final-record/canonical.json",
+          "vmi1152480:/data/tmp/frankenlibc-semantic-verification-20261103/final-record/{inventory,join,drift,docs}/*.log.jsonl",
+          "vmi1167313:/data/tmp/frankenlibc-semantic-verification-20261103/workspace-check-final/report.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verification/enabler scope, not a new libc runtime feature or complete semantic qualification. Original implementation acceptance and all unknowns remain; .47 stays blocked until .46 admission. Baselines: actual docs6 compiled2pass4fail (stale17 vs19 and mutex poisoning); original scripts admitted wrong declared source, malformed identity and refreshed stale line. Tightened identity and exact source anchor gates; no semantic class promotion or threshold relaxation. Fresh real C replay uses already-built candidate3ac3cf7f64fc225bbbdd77159a8c627e4d5f43c975aee742b661b8f8510889d6, all runtime input hashes unchanged before/after; GNU85e64f97e348786a8fb4d9f3d52fec289e2fb86bba20f0731dfe61990525e0f7.16 command checks valid, including9 intentional failures and2 preload runs;23 unique resolver cases repeated across modes/providers, not138 unique tests. UBS reports literal fixed Python -c as critical shell-command: reviewed as Python/no shell with separate path arguments, retained unsuppressed; other assertion warnings retained. Fresh SOLO verification, no independent reviewer/attestation. Exact source/build receipt still pending; do not close on this row. Four-target run at9b was cargo101: docs9/drift7/join5 passed, inventory7pass1fail because a synthetic one-line version map was not recognized by the existing parser. Corrected only the test fixture to canonical multiline version syntax; affected named test then compiled/executed1pass0fail (7 intentionally filtered),0.24s, current test SHA2c46c8e4aed97941d5f1b81e671e28e74a630cbc02b5cec9a278323d7a5e8fc3. Original failed run retained; all8 inventory cases still require final source-bound record. Companion snapshot contains168 selected existing inputs (not every docs dependency); final explicit171-source record adds actual oracle/replacement inputs from docs manifest rather than nonexistent guessed filenames. Source cut now5e853af65d27aa68f682a8c231fe9a2507bffc3e. FINAL source-bound record on1152480/source5e/171 inputs: build0,09:21:15-09:35:28Z; execution0,09:35:28-09:40:28Z; test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in299.65s. Receipt1b039f0a2a55c02d5d3fd2e556a6048ae2b2f10a0bd691581e9a234677a94e4c; executable20ce1670cdb29f253bb3d4bb926b74baa9a90fc3682f8f19e5fb4a8c9d6c0622; execution stdoutf5c8651f3bed1cb79a76742863752fe433ae4de5fb3f7ace59b6e4dc4c8f10e0. All4 canonical inventory/join/drift/docs gates0, each reports exact5e source; JSONL/report bytes retained under final-record subdirectories, all171 inputs unchanged before/after. Final workspace check0/13.43s and strictClippy0/11.61s, finalfmt0; pre-existing solver/future-compat warnings retained.29 unique targeted test functions passing across retained executions: final8 plus unchanged docs9/drift7/join5. Original combined cargo101/28pass1fail is history, never green. No independent verifier; fresh SOLO replay and bounded honesty/work audit comment3241. Audit verdict DRIFTING for this enabler/process-only window, zero new libc capability credit; preceding real resolver integration remains separately qualified. Admission/publication still pending; tracker stays in_progress. Pre-close --admit observed0 on1152480 at09:43:14Z, POST_TOTAL1/POST_PASS1/POST_FAIL0. Bead closed09:44:44Z on the original acceptance and retained evidence. Source171/8 executed cases and29 unique targeted functions remain distinct from complete libc semantic qualification; L0 unchanged. Final metadata publication follows in the same change;129 earlier rows/schema preserved.",
+        "closure_evidence": {
+          "behavior": "Verify explicit semantic unknown coverage and reject stale/misattributed source evidence without upgrading source inventory to libc parity",
+          "acceptance_sha256": "6a39b4e319edc313e9cddc34f2a74e4af49731f4aa283dfa7528cfdbce070706",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "source": {
+            "commit": "5e853af65d27aa68f682a8c231fe9a2507bffc3e",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "FEATURE_PARITY.md": "ded2df4c419ee2358325695ef8d8ed5b5d1cbe48ae3ce8e334e409f9ca50e8d5",
+              "README.md": "d8230954c7990fe96f26ec8856574d3e87801849ca0501da8fd32e54dc690803",
+              "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
+              "crates/frankenlibc-abi/src/aio_completion.rs": "442076b3f9a02501de7fb5d8b5c825bd1b5c946897a3a7799cff6e7794af5751",
+              "crates/frankenlibc-abi/src/aio_queue.rs": "a99f5d1247de427a9d3705987b1a0091cee218b4b180635e087f2f7b78149040",
+              "crates/frankenlibc-abi/src/aio_scheduler.rs": "234993a37099714cf6c157bb26ae5346e538473489cf24fd94e70ea75025c99f",
+              "crates/frankenlibc-abi/src/c11threads_abi.rs": "88764aaf87aaee4447cdcf677c8c88e92c48176ea9400dfa75c4d650ee647d51",
+              "crates/frankenlibc-abi/src/ctype_abi.rs": "3bb540bf3076714aac201ac2b74cf1b7064d3479750789827c1a0d48c9d607d9",
+              "crates/frankenlibc-abi/src/dirent_abi.rs": "d14c673c12678bbb2623c899d9efa620572763f52c31ee871391b09ca93f757b",
+              "crates/frankenlibc-abi/src/dlfcn_abi.rs": "2bea086897392225182a59a119c74f190591369275fdb59c51480891d2a24b9a",
+              "crates/frankenlibc-abi/src/dlfcn_binding.rs": "33f0184d0c019b00bc698722eda54004791e7d0c26d45a42d15c2e4badfdc07f",
+              "crates/frankenlibc-abi/src/dlfcn_cache.rs": "8c4f691b425898b7815de6bc0b0629a234b184e8a4e91843af843fac8167bc20",
+              "crates/frankenlibc-abi/src/dlfcn_candidate.rs": "3093c77fb6ac3727b347739dbb6d35b1518431f51cc937af12c1248d2dcaa217",
+              "crates/frankenlibc-abi/src/dlfcn_cxa.rs": "50e69194a39fb4fe3f908580ae8f0848706eaf31ac2c1343155a077ebda602e5",
+              "crates/frankenlibc-abi/src/dlfcn_event.rs": "1a284cc620ca75cf86f5316d2dbb5ba3f3c26602456661028708e82c59a01acf",
+              "crates/frankenlibc-abi/src/dlfcn_fortify.rs": "b0c8a0b8a1257bbe51dd445206d7d5b221a5a3dc6f75730be6ab36dd1c45adfe",
+              "crates/frankenlibc-abi/src/dlfcn_hwcaps.rs": "0576ead99b4aa0958978ceb2a00b3ac9c291b24692780f9dc712528c239fad98",
+              "crates/frankenlibc-abi/src/dlfcn_ifunc.rs": "afe55637a541eebf9d311ee317054834f6f577a84f6c5c9bdd6947341cfb5ab6",
+              "crates/frankenlibc-abi/src/dlfcn_info.rs": "6b0cf50a318500c840445269838d075cb405c73aa526b0ef6dce4cde992c4277",
+              "crates/frankenlibc-abi/src/dlfcn_initfirst.rs": "948c2060eec2dfc085af42206b94a1118d0664fce03d2a9b4337b6180a69af38",
+              "crates/frankenlibc-abi/src/dlfcn_inspection.rs": "b44ec40f9657c8597533f32c227e3136fe9cb181c3e4196ba68dac2b30cd0d1d",
+              "crates/frankenlibc-abi/src/dlfcn_io.rs": "7257745581010630a35327ce2e4b8bca40487e2c85a277e499d8d19000195f8b",
+              "crates/frankenlibc-abi/src/dlfcn_lifecycle.rs": "68be12724f7c42c661e309524467a6d46f5dde3bea4234cc1874a00ea15bdc00",
+              "crates/frankenlibc-abi/src/dlfcn_lookup.rs": "12b7043ecd5c0adff87a6ec5c9909d05a85bd7de60c3737ce79cfd970966d3e6",
+              "crates/frankenlibc-abi/src/dlfcn_lookup_bridge.rs": "2fb9be9898c77d383085446f650f8b52d0189b4919edf6cb02159184b3fb71c4",
+              "crates/frankenlibc-abi/src/dlfcn_map_layout.rs": "fbe799ede8850664ac7cdd709ce058ae926a5532af7512838a3358dea1735f7b",
+              "crates/frankenlibc-abi/src/dlfcn_memory.rs": "20c75c63b51cd407975fca3d329b8e08dd482c58e46882d0dda3b98d72ff3537",
+              "crates/frankenlibc-abi/src/dlfcn_native.rs": "41bf434bad9613ee624e19d68b6fac0c04d4213ce7cc4ee26082fb911be0263f",
+              "crates/frankenlibc-abi/src/dlfcn_object_info.rs": "d7e56b00ba6c3b759739d4d4f6b416c15ca44f40b6e74dc7ab4dc806184e8aac",
+              "crates/frankenlibc-abi/src/dlfcn_open.rs": "b8ec77c308912b6b7b7a626e7bbc630dd42e3118e2bf7f844eea9ead42687d41",
+              "crates/frankenlibc-abi/src/dlfcn_phdr.rs": "e70289413f5c7e898764a5d725de997b69582e48340be3f7c3916a73962f687b",
+              "crates/frankenlibc-abi/src/dlfcn_process_exit.rs": "0089425660410512d5f9341ad20f2a0ae56cb532763d1c8b9a6502aec6c03993",
+              "crates/frankenlibc-abi/src/dlfcn_pthread.rs": "579d8bc6d75d625456f8a4efe1055fa6272bce2eee8736bc686686f2b016be4e",
+              "crates/frankenlibc-abi/src/dlfcn_resolv.rs": "0a99a694c0a3303b4e9f203393f626001fd25918add0ed42bca31f6a378c29ca",
+              "crates/frankenlibc-abi/src/dlfcn_search.rs": "0ae3c8f2d9fb24d1c832d7da68ba00789a3c15e58112badfa4a0acf9783afaca",
+              "crates/frankenlibc-abi/src/dlfcn_semaphore.rs": "5782f675e3635ff33dae56143fc500068140e322fbb4fc1e0b58f7332f8fd447",
+              "crates/frankenlibc-abi/src/dlfcn_socket.rs": "794df4e547c8d16a74765bd7f8d69b5526fbc2176f1c7079dffa8ffe7a521253",
+              "crates/frankenlibc-abi/src/dlfcn_stdio.rs": "7462a8113e8c3c648e749743b39a52f5e1eaf3c8b35a0a0ac57eef2d71f4c5f5",
+              "crates/frankenlibc-abi/src/dlfcn_thread_control.rs": "afade69e64093a1e0a05470305cbf849da4e1a3b5a5b72f6c7215143b600f266",
+              "crates/frankenlibc-abi/src/dlfcn_thread_exit.rs": "953f2339261d291af2d71edeb93740ed05085c24c2b469f8e08d141b8db7cadb",
+              "crates/frankenlibc-abi/src/dlfcn_tls.rs": "18dfd9b767065b24cb2a485be22cc5190a6c5707ce2e70a4c89e3058e48f1a68",
+              "crates/frankenlibc-abi/src/dlfcn_unique.rs": "2040f9a959c0818ae5eac3a06466cff320176eef700a77d89950561780dacb8e",
+              "crates/frankenlibc-abi/src/dlfcn_versions.rs": "46ab54754f6a40e72130d6571ec0df0329364d8fdd67f88eb241e17b28437dd7",
+              "crates/frankenlibc-abi/src/efun_abi.rs": "044a6ca365db89e27b45375917c7140b014a36319fa6d84c027d98ea594d6fe0",
+              "crates/frankenlibc-abi/src/erf_tables.rs": "80d76295e8dabd0ba95dd7aa20ff0754f76e67f9e69f04faec3ea601f40078ae",
+              "crates/frankenlibc-abi/src/err_abi.rs": "5bcf086276de3320189cf30d03e3e8bbfacf0b75d705993ce296c9dd81ee22ab",
+              "crates/frankenlibc-abi/src/errno_abi.rs": "b6336d7fc7e3a2ef33365ce2860997d6ac61e92d5f25cce19510a205340e7835",
+              "crates/frankenlibc-abi/src/exit_handlers.rs": "f3aead65377ac3fabd5c0bc1393646a1c71da293746abab85b653307cd673037",
+              "crates/frankenlibc-abi/src/expl_table.rs": "796a65aa6d1271ad59624574900c56bf8ffe96078c676cfcfdca27629fb27b1b",
+              "crates/frankenlibc-abi/src/fenv_abi.rs": "e2c5b2e3b01a97bb95274ae386a981e60ba293ff9b5ac9fd93fe7af353f78ddd",
+              "crates/frankenlibc-abi/src/fortify_abi.rs": "67b7db1e166e6fba47f0a716dce90c1edf290542ca8f4bd0610b87c20162c975",
+              "crates/frankenlibc-abi/src/fromfp_abi.rs": "e14a38895c02f2381f8d50a0c224046c68d5f80d29f8bb9e7f41e18cb2b4c1aa",
+              "crates/frankenlibc-abi/src/gai_async.rs": "f3ff7b95a62fec093952cd6ddf25e3478d91bfd65ed633694ddf94c8fa630153",
+              "crates/frankenlibc-abi/src/glibc_internal_abi.rs": "792d6cd7e62eb6fa5cb05acadea720e1969cf049e718d54474e3f438c11ca5f8",
+              "crates/frankenlibc-abi/src/grp_abi.rs": "f8349ff2d0a4b53b0c4822cb1454427e599e5337326caddbb970b8c329d0bc13",
+              "crates/frankenlibc-abi/src/host_resolve.rs": "9fda9c1088590bfe3b94c98241e6657e1d9df4ac8ea5b59b552c0557c49a2123",
+              "crates/frankenlibc-abi/src/htm_fast_path.rs": "1d7a689c02e9f8e0e47c560260f00b6894a2bf35e8e25c52c14673674029565e",
+              "crates/frankenlibc-abi/src/iconv_abi.rs": "8183364cac237ff83f9df91d4650055a763092edf82a70e40d5fae8207100f9e",
+              "crates/frankenlibc-abi/src/inet_abi.rs": "55d31a95d5b5eef848e63180a66f0b1b760adc6c7ed794672d8234b64bb242eb",
+              "crates/frankenlibc-abi/src/io_abi.rs": "17de8a0a99c0bbf3e891f7fa9635652f43207706cc7763712d5f7ea33f229ed6",
+              "crates/frankenlibc-abi/src/io_internal_abi.rs": "8d1a507fa2c2ca27246ed0b53db20310ebaefcdd846c641634fe66f111227415",
+              "crates/frankenlibc-abi/src/iov_snapshot.rs": "6eca6451aa3af5bdc63a71f77ae29848a3b49304f0d75febb757936b650a6141",
+              "crates/frankenlibc-abi/src/iov_snapshot_tests.rs": "be7826e1a2999666b5aa06634ff1d3194fa3512e31454da160c9a7981a4c7938",
+              "crates/frankenlibc-abi/src/isoc_abi.rs": "9f65176ad989b779b97c5c8069c71d81116b493fbaf4ae386f96eaada4dedb1a",
+              "crates/frankenlibc-abi/src/lib.rs": "654ef7dadaf52aef1f6e70ce29f04b355ab6ab126a5f93e83db8723b25d6f969",
+              "crates/frankenlibc-abi/src/locale_abi.rs": "4cd7dcb5d717a2e0f167d482aa657106cd0010789f49adac23847f220e872afa",
+              "crates/frankenlibc-abi/src/locale_catalog.rs": "24e7d943efdfe7e70977d6b6fc457e381c16ae62c7e30ac5855dbe2df04278fc",
+              "crates/frankenlibc-abi/src/macros.rs": "eb2639e4416f68d3d3f70259beb462c306a96d597501cdace102b92832e4d692",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "2bb027415243fa1f98f01f4435075bff8ae61c59cd2145c067d9786d2f7916ec",
+              "crates/frankenlibc-abi/src/math_abi.rs": "797de57ba93e54fbad8fcf514f872cb8ffd794579e048305b39e707b5d1f0ed0",
+              "crates/frankenlibc-abi/src/math_exports.rs": "bce5c4753b1dcb9ea5ee3360fa2639d4e240b064de1d2910265d1b4e6848018b",
+              "crates/frankenlibc-abi/src/membrane_state.rs": "e7c56114d29793f98d90f30c159688afe5961d3bc738588fd642576e17c7be21",
+              "crates/frankenlibc-abi/src/mmap_abi.rs": "bc10a6ca17b053d37f2b0365e75116ec282947f4dfe403ad7ff8404eb2187837",
+              "crates/frankenlibc-abi/src/mqueue_notify.rs": "dcc90e64f19da9cd0dded0f793bcbe5342e0d24dbbc76d942025d02a6e47c3aa",
+              "crates/frankenlibc-abi/src/msg_snapshot.rs": "a6b25bd92e56b860f15b7c99a9d6b422759b3bde4bc717b54cfd3fa34b4eb913",
+              "crates/frankenlibc-abi/src/named_semaphore.rs": "3d17a038c362432dd4d0477695114261b267db6848fd67f261f293052ff425f5",
+              "crates/frankenlibc-abi/src/nlist_abi.rs": "5ed6c57e38ac62a60deba3ca0f9167f67581aeb484fa16f9585351557313c71a",
+              "crates/frankenlibc-abi/src/nss_module.rs": "667ab5bfa3937baa9b149cad88339dde0e8d1b409e3a9463c30eabd4689f0bd5",
+              "crates/frankenlibc-abi/src/owned_tls_cache.rs": "d7e880ad53805ec8a7ccdf7ac7f8be86d2ce9767772c63faf75e6aa50e2b35dc",
+              "crates/frankenlibc-abi/src/owned_unwind_abi.rs": "f81b6efd52de6c72307d1323e372445b463814c246acba0bf424d2a3cd30a12f",
+              "crates/frankenlibc-abi/src/poll_abi.rs": "3710b2a133ff98e6957321e6d79adb31b737e72eb8d190339b91452d1087cafd",
+              "crates/frankenlibc-abi/src/posix_timer.rs": "c078963264e95ab0bf3ada761506ef4b07b6df6641ea8c4d4180ce7ee356f100",
+              "crates/frankenlibc-abi/src/process_abi.rs": "91acfb51e83a4dd43fc1f8f2a9196f863ee8358119024126601abcc836c0de72",
+              "crates/frankenlibc-abi/src/pthread_abi.rs": "73f951bfe9a69d5c471814e5de0b46cab345d2525ae86a06a420a7cd02fa7dee",
+              "crates/frankenlibc-abi/src/pwd_abi.rs": "5e6618b025b295ca68e2818195135c0ee7020d0addbec9604902a54ae80a88b3",
+              "crates/frankenlibc-abi/src/resolv_abi.rs": "6231addd8ccf9b5f9a48fec49f2df8cd181dba32500e5b743ae62d140717b912",
+              "crates/frankenlibc-abi/src/resolv_state.rs": "0448b017b8326e27c877476be5e6b582fb4bbbc59d67ab33b37460bb8a7c1690",
+              "crates/frankenlibc-abi/src/resolv_state/global.rs": "85deed52538d18cf6692c503bbb0fe97c57a5e57fd1e861aa3a6831938029f41",
+              "crates/frankenlibc-abi/src/resource_abi.rs": "31abd73e65e34e10f37825404492c3e5294cda303de2212918e9dad389474962",
+              "crates/frankenlibc-abi/src/rpc_abi.rs": "278a06f83eddf413028367b94148a799d06d95e0a3d216ba2de56b1d1aa8794b",
+              "crates/frankenlibc-abi/src/rpc_auth_des.rs": "d917951935c35147ca56c01124917d380cee6fa01761baf849dcc6a0ef9b87ba",
+              "crates/frankenlibc-abi/src/rpc_auth_unix.rs": "760524413df6c39d87afbacd515f914f397362b704580a5ab38cca539aead34c",
+              "crates/frankenlibc-abi/src/rpc_auth_unix_tests.rs": "e4d7c142c0a591226b3e9eb4c4d019df7226f830994205380aa6dd71fde8e45c",
+              "crates/frankenlibc-abi/src/rpc_call.rs": "ebc3088cda8e4dafb69bc056a4187f61e41c7105c47a00d2d781e118fa599121",
+              "crates/frankenlibc-abi/src/rpc_client_create.rs": "b3f6722ca0595be7256758b6b7e97ac04887fa3050d4f791bb7dad01c9ebf9d8",
+              "crates/frankenlibc-abi/src/rpc_keyserv.rs": "51b22a3cf011da0e1b49daaf84e62097f2d4199811ed73bf7263d83fba7d766b",
+              "crates/frankenlibc-abi/src/rpc_portmap.rs": "e1e151829d9a380ca66039583327653199b534af1586307560dccce657d66d91",
+              "crates/frankenlibc-abi/src/rpc_svc.rs": "189a809303f794d887aa72f3c669cfdb441c1c2075ec8eb2262b4ba0d77eda7e",
+              "crates/frankenlibc-abi/src/rpc_svc_cache.rs": "81a61a34993b72753a609921453072bbc2311ccaa39a3aaf7ab60f1b7a5dfe2e",
+              "crates/frankenlibc-abi/src/rpc_tcp.rs": "81e116e1e1918d9f92e34dd16e2d88fc91f785d5e7c4a78fa3a24879faf91e37",
+              "crates/frankenlibc-abi/src/rpc_udp.rs": "1370a99a830f127672f76e86aff148b1f8c17521a71e7a5b4ae37665324acc9b",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "aecd86c1290490380f333c7f1b937d2b1f00375263a723197a0d5bb445f0b8ca",
+              "crates/frankenlibc-abi/src/search_abi.rs": "3175b3bb1ca973893948ab2147ee87f3f4014c904a367cdeed8aed9130089ca9",
+              "crates/frankenlibc-abi/src/segment_mapping.rs": "8c4c14548f7c324630e8864b5d3649cc2811558bee72cf21813bc92df33fd419",
+              "crates/frankenlibc-abi/src/semaphore_wait.rs": "7557bb25a84e543a11cc53398c06bf9b67cecde8f5f16c8f2dfba34e2d40b92d",
+              "crates/frankenlibc-abi/src/setjmp_abi.rs": "77309c1857359201e727aed46509c2bd594331636cb9609159fe2861dac445ad",
+              "crates/frankenlibc-abi/src/signal_abi.rs": "d29f6169d6707b641071584f35843496d7654980c348eb15f04cae718d0da85a",
+              "crates/frankenlibc-abi/src/slab_region.rs": "54f3086cfa3878f08d6c1a2383a36922d486ec735c60194e5495731daf4cd0bb",
+              "crates/frankenlibc-abi/src/sockaddr_snapshot.rs": "56b35a5ca97dd1fac4fb3a95c7f0c6b990899f5b96207281cdc0a6bea7e69707",
+              "crates/frankenlibc-abi/src/socket_abi.rs": "ab546d4e14a67235b4622f4418eda67a77a30ccd0e90047c7142967bbfaf234e",
+              "crates/frankenlibc-abi/src/spawn_protocol.rs": "bc99994651bd21c4b3c1231bd36e39f20affa0a1f15a8550d5f84791f9729995",
+              "crates/frankenlibc-abi/src/startup_abi.rs": "7f0b2c3fd7f6a5c18c449b67a3c4f547dc169732c77c18444655afe49fcc3b01",
+              "crates/frankenlibc-abi/src/startup_helpers.rs": "abe5abb2c919c33160c134bc7262559c34874baa2f67f7c37a229510a3be821e",
+              "crates/frankenlibc-abi/src/stdbit_abi.rs": "31040f26f9a7a95895b1b8bc7bd0af664ab1f8c9d6c4ad97837ccac8be740aed",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "2b727347fd8ebc43713ca83b70c18435ed98c7deff9ec854011888d62234c0f2",
+              "crates/frankenlibc-abi/src/stdlib_abi.rs": "1988e1f014308e975bae78db6300e5ccc488677a0799514762fc733867bdb864",
+              "crates/frankenlibc-abi/src/string_abi.rs": "02cf9882e9323b039cfc1a6abb7a674dfd1d0d618f3791ca2bba1a488645425c",
+              "crates/frankenlibc-abi/src/termios_abi.rs": "1599b188df446f85648cfcb5c797887d1340394692d3073ba1ac61492d2ef500",
+              "crates/frankenlibc-abi/src/time_abi.rs": "03cc2c8c4e08d641c0f9621ff8332550825ffdf0d8a92fbcc107d0fb1c850184",
+              "crates/frankenlibc-abi/src/trig_tables.rs": "c4ba4e1cfdb43f7cd20f228d31a383871d132627fb10e046cfd27de376d8796a",
+              "crates/frankenlibc-abi/src/unistd_abi.rs": "a12afb6f279e9d6fa254284b7f04e236d442fae744e739f5b6b964a943539423",
+              "crates/frankenlibc-abi/src/util.rs": "acd7685ea4433c04cedba0d411ee94f6c2e88b2f6d86168e79907c7ef6adeaac",
+              "crates/frankenlibc-abi/src/wait_snapshot.rs": "1c3743eae4b70ae8cbeaf355d17d5a757b32773b8ba80dfb02e8c42a2de0787d",
+              "crates/frankenlibc-abi/src/wchar_abi.rs": "e023b9a9ab3f6c6e21c8a429c2e83cf6077ceb87102d8baf6088db0de5e4a23d",
+              "crates/frankenlibc-abi/tests/conformance_diff_getaddrinfo.rs": "1865b31ce2b5dff5c939ea579d52dfbcc9f44bf7dc700b141e88c73bba7aac77",
+              "crates/frankenlibc-abi/tests/pthread_abi_test.rs": "a588f3bd276170385b061d4dec174121d02cd738ce24ca8e45b1069eabd12297",
+              "crates/frankenlibc-abi/tests/setjmp_abi_test.rs": "4b3d439be912baa3d40bd7166e646bcabc388032ac1d7c9ce6faf2374cd269cb",
+              "crates/frankenlibc-abi/version_scripts/libc.map": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
+              "crates/frankenlibc-core/src/elf/mod.rs": "7c641dddbf512a9144fc2334f217580bb8823e7585a47d73cac977f44b4b7b33",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs": "1f2986f4b08f0c97521f7bc563d97a2040dec2750394dcf05cc0a6f090dcc3c3",
+              "crates/frankenlibc-harness/tests/semantic_contract_drift_scan_completion_contract_test.rs": "6de8269345c5a9825e863a6b48dc92fa21ef9ea1eb97c3fe94f79e63af405c50",
+              "crates/frankenlibc-harness/tests/semantic_contract_drift_scan_test.rs": "6f5e53f815acc73e5975ba9a9db2e69be6ce994b56c6592bbc2ac76bba6ff69f",
+              "crates/frankenlibc-harness/tests/semantic_contract_inventory_completion_contract_test.rs": "88eea3ab28bd3a0acf5547e2d600ae7639457cad78a4aafe2972247fcd6b9b85",
+              "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs": "2c46c8e4aed97941d5f1b81e671e28e74a630cbc02b5cec9a278323d7a5e8fc3",
+              "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_completion_contract_test.rs": "8126c49f40fa32cc988dcba8cad98bdc86163e094ac48b4f8357464a9d330136",
+              "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs": "b94afad2f04d7a79fdd6a312135b823a9203bb39207a7411924ebf62c093892b",
+              "crates/frankenlibc-harness/tests/support_semantic_overlay_schema_test.rs": "2482b3d99996a1b2c85bb72fb920f37d69244a7f38346fb3a0bf669a2fdff4c5",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+              "scripts/check_docs_semantic_claims.sh": "53e0dde6767642e1cbffa82bcc10b0bc4f0725b33dae4d16cf28a4ef1cf6f486",
+              "scripts/check_semantic_contract_drift.sh": "0401902eeedca53fcde2e1ef6a014336b9303c5bd2d0c4188372ea976994a16d",
+              "scripts/check_semantic_contract_inventory.sh": "a749438fcbe544a3cb6a37bd924f7f3c26b01396573400f24afe641fe370df4b",
+              "scripts/check_semantic_contract_symbol_join.sh": "889db9521b4f937cd75a1b7f8a1da4ab60463c4befdf0810114347b136fba62e",
+              "scripts/check_support_semantic_overlay_schema.sh": "14e7e5bda3475b0b0df1dcff1b67ca760effe5f191970bcc7b2c3fb2252dd1c8",
+              "scripts/generate_host_delegation_census.py": "188e4577cb87022048e1377056359dc270e6d5d16aafd3ce2231bed5480f4c0d",
+              "support_matrix.json": "c204a3b503a74e09be99840159b0e1c8af384f85e7ad06cae10d16918bccf308",
+              "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e",
+              "tests/conformance/docs_semantic_claims.v1.json": "14cb0b5c2dffe8e0c8890fab139fa99fb34ca1063b9653b0d3c77bda1a9189f9",
+              "tests/conformance/global_resolver_abi.c": "fe8c32237b5d110b2eb7b5b9bc524b08d84b875e8c07910df7d23ce6b745ea44",
+              "tests/conformance/host_delegation_census.v1.json": "54d2b649f7964ca366467387cb331b0b48491533418b230b398daf26228ef355",
+              "tests/conformance/iconv_codec_scope_ledger.v1.json": "e352ef9fa434b1ef6fad2b031b0125b9a991c633f14eae93d735bdaea60d67e9",
+              "tests/conformance/log_schema.json": "d2b6ebc8c6d0c829e32567fdc41a974aedbf5214cb777ca3fb1b893ac302acd7",
+              "tests/conformance/oracle_precedence_divergence.v1.json": "8c1e222d25c46731f99c4b17dc2f69e8157f3e559c922fb1312040ea585a719a",
+              "tests/conformance/replacement_levels.json": "08d80866c84d90c3e0b40865cf31210b59b051efd50a30649d309865f0bff8a2",
+              "tests/conformance/semantic_contract_drift_scan.v1.json": "1bb79b69ad1deae6f2221b4d6afb7fc24635d956a61968a8db7f40a3be180c92",
+              "tests/conformance/semantic_contract_drift_scan_completion_contract.v1.json": "4a69c6a3ffebc83874cbf9dbcb5e5526dc02120bebc2a2958a1d54796df90414",
+              "tests/conformance/semantic_contract_inventory.v1.json": "d622c362445a2617ba9654828090707f959c90a082967f19ee6a8a44bccc3833",
+              "tests/conformance/semantic_contract_inventory_completion_contract.v1.json": "eb9b12987cfdbe40b8ef5424bfe9e5fbe76cc6c99a2902976642d96608d2d0fa",
+              "tests/conformance/semantic_contract_symbol_join.v1.json": "43752c7661f0c07ed316d93b8c42cbb5f8a19b0d2531b09ee7cb09bc0efc8bf1",
+              "tests/conformance/semantic_contract_symbol_join_completion_contract.v1.json": "faf399d19fe3883a8441afb725a0238cdd8fc613460de169d6c22bf16f7da898",
+              "tests/conformance/support_semantic_overlay.v1.json": "1ec91ad5b10ced74d8536a840f1ce26289e422da09a6ee68a99c57fea1717ad7",
+              "tests/conformance/support_semantic_overlay_schema.v1.json": "478de306cabe9af744b8716f9f267cc4f8bddfa5ef9e711f3abbe126d0ed80e5",
+              "tests/integration/fixture_argp.c": "8a41057c1540ea72ff09875a56a34d4cb3933f069d84bccb030fdac682c40a77",
+              "tests/integration/fixture_cancel_forced_unwind.cpp": "738afcb1a4ef4607854227029fa17d466dd9805a34ee6fa5651bc747f48e6de3",
+              "tests/integration/fixture_gai_async.c": "7de942c660cc0525dece278173b2b4637773bce6e6de17b3963cd5ddeab236e7",
+              "tests/integration/fixture_gai_async_blocked.c": "a37d28c9394e13aa0350e8ca585974d82f51a8d4af201d5abe13705e19b13951",
+              "tests/integration/fixture_pthread_cancel.c": "ed510df703464fe2864d244c25b29cb34688c0db41d5d83ac89db1d386f4e9af"
+            }
+          },
+          "behavior_paths": [
+            "scripts/check_semantic_contract_inventory.sh",
+            "scripts/generate_host_delegation_census.py",
+            "scripts/check_docs_semantic_claims.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/semantic_contract_inventory_test.rs",
+            "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs",
+            "crates/frankenlibc-harness/tests/semantic_contract_drift_scan_test.rs"
+          ],
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-03T09:12:30+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-harness/99fc30abd7762810/out/semantic_contract_inventory_test-99fc30abd7762810",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "semantic_contract_inventory_test",
+              "--no-run",
+              "--message-format=json",
+              "--config",
+              "build.fingerprint=\"content\""
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-harness/99fc30abd7762810/out/semantic_contract_inventory_test-99fc30abd7762810"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "artifact_exists_and_has_required_shape",
+              "seed_overlay_entries_are_all_covered",
+              "summary_counts_match_entries_and_sources_are_linked",
+              "gate_script_passes_and_emits_structured_report_and_log",
+              "declared_surface_covers_both_census_profiles_without_semantic_promotion",
+              "actual_gate_rejects_incomplete_stale_and_promoted_export_groups",
+              "refreshed_surface_cannot_hide_a_stale_source_line",
+              "unannotated_fallback_off_platform_dead_branch_and_missing_alias_stay_unknown"
+            ]
+          }
+        },
+        "result_receipts": [
+          "/data/tmp/frankenlibc-semantic-verification-20261103/final-record/record/receipt.json"
         ]
       }
     }
