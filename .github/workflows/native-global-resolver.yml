@@ -60,12 +60,15 @@ jobs:
         run: cargo build --locked --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/global-resolver/release.log
       - name: Exercise actual owner-pinned exports against live host and both modes
         run: |
+          unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT FLC_GLOBAL_RESOLVER_CONTROL
           cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/global_resolver_abi.c -pthread -ldl -lresolv -o "$RUNNER_TEMP/global-resolver"
           timeout 90 "$RUNNER_TEMP/global-resolver" --host | tee artifacts/global-resolver/host.log
           grep -Fq '23 host-glibc global resolver cases passed' artifacts/global-resolver/host.log
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" timeout 90 "$RUNNER_TEMP/global-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/global-resolver/candidate-$mode.log"
             grep -Fq '23 candidate global resolver cases passed' "artifacts/global-resolver/candidate-$mode.log"
+            timeout 90 env "LD_PRELOAD=$PWD/target/release/libfrankenlibc_abi.so" "FRANKENLIBC_MODE=$mode" "$RUNNER_TEMP/global-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/global-resolver/preload-$mode.log"
+            grep -Fq '23 candidate global resolver cases passed' "artifacts/global-resolver/preload-$mode.log"
           done
           expect_rejection() {
             local label="$1" reason="$2"; shift 2
