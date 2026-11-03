@@ -67,6 +67,13 @@ FrankenLibC distinguishes symbol-taxonomy ownership from full semantic parity. A
 | `known_limitation` | Explicit blocker, deferred subsystem, unsupported contract | `tests/conformance/support_semantic_overlay.v1.json` |
 | `user_recommendation` | Practical guidance: L0-only, blocked, unsupported, degraded, ready for narrow workload | Generated compatibility and claim-gate reports |
 
+`tests/conformance/semantic_contract_inventory.v1.json` accounts for declared
+source, version-script and support-matrix names in explicit groups. Each group
+keeps unreviewed semantics and backend behavior unknown, records the release
+profiles in which function declarations are active, and names the next review.
+Data/assembly declarations and uncovered configurations remain unqualified.
+Complete inventory coverage does not establish complete POSIX/GNU behavior.
+
 ---
 
 ## Quick Example

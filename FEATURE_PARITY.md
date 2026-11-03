@@ -94,7 +94,8 @@ Current support-taxonomy `Stub` rows:
 
 Current semantic fallback/no-op/bootstrap contracts:
 - Representative, non-exhaustive overlay: `tests/conformance/support_semantic_overlay.v1.json`
-- This overlay prevents treating the support taxonomy alone—regardless of stub count—as proof of full semantic replacement until semantic coverage becomes exhaustive and gated.
+- Declared-export accounting with explicit unknown groups, configuration scope and next actions: `tests/conformance/semantic_contract_inventory.v1.json`
+- Complete declaration accounting is distinct from semantic review. Neither this inventory nor the support taxonomy establishes full POSIX/GNU behavior; unresolved contracts remain blockers.
 
 ## Mode-Specific Parity Matrix
 
