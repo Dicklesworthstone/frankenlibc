@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 120,
-    "source_tree_sha256": "be71472dc88e958a8febd3b279db34df9c474b503a9d103a28ae3676b94dca34",
+    "source_tree_sha256": "c4c8d655cdc12b40e8f2f117eafcae3b32186380f868bdf89f98bdbfe03c34d3",
     "version": 16
   },
   "module_census": [
@@ -3134,10 +3134,10 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "d455b585264ebaff2009581d221b56e0b639510b7691c7450063dcd9ddd778d8",
+        "support_matrix_sha256": "c204a3b503a74e09be99840159b0e1c8af384f85e7ad06cae10d16918bccf308",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9100,
+      "function_count": 9103,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -13009,7 +13009,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 17859,
+      "resolved_call_edge_count": 17878,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1660,
@@ -15174,10 +15174,10 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "d455b585264ebaff2009581d221b56e0b639510b7691c7450063dcd9ddd778d8",
+        "support_matrix_sha256": "c204a3b503a74e09be99840159b0e1c8af384f85e7ad06cae10d16918bccf308",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9088,
+      "function_count": 9091,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -19304,7 +19304,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17657,
+      "resolved_call_edge_count": 17676,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 592,
@@ -20522,7 +20522,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "d33cf9babed41d715a904ab91bffa1811df41f7f23a6550de885afb56eeed391"
+      "sha256": "e023b9a9ab3f6c6e21c8a429c2e83cf6077ceb87102d8baf6088db0de5e4a23d"
     }
   ],
   "summary": {

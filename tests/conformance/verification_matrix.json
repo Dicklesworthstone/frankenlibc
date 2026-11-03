@@ -161,10 +161,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 126,
-    "total_entries": 126,
+    "total_critique_beads": 127,
+    "total_entries": 127,
     "by_coverage_status": {
-      "complete": 49,
+      "complete": 50,
       "partial": 1,
       "missing": 76
     },
@@ -176,8 +176,8 @@
         "missing": 18
       },
       "P1": {
-        "total": 51,
-        "complete": 30,
+        "total": 52,
+        "complete": 31,
         "partial": 0,
         "missing": 21
       },
@@ -190,14 +190,14 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 126,
-        "complete": 50,
+        "required": 127,
+        "complete": 51,
         "partial": 0,
         "missing": 76
       },
       "e2e_scripts": {
-        "required": 65,
-        "complete": 24,
+        "required": 66,
+        "complete": 25,
         "partial": 0,
         "missing": 41
       },
@@ -234,8 +234,8 @@
         "missing": 19
       },
       "e2e": {
-        "total": 21,
-        "complete": 12,
+        "total": 22,
+        "complete": 13,
         "partial": 1,
         "missing": 8
       },
@@ -341,6 +341,187 @@
     }
   },
   "entries": [
+    {
+      "bead_id": "bd-reality-202609-lx578q.7.16",
+      "title": "Stop full-source prescans in bounded multibyte string writes",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "CodexGapCloser",
+      "labels": [
+        "conformance",
+        "critique",
+        "verification"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Seven compiled/executed guard tests with 180 live GNU/candidate child arms from two new tests; default and owned TLS"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "Qualified1008 rows/mode, raw NUL-padding invariant1008 rows (288 changed inputs), original180 differences, prior5520 observations and exact CI/fresh solo replay"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": "Actual command streams and native summaries retained; no runtime telemetry claim"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": "No performance claim"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": "Live GNU comparison in the existing native fixture"
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": "No golden regeneration"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "vmi1293453:/data/tmp/frankenlibc-conversion-footprint-20261103/unit-final-ci/record/receipt.json"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "vmi1167313:/data/tmp/frankenlibc-conversion-footprint-20261103/candidate/report.json; vmi1227854:/data/tmp/frankenlibc-conversion-footprint-20261103/fresh-solo/report.json and ci-final/report.json"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.7.16",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test bounded_scan_guard_page_safety --no-fail-fast --config build.fingerprint=\"content\" -- --test-threads=1",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test bounded_scan_guard_page_safety --features owned-tls-cache --no-fail-fast --config build.fingerprint=\"content\" -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_MODE=strict LD_PRELOAD=/data/tmp/frankenlibc-conversion-footprint-20261103/candidate/candidate.so /data/tmp/frankenlibc-conversion-footprint-20261103/candidate/probe --conversion-footprint /data/tmp/frankenlibc-conversion-footprint-20261103/candidate/candidate.so",
+          "FRANKENLIBC_MODE=hardened LD_PRELOAD=/data/tmp/frankenlibc-conversion-footprint-20261103/candidate/candidate.so /data/tmp/frankenlibc-conversion-footprint-20261103/candidate/probe --conversion-footprint /data/tmp/frankenlibc-conversion-footprint-20261103/candidate/candidate.so"
+        ],
+        "expected_assertions": [
+          "Zero and nonzero bounded writes stop before an inaccessible page in mbstowcs/wcstombs/mbsrtowcs/wcsrtombs; bounded engines remain positive controls",
+          "All1008 qualified rows match GNU per mode; all5520 old rows unchanged; original differs180, wrong providers91/0",
+          "Raw layouts equal candidate padded results on all1008 rows with no signals;288 actually changed inputs;96 raw GNU signals stay unqualified"
+        ],
+        "log_schema_refs": [],
+        "artifact_paths": [
+          "/data/tmp/frankenlibc-conversion-footprint-20261103/unit/record/receipt.json",
+          "vmi1167313:/data/tmp/frankenlibc-conversion-footprint-20261103/candidate/report.json",
+          "/data/tmp/frankenlibc-conversion-footprint-20261103/unit-final-ci/record/receipt.json",
+          "vmi1227854:/data/tmp/frankenlibc-conversion-footprint-20261103/fresh-solo/report.json",
+          "vmi1227854:/data/tmp/frankenlibc-conversion-footprint-20261103/ci-final/report.json",
+          "/data/tmp/frankenlibc-conversion-footprint-workspace-check-retry-20261103.log",
+          "/data/tmp/frankenlibc-conversion-footprint-workspace-clippy-20261103.log"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Implemented bounded writes in mbstowcs/wcstombs/mbsrtowcs/wcsrtombs at runtime cut d94f7ebf03a550850b07d18fbf871864b2adaf1b; CI-only explicit reference-signal rejection ab949fb709f982bd388408af6074d94afa50f557. Final17 inputs equal ab949 (16 tracked plus ignored Cargo.lock captured separately); all runtime/Rust/C bytes still equal d94. First deployed665778269c2ed91ffffba8e92838e1fe0fa974284cbe5946dde9a38ef6182b64 vs original8f20...:0vs180 differences/1008 each mode, all5520 old observations exact; raw candidate invariant1008 rows/288 altered inputs has0differences/signals;14 wrong-provider controls91/0. First native report vmi1167313 candidate/report.json SHA525aba1c0e50e3593cc17b45bebeb0fb177c286745c52314588bedb69033bf2c; exact63-line CI fixed0/original1. Fresh SOLO positive replay rebuilt b76662f0eb13377684d0ff3f2f35875368753eb4a53326af14283ae07a3ae16e on1227854 after116 became pressure-blocked: all6528 rows/mode, raw1008 and14 provider controls pass; report280b2f6373d7a42d75b82e51cd48ab61f334bd3e68be3fbcf232ff2b5b132df7. Original negative was actually executed in first run, not replayed on122. Final68-line CI body4e400ed... executed0 on122; exact5-line guard accepts qualified0/rejects real rawGNU96signals1; ci-final/report.json SHAf3a20e989c4d8be8bc30fd8a2c4bed41b8b545b7aaa78d7ecb06e2c3a381d51f. Qualification repair preserved all912 previously normal GNU rows byte-identically and retained96raw GNU signals as unqualified; all original raw layouts remain in candidate invariant. Source-bound final unit record on1293453 unit-final-ci/record/receipt.json SHA80228dc670a1e81eee1b6838020f815250ec6080b8719a852200cce13704de10: build0/execution0/seven tests, binary9677154e677ff7edb9bac716907bff70f66152cefa7272900cbd30396418807a, stdoutf7c2b018116df06849f65e72338d130a84b23d2a5f82cbef1fafe9f6ab7faf9b. Final --admit actual0/POST_PASS1 at04:00:50Z. Earlier d94 record on114 retained as history. Default+owned guard7 each, seven conversion regression targets24 each; full workspace/all-targets/--keep-going check0 at04:00:12Z, strictClippy0 at03:56:52Z, fmt0 and UBS0critical/234warnings/1406info. Future nix and missingSMT-solver notices/ownedTLS pre-existing unused warnings retained. Paired report generation/check actual0 using retained producer with unchanged report/CLI source;4119 classifications and1085 invalid ownership cases unchanged. Failed qualification/SyntaxError/fmt/metadata assertion and rejected worker requests retained, no suppression, local fallback, cleanup or downloads. Separate fresh gate review/filled worksheets3216+3218; no independent reviewer, bit-reproducibility/performance/formal/universal-safety/POSIX/replacement/global-proof promotion. Broad parents and .45 remain open.",
+        "closure_evidence": {
+          "behavior": "Stop unbounded source prescans for output-limited multibyte string writes",
+          "acceptance_sha256": "abc11b43f82495ca770f1b4ce9276b6e5be6285393ea38e7c25f6a849984b145",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "source": {
+            "commit": "ab949fb709f982bd388408af6074d94afa50f557",
+            "files": {
+              "crates/frankenlibc-abi/src/wchar_abi.rs": "e023b9a9ab3f6c6e21c8a429c2e83cf6077ceb87102d8baf6088db0de5e4a23d",
+              "crates/frankenlibc-abi/src/errno_abi.rs": "b6336d7fc7e3a2ef33365ce2860997d6ac61e92d5f25cce19510a205340e7835",
+              "crates/frankenlibc-abi/src/locale_abi.rs": "4cd7dcb5d717a2e0f167d482aa657106cd0010789f49adac23847f220e872afa",
+              "crates/frankenlibc-abi/src/owned_tls_cache.rs": "d7e880ad53805ec8a7ccdf7ac7f8be86d2ce9767772c63faf75e6aa50e2b35dc",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "aecd86c1290490380f333c7f1b937d2b1f00375263a723197a0d5bb445f0b8ca",
+              "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
+              "crates/frankenlibc-core/src/string/wchar.rs": "50cf24948d5f2e3ead91d8bcd163c231676b77e016ae3491e7e4b6ff48873fbb",
+              "tests/integration/fixture_langinfo_time_mbrtowc_null.c": "7ad5cdaa70f2f650ab2f394391020f8219be438e602b962733a8228768949d88",
+              ".github/workflows/ci.yml": "2a40cceda47c3e95f26b69be6fa35558173b40f8604ce16ce55f41b7abc9823b",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
+              "crates/frankenlibc-core/Cargo.toml": "09d217439b597e7239feccd783faa0b78c7d40f323bfa67576e55777ac547b82",
+              "tools/stdio_synth/src/lib.rs": "5839f91ed774274572aa493019ea7169f5c843a379507dd74dfd8f23ad897950",
+              "crates/frankenlibc-abi/tests/bounded_scan_guard_page_safety.rs": "fb2a37d2ae10cbe59fcdca731cecae39e2fa05af0142b5aa393e1bfe59826713"
+            }
+          },
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/wchar_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/bounded_scan_guard_page_safety.rs"
+          ],
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-03T03:58:39Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/07b6d10a86cd1fa9/out/bounded_scan_guard_page_safety-07b6d10a86cd1fa9",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "bounded_scan_guard_page_safety",
+              "--no-run",
+              "--message-format=json",
+              "--config",
+              "build.fingerprint=\"content\""
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/07b6d10a86cd1fa9/out/bounded_scan_guard_page_safety-07b6d10a86cd1fa9"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "bounded_scans_never_read_into_guard_page",
+              "capped_parsers_never_read_into_guard_page",
+              "fixture_can_observe_an_over_read",
+              "multibyte_string_write_limits_stop_before_guard",
+              "published_progname_scan_never_reads_into_guard_page",
+              "saturating_bound_is_still_page_clamped",
+              "wide_string_write_limits_stop_before_guard"
+            ]
+          }
+        },
+        "result_receipts": [
+          "/data/tmp/frankenlibc-conversion-footprint-20261103/unit-final-ci/record/receipt.json"
+        ]
+      }
+    },
     {
       "bead_id": "bd-reality-202609-lx578q.7.15",
       "title": "Preserve legacy multibyte error, NUL and split-state semantics",

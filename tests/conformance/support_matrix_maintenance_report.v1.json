@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-02T17:27:34Z",
-  "source_commit": "f82fc5d7ee75a2dcdae6650ca24027766a4ad1d3",
-  "source_generated_at_utc": "2026-11-02T17:25:15Z",
-  "newest_abi_commit": "f82fc5d7ee75a2dcdae6650ca24027766a4ad1d3",
-  "newest_abi_commit_time": "2026-11-02T12:24:45-05:00",
+  "generated_at": "2026-11-03T03:43:28Z",
+  "source_commit": "d94f7ebf03a550850b07d18fbf871864b2adaf1b",
+  "source_generated_at_utc": "2026-11-03T03:41:29Z",
+  "newest_abi_commit": "d94f7ebf03a550850b07d18fbf871864b2adaf1b",
+  "newest_abi_commit_time": "2026-11-02T22:39:09-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 3034,
@@ -36,7 +36,7 @@
     "native_coverage_pct": 68.5
   },
   "trend": {
-    "baseline_report_path": "/data/tmp/frankenlibc-singlechar-source-20261102/support_matrix_maintenance_report.v1.json",
+    "baseline_report_path": "/data/tmp/frankenlibc-conversion-footprint-source-20261103/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
     "promotion_proof_manifest_path": "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/iconv_locale_bootstrap_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/search_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pthread_mutex_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/string_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/fortify_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/unistd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json",
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "6e6a1dd481ae602e0c2a29e9ee606d433b10677f1d8dd051b8f6fb4193d542ff",
+        "artifact_sha256": "e28ac5b531805c6192d379a3df61634c1bd91997a295d25dd28d929066995ccd",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 16,
-        "source_tree_sha256": "be71472dc88e958a8febd3b279db34df9c474b503a9d103a28ae3676b94dca34"
+        "source_tree_sha256": "c4c8d655cdc12b40e8f2f117eafcae3b32186380f868bdf89f98bdbfe03c34d3"
       }
     },
     "summary": {
