@@ -54,7 +54,7 @@
       "required_summary_values": {
         "untracked_contract_annotation_count": 0,
         "allowed_false_positive_count": 0,
-        "support_matrix_stub_count": 0,
+        "support_matrix_stub_count": 18,
         "docs_with_semantic_overlay_reference": 2
       },
       "required_checks": [

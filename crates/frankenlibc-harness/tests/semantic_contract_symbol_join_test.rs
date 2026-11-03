@@ -212,6 +212,7 @@ fn artifact_preserves_inventory_rows_and_blocks_claim_promotion() {
         "deterministic_fallback",
         "limited_bootstrap",
         "unsupported_platform_contract",
+        "proof_gap",
     ] {
         assert!(
             blocker_classes.contains(class),
@@ -289,7 +290,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
     );
     assert_eq!(
         report["summary"]["resolved_symbol_join_row_count"].as_u64(),
-        Some(84)
+        Some(89)
     );
     assert_eq!(
         report["summary"]["conflicting_exact_symbol_join_count"].as_u64(),
@@ -369,13 +370,14 @@ fn alternate_version_script_nodes_are_reflected_in_resolved_rows() {
         .output()
         .expect("failed to run semantic contract symbol-join gate with version node fixture");
     assert!(
-        output.status.success(),
-        "version-node fixture should preserve joins while changing node labels:\nstdout={}\nstderr={}",
+        !output.status.success(),
+        "changed version-node inputs must expose stale exhaustive inventory while still resolving the new labels:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let report = parse_stdout_report(&output);
+    assert_eq!(report["checks"]["exhaustive_export_surface"], "fail");
     let resolved_rows = report["resolved_symbol_join_rows"]
         .as_array()
         .expect("report must include resolved per-symbol join rows");
@@ -442,4 +444,30 @@ fn stale_missing_support_matrix_expectation_blocks_claim() {
         report["checks"]["row_join_expectations"].as_str(),
         Some("fail")
     );
+}
+
+#[test]
+fn global_version_wildcard_cannot_hide_declared_exports() {
+    let root = workspace_root();
+    let path = unique_temp_path("semantic-global-wildcard.map");
+    let text =
+        std::fs::read_to_string(root.join("crates/frankenlibc-abi/version_scripts/libc.map"))
+            .unwrap();
+    assert!(text.contains("        memcpy;"));
+    std::fs::write(&path, text.replacen("        memcpy;", "        mem*;", 1)).unwrap();
+    let output = Command::new(root.join("scripts/check_semantic_contract_symbol_join.sh"))
+        .current_dir(&root)
+        .env("FLC_SEMANTIC_JOIN_VERSION_SCRIPT", &path)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "global wildcard silently accepted"
+    );
+    let report = parse_stdout_report(&output);
+    assert!(report["errors"].as_array().unwrap().iter().any(|error| {
+        error
+            .as_str()
+            .is_some_and(|text| text.contains("unresolved global version-script declaration"))
+    }));
 }

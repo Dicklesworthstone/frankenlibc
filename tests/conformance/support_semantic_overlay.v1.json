@@ -189,14 +189,30 @@
       "source_line": 27011,
       "evidence": "argp_help/state_help use the native tree renderer, filters and caller streams; state_help/usage can exit according to flags. Existing source is broader than the historical literal/no-exit subset; full GNU behavior remains unqualified by this inventory.",
       "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, complete state stream selection, and process-exit behavior before claiming complete GNU argp parity. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7."
+    },
+    {
+      "id": "sem-remote-command-fallback",
+      "surface": "remote command fallback",
+      "symbols": [
+        "rcmd",
+        "rcmd_af",
+        "rexec",
+        "rexec_af"
+      ],
+      "support_matrix_status": "WrapsHostLibc",
+      "semantic_class": "deterministic_fallback",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 7172,
+      "required_followup": "Qualify the declared GNU contract and owner policy, then implement and execute bounded local-server success/error cases under bd-reality-202609-lx578q.7 without assuming reserved-port helpers implement the remote protocol.",
+      "evidence": "All four declared remote-command entrypoints currently return -1 with ENOSYS, regardless of otherwise valid arguments. The source disables them; this is not full GNU remote-command behavior."
     }
   ],
   "audited_summary": {
-    "entries": 9,
+    "entries": 10,
     "by_semantic_class": {
       "full_semantics": 0,
       "compat_noop": 2,
-      "deterministic_fallback": 0,
+      "deterministic_fallback": 1,
       "limited_bootstrap": 4,
       "unsupported_platform_contract": 1,
       "proof_gap": 2

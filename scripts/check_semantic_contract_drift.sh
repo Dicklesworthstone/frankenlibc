@@ -16,6 +16,7 @@ mkdir -p "${OUT_DIR}"
 python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" <<'PY'
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -70,12 +71,16 @@ def file_sha256(path):
         return None
 
 def git_head():
+    declared = os.environ.get("RCH_BUILD_SOURCE", "").removesuffix("-dirty")
+    if declared:
+        if len(declared) == 40 and all(c in "0123456789abcdef" for c in declared):
+            return declared
+        raise ValueError("RCH_BUILD_SOURCE must be a full source object ID")
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             text=True,
-            stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
         return "unknown"
@@ -195,6 +200,25 @@ else:
 inventory_entries = inventory.get("entries", []) if isinstance(inventory, dict) else []
 join_entries = join.get("entries", []) if isinstance(join, dict) else []
 join_summary = join.get("summary", {}) if isinstance(join, dict) else {}
+
+try:
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location(
+        "semantic_source_census", root / "scripts/generate_host_delegation_census.py"
+    )
+    source_census = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = source_census
+    spec.loader.exec_module(source_census)
+    surface = source_census.build_semantic_export_surface(
+        root, root / "crates/frankenlibc-abi/src", version_script_path, support, inventory
+    )
+    if inventory.get("export_surface") != surface:
+        raise ValueError("declared exports/profile membership/unknown contracts differ")
+    checks["exhaustive_export_surface"] = "pass"
+    event("exhaustive_export_surface", expected_contract="complete explicit-unknown export inventory", actual_contract=str(surface["summary"]))
+except Exception as exc:
+    checks["exhaustive_export_surface"] = "fail"
+    fail("exhaustive_export_surface", str(exc), failure_signature="stale_semantic_export_surface")
 
 if version_script_path.exists() and join_path.exists():
     checks["abi_export_input_presence"] = "pass"
@@ -418,26 +442,30 @@ checks["source_contract_annotation_drift"] = "pass" if untracked_count == 0 else
 
 support_stub_count = None
 if isinstance(support, dict):
-    counts = support.get("counts", {})
-    if isinstance(counts, dict):
-        support_stub_count = counts.get("Stub", counts.get("stub"))
-    if support_stub_count is None:
-        support_stub_count = len(support.get("stub", [])) if isinstance(support.get("stub"), list) else 0
+    support_stub_count = sum(row.get("status") == "Stub" for row in support.get("symbols", []))
 
 overlay_policy = overlay.get("coverage_policy", {}) if isinstance(overlay, dict) else {}
-if support_stub_count == 0 and overlay_policy.get("is_exhaustive") is False and "Stub=0" in str(overlay_policy.get("release_blocker", "")):
+snapshot_stubs = overlay.get("support_matrix_snapshot", {}).get("status_counts", {}).get("Stub") if isinstance(overlay, dict) else None
+if (
+    snapshot_stubs == support_stub_count
+    and overlay_policy.get("is_exhaustive") is False
+    and overlay_policy.get("inventory_complete") is True
+    and overlay_policy.get("semantic_review_complete") is False
+    and "not" in str(overlay_policy.get("release_blocker", "")).lower()
+    and "semantic" in str(overlay_policy.get("release_blocker", "")).lower()
+):
     checks["support_taxonomy_claim_blocker"] = "pass"
     event(
         "support_taxonomy_claim_blocker",
-        expected_contract="Stub=0 is not semantic parity",
-        actual_contract="semantic overlay release blocker present",
+        expected_contract="support taxonomy counts are not semantic parity",
+        actual_contract=f"explicit semantic blocker present; actual Stub={support_stub_count}",
     )
 else:
     checks["support_taxonomy_claim_blocker"] = "fail"
     fail(
         "support_taxonomy_claim_blocker",
-        "support taxonomy Stub=0 claim blocker is missing or stale",
-        expected_contract="Stub=0 blocked by semantic overlay",
+        "support taxonomy claim blocker or actual Stub count is missing or stale",
+        expected_contract="actual taxonomy count and incomplete semantic review remain explicit",
         actual_contract=f"support_stub_count={support_stub_count}, overlay_policy={overlay_policy}",
         failure_signature="missing_support_taxonomy_claim_blocker",
     )
@@ -558,6 +586,7 @@ summary = {
     "untracked_contract_annotation_count": len(newly_found_drift),
     "allowed_false_positive_count": len(allowed_drift),
     "support_matrix_stub_count": support_stub_count,
+    "export_surface_summary": surface.get("summary", {}) if "surface" in globals() else {},
     "docs_with_semantic_overlay_reference": sum(
         1 for text in [readme_text, feature_text] if "support_semantic_overlay.v1.json" in text
     ),

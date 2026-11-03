@@ -193,7 +193,10 @@ for row in entries:
     if marker not in text:
         source_errors.append(f"{row.get('id')}: marker not found: {marker}")
     evidence = row.get("evidence_artifacts", [])
-    if not evidence or any(not isinstance(item, str) or not (root / item).is_file() for item in evidence):
+    if (
+        row.get("source_path") not in evidence
+        or any(not isinstance(item, str) or not (root / item).is_file() for item in evidence)
+    ):
         source_errors.append(f"{row.get('id')}: missing referenced evidence artifact")
 if source_errors:
     checks["source_markers"] = "fail"

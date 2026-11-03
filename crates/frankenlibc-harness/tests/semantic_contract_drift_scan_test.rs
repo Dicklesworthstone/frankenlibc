@@ -27,6 +27,7 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
 const REQUIRED_RULES: &[&str] = &[
     "abi_export_input_presence",
     "docs_claim_surface",
+    "exhaustive_export_surface",
     "inventory_marker_freshness",
     "semantic_join_freshness",
     "source_contract_annotation_drift",
@@ -184,11 +185,11 @@ fn gate_passes_clean_tree_and_emits_report_and_required_log_fields() {
     }
     assert_eq!(
         report["summary"]["tracked_inventory_entries"].as_u64(),
-        Some(17)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["semantic_parity_blocker_count"].as_u64(),
-        Some(17)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["untracked_contract_annotation_count"].as_u64(),
@@ -196,7 +197,7 @@ fn gate_passes_clean_tree_and_emits_report_and_required_log_fields() {
     );
     assert_eq!(
         report["summary"]["support_matrix_stub_count"].as_u64(),
-        Some(0)
+        Some(18)
     );
     assert!(
         report["claim_surfaces_blocked_by_findings"]
@@ -266,6 +267,31 @@ fn stale_inventory_marker_fails_with_stable_signature() {
                 .contains("stale line_marker")),
         "failure should identify stale line_marker"
     );
+}
+
+#[test]
+fn stale_zero_stub_claim_and_removed_semantic_blocker_are_rejected() {
+    let root = workspace_root();
+    let canonical = load_json(&root.join("tests/conformance/support_semantic_overlay.v1.json"));
+    for (name, remove_blocker) in [("zero-stub", false), ("removed-blocker", true)] {
+        let path = unique_temp_path(&format!("semantic-contract-{name}.json"));
+        let mut overlay = canonical.clone();
+        if remove_blocker {
+            overlay["coverage_policy"]["release_blocker"] = "".into();
+        } else {
+            overlay["support_matrix_snapshot"]["status_counts"]["Stub"] = 0.into();
+        }
+        std::fs::write(&path, serde_json::to_vec_pretty(&overlay).unwrap()).unwrap();
+        let output = run_gate_with_env(&[("FLC_SEMANTIC_DRIFT_OVERLAY", &path)]);
+        assert!(
+            !output.status.success(),
+            "{name} accepted: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = parse_stdout_report(&output);
+        assert_eq!(report["checks"]["support_taxonomy_claim_blocker"], "fail");
+    }
 }
 
 #[test]

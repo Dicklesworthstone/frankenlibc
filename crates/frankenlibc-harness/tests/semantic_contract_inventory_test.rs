@@ -271,6 +271,8 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> TestResult {
         "summary_counts",
         "source_summary_counts",
         "source_markers",
+        "exhaustive_export_surface",
+        "semantic_claim_boundary",
     ] {
         ensure(
             report["checks"][check].as_str() == Some("pass"),
@@ -318,4 +320,169 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> TestResult {
     }
 
     Ok(())
+}
+
+#[test]
+fn declared_surface_covers_both_census_profiles_without_semantic_promotion() -> TestResult {
+    let root = workspace_root()?;
+    let inventory = load_json(&root.join("tests/conformance/semantic_contract_inventory.v1.json"))?;
+    let census = load_json(&root.join("tests/conformance/host_delegation_census.v1.json"))?;
+    let surface = &inventory["export_surface"];
+    ensure(
+        surface["inventory_complete"].as_bool() == Some(true),
+        "incomplete export inventory",
+    )?;
+    ensure(
+        surface["semantic_review_complete"].as_bool() == Some(false),
+        "source inventory is not full semantic review",
+    )?;
+    ensure(
+        surface["source_tree_sha256"] == census["detector"]["source_tree_sha256"],
+        "profile comparison requires the same source tree",
+    )?;
+    let groups = json_array(&surface["groups"], "export groups")?;
+    let mut symbols = HashSet::new();
+    for group in groups {
+        ensure(
+            group["semantic_status"] == "unknown",
+            "source group promoted to semantics",
+        )?;
+        ensure(
+            group["backend_review"] == "unreviewed",
+            "source presence promoted to backend proof",
+        )?;
+        ensure(
+            !json_str(&group["next_action"], "next action")?.is_empty(),
+            "unknown needs a next action",
+        )?;
+        for symbol in json_array(&group["symbols"], "group symbols")? {
+            ensure(
+                symbols.insert(json_str(symbol, "symbol")?),
+                "duplicate export membership",
+            )?;
+        }
+    }
+    ensure(
+        surface["summary"]["declared_symbol_count"].as_u64() == Some(u64::try_from(symbols.len())?),
+        "declared export count mismatch",
+    )?;
+    for profile in [
+        "interpose-release-linux-x86_64",
+        "standalone-release-linux-x86_64",
+    ] {
+        let actual = groups
+            .iter()
+            .filter(|group| {
+                group["profiles"]
+                    .as_array()
+                    .is_some_and(|profiles| profiles.iter().any(|p| p == profile))
+            })
+            .map(|group| group["symbols"].as_array().map_or(0, Vec::len))
+            .sum::<usize>();
+        ensure(
+            census["profile_census"][profile]["coverage"]["source_unique_export_symbol_count"]
+                .as_u64()
+                == Some(u64::try_from(actual)?),
+            format!("{profile}: semantic source membership differs from the cfg-aware census"),
+        )?;
+    }
+    ensure(
+        surface["summary"]["full_semantics_count"].as_u64() == Some(0),
+        "inventory must not claim semantic completion",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn actual_gate_rejects_incomplete_stale_and_promoted_export_groups() -> TestResult {
+    let root = workspace_root()?;
+    let canonical = load_json(&root.join("tests/conformance/semantic_contract_inventory.v1.json"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let retained = std::env::temp_dir().join(format!(
+        "frankenlibc-semantic-negative-{stamp}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&retained)?;
+    let mut observed = 0;
+    for case in 0..10 {
+        let mut mutant = canonical.clone();
+        match case {
+            0 => {
+                ensure(
+                    mutant["export_surface"]["groups"][0]["symbols"]
+                        .as_array_mut()
+                        .ok_or_else(|| failure("symbols"))?
+                        .pop()
+                        .is_some(),
+                    "negative case requires a real symbol",
+                )?;
+                let count = mutant["export_surface"]["summary"]["declared_symbol_count"]
+                    .as_u64()
+                    .ok_or_else(|| failure("count"))?;
+                mutant["export_surface"]["summary"]["declared_symbol_count"] = (count - 1).into();
+                mutant["export_surface"]["summary"]["unknown_semantics_count"] = (count - 1).into();
+            }
+            1 => {
+                let symbol = mutant["export_surface"]["groups"][0]["symbols"][0].clone();
+                mutant["export_surface"]["groups"][0]["symbols"]
+                    .as_array_mut()
+                    .ok_or_else(|| failure("symbols"))?
+                    .push(symbol);
+            }
+            2 => mutant["export_surface"]["groups"][0]["semantic_status"] = "full_semantics".into(),
+            3 => {
+                let groups = mutant["export_surface"]["groups"]
+                    .as_array_mut()
+                    .ok_or_else(|| failure("groups"))?;
+                let active = groups
+                    .iter_mut()
+                    .find(|group| group["profiles"].as_array().is_some_and(|p| !p.is_empty()))
+                    .ok_or_else(|| failure("active source group missing"))?;
+                active["profiles"] = serde_json::json!([]);
+            }
+            4 => mutant["export_surface"]["source_tree_sha256"] = "0".repeat(64).into(),
+            5 => mutant["export_surface"]["groups"][0]["next_action"] = "".into(),
+            6 => mutant["export_surface"]["groups"][0]["backend_review"] = "verified".into(),
+            7 => mutant["entries"][0]["evidence_artifacts"] = serde_json::json!(["README.md"]),
+            8 => {
+                mutant["entries"][0]["evidence_artifacts"] =
+                    serde_json::json!(["missing-semantic-evidence.rs"])
+            }
+            9 => {
+                let groups = mutant["export_surface"]["groups"]
+                    .as_array_mut()
+                    .ok_or_else(|| failure("groups"))?;
+                let fallback = groups
+                    .iter_mut()
+                    .find(|group| group["support_status"] == "Stub")
+                    .ok_or_else(|| failure("declared Stub group missing"))?;
+                fallback["support_status"] = "Implemented".into();
+            }
+            _ => return Err(failure("unrecognized negative case")),
+        }
+        let path = retained.join(format!("case-{case}.json"));
+        std::fs::write(&path, serde_json::to_vec_pretty(&mutant)?)?;
+        let output = Command::new(root.join("scripts/check_semantic_contract_inventory.sh"))
+            .current_dir(&root)
+            .env("FLC_SEMANTIC_INVENTORY_ARTIFACT", &path)
+            .output()?;
+        std::fs::write(retained.join(format!("case-{case}.stdout")), &output.stdout)?;
+        std::fs::write(retained.join(format!("case-{case}.stderr")), &output.stderr)?;
+        ensure(
+            !output.status.success(),
+            format!(
+                "case {case}: invalid inventory accepted; retained {}",
+                retained.display()
+            ),
+        )?;
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        ensure(
+            report["checks"]["exhaustive_export_surface"] == "fail",
+            format!("case {case}: failed for unrelated reason: {report}"),
+        )?;
+        observed += 1;
+    }
+    ensure(observed == 10, "all planted negative controls must execute")
 }
