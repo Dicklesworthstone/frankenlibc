@@ -2464,6 +2464,153 @@ def build_profile_census(
     }
 
 
+def parse_version_script(text: str) -> dict[str, list[str]]:
+    """Read explicit global names; never silently discard a global wildcard."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    nodes: dict[str, list[str]] = {}
+    current_node = None
+    in_global = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        node = re.match(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*\{", line)
+        if node:
+            current_node = node.group(1)
+            in_global = False
+        elif current_node and line.startswith("global:"):
+            in_global = True
+        elif line.startswith(("local:", "}")):
+            in_global = False
+        elif current_node and in_global and line:
+            symbol = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*;", line)
+            if symbol is None:
+                raise ValueError(f"unresolved global version-script declaration: {line}")
+            nodes.setdefault(symbol.group(1), []).append(current_node)
+    return {symbol: sorted(set(versions)) for symbol, versions in sorted(nodes.items())}
+
+
+def build_semantic_export_surface(
+    root: Path,
+    abi_source_dir: Path,
+    version_script: Path,
+    support: dict[str, Any],
+    inventory: dict[str, Any],
+) -> dict[str, Any]:
+    """Account for declarations, without inferring semantics from their presence.
+
+    Grouping saves repeated unknown/next-action text. Exact symbol membership,
+    profile membership, versions and source modules are recomputed from inputs;
+    a group cannot hide an omitted name or upgrade unknown behavior to parity.
+    Raw declarations outside the two production profiles remain visible as
+    configuration-unqualified candidates, not as observed dynamic exports.
+    """
+    source_files = sorted(abi_source_dir.glob("*.rs"))
+    raw_modules: dict[str, set[str]] = {}
+    memberships: dict[str, set[str]] = {}
+    for path in source_files:
+        for function in parse_functions(path):
+            if function.is_exported_abi and function.is_call_graph_item:
+                raw_modules.setdefault(function.exported_symbol, set()).add(function.module)
+    profile_counts = {}
+    for profile in CFG_PROFILES:
+        filtered, _, diagnostics = profile_source_view(
+            root, abi_source_dir, source_files, profile
+        )
+        if diagnostics:
+            raise ValueError(f"unresolved semantic export cfg: {[d.to_json() for d in diagnostics]}")
+        symbols = set()
+        for path, text in filtered.items():
+            for function in parse_functions(path, text):
+                if function.is_exported_abi and function.is_call_graph_item:
+                    symbol = function.exported_symbol
+                    symbols.add(symbol)
+                    memberships.setdefault(symbol, set()).add(profile.name)
+                    raw_modules.setdefault(symbol, set()).add(function.module)
+        profile_counts[profile.name] = len(symbols)
+    versions = parse_version_script(version_script.read_text(encoding="utf-8"))
+    support_rows = support.get("symbols", [])
+    support_by_symbol = {row["symbol"]: row for row in support_rows}
+    if len(support_by_symbol) != len(support_rows):
+        raise ValueError("duplicate support symbols in semantic export inputs")
+    declared = sorted(set(raw_modules) | set(versions) | set(support_by_symbol))
+    contracts = inventory.get("entries", [])
+    grouped: dict[str, dict[str, Any]] = {}
+    for symbol in declared:
+        matching_contracts = sorted(
+            row["id"]
+            for row in contracts
+            if any(
+                re.fullmatch(re.escape(pattern).replace(r"\*", ".*"), symbol)
+                for pattern in row.get("symbols", [])
+            )
+        )
+        modules = sorted(raw_modules.get(symbol, set()))
+        profiles = sorted(memberships.get(symbol, set()))
+        context = {
+            "profiles": profiles,
+            "source_modules": modules,
+            "version_nodes": versions.get(symbol, []),
+            "support_status": support_by_symbol.get(symbol, {}).get("status", "not_listed"),
+            "contract_ids": matching_contracts,
+            "semantic_status": "unknown",
+            "backend_review": "unreviewed",
+        }
+        key = json.dumps(context, sort_keys=True)
+        if key not in grouped:
+            action = (
+                "Review each named symbol against its ISO C/POSIX/GNU contract and existing "
+                "family differential cases in both modes; record measured behavior gaps in "
+                "bd-reality-202609-lx578q.7."
+            )
+            if not profiles:
+                action = (
+                    "Resolve the data/assembly/inactive-module or target/feature declaration "
+                    "before claiming a provider; then review behavior under "
+                    "bd-reality-202609-lx578q.7."
+                )
+            if context["support_status"] == "Stub":
+                action = (
+                    "Confirm the current fallback against source and a real provider; link "
+                    "printf registration to bd-rc0923-epic-eeuy4f.33 or RPC to .35, and "
+                    "other measured runtime defects to bd-reality-202609-lx578q.7."
+                )
+            grouped[key] = {
+                "id": "unknown-" + hashlib.sha256(key.encode()).hexdigest()[:16],
+                **context,
+                "symbols": [],
+                "next_action": action,
+            }
+        grouped[key]["symbols"].append(symbol)
+    groups = sorted(grouped.values(), key=lambda row: row["id"])
+    if len({row["id"] for row in groups}) != len(groups):
+        raise ValueError("semantic export group identity collision")
+    return {
+        "scope": "Declared source candidates, version-script globals and support rows; not a dynamic-symbol or behavioral proof.",
+        "inventory_complete": True,
+        "semantic_review_complete": False,
+        "profiles": {profile.name: profile.to_json() for profile in CFG_PROFILES},
+        "source_tree_sha256": source_tree_sha256(source_files, root),
+        "version_script_sha256": file_sha256(version_script),
+        "support_rows_sha256": hashlib.sha256(
+            json.dumps(support_rows, sort_keys=True).encode()
+        ).hexdigest(),
+        "contract_rows_sha256": hashlib.sha256(
+            json.dumps(contracts, sort_keys=True).encode()
+        ).hexdigest(),
+        "summary": {
+            "declared_symbol_count": len(declared),
+            "raw_source_symbol_count": len(raw_modules),
+            "profile_source_symbol_counts": profile_counts,
+            "version_script_symbol_count": len(versions),
+            "support_symbol_count": len(support_by_symbol),
+            "group_count": len(groups),
+            "unknown_semantics_count": len(declared),
+            "full_semantics_count": 0,
+            "unqualified_configuration_count": sum(not memberships.get(s) for s in declared),
+        },
+        "groups": groups,
+    }
+
+
 def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
     source_files = sorted(abi_source_dir.glob("*.rs"))
     functions: list[FunctionInfo] = []
