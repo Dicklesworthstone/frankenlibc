@@ -1440,66 +1440,25 @@ pub unsafe extern "C" fn __res_mailok(dn: *const c_char) -> c_int {
     unsafe { res_mailok(dn) }
 }
 // __res_mkquery: build a DNS query packet in the caller's buffer.
-// Only QUERY (op=0) is supported; all other opcodes return -1.
+// QUERY and NOTIFY use the calling thread's public resolver state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_mkquery(
     op: c_int,
     dname: *const c_char,
     class: c_int,
     typ: c_int,
-    _data: *const c_void,
-    _datalen: c_int,
-    _newrr: *const c_void,
+    data: *const c_void,
+    datalen: c_int,
+    newrr: *const c_void,
     buf: *mut c_void,
     buflen: c_int,
 ) -> c_int {
-    // Only QUERY (op=0) is supported.
-    if op != 0 || dname.is_null() || buf.is_null() || buflen < 12 {
-        return -1;
+    // SAFETY: the shared boundary validates the caller's strings and output.
+    unsafe {
+        crate::resolv_state::global::mkquery(
+            op, dname, class, typ, data, datalen, newrr, buf, buflen,
+        )
     }
-    let Some(name_bytes) = (unsafe { dns_c_string_bytes(dname) }) else {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
-    };
-    let Some(qname) = frankenlibc_core::resolv::dns::encode_domain_name(&name_bytes) else {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    };
-    let needed = 12 + qname.len() + 4; // header + qname + qtype + qclass
-    let effective_buflen = effective_output_len(buf, buflen as usize);
-    if effective_buflen < needed {
-        return -1;
-    }
-
-    // Generate a random transaction ID.
-    static TX_COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0x4567);
-    let tx_id = TX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-    let out = buf as *mut u8;
-    let out_slice = unsafe { std::slice::from_raw_parts_mut(out, effective_buflen) };
-
-    // Header: ID, flags (RD=1, AD from resolv.conf), qdcount=1.
-    //
-    // This is the function glibc's res_mkquery is compared against, and its AD
-    // bit is DERIVED: live glibc emits 0x0120 when resolv.conf carries
-    // `trust-ad` and 0x0100 when it does not (bd-b275vh). Reuses unistd_abi's
-    // cached resolver config so the whole crate answers from one parse.
-    let hdr = frankenlibc_core::resolv::dns::DnsHeader::new_query_with_trust_ad(
-        tx_id,
-        crate::unistd_abi::RESOLV_CONFIG.trust_ad,
-    );
-    let _ = hdr.encode(out_slice);
-
-    // Question section.
-    let mut pos = 12;
-    out_slice[pos..pos + qname.len()].copy_from_slice(&qname);
-    pos += qname.len();
-    out_slice[pos..pos + 2].copy_from_slice(&(typ as u16).to_be_bytes());
-    pos += 2;
-    out_slice[pos..pos + 2].copy_from_slice(&(class as u16).to_be_bytes());
-    pos += 2;
-
-    pos as c_int
 }
 
 // __res_nclose: release only native allocations owned by this resolver state.
@@ -1609,7 +1568,7 @@ pub unsafe extern "C" fn __res_query(
 ) -> c_int {
     unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
 }
-// __res_querydomain: concatenate name.domain and query via __res_query.
+// __res_querydomain: combine the name and suffix using this thread's state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_querydomain(
     name: *const c_char,
@@ -1619,63 +1578,8 @@ pub unsafe extern "C" fn __res_querydomain(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    if name.is_null() {
-        return -1;
-    }
-    let Some(name_bytes) = (unsafe { dns_c_string_bytes(name) }) else {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
-    };
-    // If domain is NULL or empty, just query the name directly.
-    if domain.is_null() {
-        let mut query_name = name_bytes;
-        query_name.push(0);
-        return unsafe {
-            super::unistd_abi::res_query(
-                query_name.as_ptr().cast(),
-                class,
-                typ,
-                answer.cast(),
-                anslen,
-            )
-        };
-    }
-    let Some(domain_bytes) = (unsafe { dns_c_string_bytes(domain) }) else {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
-    };
-    if domain_bytes.is_empty() {
-        let mut query_name = name_bytes;
-        query_name.push(0);
-        return unsafe {
-            super::unistd_abi::res_query(
-                query_name.as_ptr().cast(),
-                class,
-                typ,
-                answer.cast(),
-                anslen,
-            )
-        };
-    }
-
-    // Build "name.domain\0"
-    let mut fqdn = Vec::with_capacity(name_bytes.len() + 1 + domain_bytes.len() + 1);
-    fqdn.extend_from_slice(&name_bytes);
-    if !name_bytes.ends_with(b".") {
-        fqdn.push(b'.');
-    }
-    fqdn.extend_from_slice(&domain_bytes);
-    fqdn.push(0); // NUL terminate
-
-    unsafe {
-        super::unistd_abi::res_query(
-            fqdn.as_ptr().cast::<c_char>(),
-            class,
-            typ,
-            answer.cast(),
-            anslen,
-        )
-    }
+    // SAFETY: the shared boundary copies both strings before writing output.
+    unsafe { crate::resolv_state::global::querydomain(name, domain, class, typ, answer, anslen) }
 }
 // __res_randomid: generate a random 16-bit DNS query ID
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1717,67 +1621,14 @@ pub unsafe extern "C" fn __res_send(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    use frankenlibc_core::dns_transport::{QueryError, raw};
-    use frankenlibc_core::resolv::dns::DNS_HEADER_SIZE;
-    use std::io::ErrorKind;
-
-    let fail = |error: QueryError| {
-        let code = match error {
-            QueryError::InvalidQuery => libc::EINVAL,
-            QueryError::InvalidResponse => libc::EMSGSIZE,
-            QueryError::ResponseCode(_) | QueryError::RetryableResponse(_) => libc::EAGAIN,
-            QueryError::Io(error) => error.raw_os_error().unwrap_or_else(|| match error.kind() {
-                ErrorKind::TimedOut | ErrorKind::WouldBlock => libc::ETIMEDOUT,
-                ErrorKind::ConnectionRefused => libc::ECONNREFUSED,
-                ErrorKind::ConnectionReset | ErrorKind::UnexpectedEof => libc::ECONNRESET,
-                ErrorKind::Interrupted => libc::EINTR,
-                ErrorKind::PermissionDenied => libc::EACCES,
-                ErrorKind::InvalidInput => libc::EINVAL,
-                _ => libc::EIO,
-            }),
-        };
-        // SAFETY: errno storage belongs to this thread.
-        unsafe { set_abi_errno(code) };
-        -1
-    };
-    if msg.is_null()
-        || answer.is_null()
-        || msglen < DNS_HEADER_SIZE as c_int
-        || msglen > u16::MAX as c_int
-        || anslen < DNS_HEADER_SIZE as c_int
-    {
-        return fail(QueryError::InvalidQuery);
-    }
-    if tracked_region_too_short_addr(msg as usize, msglen as usize)
-        || tracked_output_too_short(answer, anslen as usize)
-    {
-        return fail(QueryError::InvalidQuery);
-    }
-
-    // SAFETY: caller owns a readable message; signed lengths, null pointers
-    // and tracked allocation extents have been checked before socket I/O.
-    let query = unsafe { std::slice::from_raw_parts(msg.cast::<u8>(), msglen as usize) };
-    let config = raw::Config::from(&*super::unistd_abi::RESOLV_CONFIG);
-    let reply = match raw::send(query, &config) {
-        Ok(reply) => reply,
-        Err(error) => return fail(error),
-    };
-    // Construct the mutable output only AFTER the transport no longer borrows
-    // the query. Callers may reuse their message buffer as the answer buffer.
-    // SAFETY: writable caller storage with the checked advertised extent.
-    let out = unsafe { std::slice::from_raw_parts_mut(answer.cast::<u8>(), anslen as usize) };
-    match reply.copy_answer(out) {
-        // TCP may report more bytes than fit in out, with TC marked there.
-        // The wire limit bounds this conversion even for a huge caller buffer.
-        Ok(length) => length as c_int,
-        Err(error) => fail(error),
-    }
+    // SAFETY: the shared boundary checks spans before socket I/O and permits
+    // the caller to reuse its message storage for the answer.
+    unsafe { crate::resolv_state::global::send(msg, msglen, answer, anslen) }
 }
 
-// __res_state: return a pointer to the per-thread resolver state.
-// We provide a minimal opaque struct in TLS. Callers that only check for
-// non-null or pass it to __res_n* will work correctly since our __res_n*
-// implementations ignore the state pointer.
+// __res_state: stable, initially zeroed public state for the calling thread.
+// Legacy APIs initialize it on first use; direct callers can configure it and
+// pass it to res_n*. Both TLS backends preserve its address and alignment.
 //
 // ALIGNMENT IS LOAD-BEARING. `__res_state()` hands this address to the caller as
 // a `struct __res_state *`, and that struct is pointers, ints and longs — a
@@ -1790,6 +1641,14 @@ pub unsafe extern "C" fn __res_send(
 // wrapper is also a valid pointer to its bytes.
 #[repr(C, align(8))]
 struct ResStateBuf([u8; 640]);
+
+impl Drop for ResStateBuf {
+    fn drop(&mut self) {
+        // SAFETY: the aligned state remains live during its destructor. close
+        // releases only native-owned configuration, never caller overrides.
+        unsafe { crate::resolv_state::close(self.0.as_mut_ptr().cast()) };
+    }
+}
 
 #[cfg(feature = "owned-tls-cache")]
 static RES_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ResStateBuf> =
@@ -1820,10 +1679,6 @@ fn res_state_ptr() -> *mut c_void {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_state() -> *mut c_void {
-    // Minimal thread-local state: just enough to be a valid non-null pointer.
-    // glibc's struct __res_state is ~600 bytes; callers that read fields
-    // directly would need a full layout, but the common path is to pass
-    // this to __res_n* functions which we handle natively.
     res_state_ptr()
 }
 

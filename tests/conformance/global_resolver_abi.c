@@ -1,6 +1,8 @@
 /* Global resolver ABI conformance. Loopback only; no external DNS or root.
  * cc -std=c11 -O2 -Wall -Wextra -Werror global_resolver_abi.c -pthread -ldl -lresolv -o global-resolver
  * timeout 90 ./global-resolver --host   (or absolute candidate shared library)
+ * An optional second path pins the expected provider independently of dlopen.
+ * FLC_GLOBAL_RESOLVER_CONTROL=missing_result|corrupt_reply exercises rejection.
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -19,6 +21,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef NDEBUG
+#error "The resolver oracle requires active assertions"
+#endif
+
 static res_state (*state_ptr)(void);
 static int (*initialize)(void);
 static void (*state_close)(res_state);
@@ -29,6 +35,12 @@ static int (*search)(const char*,int,int,unsigned char*,int);
 static int (*querydomain)(const char*,const char*,int,int,unsigned char*,int);
 static int *(*host_error)(void);
 static unsigned passed;
+static int omit_result, corrupt_reply;
+
+static void reject(const char *reason) {
+    fprintf(stderr, "FAIL: %s\n", reason);
+    exit(42);
+}
 
 static void *symbol(void *handle, const char *name, const char *candidate) {
     void *p = dlsym(handle, name);
@@ -39,13 +51,23 @@ static void *symbol(void *handle, const char *name, const char *candidate) {
         struct stat expected, actual;
         assert(stat(candidate, &expected) == 0);
         assert(stat(info.dli_fname, &actual) == 0);
-        assert(expected.st_dev == actual.st_dev && expected.st_ino == actual.st_ino);
+        if (expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino)
+            reject("provider_mismatch");
     } else {
         assert(strstr(info.dli_fname, "libc.so") || strstr(info.dli_fname, "libresolv.so"));
     }
+    printf("PROVIDER: %s %s\n", name, info.dli_fname);
     return p;
 }
-static void pass(const char *label) { ++passed; printf("PASS: %s\n", label); }
+static void pass(const char *label) {
+    if (omit_result) {
+        omit_result = 0;
+        printf("CONTROL: withheld result: %s\n", label);
+        return;
+    }
+    ++passed;
+    printf("PASS: %s\n", label);
+}
 static void deadlines(int fd) {
     struct timeval timeout = {.tv_sec = 4};
     assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
@@ -134,6 +156,8 @@ static void *serve(void *opaque) {
             unsigned char rr[] = {0xc0,12,0,(unsigned char)server->kind,0,(unsigned char)server->class_,0,0,0,60,0,4,192,0,2,(unsigned char)server->marker};
             if (server->kind == ns_t_txt) memcpy(rr + 12, "\3ok!", 4);
             memcpy(reply + response_length, rr, sizeof(rr)); response_length += sizeof(rr);
+            if (corrupt_reply && server->kind == ns_t_a)
+                reply[response_length - 1] ^= 1;
         }
         if (server->transport == 2) {
             unsigned char truncated[2048]; memcpy(truncated, reply, end);
@@ -216,7 +240,8 @@ static void network_case(int operation, int transport, int edns, int code, int m
     assert(memcmp(storage + capacity + 1, before + capacity + 1, sizeof(storage) - (size_t)capacity - 1) == 0);
     assert(out[2] & 0x80);
     if (transport && capacity == 12) { assert(n > capacity); assert(out[2] & 2); }
-    else if (marker && operation != 3) assert(out[n - 1] == (class_ == ns_c_chaos ? '!' : marker));
+    else if (marker && operation != 3 && out[n - 1] != (class_ == ns_c_chaos ? '!' : marker))
+        reject("response_marker_mismatch");
     assert((out[3] & 0x20) == (trust ? 0x20 : 0));
     if (operation != 1 && operation != 3 && marker) assert(*host_error() == 99);
     assert(pthread_join(worker, NULL) == 0);
@@ -287,13 +312,19 @@ static void thread_case(void) {
     assert(pthread_barrier_destroy(&barrier) == 0); pass("simultaneous global callers retain separate TLS endpoints");
 }
 int main(int argc, char **argv) {
-    assert(argc == 2); const char *candidate = strcmp(argv[1], "--host") ? argv[1] : NULL;
+    assert(argc == 2 || argc == 3);
+    const char *control = getenv("FLC_GLOBAL_RESOLVER_CONTROL");
+    omit_result = control && strcmp(control, "missing_result") == 0;
+    corrupt_reply = control && strcmp(control, "corrupt_reply") == 0;
+    if (control && !omit_result && !corrupt_reply) reject("unknown_control");
+    const char *candidate = strcmp(argv[1], "--host") ? argv[1] : NULL;
+    const char *expected = argc == 3 ? argv[2] : candidate;
     void *handle = dlopen(candidate ? candidate : "libc.so.6", RTLD_NOW | RTLD_LOCAL); assert(handle);
-    state_ptr = symbol(handle,"__res_state",candidate); initialize = symbol(handle,"__res_init",candidate);
-    state_close = symbol(handle,"__res_nclose",candidate); build = symbol(handle,"res_mkquery",candidate);
-    send_raw = symbol(handle,"res_send",candidate); query = symbol(handle,"res_query",candidate);
-    search = symbol(handle,"res_search",candidate); querydomain = symbol(handle,"res_querydomain",candidate);
-    host_error = symbol(handle,"__h_errno_location",candidate);
+    state_ptr = symbol(handle,"__res_state",expected); initialize = symbol(handle,"__res_init",expected);
+    state_close = symbol(handle,"__res_nclose",expected); build = symbol(handle,"res_mkquery",expected);
+    send_raw = symbol(handle,"res_send",expected); query = symbol(handle,"res_query",expected);
+    search = symbol(handle,"res_search",expected); querydomain = symbol(handle,"res_querydomain",expected);
+    host_error = symbol(handle,"__h_errno_location",expected);
     initialization_cases();
     for (int transport=0;transport<3;++transport) {
         network_case(0,transport,0,0,42,1,512,0,0);
@@ -308,6 +339,7 @@ int main(int argc, char **argv) {
     network_case(2,0,0,0,42,1,512,0,0);
     network_case(3,0,0,0,42,1,512,0,0);
     thread_case();
+    if (passed != 23) reject("missing_case_result");
     printf("%u %s global resolver cases passed\n", passed, candidate ? "candidate" : "host-glibc");
     return 0;
 }
