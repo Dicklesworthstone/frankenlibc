@@ -612,7 +612,7 @@ This is L0 interpose functionality: installed modules use the host dynamic loade
 - `inet_pton` / `inet_ntop` with metamorphic round-trip harness coverage
 - `inet_aton` / `inet_ntoa` / `htons` / `ntohs` family
 - DNS compression name parsing with EFAULT-correct bounds
-- Native `res_init` resolver bootstrap
+- Native `res_init`, `res_query`, `res_search`, `res_querydomain`, `res_mkquery` and `res_send` share the calling thread's mutable `__res_state` with the reentrant `res_n*` engine. Caller-selected endpoints, RD/AD flags, non-IN classes, suffixes, negative-answer error slots and UDP/TCP behavior are covered by `tests/conformance/global_resolver_abi.c`: 23 loopback cases passed against distinct GNU/candidate providers in strict and hardened modes on 2026-11-03. This bounded check does not qualify all resolver behavior.
 - IDNA / Punycode (in `crates/frankenlibc-core/src/idna/`)
 - TLS-cached pwd / grp / shadow reentrant slots (`_r` family) hardened against concurrent reseeding
 - Base-64 helpers (`b64_ntop` / `b64_pton`) with golden conformance fixtures
@@ -3917,7 +3917,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,638 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,428 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
 | `crates/frankenlibc-core/src/` | 203 Rust files, 1,167,932 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
