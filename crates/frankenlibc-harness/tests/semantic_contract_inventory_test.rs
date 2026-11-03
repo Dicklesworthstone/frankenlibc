@@ -373,7 +373,7 @@ fn declared_surface_covers_both_census_profiles_without_semantic_promotion() -> 
         let actual = groups
             .iter()
             .filter(|group| {
-                group["profiles"]
+                group["function_profiles"]
                     .as_array()
                     .is_some_and(|profiles| profiles.iter().any(|p| p == profile))
             })
@@ -390,6 +390,27 @@ fn declared_surface_covers_both_census_profiles_without_semantic_promotion() -> 
         surface["summary"]["full_semantics_count"].as_u64() == Some(0),
         "inventory must not claim semantic completion",
     )?;
+    for symbol in [
+        "sys_signame",
+        "__libc_dlerror_result",
+        "_itoa_lower_digits",
+        "__frankenlibc_pointer_guard",
+    ] {
+        let group = groups
+            .iter()
+            .find(|group| {
+                group["symbols"]
+                    .as_array()
+                    .is_some_and(|names| names.iter().any(|name| name == symbol))
+            })
+            .ok_or_else(|| failure(format!("declared data export omitted: {symbol}")))?;
+        ensure(
+            group["declaration_kinds"]
+                .as_array()
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind == "data")),
+            format!("{symbol}: data declaration must not be confused with a function"),
+        )?;
+    }
     Ok(())
 }
 
@@ -482,6 +503,12 @@ fn actual_gate_rejects_incomplete_stale_and_promoted_export_groups() -> TestResu
             report["checks"]["exhaustive_export_surface"] == "fail",
             format!("case {case}: failed for unrelated reason: {report}"),
         )?;
+        if matches!(case, 7 | 8) {
+            ensure(
+                report["checks"]["source_markers"] == "fail",
+                "wrong or missing evidence must fail its own check, beyond the source binding",
+            )?;
+        }
         observed += 1;
     }
     ensure(observed == 10, "all planted negative controls must execute")

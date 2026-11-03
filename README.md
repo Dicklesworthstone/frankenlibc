@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State (snapshot generated 2026-10-19)
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the generated snapshot from 2026-11-01, bound to ABI source `cd3970184`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
+`tests/conformance/reality_report.v1.json` is the generated snapshot from 2026-11-03, bound to ABI source `d94f7ebf0`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
 Reality snapshot: total_exported=4119, implemented=2415, raw_syscall=408, wraps_host_libc=1278, glibc_call_through=0, stub=18.
 
 Declared replacement level: **L0 — Interpose**.
@@ -3917,9 +3917,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,297 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,638 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
-| `crates/frankenlibc-core/src/` | 203 Rust files, 1,167,873 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 203 Rust files, 1,167,932 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

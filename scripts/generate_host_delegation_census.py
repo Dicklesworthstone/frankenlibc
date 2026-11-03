@@ -2488,6 +2488,31 @@ def parse_version_script(text: str) -> dict[str, list[str]]:
     return {symbol: sorted(set(versions)) for symbol, versions in sorted(nodes.items())}
 
 
+def parse_data_exports(path: Path, text: str) -> list[tuple[str, str]]:
+    """Find defined data declarations using the same lexical/attribute spans."""
+    mask = rust_code_mask(text)
+    attributes = attribute_spans(text, mask)
+    result = []
+    for declaration in re.finditer(
+        r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?([A-Za-z_]\w*)\s*:",
+        mask,
+    ):
+        cursor = declaration.start()
+        preceding = []
+        for start, end in reversed(attributes):
+            if end > cursor:
+                continue
+            if not only_trivia(mask, end, cursor):
+                break
+            preceding.insert(0, text[start:end])
+            cursor = start
+        attrs = "\n".join(preceding)
+        if "no_mangle" in attrs or "export_name" in attrs:
+            alias = EXPORT_NAME_RE.search(attrs)
+            result.append((alias.group(1) if alias else declaration.group(1), path.stem))
+    return result
+
+
 def build_semantic_export_surface(
     root: Path,
     abi_source_dir: Path,
@@ -2507,25 +2532,32 @@ def build_semantic_export_surface(
     if not source_files or not (abi_source_dir / "lib.rs").is_file():
         raise ValueError("semantic export inventory requires the live ABI module root")
     raw_modules: dict[str, set[str]] = {}
+    declaration_kinds: dict[str, set[str]] = {}
     memberships: dict[str, set[str]] = {}
+    function_memberships: dict[str, set[str]] = {}
     # Both profiles share most source text. Cache only exact text/path matches
     # within this invocation, retaining every duplicate declaration for checks.
-    export_cache: dict[tuple[Path, str], list[tuple[str, str]]] = {}
+    export_cache: dict[tuple[Path, str], list[tuple[str, str, str]]] = {}
 
-    def exports(path: Path, text: str) -> list[tuple[str, str]]:
+    def exports(path: Path, text: str) -> list[tuple[str, str, str]]:
         key = (path, hashlib.sha256(text.encode()).hexdigest())
         if key not in export_cache:
             export_cache[key] = [
-                (function.exported_symbol, function.module)
+                (function.exported_symbol, function.module, "function")
                 for function in parse_functions(path, text)
                 if function.is_exported_abi
             ]
+            export_cache[key].extend(
+                (symbol, module, "data") for symbol, module in parse_data_exports(path, text)
+            )
         return export_cache[key]
 
     for path in source_files:
-        for symbol, module in exports(path, path.read_text(encoding="utf-8")):
+        for symbol, module, kind in exports(path, path.read_text(encoding="utf-8")):
             raw_modules.setdefault(symbol, set()).add(module)
+            declaration_kinds.setdefault(symbol, set()).add(kind)
     profile_counts = {}
+    profile_function_counts = {}
     for profile in CFG_PROFILES:
         filtered, _, diagnostics = profile_source_view(
             root, abi_source_dir, source_files, profile
@@ -2533,14 +2565,20 @@ def build_semantic_export_surface(
         if diagnostics:
             raise ValueError(f"unresolved semantic export cfg: {[d.to_json() for d in diagnostics]}")
         symbols = set()
+        function_symbols = set()
         for path, text in filtered.items():
-            for symbol, module in exports(path, text):
+            for symbol, module, kind in exports(path, text):
                 if symbol in symbols:
                     raise ValueError(f"duplicate semantic export in {profile.name}: {symbol}")
                 symbols.add(symbol)
                 memberships.setdefault(symbol, set()).add(profile.name)
                 raw_modules.setdefault(symbol, set()).add(module)
+                declaration_kinds.setdefault(symbol, set()).add(kind)
+                if kind == "function":
+                    function_symbols.add(symbol)
+                    function_memberships.setdefault(symbol, set()).add(profile.name)
         profile_counts[profile.name] = len(symbols)
+        profile_function_counts[profile.name] = len(function_symbols)
     versions = parse_version_script(version_script.read_text(encoding="utf-8"))
     support_rows = support.get("symbols", [])
     if not versions or not support_rows:
@@ -2564,6 +2602,8 @@ def build_semantic_export_surface(
         profiles = sorted(memberships.get(symbol, set()))
         context = {
             "profiles": profiles,
+            "function_profiles": sorted(function_memberships.get(symbol, set())),
+            "declaration_kinds": sorted(declaration_kinds.get(symbol, set())),
             "source_modules": modules,
             "version_nodes": versions.get(symbol, []),
             "support_status": support_by_symbol.get(symbol, {}).get("status", "not_listed"),
@@ -2601,7 +2641,7 @@ def build_semantic_export_surface(
     if len({row["id"] for row in groups}) != len(groups):
         raise ValueError("semantic export group identity collision")
     return {
-        "scope": "Declared source candidates, version-script globals and support rows; not a dynamic-symbol or behavioral proof.",
+        "scope": "Declared function/data candidates, version-script globals and support rows. Unresolved assembly or uncovered configurations stay unqualified; not a dynamic-symbol or behavioral proof.",
         "inventory_complete": True,
         "semantic_review_complete": False,
         "profiles": {profile.name: profile.to_json() for profile in CFG_PROFILES},
@@ -2617,6 +2657,7 @@ def build_semantic_export_surface(
             "declared_symbol_count": len(declared),
             "raw_source_symbol_count": len(raw_modules),
             "profile_source_symbol_counts": profile_counts,
+            "profile_function_symbol_counts": profile_function_counts,
             "version_script_symbol_count": len(versions),
             "support_symbol_count": len(support_by_symbol),
             "group_count": len(groups),
