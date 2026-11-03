@@ -16,9 +16,148 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* One protocol is compiled into both the native plugin and the deployed C
+   executable. The caller supplies independently captured GNU/kernel metadata. */
+extern int narrow_stat(const char *, struct stat *) __asm__("stat");
+extern int narrow_fstat(int, struct stat *) __asm__("fstat");
+extern int narrow_lstat(const char *, struct stat *) __asm__("lstat");
+extern int narrow_fstatat(int, const char *, struct stat *, int) __asm__("fstatat");
+_Static_assert(sizeof(struct stat) == sizeof(struct stat64), "ELF64 stat layout");
+
+void *flc_metadata_function(unsigned index) {
+    switch (index) {
+        case 0: return (void *)narrow_stat;
+        case 1: return (void *)narrow_fstat;
+        case 2: return (void *)narrow_lstat;
+        case 3: return (void *)narrow_fstatat;
+        case 4: return (void *)stat64;
+        case 5: return (void *)fstat64;
+        case 6: return (void *)lstat64;
+        case 7: return (void *)fstatat64;
+        case 8: return (void *)statx;
+        default: return NULL;
+    }
+}
+
+static int metadata_call(unsigned index, int directory, int fd,
+                         const char *path, struct stat *out, int flags) {
+    if (index < 4) {
+        switch (index) {
+            case 0: return narrow_stat(path, out);
+            case 1: return narrow_fstat(fd, out);
+            case 2: return narrow_lstat(path, out);
+            default: return narrow_fstatat(directory, path, out, flags);
+        }
+    }
+    struct stat64 large;
+    memcpy(&large, out, sizeof large);
+    int result;
+    switch (index) {
+        case 4: result = stat64(path, &large); break;
+        case 5: result = fstat64(fd, &large); break;
+        case 6: result = lstat64(path, &large); break;
+        default: result = fstatat64(directory, path, &large, flags); break;
+    }
+    memcpy(out, &large, sizeof *out);
+    return result;
+}
+
+static int metadata_equal(const struct stat *a, const struct stat *b) {
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
+        a->st_mode == b->st_mode && a->st_nlink == b->st_nlink &&
+        a->st_uid == b->st_uid && a->st_gid == b->st_gid &&
+        a->st_rdev == b->st_rdev && a->st_size == b->st_size &&
+        a->st_blksize == b->st_blksize && a->st_blocks == b->st_blocks &&
+        a->st_atim.tv_sec == b->st_atim.tv_sec && a->st_atim.tv_nsec == b->st_atim.tv_nsec &&
+        a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+        a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+}
+
+#define META_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+int flc_metadata_protocol(const char *directory, const char *file, const char *link, const char *missing,
+                          const struct stat expected[3], unsigned counts[2]) {
+    int fd = open(file, O_RDONLY), dir = open(directory, O_RDONLY | O_DIRECTORY);
+    META_CHECK(fd >= 0 && dir >= 0);
+    META_CHECK(expected[0].st_size > INT32_MAX && S_ISREG(expected[0].st_mode));
+    META_CHECK(S_ISLNK(expected[1].st_mode) && S_ISDIR(expected[2].st_mode));
+    META_CHECK(lseek(fd, 17, SEEK_SET) == 17);
+    counts[0] = counts[1] = 0;
+    for (unsigned api = 0; api < 8; api++) {
+        unsigned family = api % 4;
+        for (unsigned item = 0; item < 3; item++) {
+            const char *path = item == 0 ? file : item == 1 ? link : directory;
+            int which = item == 1 && family == 2 ? 1 : item == 2 && family != 1 ? 2 : 0;
+            struct stat out = {0};
+            errno = 1234;
+            META_CHECK(metadata_call(api, AT_FDCWD, fd, path, &out, 0) == 0);
+            META_CHECK(errno == 1234 && metadata_equal(&out, &expected[which]));
+            counts[0]++;
+        }
+        struct stat out, untouched;
+        memset(&untouched, 0xA5, sizeof untouched);
+        out = untouched;
+        errno = 0;
+        const char *absent = family == 0 || family == 2 ? missing : "missing";
+        META_CHECK(metadata_call(api, -1, -1, absent, &out, 0) == -1);
+        META_CHECK(errno == (family == 1 || family == 3 ? EBADF : ENOENT));
+        META_CHECK(memcmp(&out, &untouched, sizeof out) == 0);
+        counts[1]++;
+        if (family == 3) {
+            errno = 1234;
+            META_CHECK(metadata_call(api, dir, fd, "data", &out, 0) == 0);
+            META_CHECK(errno == 1234 && metadata_equal(&out, &expected[0]));
+            counts[0]++;
+            META_CHECK(metadata_call(api, dir, fd, "link", &out, AT_SYMLINK_NOFOLLOW) == 0);
+            META_CHECK(metadata_equal(&out, &expected[1])); counts[0]++;
+            META_CHECK(metadata_call(api, fd, fd, "", &out, AT_EMPTY_PATH) == 0);
+            META_CHECK(metadata_equal(&out, &expected[0])); counts[0]++;
+            out = untouched; errno = 0;
+            META_CHECK(metadata_call(api, dir, fd, "data", &out, INT_MIN) == -1 && errno == EINVAL);
+            META_CHECK(memcmp(&out, &untouched, sizeof out) == 0); counts[1]++;
+        }
+    }
+    struct statx extended, untouched;
+    for (unsigned item = 0; item < 4; item++) {
+        const char *path = item == 0 ? "data" : item == 1 ? "link" : item == 2 ? "" : ".";
+        int which = item == 1 ? 1 : item == 3 ? 2 : 0;
+        int base = item == 2 ? fd : dir;
+        int flags = item == 2 ? AT_EMPTY_PATH : AT_SYMLINK_NOFOLLOW;
+        memset(&extended, 0, sizeof extended); errno = 1234;
+        META_CHECK(statx(base, path, flags, STATX_BASIC_STATS, &extended) == 0 && errno == 1234);
+        META_CHECK((extended.stx_mask & STATX_BASIC_STATS) == STATX_BASIC_STATS);
+        const struct stat *want = &expected[which];
+        META_CHECK(extended.stx_ino == want->st_ino && extended.stx_size == (uint64_t)want->st_size);
+        META_CHECK(extended.stx_mode == want->st_mode && extended.stx_nlink == want->st_nlink);
+        META_CHECK(extended.stx_uid == want->st_uid && extended.stx_gid == want->st_gid);
+        META_CHECK(extended.stx_dev_major == major(want->st_dev) && extended.stx_dev_minor == minor(want->st_dev));
+        META_CHECK(extended.stx_mtime.tv_sec == want->st_mtim.tv_sec && extended.stx_mtime.tv_nsec == want->st_mtim.tv_nsec);
+        META_CHECK(extended.stx_ctime.tv_sec == want->st_ctim.tv_sec && extended.stx_ctime.tv_nsec == want->st_ctim.tv_nsec);
+        counts[0]++;
+    }
+    memset(&untouched, 0xA5, sizeof untouched);
+    const int bases[] = {-1, dir, dir};
+    const char *paths[] = {"data", "missing", "data"};
+    const int flags[] = {0, 0, INT_MIN};
+    const int errors[] = {EBADF, ENOENT, EINVAL};
+    for (unsigned item = 0; item < 3; item++) {
+        extended = untouched; errno = 0;
+        META_CHECK(statx(bases[item], paths[item], flags[item], STATX_BASIC_STATS, &extended) == -1);
+        META_CHECK(errno == errors[item] && memcmp(&extended, &untouched, sizeof extended) == 0);
+        counts[1]++;
+    }
+    META_CHECK(lseek(fd, 0, SEEK_CUR) == 17);
+    META_CHECK(close(fd) == 0 && close(dir) == 0);
+    META_CHECK(counts[0] == 34 && counts[1] == 13);
+    return 0;
+}
+#undef META_CHECK
+
+#ifndef FLC_STAT_PLUGIN
 static const char *err(int r) { return r < 0 ? strerrorname_np(errno) : "ok"; }
 
 /* Keep both real GNU symbol imports despite the large-file redirect. */
@@ -230,7 +369,29 @@ static int allocation_contract(void) {
     return 0;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc == 5 && strcmp(argv[1], "--metadata") == 0) {
+        struct stat expected[3], provider, actual;
+        const char *pin = getenv("FLC_STAT_EXPECT_PROVIDER");
+        if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &provider, 0) != 0) return 42;
+        for (unsigned i = 0; i < 10; i++) {
+            Dl_info info;
+            void *symbol = i == 9 ? (void *)__errno_location : flc_metadata_function(i);
+            if (!dladdr(symbol, &info) || !info.dli_fname ||
+                syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) != 0 ||
+                provider.st_dev != actual.st_dev || provider.st_ino != actual.st_ino) return 42;
+        }
+        if (syscall(SYS_newfstatat, AT_FDCWD, argv[4], &expected[0], 0) != 0 ||
+            syscall(SYS_newfstatat, AT_FDCWD, argv[3], &expected[0], 0) != 0 ||
+            syscall(SYS_newfstatat, AT_FDCWD, argv[4], &expected[1], AT_SYMLINK_NOFOLLOW) != 0 ||
+            syscall(SYS_newfstatat, AT_FDCWD, argv[2], &expected[2], 0) != 0) return 2;
+        unsigned counts[2];
+        char missing[PATH_MAX];
+        if (snprintf(missing, sizeof missing, "%s/missing", argv[2]) >= (int)sizeof missing) return 2;
+        int result = flc_metadata_protocol(argv[2], argv[3], argv[4], missing, expected, counts);
+        printf("metadata protocol: line=%d success=%u errors=%u\n", result, counts[0], counts[1]);
+        return result ? 1 : 0;
+    }
     int provider = check_lock_provider();
     if (provider) return provider;
     char path[] = "/tmp/fl_fcntl64_XXXXXX";
@@ -283,3 +444,4 @@ int main(void) {
     CHECK(lockf_contract() == 0);
     return allocation_contract();
 }
+#endif
