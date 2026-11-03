@@ -15169,7 +15169,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -20456,7 +20456,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -21357,7 +21357,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -28106,7 +28106,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -28344,7 +28344,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -32730,7 +32730,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -32900,7 +32900,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -33988,7 +33988,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -34158,7 +34158,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -34209,7 +34209,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -34277,7 +34277,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -35212,7 +35212,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -35246,7 +35246,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -36198,7 +36198,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -38561,7 +38561,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -40805,7 +40805,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -43049,7 +43049,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Same seek syscall as strict; preserves invalid-whence errno and file position without guessing SEEK_SET",
       "issues": []
     },
     {
@@ -43066,7 +43066,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
-      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
+      "hardened_semantics": "Same seek syscall as strict; preserves invalid-whence errno and file position without guessing SEEK_SET",
       "issues": []
     },
     {
@@ -43100,7 +43100,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -52433,7 +52433,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -52552,7 +52552,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -53844,7 +53844,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -58383,7 +58383,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -58791,7 +58791,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -62225,7 +62225,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -65183,7 +65183,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -65370,7 +65370,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {
@@ -67529,7 +67529,7 @@
       "priority_score": 80,
       "default_stub": false,
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "issues": []
     },
     {

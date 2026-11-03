@@ -551,6 +551,121 @@ fn io_runtime_errors_preserve_buffers_and_file_position() {
         },
     );
 }
+
+#[test]
+fn lseek_aliases_match_host_errors_without_repositioning() {
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::fs::FileExt;
+
+    type Seek = unsafe extern "C" fn(c_int, i64, c_int) -> i64;
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    // SAFETY: these signatures match the GNU declarations. Each resolution
+    // rejects an address equal to our own implementation before any call.
+    let (host_seek, host_seek64, host_errno): (Seek, Seek, Errno) = unsafe {
+        (
+            dlsym_oracle::host_fn(c"lseek", unistd::lseek as *const ()),
+            dlsym_oracle::host_fn(c"lseek64", unistd::lseek64 as *const ()),
+            dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()),
+        )
+    };
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-lseek-retained-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    file.write_all(b"0123456789").unwrap();
+    let duplicate = file.try_clone().unwrap();
+    let mut ends = [-1; 2];
+    // SAFETY: ends has space for two descriptors; successful descriptors are
+    // immediately owned, so assertion unwinding closes them without unlinking.
+    assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+    let (reader, writer) =
+        unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+    // SAFETY: the pipe writer is live and the constant supplies one byte.
+    assert_eq!(
+        unsafe { libc::write(writer.as_raw_fd(), c"q".as_ptr().cast(), 1) },
+        1
+    );
+    // SAFETY: duplicate a live fd, then close only that owned duplicate.
+    let closed = unsafe { libc::dup(reader.as_raw_fd()) };
+    assert!(closed >= 0);
+    assert_eq!(unsafe { libc::close(closed) }, 0);
+    // Resolve errno before using the closed descriptor: no subsequent setup
+    // opens another fd that could reuse it.
+    // SAFETY: both functions return this thread's writable errno cell.
+    let (host_slot, native_slot) = unsafe { (host_errno(), errno::__errno_location()) };
+    let mut mismatches = Vec::new();
+    let mut observations = 0;
+    for (name, native, host) in [
+        ("lseek", unistd::lseek as Seek, host_seek),
+        ("lseek64", unistd::lseek64 as Seek, host_seek64),
+    ] {
+        for (kind, fd) in [
+            ("regular", file.as_raw_fd()),
+            ("duplicate", duplicate.as_raw_fd()),
+            ("pipe", reader.as_raw_fd()),
+            ("invalid", -1),
+            ("closed", closed),
+        ] {
+            for whence in [0, 1, 2, 3, 4, -1, 5, 123456, c_int::MIN, c_int::MAX] {
+                for offset in [-9, 0, 7] {
+                    // SAFETY: descriptors are either live resources or
+                    // deliberately invalid; seek never dereferences a pointer.
+                    // Capture each provider's errno before any further call.
+                    let (expected, actual) = unsafe {
+                        assert_eq!(host_seek(file.as_raw_fd(), 3, libc::SEEK_SET), 3);
+                        *host_slot = 0;
+                        let rc = host(fd, offset, whence);
+                        let error = *host_slot;
+                        let position = host_seek(file.as_raw_fd(), 0, libc::SEEK_CUR);
+                        let expected = (rc, error, position);
+                        assert_eq!(host_seek(file.as_raw_fd(), 3, libc::SEEK_SET), 3);
+                        *native_slot = 0;
+                        let rc = native(fd, offset, whence);
+                        let error = *native_slot;
+                        let position = host_seek(file.as_raw_fd(), 0, libc::SEEK_CUR);
+                        (expected, (rc, error, position))
+                    };
+                    if expected != actual {
+                        mismatches.push(format!(
+                            "{name}/{kind} offset={offset} whence={whence}: host={expected:?} native={actual:?}"
+                        ));
+                    }
+                    observations += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(observations, 300);
+    let mut bytes = [0; 10];
+    assert_eq!(file.read_at(&mut bytes, 0).unwrap(), bytes.len());
+    assert_eq!(&bytes, b"0123456789");
+    assert_eq!(file.metadata().unwrap().len(), 10);
+    let mut byte = 0u8;
+    // SAFETY: the pipe reader is live and byte is writable for one byte.
+    assert_eq!(
+        unsafe { libc::read(reader.as_raw_fd(), (&raw mut byte).cast(), 1) },
+        1
+    );
+    assert_eq!(byte, b'q', "seek errors must not consume pipe data");
+    assert!(
+        mismatches.is_empty(),
+        "{} mismatches:\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+}
+
 #[test]
 fn io_runtime_errno_isolated_between_native_calling_threads() {
     isolated(

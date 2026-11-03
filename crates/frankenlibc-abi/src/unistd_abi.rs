@@ -726,33 +726,17 @@ pub unsafe extern "C" fn isatty(fd: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
-    let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
 
-    if !unistd_core::valid_whence(whence) {
-        if mode.heals_enabled() {
-            // default to SEEK_SET in hardened mode
-            match syscall::sys_lseek(fd, offset, unistd_core::SEEK_SET) {
-                Ok(pos) => {
-                    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-                    return pos;
-                }
-                Err(e) => {
-                    unsafe { set_abi_errno(e) };
-                    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-                    return -1;
-                }
-            }
-        }
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
-        return -1;
-    }
-
+    // An invalid selector cannot identify an intended position to repair.
+    // Preserve it for the kernel: guessing SEEK_SET mutates the shared file
+    // offset, while rejecting it here masks EBADF for invalid descriptors.
+    // The same syscall also retains SEEK_DATA/SEEK_HOLE filesystem semantics.
     match syscall::sys_lseek(fd, offset, whence) {
         Ok(pos) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);

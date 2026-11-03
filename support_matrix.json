@@ -1287,7 +1287,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -2184,7 +2184,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -2309,7 +2309,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -3646,7 +3646,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -3748,7 +3748,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -4673,7 +4673,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -4743,7 +4743,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -5232,7 +5232,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -5296,7 +5296,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -5323,7 +5323,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -5359,7 +5359,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -5736,7 +5736,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -5745,7 +5745,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -6170,7 +6170,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -6922,7 +6922,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -7500,7 +7500,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -7871,7 +7871,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Same seek syscall as strict; preserves invalid-whence errno and file position without guessing SEEK_SET",
       "default_stub": false
     },
     {
@@ -7880,7 +7880,7 @@
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
-      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
+      "hardened_semantics": "Same seek syscall as strict; preserves invalid-whence errno and file position without guessing SEEK_SET",
       "default_stub": false
     },
     {
@@ -7895,7 +7895,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -11091,7 +11091,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -11145,7 +11145,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -11463,7 +11463,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -12854,7 +12854,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -12999,7 +12999,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -14369,7 +14369,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -15194,7 +15194,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -15268,7 +15268,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {
@@ -16165,7 +16165,7 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid amode",
       "default_stub": false
     },
     {

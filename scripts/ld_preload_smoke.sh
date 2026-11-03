@@ -287,7 +287,7 @@ cc -O2 "${ROOT}/tests/integration/fixture_arg_passthrough.c" -o "${ARG_PASSTHROU
 VM_ADVICE_BIN="${BIN_DIR}/fixture_vm_advice"
 cc -O2 "${ROOT}/tests/integration/fixture_vm_advice.c" -o "${VM_ADVICE_BIN}"
 LSEEK_SPARSE_BIN="${BIN_DIR}/fixture_lseek_sparse"
-cc -O2 "${ROOT}/tests/integration/fixture_lseek_sparse.c" -o "${LSEEK_SPARSE_BIN}"
+cc -O2 -Wall -Wextra -Werror "${ROOT}/tests/integration/fixture_lseek_sparse.c" -ldl -o "${LSEEK_SPARSE_BIN}"
 SOCKET_FAMILIES_BIN="${BIN_DIR}/fixture_socket_families"
 cc -O2 "${ROOT}/tests/integration/fixture_socket_families.c" -o "${SOCKET_FAMILIES_BIN}"
 SIGNAL_BACKTRACE_BIN="${BIN_DIR}/fixture_signal_backtrace"
