@@ -19334,12 +19334,12 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
-          "artifacts": "Final source execution and deployed gate pending"
+          "status": "complete",
+          "artifacts": "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/final-record-stable/{record/receipt.json,admit.stdout,fresh-strict.stdout,fresh-hardened.stdout}; compiler0,named2passed,admission0,fresh full13bothmodes"
         },
         "e2e_scripts": {
-          "status": "partial",
-          "artifacts": "Final source execution and deployed gate pending"
+          "status": "complete",
+          "artifacts": "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/c-stable/report.json; live GNU/native34success13errors,4provider42 controls,original descriptor regression and GCC-Werror/analyzer0"
         },
         "structured_logs": {
           "status": "not_required"
@@ -19355,23 +19355,37 @@
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 2,
-        "complete": 0,
-        "partial": 2,
+        "complete": 2,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.23",
         "stream": "e2e",
-        "status": "in_progress",
+        "status": "complete",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test dlfcn_native_io_test --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
           "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/3866d4532bcf30c0/out/dlfcn_native_io_test-3866d4532bcf30c0 --test-threads=1 --nocapture",
           "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/3866d4532bcf30c0/out/dlfcn_native_io_test-3866d4532bcf30c0 --test-threads=1 --nocapture"
         ],
         "e2e_cmds": [
-          "gcc -O2 -Wall -Wextra -Werror -fno-builtin tests/integration/fixture_fcntl64_args.c -o /data/tmp/frankenlibc-stat-native-20261103/release/probe -pthread -ldl"
+          "gcc -O2 -Wall -Wextra -Werror -fno-builtin tests/integration/fixture_fcntl64_args.c -o /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe -pthread -ldl",
+          "readelf --dyn-syms --wide /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe",
+          "gcc -O2 -Wall -Wextra -Werror -fanalyzer -fsyntax-only tests/integration/fixture_fcntl64_args.c",
+          "/data/tmp/frankenlibc-stat-native-20261103/c-stable/probe",
+          "/data/tmp/frankenlibc-stat-native-20261103/c-stable/probe",
+          "/data/tmp/frankenlibc-stat-native-20261103/c-stable/probe",
+          "/data/tmp/frankenlibc-stat-native-20261103/c-stable/probe",
+          "env FRANKENLIBC_MODE=strict FLC_STAT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=strict FLC_STAT_EXPECT_PROVIDER=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=strict FLC_STAT_EXPECT_PROVIDER=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=strict FLC_STAT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=hardened FLC_STAT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=hardened FLC_STAT_EXPECT_PROVIDER=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=hardened FLC_STAT_EXPECT_PROVIDER=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link",
+          "env FRANKENLIBC_MODE=hardened FLC_STAT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-stat-native-20261103/release/candidate.so /data/tmp/frankenlibc-stat-native-20261103/c-stable/probe --metadata /data/tmp/frankenlibc-stat-native-20261103/c-stable /data/tmp/frankenlibc-stat-native-20261103/c-stable/data /data/tmp/frankenlibc-stat-native-20261103/c-stable/link"
         ],
         "expected_assertions": [
           "Original unchanged runtime compiles and fails the actual native handle gate after all GNU metadata positives pass; corrected original has0passed2failed eachmode",
@@ -19392,13 +19406,13 @@
           "vmi1156319:/data/tmp/frankenlibc-stat-native-20261103/metadata-final/report.json",
           "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/final-record/record/receipt.json",
           "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/final-record-stable/record/receipt.json",
-          "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/c-stable/report.json"
+          "vmi1149989:/data/tmp/frankenlibc-stat-native-20261103/c-stable/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-stat-native-20261103/workspace-check-final/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-stat-native-20261103/workspace-check-final/fmt.stdout"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "Final source receipt/admission, fresh acceptance replay, release and compiler gates, evidence publication pending"
-        ],
-        "notes": "Bound modern metadata integration only. Corrected original actual GNU positives then native host-fallback failures are observed. The first original probes failed on a stale test atime snapshot and are retained as probe failures, not runtime RED. Runtime source1d1756698; final source4e5d67f6e73bdd2a51c68bc66ab38c2eb5744123 adds only3actual producer hashes to canonical metadata. First full13 bothmode pass preceded final diagnostic formatting/comment/early-counter initialization and stronger statx field assertions; final receipt/replay still pending. Required checks and deployed release are running. Broad parents remain open. SOLO verification, no independent attestation. Final fresh review found the per-observation oracle could conceal an implementation mutating file metadata. Source7d3bdb4458e0465076a9af10e8d8429cafccb992 strengthens only the shared C test: every original field except traversal-updated atime must remain invariant, while all returned fields including atime still match live reference exactly. No runtime source changed;4e5 receipt remains historical and is not retargeted. New final source receipt and strengthened deployed C replay pending.",
+        "close_blockers": [],
+        "notes": "Native plugins now bind all9 modern stat-family names to existing actual native ABI functions, with GLIBC_2.33 modern stat versions and GLIBC_2.28 statx. PLT/GOT and caller-relative lookup check46 actual provider addresses and accurate/wrong versions. Original corrected exposing gate compiled0 and failed0passed2failed in each mode after all GNU positives; failure is actual host fallback. Earlier probes failed on a stale symlink-atime snapshot and are retained as probe defects, not runtime RED. Live reference corrected that defect; final fresh review additionally preserved every initial non-atime field so a mutating implementation cannot match its own changes. Every output field includingatime still matches live GNU exactly; no tolerance or assertion was dropped. Shared protocol performs34positive and13error observations per provider/variant: sparse file4GiB+37, directory/symlink, follow/nofollow, relative/empty-path fd queries, badfd/missing/badflags, full defined stat/statx basic fields, byte sentinels and unchanged offset17. Final13-parent suite and fresh SOLO replay pass in bothmodes, retaining all11 previous tests. Repeated modes/child summaries are not independent extra tests. Runtime source1d1756698373a7b6c3d627995985886fc2598b21;4e5 adds only3 actual producer hashes;7d3 strengthens only the C test invariant. Release library remains explicitly bound to1d17, SHA256 06e00706a0634baddb49f377988bd2a6203f8097b9054148c2cccb147ab75afc. Strengthened7d3 C probe 072635a0d48b31ed850cb9ca745ea233d620ac20c8ff7893e61b371f1ab23da4 uses that unchanged binary with verified identical runtime Rust inputs, pins9 metadata functions+errno, matches GNU stdout/stderr in bothmodes, rejects all4 wrong-provider controls with42 and passes the original descriptor regression with byte parity. GNU library SHA256 85e64f97e348786a8fb4d9f3d52fec289e2fb86bba20f0731dfe61990525e0f7. GCC-Werror and analyzer pass on the strengthened fixture. Final receipt 082a7943feb023587e30dc37452e9616637281f9e890c7545859a0599f05d057 binds493 unchanged inputs to7d3, x86_64/hardened/test/default features, actual compiler0 and2named metadata tests passed/0failed/11filtered. Separate admission returns0. Executable SHA256 6e57b7b7b381fe8e6db65c2094b95a585993d638f0ac9bc2c0966a9a1518f2c8. The Rust executable can remain identical across a C-only strengthening because these tests recompile and load the captured C fixture at runtime; both final PLT/GOT tests actually execute the strengthened protocol. Earlier4e5 receiptb9d1580321db7c730122e50ee6b4dc4f9430e2fbe499b7bc99d1ce21d80ee79e remains historical and was not retargeted. Final full workspace/all-targets/keep-going check passed on7d3 in 1322.67s; full fmt then0. Strict full workspace/all-targets/keep-going Clippy with -D warnings passed on4e5 in 485.76s; no Rust source changed afterward. All5 canonical metadata gates pass on4e5, with4reports explicitly source-bound; ABI source and generated metadata are unchanged in7d3.4730 unknown semantics,0 full semantics,18Stub andL0 remain. Scoped direct Rust UBS analyzer completed2 files with0critical/130warning/32info, not a clean scan. C analyzer0. Existing no-SMT-solver and nix future-incompatibility diagnostics remain; no formal-proof claim. Whole workspace runtime execution is unrun because some targets delete files; named13-test execution is the bounded runtime evidence. Retained failures include stale-atime probe failures, two formatter-layout failures corrected manually, cold workspacecheck137 at the unchanged30min bound, normal no-free-slot refusals and two retry-controller syntax failures before Cargo; a hand-written controller was syntax-parsed before the successful retry. All build/test streams retained. First CASS helper did not display successful-search stderr; all6 searches rerun with both streams retained, allstderr empty. No manual cleanup, local build/artifact download or worker/lock/cache override. Creation, real-work DRIFTING and20-question honesty worksheets are in bead comments; source7d3 publication on main/mirror was verified. Final verification is SOLO, not independently attested. Original acceptance unchanged; no performance, universal safety, standalone, global-CI, ARM-execution, legacy-version or old-kernel fallback promotion. Parent7/classification37/historical44 remain open and CI backend14 blocked. All137 earlier matrix rows and schema unchanged. Complete evidence publication and exact branch-ref verification precede bounded closure; bead remains in_progress until then.",
         "result_receipts": [
           "/data/tmp/frankenlibc-stat-native-20261103/final-record-stable/record/receipt.json"
         ],
