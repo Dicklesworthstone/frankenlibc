@@ -15705,6 +15705,166 @@
           "/data/tmp/frankenlibc-reserved-port-20261103/final-record/record/receipt.json"
         ]
       }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.48",
+      "title": "Declare failure-preserving Bash defaults in eight CI workflows",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "CodexGapCloser",
+      "labels": [
+        "ci-config",
+        "docs-only",
+        "source-verification"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": false,
+          "scope": "Not required for this reversible YAML-default configuration change; no Rust code or product capability claim"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "Source/configuration checks: existing gate,42 Bash syntax blocks and24 actual shell controls; no compiled libc/runtime proof"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": "Not required for this reversible YAML-default configuration change; no Rust code or product capability claim"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": "Not required for this reversible YAML-default configuration change; no Rust code or product capability claim"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": "Not required for this reversible YAML-default configuration change; no Rust code or product capability claim"
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": "Not required for this reversible YAML-default configuration change; no Rust code or product capability claim"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "not_required"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "vmi1152480:/data/tmp/frankenlibc-ci-bash-defaults-20261103/final-record/record/receipt.json; source-only9configuration/checker checks/11captured inputs;729scan/0findings,42syntax,24actual shell controls"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 1,
+        "complete": 1,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.48",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [],
+        "e2e_cmds": [
+          "bash scripts/check_pipeline_exit_status.sh",
+          "source-bound verification command in closure_evidence.gate.command"
+        ],
+        "expected_assertions": [
+          "Production gate actually scans729files and reports0 findings, preserving prior19-finding failure",
+          "All8 YAML documents equal captured originals after removing only declared Bash defaults;42existing Bash blocks parse",
+          "Each configured shell retains producer exit7 and success0; wrong implicit shell masks failure0 and is retained as negative control",
+          "No full CoreCI, runtime, ABI, performance or readiness claim; source-only lower proof class is explicit"
+        ],
+        "log_schema_refs": [],
+        "artifact_paths": [
+          "vmi1152480:/data/tmp/frankenlibc-ci-bash-defaults-20261103/before/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-ci-bash-check-he6rqkti/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-ci-bash-defaults-20261103/final-record/record/receipt.json",
+          "https://github.com/Dicklesworthstone/frankenlibc/actions/runs/41628245209",
+          "https://github.com/Dicklesworthstone/frankenlibc/actions/runs/41613742803",
+          "/data/tmp/frankenlibc-ci-bash-defaults-ubs-20261103.json",
+          "vmi1152480:/data/tmp/frankenlibc-ci-bash-check-pijmt46l/report.json",
+          "vmi1152480:/data/tmp/frankenlibc-ci-bash-defaults-20261103/final-record/admit.stdout",
+          "https://github.com/Dicklesworthstone/frankenlibc/actions/runs/41632637903/job/125905797678"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Configuration-only ENABLER, zero new libc capability credit.8existing workflows add26YAML lines declaring Bash defaults; every original parsed document field/body preserved except the new default. All checker/limits/triggers/permissions/timeouts retained. Pre-fix19 findings reviewed as2genuine unprotected archive pipelines,16already-inline-protected pipelines and1Rustliteral false positive; no claim of19runtimebugs. Existing checker unchanged. Actual before sourceb9eb checker729scanned/19findings/exit1 plus implicit-shell upstream7 masked0. Captured original-document SHA794828b9039a00bcb01a6119abe7791c2509e8fc4a33956fb47db1a978ec82b8. First after gate729/0/exit0,42existing Bash blocks parse0,24actual controls (8configured failure7,8success0,8implicit-masking0 expected negatives); reporthe6rqkti retained. Fresh exact sourceaef23146087353915bdee077fe7a3554364affa0/11captured inputs replay0 at11:59:44-46Z, same729/0,42syntax,24controls, all hashes unchanged. SOURCE-only receipt10d0340bad9158b7c99c38c3273668336e1e875490929fdba14502c9aa7639f8; stdout3537e659063d002a706ea79e052aa79cd09bfa2281fd0278db43f49eb8618ae6; interpreter52e0a13e60a981d8c4b6478be2ba5176f69da07948a056bf49cf6f077e30cb41; build=null, executed_cases=null, no fabricated Rust test count. Existing schema docs-only/source-verification labels explicitly conservatively mark CI configuration source proof; no compiled/runtime/ABI/POSIX/performance/readiness promotion. --admit0 POST_PASS1/POST_FAIL0 beforeclose12:14:35Z. Source published and both remote refs verified beforeclosure; no Rust source/dependency edits, previous runtime source compiler results remain separately qualified. Hosted CI Core Gates125905797678/run41632637903 confirms pipeline729/0/PASS, then stops at5evidence-ledger artifact hash errors; overallCI remainsred, other jobs/limits unchanged. Wider pending/failing CI and next concrete investigations recorded on parent3257/3258; no silent exclusions or green claim. UBS YAML-only exit3 is unsupported/no-scan NON-RESULT retained; manual full diff plus real YAML/Bash/checker tests are evidence. Initial DCG device-sink rejection occurred before execution and was corrected to captured stdout without device write/bypass. Fresh SOLO honesty/work audit3256, no independent reviewer claim; bounded ENABLER, no new machinery/gate/schema or process capability count. Official GitHub shell/default semantics verified from primary docs. All131prior matrix rows, original acceptance and larger project goals preserved.",
+        "closure_evidence": {
+          "behavior": "Make GitHub CI pipeline failures propagate through eight declared Bash workflow defaults, preserving all original bodies and gates",
+          "acceptance_sha256": "0a4ff7de5b3bb926e9f46d4dbcd426a148dae2652b0339f3c5be45c4119d877c",
+          "claim_class": "source",
+          "evidence_class": "source",
+          "source": {
+            "commit": "aef23146087353915bdee077fe7a3554364affa0",
+            "files": {
+              ".github/workflows/c11-thread-cancellation.yml": "d85e9062578d8e2a1c5fec18f1f1c1fa0df05d78ca3b21e32dcdcad8435d823b",
+              ".github/workflows/legacy-host-dns.yml": "301e1ea2a54b69c48c55cf3cce1203f0bbb600b91ddc5872cdaed73dc106be07",
+              ".github/workflows/locale-objects.yml": "4ba718ac84f38cd53edd3387915a3ed1b2742707e51a877705abff3950ab66c7",
+              ".github/workflows/socket-address-safety.yml": "6dae063ef92f6d2b14050d1c5f4fdb9d170adf407a060d3c5d5c682d536b3280",
+              ".github/workflows/socket-message-safety.yml": "ab4c77958f01a49d4e4c15e70ae95a11a767e3b02712b7028d5d17d925dd3d92",
+              ".github/workflows/socket-option-contracts.yml": "bdbb806c5a5c64b38bbe1c3738b24f17008692d3ddcdabd890bbb288ffe26b86",
+              ".github/workflows/stdio-file-layout.yml": "9a145aa972afb6be2bdeafb2b2ac978062b930f46c82a019cc9dad25c39a956e",
+              ".github/workflows/vectored-io-safety.yml": "a20be83f0f49741d83eee98ad72245afd284e6e3b67038a03a87eff177652583",
+              "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+              "scripts/check_pipeline_exit_status.sh": "947c9786a914df152ec1756f87ff751611b192d56729f87a28611447e5c09c32",
+              "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e"
+            }
+          },
+          "behavior_paths": [
+            ".github/workflows/c11-thread-cancellation.yml",
+            ".github/workflows/legacy-host-dns.yml",
+            ".github/workflows/locale-objects.yml",
+            ".github/workflows/socket-address-safety.yml",
+            ".github/workflows/socket-message-safety.yml",
+            ".github/workflows/socket-option-contracts.yml",
+            ".github/workflows/stdio-file-layout.yml",
+            ".github/workflows/vectored-io-safety.yml"
+          ],
+          "test_paths": [
+            "scripts/check_pipeline_exit_status.sh"
+          ],
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "source",
+            "features": []
+          },
+          "not_before": "2026-11-03T11:58:33.123692+00:00",
+          "gate": {
+            "command": [
+              "python3",
+              "-c",
+              "import pathlib,subprocess,json,hashlib,re,sys,yaml,tempfile\nroot=pathlib.Path(tempfile.mkdtemp(prefix='frankenlibc-ci-bash-check-',dir='/data/tmp'))\nbefore=pathlib.Path('/data/tmp/frankenlibc-ci-bash-defaults-20261103/before/workflow-documents.json')\nassert hashlib.sha256(before.read_bytes()).hexdigest()=='794828b9039a00bcb01a6119abe7791c2509e8fc4a33956fb47db1a978ec82b8'\noriginal=json.loads(before.read_text());inputs={name:hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() for name in original}\ninputs['scripts/check_pipeline_exit_status.sh']=hashlib.sha256(pathlib.Path('scripts/check_pipeline_exit_status.sh').read_bytes()).hexdigest()\nreport={'workflows':0,'syntax_blocks':0,'pipeline_cases':[],'baseline_sha256':hashlib.sha256(before.read_bytes()).hexdigest()}\nfor name,old in original.items():\n doc=json.loads(json.dumps(yaml.safe_load(pathlib.Path(name).read_text())))\n defaults=doc.pop('defaults');assert defaults=={'run':{'shell':'bash'}},name\n assert doc==old,(name,'workflow body changed beyond defaults')\n report['workflows']+=1\n for job,body in doc['jobs'].items():\n  for index,step in enumerate(body.get('steps',[])):\n   if 'run' not in step:continue\n   syntax=subprocess.run(['bash','-n'],input=step['run'],capture_output=True,text=True)\n   (root/(pathlib.Path(name).stem+'-'+job+'-'+str(index)+'.syntax.stderr')).write_text(syntax.stderr)\n   assert syntax.returncode==0,(name,job,index,syntax.stderr)\n   report['syntax_blocks']+=1\n # GitHub documents explicit shell:bash as bash --noprofile --norc -eo pipefail.\n explicit=['bash','--noprofile','--norc','-e','-o','pipefail'] if defaults['run']['shell']=='bash' else None\n assert explicit is not None,name\n for tag,command,want in [('configured-failure',explicit+['-c',\"bash -c 'printf upstream-evidence; exit 7' | tee\"],7),('configured-success',explicit+['-c',\"bash -c 'printf upstream-evidence; exit 0' | tee\"],0),('implicit-masking-negative',['bash','--noprofile','--norc','-e','-c',\"bash -c 'printf upstream-evidence; exit 7' | tee\"],0)]:\n  p=subprocess.run(command,capture_output=True,text=True)\n  (root/(pathlib.Path(name).stem+'-'+tag+'.stdout')).write_text(p.stdout);(root/(pathlib.Path(name).stem+'-'+tag+'.stderr')).write_text(p.stderr)\n  row={'workflow':name,'tag':tag,'command':command,'exit_code':p.returncode,'expected_exit_code':want,'stdout':p.stdout,'stderr':p.stderr};report['pipeline_cases'].append(row)\n  assert p.returncode==want and p.stdout=='upstream-evidence' and not p.stderr,row\np=subprocess.run(['bash','scripts/check_pipeline_exit_status.sh'],capture_output=True,text=True)\n(root/'gate.stdout').write_text(p.stdout);(root/'gate.stderr').write_text(p.stderr);print(p.stdout,flush=True);sys.stderr.write(p.stderr)\nassert p.returncode==0 and re.search(r'findings\\s*: 0\\b',p.stdout)\nscanned=int(re.search(r'files scanned:\\s*(\\d+)',p.stdout).group(1));assert scanned>0\nassert report['workflows']==8 and report['syntax_blocks']>0 and len(report['pipeline_cases'])==24\nfor name,h in inputs.items():assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==h,name\nreport.update({'source_inputs':inputs,'gate_exit':p.returncode,'files_scanned':scanned,'result':'pass'});(root/'report.json').write_text(json.dumps(report,indent=2)+'\\n')\nprint('BASH_DEFAULTS_VERIFIED workflows=8 pipeline_cases=24',flush=True)\nprint('BASH_SYNTAX_BLOCKS',report['syntax_blocks'],flush=True)\nprint('UNCHANGED_WORKFLOW_BODIES_AND_CHECKER',len(inputs),flush=True)\nprint('EVIDENCE',str(root/'report.json'),flush=True)\n"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "expected_stdout": [
+              "files scanned: 729",
+              "findings     : 0",
+              "PASS: no pipeline exit-status traps found.",
+              "BASH_DEFAULTS_VERIFIED workflows=8 pipeline_cases=24",
+              "BASH_SYNTAX_BLOCKS 42",
+              "UNCHANGED_WORKFLOW_BODIES_AND_CHECKER 9"
+            ]
+          }
+        },
+        "result_receipts": [
+          "/data/tmp/frankenlibc-ci-bash-defaults-20261103/final-record/record/receipt.json"
+        ]
+      }
     }
   ]
 }
