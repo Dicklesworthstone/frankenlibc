@@ -572,16 +572,18 @@ fn metadata_protocol(api: Api, got: bool) {
 
 #[test]
 fn io_runtime_plt_metadata_matches_host() {
-    isolated("io_runtime_plt_metadata_matches_host", |api| {
-        metadata_protocol(api, false)
-    });
+    // These queries change no process-wide state. Exercise both providers in
+    // this test process so its result describes the complete comparison.
+    for native in [false, true] {
+        metadata_protocol(Api::new(native), false);
+    }
 }
 
 #[test]
 fn io_runtime_got_metadata_matches_host() {
-    isolated("io_runtime_got_metadata_matches_host", |api| {
-        metadata_protocol(api, true)
-    });
+    for native in [false, true] {
+        metadata_protocol(Api::new(native), true);
+    }
 }
 
 #[test]
