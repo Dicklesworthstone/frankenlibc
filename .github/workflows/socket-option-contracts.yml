@@ -14,6 +14,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   option-contracts:
     runs-on: ubuntu-latest

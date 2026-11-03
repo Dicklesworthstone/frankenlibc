@@ -15,6 +15,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: c11-thread-cancellation-${{ github.ref }}
   cancel-in-progress: false
