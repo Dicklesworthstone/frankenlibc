@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <wchar.h>
 
@@ -336,7 +338,70 @@ static int printf_callback_case(const char *name, int stage) {
   return 0;
 }
 
+// Focused scan ABI observer, also loaded as a GNU-backed shared library by
+// Rust. The supplied pointer is the actual resolved provider entrypoint.
+static unsigned scan_throw_calls;
+static int scan_throw_filter(const struct dirent *) {
+  if (++scan_throw_calls == 3) throw Boom("scan-filter");
+  return 1;
+}
+static int scan_throw_compare(const struct dirent **a, const struct dirent **b) {
+  if (++scan_throw_calls == 3) throw Boom("scan-compare");
+  return strcmp((*a)->d_name, (*b)->d_name);
+}
+extern "C" int flc_scan_unwind(void *function, unsigned variant, const char *directory,
+                                unsigned stage) {
+  using Select = int (*)(const struct dirent *);
+  using Compare = int (*)(const struct dirent **, const struct dirent **);
+  using Scan = int (*)(const char *, struct dirent ***, Select, Compare);
+  using ScanAt = int (*)(int, const char *, struct dirent ***, Select, Compare);
+  if (!function || variant > 3 || stage > 1) return 2;
+  int before = open_fd_count();
+  if (before < 0) return 3;
+  auto sentinel = reinterpret_cast<struct dirent **>(uintptr_t(1));
+  struct dirent **list = sentinel;
+  scan_throw_calls = 0;
+  bool caught = false;
+  try {
+    if (variant < 2)
+      (void)reinterpret_cast<Scan>(function)(directory, &list,
+          stage == 0 ? scan_throw_filter : nullptr, stage == 1 ? scan_throw_compare : nullptr);
+    else
+      (void)reinterpret_cast<ScanAt>(function)(AT_FDCWD, directory, &list,
+          stage == 0 ? scan_throw_filter : nullptr, stage == 1 ? scan_throw_compare : nullptr);
+  } catch (const Boom &error) {
+    caught = !strcmp(error.what(), stage == 0 ? "scan-filter" : "scan-compare");
+  }
+  return caught && scan_throw_calls == 3 && list == sentinel && open_fd_count() == before ? 0 : 1;
+}
+
+// Keep an oracle crash local to its observation. A signal is returned as a
+// negative number; it must never be mistaken for a caught exception.
+extern "C" int flc_scan_unwind_child(void *function, unsigned variant,
+                                      const char *directory, unsigned stage) {
+  pid_t pid = fork();
+  if (pid < 0) return 3;
+  if (pid == 0) _exit(flc_scan_unwind(function, variant, directory, stage));
+  int status = 0;
+  if (waitpid(pid, &status, 0) != pid) return 4;
+  return WIFSIGNALED(status) ? -WTERMSIG(status) : WIFEXITED(status) ? WEXITSTATUS(status) : 5;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 5 && !strcmp(argv[1], "--scan-unwind")) {
+    const char *names[] = {"scandir", "scandir64", "scandirat", "scandirat64"};
+    unsigned variant = (unsigned)strtoul(argv[2], nullptr, 10);
+    if (variant > 3) return 2;
+    void *function = dlsym(RTLD_DEFAULT, names[variant]);
+    const char *pin = getenv("FLC_SCAN_EXPECT_PROVIDER");
+    struct stat expected, actual; Dl_info info;
+    if (!pin || !function || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0) || !dladdr(function, &info) ||
+        !info.dli_fname || syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+        expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino) return 42;
+    int result = flc_scan_unwind(function, variant, argv[4], (unsigned)strtoul(argv[3], nullptr, 10));
+    printf("scan unwind variant=%u stage=%s result=%d\n", variant, argv[3], result);
+    return result;
+  }
   if (argc == 4 && !strcmp(argv[1], "--printf")) return printf_callback_case(argv[2], atoi(argv[3]));
   if (argc != 1) return 2;
   run_case("qsort", [] { qsort(ints, 5, sizeof(int), cmp_throw); });

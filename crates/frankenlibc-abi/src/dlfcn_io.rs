@@ -5,7 +5,10 @@
 //! never bind native IO to one errno provider and __errno_location to another.
 //! This table is consumed by both relocation and caller-relative lookup.
 
-use crate::{dirent_abi as dirs, errno_abi as errno, io_abi as io, unistd_abi as unistd};
+use crate::{
+    dirent_abi as dirs, errno_abi as errno, glibc_internal_abi as internal, io_abi as io,
+    unistd_abi as unistd,
+};
 
 #[path = "dlfcn_socket.rs"]
 mod socket;
@@ -31,6 +34,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     let introduced = match name {
         "openat" | "openat64" | "faccessat" | "readlinkat" | "fdopendir" => "GLIBC_2.4",
         "pipe2" | "dup3" => "GLIBC_2.9",
+        "scandirat" | "scandirat64" => "GLIBC_2.15",
         _ => "GLIBC_2.2.5",
     };
     let supported = if matches!(name, "fcntl64" | "statx") {
@@ -83,6 +87,14 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "rewinddir" => dirs::rewinddir as *const (),
         "telldir" => dirs::telldir as *const (),
         "seekdir" => dirs::seekdir as *const (),
+        "scandir" => dirs::scandir as *const (),
+        "scandir64" => dirs::scandir64 as *const (),
+        "scandirat" => internal::scandirat as *const (),
+        "scandirat64" => internal::scandirat64 as *const (),
+        "alphasort" => dirs::alphasort as *const (),
+        "alphasort64" => unistd::alphasort64 as *const (),
+        "versionsort" => dirs::versionsort as *const (),
+        "versionsort64" => unistd::versionsort64 as *const (),
         "read" => unistd::read as *const (),
         "write" => unistd::write as *const (),
         "close" => unistd::close as *const (),

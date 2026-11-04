@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <locale.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -300,6 +301,168 @@ done:
 }
 #undef DIRECTORY_CHECK
 
+extern int scan_narrow(const char *, struct dirent ***, int (*)(const struct dirent *),
+                       int (*)(const struct dirent **, const struct dirent **)) __asm__("scandir");
+extern int scan_at_narrow(int, const char *, struct dirent ***, int (*)(const struct dirent *),
+                          int (*)(const struct dirent **, const struct dirent **)) __asm__("scandirat");
+extern int scan_alpha(const struct dirent **, const struct dirent **) __asm__("alphasort");
+extern int scan_version(const struct dirent **, const struct dirent **) __asm__("versionsort");
+
+void *flc_scan_function(unsigned index) {
+    switch (index) {
+        case 0: return (void *)scan_narrow;
+        case 1: return (void *)scandir64;
+        case 2: return (void *)scan_at_narrow;
+        case 3: return (void *)scandirat64;
+        case 4: return (void *)scan_alpha;
+        case 5: return (void *)alphasort64;
+        case 6: return (void *)scan_version;
+        case 7: return (void *)versionsort64;
+        default: return NULL;
+    }
+}
+
+typedef int (*scan_select)(const struct dirent *);
+typedef int (*scan_compare)(const struct dirent **, const struct dirent **);
+typedef int (*scan_name_compare)(const char *, const char *);
+static void *scan_address(void *const *functions, unsigned index) {
+    return functions ? functions[index] : flc_scan_function(index);
+}
+static int scan_invoke(void *function, unsigned variant, int fd, const char *path,
+                        struct dirent ***list, scan_select select, scan_compare compare) {
+    if (variant < 2)
+        return ((int (*)(const char *, struct dirent ***, scan_select, scan_compare))function)(path, list, select, compare);
+    return ((int (*)(int, const char *, struct dirent ***, scan_select, scan_compare))function)(fd, path, list, select, compare);
+}
+static void scan_release(struct dirent **list, int count, void (*release)(void *)) {
+    if (list && count >= 0) {
+        for (int i = 0; i < count; i++) release(list[i]);
+        release(list);
+    }
+}
+static int scan_index(const char *name) {
+    int index = directory_name_index(name);
+    if (index >= 0) return index;
+    const char *extra[] = {"file2", "file10", "file1", "file01", "file001"};
+    for (unsigned i = 0; i < 5; i++) if (!strcmp(name, extra[i])) return 208 + (int)i;
+    return -1;
+}
+/* Observer state is process-local; these protocols run serially in isolated
+   children. Reentry below invokes the scan ABI directly, without a new observer. */
+static struct {
+    unsigned group, calls, comparisons;
+    int *slot, mismatch;
+    int (*inject)(int);
+    void *function;
+    const char *path;
+    void (*release)(void *);
+} scan_observer;
+static int scan_filter(const struct dirent *entry) {
+    unsigned call = ++scan_observer.calls;
+    if (scan_observer.group >= 9 && scan_observer.group <= 11 && call == 3) {
+        const int errors[] = {EIO, EINTR, EACCES};
+        if (!scan_observer.inject || scan_observer.inject(errors[scan_observer.group - 9]))
+            scan_observer.mismatch = 1;
+    }
+    if (scan_observer.group == 5 && call == 1) {
+        struct dirent **nested = NULL;
+        int n = scan_invoke(scan_observer.function, 0, -1, scan_observer.path, &nested, NULL, NULL);
+        if (n != 213) scan_observer.mismatch = 1;
+        scan_release(nested, n, scan_observer.release);
+    }
+    *scan_observer.slot = EAGAIN;
+    if (scan_observer.group == 4) return 0;
+    if (scan_observer.group == 3) {
+        int index = scan_index(entry->d_name);
+        return index >= 8 && index < 208 && (index - 8) % 2 == 0;
+    }
+    return 1;
+}
+static int scan_descending(const struct dirent **a, const struct dirent **b) {
+    scan_observer.comparisons++;
+    *scan_observer.slot = EDOM;
+    return strcmp((*b)->d_name, (*a)->d_name);
+}
+static int scan_fd_count(void) {
+    int count = 0;
+    for (int fd = 0; fd < 4096; fd++) if (fcntl(fd, F_GETFD) >= 0) count++;
+    return count;
+}
+
+/* 12 groups per variant, plus relative badfd for the two at variants.
+   7 positive + 5 error groups; all returned allocations use their provider. */
+int flc_scan_case(unsigned group, unsigned variant, const char *directory, const char *missing,
+                   const char *file, void *const *functions, int *(*error_slot)(void),
+                   void (*release)(void *), metadata_reference reference,
+                   scan_name_compare alphabetical, scan_name_compare version,
+                   int (*inject)(int)) {
+    if (variant > 3 || group > 12 || (group == 12 && variant < 2)) return 2;
+    int before = scan_fd_count(), result = 0;
+    int fd = open(directory, O_RDONLY | O_DIRECTORY);
+    if (fd < 0) return __LINE__;
+    scan_observer.group = group; scan_observer.calls = scan_observer.comparisons = 0;
+    scan_observer.slot = error_slot(); scan_observer.mismatch = 0;
+    scan_observer.inject = inject; scan_observer.function = scan_address(functions, 0);
+    scan_observer.path = directory; scan_observer.release = release;
+    scan_compare compare = group == 1 ? (scan_compare)scan_address(functions, 4 + variant % 2) :
+                           group == 2 ? (scan_compare)scan_address(functions, 6 + variant % 2) :
+                           group == 5 ? scan_descending : NULL;
+    const char *path = variant < 2 || group == 8 ? directory : ".";
+    if (group == 6) path = variant < 2 ? missing : "missing";
+    if (group == 7) path = variant < 2 ? file : "alpha";
+    struct dirent **sentinel = (struct dirent **)(uintptr_t)1, **list = sentinel;
+    *scan_observer.slot = 1234;
+    int n = scan_invoke(scan_address(functions, variant), variant,
+                        group == 8 || group == 12 ? -1 : fd, path, &list, scan_filter, compare);
+    int error = *scan_observer.slot;
+    int expected_error = group == 6 ? ENOENT : group == 7 ? ENOTDIR : group == 12 ? EBADF :
+                         group == 9 ? EIO : group == 10 ? EINTR : group == 11 ? EACCES : 0;
+    if (expected_error) {
+        if (n != -1 || error != expected_error || list != sentinel) result = __LINE__;
+        if (group >= 9 && group <= 11 && scan_observer.calls < 3) result = __LINE__;
+    } else {
+        int expected_count = group == 3 ? 100 : group == 4 ? 0 : 213;
+        unsigned char seen[213] = {0};
+        if (n != expected_count || error != 1234 || scan_observer.calls != 213) result = __LINE__;
+        if (n > 0 && (!list || list == sentinel)) result = __LINE__;
+        if (!result) for (int i = 0; i < n; i++) {
+            struct dirent *entry = list[i];
+            size_t length = strnlen(entry->d_name, sizeof entry->d_name);
+            int index = length == sizeof entry->d_name ? -1 : scan_index(entry->d_name);
+            if (index < 0 || index >= 213 || seen[index]++ ||
+                (group == 3 && !(index >= 8 && index < 208 && (index - 8) % 2 == 0))) { result = __LINE__; break; }
+            struct stat st;
+            if (reference(fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) || st.st_ino != entry->d_ino) { result = __LINE__; break; }
+            unsigned type = S_ISDIR(st.st_mode) ? DT_DIR : S_ISLNK(st.st_mode) ? DT_LNK : DT_REG;
+            if (entry->d_type != DT_UNKNOWN && entry->d_type != type) { result = __LINE__; break; }
+            if (i && compare) {
+                int order = (group == 2 ? version : alphabetical)(list[i - 1]->d_name, entry->d_name);
+                if ((group == 5 && order < 0) || (group != 5 && order > 0)) { result = __LINE__; break; }
+            }
+        }
+        if (group == 5 && !scan_observer.comparisons) result = __LINE__;
+    }
+    if (scan_observer.mismatch) result = __LINE__;
+    if (n >= 0 && list != sentinel) scan_release(list, n, release);
+    if (close(fd) != 0 || scan_fd_count() != before) result = __LINE__;
+    return result;
+}
+
+int flc_scan_comparators(void *const *functions, scan_name_compare alphabetical,
+                          scan_name_compare version) {
+    const char *pairs[][2] = {{"file9", "file10"}, {"file10", "file9"}, {"a", "a"},
+        {"img2", "img2"}, {"v1.9", "v1.10"}, {"abc", "abd"}, {"", "x"}, {"file001", "file1"}};
+    for (unsigned which = 0; which < 4; which++) for (unsigned i = 0; i < 8; i++) {
+        struct dirent a = {0}, b = {0};
+        strcpy(a.d_name, pairs[i][0]); strcpy(b.d_name, pairs[i][1]);
+        const struct dirent *pa = &a, *pb = &b;
+        int observed = ((scan_compare)scan_address(functions, 4 + which))(&pa, &pb);
+        int expected = (which < 2 ? alphabetical : version)(pairs[i][0], pairs[i][1]);
+        if ((observed > 0) - (observed < 0) != (expected > 0) - (expected < 0)) return __LINE__;
+    }
+    return 0;
+}
+
 static int metadata_matches(const struct stat *out, const char *path,
                              metadata_reference reference, const struct stat *initial) {
     struct stat expected;
@@ -553,6 +716,73 @@ static int path_filter(int number, int error) {
     };
     struct sock_fprog program = {(unsigned short)(sizeof code / sizeof *code), code};
     return prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program);
+}
+
+typedef int (*scan_case_function)(unsigned, unsigned, const char *, const char *, const char *,
+    void *const *, int *(*)(void), void (*)(void *), metadata_reference,
+    scan_name_compare, scan_name_compare, int (*)(int));
+static int scan_inject(int error) { return path_filter(SYS_getdents64, error); }
+
+int flc_scan_child(scan_case_function run, unsigned group, unsigned variant,
+                    const char *directory, const char *missing, const char *file,
+                    void *const *functions, int *(*error_slot)(void), void (*release)(void *),
+                    metadata_reference reference, scan_name_compare alphabetical,
+                    scan_name_compare version) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return __LINE__;
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(pipefd[0]);
+        int result = run(group, variant, directory, missing, file, functions,
+                         error_slot, release, reference, alphabetical, version, scan_inject);
+        ssize_t sent = write(pipefd[1], &result, sizeof result);
+        close(pipefd[1]);
+        _exit(sent == sizeof result ? 0 : 3);
+    }
+    close(pipefd[1]);
+    if (pid < 0) { close(pipefd[0]); return __LINE__; }
+    int result = -1, status = 0;
+    ssize_t received = read(pipefd[0], &result, sizeof result);
+    close(pipefd[0]);
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) ||
+        received != sizeof result) return __LINE__;
+    return result;
+}
+
+static int scan_provider(void) {
+    struct stat expected, actual;
+    const char *pin = getenv("FLC_SCAN_EXPECT_PROVIDER");
+    if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0)) return 42;
+    for (unsigned i = 0; i < 10; i++) {
+        Dl_info info;
+        void *function = i < 8 ? flc_scan_function(i) : i == 8 ? (void *)free : (void *)__errno_location;
+        if (!dladdr(function, &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+            actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) return 42;
+    }
+    return 0;
+}
+
+/* The candidate's comparator must not also serve as its name-order oracle. */
+static void *scan_oracles(scan_name_compare *alphabetical, scan_name_compare *version) {
+    const char *pin = getenv("FLC_SCAN_ORACLE_PROVIDER");
+    struct stat expected, actual;
+    if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0)) return NULL;
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!host) return NULL;
+    void *functions[] = {dlsym(host, "strcoll"), dlsym(host, "strverscmp"), dlsym(host, "setlocale")};
+    for (unsigned i = 0; i < 3; i++) {
+        Dl_info info;
+        if (!functions[i] || !dladdr(functions[i], &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+            actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) {
+            dlclose(host); return NULL;
+        }
+    }
+    if (!((char *(*)(int, const char *))functions[2])(LC_ALL, "C")) { dlclose(host); return NULL; }
+    *alphabetical = (scan_name_compare)functions[0];
+    *version = (scan_name_compare)functions[1];
+    return host;
 }
 
 static int path_provider(void) {
@@ -997,6 +1227,32 @@ static int allocation_contract(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 6 && strcmp(argv[1], "--scan-case") == 0) {
+        int provider = scan_provider();
+        if (provider) return provider;
+        scan_name_compare alphabetical, version;
+        void *oracle = scan_oracles(&alphabetical, &version);
+        if (!oracle) return 43;
+        char missing[PATH_MAX];
+        if (snprintf(missing, sizeof missing, "%s/missing", argv[4]) >= (int)sizeof missing) return 2;
+        int result = flc_scan_child(flc_scan_case, (unsigned)strtoul(argv[2], NULL, 10),
+            (unsigned)strtoul(argv[3], NULL, 10), argv[4], missing, argv[5], NULL,
+            __errno_location, free, metadata_kernel_reference, alphabetical, version);
+        if (dlclose(oracle)) return 44;
+        printf("scan group=%s variant=%s line=%d\n", argv[2], argv[3], result);
+        return result ? 1 : 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--scan-comparators") == 0) {
+        int provider = scan_provider();
+        if (provider) return provider;
+        scan_name_compare alphabetical, version;
+        void *oracle = scan_oracles(&alphabetical, &version);
+        if (!oracle) return 43;
+        int result = flc_scan_comparators(NULL, alphabetical, version);
+        if (dlclose(oracle)) return 44;
+        printf("scan comparators=32 line=%d\n", result);
+        return result ? 1 : 0;
+    }
     if (argc == 5 && strcmp(argv[1], "--directory-case") == 0) {
         const char *pin = getenv("FLC_DIRECTORY_EXPECT_PROVIDER");
         struct stat expected, actual;

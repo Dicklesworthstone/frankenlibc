@@ -577,7 +577,7 @@ pub unsafe extern "C-unwind" fn versionsort(
 /// Everything `scandir` owns while user callbacks run: the open directory,
 /// the copied entries and the result array. Dropping it releases all of them,
 /// so an error return or a `filter`/`compar` callback that unwinds (a C++
-/// exception) leaks nothing — glibc's scandir runs the same cleanup on unwind.
+/// exception) leaks nothing. The directory is marked closed before sorting.
 /// A successful scan hands the entries to the caller with `into_namelist`.
 struct ScandirState {
     dir: *mut DIR,
@@ -645,6 +645,8 @@ pub(crate) unsafe fn scandir_dir(
         unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
     >,
 ) -> c_int {
+    // SAFETY: this thread's ABI errno slot is live throughout the scan.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     let mut state = ScandirState {
         dir,
         entries: Vec::new(),
@@ -652,8 +654,21 @@ pub(crate) unsafe fn scandir_dir(
     };
 
     loop {
+        // Callbacks and successful allocations may change errno. Only the
+        // read immediately preceding NULL determines whether it means EOF.
+        // SAFETY: errno is the current thread's ABI-owned slot.
+        unsafe { set_abi_errno(0) };
         let entry = unsafe { readdir(state.dir) };
         if entry.is_null() {
+            // SAFETY: readdir reports errors through this same live slot.
+            let error = unsafe { *crate::errno_abi::__errno_location() };
+            if error != 0 {
+                drop(state);
+                // SAFETY: publish the read error after closing/freeing state,
+                // leaving the caller's namelist unchanged on failure.
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
             break;
         }
 
@@ -723,6 +738,8 @@ pub(crate) unsafe fn scandir_dir(
     }
 
     unsafe { *namelist = state.into_namelist() };
+    // SAFETY: restore caller errno after callbacks and all internal cleanup.
+    unsafe { set_abi_errno(saved_errno) };
     count as c_int
 }
 

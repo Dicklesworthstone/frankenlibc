@@ -8,8 +8,8 @@ use std::sync::atomic::AtomicI32;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::{
-    dirent_abi as dirs, dlfcn_abi as dl, errno_abi as errno, fortify_abi as checked, io_abi as io,
-    malloc_abi as malloc, unistd_abi as unistd,
+    dirent_abi as dirs, dlfcn_abi as dl, errno_abi as errno, fortify_abi as checked,
+    glibc_internal_abi as internal, io_abi as io, malloc_abi as malloc, unistd_abi as unistd,
 };
 use frankenlibc_core::elf::ElfLoader;
 
@@ -182,6 +182,8 @@ void *io_function(unsigned index) {
     extern void *flc_metadata_function(unsigned);
     extern void *flc_path_function(unsigned);
     extern void *flc_directory_function(unsigned);
+    extern void *flc_scan_function(unsigned);
+    if (index >= 69) return flc_scan_function(index - 69);
     if (index >= 58) return flc_directory_function(index - 58);
     if (index >= 46) return flc_path_function(index - 46);
     switch (index) {
@@ -352,7 +354,33 @@ fn symbols() -> Vec<(&'static str, &'static str, *const ())> {
         ),
     ];
     result.extend(directory_symbols());
+    result.extend(scan_symbols());
     result
+}
+
+fn scan_symbols() -> [(&'static str, &'static str, *const ()); 8] {
+    [
+        ("scandir", "GLIBC_2.2.5", dirs::scandir as *const ()),
+        ("scandir64", "GLIBC_2.2.5", dirs::scandir64 as *const ()),
+        ("scandirat", "GLIBC_2.15", internal::scandirat as *const ()),
+        (
+            "scandirat64",
+            "GLIBC_2.15",
+            internal::scandirat64 as *const (),
+        ),
+        ("alphasort", "GLIBC_2.2.5", dirs::alphasort as *const ()),
+        (
+            "alphasort64",
+            "GLIBC_2.2.5",
+            unistd::alphasort64 as *const (),
+        ),
+        ("versionsort", "GLIBC_2.2.5", dirs::versionsort as *const ()),
+        (
+            "versionsort64",
+            "GLIBC_2.2.5",
+            unistd::versionsort64 as *const (),
+        ),
+    ]
 }
 
 fn directory_symbols() -> [(&'static str, &'static str, *const ()); 11] {
@@ -676,7 +704,7 @@ fn directory_isolated(name: &str, scenario: fn(bool)) {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    println!("directory host/native: 13 groups (8 positive, 5 error); retained {retained:?}");
+    println!("{name}: host/native passed; retained {retained:?}");
 }
 
 fn directory_protocol(native: bool, got: bool, direct: bool) {
@@ -1029,6 +1057,265 @@ fn native_cwd_review_deep_errors_and_bind_mount() {
     println!("{provider}: 18 cases (6 success, 12 errors); retained {root:?}");
 }
 
+fn scan_protocol(native: bool, got: bool) {
+    type SetLocale = unsafe extern "C" fn(c_int, *const c_char) -> *const c_char;
+    // SAFETY: this protocol runs in its own provider child. Set the GNU
+    // comparison oracle's locale explicitly instead of trusting inherited state.
+    let set_locale: SetLocale = unsafe {
+        dlsym_oracle::host_fn(
+            c"setlocale",
+            frankenlibc_abi::locale_abi::setlocale as *const (),
+        )
+    };
+    // SAFETY: LC_ALL is valid and the constant locale string is NUL-terminated.
+    let locale = unsafe { set_locale(libc::LC_ALL, c"C".as_ptr()) };
+    assert!(!locale.is_null());
+    // SAFETY: successful setlocale returns a live NUL-terminated locale name.
+    assert_eq!(unsafe { CStr::from_ptr(locale) }, c"C");
+    let fixture = Fixture::new(got);
+    let directory = fixture.dir.join("scan-data");
+    std::fs::create_dir(&directory).unwrap();
+    for name in [
+        "alpha", "beta", "gamma", "file2", "file10", "file1", "file01", "file001",
+    ] {
+        std::fs::write(directory.join(name), b"scan").unwrap();
+    }
+    std::fs::create_dir(directory.join("sub")).unwrap();
+    std::os::unix::fs::symlink("alpha", directory.join("link")).unwrap();
+    std::fs::write(directory.join("n".repeat(255)), b"long").unwrap();
+    for i in 0..200 {
+        std::fs::write(directory.join(format!("item{i:03}")), b"item").unwrap();
+    }
+    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let mut observers = Vec::new();
+    for (name, compiler, source) in [
+        (
+            "scan-observer.so",
+            "gcc",
+            "tests/integration/fixture_fcntl64_args.c",
+        ),
+        (
+            "scan-unwind.so",
+            "g++",
+            "tests/integration/fixture_callback_unwind.cpp",
+        ),
+    ] {
+        let path = fixture.dir.join(name);
+        let output = Command::new(compiler)
+            .args([
+                "-shared",
+                "-fPIC",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-fno-builtin",
+            ])
+            .arg(root.join(source))
+            .args(["-ldl", "-pthread", "-o"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        std::fs::write(fixture.dir.join(format!("{name}.stdout")), &output.stdout).unwrap();
+        std::fs::write(fixture.dir.join(format!("{name}.stderr")), &output.stderr).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        observers.push(path);
+    }
+    let direct = std::env::var_os("FRANKENLIBC_SCAN_DIRECT").is_some();
+    let api = Api::new(native && !direct);
+    let plugin = api.open(&fixture.path);
+    if !direct {
+        addresses(api, plugin);
+    }
+    let host = Api::new(false);
+    let observer = host.open(&observers[0]);
+    let cpp = host.open(&observers[1]);
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    type Free = unsafe extern "C" fn(*mut c_void);
+    type Reference = unsafe extern "C" fn(c_int, *const c_char, *mut libc::stat, c_int) -> c_int;
+    type Compare = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
+    type Inject = unsafe extern "C" fn(c_int) -> c_int;
+    type Run = unsafe extern "C" fn(
+        u32,
+        u32,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const *mut c_void,
+        Errno,
+        Free,
+        Reference,
+        Compare,
+        Compare,
+        Inject,
+    ) -> c_int;
+    type Child = unsafe extern "C" fn(
+        Run,
+        u32,
+        u32,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const *mut c_void,
+        Errno,
+        Free,
+        Reference,
+        Compare,
+        Compare,
+    ) -> c_int;
+    type Comparators = unsafe extern "C" fn(*const *mut c_void, Compare, Compare) -> c_int;
+    type Unwind = unsafe extern "C" fn(*mut c_void, u32, *const c_char, u32) -> c_int;
+    // SAFETY: these signatures match the shared C/C++ observers; observers
+    // and callbacks remain loaded throughout all synchronous child calls.
+    let run: Run = unsafe { std::mem::transmute(api.symbol(plugin, c"flc_scan_case")) };
+    // SAFETY: the GNU observer owns fork/pipe/wait and injects a real syscall error.
+    let child: Child = unsafe { std::mem::transmute(host.symbol(observer, c"flc_scan_child")) };
+    // SAFETY: both functions have the declared observer signatures.
+    let comparators: Comparators =
+        unsafe { std::mem::transmute(api.symbol(plugin, c"flc_scan_comparators")) };
+    // SAFETY: the C++ observer catches exceptions in a forked child and
+    // reports signals separately; no exception crosses this Rust call.
+    let unwind: Unwind = unsafe { std::mem::transmute(host.symbol(cpp, c"flc_scan_unwind_child")) };
+    let functions: Vec<*mut c_void> = scan_symbols()
+        .into_iter()
+        .map(|(name, _, expected)| {
+            if native {
+                expected as *mut c_void
+            } else {
+                // SAFETY: oracle lookup rejects the native implementation address.
+                unsafe { dlsym_oracle::host_addr(&CString::new(name).unwrap(), expected) }
+            }
+        })
+        .collect();
+    // SAFETY: the callbacks use their documented GNU/ABI signatures. Returned
+    // scan allocations always go to the same provider's free and errno slot.
+    let error: Errno = if native {
+        errno::__errno_location
+    } else {
+        unsafe { dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()) }
+    };
+    let free: Free = if native {
+        malloc::free
+    } else {
+        // SAFETY: this is the independent GNU allocator deallocator.
+        unsafe { dlsym_oracle::host_fn(c"free", malloc::free as *const ()) }
+    };
+    // SAFETY: independent live GNU metadata and name-order oracles.
+    let reference: Reference =
+        unsafe { dlsym_oracle::host_fn(c"fstatat", unistd::fstatat as *const ()) };
+    // SAFETY: both functions compare two live NUL-terminated names in C locale.
+    let alpha: Compare = unsafe {
+        dlsym_oracle::host_fn(
+            c"strcoll",
+            frankenlibc_abi::string_abi::strcoll as *const (),
+        )
+    };
+    // SAFETY: the native address is excluded by the independent GNU resolver.
+    let version: Compare = unsafe {
+        dlsym_oracle::host_fn(
+            c"strverscmp",
+            frankenlibc_abi::string_abi::strverscmp as *const (),
+        )
+    };
+    let directory = CString::new(directory.as_os_str().as_bytes()).unwrap();
+    let missing = CString::new(format!("{}/missing", directory.to_str().unwrap())).unwrap();
+    let file = CString::new(format!("{}/alpha", directory.to_str().unwrap())).unwrap();
+    let table = if direct {
+        functions.as_ptr()
+    } else {
+        std::ptr::null()
+    };
+    let mut failures = Vec::new();
+    for variant in 0..4 {
+        for group in 0..13 {
+            if group == 12 && variant < 2 {
+                continue;
+            }
+            // SAFETY: all paths, function tables and callbacks stay live; the
+            // GNU child runner isolates fault injection from subsequent cases.
+            let result = unsafe {
+                child(
+                    run,
+                    group,
+                    variant,
+                    directory.as_ptr(),
+                    missing.as_ptr(),
+                    file.as_ptr(),
+                    table,
+                    error,
+                    free,
+                    reference,
+                    alpha,
+                    version,
+                )
+            };
+            if result != 0 {
+                failures.push((variant, group, result));
+            }
+        }
+        let function = if direct {
+            functions[variant as usize]
+        } else {
+            // SAFETY: this C export returns the actual imported ABI address.
+            let lookup: Function =
+                unsafe { std::mem::transmute(api.symbol(plugin, c"flc_scan_function")) };
+            // SAFETY: variants0..3 select the four scan entrypoints.
+            unsafe { lookup(variant) }
+        };
+        for stage in 0..2 {
+            // SAFETY: actual scan pointer and path are valid; the observer
+            // catches the callback exception inside its own C++ frame.
+            let result = unsafe { unwind(function, variant, directory.as_ptr(), stage) };
+            // The measured GNU build double-closes its DIR if a comparator
+            // throws after closedir. Keep that oracle failure explicit; the
+            // native provider must catch all eight callbacks without a signal.
+            let expected = if !native && stage == 1 {
+                -libc::SIGABRT
+            } else {
+                0
+            };
+            if result != expected {
+                failures.push((variant, 20 + stage, result));
+            }
+            println!(
+                "scan unwind native={native} variant={variant} stage={stage} observed={result} expected={expected}"
+            );
+        }
+    }
+    // SAFETY: actual imported comparators and independent GNU name oracles.
+    assert_eq!(unsafe { comparators(table, alpha, version) }, 0);
+    host.close(cpp);
+    host.close(observer);
+    api.close(plugin);
+    assert!(
+        failures.is_empty(),
+        "scan native={native} got={got} direct={direct}: {failures:?}; retained {:?}",
+        fixture.dir
+    );
+    println!(
+        "scan:50observations/32comparisons/8unwind-observations native={native} got={got} direct={direct}; retained {:?}",
+        fixture.dir
+    );
+}
+
+#[test]
+fn native_scan_plt_protocol() {
+    directory_isolated("native_scan_plt_protocol", |native| {
+        scan_protocol(native, false)
+    });
+}
+
+#[test]
+fn native_scan_got_protocol() {
+    directory_isolated("native_scan_got_protocol", |native| {
+        scan_protocol(native, true)
+    });
+}
+
 #[test]
 fn native_cwd_review_symlink_tmpdir() {
     let root = std::env::temp_dir().join(format!(
@@ -1193,7 +1480,10 @@ fn io_runtime_dynamic_versions_match_direct_providers() {
                     );
                     assert_eq!(error, 1);
                 }
-                if name.as_bytes() == b"fcntl64" || name.as_bytes() == b"fdopendir" {
+                if matches!(
+                    name.to_bytes(),
+                    b"fcntl64" | b"fdopendir" | b"scandirat" | b"scandirat64"
+                ) {
                     let mut error = -1;
                     assert!(
                         unsafe { dynamic(name.as_ptr(), c"GLIBC_2.2.5".as_ptr(), &mut error) }
