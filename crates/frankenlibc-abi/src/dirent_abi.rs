@@ -25,6 +25,8 @@ struct DirState {
     eof: bool,
     /// Kernel d_off of the last returned entry (for telldir/seekdir).
     last_d_off: i64,
+    /// Stable storage owned by this stream, rather than shared across a thread.
+    entry: libc::dirent,
 }
 
 /// Global registry of open directory streams, keyed by a unique handle.
@@ -65,8 +67,10 @@ fn write_dirent(
     dst: *mut libc::dirent,
     entry: &dirent_core::DirEntry<'_>,
     d_reclen: libc::c_ushort,
-) {
-    // SAFETY: caller provides a valid writable dirent slot.
+    output: *mut libc::dirent,
+) -> *mut libc::dirent {
+    // SAFETY: dst is this stream's writable entry, protected by its mutex.
+    // Non-null output is a caller-provided readdir_r record, distinct from dst.
     unsafe {
         std::ptr::write_bytes(dst, 0, 1);
         (*dst).d_ino = entry.d_ino;
@@ -81,38 +85,24 @@ fn write_dirent(
         if let Some(last) = name_dst.get_mut(copy_len) {
             *last = 0;
         }
+        if output.is_null() {
+            dst
+        } else {
+            // GNU reentrant reads omit padding beyond the maximum name slot.
+            // Copy only the record, leaving the caller's remaining bytes alone.
+            let limit = std::mem::offset_of!(libc::dirent, d_name) + 256;
+            let length = usize::from(d_reclen).min(limit);
+            std::ptr::copy_nonoverlapping(dst.cast::<u8>(), output.cast::<u8>(), length);
+            (*output).d_reclen = length as libc::c_ushort;
+            output
+        }
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_readdir_entry() -> libc::dirent {
     // SAFETY: `libc::dirent` is a plain C record; zero initialization matches
-    // the previous TLS buffer initialization before each entry is populated.
+    // the stream buffer initialization before each entry is populated.
     unsafe { std::mem::zeroed() }
-}
-
-#[cfg(feature = "owned-tls-cache")]
-static READDIR_ENTRY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::dirent> =
-    crate::owned_tls_cache::OwnedTlsCache::new(empty_readdir_entry);
-
-#[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static READDIR_ENTRY_BUF: std::cell::UnsafeCell<libc::dirent> = const {
-        // SAFETY: `libc::dirent` is a plain C record and callers only observe
-        // it after `write_dirent` fully populates the fields for one entry.
-        std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() })
-    };
-}
-
-fn with_readdir_entry<R>(callback: impl FnOnce(*mut libc::dirent) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        READDIR_ENTRY_OWNED_TLS.with(|entry| callback(entry as *mut libc::dirent))
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        READDIR_ENTRY_BUF.with(|cell| callback(cell.get()))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +151,7 @@ pub unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
         valid_bytes: 0,
         eof: false,
         last_d_off: 0,
+        entry: empty_readdir_entry(),
     };
 
     let mut registry = lock_registry();
@@ -175,11 +166,19 @@ pub unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
 // readdir
 // ---------------------------------------------------------------------------
 
-/// POSIX `readdir` — returns a pointer to a static `dirent` struct.
+/// POSIX `readdir` — returns a pointer to stream-owned `dirent` storage.
 ///
-/// We use a thread-local buffer for the returned `dirent` to avoid lifetime issues.
+/// Reads on a different stream cannot invalidate this entry. The registry's
+/// Arc keeps its address stable until the stream is closed.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
+    // SAFETY: the caller supplies an open stream; null output selects its slot.
+    unsafe { readdir_to(dirp, std::ptr::null_mut()) }
+}
+
+/// Read and optionally copy a record while holding the stream mutex. In
+/// particular, reentrant reads must not copy after releasing that mutex.
+unsafe fn readdir_to(dirp: *mut DIR, output: *mut libc::dirent) -> *mut libc::dirent {
     let (_mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, dirp as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -211,6 +210,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
             offset,
             valid_bytes,
             last_d_off,
+            entry: slot,
             ..
         } = &mut *state;
         let current_offset = *offset;
@@ -221,10 +221,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
             let d_reclen = (next_off - current_offset) as libc::c_ushort;
             *last_d_off = entry.d_off;
             *offset = next_off;
-            return with_readdir_entry(|ptr| {
-                write_dirent(ptr, &entry, d_reclen);
-                ptr
-            });
+            return write_dirent(slot, &entry, d_reclen, output);
         }
     }
 
@@ -259,6 +256,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
             offset,
             valid_bytes,
             last_d_off,
+            entry: slot,
             ..
         } = &mut *state;
         if let Some((entry, next_off)) = dirent_core::parse_dirent64(&buffer[..*valid_bytes], 0) {
@@ -266,10 +264,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
             *last_d_off = entry.d_off;
             *offset = next_off;
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-            return with_readdir_entry(|ptr| {
-                write_dirent(ptr, &entry, d_reclen);
-                ptr
-            });
+            return write_dirent(slot, &entry, d_reclen, output);
         }
     }
 
@@ -423,7 +418,9 @@ pub unsafe extern "C" fn readdir_r(
     // To distinguish EOF from error without modifying the caller's errno.
     let old_errno = unsafe { *super::errno_abi::__errno_location() };
     unsafe { set_abi_errno(0) };
-    let ptr = unsafe { readdir(dirp) };
+    // SAFETY: entry is the caller's writable record. The copy takes place
+    // under the stream mutex, including when other threads use this stream.
+    let ptr = unsafe { readdir_to(dirp, entry) };
     if ptr.is_null() {
         unsafe { *result = std::ptr::null_mut() };
         let e = unsafe { *super::errno_abi::__errno_location() };
@@ -435,8 +432,8 @@ pub unsafe extern "C" fn readdir_r(
         }
     } else {
         unsafe { set_abi_errno(old_errno) };
+        // SAFETY: result is the caller's non-null output pointer, checked above.
         unsafe {
-            std::ptr::copy_nonoverlapping(ptr, entry, 1);
             *result = entry;
         }
         0
@@ -800,6 +797,36 @@ pub unsafe extern "C" fn fdopendir(fd: c_int) -> *mut libc::DIR {
         return std::ptr::null_mut();
     }
 
+    // SAFETY: F_GETFL has no pointer argument; the kernel validates the fd.
+    let flags = match unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) } {
+        Ok(flags) => flags,
+        Err(error) => {
+            // SAFETY: errno is this thread's ABI-owned slot.
+            unsafe { set_abi_errno(error) };
+            return std::ptr::null_mut();
+        }
+    };
+    let error = if flags & libc::O_PATH != 0 {
+        libc::EBADF
+    } else if flags & libc::O_ACCMODE == libc::O_WRONLY {
+        libc::EINVAL
+    } else {
+        0
+    };
+    if error != 0 {
+        // SAFETY: errno is this thread's ABI-owned slot. Rejection retains fd.
+        unsafe { set_abi_errno(error) };
+        return std::ptr::null_mut();
+    }
+    // SAFETY: F_SETFD consumes integer flags, not a pointer. Ownership passes
+    // to the stream only after validation and close-on-exec setup succeed.
+    if let Err(error) = unsafe { syscall::sys_fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC as usize) }
+    {
+        // SAFETY: errno is this thread's ABI-owned slot; fd stays caller-owned.
+        unsafe { set_abi_errno(error) };
+        return std::ptr::null_mut();
+    }
+
     let handle = next_handle();
     let state = DirState {
         fd,
@@ -808,6 +835,7 @@ pub unsafe extern "C" fn fdopendir(fd: c_int) -> *mut libc::DIR {
         valid_bytes: 0,
         eof: false,
         last_d_off: 0,
+        entry: empty_readdir_entry(),
     };
 
     let mut registry = lock_registry();

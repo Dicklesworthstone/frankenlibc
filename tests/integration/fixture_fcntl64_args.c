@@ -8,10 +8,12 @@
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include <dlfcn.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -79,6 +81,225 @@ static int metadata_equal(const struct stat *a, const struct stat *b) {
 }
 
 typedef int (*metadata_reference)(int, const char *, struct stat *, int);
+
+/* Keep both real ELF64 names despite large-file redirection. The explicit
+   declarations also let this conformance probe call the obsolete _r ABI. */
+extern struct dirent *directory_readdir(DIR *) __asm__("readdir");
+extern int directory_readdir_r(DIR *, struct dirent *, struct dirent **) __asm__("readdir_r");
+extern int directory_readdir64_r(DIR *, struct dirent64 *, struct dirent64 **) __asm__("readdir64_r");
+_Static_assert(sizeof(struct dirent) == sizeof(struct dirent64), "ELF64 dirent layout");
+
+void *flc_directory_function(unsigned index) {
+    switch (index) {
+        case 0: return (void *)opendir;
+        case 1: return (void *)fdopendir;
+        case 2: return (void *)directory_readdir;
+        case 3: return (void *)readdir64;
+        case 4: return (void *)directory_readdir_r;
+        case 5: return (void *)directory_readdir64_r;
+        case 6: return (void *)closedir;
+        case 7: return (void *)dirfd;
+        case 8: return (void *)rewinddir;
+        case 9: return (void *)telldir;
+        case 10: return (void *)seekdir;
+        default: return NULL;
+    }
+}
+
+struct directory_api {
+    DIR *(*open)(const char *);
+    DIR *(*fdopen)(int);
+    struct dirent *(*read)(DIR *);
+    struct dirent64 *(*read64)(DIR *);
+    int (*read_r)(DIR *, struct dirent *, struct dirent **);
+    int (*read64_r)(DIR *, struct dirent64 *, struct dirent64 **);
+    int (*close)(DIR *);
+    int (*fd)(DIR *);
+    void (*rewind)(DIR *);
+    long (*tell)(DIR *);
+    void (*seek)(DIR *, long);
+};
+
+static void *directory_address(void *const *functions, unsigned index) {
+    return functions ? functions[index] : flc_directory_function(index);
+}
+
+/* Copy only the returned record, never bytes beyond a GNU variable-sized
+   dirent. Reentrant calls use caller-owned complete records. */
+static int directory_next(struct directory_api *api, DIR *dir, unsigned variant,
+                           struct dirent *out, int *slot) {
+    memset(out, 0, sizeof *out);
+    *slot = 1234;
+    if (variant < 2) {
+        const void *entry;
+        unsigned short length;
+        if (variant == 0) {
+            struct dirent *p = api->read(dir);
+            if (!p) return *slot == 1234 ? 0 : -1;
+            entry = p; length = p->d_reclen;
+        } else {
+            struct dirent64 *p = api->read64(dir);
+            if (!p) return *slot == 1234 ? 0 : -1;
+            entry = p; length = p->d_reclen;
+        }
+        if (length < offsetof(struct dirent, d_name) + 1 || length > sizeof *out) return -1;
+        memcpy(out, entry, length);
+    } else if (variant == 2) {
+        struct dirent *result = NULL;
+        memset(out, 0xA5, sizeof *out);
+        int r = api->read_r(dir, out, &result);
+        if (r || *slot != 1234 || (result && result != out)) return -1;
+        if (!result) return 0;
+        if (out->d_reclen < 20 || out->d_reclen > sizeof *out) return -1;
+        for (size_t i = out->d_reclen; i < sizeof *out; i++)
+            if (((unsigned char *)out)[i] != 0xA5) return -1;
+    } else {
+        struct dirent64 entry = {0}, *result = NULL;
+        memset(&entry, 0xA5, sizeof entry);
+        int r = api->read64_r(dir, &entry, &result);
+        if (r || *slot != 1234 || (result && result != &entry)) return -1;
+        if (!result) return 0;
+        if (entry.d_reclen < 20 || entry.d_reclen > sizeof entry) return -1;
+        for (size_t i = entry.d_reclen; i < sizeof entry; i++)
+            if (((unsigned char *)&entry)[i] != 0xA5) return -1;
+        memcpy(out, &entry, sizeof *out);
+    }
+    return 1;
+}
+
+static int directory_name_index(const char *name) {
+    const char *fixed[] = {".", "..", "alpha", "beta", "gamma", "sub", "link"};
+    for (unsigned i = 0; i < sizeof fixed / sizeof *fixed; i++)
+        if (strcmp(name, fixed[i]) == 0) return (int)i;
+    if (strlen(name) == 255) {
+        for (unsigned i = 0; i < 255; i++) if (name[i] != 'n') return -1;
+        return 7;
+    }
+    if (strlen(name) == 7 && memcmp(name, "item", 4) == 0 &&
+        name[4] >= '0' && name[4] <= '1' && name[5] >= '0' && name[5] <= '9' &&
+        name[6] >= '0' && name[6] <= '9')
+        return 8 + 100 * (name[4] - '0') + 10 * (name[5] - '0') + name[6] - '0';
+    return -1;
+}
+
+static int directory_walk(struct directory_api *api, DIR *dir, unsigned variant,
+                           int *slot, metadata_reference reference) {
+    unsigned char seen[208] = {0};
+    unsigned count = 0;
+    struct dirent entry;
+    int status;
+    while ((status = directory_next(api, dir, variant, &entry, slot)) == 1) {
+        size_t length = strnlen(entry.d_name, sizeof entry.d_name);
+        size_t expected = (20 + length + 7) & ~(size_t)7;
+        /* GNU _r removes final padding if it exceeds the maximum name slot. */
+        size_t limit = offsetof(struct dirent, d_name) + 256;
+        if (variant >= 2 && expected > limit) expected = limit;
+        if (length == sizeof entry.d_name || entry.d_reclen != expected) return __LINE__;
+        int index = directory_name_index(entry.d_name);
+        if (index < 0 || index >= 208 || seen[index]++) return __LINE__;
+        struct stat st;
+        if (reference(api->fd(dir), entry.d_name, &st, AT_SYMLINK_NOFOLLOW) != 0 || entry.d_ino != st.st_ino)
+            return __LINE__;
+        unsigned type = S_ISDIR(st.st_mode) ? DT_DIR : S_ISLNK(st.st_mode) ? DT_LNK : DT_REG;
+        if (entry.d_type != DT_UNKNOWN && entry.d_type != type) return __LINE__;
+        count++;
+    }
+    if (status != 0 || count != 208) return __LINE__;
+    return 0;
+}
+
+#define DIRECTORY_CHECK(condition) do { if (!(condition)) { result = __LINE__; goto done; } } while (0)
+/* Thirteen fixed groups: four walks, independent-stream storage, seek/EOF,
+   rewind, fd ownership, O_PATH/non-directory/badfd/missing/regular errors. */
+int flc_directory_case(unsigned which, const char *directory, const char *file, const char *missing,
+                        void *const *functions, int *(*error_slot)(void), metadata_reference reference) {
+    struct directory_api api;
+    api.open = (__typeof__(api.open))directory_address(functions, 0);
+    api.fdopen = (__typeof__(api.fdopen))directory_address(functions, 1);
+    api.read = (__typeof__(api.read))directory_address(functions, 2);
+    api.read64 = (__typeof__(api.read64))directory_address(functions, 3);
+    api.read_r = (__typeof__(api.read_r))directory_address(functions, 4);
+    api.read64_r = (__typeof__(api.read64_r))directory_address(functions, 5);
+    api.close = (__typeof__(api.close))directory_address(functions, 6);
+    api.fd = (__typeof__(api.fd))directory_address(functions, 7);
+    api.rewind = (__typeof__(api.rewind))directory_address(functions, 8);
+    api.tell = (__typeof__(api.tell))directory_address(functions, 9);
+    api.seek = (__typeof__(api.seek))directory_address(functions, 10);
+    DIR *a = NULL, *b = NULL;
+    int fd = -1, result = 0, *slot = error_slot();
+    if (which < 4 || which == 6) {
+        a = api.open(directory); DIRECTORY_CHECK(a != NULL);
+        DIRECTORY_CHECK(directory_walk(&api, a, which < 4 ? which : 0, slot, reference) == 0);
+        if (which == 6) {
+            api.rewind(a); DIRECTORY_CHECK(api.tell(a) == 0);
+            DIRECTORY_CHECK(directory_walk(&api, a, 0, slot, reference) == 0);
+        }
+    } else if (which == 4) {
+        a = api.open(directory); b = api.open(directory); DIRECTORY_CHECK(a && b);
+        struct dirent *saved = NULL;
+        for (unsigned i = 0; i < 208; i++) {
+            saved = api.read(a); DIRECTORY_CHECK(saved != NULL);
+            if (strcmp(saved->d_name, "alpha") == 0) break;
+        }
+        DIRECTORY_CHECK(strcmp(saved->d_name, "alpha") == 0);
+        ino_t ino = saved->d_ino; off_t offset = saved->d_off;
+        unsigned short length = saved->d_reclen; unsigned char type = saved->d_type;
+        struct dirent *other;
+        do { other = api.read(b); DIRECTORY_CHECK(other != NULL); } while (strcmp(other->d_name, "beta"));
+        DIRECTORY_CHECK(strcmp(saved->d_name, "alpha") == 0 && saved->d_ino == ino &&
+                        saved->d_off == offset && saved->d_reclen == length && saved->d_type == type);
+        api.rewind(b);
+        struct dirent entry;
+        DIRECTORY_CHECK(directory_next(&api, b, 1, &entry, slot) == 1);
+        DIRECTORY_CHECK(directory_next(&api, b, 2, &entry, slot) == 1);
+        DIRECTORY_CHECK(directory_next(&api, b, 3, &entry, slot) == 1);
+        DIRECTORY_CHECK(api.close(b) == 0); b = NULL;
+        DIRECTORY_CHECK(strcmp(saved->d_name, "alpha") == 0 && saved->d_ino == ino &&
+                        saved->d_off == offset && saved->d_reclen == length && saved->d_type == type);
+    } else if (which == 5) {
+        a = api.open(directory); DIRECTORY_CHECK(a != NULL);
+        struct dirent entry, expected;
+        for (unsigned i = 0; i < 3; i++) DIRECTORY_CHECK(directory_next(&api, a, 0, &entry, slot) == 1);
+        long cookie = api.tell(a); DIRECTORY_CHECK(cookie != -1);
+        DIRECTORY_CHECK(directory_next(&api, a, 0, &expected, slot) == 1);
+        api.seek(a, cookie);
+        DIRECTORY_CHECK(directory_next(&api, a, 0, &entry, slot) == 1 &&
+                        strcmp(entry.d_name, expected.d_name) == 0 && entry.d_ino == expected.d_ino);
+        int next;
+        while ((next = directory_next(&api, a, 0, &entry, slot)) == 1) { }
+        DIRECTORY_CHECK(next == 0);
+        api.seek(a, cookie);
+        DIRECTORY_CHECK(directory_next(&api, a, 0, &entry, slot) == 1 &&
+                        strcmp(entry.d_name, expected.d_name) == 0 && entry.d_ino == expected.d_ino);
+    } else if (which >= 7 && which <= 9) {
+        fd = open(which == 9 ? file : directory, (which == 8 ? O_PATH : O_RDONLY) | (which == 9 ? 0 : O_DIRECTORY));
+        DIRECTORY_CHECK(fd >= 0 && fcntl(fd, F_GETFD) == 0);
+        *slot = 1234; a = api.fdopen(fd); int error = *slot;
+        if (a) { int owned = fd; fd = -1; DIRECTORY_CHECK(api.fd(a) == owned); }
+        if (which == 7) {
+            DIRECTORY_CHECK(a != NULL); int owned = api.fd(a);
+            DIRECTORY_CHECK(fcntl(owned, F_GETFD) == FD_CLOEXEC);
+            DIRECTORY_CHECK(directory_walk(&api, a, 0, slot, reference) == 0);
+            DIRECTORY_CHECK(api.close(a) == 0); a = NULL;
+            DIRECTORY_CHECK(fcntl(owned, F_GETFD) == -1);
+        } else {
+            DIRECTORY_CHECK(a == NULL && error == (which == 8 ? EBADF : ENOTDIR));
+            DIRECTORY_CHECK(fcntl(fd, F_GETFD) == 0);
+        }
+    } else if (which == 10) {
+        *slot = 1234; a = api.fdopen(-1); DIRECTORY_CHECK(a == NULL && *slot == EBADF);
+    } else if (which == 11 || which == 12) {
+        *slot = 1234; a = api.open(which == 11 ? missing : file);
+        DIRECTORY_CHECK(a == NULL && *slot == (which == 11 ? ENOENT : ENOTDIR));
+    } else result = 2;
+done:
+    if (b && api.close(b) != 0) result = result ? result : __LINE__;
+    if (a && api.close(a) != 0) result = result ? result : __LINE__;
+    if (fd >= 0 && close(fd) != 0) result = result ? result : __LINE__;
+    return result;
+}
+#undef DIRECTORY_CHECK
+
 static int metadata_matches(const struct stat *out, const char *path,
                              metadata_reference reference, const struct stat *initial) {
     struct stat expected;
@@ -776,6 +997,24 @@ static int allocation_contract(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 5 && strcmp(argv[1], "--directory-case") == 0) {
+        const char *pin = getenv("FLC_DIRECTORY_EXPECT_PROVIDER");
+        struct stat expected, actual;
+        if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0) != 0) return 42;
+        for (unsigned i = 0; i < 12; i++) {
+            Dl_info info;
+            void *function = i < 11 ? flc_directory_function(i) : (void *)__errno_location;
+            if (!dladdr(function, &info) || !info.dli_fname ||
+                syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) != 0 ||
+                actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) return 42;
+        }
+        char missing[PATH_MAX];
+        if (snprintf(missing, sizeof missing, "%s/missing", argv[3]) >= (int)sizeof missing) return 2;
+        int result = flc_directory_case((unsigned)strtoul(argv[2], NULL, 10), argv[3], argv[4],
+                                        missing, NULL, __errno_location, metadata_kernel_reference);
+        printf("directory case=%s line=%d\n", argv[2], result);
+        return result ? 1 : 0;
+    }
     if (argc == 6 && strcmp(argv[1], "--cwd-review") == 0)
         return cwd_review(argv[2], argv[3], argv[4], atoi(argv[5]));
     if (argc == 4 && strcmp(argv[1], "--path-overflow") == 0) {
