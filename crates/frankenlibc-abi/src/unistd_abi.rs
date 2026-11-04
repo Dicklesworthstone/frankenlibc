@@ -1056,7 +1056,7 @@ fn getcwd_by_walking_up() -> Result<Vec<u8>, c_int> {
     let mut dirfd = open_dir(libc::AT_FDCWD, b".")?;
     let mut components: Vec<Vec<u8>> = Vec::new();
     let mut entries = vec![0u8; 32 * 1024];
-    let result = loop {
+    let result = 'walk: loop {
         if cur.st_dev == root.st_dev && cur.st_ino == root.st_ino {
             break Ok(());
         }
@@ -1070,17 +1070,26 @@ fn getcwd_by_walking_up() -> Result<Vec<u8>, c_int> {
             Ok(st) => st,
             Err(e) => break Err(e),
         };
-        // Find the entry of `parent` that is `cur`. Across a mount point the
-        // d_ino of the entry is the mounted-on inode, so confirm by stat.
+        // Directory inode hints usually avoid stat calls. A same-device bind
+        // mount can hide a different inode behind the hint, so retry without
+        // filtering if the first complete scan finds no matching entry.
         let mut found: Option<Vec<u8>> = None;
+        let mut filter_inode = parent.st_dev == cur.st_dev;
         'scan: loop {
             // SAFETY: `entries` is a writable buffer of its length.
             let n = match unsafe {
                 syscall::sys_getdents64(dirfd, entries.as_mut_ptr(), entries.len())
             } {
+                Ok(0) if filter_inode => {
+                    if let Err(e) = syscall::sys_lseek(dirfd, 0, libc::SEEK_SET) {
+                        break 'walk Err(e);
+                    }
+                    filter_inode = false;
+                    continue 'scan;
+                }
                 Ok(0) => break 'scan,
                 Ok(n) => n,
-                Err(_) => break 'scan,
+                Err(e) => break 'walk Err(e),
             };
             let mut off = 0usize;
             while off + 19 <= n {
@@ -1098,7 +1107,7 @@ fn getcwd_by_walking_up() -> Result<Vec<u8>, c_int> {
                 if name == b"." || name == b".." {
                     continue;
                 }
-                if parent.st_dev == cur.st_dev && ino != cur.st_ino {
+                if filter_inode && ino != cur.st_ino {
                     continue;
                 }
                 if let Ok(st) = stat_of(dirfd, name)

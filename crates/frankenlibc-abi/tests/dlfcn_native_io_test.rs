@@ -415,6 +415,8 @@ impl Fixture {
                 .as_nanos()
         ));
         std::fs::create_dir(&dir).unwrap();
+        // getcwd reports the physical pathname, including when TMPDIR is an alias.
+        let dir = std::fs::canonicalize(dir).unwrap();
         let source = dir.join("fixture.c");
         let path = dir.join("fixture.so");
         std::fs::write(&source, SOURCE).unwrap();
@@ -618,6 +620,232 @@ fn native_pathname_plt_protocol() {
 #[test]
 fn native_pathname_got_protocol() {
     pathname_protocols("native_pathname_got_protocol", true);
+}
+
+#[test]
+fn native_cwd_review_deep_errors_and_bind_mount() {
+    use std::os::fd::AsRawFd;
+
+    let name = "native_cwd_review_deep_errors_and_bind_mount";
+    let Ok(provider) = std::env::var("FRANKENLIBC_CWD_CHILD") else {
+        let retained = std::env::temp_dir().join(format!(
+            "frankenlibc-cwd-parents-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&retained).unwrap();
+        for provider in ["host", "native"] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env("FRANKENLIBC_CWD_CHILD", provider)
+                .output()
+                .unwrap();
+            std::fs::write(retained.join(format!("{provider}.stdout")), &output.stdout).unwrap();
+            std::fs::write(retained.join(format!("{provider}.stderr")), &output.stderr).unwrap();
+            assert!(
+                output.status.success(),
+                "{provider}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        println!(
+            "deep cwd: host/native each passed 18 cases (6 success, 12 errors); retained {retained:?}"
+        );
+        return;
+    };
+    assert!(matches!(provider.as_str(), "host" | "native"));
+    let fixture = Fixture::new(false);
+    let root = std::fs::canonicalize(&fixture.dir).unwrap();
+    let source = root.join("source-parent/source");
+    let target = root.join("bind");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir(&target).unwrap();
+    let component = "d".repeat(200);
+    let mut deep = std::fs::File::open(&source).unwrap();
+    let mut normal_name = source.clone();
+    let mut bind_name = target.clone();
+    for _ in 0..24 {
+        let child = PathBuf::from(format!("/proc/self/fd/{}", deep.as_raw_fd())).join(&component);
+        std::fs::create_dir(&child).unwrap();
+        deep = std::fs::File::open(&child).unwrap();
+        normal_name.push(&component);
+        bind_name.push(&component);
+    }
+    assert!(normal_name.as_os_str().len() > 4096 && bind_name.as_os_str().len() > 4096);
+    let observer = root.join("observer.so");
+    let output = Command::new("gcc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fno-builtin",
+        ])
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/integration/fixture_fcntl64_args.c"
+        ))
+        .args(["-ldl", "-pthread", "-o"])
+        .arg(&observer)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let host = Api::new(false);
+    let handle = host.open(&observer);
+    type Cwd = unsafe extern "C" fn(*mut c_char, usize) -> *mut c_char;
+    type Free = unsafe extern "C" fn(*mut c_void);
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    #[repr(C)]
+    struct Observation {
+        status: c_int,
+        setup: c_int,
+        success: c_int,
+        error: c_int,
+        raw_error: c_int,
+        guards_ok: c_int,
+        fd_delta: c_int,
+        same_device: c_int,
+        different_inode: c_int,
+        length: usize,
+        path: [u8; 8192],
+    }
+    type Observe = unsafe extern "C" fn(
+        Cwd,
+        Free,
+        Errno,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        c_int,
+        c_int,
+        c_int,
+        *mut Observation,
+    ) -> c_int;
+    // SAFETY: the C observer has this exact signature. Each callback comes
+    // from one provider, including its allocator and errno slot.
+    let (observe, cwd, free, error): (Observe, Cwd, Free, Errno) = unsafe {
+        let observe =
+            std::mem::transmute::<*mut c_void, Observe>(host.symbol(handle, c"flc_cwd_observe"));
+        let callbacks = if provider == "native" {
+            (
+                unistd::getcwd as Cwd,
+                malloc::free as Free,
+                errno::__errno_location as Errno,
+            )
+        } else {
+            (
+                dlsym_oracle::host_fn(c"getcwd", unistd::getcwd as *const ()),
+                dlsym_oracle::host_fn(c"free", malloc::free as *const ()),
+                dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()),
+            )
+        };
+        (observe, callbacks.0, callbacks.1, callbacks.2)
+    };
+    let source = CString::new(source.as_os_str().as_bytes()).unwrap();
+    let target = CString::new(target.as_os_str().as_bytes()).unwrap();
+    let component = CString::new(component).unwrap();
+    let before = std::env::current_dir().unwrap();
+    let errors = [0, libc::EACCES, libc::EIO, libc::EINTR, libc::ENOENT, 0];
+    let mut mismatches = Vec::new();
+    for (policy, expected_error) in errors.into_iter().enumerate() {
+        for form in 0..3 {
+            // SAFETY: zero is valid for every integer and byte field.
+            let mut out: Observation = unsafe { std::mem::zeroed() };
+            // SAFETY: callbacks and strings outlive this synchronous call;
+            // the descriptor is live and out is a writable C-layout buffer.
+            let result = unsafe {
+                observe(
+                    cwd,
+                    free,
+                    error,
+                    source.as_ptr(),
+                    target.as_ptr(),
+                    component.as_ptr(),
+                    deep.as_raw_fd(),
+                    policy as c_int,
+                    form,
+                    &mut out,
+                )
+            };
+            let mut valid = result == 0
+                && out.status == 0
+                && out.setup == 0
+                && out.raw_error == libc::ENAMETOOLONG
+                && out.guards_ok == 1
+                && out.fd_delta == 0;
+            if expected_error == 0 {
+                let expected = if policy == 5 {
+                    &bind_name
+                } else {
+                    &normal_name
+                }
+                .as_os_str()
+                .as_bytes();
+                valid &= out.success == 1
+                    && out.length == expected.len()
+                    && out.path.get(..out.length) == Some(expected)
+                    && out.path.get(out.length) == Some(&0);
+            } else {
+                valid &= out.success == 0 && out.error == expected_error;
+            }
+            if policy == 5 {
+                valid &= out.same_device == 1 && out.different_inode == 1;
+            }
+            if !valid {
+                mismatches.push(format!("policy={policy} form={form} result={result} setup={} status={} success={} errno={} raw={} guards={} fds={} length={}",
+                    out.setup, out.status, out.success, out.error, out.raw_error, out.guards_ok, out.fd_delta, out.length));
+            }
+        }
+    }
+    assert_eq!(std::env::current_dir().unwrap(), before);
+    host.close(handle);
+    assert!(
+        mismatches.is_empty(),
+        "{provider}: {mismatches:#?}; retained {root:?}"
+    );
+    println!("{provider}: 18 cases (6 success, 12 errors); retained {root:?}");
+}
+
+#[test]
+fn native_cwd_review_symlink_tmpdir() {
+    let root = std::env::temp_dir().join(format!(
+        "frankenlibc-cwd-alias-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    std::fs::create_dir(root.join("real")).unwrap();
+    std::os::unix::fs::symlink("real", root.join("alias")).unwrap();
+    for provider in ["host", "native"] {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "native_pathname_plt_protocol", "--nocapture"])
+            .env("FRANKENLIBC_PATH_CHILD", provider)
+            .env("TMPDIR", root.join("alias"))
+            .output()
+            .unwrap();
+        std::fs::write(root.join(format!("{provider}.stdout")), &output.stdout).unwrap();
+        std::fs::write(root.join(format!("{provider}.stderr")), &output.stderr).unwrap();
+        assert!(
+            output.status.success(),
+            "{provider}: {}\n{}; retained {root:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 fn protocols(api: Api, got: bool) {

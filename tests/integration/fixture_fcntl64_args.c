@@ -315,16 +315,18 @@ done:
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <stddef.h>
+#include <sched.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
 
 static int path_kernel_restore(int fd) { return (int)syscall(SYS_fchdir, fd); }
 
-/* Fault injection into one child's faccessat2 only; other errors must never
-   be hidden by an unconditional fallback. This is not a security sandbox. */
-static int path_filter(int error) {
+/* Fault injection into one selected syscall in one child. Other errors must
+   never be hidden by a fallback. This is not a security sandbox. */
+static int path_filter(int number, int error) {
     struct sock_filter code[] = {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_faccessat2, 0, 1),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned)number, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (unsigned)error),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
     };
@@ -369,7 +371,7 @@ static int path_edges(const char *jail, const char *file, const char *missing) {
                     if (i != 0) free(answer);
                 }
             } else {
-                out.setup = path_filter(i == 5 ? EACCES : ENOSYS);
+                out.setup = path_filter(SYS_faccessat2, i == 5 ? EACCES : ENOSYS);
                 if (!out.setup) {
                     errno = 0;
                     out.result = faccessat(AT_FDCWD, i == 4 ? missing : file, F_OK, 0);
@@ -393,6 +395,169 @@ static int path_edges(const char *jail, const char *file, const char *missing) {
         failures += !correct;
     }
     return failures ? 1 : 0;
+}
+
+typedef char *(*cwd_function)(char *, size_t);
+typedef void (*cwd_free)(void *);
+typedef int *(*cwd_errno)(void);
+struct cwd_observation {
+    int status, setup, success, error, raw_error, guards_ok, fd_delta;
+    int same_device, different_inode;
+    size_t length;
+    char path[8192];
+};
+
+static int cwd_fd_count(void) {
+    int count = 0;
+    for (int fd = 0; fd < 4096; fd++) count += syscall(SYS_fcntl, fd, F_GETFD) >= 0;
+    return count;
+}
+
+/* Run actual filesystem/syscall operations in a child, so neither cwd nor
+   mount propagation can escape into the test runner. Policies: normal,
+   getdents64 EACCES/EIO/EINTR, EOF, and a same-device bind mount. */
+int flc_cwd_observe(cwd_function cwd, cwd_free release, cwd_errno error_slot,
+                    const char *source, const char *target, const char *component,
+                    int deep, int policy, int form, struct cwd_observation *out) {
+    if (deep < 0 || deep >= 4096 || policy < 0 || policy > 5 || form < 0 || form > 2) return 2;
+    char *warm = cwd(NULL, 0);
+    if (!warm) return 2;
+    release(warm);
+    int ends[2];
+    if (pipe(ends) != 0) return 2;
+    pid_t child = fork();
+    if (child < 0) { close(ends[0]); close(ends[1]); return 2; }
+    if (child == 0) {
+        close(ends[0]);
+        struct cwd_observation result = {0};
+        if (policy == 5) {
+            struct stat src, dst;
+            if (syscall(SYS_newfstatat, AT_FDCWD, source, &src, 0) != 0 ||
+                syscall(SYS_newfstatat, AT_FDCWD, target, &dst, 0) != 0) {
+                result.setup = 1; goto send;
+            }
+            result.same_device = src.st_dev == dst.st_dev;
+            result.different_inode = src.st_ino != dst.st_ino;
+            if (unshare(CLONE_NEWNS) != 0 ||
+                mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0 ||
+                mount(source, target, NULL, MS_BIND, NULL) != 0) {
+                result.setup = 2; goto send;
+            }
+            int fd = open(target, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            if (fd < 0) { result.setup = 3; goto send; }
+            for (unsigned i = 0; i < 24; i++) {
+                int next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+                close(fd);
+                if (next < 0) { result.setup = 4; goto send; }
+                fd = next;
+            }
+            int changed = fchdir(fd);
+            close(fd);
+            if (changed != 0) { result.setup = 5; goto send; }
+        } else if (fchdir(deep) != 0) {
+            result.setup = 6; goto send;
+        }
+        char kernel_path[8192];
+        errno = 0;
+        long raw = syscall(SYS_getcwd, kernel_path, sizeof kernel_path);
+        result.raw_error = raw < 0 ? errno : 0;
+        if (result.raw_error != ENAMETOOLONG) { result.setup = 7; goto send; }
+        if (policy >= 1 && policy <= 4) {
+            const int errors[] = {EACCES, EIO, EINTR, 0};
+            if (path_filter(SYS_getdents64, errors[policy - 1]) != 0) {
+                result.setup = 8; goto send;
+            }
+        }
+        struct { unsigned char left[32]; char bytes[8192]; unsigned char right[32]; } guarded;
+        memset(&guarded, 0xA5, sizeof guarded);
+        int before = cwd_fd_count();
+        int *slot = error_slot();
+        *slot = 1234;
+        char *answer = cwd(form == 0 ? guarded.bytes : NULL, form == 1 ? 0 : sizeof guarded.bytes);
+        result.error = *slot;
+        result.success = answer != NULL;
+        if (answer) {
+            result.length = strnlen(answer, sizeof result.path);
+            if (result.length < sizeof result.path) memcpy(result.path, answer, result.length + 1);
+        }
+        if (form != 0) release(answer);
+        result.fd_delta = cwd_fd_count() - before;
+        result.guards_ok = 1;
+        for (unsigned i = 0; i < 32; i++)
+            result.guards_ok &= guarded.left[i] == 0xA5 && guarded.right[i] == 0xA5;
+send:;
+        size_t sent = 0;
+        while (sent < sizeof result) {
+            ssize_t n = write(ends[1], (char *)&result + sent, sizeof result - sent);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) _exit(2);
+            sent += (size_t)n;
+        }
+        _exit(0);
+    }
+    close(ends[1]);
+    size_t received = 0;
+    while (received < sizeof *out) {
+        ssize_t n = read(ends[0], (char *)out + received, sizeof *out - received);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        received += (size_t)n;
+    }
+    close(ends[0]);
+    int status = 0;
+    pid_t waited;
+    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    if (waited != child || received != sizeof *out) return 2;
+    out->status = status;
+    return 0;
+}
+
+static int cwd_review(const char *source, const char *target, const char *component, int deep) {
+    const char *pin = getenv("FLC_CWD_EXPECT_PROVIDER");
+    struct stat expected, actual;
+    if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0) != 0) return 42;
+    const void *functions[] = {(const void *)getcwd, (const void *)free, (const void *)__errno_location};
+    for (unsigned i = 0; i < sizeof functions / sizeof *functions; i++) {
+        Dl_info info;
+        if (!dladdr(functions[i], &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) != 0 ||
+            actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) return 42;
+    }
+    const int errors[] = {0, EACCES, EIO, EINTR, ENOENT, 0};
+    unsigned successes = 0, failures = 0, mismatches = 0;
+    for (int policy = 0; policy < 6; policy++) {
+        char pathname[8192];
+        int used = snprintf(pathname, sizeof pathname, "%s", policy == 5 ? target : source);
+        if (used < 0 || used >= (int)sizeof pathname) return 2;
+        size_t length = (size_t)used, part = strlen(component);
+        for (unsigned i = 0; i < 24; i++) {
+            if (length + part + 2 > sizeof pathname) return 2;
+            pathname[length++] = '/';
+            memcpy(pathname + length, component, part + 1);
+            length += part;
+        }
+        for (int form = 0; form < 3; form++) {
+            struct cwd_observation out = {0};
+            int r = flc_cwd_observe(getcwd, free, __errno_location, source, target,
+                                    component, deep, policy, form, &out);
+            int valid = r == 0 && out.status == 0 && out.setup == 0 &&
+                        out.raw_error == ENAMETOOLONG && out.guards_ok && out.fd_delta == 0;
+            if (errors[policy]) {
+                failures++;
+                valid &= !out.success && out.error == errors[policy];
+            } else {
+                successes++;
+                valid &= out.success && out.length == length && strcmp(out.path, pathname) == 0;
+            }
+            if (policy == 5) valid &= out.same_device && out.different_inode;
+            mismatches += !valid;
+            printf("cwd case policy=%d form=%d valid=%d setup=%d status=%d success=%d errno=%d raw=%d guards=%d fds=%d length=%zu\n",
+                   policy, form, valid, out.setup, out.status, out.success, out.error,
+                   out.raw_error, out.guards_ok, out.fd_delta, out.length);
+        }
+    }
+    printf("cwd review: successes=%u errors=%u mismatches=%u\n", successes, failures, mismatches);
+    return mismatches ? 1 : 0;
 }
 
 static int metadata_kernel_reference(int dir, const char *path, struct stat *out, int flags) {
@@ -611,6 +776,8 @@ static int allocation_contract(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 6 && strcmp(argv[1], "--cwd-review") == 0)
+        return cwd_review(argv[2], argv[3], argv[4], atoi(argv[5]));
     if (argc == 4 && strcmp(argv[1], "--path-overflow") == 0) {
         int provider = path_provider();
         if (provider) return provider;
