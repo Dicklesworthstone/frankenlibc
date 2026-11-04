@@ -21434,23 +21434,10 @@ pub unsafe extern "C" fn readdir64_r(
     entry: *mut libc::dirent64,
     result: *mut *mut libc::dirent64,
 ) -> c_int {
-    if dirp.is_null() || entry.is_null() || result.is_null() {
-        return libc::EINVAL;
-    }
-    unsafe {
-        *result = std::ptr::null_mut();
-        *crate::errno_abi::__errno_location() = 0;
-    }
-    let next = unsafe { crate::dirent_abi::readdir64(dirp.cast()) } as *mut libc::dirent64;
-    if next.is_null() {
-        let err = unsafe { *crate::errno_abi::__errno_location() };
-        return if err == 0 { 0 } else { err };
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(next, entry, 1);
-        *result = entry;
-    }
-    0
+    // SAFETY: on supported ELF64 targets dirent and dirent64 have identical
+    // layouts. The common implementation preserves errno and copies only the
+    // returned record while holding the stream mutex.
+    unsafe { crate::dirent_abi::readdir_r(dirp.cast(), entry.cast(), result.cast()) }
 }
 
 // ===========================================================================

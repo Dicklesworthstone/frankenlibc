@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicI32;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::{
-    dlfcn_abi as dl, errno_abi as errno, fortify_abi as checked, io_abi as io,
+    dirent_abi as dirs, dlfcn_abi as dl, errno_abi as errno, fortify_abi as checked, io_abi as io,
     malloc_abi as malloc, unistd_abi as unistd,
 };
 use frankenlibc_core::elf::ElfLoader;
@@ -181,6 +181,8 @@ uintptr_t io_thread_errno(int *arrived, int marker) {
 void *io_function(unsigned index) {
     extern void *flc_metadata_function(unsigned);
     extern void *flc_path_function(unsigned);
+    extern void *flc_directory_function(unsigned);
+    if (index >= 58) return flc_directory_function(index - 58);
     if (index >= 46) return flc_path_function(index - 46);
     switch (index) {
         case 0: return (void *)__errno_location;
@@ -252,8 +254,8 @@ __attribute__((destructor)) static void finalize(void) {
 }
 "#;
 
-fn symbols() -> [(&'static str, &'static str, *const ()); 58] {
-    [
+fn symbols() -> Vec<(&'static str, &'static str, *const ())> {
+    let mut result = vec![
         (
             "__errno_location",
             "GLIBC_2.2.5",
@@ -348,6 +350,28 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 58] {
             "GLIBC_2.5",
             checked::__readlinkat_chk as *const (),
         ),
+    ];
+    result.extend(directory_symbols());
+    result
+}
+
+fn directory_symbols() -> [(&'static str, &'static str, *const ()); 11] {
+    [
+        ("opendir", "GLIBC_2.2.5", dirs::opendir as *const ()),
+        ("fdopendir", "GLIBC_2.4", dirs::fdopendir as *const ()),
+        ("readdir", "GLIBC_2.2.5", dirs::readdir as *const ()),
+        ("readdir64", "GLIBC_2.2.5", dirs::readdir64 as *const ()),
+        ("readdir_r", "GLIBC_2.2.5", dirs::readdir_r as *const ()),
+        (
+            "readdir64_r",
+            "GLIBC_2.2.5",
+            unistd::readdir64_r as *const (),
+        ),
+        ("closedir", "GLIBC_2.2.5", dirs::closedir as *const ()),
+        ("dirfd", "GLIBC_2.2.5", dirs::dirfd as *const ()),
+        ("rewinddir", "GLIBC_2.2.5", dirs::rewinddir as *const ()),
+        ("telldir", "GLIBC_2.2.5", dirs::telldir as *const ()),
+        ("seekdir", "GLIBC_2.2.5", dirs::seekdir as *const ()),
     ]
 }
 
@@ -620,6 +644,195 @@ fn native_pathname_plt_protocol() {
 #[test]
 fn native_pathname_got_protocol() {
     pathname_protocols("native_pathname_got_protocol", true);
+}
+
+fn directory_isolated(name: &str, scenario: fn(bool)) {
+    if let Ok(provider) = std::env::var("FRANKENLIBC_DIRECTORY_CHILD") {
+        assert!(matches!(provider.as_str(), "host" | "native"));
+        scenario(provider == "native");
+        return;
+    }
+    let retained = std::env::temp_dir().join(format!(
+        "frankenlibc-directory-parents-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&retained).unwrap();
+    for provider in ["host", "native"] {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env("FRANKENLIBC_DIRECTORY_CHILD", provider)
+            .output()
+            .unwrap();
+        std::fs::write(retained.join(format!("{provider}.stdout")), &output.stdout).unwrap();
+        std::fs::write(retained.join(format!("{provider}.stderr")), &output.stderr).unwrap();
+        assert!(
+            output.status.success(),
+            "{provider}: {}\n{}; retained {retained:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    println!("directory host/native: 13 groups (8 positive, 5 error); retained {retained:?}");
+}
+
+fn directory_protocol(native: bool, got: bool, direct: bool) {
+    let fixture = Fixture::new(got);
+    let directory = fixture.dir.join("directory-data");
+    std::fs::create_dir(&directory).unwrap();
+    for name in ["alpha", "beta", "gamma"] {
+        std::fs::write(directory.join(name), name.as_bytes()).unwrap();
+    }
+    std::fs::create_dir(directory.join("sub")).unwrap();
+    std::os::unix::fs::symlink("alpha", directory.join("link")).unwrap();
+    std::fs::write(directory.join("n".repeat(255)), b"long").unwrap();
+    for i in 0..200 {
+        std::fs::write(directory.join(format!("item{i:03}")), b"item").unwrap();
+    }
+    let api = Api::new(native && !direct);
+    let path = if direct {
+        let observer = fixture.dir.join("directory-observer.so");
+        let output = Command::new("gcc")
+            .args([
+                "-shared",
+                "-fPIC",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-fno-builtin",
+            ])
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/integration/fixture_fcntl64_args.c"
+            ))
+            .args(["-ldl", "-pthread", "-o"])
+            .arg(&observer)
+            .output()
+            .unwrap();
+        std::fs::write(fixture.dir.join("observer-gcc.stdout"), &output.stdout).unwrap();
+        std::fs::write(fixture.dir.join("observer-gcc.stderr"), &output.stderr).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        observer
+    } else {
+        fixture.path.clone()
+    };
+    let handle = api.open(&path);
+    if !direct {
+        addresses(api, handle);
+    }
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    type Reference = unsafe extern "C" fn(c_int, *const c_char, *mut libc::stat, c_int) -> c_int;
+    type Run = unsafe extern "C" fn(
+        u32,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const *mut c_void,
+        Errno,
+        Reference,
+    ) -> c_int;
+    type Fcntl = unsafe extern "C" fn(c_int, c_int, ...) -> c_int;
+    // SAFETY: the signatures match the shared C observer and GNU functions.
+    // All stream operations use one provider, including its errno slot.
+    let (run, error, reference, fcntl): (Run, Errno, Reference, Fcntl) = unsafe {
+        (
+            std::mem::transmute::<*mut c_void, Run>(api.symbol(handle, c"flc_directory_case")),
+            if native {
+                errno::__errno_location
+            } else {
+                dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ())
+            },
+            dlsym_oracle::host_fn(c"fstatat", unistd::fstatat as *const ()),
+            dlsym_oracle::host_fn(c"fcntl", unistd::fcntl64 as *const ()),
+        )
+    };
+    let functions: Vec<*mut c_void> = directory_symbols()
+        .into_iter()
+        .map(|(name, _, expected)| {
+            if native {
+                expected as *mut c_void
+            } else {
+                let name = CString::new(name).unwrap();
+                // SAFETY: this resolver rejects the supplied native address.
+                unsafe { dlsym_oracle::host_addr(&name, expected) }
+            }
+        })
+        .collect();
+    let name = CString::new(directory.as_os_str().as_bytes()).unwrap();
+    let file = CString::new(directory.join("alpha").as_os_str().as_bytes()).unwrap();
+    let missing = CString::new(directory.join("missing").as_os_str().as_bytes()).unwrap();
+    let count_fds = || {
+        (0..4096)
+            .filter(|&fd| {
+                // SAFETY: GNU F_GETFD takes no optional argument and accepts any fd.
+                unsafe { fcntl(fd, libc::F_GETFD) >= 0 }
+            })
+            .count()
+    };
+    let mut failures = Vec::new();
+    for case in 0..13 {
+        let before = count_fds();
+        // SAFETY: paths, callbacks, optional function table and C layout
+        // records remain live for the complete synchronous invocation.
+        let result = unsafe {
+            run(
+                case,
+                name.as_ptr(),
+                file.as_ptr(),
+                missing.as_ptr(),
+                if direct {
+                    functions.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
+                error,
+                reference,
+            )
+        };
+        let after = count_fds();
+        if result != 0 || before != after {
+            failures.push((case, result, before, after));
+        }
+    }
+    api.close(handle);
+    assert!(
+        failures.is_empty(),
+        "native={native} direct={direct} got={got}: {failures:?}; retained {:?}",
+        fixture.dir
+    );
+    println!(
+        "directory13groups/208entries passed native={native} direct={direct} got={got}; retained {:?}",
+        fixture.dir
+    );
+}
+
+#[test]
+fn native_directory_direct_contract() {
+    directory_isolated("native_directory_direct_contract", |native| {
+        directory_protocol(native, false, true)
+    });
+}
+
+#[test]
+fn native_directory_plt_protocol() {
+    directory_isolated("native_directory_plt_protocol", |native| {
+        directory_protocol(native, false, false)
+    });
+}
+
+#[test]
+fn native_directory_got_protocol() {
+    directory_isolated("native_directory_got_protocol", |native| {
+        directory_protocol(native, true, false)
+    });
 }
 
 #[test]
@@ -980,7 +1193,7 @@ fn io_runtime_dynamic_versions_match_direct_providers() {
                     );
                     assert_eq!(error, 1);
                 }
-                if name.as_bytes() == b"fcntl64" {
+                if name.as_bytes() == b"fcntl64" || name.as_bytes() == b"fdopendir" {
                     let mut error = -1;
                     assert!(
                         unsafe { dynamic(name.as_ptr(), c"GLIBC_2.2.5".as_ptr(), &mut error) }
@@ -988,7 +1201,7 @@ fn io_runtime_dynamic_versions_match_direct_providers() {
                     );
                     assert_eq!(
                         error, 1,
-                        "fcntl64 must not inherit fcntl's baseline version"
+                        "newer interfaces must not inherit the baseline version"
                     );
                 }
                 if matches!(

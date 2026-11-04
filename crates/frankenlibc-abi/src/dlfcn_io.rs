@@ -5,7 +5,7 @@
 //! never bind native IO to one errno provider and __errno_location to another.
 //! This table is consumed by both relocation and caller-relative lookup.
 
-use crate::{errno_abi as errno, io_abi as io, unistd_abi as unistd};
+use crate::{dirent_abi as dirs, errno_abi as errno, io_abi as io, unistd_abi as unistd};
 
 #[path = "dlfcn_socket.rs"]
 mod socket;
@@ -29,7 +29,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     // The newer *at and pipe2/dup3 interfaces predate AArch64's baseline,
     // but have their own compatibility versions on x86-64.
     let introduced = match name {
-        "openat" | "openat64" | "faccessat" | "readlinkat" => "GLIBC_2.4",
+        "openat" | "openat64" | "faccessat" | "readlinkat" | "fdopendir" => "GLIBC_2.4",
         "pipe2" | "dup3" => "GLIBC_2.9",
         _ => "GLIBC_2.2.5",
     };
@@ -72,6 +72,17 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "fchdir" => unistd::fchdir as *const (),
         "readlink" => unistd::readlink as *const (),
         "readlinkat" => unistd::readlinkat as *const (),
+        "opendir" => dirs::opendir as *const (),
+        "fdopendir" => dirs::fdopendir as *const (),
+        "readdir" => dirs::readdir as *const (),
+        "readdir64" => dirs::readdir64 as *const (),
+        "readdir_r" => dirs::readdir_r as *const (),
+        "readdir64_r" => unistd::readdir64_r as *const (),
+        "closedir" => dirs::closedir as *const (),
+        "dirfd" => dirs::dirfd as *const (),
+        "rewinddir" => dirs::rewinddir as *const (),
+        "telldir" => dirs::telldir as *const (),
+        "seekdir" => dirs::seekdir as *const (),
         "read" => unistd::read as *const (),
         "write" => unistd::write as *const (),
         "close" => unistd::close as *const (),
