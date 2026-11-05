@@ -18,9 +18,10 @@ use std::ffi::{CString, c_char, c_int, c_long, c_uint};
 
 use frankenlibc_abi::stdio_abi::sscanf as fl_sscanf;
 
-unsafe extern "C" {
-    fn sscanf(s: *const c_char, fmt: *const c_char, ...) -> c_int;
-}
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+type SscanfFn = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
+static HOST_SSCANF: std::sync::OnceLock<SscanfFn> = std::sync::OnceLock::new();
 
 struct Lcg(u64);
 impl Lcg {
@@ -152,7 +153,10 @@ fn render(scanf_is_fl: bool, kind: Kind, s: &CString, fmt: &CString) -> Out {
             if scanf_is_fl {
                 $m!(fl_sscanf, s.as_ptr(), fmt.as_ptr())
             } else {
-                $m!(sscanf, s.as_ptr(), fmt.as_ptr())
+                let host = *HOST_SSCANF.get_or_init(|| unsafe {
+                    dlsym_oracle::host_fn(c"sscanf", fl_sscanf as *const ())
+                });
+                $m!(host, s.as_ptr(), fmt.as_ptr())
             }
         };
     }
@@ -183,30 +187,12 @@ fn sscanf_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
-    // C23 added the `0b`/`0B` binary prefix to base-0 integer parsing; glibc
-    // adopted it in 2.38, and fl implements it. Detect at runtime whether the
-    // linked host glibc honors it: if so, fl and host agree and `%i`+`0b` inputs
-    // are actively gated below; on an older host that parses "0b1" as octal 0,
-    // they are excluded (the documented fl-extension parity decision,
-    // bd-2g7oyh.403's sibling bd-2g7oyh.203).
-    let host_supports_0b = {
-        let probe = CString::new("0b1").unwrap();
-        let fmt = CString::new("%i%n").unwrap();
-        render(false, Kind::Int, &probe, &fmt) == render(true, Kind::Int, &probe, &fmt)
-    };
-
     for _ in 0..6000 {
         let input = gen_input(&mut r);
         let Ok(cs) = CString::new(input.as_str()) else {
             continue;
         };
         for &(fmt, kind) in FORMATS {
-            // fl implements the C23 `0b` binary prefix in `%i`. Only exclude
-            // these inputs when the linked host glibc is too old to honor it
-            // (pre-2.38); on a modern host fl and glibc agree and this is gated.
-            if fmt == "%i%n" && !host_supports_0b && input.to_ascii_lowercase().contains("0b") {
-                continue;
-            }
             let cf = CString::new(fmt).unwrap();
             let fl = render(true, kind, &cs, &cf);
             let host = render(false, kind, &cs, &cf);
@@ -226,4 +212,158 @@ fn sscanf_differential_fuzz_vs_glibc() {
         divs.join("\n")
     );
     eprintln!("sscanf differential fuzz: {compared} comparisons, 0 divergences vs host glibc");
+}
+
+#[derive(Clone, Copy)]
+enum FloatKind {
+    F32,
+    F64,
+    #[cfg(target_arch = "x86_64")]
+    X87,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(16))]
+struct LongDouble([u8; 16]);
+
+fn exponent_outcome(
+    target: SscanfFn,
+    input: &str,
+    format: &str,
+    kind: FloatKind,
+) -> (c_int, [u8; 16], c_int, u8) {
+    let input = CString::new(input).unwrap();
+    let format = CString::new(format).unwrap();
+    let mut consumed = -1;
+    let mut tail = b'?';
+    let mut bits = [0u8; 16];
+    let result = match kind {
+        FloatKind::F32 => {
+            let mut value = -9.0_f32;
+            let result = unsafe {
+                target(
+                    input.as_ptr(),
+                    format.as_ptr(),
+                    &mut value as *mut f32,
+                    &mut consumed as *mut c_int,
+                    (&mut tail as *mut u8).cast::<c_char>(),
+                )
+            };
+            bits[..4].copy_from_slice(&value.to_ne_bytes());
+            result
+        }
+        FloatKind::F64 => {
+            let mut value = -9.0_f64;
+            let result = unsafe {
+                target(
+                    input.as_ptr(),
+                    format.as_ptr(),
+                    &mut value as *mut f64,
+                    &mut consumed as *mut c_int,
+                    (&mut tail as *mut u8).cast::<c_char>(),
+                )
+            };
+            bits[..8].copy_from_slice(&value.to_ne_bytes());
+            result
+        }
+        #[cfg(target_arch = "x86_64")]
+        FloatKind::X87 => {
+            let mut value = LongDouble([0xA5; 16]);
+            // x86_64 long double has 16-byte storage/alignment and a ten-byte
+            // x87 payload. Padding is unspecified and is not compared.
+            let result = unsafe {
+                target(
+                    input.as_ptr(),
+                    format.as_ptr(),
+                    &mut value as *mut LongDouble,
+                    &mut consumed as *mut c_int,
+                    (&mut tail as *mut u8).cast::<c_char>(),
+                )
+            };
+            bits[..10].copy_from_slice(&value.0[..10]);
+            result
+        }
+    };
+    (result, bits, consumed, tail)
+}
+
+#[test]
+fn incomplete_exponents_preserve_value_width_count_and_following_character() {
+    use frankenlibc_abi::{isoc_abi as iso, stdio_abi as io};
+
+    let cases = [
+        ("27EeA7A9", ""),
+        ("+9.e", ""),
+        ("1e+", ""),
+        ("1e-!", ""),
+        ("-0e+!", ""),
+        (".5E-!", ""),
+        ("1e+7!", "1"),
+        ("1e+7!", "2"),
+        ("1e+7!", "3"),
+        ("1e+7!", "4"),
+        ("0x1p!", ""),
+        ("0x1.8p-!", ""),
+        ("0x.0p+", ""),
+        ("0x2p-foo", ""),
+        ("0x1p+7!", "3"),
+        ("0x1p+7!", "4"),
+        ("0x1p+7!", "5"),
+        ("0x1p+7!", "6"),
+        ("0x.p+", ""),
+        ("0x", ""),
+        ("-0x0p-!", ""),
+        ("1.0000000000000000001e+!", ""),
+        ("0x1.0000000000000002p+!", ""),
+        ("1.5e+2!", ""),
+        ("e+!", ""),
+    ];
+    let conversions = [
+        ("f", FloatKind::F32),
+        ("lf", FloatKind::F64),
+        ("le", FloatKind::F64),
+        ("lg", FloatKind::F64),
+        ("la", FloatKind::F64),
+        #[cfg(target_arch = "x86_64")]
+        ("Lf", FloatKind::X87),
+        #[cfg(target_arch = "x86_64")]
+        ("La", FloatKind::X87),
+    ];
+    let mut comparisons = 0;
+    for (name, target) in [
+        (c"sscanf", io::sscanf as SscanfFn),
+        (c"__isoc99_sscanf", io::__isoc99_sscanf as SscanfFn),
+        (c"__isoc23_sscanf", iso::__isoc23_sscanf as SscanfFn),
+    ] {
+        let host: SscanfFn = unsafe { dlsym_oracle::host_fn(name, target as *const ()) };
+        let control = exponent_outcome(host, "27E!", "%lf%n%c", FloatKind::F64);
+        assert_eq!((control.0, control.2, control.3), (2, 3, b'!'));
+        assert_eq!(&control.1[..8], &27.0_f64.to_ne_bytes());
+        for (input, width) in cases {
+            for (conversion, kind) in conversions {
+                let format = format!("%{width}{conversion}%n%c");
+                assert_eq!(
+                    exponent_outcome(target, input, &format, kind),
+                    exponent_outcome(host, input, &format, kind),
+                    "{name:?}: input={input:?}, format={format:?}"
+                );
+                comparisons += 1;
+            }
+        }
+        // The strict mixed-field fast path uses this same core float scanner.
+        // Exercise it without `%n`, which would make that path decline.
+        let mut integer = -1;
+        let mut value = -9.0_f64;
+        let count = unsafe {
+            target(
+                c"7 1e+".as_ptr(),
+                c"%d %lf".as_ptr(),
+                &mut integer as *mut c_int,
+                &mut value as *mut f64,
+            )
+        };
+        assert_eq!((count, integer, value), (2, 7, 1.0));
+    }
+    assert_eq!(comparisons, 3 * cases.len() * conversions.len());
+    eprintln!("incomplete exponent differential: {comparisons} exact-symbol GNU comparisons");
 }

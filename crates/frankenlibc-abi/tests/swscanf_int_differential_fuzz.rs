@@ -12,8 +12,12 @@
 
 use frankenlibc_abi::wchar_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+type SwscanfFn =
+    unsafe extern "C" fn(*const libc::wchar_t, *const libc::wchar_t, ...) -> libc::c_int;
+
 unsafe extern "C" {
-    fn swscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ...) -> libc::c_int;
     fn setlocale(category: libc::c_int, locale: *const libc::c_char) -> *const libc::c_char;
 }
 
@@ -40,7 +44,7 @@ fn w(bytes: &[u8]) -> Vec<libc::wchar_t> {
 /// Build a format using at most 3 NON-suppressed int conversions (so the three
 /// &int args are never over-consumed) plus suppressed conversions / separators.
 fn gen_format(r: &mut Lcg) -> (Vec<u8>, usize) {
-    const CONV: &[u8] = b"duxo"; // NB: %i excluded — fl 0b-binary extension diverges (bd-2g7oyh.203)
+    const CONV: &[u8] = b"diuxo";
     let mut f = Vec::new();
     let ntok = 1 + r.below(4);
     let mut bound = 0usize; // non-suppressed conversions
@@ -79,6 +83,7 @@ fn gen_input(r: &mut Lcg) -> Vec<u8> {
 
 #[test]
 fn swscanf_int_differential_fuzz_vs_glibc() {
+    let host: SwscanfFn = unsafe { dlsym_oracle::host_fn(c"swscanf", fl::swscanf as *const ()) };
     unsafe {
         let utf8 = std::ffi::CString::new("C.UTF-8").unwrap();
         setlocale(6, utf8.as_ptr());
@@ -110,7 +115,7 @@ fn swscanf_int_differential_fuzz_vs_glibc() {
             )
         };
         let rg = unsafe {
-            swscanf(
+            host(
                 inp.as_ptr(),
                 fmt.as_ptr(),
                 &mut ag[0] as *mut i32,

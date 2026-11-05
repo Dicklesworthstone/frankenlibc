@@ -372,6 +372,9 @@ pub struct ScanSpec {
     /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
     /// entry points after parsing; defaults to false for narrow `sscanf`.
     pub wide_input: bool,
+    /// Accept a `0b`/`0B` prefix for `%i`, as required by the C23 scanf aliases.
+    /// Legacy and C99 entry points leave this false, even on a C23-capable libc.
+    pub binary_prefix: bool,
     /// True when the GNU `m` assignment-allocation modifier was given (`%ms`,
     /// `%m[`, `%mc`): the destination argument is a `char **` and the matched
     /// text is stored into a freshly allocated buffer. Only meaningful for the
@@ -591,6 +594,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                 scanset: None,
                 simple_set: SimpleScanSet::None,
                 wide_input: false,
+                binary_prefix: false,
                 alloc: false,
                 route: ScanfRoute::invalid(),
             };
@@ -961,6 +965,7 @@ fn default_float_spec() -> &'static ScanSpec {
             scanset: None,
             simple_set: SimpleScanSet::None,
             wide_input: false,
+            binary_prefix: false,
             alloc: false,
             route: ScanfRoute::invalid(),
         };
@@ -1292,6 +1297,9 @@ fn scan_int(
         false
     };
 
+    // GNU scanf counts the leading zero as a digit even when a consumed hex
+    // prefix is not followed by a digit (including a field ending at `0x`).
+    let mut any_digit = false;
     // Optional 0x/0X prefix for hex.
     if base == 16
         && i + 1 < input.len()
@@ -1301,13 +1309,13 @@ fn scan_int(
     {
         i += 2;
         chars_read += 2;
+        any_digit = true;
     }
 
     // Digits. The accumulator saturates to u64::MAX on overflow; glibc
     // clamps an out-of-range integer to its limit rather than wrapping.
     let mut val: u64 = 0;
     let mut overflowed = false;
-    let mut any_digit = false;
 
     // SWAR fast path (base 10): consume 8 decimal digits per step via the same
     // exhaustively-verified helpers as strtol. Gated so the 8-digit block fits
@@ -1405,7 +1413,7 @@ fn scan_int(
     Some((Some(value), i))
 }
 
-/// Scan integer with auto-detected base (%i: 0x=hex, 0=octal, else decimal).
+/// Scan integer with auto-detected base (`%i`, including `0b` only for C23).
 fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
@@ -1433,7 +1441,10 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         false
     };
 
-    // Detect base (hex 0x, binary 0b, octal 0, decimal otherwise).
+    // As in the explicit hex conversion, a consumed prefix includes a valid
+    // zero digit. GNU scanf assigns zero for bare `0x` (and C23 `0b`).
+    let mut any_digit = false;
+    // Detect base (hex 0x, C23 binary 0b, octal 0, decimal otherwise).
     let base = if i < input.len() && chars_read < max_chars && input[i] == b'0' {
         if i + 1 < input.len()
             && chars_read + 1 < max_chars
@@ -1441,13 +1452,16 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         {
             i += 2;
             chars_read += 2;
+            any_digit = true;
             16u32
-        } else if i + 1 < input.len()
+        } else if spec.binary_prefix
+            && i + 1 < input.len()
             && chars_read + 1 < max_chars
             && (input[i + 1] == b'b' || input[i + 1] == b'B')
         {
             i += 2;
             chars_read += 2;
+            any_digit = true;
             2u32
         } else {
             8u32
@@ -1461,7 +1475,6 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
     // clamps an out-of-range integer to its limit rather than wrapping.
     let mut val: u64 = 0;
     let mut overflowed = false;
-    let mut any_digit = false;
 
     // SWAR fast path (base 10): consume 8 decimal digits per step via the same
     // exhaustively-verified helpers as strtol. Gated so the 8-digit block fits
@@ -1537,8 +1550,6 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
     }
 
     if !any_digit {
-        // A bare "0x"/"0X" with no hex digit is a matching failure: glibc
-        // treats the prefix as committing to a hex literal.
         return None;
     }
 
@@ -1724,6 +1735,7 @@ fn scan_float_c_radix(
     let tok_start = i;
     let mut any_digit = false;
     let mut seen_dot = false;
+    let mut value_end = None;
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         if c.is_ascii_digit() {
@@ -1734,6 +1746,7 @@ fn scan_float_c_radix(
             // "03.1.5" -> 3.1 consuming 4 bytes). Found by sscanf_differential_fuzz.
             seen_dot = true;
         } else if (c == b'e' || c == b'E') && any_digit {
+            let mantissa_end = i;
             i += 1;
             chars_read += 1;
             // Optional exponent sign.
@@ -1742,9 +1755,17 @@ fn scan_float_c_radix(
                 chars_read += 1;
             }
             // Exponent digits.
+            let exponent_start = i;
             while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
                 i += 1;
                 chars_read += 1;
+            }
+            if i == exponent_start {
+                // GNU scanf consumes an incomplete exponent marker and its
+                // optional sign, but assigns the mantissa. Rust's float parser
+                // rejects that suffix, so separate value parsing from input
+                // consumption; `%n` and the following directive still see `i`.
+                value_end = Some(mantissa_end);
             }
             break;
         } else {
@@ -1759,7 +1780,7 @@ fn scan_float_c_radix(
     }
 
     // Parse the accepted token straight out of `input`.
-    let s = core::str::from_utf8(input.get(tok_start..i)?).ok()?;
+    let s = core::str::from_utf8(input.get(tok_start..value_end.unwrap_or(i))?).ok()?;
     let magnitude: f64 = s.parse().ok()?;
     let val = if negative { -magnitude } else { magnitude };
 
@@ -1851,21 +1872,16 @@ fn scan_hex_float(
             exp_negative = false;
         }
 
-        let mut any_exp_digit = false;
         while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
-            any_exp_digit = true;
             let d = (input[i] - b'0') as i32;
             bin_exp = bin_exp.saturating_mul(10).saturating_add(d);
             i += 1;
             chars_read += 1;
         }
 
-        if !any_exp_digit {
-            // A `p` exponent marker after actual hex digits commits to a
-            // binary exponent. Without following exponent digits, glibc
-            // reports a matching failure rather than accepting the prefix.
-            return None;
-        } else if exp_negative {
+        // As for decimal exponents, GNU scanf consumes an incomplete `p`/`P`
+        // suffix and optional sign, retaining the significand with exponent 0.
+        if exp_negative {
             bin_exp = -bin_exp;
         }
     }
@@ -2235,6 +2251,16 @@ mod tests {
         }
     }
 
+    fn c23_format(fmt: &[u8]) -> ScanDirectives {
+        let mut dirs = parse_scanf_format(fmt);
+        for dir in dirs.as_mut_slice() {
+            if let ScanDirective::Spec(spec) = dir {
+                spec.binary_prefix = true;
+            }
+        }
+        dirs
+    }
+
     #[test]
     fn parses_gnu_m_allocation_modifier_on_string_conversions() {
         // GNU `%ms` / `%m[` / `%mc`: the destination is a `char **` and the ABI
@@ -2491,7 +2517,7 @@ mod tests {
 
     #[test]
     fn test_scan_auto_int_binary() {
-        let dirs = parse_scanf_format(b"%i");
+        let dirs = c23_format(b"%i");
         let result = scan_input(b"0b1010", &dirs);
         assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::SignedInt(10)));
@@ -2508,21 +2534,17 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_auto_int_binary_invalid() {
-        // glibc returns 0 conversions when 0b is followed by non-binary digit
-        let dirs = parse_scanf_format(b"%i");
-
-        // 0b followed by invalid digit '2'
-        let result = scan_input(b"0b2", &dirs);
-        assert_eq!(result.count, 0);
-
-        // Just 0b with nothing after
-        let result = scan_input(b"0b", &dirs);
-        assert_eq!(result.count, 0);
-
-        // 0b followed by letter
-        let result = scan_input(b"0bx", &dirs);
-        assert_eq!(result.count, 0);
+    fn test_scan_auto_int_binary_prefix_without_following_digits() {
+        // The independently resolved GNU __isoc23_sscanf assigns zero and
+        // consumes the prefix, even without a following binary digit.
+        let dirs = c23_format(b"%i%n");
+        for input in [b"0b2".as_slice(), b"0b", b"0bx"] {
+            let result = scan_input(input, &dirs);
+            assert_eq!(result.count, 1, "input={input:?}");
+            assert!(matches!(result.values[0], ScanValue::SignedInt(0)));
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(2)));
+            assert_eq!(result.consumed, 2);
+        }
     }
 
     #[test]
@@ -2558,12 +2580,23 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_i_bare_0x_is_matching_failure() {
-        // %i with a bare "0x"/"0xZ" (no hex digit) is a matching failure.
+    fn test_scan_integer_bare_hex_prefix_assigns_zero() {
+        // GNU's legacy, C99 and C23 scanf all retain the initial zero. This
+        // differs from strtol's end-pointer rule for an incomplete prefix.
+        for fmt in [b"%i%n".as_slice(), b"%x%n", b"%2i%n", b"%2x%n"] {
+            let dirs = parse_scanf_format(fmt);
+            for input in [b"0x".as_slice(), b"0xZ", b"0X!"] {
+                let result = scan_input(input, &dirs);
+                assert_eq!(result.count, 1, "fmt={fmt:?} input={input:?}");
+                assert!(matches!(
+                    result.values[0],
+                    ScanValue::SignedInt(0) | ScanValue::UnsignedInt(0)
+                ));
+                assert!(matches!(result.values[1], ScanValue::CharsConsumed(2)));
+                assert_eq!(result.consumed, 2);
+            }
+        }
         let dirs = parse_scanf_format(b"%i");
-        assert_eq!(scan_input(b"0x", &dirs).count, 0);
-        assert_eq!(scan_input(b"0xZ", &dirs).count, 0);
-        // Sanity: a real hex literal still scans.
         assert_eq!(scan_input(b"0x1f", &dirs).count, 1);
     }
 
@@ -3009,29 +3042,81 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_hex_float_p_without_digits_is_matching_failure() {
-        // Host glibc treats a p/P marker after actual hex digits as a
-        // committed binary exponent; missing exponent digits fail the whole
-        // conversion.
-        let dirs = parse_scanf_format(b"%a");
-        assert_eq!(scan_input(b"0x1.0p", &dirs).count, 0);
-        assert_eq!(scan_input(b"0x1.0P", &dirs).count, 0);
-        assert_eq!(scan_input(b"0x.0p", &dirs).count, 0);
+    fn test_scan_hex_float_p_without_digits_retains_significand() {
+        let dirs = parse_scanf_format(b"%a%n");
+        for (input, expected) in [
+            (b"0x1.0p".as_slice(), 1.0),
+            (b"0x1.0P", 1.0),
+            (b"0x.0p", 0.0),
+        ] {
+            let result = scan_input(input, &dirs);
+            assert_eq!(result.count, 1);
+            assert!(matches!(result.values[0], ScanValue::Float(v) if v == expected));
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == input.len()));
+            assert_eq!(result.consumed, input.len());
+        }
     }
 
     #[test]
-    fn test_scan_hex_float_p_sign_without_digits_is_matching_failure() {
-        let dirs = parse_scanf_format(b"%a");
-        assert_eq!(scan_input(b"0x1.0p-", &dirs).count, 0);
-        assert_eq!(scan_input(b"0x1.0p+", &dirs).count, 0);
-        assert_eq!(scan_input(b"0x.0p-", &dirs).count, 0);
+    fn test_scan_hex_float_p_sign_without_digits_retains_significand() {
+        let dirs = parse_scanf_format(b"%a%n");
+        for (input, expected) in [
+            (b"0x1.0p-".as_slice(), 1.0),
+            (b"0x1.0p+", 1.0),
+            (b"0x.0p-", 0.0),
+        ] {
+            let result = scan_input(input, &dirs);
+            assert_eq!(result.count, 1);
+            assert!(matches!(result.values[0], ScanValue::Float(v) if v == expected));
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == input.len()));
+            assert_eq!(result.consumed, input.len());
+        }
     }
 
     #[test]
-    fn test_scan_hex_float_p_sign_then_text_is_matching_failure() {
-        let dirs = parse_scanf_format(b"%a%s");
+    fn test_scan_hex_float_p_sign_leaves_following_text() {
+        let dirs = parse_scanf_format(b"%a%n%s");
         let result = scan_input(b"0x2p-foo", &dirs);
-        assert_eq!(result.count, 0);
+        assert_eq!(result.count, 2);
+        assert!(matches!(result.values[0], ScanValue::Float(v) if v == 2.0));
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(5)));
+        assert!(matches!(&result.values[2], ScanValue::String(s) if s.as_slice() == b"foo"));
+    }
+
+    #[test]
+    fn test_scan_incomplete_exponent_widths_counts_and_leftovers() {
+        // Exact GNU sscanf/__isoc99_sscanf/__isoc23_sscanf probes agree:
+        // consume the exponent prefix while assigning the mantissa.
+        for (input, format, expected, consumed, tail) in [
+            (
+                b"27EeA7".as_slice(),
+                b"%lf%n%c".as_slice(),
+                27.0_f64,
+                3,
+                b'e',
+            ),
+            (b"+9.e!", b"%lf%n%c", 9.0, 4, b'!'),
+            (b"-0e+!", b"%lf%n%c", -0.0, 4, b'!'),
+            (b".5E-!", b"%lf%n%c", 0.5, 4, b'!'),
+            (b"1e+7!", b"%1lf%n%c", 1.0, 1, b'e'),
+            (b"1e+7!", b"%2lf%n%c", 1.0, 2, b'+'),
+            (b"1e+7!", b"%3lf%n%c", 1.0, 3, b'7'),
+            (b"0x1p+7!", b"%4lf%n%c", 1.0, 4, b'+'),
+            (b"0x1p+7!", b"%5lf%n%c", 1.0, 5, b'7'),
+            (b"1e+2!", b"%lf%n%c", 100.0, 4, b'!'),
+        ] {
+            let dirs = parse_scanf_format(format);
+            let result = scan_input(input, &dirs);
+            assert_eq!(result.count, 2, "input={input:?}, format={format:?}");
+            assert!(
+                matches!(result.values[0], ScanValue::Float(v) if v.to_bits() == expected.to_bits())
+            );
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == consumed));
+            assert!(
+                matches!(&result.values[2], ScanValue::Char(bytes) if bytes.as_slice() == [tail])
+            );
+            assert_eq!(result.consumed, consumed + 1);
+        }
     }
 
     #[test]
@@ -3191,11 +3276,25 @@ mod tests {
 
     #[test]
     fn glibc_binary_prefix_0b_parity() {
-        // glibc 2.38+: sscanf("0b1010", "%i") -> n=1, val=10 (C23 binary prefix)
-        let dirs = parse_scanf_format(b"%i");
-        let result = scan_input(b"0b1010", &dirs);
-        assert_eq!(result.count, 1);
-        assert!(matches!(result.values[0], ScanValue::SignedInt(10)));
+        // GNU 2.39's exact exported symbols differ; libc's version alone does
+        // not opt the legacy/C99 symbols into the C23 grammar.
+        for (format, legacy_n, c23_n, c23_value) in [
+            (b"%i%n".as_slice(), 1, 5, 5),
+            (b"%1i%n", 1, 1, 0),
+            (b"%2i%n", 1, 2, 0),
+            (b"%3i%n", 1, 3, 1),
+        ] {
+            for (dirs, count, value) in [
+                (parse_scanf_format(format), legacy_n, 0),
+                (c23_format(format), c23_n, c23_value),
+            ] {
+                let result = scan_input(b"0b101!", &dirs);
+                assert_eq!(result.count, 1);
+                assert!(matches!(result.values[0], ScanValue::SignedInt(v) if v == value));
+                assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == count));
+                assert_eq!(result.consumed, count);
+            }
+        }
     }
 
     #[test]

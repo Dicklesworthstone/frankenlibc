@@ -17,6 +17,7 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 
+use crate::stdio_abi::ScanfDialect;
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_void};
 
 type c_ulong = u64;
@@ -42,7 +43,12 @@ type WcharT = i32;
 pub unsafe extern "C-unwind" fn __isoc23_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::stdio_abi::vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize)
+        crate::stdio_abi::vscanf_with_dialect(
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
+        )
     }
 }
 
@@ -55,11 +61,12 @@ pub unsafe extern "C-unwind" fn __isoc23_fscanf(
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::stdio_abi::vfscanf_for_caller(
+        crate::stdio_abi::vfscanf_with_dialect(
             stream,
             format,
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
         )
     }
 }
@@ -193,7 +200,7 @@ pub unsafe extern "C" fn __isoc23_sscanf(
         }
     }
     let ap = &mut args as *mut _ as *mut c_void;
-    unsafe { crate::stdio_abi::vsscanf(s, format, ap) }
+    unsafe { crate::stdio_abi::vsscanf_with_dialect(s, format, ap, ScanfDialect::C23) }
 }
 
 /// `__isoc23_wscanf` — C23 alias for wscanf.
@@ -201,10 +208,11 @@ pub unsafe extern "C" fn __isoc23_sscanf(
 pub unsafe extern "C-unwind" fn __isoc23_wscanf(format: *const WcharT, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::wchar_abi::vwscanf_for_caller(
+        crate::wchar_abi::vwscanf_with_dialect(
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
         )
     }
 }
@@ -218,11 +226,12 @@ pub unsafe extern "C-unwind" fn __isoc23_fwscanf(
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::wchar_abi::vfwscanf_for_caller(
+        crate::wchar_abi::vfwscanf_with_dialect(
             stream,
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
         )
     }
 }
@@ -236,10 +245,11 @@ pub unsafe extern "C" fn __isoc23_swscanf(
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::wchar_abi::vswscanf(
+        crate::wchar_abi::vswscanf_with_dialect(
             s.cast::<libc::wchar_t>(),
             format.cast::<libc::wchar_t>(),
             ap,
+            ScanfDialect::C23,
         )
     }
 }
@@ -248,7 +258,12 @@ pub unsafe extern "C" fn __isoc23_swscanf(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc23_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
     unsafe {
-        crate::stdio_abi::vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize)
+        crate::stdio_abi::vscanf_with_dialect(
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
+        )
     }
 }
 
@@ -260,11 +275,12 @@ pub unsafe extern "C-unwind" fn __isoc23_vfscanf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::stdio_abi::vfscanf_for_caller(
+        crate::stdio_abi::vfscanf_with_dialect(
             stream,
             format,
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
         )
     }
 }
@@ -276,17 +292,18 @@ pub unsafe extern "C" fn __isoc23_vsscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { crate::stdio_abi::vsscanf(s, format, ap) }
+    unsafe { crate::stdio_abi::vsscanf_with_dialect(s, format, ap, ScanfDialect::C23) }
 }
 
 /// `__isoc23_vwscanf` — C23 alias for vwscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc23_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
     unsafe {
-        crate::wchar_abi::vwscanf_for_caller(
+        crate::wchar_abi::vwscanf_with_dialect(
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
         )
     }
 }
@@ -299,11 +316,12 @@ pub unsafe extern "C-unwind" fn __isoc23_vfwscanf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::wchar_abi::vfwscanf_for_caller(
+        crate::wchar_abi::vfwscanf_with_dialect(
             stream,
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C23,
         )
     }
 }
@@ -316,10 +334,11 @@ pub unsafe extern "C" fn __isoc23_vswscanf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::wchar_abi::vswscanf(
+        crate::wchar_abi::vswscanf_with_dialect(
             s.cast::<libc::wchar_t>(),
             format.cast::<libc::wchar_t>(),
             ap,
+            ScanfDialect::C23,
         )
     }
 }
@@ -599,10 +618,11 @@ pub unsafe extern "C" fn __isoc23_wcstoull_l(
 pub unsafe extern "C-unwind" fn __isoc99_wscanf(format: *const WcharT, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::wchar_abi::vwscanf_for_caller(
+        crate::wchar_abi::vwscanf_with_dialect(
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
         )
     }
 }
@@ -616,11 +636,12 @@ pub unsafe extern "C-unwind" fn __isoc99_fwscanf(
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::wchar_abi::vfwscanf_for_caller(
+        crate::wchar_abi::vfwscanf_with_dialect(
             stream,
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
         )
     }
 }
@@ -634,10 +655,11 @@ pub unsafe extern "C" fn __isoc99_swscanf(
 ) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe {
-        crate::wchar_abi::vswscanf(
+        crate::wchar_abi::vswscanf_with_dialect(
             s.cast::<libc::wchar_t>(),
             format.cast::<libc::wchar_t>(),
             ap,
+            ScanfDialect::C99,
         )
     }
 }
@@ -646,10 +668,11 @@ pub unsafe extern "C" fn __isoc99_swscanf(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc99_vwscanf(format: *const WcharT, ap: *mut c_void) -> c_int {
     unsafe {
-        crate::wchar_abi::vwscanf_for_caller(
+        crate::wchar_abi::vwscanf_with_dialect(
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
         )
     }
 }
@@ -662,11 +685,12 @@ pub unsafe extern "C-unwind" fn __isoc99_vfwscanf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::wchar_abi::vfwscanf_for_caller(
+        crate::wchar_abi::vfwscanf_with_dialect(
             stream,
             format.cast::<libc::wchar_t>(),
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
         )
     }
 }
@@ -679,10 +703,11 @@ pub unsafe extern "C" fn __isoc99_vswscanf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::wchar_abi::vswscanf(
+        crate::wchar_abi::vswscanf_with_dialect(
             s.cast::<libc::wchar_t>(),
             format.cast::<libc::wchar_t>(),
             ap,
+            ScanfDialect::C99,
         )
     }
 }

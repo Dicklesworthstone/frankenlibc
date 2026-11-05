@@ -157,6 +157,54 @@ const CASES: &[(&str, &str)] = &[
     ("5", "%u"),
 ];
 
+#[test]
+fn integer_prefixes_follow_each_exact_gnu_alias() {
+    let cases = [
+        ("0b101!", "%i%n"),
+        ("-0B101!", "%i%n"),
+        ("+0b101!", "%i%n"),
+        ("0b", "%i%n"),
+        ("0b2!", "%i%n"),
+        ("0b!", "%i%n"),
+        ("0b101!", "%1i%n"),
+        ("0b101!", "%2i%n"),
+        ("0b101!", "%3i%n"),
+        ("-0b1!", "%3i%n"),
+        ("-0b1!", "%4i%n"),
+        ("0x", "%i%n"),
+        ("-0X!", "%i%n"),
+        ("0x1!", "%1i%n"),
+        ("0x1!", "%2i%n"),
+        ("09!", "%i%n"),
+        ("123!", "%i%n"),
+        ("?", "%i%n"),
+        ("", "%i%n"),
+        ("0b101!", "%*i%n"),
+    ];
+    for (name, fl) in fl_arms() {
+        let symbol = CString::new(name).unwrap();
+        let host: SscanfFn = unsafe { host_fn(&symbol, fl as *const ()) };
+        let control = scan_args(host, "0b101!", "%i%n");
+        let expected = if name == "__isoc23_sscanf" {
+            [5, 5]
+        } else {
+            [0, 1]
+        };
+        assert_eq!(
+            (control.0, &control.1[..2]),
+            (1, expected.as_slice()),
+            "{name}"
+        );
+        for (input, format) in cases {
+            assert_eq!(
+                scan_args(fl, input, format),
+                scan_args(host, input, format),
+                "{name}: input={input:?}, format={format:?}"
+            );
+        }
+    }
+}
+
 /// Inputs for the `"%s"` fast path, which serves the exact format and nothing
 /// else. The engine handled these before and must keep agreeing with the host:
 /// leading whitespace of every ASCII kind, a token that runs to the terminator,
