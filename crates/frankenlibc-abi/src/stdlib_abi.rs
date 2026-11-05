@@ -1493,6 +1493,17 @@ pub unsafe extern "C" fn strtol(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_long {
+    unsafe { strtol_with_binary_prefix(nptr, endptr, base, false) }
+}
+
+// Keep the ABI's validation/errno/endptr handling shared by legacy and C23
+// callers; only the core engine's binary-prefix rule differs.
+pub(crate) unsafe fn strtol_with_binary_prefix(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    allow_binary_prefix: bool,
+) -> c_long {
     if nptr.is_null() {
         return 0;
     }
@@ -1566,7 +1577,12 @@ pub unsafe extern "C" fn strtol(
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
-    let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtol_impl(slice, base);
+    let (val, consumed, status) =
+        frankenlibc_core::stdlib::conversion::strtol_impl_with_binary_prefix(
+            slice,
+            base,
+            allow_binary_prefix,
+        );
 
     if status == frankenlibc_core::stdlib::conversion::ConversionStatus::Overflow
         || status == frankenlibc_core::stdlib::conversion::ConversionStatus::Underflow
@@ -1606,6 +1622,15 @@ pub unsafe extern "C" fn strtoimax(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
     base: c_int,
+) -> intmax_t {
+    unsafe { strtoimax_with_binary_prefix(nptr, endptr, base, false) }
+}
+
+pub(crate) unsafe fn strtoimax_with_binary_prefix(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    allow_binary_prefix: bool,
 ) -> intmax_t {
     if nptr.is_null() {
         return 0;
@@ -1658,7 +1683,12 @@ pub unsafe extern "C" fn strtoimax(
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
-    let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtoimax_impl(slice, base);
+    let (val, consumed, status) =
+        frankenlibc_core::stdlib::conversion::strtol_impl_with_binary_prefix(
+            slice,
+            base,
+            allow_binary_prefix,
+        );
 
     if status == frankenlibc_core::stdlib::conversion::ConversionStatus::Overflow
         || status == frankenlibc_core::stdlib::conversion::ConversionStatus::Underflow
@@ -1711,6 +1741,15 @@ pub unsafe extern "C" fn strtoul(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulong {
+    unsafe { strtoul_with_binary_prefix(nptr, endptr, base, false) }
+}
+
+pub(crate) unsafe fn strtoul_with_binary_prefix(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    allow_binary_prefix: bool,
+) -> c_ulong {
     if nptr.is_null() {
         return 0;
     }
@@ -1762,7 +1801,12 @@ pub unsafe extern "C" fn strtoul(
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
-    let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtoul_impl(slice, base);
+    let (val, consumed, status) =
+        frankenlibc_core::stdlib::conversion::strtoul_impl_with_binary_prefix(
+            slice,
+            base,
+            allow_binary_prefix,
+        );
 
     if status == frankenlibc_core::stdlib::conversion::ConversionStatus::Overflow
         || status == frankenlibc_core::stdlib::conversion::ConversionStatus::Underflow
@@ -1801,6 +1845,15 @@ pub unsafe extern "C" fn strtoumax(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
     base: c_int,
+) -> uintmax_t {
+    unsafe { strtoumax_with_binary_prefix(nptr, endptr, base, false) }
+}
+
+pub(crate) unsafe fn strtoumax_with_binary_prefix(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    allow_binary_prefix: bool,
 ) -> uintmax_t {
     if nptr.is_null() {
         return 0;
@@ -1853,7 +1906,12 @@ pub unsafe extern "C" fn strtoumax(
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
-    let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtoumax_impl(slice, base);
+    let (val, consumed, status) =
+        frankenlibc_core::stdlib::conversion::strtoul_impl_with_binary_prefix(
+            slice,
+            base,
+            allow_binary_prefix,
+        );
 
     if status == frankenlibc_core::stdlib::conversion::ConversionStatus::Overflow
         || status == frankenlibc_core::stdlib::conversion::ConversionStatus::Underflow

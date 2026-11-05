@@ -2,9 +2,8 @@
 
 //! Integration tests for `isoc_abi` — C99/C23 internal-linkage alias forwarding.
 //!
-//! These __isoc23_* and __isoc99_* symbols are ABI-identical wrappers around
-//! base functions (strtol, wcstol, etc.). Tests verify the forwarding produces
-//! correct results.
+//! The C23 integer entrypoints additionally enable binary prefixes; ordinary
+//! integer symbols retain legacy parsing. Other aliases preserve their ABI.
 
 use std::ffi::{c_char, c_int};
 use std::ptr;
@@ -17,6 +16,53 @@ use frankenlibc_abi::isoc_abi::*;
 
 fn c_ptr(s: &[u8]) -> *const c_char {
     s.as_ptr().cast::<c_char>()
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn c23_integer_prefix_mode_is_distinct_from_legacy() {
+    use frankenlibc_abi::{errno_abi as errno, stdlib_abi as legacy};
+    type Signed = unsafe extern "C" fn(*const c_char, *mut *mut c_char, c_int) -> i64;
+    type Unsigned = unsafe extern "C" fn(*const c_char, *mut *mut c_char, c_int) -> u64;
+    let input = c"-0B101z";
+    for base in [0, 2] {
+        for (old, new) in [
+            (legacy::strtol as Signed, __isoc23_strtol as Signed),
+            (legacy::strtoll as Signed, __isoc23_strtoll as Signed),
+            (legacy::strtoimax as Signed, __isoc23_strtoimax as Signed),
+        ] {
+            for (function, value, consumed) in [(old, 0, 2), (new, -5, 6)] {
+                let mut end = ptr::null_mut();
+                // SAFETY: both function pointers use this C prototype; input
+                // is terminated and end points to live writable storage.
+                unsafe {
+                    *errno::__errno_location() = 1234;
+                    assert_eq!(function(input.as_ptr(), &mut end, base), value);
+                    assert_eq!(end.offset_from(input.as_ptr()), consumed);
+                    assert_eq!(*errno::__errno_location(), 1234);
+                }
+            }
+        }
+        for (old, new) in [
+            (legacy::strtoul as Unsigned, __isoc23_strtoul as Unsigned),
+            (legacy::strtoull as Unsigned, __isoc23_strtoull as Unsigned),
+            (
+                legacy::strtoumax as Unsigned,
+                __isoc23_strtoumax as Unsigned,
+            ),
+        ] {
+            for (function, value, consumed) in [(old, 0, 2), (new, u64::MAX - 4, 6)] {
+                let mut end = ptr::null_mut();
+                // SAFETY: same prototype, terminated input and writable end.
+                unsafe {
+                    *errno::__errno_location() = 1234;
+                    assert_eq!(function(input.as_ptr(), &mut end, base), value);
+                    assert_eq!(end.offset_from(input.as_ptr()), consumed);
+                    assert_eq!(*errno::__errno_location(), 1234);
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

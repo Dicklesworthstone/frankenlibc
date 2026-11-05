@@ -2,7 +2,7 @@
 #![allow(unsafe_code)] // live host-glibc strtol oracle
 
 //! Randomized differential fuzzer for the integer string-parse family —
-//! `strtol` / `strtoul` / `strtoll` / `strtoull` — vs live host glibc.
+//! legacy and C23 `strtol` / `strtoul` / `strtoll` / `strtoull` vs live glibc.
 //!
 //! The hand-curated `conformance_diff_stdlib_numeric` battery pins ~15 corner
 //! inputs; this drives random byte strings (biased toward signs, whitespace,
@@ -12,24 +12,43 @@
 //! `endptr` consumed-offset, and whether ERANGE was raised (the only errno
 //! value POSIX mandates strto* set). 250k cases per signed/unsigned pair.
 //!
-//! ORACLE CHOICE: fl's *plain* `strtol`/`strtoul`/... symbols deliberately
-//! implement C23 semantics — they accept the `0b`/`0B` binary prefix (base 0
-//! and base 2), pinned by core unit tests and matching the same policy as the
-//! open scanf-`%i` bead bd-2g7oyh.203. glibc 2.38+ instead splits this: the raw
-//! `strtol@GLIBC_2.2.5` symbol stays pre-C23 (NO `0b`), and the C23 behavior
-//! lives in a separate `__isoc23_strtol` symbol (what a modern compiler's
-//! `<stdlib.h>` redirects `strtol` to). A plain `extern { fn strtol }` binds the
-//! raw symbol, so to diff fl's C23-flavored plain symbol against the matching
-//! glibc behavior we bind the `__isoc23_*` oracles explicitly. (Bug this fuzzer
-//! actually found: invalid-base handling — fl checked the base too late and
-//! wrote *endptr; glibc validates base first and leaves *endptr untouched.)
+//! ORACLE CHOICE: ordinary symbols reject C23's `0b`/`0B` prefix, while
+//! `__isoc23_*` accepts it for bases0/2. Compare each native entrypoint with
+//! the matching GNU symbol. The former C23-only oracle could not establish
+//! legacy ABI compatibility. Both modes now see the same250k generated inputs:
+//! one million legacy and one million C23 comparisons, with no removed cases.
 
 use std::ffi::CString;
 
 use frankenlibc_abi::errno_abi::__errno_location as fl_errno;
+use frankenlibc_abi::isoc_abi as c23;
 use frankenlibc_abi::stdlib_abi as fl;
 
 unsafe extern "C" {
+    #[link_name = "strtol"]
+    fn legacy_strtol(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_long;
+    #[link_name = "strtoul"]
+    fn legacy_strtoul(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_ulong;
+    #[link_name = "strtoll"]
+    fn legacy_strtoll(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_longlong;
+    #[link_name = "strtoull"]
+    fn legacy_strtoull(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_ulonglong;
     #[link_name = "__isoc23_strtol"]
     fn strtol(
         nptr: *const libc::c_char,
@@ -128,6 +147,26 @@ fn off(end: *mut libc::c_char, base: *const libc::c_char) -> isize {
 
 #[test]
 fn strtol_family_differential_fuzz_vs_glibc() {
+    type Signed = unsafe extern "C" fn(
+        *const libc::c_char,
+        *mut *mut libc::c_char,
+        libc::c_int,
+    ) -> libc::c_long;
+    type Unsigned = unsafe extern "C" fn(
+        *const libc::c_char,
+        *mut *mut libc::c_char,
+        libc::c_int,
+    ) -> libc::c_ulong;
+    type LongLong = unsafe extern "C" fn(
+        *const libc::c_char,
+        *mut *mut libc::c_char,
+        libc::c_int,
+    ) -> libc::c_longlong;
+    type ULongLong = unsafe extern "C" fn(
+        *const libc::c_char,
+        *mut *mut libc::c_char,
+        libc::c_int,
+    ) -> libc::c_ulonglong;
     let mut r = Lcg(0x5743_2110_d00d_f001);
     let mut divs: Vec<String> = Vec::new();
     let mut compared = 0u64;
@@ -149,81 +188,122 @@ fn strtol_family_differential_fuzz_vs_glibc() {
         let cs = CString::new(input.clone()).unwrap();
         let p = cs.as_ptr();
 
-        // --- signed: strtol ---
-        {
+        // Preserve the original C23 oracle and add the matching legacy arm.
+        for (semantic, native, oracle) in [
+            ("legacy", fl::strtol as Signed, legacy_strtol as Signed),
+            ("C23", c23::__isoc23_strtol as Signed, strtol as Signed),
+        ] {
+            assert_ne!(native as *const (), oracle as *const ());
             compared += 1;
             let mut fe: *mut libc::c_char = std::ptr::null_mut();
             let mut le: *mut libc::c_char = std::ptr::null_mut();
             clear_errno!();
-            let fv = unsafe { fl::strtol(p, &mut fe, base) };
+            let fv = unsafe { native(p, &mut fe, base) };
             let frange = unsafe { *fl_errno() } == libc::ERANGE;
             clear_errno!();
-            let lv = unsafe { strtol(p, &mut le, base) };
+            let lv = unsafe { oracle(p, &mut le, base) };
             let lrange = unsafe { *libc::__errno_location() } == libc::ERANGE;
             if (fv != lv || off(fe, p) != off(le, p) || frange != lrange) && divs.len() < 40 {
                 divs.push(format!(
-                    "strtol({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
+                    "{semantic} strtol({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
                     shown, hex, off(fe, p), off(le, p)
                 ));
             }
         }
 
         // strtoll delegates to strtol but exercise the symbol independently.
-        {
+        for (semantic, native, oracle) in [
+            (
+                "legacy",
+                fl::strtoll as LongLong,
+                legacy_strtoll as LongLong,
+            ),
+            (
+                "C23",
+                c23::__isoc23_strtoll as LongLong,
+                strtoll as LongLong,
+            ),
+        ] {
+            assert_ne!(native as *const (), oracle as *const ());
             compared += 1;
             let mut fe: *mut libc::c_char = std::ptr::null_mut();
             let mut le: *mut libc::c_char = std::ptr::null_mut();
             clear_errno!();
-            let fv = unsafe { fl::strtoll(p, &mut fe, base) };
+            let fv = unsafe { native(p, &mut fe, base) };
             let frange = unsafe { *fl_errno() } == libc::ERANGE;
             clear_errno!();
-            let lv = unsafe { strtoll(p, &mut le, base) };
+            let lv = unsafe { oracle(p, &mut le, base) };
             let lrange = unsafe { *libc::__errno_location() } == libc::ERANGE;
             if (fv != lv || off(fe, p) != off(le, p) || frange != lrange) && divs.len() < 40 {
                 divs.push(format!(
-                    "strtoll({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
+                    "{semantic} strtoll({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
                     shown, hex, off(fe, p), off(le, p)
                 ));
             }
         }
 
         // --- unsigned: strtoul & strtoull ---
-        {
+        for (semantic, native, oracle) in [
+            (
+                "legacy",
+                fl::strtoul as Unsigned,
+                legacy_strtoul as Unsigned,
+            ),
+            (
+                "C23",
+                c23::__isoc23_strtoul as Unsigned,
+                strtoul as Unsigned,
+            ),
+        ] {
+            assert_ne!(native as *const (), oracle as *const ());
             compared += 1;
             let mut fe: *mut libc::c_char = std::ptr::null_mut();
             let mut le: *mut libc::c_char = std::ptr::null_mut();
             clear_errno!();
-            let fv = unsafe { fl::strtoul(p, &mut fe, base) };
+            let fv = unsafe { native(p, &mut fe, base) };
             let frange = unsafe { *fl_errno() } == libc::ERANGE;
             clear_errno!();
-            let lv = unsafe { strtoul(p, &mut le, base) };
+            let lv = unsafe { oracle(p, &mut le, base) };
             let lrange = unsafe { *libc::__errno_location() } == libc::ERANGE;
             if (fv != lv || off(fe, p) != off(le, p) || frange != lrange) && divs.len() < 40 {
                 divs.push(format!(
-                    "strtoul({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
+                    "{semantic} strtoul({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
                     shown, hex, off(fe, p), off(le, p)
                 ));
             }
         }
-        {
+        for (semantic, native, oracle) in [
+            (
+                "legacy",
+                fl::strtoull as ULongLong,
+                legacy_strtoull as ULongLong,
+            ),
+            (
+                "C23",
+                c23::__isoc23_strtoull as ULongLong,
+                strtoull as ULongLong,
+            ),
+        ] {
+            assert_ne!(native as *const (), oracle as *const ());
             compared += 1;
             let mut fe: *mut libc::c_char = std::ptr::null_mut();
             let mut le: *mut libc::c_char = std::ptr::null_mut();
             clear_errno!();
-            let fv = unsafe { fl::strtoull(p, &mut fe, base) };
+            let fv = unsafe { native(p, &mut fe, base) };
             let frange = unsafe { *fl_errno() } == libc::ERANGE;
             clear_errno!();
-            let lv = unsafe { strtoull(p, &mut le, base) };
+            let lv = unsafe { oracle(p, &mut le, base) };
             let lrange = unsafe { *libc::__errno_location() } == libc::ERANGE;
             if (fv != lv || off(fe, p) != off(le, p) || frange != lrange) && divs.len() < 40 {
                 divs.push(format!(
-                    "strtoull({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
+                    "{semantic} strtoull({:?} [{}] base={base}: fl=(v={fv}, end=+{}, erange={frange}) glibc=(v={lv}, end=+{}, erange={lrange})",
                     shown, hex, off(fe, p), off(le, p)
                 ));
             }
         }
     }
 
+    assert_eq!(compared, 2_000_000);
     assert!(
         divs.is_empty(),
         "strtol family diverged from glibc ({compared} compared):\n{}",

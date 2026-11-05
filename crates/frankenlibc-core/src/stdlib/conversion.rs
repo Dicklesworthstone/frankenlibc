@@ -122,8 +122,17 @@ pub fn atoll(s: &[u8]) -> i64 {
     atol(s)
 }
 
-/// Helper for strtol: returns (value, consumed_bytes, status)
+/// C23-aware core parser: returns (value, consumed_bytes, status).
 pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
+    strtol_impl_with_binary_prefix(s, base, true)
+}
+
+/// Shared integer engine: legacy C entrypoints disable C23's binary prefix.
+pub fn strtol_impl_with_binary_prefix(
+    s: &[u8],
+    base: i32,
+    allow_binary_prefix: bool,
+) -> (i64, usize, ConversionStatus) {
     let mut i = 0;
     let len = s.len();
 
@@ -178,7 +187,10 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
 
     // Check for "0x"/"0X" and "0b"/"0B" prefixes
     let has_0x_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X');
-    let has_0b_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'b' || s[i + 1] == b'B');
+    let has_0b_prefix = allow_binary_prefix
+        && i + 1 < len
+        && s[i] == b'0'
+        && (s[i + 1] == b'b' || s[i + 1] == b'B');
     let is_binary_digit = |c: u8| c == b'0' || c == b'1';
 
     if base == 0 {
@@ -336,6 +348,15 @@ pub fn strtoimax(s: &[u8], base: i32) -> (i64, usize) {
 
 /// Helper for strtoul
 pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
+    strtoul_impl_with_binary_prefix(s, base, true)
+}
+
+/// Unsigned counterpart with an explicit legacy/C23 prefix choice.
+pub fn strtoul_impl_with_binary_prefix(
+    s: &[u8],
+    base: i32,
+    allow_binary_prefix: bool,
+) -> (u64, usize, ConversionStatus) {
     let mut i = 0;
     let len = s.len();
 
@@ -371,7 +392,10 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
 
     // Check for "0x"/"0X" and "0b"/"0B" prefixes
     let has_0x_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X');
-    let has_0b_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'b' || s[i + 1] == b'B');
+    let has_0b_prefix = allow_binary_prefix
+        && i + 1 < len
+        && s[i] == b'0'
+        && (s[i + 1] == b'b' || s[i + 1] == b'B');
     let is_binary_digit = |c: u8| c == b'0' || c == b'1';
 
     if base == 0 {

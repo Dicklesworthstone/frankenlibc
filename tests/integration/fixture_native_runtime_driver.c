@@ -6,10 +6,33 @@
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+/* Pin every integer import and its errno slot to the expected deployed image.
+ * Raw newfstatat keeps the witness independent of public stat interposition. */
+static int integer_provider_matches(void *handle) {
+    const char *expected = getenv("FLC_INTEGER_EXPECT_PROVIDER");
+    struct stat want;
+    if (!expected || syscall(SYS_newfstatat, AT_FDCWD, expected, &want, 0)) return 0;
+    void *(*select_import)(unsigned, unsigned) =
+        (void *(*)(unsigned, unsigned))dlsym(handle, "integer_function");
+    if (!select_import) return 0;
+    for (unsigned i = 0; i < 10; i++) {
+        Dl_info info;
+        struct stat actual;
+        if (!dladdr(select_import(i, 0), &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+            actual.st_dev != want.st_dev || actual.st_ino != want.st_ino) return 0;
+    }
+    return 1;
+}
 
 int main(int argc, char **argv) {
     if (argc < 3 || argc > 4) return 64;
@@ -18,6 +41,10 @@ int main(int argc, char **argv) {
     if (argc == 4 && ((uintptr_t)handle & 0xff) != 0x4d) {
         fputs("host fallback is not native execution\n", stderr);
         dlclose(handle); return 66;
+    }
+    if (strcmp(argv[2], "integer_smoke") == 0 && !integer_provider_matches(handle)) {
+        fputs("integer import provider mismatch\n", stderr);
+        dlclose(handle); return 42;
     }
     int result;
     if (strncmp(argv[2], "cancel", 6) == 0) {

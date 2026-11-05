@@ -1,11 +1,11 @@
-//! Additional allocation and byte-string entry points for the native loader.
+//! Allocation, byte-string and integer parsing entry points for the native loader.
 //!
 //! Bind to FrankenLibC's existing ABI bodies, never to host allocator addresses
 //! discovered by symbol name. In particular, calloc/realloc/strdup results must
 //! remain compatible with the free already supplied to native plugins.
 //! This is a bounded addition to the runtime surface, not a new libc engine.
 
-use crate::{malloc_abi as allocation, string_abi as strings};
+use crate::{malloc_abi as allocation, stdlib_abi as stdlib, string_abi as strings};
 
 #[path = "dlfcn_io.rs"]
 mod io;
@@ -61,6 +61,15 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "calloc" => allocation::calloc as *const (),
         "realloc" => allocation::realloc as *const (),
         "malloc_usable_size" => allocation::malloc_usable_size as *const (),
+        "atoi" => stdlib::atoi as *const (),
+        "atol" => stdlib::atol as *const (),
+        "atoll" => stdlib::atoll as *const (),
+        "strtol" => stdlib::strtol as *const (),
+        "strtoul" => stdlib::strtoul as *const (),
+        "strtoll" => stdlib::strtoll as *const (),
+        "strtoull" => stdlib::strtoull as *const (),
+        "strtoimax" => stdlib::strtoimax as *const (),
+        "strtoumax" => stdlib::strtoumax as *const (),
         "memchr" => strings::memchr as *const (),
         "memrchr" => strings::memrchr as *const (),
         "memcmp" => strings::memcmp as *const (),

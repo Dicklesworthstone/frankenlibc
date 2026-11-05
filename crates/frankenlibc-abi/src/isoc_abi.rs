@@ -328,14 +328,14 @@ pub unsafe extern "C" fn __isoc23_vswscanf(
 // C23 __isoc23_* strtol family (6 base + 4 locale)
 // ===========================================================================
 
-/// `__isoc23_strtol` — C23 alias for strtol.
+/// `__isoc23_strtol` — C23 parser with binary-prefix support.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_strtol(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_long {
-    unsafe { crate::stdlib_abi::strtol(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtol_with_binary_prefix(nptr, endptr, base, true) }
 }
 
 /// `__isoc23_strtoul` — C23 alias for strtoul.
@@ -345,7 +345,7 @@ pub unsafe extern "C" fn __isoc23_strtoul(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulong {
-    unsafe { crate::stdlib_abi::strtoul(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoul_with_binary_prefix(nptr, endptr, base, true) }
 }
 
 /// `__isoc23_strtoll` — C23 alias for strtoll.
@@ -355,7 +355,7 @@ pub unsafe extern "C" fn __isoc23_strtoll(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_longlong {
-    unsafe { crate::stdlib_abi::strtoll(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtol_with_binary_prefix(nptr, endptr, base, true) as c_longlong }
 }
 
 /// `__isoc23_strtoull` — C23 alias for strtoull.
@@ -365,7 +365,9 @@ pub unsafe extern "C" fn __isoc23_strtoull(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulonglong {
-    unsafe { crate::stdlib_abi::strtoull(nptr, endptr, base) }
+    unsafe {
+        crate::stdlib_abi::strtoul_with_binary_prefix(nptr, endptr, base, true) as c_ulonglong
+    }
 }
 
 /// `__isoc23_strtoimax` — C23 alias for strtoimax.
@@ -375,7 +377,7 @@ pub unsafe extern "C" fn __isoc23_strtoimax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> i64 {
-    unsafe { crate::stdlib_abi::strtoimax(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoimax_with_binary_prefix(nptr, endptr, base, true) }
 }
 
 /// `__isoc23_strtoumax` — C23 alias for strtoumax.
@@ -385,7 +387,7 @@ pub unsafe extern "C" fn __isoc23_strtoumax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> u64 {
-    unsafe { crate::stdlib_abi::strtoumax(nptr, endptr, base) }
+    unsafe { crate::stdlib_abi::strtoumax_with_binary_prefix(nptr, endptr, base, true) }
 }
 
 /// `__isoc23_strtol_l` — C23 locale alias for strtol (locale ignored).
@@ -396,7 +398,7 @@ pub unsafe extern "C" fn __isoc23_strtol_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_long {
-    unsafe { crate::stdlib_abi::strtol(nptr, endptr, base) }
+    unsafe { __isoc23_strtol(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoul_l` — C23 locale alias for strtoul (locale ignored).
@@ -407,7 +409,7 @@ pub unsafe extern "C" fn __isoc23_strtoul_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulong {
-    unsafe { crate::stdlib_abi::strtoul(nptr, endptr, base) }
+    unsafe { __isoc23_strtoul(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoll_l` — C23 locale alias for strtoll (locale ignored).
@@ -418,7 +420,7 @@ pub unsafe extern "C" fn __isoc23_strtoll_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_longlong {
-    unsafe { crate::stdlib_abi::strtoll(nptr, endptr, base) }
+    unsafe { __isoc23_strtoll(nptr, endptr, base) }
 }
 
 /// `__isoc23_strtoull_l` — C23 locale alias for strtoull (locale ignored).
@@ -429,7 +431,7 @@ pub unsafe extern "C" fn __isoc23_strtoull_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulonglong {
-    unsafe { crate::stdlib_abi::strtoull(nptr, endptr, base) }
+    unsafe { __isoc23_strtoull(nptr, endptr, base) }
 }
 
 // ===========================================================================
