@@ -6211,7 +6211,20 @@ pub unsafe extern "C-unwind" fn ftw(
             // Build NUL-terminated path for the C callback.
             let mut buf = p.to_vec();
             buf.push(0);
-            unsafe { callback(buf.as_ptr() as *const c_char, &st.0, walktype_to_ftw_int(t)) }
+            // The legacy ftw callback has no FTW_SLN classification. GNU
+            // reports an unresolved link as FTW_NS through this older ABI.
+            let kind = if t == frankenlibc_core::ftw::WalkType::DanglingSymlink {
+                frankenlibc_core::ftw::WalkType::StatFailed
+            } else {
+                t
+            };
+            unsafe {
+                callback(
+                    buf.as_ptr() as *const c_char,
+                    &st.0,
+                    walktype_to_ftw_int(kind),
+                )
+            }
         },
     );
     // SAFETY: reports errno only when the walk never started.
@@ -6225,12 +6238,89 @@ struct FtwInfo {
     level: c_int,
 }
 
+/// Anchor traversal to the entry CWD while FTW_CHDIR callbacks temporarily
+/// observe each object's directory. Each invocation owns its anchor, so a
+/// callback can reenter nftw without a global lock or shared restore state.
+struct FtwCwd {
+    origin: c_int,
+    restore_error: std::cell::Cell<Option<c_int>>,
+}
+
+impl FtwCwd {
+    fn new() -> Result<Self, c_int> {
+        // SAFETY: the literal is NUL-terminated and openat copies it during
+        // this syscall. O_PATH anchors CWD without requiring read permission;
+        // the owned descriptor remains live through callbacks.
+        let origin = unsafe {
+            syscall::sys_openat(
+                libc::AT_FDCWD,
+                c".".as_ptr().cast(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                0,
+            )
+        }?;
+        Ok(Self {
+            origin,
+            restore_error: std::cell::Cell::new(None),
+        })
+    }
+
+    fn enter(&self, path: &[u8], postorder: bool) -> Result<FtwCwdRestore<'_>, c_int> {
+        let base = frankenlibc_core::ftw::base_offset_of(path);
+        // GNU's post-order directory callback runs inside that directory;
+        // other callbacks run in the parent of the reported object.
+        let directory = if postorder {
+            path
+        } else if base == 0 {
+            b"."
+        } else {
+            &path[..base]
+        };
+        let mut name = directory.to_vec();
+        name.push(0);
+        // SAFETY: name is NUL-terminated and the anchor descriptor is owned
+        // by this walk. Resolve relative callback paths against its entry CWD.
+        let fd = unsafe {
+            syscall::sys_openat(
+                self.origin,
+                name.as_ptr(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                0,
+            )
+        }?;
+        let changed = syscall::sys_fchdir(fd);
+        let _ = syscall::sys_close(fd);
+        changed?;
+        Ok(FtwCwdRestore { cwd: self })
+    }
+}
+
+impl Drop for FtwCwd {
+    fn drop(&mut self) {
+        let _ = syscall::sys_close(self.origin);
+    }
+}
+
+struct FtwCwdRestore<'a> {
+    cwd: &'a FtwCwd,
+}
+
+impl Drop for FtwCwdRestore<'_> {
+    fn drop(&mut self) {
+        // Raw syscalls do not overwrite the callback's ABI errno. This also
+        // runs when a foreign callback unwinds out of the Rust walk frames.
+        if let Err(error) = syscall::sys_fchdir(self.cwd.origin) {
+            self.cwd.restore_error.set(Some(error));
+        }
+    }
+}
+
 /// POSIX `nftw` — extended file tree walk (native implementation
 /// backed by frankenlibc-core::ftw::walk_tree as of bd-ftw-3).
 ///
 /// Supports FTW_PHYS (no follow symlinks), FTW_DEPTH (post-order),
-/// FTW_MOUNT (stay on same filesystem). FTW_CHDIR is accepted but
-/// not honored by the core walker (caller can chdir before calling).
+/// FTW_MOUNT (stay on same filesystem). FTW_CHDIR scopes each callback's
+/// working directory while keeping traversal relative to the entry CWD.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn nftw(
     dirpath: *const c_char,
@@ -6255,6 +6345,19 @@ pub unsafe extern "C-unwind" fn nftw(
 
     let fs = AbiFs;
     let core_flags = frankenlibc_core::ftw::WalkFlags::from_bits(flags as u32);
+    let cwd = if core_flags.contains(frankenlibc_core::ftw::WalkFlags::CHDIR) {
+        match FtwCwd::new() {
+            Ok(cwd) => Some(cwd),
+            Err(error) => {
+                // SAFETY: report the failed entry-CWD descriptor acquisition.
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        }
+    } else {
+        None
+    };
+    let mut callback_error = None;
     let outcome =
         frankenlibc_core::ftw::walk_tree(&path_bytes, &fs, core_flags, |p, st, t, level, base| {
             let mut buf = p.to_vec();
@@ -6263,15 +6366,39 @@ pub unsafe extern "C-unwind" fn nftw(
                 base: base as c_int,
                 level: level as c_int,
             };
-            unsafe {
+            let restore = if let Some(cwd) = &cwd {
+                match cwd.enter(p, t == frankenlibc_core::ftw::WalkType::DirPostOrder) {
+                    Ok(restore) => Some(restore),
+                    Err(error) => {
+                        callback_error = Some(error);
+                        return -1;
+                    }
+                }
+            } else {
+                None
+            };
+            // SAFETY: callback, stat, info and NUL-terminated path stay live
+            // through the call; the CWD guard also covers foreign unwinding.
+            let result = unsafe {
                 callback(
                     buf.as_ptr() as *const c_char,
                     &st.0,
                     t.as_c_int(),
                     &mut info as *mut FtwInfo as *mut c_void,
                 )
+            };
+            drop(restore);
+            if let Some(error) = cwd.as_ref().and_then(|cwd| cwd.restore_error.get()) {
+                callback_error = Some(error);
+                return -1;
             }
+            result
         });
+    if let Some(error) = callback_error {
+        // SAFETY: distinguish a CWD syscall failure from callback return -1.
+        unsafe { set_abi_errno(error) };
+        return -1;
+    }
     // SAFETY: reports errno only when the walk never started. In particular a
     // callback that returns -1 must leave errno alone.
     unsafe { finish_walk(outcome, &path_bytes, core_flags) }

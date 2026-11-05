@@ -387,7 +387,85 @@ extern "C" int flc_scan_unwind_child(void *function, unsigned variant,
   return WIFSIGNALED(status) ? -WTERMSIG(status) : WIFEXITED(status) ? WEXITSTATUS(status) : 5;
 }
 
+static int walk_throw_calls, walk_throw_flags, walk_throw_origin;
+static bool walk_throw_cwd_wrong;
+static int walk_throw_visit(const char *path) {
+  walk_throw_calls++;
+  struct stat actual, expected;
+  const char *slash = strrchr(path, '/');
+  std::string parent = slash ? std::string(path, (size_t)(slash - path + 1)) : ".";
+  const char *wanted = walk_throw_flags & FTW_CHDIR ? parent.c_str() : ".";
+  if (syscall(SYS_newfstatat, AT_FDCWD, ".", &actual, 0) ||
+      syscall(SYS_newfstatat, walk_throw_origin, wanted, &expected, 0) ||
+      actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino)
+    walk_throw_cwd_wrong = true;
+  if (walk_throw_calls == 3) throw Boom("tree-walk");
+  return 0;
+}
+static int walk_throw_simple(const char *path, const struct stat *, int) {
+  return walk_throw_visit(path);
+}
+static int walk_throw_extended(const char *path, const struct stat *, int, struct FTW *) {
+  return walk_throw_visit(path);
+}
+// Bits distinguish catch/count/CWD/FD/input/during-callback failures. A GNU
+// cleanup failure remains an observation, not evidence that native cleanup works.
+extern "C" int flc_walk_unwind(void *function, unsigned variant, const char *directory, int flags) {
+  using Simple = int (*)(const char *, const struct stat *, int);
+  using Extended = int (*)(const char *, const struct stat *, int, struct FTW *);
+  using Walk = int (*)(const char *, Simple, int);
+  using WalkNew = int (*)(const char *, Extended, int, int);
+  if (!function || variant > 3) return 64;
+  int before = open_fd_count();
+  if (before < 0) return 64;
+  walk_throw_origin = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (walk_throw_origin < 0) return 64;
+  std::string input(directory);
+  walk_throw_calls = 0; walk_throw_flags = flags; walk_throw_cwd_wrong = false;
+  bool caught = false;
+  try {
+    if (variant < 2) (void)reinterpret_cast<Walk>(function)(directory, walk_throw_simple, 1);
+    else (void)reinterpret_cast<WalkNew>(function)(directory, walk_throw_extended, 1, flags);
+  } catch (const Boom &error) {
+    caught = !strcmp(error.what(), "tree-walk");
+  }
+  struct stat actual, expected;
+  bool cwd_ok = !syscall(SYS_newfstatat, AT_FDCWD, ".", &actual, 0) &&
+      !syscall(SYS_newfstatat, walk_throw_origin, ".", &expected, 0) &&
+      actual.st_dev == expected.st_dev && actual.st_ino == expected.st_ino;
+  int result = (caught ? 0 : 1) | (walk_throw_calls == 3 ? 0 : 2) | (cwd_ok ? 0 : 4) |
+      (input == directory ? 0 : 16) | (walk_throw_cwd_wrong ? 32 : 0);
+  // Recover only after observing the caller's CWD; each case is also fork-isolated.
+  int restored = fchdir(walk_throw_origin);
+  int closed = close(walk_throw_origin);
+  if (restored || closed) result |= 64;
+  if (open_fd_count() != before) result |= 8;
+  return result;
+}
+extern "C" int flc_walk_unwind_child(void *function, unsigned variant, const char *directory, int flags) {
+  pid_t child = fork();
+  if (child < 0) return 64;
+  if (child == 0) _exit(flc_walk_unwind(function, variant, directory, flags));
+  int status = 0;
+  if (waitpid(child, &status, 0) != child) return 64;
+  return WIFSIGNALED(status) ? -WTERMSIG(status) : WIFEXITED(status) ? WEXITSTATUS(status) : 64;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 5 && !strcmp(argv[1], "--walk-unwind")) {
+    const char *names[] = {"ftw", "ftw64", "nftw", "nftw64"};
+    unsigned variant = (unsigned)strtoul(argv[2], nullptr, 10);
+    if (variant > 3) return 64;
+    void *function = dlsym(RTLD_DEFAULT, names[variant]);
+    const char *pin = getenv("FLC_WALK_EXPECT_PROVIDER");
+    struct stat expected, actual; Dl_info info;
+    if (!pin || !function || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0) || !dladdr(function, &info) ||
+        !info.dli_fname || syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+        expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino) return 42;
+    int result = flc_walk_unwind(function, variant, argv[4], atoi(argv[3]));
+    printf("walk unwind variant=%u flags=%s result=%d\n", variant, argv[3], result);
+    return result;
+  }
   if (argc == 5 && !strcmp(argv[1], "--scan-unwind")) {
     const char *names[] = {"scandir", "scandir64", "scandirat", "scandirat64"};
     unsigned variant = (unsigned)strtoul(argv[2], nullptr, 10);

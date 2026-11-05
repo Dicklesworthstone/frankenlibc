@@ -35,6 +35,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "openat" | "openat64" | "faccessat" | "readlinkat" | "fdopendir" => "GLIBC_2.4",
         "pipe2" | "dup3" => "GLIBC_2.9",
         "scandirat" | "scandirat64" => "GLIBC_2.15",
+        "nftw" | "nftw64" => "GLIBC_2.3.3",
         _ => "GLIBC_2.2.5",
     };
     let supported = if matches!(name, "fcntl64" | "statx") {
@@ -95,6 +96,10 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "alphasort64" => unistd::alphasort64 as *const (),
         "versionsort" => dirs::versionsort as *const (),
         "versionsort64" => unistd::versionsort64 as *const (),
+        "ftw" => unistd::ftw as *const (),
+        "ftw64" => unistd::ftw64 as *const (),
+        "nftw" => unistd::nftw as *const (),
+        "nftw64" => unistd::nftw64 as *const (),
         "read" => unistd::read as *const (),
         "write" => unistd::write as *const (),
         "close" => unistd::close as *const (),

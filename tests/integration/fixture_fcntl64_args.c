@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ftw.h>
 #include <limits.h>
 #include <locale.h>
 #include <stdint.h>
@@ -463,6 +464,202 @@ int flc_scan_comparators(void *const *functions, scan_name_compare alphabetical,
     return 0;
 }
 
+extern int walk_narrow(const char *, int (*)(const char *, const struct stat *, int), int) __asm__("ftw");
+extern int walk_new(const char *, int (*)(const char *, const struct stat *, int, struct FTW *), int, int) __asm__("nftw");
+void *flc_walk_function(unsigned index) {
+    switch (index) {
+        case 0: return (void *)walk_narrow;
+        case 1: return (void *)ftw64;
+        case 2: return (void *)walk_new;
+        case 3: return (void *)nftw64;
+        default: return NULL;
+    }
+}
+
+struct walk_record {
+    char path[1024];
+    uint64_t device, inode, size;
+    unsigned mode;
+    int type, base, level;
+};
+struct walk_observation {
+    int result, error, calls, mismatch, fd_delta, cwd_ok;
+    unsigned count;
+    int action;
+    struct walk_record entries[256];
+};
+size_t flc_walk_observation_size(void) { return sizeof(struct walk_observation); }
+static struct {
+    unsigned group, variant;
+    int flags, anchor, *slot;
+    int (*inject)(int);
+    metadata_reference reference;
+    void *nested;
+    const char *file;
+    struct walk_observation *out;
+} walk_observer;
+static int walk_nested_calls;
+static int walk_nested(const char *path, const struct stat *st, int type) {
+    (void)path;
+    walk_nested_calls++;
+    return type == FTW_F && S_ISREG(st->st_mode) ? 0 : 91;
+}
+static int walk_invoke(void *function, unsigned variant, const char *path, int flags,
+                       int (*simple)(const char *, const struct stat *, int),
+                       int (*extended)(const char *, const struct stat *, int, struct FTW *)) {
+    if (variant < 2)
+        return ((int (*)(const char *, int (*)(const char *, const struct stat *, int), int))function)(path, simple, 1);
+    return ((int (*)(const char *, int (*)(const char *, const struct stat *, int, struct FTW *), int, int))function)(path, extended, 1, flags);
+}
+static int walk_visit(const char *path, const struct stat *st, int type, struct FTW *info) {
+    struct walk_observation *out = walk_observer.out;
+    unsigned index = out->count++;
+    out->calls++;
+    if (index >= 256) { out->mismatch = __LINE__; return 92; }
+    struct walk_record *record = &out->entries[index];
+    size_t length = strnlen(path, sizeof record->path);
+    if (length == sizeof record->path) { out->mismatch = __LINE__; return 93; }
+    memcpy(record->path, path, length + 1);
+    const char *slash = strrchr(path, '/');
+    int base = slash ? (int)(slash - path + 1) : 0;
+    record->type = type;
+    record->base = info ? info->base : base;
+    record->level = info ? info->level : -1;
+    if (record->base != base) out->mismatch = __LINE__;
+    struct stat actual, expected;
+    if (type != FTW_NS) {
+        int flags = type == FTW_SL || type == FTW_SLN ? AT_SYMLINK_NOFOLLOW : 0;
+        if (walk_observer.reference(walk_observer.anchor, path, &expected, flags) ||
+            st->st_dev != expected.st_dev || st->st_ino != expected.st_ino ||
+            st->st_mode != expected.st_mode || st->st_size != expected.st_size)
+            out->mismatch = __LINE__;
+        record->device = st->st_dev; record->inode = st->st_ino;
+        record->size = (uint64_t)st->st_size; record->mode = st->st_mode;
+    }
+    char parent[1024];
+    memcpy(parent, path, (size_t)base); parent[base] = 0;
+    if (walk_observer.reference(AT_FDCWD, ".", &actual, 0) ||
+        walk_observer.reference(walk_observer.anchor,
+            walk_observer.flags & FTW_CHDIR ? (type == FTW_DP ? path : (base ? parent : ".")) : ".", &expected, 0) ||
+        actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino)
+        out->mismatch = __LINE__;
+    if (walk_observer.group >= 16 && out->calls == 3) {
+        const int errors[] = {EIO, EINTR, EACCES};
+        if (!walk_observer.inject || walk_observer.inject(errors[walk_observer.group - 16]))
+            out->mismatch = __LINE__;
+        out->action = 1;
+    }
+    if (walk_observer.group == 15 && out->calls == 1) {
+        walk_nested_calls = 0;
+        if (walk_invoke(walk_observer.nested, 0, walk_observer.file, 0, walk_nested, NULL) ||
+            walk_nested_calls != 1) out->mismatch = __LINE__;
+        out->action = 1;
+    }
+    *walk_observer.slot = E2BIG;
+    if ((walk_observer.group == 2 || walk_observer.group == 3) && out->calls == 3)
+        return walk_observer.group == 2 ? 37 : -1;
+    if (walk_observer.group == 12 && type == FTW_D && !strcmp(path + base, "sub")) {
+        out->action = 1; return FTW_SKIP_SUBTREE;
+    }
+    if (walk_observer.group == 13 && type == FTW_F && strstr(path, "/sub/") && !out->action) {
+        out->action = 1; return FTW_SKIP_SIBLINGS;
+    }
+    if (walk_observer.group == 14 && out->calls == 3) {
+        out->action = 1; return FTW_STOP;
+    }
+    return 0;
+}
+static int walk_simple(const char *path, const struct stat *st, int type) {
+    return walk_visit(path, st, type, NULL);
+}
+
+/* Same observer in the dependency-free plugin and deployed executable. The
+   GNU-backed child runner below isolates CWD changes and seccomp faults. */
+int flc_walk_case(unsigned group, unsigned variant, const char *directory, const char *file,
+                    void *const *functions, int *(*error_slot)(void), metadata_reference reference,
+                    int (*inject)(int), struct walk_observation *out) {
+    memset(out, 0, sizeof *out);
+    if (group > 18 || variant > 3 || (group >= 8 && group <= 15 && variant < 2)) return 2;
+    char path[1024];
+    if (snprintf(path, sizeof path, "%s%s", group == 1 || group == 5 ? file : directory,
+                 group == 4 ? "/missing" : group == 5 ? "/child" : group == 6 ? "/../walk-loop" : "") >= (int)sizeof path) return 3;
+    if (group == 7 || group == 15) {
+        char *base = strrchr(path, '/');
+        if (!base) return 4;
+        *base = 0;
+        if (chdir(path)) return 5;
+        memmove(path, base + 1, strlen(base + 1) + 1);
+    }
+    int before = scan_fd_count();
+    int anchor = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (anchor < 0) return 6;
+    const int flags[] = {FTW_PHYS, FTW_PHYS | FTW_DEPTH, FTW_PHYS | FTW_CHDIR,
+        FTW_PHYS | FTW_CHDIR | FTW_DEPTH, FTW_PHYS | FTW_ACTIONRETVAL,
+        FTW_PHYS | FTW_ACTIONRETVAL, FTW_PHYS | FTW_ACTIONRETVAL, FTW_PHYS | FTW_CHDIR};
+    walk_observer.group = group; walk_observer.variant = variant;
+    walk_observer.flags = group >= 8 && group <= 15 ? flags[group - 8] : 0;
+    walk_observer.anchor = anchor; walk_observer.slot = error_slot();
+    walk_observer.inject = inject; walk_observer.reference = reference;
+    walk_observer.nested = functions ? functions[0] : flc_walk_function(0);
+    walk_observer.file = file; walk_observer.out = out;
+    *walk_observer.slot = 1234;
+    out->result = walk_invoke(functions ? functions[variant] : flc_walk_function(variant),
+        variant, path, walk_observer.flags, walk_simple, walk_visit);
+    out->error = *walk_observer.slot;
+    struct stat actual, expected;
+    out->cwd_ok = reference(AT_FDCWD, ".", &actual, 0) == 0 &&
+        reference(anchor, ".", &expected, 0) == 0 &&
+        actual.st_dev == expected.st_dev && actual.st_ino == expected.st_ino;
+    if (close(anchor)) return 7;
+    out->fd_delta = scan_fd_count() - before;
+    return 0;
+}
+
+int flc_walk_compare(const struct walk_observation *expected, const struct walk_observation *actual,
+                      unsigned group, unsigned variant) {
+    if (expected->mismatch || actual->mismatch || !expected->cwd_ok || !actual->cwd_ok ||
+        expected->fd_delta || actual->fd_delta || expected->result != actual->result ||
+        (expected->result && expected->error != actual->error) ||
+        expected->calls != actual->calls || expected->count != actual->count ||
+        expected->action != actual->action) return __LINE__;
+    if (group == 4 || group == 5 || group == 6) {
+        if (expected->result != -1 || expected->count || expected->error !=
+            (group == 4 ? ENOENT : group == 5 ? ENOTDIR : ELOOP)) return __LINE__;
+    } else if (!expected->count) return __LINE__;
+    if ((group == 0 || group == 7) && expected->count != 172) return __LINE__;
+    if (group == 1 && expected->count != 1) return __LINE__;
+    if ((group == 2 || group == 3) && (expected->calls != 3 || expected->result != (group == 2 ? 37 : -1))) return __LINE__;
+    if (((group >= 8 && group <= 11) || group == 15) && expected->count != 174) return __LINE__;
+    if (group >= 12 && !expected->action) return __LINE__;
+    if (group == 14 && (expected->calls != 3 || expected->result != FTW_STOP)) return __LINE__;
+    for (unsigned i = 0; i < expected->count; i++) {
+        const struct walk_record *record = &expected->entries[i], *match = NULL;
+        for (unsigned j = 0; j < actual->count; j++) if (!strcmp(record->path, actual->entries[j].path)) {
+            if (match) return __LINE__;
+            match = &actual->entries[j];
+        }
+        if (!match || record->type != match->type || record->base != match->base ||
+            record->level != match->level || record->device != match->device ||
+            record->inode != match->inode || record->size != match->size || record->mode != match->mode) {
+            fprintf(stderr, "walk record %s: GNU type/base/level=%d/%d/%d actual=%d/%d/%d\n",
+                    record->path, record->type, record->base, record->level,
+                    match ? match->type : -1, match ? match->base : -1, match ? match->level : -1);
+            return __LINE__;
+        }
+    }
+    if (variant >= 2) for (unsigned i = 0; i < actual->count; i++) {
+        const struct walk_record *parent = &actual->entries[i];
+        if (parent->type != FTW_D && parent->type != FTW_DP) continue;
+        size_t length = strlen(parent->path);
+        for (unsigned j = 0; j < actual->count; j++) {
+            const struct walk_record *child = &actual->entries[j];
+            if (!strncmp(parent->path, child->path, length) && child->path[length] == '/' &&
+                (child->level <= parent->level || (parent->type == FTW_D ? i >= j : i <= j))) return __LINE__;
+        }
+    }
+    return 0;
+}
+
 static int metadata_matches(const struct stat *out, const char *path,
                              metadata_reference reference, const struct stat *initial) {
     struct stat expected;
@@ -722,6 +919,80 @@ typedef int (*scan_case_function)(unsigned, unsigned, const char *, const char *
     void *const *, int *(*)(void), void (*)(void *), metadata_reference,
     scan_name_compare, scan_name_compare, int (*)(int));
 static int scan_inject(int error) { return path_filter(SYS_getdents64, error); }
+
+typedef int (*walk_case_function)(unsigned, unsigned, const char *, const char *,
+    void *const *, int *(*)(void), metadata_reference, int (*)(int), struct walk_observation *);
+int flc_walk_child(walk_case_function run, unsigned group, unsigned variant,
+                     const char *directory, const char *file, void *const *functions,
+                     int *(*error_slot)(void), metadata_reference reference,
+                     struct walk_observation *out) {
+    int ends[2];
+    if (pipe(ends)) return __LINE__;
+    pid_t child = fork();
+    if (child == 0) {
+        close(ends[0]);
+        int result = run(group, variant, directory, file, functions, error_slot, reference, scan_inject, out);
+        if (result) out->mismatch = result;
+        size_t sent = 0;
+        while (sent < sizeof *out) {
+            ssize_t n = write(ends[1], (const char *)out + sent, sizeof *out - sent);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) _exit(3);
+            sent += (size_t)n;
+        }
+        close(ends[1]);
+        _exit(0);
+    }
+    close(ends[1]);
+    if (child < 0) { close(ends[0]); return __LINE__; }
+    size_t received = 0;
+    while (received < sizeof *out) {
+        ssize_t n = read(ends[0], (char *)out + received, sizeof *out - received);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        received += (size_t)n;
+    }
+    close(ends[0]);
+    int status = 0;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) ||
+        received != sizeof *out) return __LINE__;
+    return 0;
+}
+
+static int walk_provider(void) {
+    struct stat expected, actual;
+    const char *pin = getenv("FLC_WALK_EXPECT_PROVIDER");
+    if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0)) return 42;
+    for (unsigned i = 0; i < 5; i++) {
+        void *function = i < 4 ? flc_walk_function(i) : (void *)__errno_location;
+        Dl_info info;
+        if (!dladdr(function, &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+            expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino) return 42;
+    }
+    return 0;
+}
+
+static void *walk_oracles(void *functions[4], int *(**slot)(void)) {
+    const char *pin = getenv("FLC_WALK_ORACLE_PROVIDER");
+    struct stat expected, actual;
+    if (!pin || syscall(SYS_newfstatat, AT_FDCWD, pin, &expected, 0)) return NULL;
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!host) return NULL;
+    const char *names[] = {"ftw", "ftw64", "nftw", "nftw64", "__errno_location"};
+    for (unsigned i = 0; i < 5; i++) {
+        void *function = dlsym(host, names[i]);
+        Dl_info info;
+        if (!function || !dladdr(function, &info) || !info.dli_fname ||
+            syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0) ||
+            expected.st_dev != actual.st_dev || expected.st_ino != actual.st_ino) {
+            dlclose(host); return NULL;
+        }
+        if (i < 4) functions[i] = function;
+        else *slot = (int *(*)(void))function;
+    }
+    return host;
+}
 
 int flc_scan_child(scan_case_function run, unsigned group, unsigned variant,
                     const char *directory, const char *missing, const char *file,
@@ -1227,6 +1498,27 @@ static int allocation_contract(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 6 && strcmp(argv[1], "--walk-case") == 0) {
+        int provider = walk_provider();
+        if (provider) return provider;
+        void *functions[4]; int *(*slot)(void);
+        void *oracle = walk_oracles(functions, &slot);
+        if (!oracle) return 43;
+        struct walk_observation *expected = calloc(1, sizeof *expected), *actual = calloc(1, sizeof *actual);
+        if (!expected || !actual) { free(expected); free(actual); dlclose(oracle); return 44; }
+        unsigned group = (unsigned)strtoul(argv[2], NULL, 10), variant = (unsigned)strtoul(argv[3], NULL, 10);
+        int result = flc_walk_child(flc_walk_case, group, variant, argv[4], argv[5], functions, slot,
+                                   metadata_kernel_reference, expected);
+        if (!result) result = flc_walk_child(flc_walk_case, group, variant, argv[4], argv[5], NULL,
+                                            __errno_location, metadata_kernel_reference, actual);
+        if (!result) result = flc_walk_compare(expected, actual, group, variant);
+        printf("walk group=%u variant=%u line=%d GNU=%d/%d/%u actual=%d/%d/%u mismatch=%d/%d\n",
+               group, variant, result, expected->result, expected->error, expected->count,
+               actual->result, actual->error, actual->count, expected->mismatch, actual->mismatch);
+        free(expected); free(actual);
+        if (dlclose(oracle)) return 45;
+        return result ? 1 : 0;
+    }
     if (argc == 6 && strcmp(argv[1], "--scan-case") == 0) {
         int provider = scan_provider();
         if (provider) return provider;

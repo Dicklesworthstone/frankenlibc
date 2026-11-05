@@ -183,6 +183,8 @@ void *io_function(unsigned index) {
     extern void *flc_path_function(unsigned);
     extern void *flc_directory_function(unsigned);
     extern void *flc_scan_function(unsigned);
+    extern void *flc_walk_function(unsigned);
+    if (index >= 77) return flc_walk_function(index - 77);
     if (index >= 69) return flc_scan_function(index - 69);
     if (index >= 58) return flc_directory_function(index - 58);
     if (index >= 46) return flc_path_function(index - 46);
@@ -356,6 +358,15 @@ fn symbols() -> Vec<(&'static str, &'static str, *const ())> {
     result.extend(directory_symbols());
     result.extend(scan_symbols());
     result
+}
+
+fn walk_symbols() -> [(&'static str, &'static str, *const ()); 4] {
+    [
+        ("ftw", "GLIBC_2.2.5", unistd::ftw as *const ()),
+        ("ftw64", "GLIBC_2.2.5", unistd::ftw64 as *const ()),
+        ("nftw", "GLIBC_2.3.3", unistd::nftw as *const ()),
+        ("nftw64", "GLIBC_2.3.3", unistd::nftw64 as *const ()),
+    ]
 }
 
 fn scan_symbols() -> [(&'static str, &'static str, *const ()); 8] {
@@ -1313,6 +1324,364 @@ fn native_scan_plt_protocol() {
 fn native_scan_got_protocol() {
     directory_isolated("native_scan_got_protocol", |native| {
         scan_protocol(native, true)
+    });
+}
+
+#[repr(C)]
+struct WalkRecord {
+    path: [c_char; 1024],
+    device: u64,
+    inode: u64,
+    size: u64,
+    mode: u32,
+    kind: c_int,
+    base: c_int,
+    level: c_int,
+}
+
+#[repr(C)]
+struct WalkObservation {
+    result: c_int,
+    error: c_int,
+    calls: c_int,
+    mismatch: c_int,
+    fd_delta: c_int,
+    cwd_ok: c_int,
+    count: u32,
+    action: c_int,
+    entries: [WalkRecord; 256],
+}
+
+impl WalkObservation {
+    fn empty() -> Box<Self> {
+        let mut result = Box::<Self>::new_uninit();
+        // SAFETY: this C-layout observation contains only integer/byte fields;
+        // all-zero is valid. Initialize on the heap to avoid a large test stack.
+        unsafe {
+            result.as_mut_ptr().write_bytes(0, 1);
+            result.assume_init()
+        }
+    }
+}
+
+fn walk_protocol(native: bool, got: bool) {
+    let fixture = Fixture::new(got);
+    let directory = fixture.dir.join("walk-data");
+    std::fs::create_dir(&directory).unwrap();
+    for name in ["sub", "sub/deep", "peer"] {
+        std::fs::create_dir(directory.join(name)).unwrap();
+    }
+    for name in ["filea", "fileb", "sub/leaf", "sub/deep/end", "peer/other"] {
+        std::fs::write(directory.join(name), b"walk").unwrap();
+    }
+    std::fs::write(directory.join("n".repeat(255)), b"long").unwrap();
+    for i in 0..160 {
+        std::fs::write(directory.join(format!("sub/item{i:03}")), b"walk").unwrap();
+    }
+    for (name, target) in [
+        ("valid", "filea"),
+        ("dangling", "missing"),
+        ("cycle", "."),
+        ("alias", "sub"),
+    ] {
+        std::os::unix::fs::symlink(target, directory.join(name)).unwrap();
+    }
+    std::os::unix::fs::symlink("walk-loop", fixture.dir.join("walk-loop")).unwrap();
+    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let mut observers = Vec::new();
+    for (name, compiler, source) in [
+        (
+            "walk-observer.so",
+            "gcc",
+            "tests/integration/fixture_fcntl64_args.c",
+        ),
+        (
+            "walk-unwind.so",
+            "g++",
+            "tests/integration/fixture_callback_unwind.cpp",
+        ),
+    ] {
+        let path = fixture.dir.join(name);
+        let mut command = Command::new(compiler);
+        command.args([
+            "-shared",
+            "-fPIC",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fno-builtin",
+        ]);
+        if got {
+            command.arg("-fno-plt");
+        }
+        let output = command
+            .arg(root.join(source))
+            .args(["-ldl", "-pthread", "-o"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        std::fs::write(fixture.dir.join(format!("{name}.stdout")), &output.stdout).unwrap();
+        std::fs::write(fixture.dir.join(format!("{name}.stderr")), &output.stderr).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        observers.push(path);
+    }
+    let direct = std::env::var_os("FRANKENLIBC_WALK_DIRECT").is_some();
+    let api = Api::new(native && !direct);
+    // GNU's versionless relocation picks its legacy nftw ABI. The normally
+    // linked shared observer imports modern nftw@GLIBC_2.3.3 instead. Native
+    // plugins remain dependency-free; their explicit version lookups below
+    // must select that same modern contract and reject the legacy ABI.
+    let plugin = api.open(if !native && !direct {
+        &observers[0]
+    } else {
+        &fixture.path
+    });
+    if !direct && native {
+        addresses(api, plugin);
+    }
+    let host = Api::new(false);
+    let observer = host.open(&observers[0]);
+    let cpp = host.open(&observers[1]);
+    type Errno = unsafe extern "C" fn() -> *mut c_int;
+    type Reference = unsafe extern "C" fn(c_int, *const c_char, *mut libc::stat, c_int) -> c_int;
+    type Inject = unsafe extern "C" fn(c_int) -> c_int;
+    type Run = unsafe extern "C" fn(
+        u32,
+        u32,
+        *const c_char,
+        *const c_char,
+        *const *mut c_void,
+        Errno,
+        Reference,
+        Inject,
+        *mut WalkObservation,
+    ) -> c_int;
+    type Child = unsafe extern "C" fn(
+        Run,
+        u32,
+        u32,
+        *const c_char,
+        *const c_char,
+        *const *mut c_void,
+        Errno,
+        Reference,
+        *mut WalkObservation,
+    ) -> c_int;
+    type Compare =
+        unsafe extern "C" fn(*const WalkObservation, *const WalkObservation, u32, u32) -> c_int;
+    type Size = unsafe extern "C" fn() -> usize;
+    type Unwind = unsafe extern "C" fn(*mut c_void, u32, *const c_char, c_int) -> c_int;
+    // SAFETY: the signatures/layouts match the retained shared C/C++ observers.
+    // All observer libraries remain loaded through their synchronous calls.
+    let run: Run = unsafe { std::mem::transmute(api.symbol(plugin, c"flc_walk_case")) };
+    // SAFETY: GNU owns process/fault isolation and the complete observation pipe.
+    let child: Child = unsafe { std::mem::transmute(host.symbol(observer, c"flc_walk_child")) };
+    // SAFETY: these GNU-backed exports compare observations and report C layout.
+    let compare: Compare =
+        unsafe { std::mem::transmute(host.symbol(observer, c"flc_walk_compare")) };
+    // SAFETY: the C sizeof helper takes no arguments and returns size_t.
+    let size: Size =
+        unsafe { std::mem::transmute(host.symbol(observer, c"flc_walk_observation_size")) };
+    // SAFETY: C++ catches in its own forked frame; no exception crosses Rust here.
+    let unwind: Unwind = unsafe { std::mem::transmute(host.symbol(cpp, c"flc_walk_unwind_child")) };
+    // SAFETY: this is a live C sizeof call, before any observation writes.
+    assert_eq!(unsafe { size() }, std::mem::size_of::<WalkObservation>());
+    let functions: Vec<*mut c_void> = walk_symbols().iter().map(|s| s.2 as *mut c_void).collect();
+    let references: Vec<*mut c_void> = walk_symbols()
+        .iter()
+        .map(|(name, _, expected)| {
+            // SAFETY: the GNU resolver excludes the native function's address.
+            unsafe { dlsym_oracle::host_addr(&CString::new(*name).unwrap(), *expected) }
+        })
+        .collect();
+    if !direct {
+        // SAFETY: the shared C export returns its four actual imported pointers.
+        let lookup: Function =
+            unsafe { std::mem::transmute(api.symbol(plugin, c"flc_walk_function")) };
+        for (index, (name, version, _)) in walk_symbols().into_iter().enumerate() {
+            // SAFETY: every index is a declared tree-walk import.
+            let actual = unsafe { lookup(index as u32) };
+            assert_eq!(
+                actual,
+                if native {
+                    functions[index]
+                } else {
+                    references[index]
+                },
+                "provider: {name}"
+            );
+            if native {
+                // SAFETY: caller-relative lookup uses the existing plugin export.
+                let dynamic: Dynamic =
+                    unsafe { std::mem::transmute(api.symbol(plugin, c"io_dynamic")) };
+                let name = CString::new(name).unwrap();
+                let version = CString::new(version).unwrap();
+                for required in [std::ptr::null(), version.as_ptr()] {
+                    let mut error = -1;
+                    // SAFETY: strings and writable error slot live through lookup.
+                    assert_eq!(
+                        unsafe { dynamic(name.as_ptr(), required, &mut error) },
+                        actual
+                    );
+                    assert_eq!(error, 0);
+                }
+                let wrong = if index < 2 {
+                    c"GLIBC_2.3.3"
+                } else {
+                    c"GLIBC_2.2.5"
+                };
+                for rejected in [wrong, c"FRANKENLIBC_WALK_MISSING_VERSION"] {
+                    let mut error = -1;
+                    // SAFETY: rejected version is a live NUL-terminated string.
+                    assert!(
+                        unsafe { dynamic(name.as_ptr(), rejected.as_ptr(), &mut error) }.is_null()
+                    );
+                    assert_eq!(error, 1);
+                }
+            }
+        }
+    }
+    // SAFETY: errno and metadata callbacks have the GNU ABI and remain live.
+    let host_error: Errno =
+        unsafe { dlsym_oracle::host_fn(c"__errno_location", errno::__errno_location as *const ()) };
+    // SAFETY: metadata comes from GNU, with the observer's original CWD descriptor.
+    let reference: Reference =
+        unsafe { dlsym_oracle::host_fn(c"fstatat", unistd::fstatat as *const ()) };
+    let error: Errno = if native {
+        errno::__errno_location
+    } else {
+        host_error
+    };
+    let table = if direct {
+        if native {
+            functions.as_ptr()
+        } else {
+            references.as_ptr()
+        }
+    } else {
+        std::ptr::null()
+    };
+    let directory = CString::new(directory.as_os_str().as_bytes()).unwrap();
+    let file = CString::new(format!("{}/filea", directory.to_str().unwrap())).unwrap();
+    let mut expected = WalkObservation::empty();
+    let mut actual = WalkObservation::empty();
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for variant in 0..4 {
+        for group in 0..19 {
+            if (8..=15).contains(&group) && variant < 2 {
+                continue;
+            }
+            // SAFETY: buffers, paths, callbacks and tables stay live. The GNU
+            // child runner isolates all provider CWD/fault state per call.
+            let oracle_result = unsafe {
+                child(
+                    run,
+                    group,
+                    variant,
+                    directory.as_ptr(),
+                    file.as_ptr(),
+                    references.as_ptr(),
+                    host_error,
+                    reference,
+                    &mut *expected,
+                )
+            };
+            // SAFETY: the same observer now calls the actual imported provider.
+            let actual_result = unsafe {
+                child(
+                    run,
+                    group,
+                    variant,
+                    directory.as_ptr(),
+                    file.as_ptr(),
+                    table,
+                    error,
+                    reference,
+                    &mut *actual,
+                )
+            };
+            // SAFETY: both complete observations were initialized before use.
+            let compared = unsafe { compare(&*expected, &*actual, group, variant) };
+            if oracle_result != 0 || actual_result != 0 || compared != 0 {
+                failures.push(format!("v={variant} g={group} child={oracle_result}/{actual_result} compare={compared} mismatch={}/{} result={}/{} errno={}/{} counts={}/{}",
+                    expected.mismatch, actual.mismatch, expected.result, actual.result,
+                    expected.error, actual.error, expected.count, actual.count));
+            }
+            println!(
+                "walk v={variant} g={group} GNU={}/{}/{} actual={}/{}/{}",
+                expected.result,
+                expected.error,
+                expected.count,
+                actual.result,
+                actual.error,
+                actual.count
+            );
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, 60);
+    for (variant, flags) in [(0, 0), (1, 0), (2, 1), (3, 1), (2, 5), (3, 5)] {
+        let function = if direct {
+            if native {
+                functions[variant as usize]
+            } else {
+                references[variant as usize]
+            }
+        } else {
+            // SAFETY: the plugin reports its actual imported ABI address.
+            let lookup: Function =
+                unsafe { std::mem::transmute(api.symbol(plugin, c"flc_walk_function")) };
+            // SAFETY: indices0..3 select the four tree-walk entrypoints.
+            unsafe { lookup(variant) }
+        };
+        // SAFETY: C++ isolates and catches the exception without crossing Rust.
+        let result = unsafe { unwind(function, variant, directory.as_ptr(), flags) };
+        // GNU cleanup failures are retained as negative observations. Its
+        // catch/count/input/during-callback bits must still be clean. Native
+        // must meet every condition, including CWD and descriptor cleanup.
+        let valid = if native {
+            result == 0
+        } else {
+            result >= 0 && result & !12 == 0
+        };
+        if !valid {
+            failures.push(format!(
+                "unwind v={variant} flags={flags} observed={result}"
+            ));
+        }
+        println!("walk unwind native={native} v={variant} flags={flags} observed={result}");
+    }
+    host.close(cpp);
+    host.close(observer);
+    api.close(plugin);
+    assert!(
+        failures.is_empty(),
+        "native={native} got={got} direct={direct}: {failures:?}; retained {:?}",
+        fixture.dir
+    );
+    println!(
+        "walk:60observations/6unwind-observations native={native} got={got} direct={direct}; retained {:?}",
+        fixture.dir
+    );
+}
+
+#[test]
+fn native_walk_plt_protocol() {
+    directory_isolated("native_walk_plt_protocol", |native| {
+        walk_protocol(native, false)
+    });
+}
+
+#[test]
+fn native_walk_got_protocol() {
+    directory_isolated("native_walk_got_protocol", |native| {
+        walk_protocol(native, true)
     });
 }
 
