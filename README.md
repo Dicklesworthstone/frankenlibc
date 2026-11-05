@@ -733,6 +733,8 @@ All five claims have completion-contract artifacts under `tests/conformance/*_co
 
 `errno` is per-thread state; a global or non-thread-local implementation would break real programs.
 
+Legacy narrow and wide integer entrypoints keep the older prefix rule: in the C locale, `wcstol(L"0b101", ..., 0)` returns zero and stops before `b`, while `__isoc23_wcstol` consumes the binary prefix and returns five. The wide parsers continue past an internal scan window when leading whitespace, a sign, or a permitted prefix could still lead to digits. The corresponding `_l` wrappers are tested with C-locale handles; this does not establish arbitrary-locale conformance.
+
 ---
 
 ## Runtime Math Controllers
@@ -3921,9 +3923,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,942 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,996 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
-| `crates/frankenlibc-core/src/` | 203 Rust files, 1,167,988 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,078 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

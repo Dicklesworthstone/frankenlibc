@@ -2,16 +2,16 @@
 //!
 //! GCC and Clang emit `__isoc99_*` and `__isoc23_*` symbol references when
 //! compiling with `-std=c99`/`-std=c23` (or later). These are ABI-identical to
-//! their base counterparts; they exist solely for binary compatibility with
-//! glibc's versioned symbol scheme.
+//! their base counterparts. The C23 integer entrypoints additionally accept
+//! binary prefixes; their legacy counterparts retain the older parsing rule.
 //!
 //! This module consolidates all 38 such wrappers in one place:
 //!
-//! - 12 narrow scanf variants (C23)
+//! - 6 narrow scanf variants (C23)
 //! - 6 wide scanf variants (C23)
 //! - 6 wide scanf variants (C99)
 //! - 10 strtol-family variants (C23)
-//! - 4 wcstol/wcstoul/wcstoll/wcstoull + imaxabs variants (C23, 6 total)
+//! - 6 wide integer variants (C23, including wcstoimax/wcstoumax)
 //! - 4 wcstol_l locale variants (C23)
 
 #![allow(non_snake_case)]
@@ -335,6 +335,7 @@ pub unsafe extern "C" fn __isoc23_strtol(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_long {
+    // SAFETY: preserve the caller's string/endptr contract in the shared C23 body.
     unsafe { crate::stdlib_abi::strtol_with_binary_prefix(nptr, endptr, base, true) }
 }
 
@@ -345,6 +346,7 @@ pub unsafe extern "C" fn __isoc23_strtoul(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulong {
+    // SAFETY: preserve the caller's string/endptr contract in the shared C23 body.
     unsafe { crate::stdlib_abi::strtoul_with_binary_prefix(nptr, endptr, base, true) }
 }
 
@@ -355,6 +357,7 @@ pub unsafe extern "C" fn __isoc23_strtoll(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_longlong {
+    // SAFETY: same pointer contract; long and long long are both 64-bit on supported targets.
     unsafe { crate::stdlib_abi::strtol_with_binary_prefix(nptr, endptr, base, true) as c_longlong }
 }
 
@@ -365,6 +368,7 @@ pub unsafe extern "C" fn __isoc23_strtoull(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulonglong {
+    // SAFETY: same pointer contract; the supported targets use 64-bit unsigned integer returns.
     unsafe {
         crate::stdlib_abi::strtoul_with_binary_prefix(nptr, endptr, base, true) as c_ulonglong
     }
@@ -377,6 +381,7 @@ pub unsafe extern "C" fn __isoc23_strtoimax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> i64 {
+    // SAFETY: preserve the caller's string/endptr contract in the shared C23 body.
     unsafe { crate::stdlib_abi::strtoimax_with_binary_prefix(nptr, endptr, base, true) }
 }
 
@@ -387,6 +392,7 @@ pub unsafe extern "C" fn __isoc23_strtoumax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> u64 {
+    // SAFETY: preserve the caller's string/endptr contract in the shared C23 body.
     unsafe { crate::stdlib_abi::strtoumax_with_binary_prefix(nptr, endptr, base, true) }
 }
 
@@ -398,6 +404,7 @@ pub unsafe extern "C" fn __isoc23_strtol_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_long {
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
     unsafe { __isoc23_strtol(nptr, endptr, base) }
 }
 
@@ -409,6 +416,7 @@ pub unsafe extern "C" fn __isoc23_strtoul_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulong {
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
     unsafe { __isoc23_strtoul(nptr, endptr, base) }
 }
 
@@ -420,6 +428,7 @@ pub unsafe extern "C" fn __isoc23_strtoll_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_longlong {
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
     unsafe { __isoc23_strtoll(nptr, endptr, base) }
 }
 
@@ -431,6 +440,7 @@ pub unsafe extern "C" fn __isoc23_strtoull_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulonglong {
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
     unsafe { __isoc23_strtoull(nptr, endptr, base) }
 }
 
@@ -438,18 +448,20 @@ pub unsafe extern "C" fn __isoc23_strtoull_l(
 // C23 __isoc23_* wcstol family (6 base + 4 locale)
 // ===========================================================================
 
-/// `__isoc23_wcstol` — C23 alias for wcstol.
+/// `__isoc23_wcstol` — C23 wide parser with binary-prefix support.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_wcstol(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_long {
+    // SAFETY: forward the original wide-string/endptr contract with identical pointee layout.
     unsafe {
-        crate::wchar_abi::wcstol(
+        crate::wchar_abi::wcstol_with_binary_prefix(
             nptr.cast::<libc::wchar_t>(),
             endptr.cast::<*mut libc::wchar_t>(),
             base,
+            true,
         )
     }
 }
@@ -461,11 +473,13 @@ pub unsafe extern "C" fn __isoc23_wcstoul(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_ulong {
+    // SAFETY: forward the original wide-string/endptr contract with identical pointee layout.
     unsafe {
-        crate::wchar_abi::wcstoul(
+        crate::wchar_abi::wcstoul_with_binary_prefix(
             nptr.cast::<libc::wchar_t>(),
             endptr.cast::<*mut libc::wchar_t>(),
             base,
+            true,
         )
     }
 }
@@ -477,11 +491,13 @@ pub unsafe extern "C" fn __isoc23_wcstoll(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_longlong {
+    // SAFETY: same pointer contract and 64-bit integer return on supported targets.
     unsafe {
-        crate::wchar_abi::wcstoll(
+        crate::wchar_abi::wcstol_with_binary_prefix(
             nptr.cast::<libc::wchar_t>(),
             endptr.cast::<*mut libc::wchar_t>(),
             base,
+            true,
         )
     }
 }
@@ -493,11 +509,13 @@ pub unsafe extern "C" fn __isoc23_wcstoull(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> c_ulonglong {
+    // SAFETY: same pointer contract and 64-bit integer return on supported targets.
     unsafe {
-        crate::wchar_abi::wcstoull(
+        crate::wchar_abi::wcstoul_with_binary_prefix(
             nptr.cast::<libc::wchar_t>(),
             endptr.cast::<*mut libc::wchar_t>(),
             base,
+            true,
         )
     }
 }
@@ -509,7 +527,8 @@ pub unsafe extern "C" fn __isoc23_wcstoimax(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> i64 {
-    unsafe { crate::wchar_abi::wcstoimax(nptr.cast::<u32>(), endptr.cast::<*mut u32>(), base) }
+    // SAFETY: Linux LP64 intmax_t and long share the return ABI; wide pointer layout is unchanged.
+    unsafe { crate::wchar_abi::wcstol_with_binary_prefix(nptr, endptr, base, true) }
 }
 
 /// `__isoc23_wcstoumax` — C23 alias for wcstoumax.
@@ -519,7 +538,8 @@ pub unsafe extern "C" fn __isoc23_wcstoumax(
     endptr: *mut *mut WcharT,
     base: c_int,
 ) -> u64 {
-    unsafe { crate::wchar_abi::wcstoumax(nptr.cast::<u32>(), endptr.cast::<*mut u32>(), base) }
+    // SAFETY: Linux LP64 uintmax_t and unsigned long share the return ABI and pointer contract.
+    unsafe { crate::wchar_abi::wcstoul_with_binary_prefix(nptr, endptr, base, true) }
 }
 
 /// `__isoc23_wcstol_l` — C23 locale alias for wcstol (locale ignored).
@@ -530,13 +550,8 @@ pub unsafe extern "C" fn __isoc23_wcstol_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_long {
-    unsafe {
-        crate::wchar_abi::wcstol(
-            nptr.cast::<libc::wchar_t>(),
-            endptr.cast::<*mut libc::wchar_t>(),
-            base,
-        )
-    }
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
+    unsafe { __isoc23_wcstol(nptr, endptr, base) }
 }
 
 /// `__isoc23_wcstoul_l` — C23 locale alias for wcstoul (locale ignored).
@@ -547,13 +562,8 @@ pub unsafe extern "C" fn __isoc23_wcstoul_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulong {
-    unsafe {
-        crate::wchar_abi::wcstoul(
-            nptr.cast::<libc::wchar_t>(),
-            endptr.cast::<*mut libc::wchar_t>(),
-            base,
-        )
-    }
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
+    unsafe { __isoc23_wcstoul(nptr, endptr, base) }
 }
 
 /// `__isoc23_wcstoll_l` — C23 locale alias for wcstoll (locale ignored).
@@ -564,13 +574,8 @@ pub unsafe extern "C" fn __isoc23_wcstoll_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_longlong {
-    unsafe {
-        crate::wchar_abi::wcstoll(
-            nptr.cast::<libc::wchar_t>(),
-            endptr.cast::<*mut libc::wchar_t>(),
-            base,
-        )
-    }
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
+    unsafe { __isoc23_wcstoll(nptr, endptr, base) }
 }
 
 /// `__isoc23_wcstoull_l` — C23 locale alias for wcstoull (locale ignored).
@@ -581,13 +586,8 @@ pub unsafe extern "C" fn __isoc23_wcstoull_l(
     base: c_int,
     _locale: *mut c_void,
 ) -> c_ulonglong {
-    unsafe {
-        crate::wchar_abi::wcstoull(
-            nptr.cast::<libc::wchar_t>(),
-            endptr.cast::<*mut libc::wchar_t>(),
-            base,
-        )
-    }
+    // SAFETY: forward the original pointers; this entrypoint currently uses C-locale parsing.
+    unsafe { __isoc23_wcstoull(nptr, endptr, base) }
 }
 
 // ===========================================================================

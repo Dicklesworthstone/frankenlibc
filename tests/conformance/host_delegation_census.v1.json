@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 121,
-    "source_tree_sha256": "4b8f2eb7eab4e104b13d3df073217e443dd9a3586c9112a92b573661f1f47a0f",
+    "source_tree_sha256": "2389f3b5d461aca57409e7d286e3a18a3bb100595eca0f6581b4e184c6d72f67",
     "version": 16
   },
   "module_census": [
@@ -3138,7 +3138,7 @@
         "support_matrix_sha256": "c573f2a485a6880f4f128f8c801cdee654aa0f5f5064dcef9748e2ae3b9b95da",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9123,
+      "function_count": 9126,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -13094,7 +13094,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18085,
+      "resolved_call_edge_count": 18088,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1681,
@@ -15378,7 +15378,7 @@
         "support_matrix_sha256": "c573f2a485a6880f4f128f8c801cdee654aa0f5f5064dcef9748e2ae3b9b95da",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9111,
+      "function_count": 9114,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -19505,7 +19505,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17878,
+      "resolved_call_edge_count": 17881,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 592,
@@ -20591,7 +20591,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/isoc_abi.rs",
-      "sha256": "7780987f73a9c8fee31350c51bb483028bbce95983b54a7e5b68a492809283a8"
+      "sha256": "a6fe01bb7d9ddc98cdd7cb4dc54229da4e72b7201bfff00177129347f11d753b"
     },
     {
       "path": "crates/frankenlibc-abi/src/lib.rs",
@@ -20831,7 +20831,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "e023b9a9ab3f6c6e21c8a429c2e83cf6077ceb87102d8baf6088db0de5e4a23d"
+      "sha256": "2b2236c86c572edf7cb6234ed16439e4896c9a5f81d21c0893b31b0a2c27a467"
     }
   ],
   "summary": {

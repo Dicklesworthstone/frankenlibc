@@ -173,3 +173,59 @@ fn wcstol_differential_fuzz_vs_glibc() {
     );
     eprintln!("wcstol/wcstoul fuzz: {compared} comparisons, 0 divergences vs host glibc");
 }
+
+/// The ordinary ABI disables the core API's intentional C23 extension. Unlike
+/// the original extension-scoped test above, this legacy campaign skips no
+/// generated binary-prefix cases; its generator and GNU oracle are shared.
+#[test]
+fn legacy_wcstol_differential_fuzz_without_prefix_skips() {
+    use frankenlibc_core::stdlib::conversion::{
+        wcstol_impl_with_binary_prefix, wcstoul_impl_with_binary_prefix,
+    };
+    let mut r = Lcg(0x57c5_70a7_5ee0_0001);
+    let mut divs = Vec::new();
+    let mut compared = 0;
+    for _ in 0..300_000 {
+        let input = gen_input(&mut r);
+        let base = gen_base(&mut r);
+        if r.next() & 1 == 0 {
+            let (value, consumed, status) = wcstoul_impl_with_binary_prefix(&input, base, false);
+            let native = (
+                value,
+                consumed,
+                matches!(status, ConversionStatus::Overflow),
+            );
+            let host = host_wcstoul(&input, base);
+            if native != host && divs.len() < 40 {
+                divs.push(format!(
+                    "legacy wcstoul base={base} input={input:x?}: native={native:?} GNU={host:?}"
+                ));
+            }
+        } else {
+            let (value, consumed, status) = wcstol_impl_with_binary_prefix(&input, base, false);
+            let native = (
+                value,
+                consumed,
+                matches!(
+                    status,
+                    ConversionStatus::Overflow | ConversionStatus::Underflow
+                ),
+            );
+            let host = host_wcstol(&input, base);
+            if native != host && divs.len() < 40 {
+                divs.push(format!(
+                    "legacy wcstol base={base} input={input:x?}: native={native:?} GNU={host:?}"
+                ));
+            }
+        }
+        compared += 1;
+    }
+    assert_eq!(compared, 300_000);
+    assert!(
+        divs.is_empty(),
+        "{} legacy divergences:\n{}",
+        divs.len(),
+        divs.join("\n")
+    );
+    eprintln!("legacy wcstol/wcstoul: {compared} comparisons, zero prefix skips");
+}

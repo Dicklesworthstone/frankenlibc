@@ -5405,9 +5405,29 @@ unsafe fn parse_wcstod_integer_fast(nptr: *const u32) -> Option<(f64, usize)> {
     Some((if negative { -v } else { v }, i))
 }
 
+// A bounded window can end before the first digit, or between a permitted
+// prefix marker and its first digit. Other short parses already found their
+// boundary and must not pay for an unrelated long alphanumeric tail.
+fn wide_integer_prefix_may_extend(s: &[u32], base: c_int, binary: bool) -> bool {
+    let mut start = 0;
+    while start < s.len() && matches!(s[start], 0x09..=0x0d | 0x20) {
+        start += 1;
+    }
+    if start < s.len() && matches!(s[start], 0x2b | 0x2d) {
+        start += 1;
+    }
+    if start == s.len() {
+        return true;
+    }
+    let tail = &s[start..];
+    ((base == 0 || base == 16) && matches!(tail, [0x30, 0x78 | 0x58]))
+        || (binary && (base == 0 || base == 2) && matches!(tail, [0x30, 0x62 | 0x42]))
+}
+
 unsafe fn wide_parse_int<T: Copy>(
     nptr: *const libc::wchar_t,
     base: c_int,
+    allow_binary_prefix: bool,
     parse: impl Fn(&[u32], c_int) -> (T, usize, ConversionStatus),
 ) -> (T, usize, ConversionStatus) {
     // SAFETY: token scan reads at most WIDE_INT_SCAN wchars from a valid wide string.
@@ -5415,9 +5435,12 @@ unsafe fn wide_parse_int<T: Copy>(
     // SAFETY: bounded by the measured token length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, tlen) };
     let (value, consumed, status) = parse(slice, base);
-    // The token was cut by the bound only if the scan filled the whole window AND the parse
-    // consumed all of it (a genuine >512-char number). Re-scan unbounded for the exact result.
-    if hit_bound && consumed >= tlen {
+    // Extend only a potentially incomplete token, including a window filled
+    // by leading whitespace/sign or ending in an incomplete permitted prefix.
+    if hit_bound
+        && status != ConversionStatus::InvalidBase
+        && (consumed >= tlen || wide_integer_prefix_may_extend(slice, base, allow_binary_prefix))
+    {
         // SAFETY: unbounded token scan of the same valid wide string.
         let (flen, _) = unsafe { wide_numeric_token_len(nptr as *const u32, usize::MAX) };
         // SAFETY: bounded by the measured full token length.
@@ -5433,6 +5456,18 @@ pub unsafe extern "C" fn wcstol(
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
 ) -> std::ffi::c_long {
+    // SAFETY: preserve the caller's wide-string/endptr contract in the shared body.
+    unsafe { wcstol_with_binary_prefix(nptr, endptr, base, false) }
+}
+
+/// Shared ABI body; the caller supplies a readable terminated wide string
+/// and, when non-null, writable end-pointer storage.
+pub(crate) unsafe fn wcstol_with_binary_prefix(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+    allow_binary_prefix: bool,
+) -> std::ffi::c_long {
     if nptr.is_null() {
         if !endptr.is_null() {
             // SAFETY: caller-provided endptr is writable when non-null.
@@ -5443,14 +5478,18 @@ pub unsafe extern "C" fn wcstol(
 
     // Single-pass fast path for base 10/16 (parse_wcstol_fast); the two-pass
     // wide_numeric_token_len + wcstol_impl fallback handles base 0 and other bases.
+    // SAFETY: nptr is non-null and retains the public wide-string contract;
+    // both paths bound consumed by the input's measured numeric prefix.
     let (value, consumed, status) = unsafe {
         match parse_wcstol_fast(nptr as *const u32, base) {
             Some(r) => r,
-            None => wide_parse_int(
-                nptr,
-                base,
-                frankenlibc_core::stdlib::conversion::wcstol_impl,
-            ),
+            None => wide_parse_int(nptr, base, allow_binary_prefix, |s, b| {
+                frankenlibc_core::stdlib::conversion::wcstol_impl_with_binary_prefix(
+                    s,
+                    b,
+                    allow_binary_prefix,
+                )
+            }),
         }
     };
 
@@ -5478,6 +5517,17 @@ pub unsafe extern "C" fn wcstoul(
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
 ) -> std::ffi::c_ulong {
+    // SAFETY: preserve the caller's wide-string/endptr contract in the shared body.
+    unsafe { wcstoul_with_binary_prefix(nptr, endptr, base, false) }
+}
+
+/// Unsigned shared ABI body with the same pointer contract as wcstoul.
+pub(crate) unsafe fn wcstoul_with_binary_prefix(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+    allow_binary_prefix: bool,
+) -> std::ffi::c_ulong {
     if nptr.is_null() {
         if !endptr.is_null() {
             // SAFETY: caller-provided endptr is writable when non-null.
@@ -5488,14 +5538,18 @@ pub unsafe extern "C" fn wcstoul(
 
     // Single-pass fast path for base 10/16 (parse_wcstoul_fast); base 0/other fall back to
     // the two-pass wide_numeric_token_len + wcstoul_impl.
+    // SAFETY: nptr is non-null and retains the public wide-string contract;
+    // both paths bound consumed by the input's measured numeric prefix.
     let (value, consumed, status) = unsafe {
         match parse_wcstoul_fast(nptr as *const u32, base) {
             Some(r) => r,
-            None => wide_parse_int(
-                nptr,
-                base,
-                frankenlibc_core::stdlib::conversion::wcstoul_impl,
-            ),
+            None => wide_parse_int(nptr, base, allow_binary_prefix, |s, b| {
+                frankenlibc_core::stdlib::conversion::wcstoul_impl_with_binary_prefix(
+                    s,
+                    b,
+                    allow_binary_prefix,
+                )
+            }),
         }
     };
 

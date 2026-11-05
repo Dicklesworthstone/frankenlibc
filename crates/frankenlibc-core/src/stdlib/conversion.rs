@@ -653,8 +653,8 @@ fn wide_is_ascii_hexdigit(wc: u32) -> bool {
 /// Returns `(value, consumed_wchars, status)`. Semantics:
 ///   - Leading whitespace skipped via [`wide_is_space`] (ASCII / C-locale).
 ///   - Optional `+` / `-` sign consumed.
-///   - `base == 0` auto-detects: `0x`/`0X` prefix → 16, leading `0` → 8,
-///     otherwise 10.
+///   - `base == 0` auto-detects: `0x`/`0X` prefix → 16, C23 `0b`/`0B` → 2,
+///     leading `0` → 8, otherwise 10.
 ///   - `base == 16` consumes a `0x`/`0X` prefix when followed by a
 ///     hex digit.
 ///   - Accumulator overflow returns `i64::MAX` / `i64::MIN` (with
@@ -665,6 +665,15 @@ fn wide_is_ascii_hexdigit(wc: u32) -> bool {
 ///     only inputs.
 ///   - Returns `(0, 0, InvalidBase)` for `base` outside `0` ∪ `2..=36`.
 pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
+    wcstol_impl_with_binary_prefix(s, base, true)
+}
+
+/// Wide signed engine with an explicit legacy/C23 prefix policy.
+pub fn wcstol_impl_with_binary_prefix(
+    s: &[u32],
+    base: i32,
+    allow_binary_prefix: bool,
+) -> (i64, usize, ConversionStatus) {
     let mut i = 0usize;
     let len = s.len();
 
@@ -699,8 +708,10 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
     let mut effective_base = base as u64;
     let has_0x_prefix =
         i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
-    let has_0b_prefix =
-        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'b' as u32 || s[i + 1] == b'B' as u32);
+    let has_0b_prefix = allow_binary_prefix
+        && i + 1 < len
+        && s[i] == b'0' as u32
+        && (s[i + 1] == b'b' as u32 || s[i + 1] == b'B' as u32);
     let wide_is_binary_digit = |c: u32| c == b'0' as u32 || c == b'1' as u32;
 
     if base == 0 {
@@ -785,6 +796,15 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
 /// [`wcstol_impl`]. Negative inputs are accepted and the sign is
 /// applied via two's-complement wrap (matching glibc's `wcstoul`).
 pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
+    wcstoul_impl_with_binary_prefix(s, base, true)
+}
+
+/// Wide unsigned engine with an explicit legacy/C23 prefix policy.
+pub fn wcstoul_impl_with_binary_prefix(
+    s: &[u32],
+    base: i32,
+    allow_binary_prefix: bool,
+) -> (u64, usize, ConversionStatus) {
     let mut i = 0usize;
     let len = s.len();
 
@@ -819,8 +839,10 @@ pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
     let mut effective_base = base as u64;
     let has_0x_prefix =
         i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
-    let has_0b_prefix =
-        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'b' as u32 || s[i + 1] == b'B' as u32);
+    let has_0b_prefix = allow_binary_prefix
+        && i + 1 < len
+        && s[i] == b'0' as u32
+        && (s[i + 1] == b'b' as u32 || s[i + 1] == b'B' as u32);
     let wide_is_binary_digit = |c: u32| c == b'0' as u32 || c == b'1' as u32;
 
     if base == 0 {
@@ -2618,6 +2640,74 @@ mod tests {
     }
 
     // ---- parity with byte-slice strtol_impl/strtoul_impl ----
+
+    #[test]
+    fn wide_signed_legacy_and_c23_prefix_policies() {
+        for (s, base, old, old_end, new, new_end) in [
+            ("0b101!", 0, 0, 1, 5, 5),
+            ("-0B101!", 2, 0, 2, -5, 6),
+            ("+0b", 0, 0, 2, 0, 2),
+            ("0b2", 0, 0, 1, 0, 1),
+            ("0b101", 16, 0xb101, 5, 0xb101, 5),
+            ("0x10", 0, 16, 4, 16, 4),
+        ] {
+            let input = ws(s);
+            assert_eq!(
+                wcstol_impl_with_binary_prefix(&input, base, false),
+                (old, old_end, ConversionStatus::Success)
+            );
+            assert_eq!(
+                wcstol_impl_with_binary_prefix(&input, base, true),
+                (new, new_end, ConversionStatus::Success)
+            );
+            assert_eq!(
+                wcstol_impl(&input, base),
+                (new, new_end, ConversionStatus::Success)
+            );
+        }
+        for base in [1, 37] {
+            for binary in [false, true] {
+                assert_eq!(
+                    wcstol_impl_with_binary_prefix(&[], base, binary),
+                    (0, 0, ConversionStatus::InvalidBase)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wide_unsigned_legacy_and_c23_prefix_policies() {
+        for (s, base, old, old_end, new, new_end) in [
+            ("0b101!", 0, 0, 1, 5, 5),
+            ("-0B101!", 2, 0, 2, u64::MAX - 4, 6),
+            ("+0b", 0, 0, 2, 0, 2),
+            ("0b2", 0, 0, 1, 0, 1),
+            ("0b101", 16, 0xb101, 5, 0xb101, 5),
+            ("0x10", 0, 16, 4, 16, 4),
+        ] {
+            let input = ws(s);
+            assert_eq!(
+                wcstoul_impl_with_binary_prefix(&input, base, false),
+                (old, old_end, ConversionStatus::Success)
+            );
+            assert_eq!(
+                wcstoul_impl_with_binary_prefix(&input, base, true),
+                (new, new_end, ConversionStatus::Success)
+            );
+            assert_eq!(
+                wcstoul_impl(&input, base),
+                (new, new_end, ConversionStatus::Success)
+            );
+        }
+        for base in [1, 37] {
+            for binary in [false, true] {
+                assert_eq!(
+                    wcstoul_impl_with_binary_prefix(&[], base, binary),
+                    (0, 0, ConversionStatus::InvalidBase)
+                );
+            }
+        }
+    }
 
     #[test]
     fn wcstol_matches_strtol_on_ascii_decimal() {
