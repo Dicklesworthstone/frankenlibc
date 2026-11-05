@@ -1,13 +1,18 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use frankenlibc_abi::{dlfcn_abi as dl, malloc_abi as allocation, string_abi as strings};
+use frankenlibc_abi::{
+    dlfcn_abi as dl, errno_abi as errno, malloc_abi as allocation, mmap_abi as mapping,
+    string_abi as strings, unistd_abi as unistd,
+};
 use frankenlibc_core::elf::ElfLoader;
 
 #[path = "common/dlsym_oracle.rs"]
@@ -26,6 +31,9 @@ const SOURCE: &str = r#"#define _GNU_SOURCE
 #include <malloc.h>
 #include <dlfcn.h>
 #include <stdint.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #ifdef LOCAL_COMPARE
 int memcmp(const void *left, const void *right, size_t n) {
@@ -81,6 +89,141 @@ int memory_strings(void) {
     return 0;
 }
 
+
+#define VM_PAGE 4096
+#define VM_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+
+#ifdef LOCAL_ADVICE
+int madvise(void *address, size_t length, int advice) {
+    (void)address; (void)length; (void)advice; return 23;
+}
+#endif
+int memory_advice_probe(void) { return madvise(NULL, 0, MADV_NORMAL); }
+
+int memory_virtual_mappings(void) {
+    errno = 1234;
+    unsigned char *p = mmap(NULL, 2 * VM_PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(p != MAP_FAILED && errno == 1234);
+    for (int i = 0; i < 2 * VM_PAGE; ++i) VM_CHECK(p[i] == 0);
+    p[0] = 41; p[VM_PAGE - 1] = 42; p[VM_PAGE] = 43; p[2 * VM_PAGE - 1] = 44;
+    unsigned char resident[3] = {0, 0, 0xA5};
+    VM_CHECK(mincore(p, 2 * VM_PAGE, resident) == 0 && resident[2] == 0xA5);
+    VM_CHECK((resident[0] & 1) && (resident[1] & 1));
+    VM_CHECK(mprotect(p, VM_PAGE, PROT_READ) == 0);
+    VM_CHECK(p[0] == 41 && p[VM_PAGE - 1] == 42);
+    VM_CHECK(mprotect(p, VM_PAGE, PROT_READ | PROT_WRITE) == 0);
+    p[0] = 45;
+    VM_CHECK(madvise(p, 2 * VM_PAGE, MADV_NORMAL) == 0);
+    errno = 1234;
+    VM_CHECK(posix_madvise(p, 2 * VM_PAGE, POSIX_MADV_NORMAL) == 0 && errno == 1234);
+    /* POSIX_MADV_DONTNEED is nondestructive, unlike Linux MADV_DONTNEED. */
+    VM_CHECK(posix_madvise(p, 2 * VM_PAGE, POSIX_MADV_DONTNEED) == 0);
+    VM_CHECK(p[0] == 45 && p[VM_PAGE] == 43);
+    /* Exercise the ordinary four-argument call as well as MREMAP_FIXED below. */
+    unsigned char *q = mremap(p, 2 * VM_PAGE, 3 * VM_PAGE, MREMAP_MAYMOVE);
+    VM_CHECK(q != MAP_FAILED && q[0] == 45 && q[VM_PAGE] == 43);
+    VM_CHECK(q[VM_PAGE - 1] == 42 && q[2 * VM_PAGE - 1] == 44);
+    for (int i = 2 * VM_PAGE; i < 3 * VM_PAGE; ++i) VM_CHECK(q[i] == 0);
+    q[2 * VM_PAGE] = 46;
+    VM_CHECK(madvise(q + 2 * VM_PAGE, VM_PAGE, MADV_DONTNEED) == 0);
+    VM_CHECK(q[2 * VM_PAGE] == 0 && q[0] == 45);
+    VM_CHECK(munlock(q, 3 * VM_PAGE) == 0);
+    VM_CHECK(munmap(q, 3 * VM_PAGE) == 0);
+    return 0;
+}
+
+int memory_fixed_remap(void) {
+    unsigned char *p = mmap(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(p != MAP_FAILED); p[0] = 83; p[VM_PAGE - 1] = 84;
+    unsigned char *target = mmap(NULL, 2 * VM_PAGE, PROT_NONE,
+                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(target != MAP_FAILED);
+    unsigned char *q = mremap(p, VM_PAGE, 2 * VM_PAGE,
+                              MREMAP_MAYMOVE | MREMAP_FIXED, target);
+    VM_CHECK(q == target && q[0] == 83 && q[VM_PAGE - 1] == 84 && q[VM_PAGE] == 0);
+    unsigned char resident = 0xA5;
+    errno = 0;
+    VM_CHECK(mincore(p, VM_PAGE, &resident) == -1 && errno == ENOMEM);
+    VM_CHECK(resident == 0xA5);
+    VM_CHECK(munmap(q, 2 * VM_PAGE) == 0);
+    return 0;
+}
+
+int memory_file_mappings(int fd) {
+    VM_CHECK(ftruncate(fd, 2 * VM_PAGE) == 0);
+    VM_CHECK(pwrite(fd, "A", 1, 0) == 1 && pwrite(fd, "B", 1, VM_PAGE) == 1);
+    VM_CHECK(lseek(fd, 17, SEEK_SET) == 17);
+    unsigned char *shared = mmap(NULL, 2 * VM_PAGE, PROT_READ | PROT_WRITE,
+                                 MAP_SHARED, fd, 0);
+    VM_CHECK(shared != MAP_FAILED && shared[0] == 'A' && shared[VM_PAGE] == 'B');
+    unsigned char *private = mmap64(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE, fd, VM_PAGE);
+    VM_CHECK(private != MAP_FAILED && private[0] == 'B');
+    private[0] = 0x83;
+    char byte = 0;
+    VM_CHECK(pread(fd, &byte, 1, VM_PAGE) == 1 && byte == 'B');
+    VM_CHECK(shared[VM_PAGE] == 'B');
+    shared[0] = 'Q'; shared[VM_PAGE] = 'R';
+    VM_CHECK(msync(shared, 2 * VM_PAGE, MS_SYNC) == 0);
+    VM_CHECK(pread(fd, &byte, 1, 0) == 1 && byte == 'Q');
+    VM_CHECK(pread(fd, &byte, 1, VM_PAGE) == 1 && byte == 'R');
+    VM_CHECK(private[0] == 0x83 && lseek(fd, 0, SEEK_CUR) == 17);
+    VM_CHECK(munmap(private, VM_PAGE) == 0 && munmap(shared, 2 * VM_PAGE) == 0);
+    return 0;
+}
+
+int memory_mapping_errors(void) {
+    unsigned char *p = mmap(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(p != MAP_FAILED); p[0] = 71;
+    errno = 0;
+    VM_CHECK(mmap(NULL, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+             == MAP_FAILED && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(mmap64(NULL, VM_PAGE, PROT_READ, MAP_PRIVATE, -1, 0)
+             == MAP_FAILED && errno == EBADF);
+    errno = 0;
+    VM_CHECK(mmap64(NULL, VM_PAGE, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 1)
+             == MAP_FAILED && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(munmap(p + 1, VM_PAGE) == -1 && errno == EINVAL && p[0] == 71);
+    errno = 0;
+    VM_CHECK(mprotect(p + 1, VM_PAGE - 1, PROT_READ) == -1 && errno == EINVAL);
+    p[0] = 72; /* A failed protection change must leave the mapping writable. */
+    errno = 0;
+    VM_CHECK(msync(p + 1, VM_PAGE - 1, MS_SYNC) == -1 && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(madvise(p + 1, VM_PAGE - 1, MADV_NORMAL) == -1 && errno == EINVAL);
+    errno = 1234;
+    VM_CHECK(posix_madvise(p + 1, VM_PAGE - 1, POSIX_MADV_NORMAL) == EINVAL);
+    VM_CHECK(errno == 1234 && p[0] == 72);
+    unsigned char resident[2] = {0xA5, 0xA5};
+    errno = 0;
+    VM_CHECK(mincore(p + 1, VM_PAGE - 1, resident) == -1 && errno == EINVAL);
+    VM_CHECK(resident[0] == 0xA5 && resident[1] == 0xA5);
+    errno = 0;
+    VM_CHECK(mremap(p, VM_PAGE, 0, MREMAP_MAYMOVE) == MAP_FAILED && errno == EINVAL);
+    VM_CHECK(p[0] == 72);
+    errno = 0;
+    VM_CHECK(mlockall(0) == -1 && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(mlock2(p, VM_PAGE, -1) == -1 && errno == EINVAL);
+    VM_CHECK(munmap(p, VM_PAGE) == 0);
+    return 0;
+}
+
+/* The parent expects SIGSEGV, so a no-op mprotect cannot pass this protocol. */
+int memory_write_readonly(void) {
+    volatile unsigned char *p = mmap(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK((void *)p != MAP_FAILED);
+    VM_CHECK(mprotect((void *)p, VM_PAGE, PROT_READ) == 0);
+    p[0] = 1;
+    return 0;
+}
+
 void *memory_function(unsigned index) {
     switch (index) {
         case 0: return (void *)calloc;
@@ -105,6 +248,21 @@ void *memory_function(unsigned index) {
         case 19: return (void *)strpbrk;
         case 20: return (void *)malloc;
         case 21: return (void *)free;
+        case 22: return (void *)mmap;
+        case 23: return (void *)mmap64;
+        case 24: return (void *)munmap;
+        case 25: return (void *)mprotect;
+        case 26: return (void *)msync;
+        case 27: return (void *)madvise;
+        case 28: return (void *)posix_madvise;
+        case 29: return (void *)mincore;
+        case 30: return (void *)mremap;
+        case 31: return (void *)mlock;
+        case 32: return (void *)munlock;
+        case 33: return (void *)mlockall;
+        case 34: return (void *)munlockall;
+        case 35: return (void *)mlock2;
+        case 36: return (void *)__errno_location;
         default: return 0;
     }
 }
@@ -122,7 +280,7 @@ __attribute__((destructor)) static void fini(void) {
 #endif
 "#;
 
-fn symbols() -> [(&'static str, *const ()); 22] {
+fn symbols() -> [(&'static str, *const ()); 37] {
     [
         ("calloc", allocation::calloc as *const ()),
         ("realloc", allocation::realloc as *const ()),
@@ -149,6 +307,21 @@ fn symbols() -> [(&'static str, *const ()); 22] {
         ("strpbrk", strings::strpbrk as *const ()),
         ("malloc", allocation::malloc as *const ()),
         ("free", allocation::free as *const ()),
+        ("mmap", mapping::mmap as *const ()),
+        ("mmap64", unistd::mmap64 as *const ()),
+        ("munmap", mapping::munmap as *const ()),
+        ("mprotect", mapping::mprotect as *const ()),
+        ("msync", mapping::msync as *const ()),
+        ("madvise", mapping::madvise as *const ()),
+        ("posix_madvise", unistd::posix_madvise as *const ()),
+        ("mincore", unistd::mincore as *const ()),
+        ("mremap", mapping::mremap as *const ()),
+        ("mlock", mapping::mlock as *const ()),
+        ("munlock", mapping::munlock as *const ()),
+        ("mlockall", mapping::mlockall as *const ()),
+        ("munlockall", mapping::munlockall as *const ()),
+        ("mlock2", mapping::mlock2 as *const ()),
+        ("__errno_location", errno::__errno_location as *const ()),
     ]
 }
 
@@ -297,9 +470,7 @@ fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
     }
 }
 
-fn exercise(api: Api, flags: &[&str]) {
-    let fixture = Fixture::new(flags);
-    let handle = api.open(&fixture.path, 0);
+fn assert_memory_providers(api: Api, handle: *mut c_void) {
     let function: Function = unsafe { std::mem::transmute(api.symbol(handle, c"memory_function")) };
     for (index, (name, expected)) in symbols().into_iter().enumerate() {
         let actual = unsafe { function(index as u32) };
@@ -312,8 +483,17 @@ fn exercise(api: Api, flags: &[&str]) {
             assert_eq!(actual, host);
         }
     }
+}
+
+fn exercise(api: Api, flags: &[&str]) {
+    let fixture = Fixture::new(flags);
+    let handle = api.open(&fixture.path, 0);
+    assert_memory_providers(api, handle);
     assert_eq!(api.run(handle, c"memory_allocations"), 0);
     assert_eq!(api.run(handle, c"memory_strings"), 0);
+    assert_eq!(api.run(handle, c"memory_virtual_mappings"), 0);
+    assert_eq!(api.run(handle, c"memory_fixed_remap"), 0);
+    assert_eq!(api.run(handle, c"memory_mapping_errors"), 0);
     assert_eq!(api.run(handle, c"memory_weak_missing"), 1);
     api.close(handle);
 }
@@ -344,19 +524,30 @@ fn memory_runtime_dynamic_addresses_match_direct_imports() {
         |api| {
             let f = Fixture::new(&[]);
             let h = api.open(&f.path, 0);
+            assert_memory_providers(api, h);
             let imported: Function =
                 unsafe { std::mem::transmute(api.symbol(h, c"memory_function")) };
             let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
             for (index, (name, expected)) in symbols().into_iter().enumerate() {
+                let valid_version = if name == "mlock2" {
+                    c"GLIBC_2.27"
+                } else {
+                    c"GLIBC_2.2.5"
+                };
+                let wrong_version = if name == "mlock2" {
+                    c"GLIBC_2.2.5"
+                } else {
+                    c"GLIBC_2.27"
+                };
                 let name = CString::new(name).unwrap();
                 let direct = unsafe { imported(index as u32) };
                 if api.native {
                     assert_eq!(direct as usize, expected as usize);
                 }
-                for version in [std::ptr::null(), c"GLIBC_2.2.5".as_ptr()] {
+                for version in [std::ptr::null(), valid_version.as_ptr()] {
                     assert_eq!(unsafe { dynamic(name.as_ptr(), version) }, direct);
                 }
-                for version in [c"GLIBC_2.34", c"FRANKENLIBC_NO_SUCH_VERSION"] {
+                for version in [wrong_version, c"GLIBC_2.34", c"FRANKENLIBC_NO_SUCH_VERSION"] {
                     assert!(unsafe { dynamic(name.as_ptr(), version.as_ptr()) }.is_null());
                 }
             }
@@ -449,4 +640,127 @@ fn memory_runtime_fallback_preserves_native_scope_preemption() {
             api.close(d);
         },
     );
+}
+
+#[test]
+fn memory_runtime_shared_and_private_file_mappings_preserve_io_state() {
+    isolated(
+        "memory_runtime_shared_and_private_file_mappings_preserve_io_state",
+        false,
+        |api| {
+            let fixture = Fixture::new(&[]);
+            let handle = api.open(&fixture.path, 0);
+            assert_memory_providers(api, handle);
+            let pathname = fixture.dir.join("mapped-file");
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&pathname)
+                .unwrap();
+            type FileMappings = unsafe extern "C" fn(c_int) -> c_int;
+            let run: FileMappings =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_file_mappings")) };
+            assert_eq!(unsafe { run(file.as_raw_fd()) }, 0);
+            // Read through the independent host file API after both mappings
+            // were unmapped: copying bytes only inside the plugin cannot pass.
+            let bytes = std::fs::read(&pathname).unwrap();
+            assert_eq!(bytes.len(), 8192);
+            assert_eq!(bytes[0], b'Q');
+            assert_eq!(bytes[4096], b'R');
+            assert!(bytes[1..4096].iter().all(|byte| *byte == 0));
+            assert!(bytes[4097..].iter().all(|byte| *byte == 0));
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_vm_fallback_preserves_native_scope_preemption() {
+    // As with the allocation/string test above, this exercises the native
+    // namespace, whose GLOBAL prefix is separate from the host libc prefix.
+    isolated(
+        "memory_runtime_vm_fallback_preserves_native_scope_preemption",
+        true,
+        |api| {
+            let ordinary = Fixture::new(&["-DLOCAL_ADVICE"]);
+            let provider_c = ordinary.dir.join("vm-provider.c");
+            let provider_so = ordinary.dir.join("vm-provider.so");
+            std::fs::write(
+                &provider_c,
+                "#include <stddef.h>\nint madvise(void *a,size_t n,int v){(void)a;(void)n;(void)v;return 37;}\n",
+            )
+            .unwrap();
+            compile(&provider_c, &provider_so, &[]);
+            let global = api.open(&provider_so, libc::RTLD_GLOBAL);
+            let handle = api.open(&ordinary.path, 0);
+            let selected = api.symbol(global, c"madvise");
+            let imported: Function =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_function")) };
+            assert_eq!(unsafe { imported(27) }, selected);
+            assert_eq!(api.run(handle, c"memory_advice_probe"), 37);
+            let dynamic: Dynamic =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { dynamic(c"madvise".as_ptr(), std::ptr::null()) },
+                selected
+            );
+            let deep = Fixture::new(&["-DLOCAL_ADVICE"]);
+            let deep_handle = api.open(&deep.path, libc::RTLD_DEEPBIND);
+            let local = api.symbol(deep_handle, c"madvise");
+            assert_ne!(local, selected);
+            assert_eq!(api.run(deep_handle, c"memory_advice_probe"), 23);
+            let deep_dynamic: Dynamic =
+                unsafe { std::mem::transmute(api.symbol(deep_handle, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { deep_dynamic(c"madvise".as_ptr(), std::ptr::null()) },
+                local
+            );
+            api.close(global);
+            assert_eq!(api.run(handle, c"memory_advice_probe"), 37);
+            api.close(handle);
+            api.close(deep_handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_protection_changes_fault_on_write() {
+    const NAME: &str = "memory_runtime_protection_changes_fault_on_write";
+    if let Ok(mode) = std::env::var("FRANKENLIBC_MEMORY_FAULT_CHILD") {
+        assert!(matches!(mode.as_str(), "host" | "native"));
+        let api = Api::new(mode == "native");
+        let fixture = Fixture::new(&[]);
+        let handle = api.open(&fixture.path, 0);
+        assert_memory_providers(api, handle);
+        let limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: this isolated child intentionally faults below. Disabling
+        // its core dump affects no other process or test.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limit) }, 0);
+        let result = api.run(handle, c"memory_write_readonly");
+        panic!("write to read-only mapping unexpectedly returned {result}");
+    }
+    for mode in ["host", "native"] {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env("FRANKENLIBC_MEMORY_FAULT_CHILD", mode)
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert_eq!(status.signal(), Some(libc::SIGSEGV), "{mode}: {status}");
+                break;
+            }
+            if start.elapsed() > Duration::from_secs(40) {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{NAME}: {mode}: timeout");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }

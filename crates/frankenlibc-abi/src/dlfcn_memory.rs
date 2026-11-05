@@ -1,4 +1,4 @@
-//! Allocation, byte-string, ctype and integer entry points for the native loader.
+//! Allocation, virtual memory, string and scalar entry points for the native loader.
 //!
 //! Bind to FrankenLibC's existing ABI bodies, never to host allocator addresses
 //! discovered by symbol name. In particular, calloc/realloc/strdup results must
@@ -6,7 +6,8 @@
 //! This is a bounded addition to the runtime surface, not a new libc engine.
 
 use crate::{
-    ctype_abi as ctype, malloc_abi as allocation, stdlib_abi as stdlib, string_abi as strings,
+    ctype_abi as ctype, malloc_abi as allocation, mmap_abi as mapping, stdlib_abi as stdlib,
+    string_abi as strings, unistd_abi as unistd,
 };
 
 #[path = "dlfcn_io.rs"]
@@ -52,6 +53,14 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     } else {
         "GLIBC_2.2.5"
     };
+    // mlock2 postdates both architecture baselines. A known name with an
+    // unsupported version must stay rejected by runtime_export, rather than
+    // escaping into host lookup and a different errno/policy domain.
+    if name == "mlock2" {
+        return version
+            .is_none_or(|version| version == "GLIBC_2.27")
+            .then_some(mapping::mlock2 as *const () as usize as u64);
+    }
     // The table accessors were introduced after the x86-64 baseline. Keep
     // their real version separate from the ordinary byte-ctype functions.
     let ctype_table = match name {
@@ -81,6 +90,21 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "calloc" => allocation::calloc as *const (),
         "realloc" => allocation::realloc as *const (),
         "malloc_usable_size" => allocation::malloc_usable_size as *const (),
+        // Native plugins share the ABI's VM policy, syscall and errno paths.
+        // Taking the real function address also retains msync's unwind ABI.
+        "mmap" => mapping::mmap as *const (),
+        "mmap64" => unistd::mmap64 as *const (),
+        "munmap" => mapping::munmap as *const (),
+        "mprotect" => mapping::mprotect as *const (),
+        "msync" => mapping::msync as *const (),
+        "madvise" => mapping::madvise as *const (),
+        "posix_madvise" => unistd::posix_madvise as *const (),
+        "mincore" => unistd::mincore as *const (),
+        "mremap" => mapping::mremap as *const (),
+        "mlock" => mapping::mlock as *const (),
+        "munlock" => mapping::munlock as *const (),
+        "mlockall" => mapping::mlockall as *const (),
+        "munlockall" => mapping::munlockall as *const (),
         "atoi" => stdlib::atoi as *const (),
         "atol" => stdlib::atol as *const (),
         "atoll" => stdlib::atoll as *const (),
