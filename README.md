@@ -635,7 +635,7 @@ This is L0 interpose functionality: installed modules use the host dynamic loade
 - `dlerror` is native thread-local state
 - Self-contained ELF64 plugins can bind descriptor I/O and modern `stat`, `fstat`, `lstat`, `fstatat`, their `64` variants, and `statx` to the existing native ABI implementations. The metadata bindings serve both PLT/GOT relocation and caller-relative versioned lookup (`GLIBC_2.33` for modern stat names, `GLIBC_2.28` for `statx`). Legacy `__*xstat` interfaces and old-kernel `statx` fallback are outside this tested plugin scope.
 - Native plugins can also import `getentropy` and the three `arc4random` APIs. Caller-relative lookup accepts `GLIBC_2.25` for `getentropy` and `GLIBC_2.36` for `arc4random`, `arc4random_buf`, and `arc4random_uniform`. Real PLT/GOT calls and kernel-fault behavior are tested on x86-64; AArch64 execution and ELF-versioned relocations are outside this test scope.
-- Integer imports include `atoi`, `atol`, `atoll`, `strtol`, `strtoul`, `strtoll`, `strtoull`, `strtoimax`, and `strtoumax`. The legacy integer ABI stops before a `b`/`B` prefix marker in bases 0 and 2; the separate `__isoc23_*` entrypoints retain binary-prefix support. Live GNU comparisons exercise actual plugin imports, end pointers and errno on x86-64.
+- Integer imports include `atoi`, `atol`, `atoll`, and forty narrow/wide parsers covering the legacy and `__isoc23_*` families plus their supplied `_l` variants. The legacy ABI stops before a `b`/`B` prefix marker in bases 0 and 2; C23 entrypoints retain binary-prefix support. Caller-relative lookup uses each symbol's GNU version, including the x86-64 `GLIBC_2.3.3` narrow long-long locale aliases. Live GNU comparisons exercise actual PLT/GOT imports, values, end pointers and errno on x86-64. Locale-taking parsers are qualified with C-locale handles; arbitrary locales, AArch64 execution and ELF-versioned relocations remain outside this plugin scope.
 - Byte-ctype imports cover the sixteen non-locale classification/conversion functions and the three `__ctype_*_loc` accessors used by ordinary `<ctype.h>` macros. Function lookup uses the target baseline; the table accessors use `GLIBC_2.3` on x86-64 and `GLIBC_2.17` on AArch64. PLT/GOT function and macro behavior is compared against GNU libc over the C-locale byte and signed-char table range on x86-64; arbitrary locales and AArch64 execution remain outside this plugin test scope.
 - `dladdr` and `dl_iterate_phdr` are classified as `WrapsHostLibc`; standalone fallback paths remain narrower than host dynamic-linker metadata
 - Hardened mode heals invalid `dlopen` flags to `RTLD_NOW` before local resolution
@@ -3923,7 +3923,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,996 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 227,276 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
 | `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,078 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
