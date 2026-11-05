@@ -6,8 +6,8 @@
 //! This is a bounded addition to the runtime surface, not a new libc engine.
 
 use crate::{
-    ctype_abi as ctype, malloc_abi as allocation, mmap_abi as mapping, stdlib_abi as stdlib,
-    string_abi as strings, unistd_abi as unistd,
+    ctype_abi as ctype, isoc_abi as c23, malloc_abi as allocation, mmap_abi as mapping,
+    stdlib_abi as stdlib, string_abi as strings, unistd_abi as unistd, wchar_abi as wide,
 };
 
 #[path = "dlfcn_io.rs"]
@@ -60,6 +60,54 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         return version
             .is_none_or(|version| version == "GLIBC_2.27")
             .then_some(mapping::mlock2 as *const () as usize as u64);
+    }
+    let locale_version = if cfg!(target_arch = "aarch64") {
+        baseline
+    } else {
+        "GLIBC_2.3"
+    };
+    // Narrow long-long locale aliases arrived later on x86-64; their wide
+    // counterparts use GLIBC_2.3. All legacy names share the ARM baseline.
+    let narrow_ll_locale_version = if cfg!(target_arch = "aarch64") {
+        baseline
+    } else {
+        "GLIBC_2.3.3"
+    };
+    let integer = match name {
+        "strtol_l" => Some((stdlib::strtol_l as *const (), locale_version)),
+        "strtoul_l" => Some((stdlib::strtoul_l as *const (), locale_version)),
+        "strtoll_l" => Some((stdlib::strtoll_l as *const (), narrow_ll_locale_version)),
+        "strtoull_l" => Some((stdlib::strtoull_l as *const (), narrow_ll_locale_version)),
+        "wcstol_l" => Some((wide::wcstol_l as *const (), locale_version)),
+        "wcstoul_l" => Some((wide::wcstoul_l as *const (), locale_version)),
+        "wcstoll_l" => Some((wide::wcstoll_l as *const (), locale_version)),
+        "wcstoull_l" => Some((wide::wcstoull_l as *const (), locale_version)),
+        "__isoc23_strtol" => Some((c23::__isoc23_strtol as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoul" => Some((c23::__isoc23_strtoul as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoll" => Some((c23::__isoc23_strtoll as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoull" => Some((c23::__isoc23_strtoull as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoimax" => Some((c23::__isoc23_strtoimax as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoumax" => Some((c23::__isoc23_strtoumax as *const (), "GLIBC_2.38")),
+        "__isoc23_strtol_l" => Some((c23::__isoc23_strtol_l as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoul_l" => Some((c23::__isoc23_strtoul_l as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoll_l" => Some((c23::__isoc23_strtoll_l as *const (), "GLIBC_2.38")),
+        "__isoc23_strtoull_l" => Some((c23::__isoc23_strtoull_l as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstol" => Some((c23::__isoc23_wcstol as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoul" => Some((c23::__isoc23_wcstoul as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoll" => Some((c23::__isoc23_wcstoll as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoull" => Some((c23::__isoc23_wcstoull as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoimax" => Some((c23::__isoc23_wcstoimax as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoumax" => Some((c23::__isoc23_wcstoumax as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstol_l" => Some((c23::__isoc23_wcstol_l as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoul_l" => Some((c23::__isoc23_wcstoul_l as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoll_l" => Some((c23::__isoc23_wcstoll_l as *const (), "GLIBC_2.38")),
+        "__isoc23_wcstoull_l" => Some((c23::__isoc23_wcstoull_l as *const (), "GLIBC_2.38")),
+        _ => None,
+    };
+    if let Some((function, expected_version)) = integer {
+        return version
+            .is_none_or(|version| version == expected_version)
+            .then_some(function as usize as u64);
     }
     // The table accessors were introduced after the x86-64 baseline. Keep
     // their real version separate from the ordinary byte-ctype functions.
@@ -116,6 +164,12 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "strtoull" => stdlib::strtoull as *const (),
         "strtoimax" => stdlib::strtoimax as *const (),
         "strtoumax" => stdlib::strtoumax as *const (),
+        "wcstol" => wide::wcstol as *const (),
+        "wcstoul" => wide::wcstoul as *const (),
+        "wcstoll" => wide::wcstoll as *const (),
+        "wcstoull" => wide::wcstoull as *const (),
+        "wcstoimax" => wide::wcstoimax as *const (),
+        "wcstoumax" => wide::wcstoumax as *const (),
         "isalnum" => ctype::isalnum as *const (),
         "isalpha" => ctype::isalpha as *const (),
         "isblank" => ctype::isblank as *const (),
