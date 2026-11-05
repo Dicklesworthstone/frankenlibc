@@ -307,3 +307,408 @@ fn scanf_and_its_isoc_aliases_exact_char_matches_glibc_on_stdin() {
         "fl __isoc23_scanf failed"
     );
 }
+
+// Actual C va_list forwarding for every narrow/wide stream and string shape.
+// Functions are passed in by the test, so the C compiler cannot redirect the
+// named legacy/C99/C23 symbol or silently replace the independent host oracle.
+const DIALECT_BRIDGE: &str = r#"
+#include <stdarg.h>
+#include <stdio.h>
+#include <wchar.h>
+#define BRIDGE(T, P) \
+static int P##_file_v(void *fn, FILE *s, const T *format, ...) { \
+    va_list ap; va_start(ap, format); \
+    int rc = ((int (*)(FILE *, const T *, va_list))fn)(s, format, ap); \
+    va_end(ap); return rc; \
+} \
+static int P##_input_v(void *fn, const T *format, ...) { \
+    va_list ap; va_start(ap, format); \
+    int rc = ((int (*)(const T *, va_list))fn)(format, ap); \
+    va_end(ap); return rc; \
+} \
+static int P##_string_v(void *fn, const T *input, const T *format, ...) { \
+    va_list ap; va_start(ap, format); \
+    int rc = ((int (*)(const T *, const T *, va_list))fn)(input, format, ap); \
+    va_end(ap); return rc; \
+} \
+int P##_stream(void *fn, int kind, FILE *s, const T *format, int *value, int *n) { \
+    switch (kind) { \
+    case 0: return ((int (*)(FILE *, const T *, ...))fn)(s, format, value, n); \
+    case 1: return P##_file_v(fn, s, format, value, n); \
+    case 2: return ((int (*)(const T *, ...))fn)(format, value, n); \
+    case 3: return P##_input_v(fn, format, value, n); \
+    default: return -999; \
+    } \
+} \
+int P##_string(void *fn, int is_v, const T *input, const T *format, \
+               int *value, int *n, T *tail) { \
+    if (is_v) return P##_string_v(fn, input, format, value, n, tail); \
+    return ((int (*)(const T *, const T *, ...))fn)(input, format, value, n, tail); \
+}
+BRIDGE(char, narrow)
+BRIDGE(wchar_t, wide)
+"#;
+
+type StreamBridge<T> = unsafe extern "C" fn(
+    *mut c_void,
+    c_int,
+    *mut c_void,
+    *const T,
+    *mut c_int,
+    *mut c_int,
+) -> c_int;
+type StringBridge<T> = unsafe extern "C" fn(
+    *mut c_void,
+    c_int,
+    *const T,
+    *const T,
+    *mut c_int,
+    *mut c_int,
+    *mut T,
+) -> c_int;
+type FtelloFn = unsafe extern "C-unwind" fn(*mut c_void) -> libc::off_t;
+type FgetcFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type FgetwcFn = unsafe extern "C-unwind" fn(*mut c_void) -> u32;
+
+#[derive(Clone, Copy)]
+struct ScanFiles {
+    open: FopenFn,
+    close: FcloseFn,
+    tell: FtelloFn,
+    get_byte: FgetcFn,
+    get_wide: FgetwcFn,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PrefixOutcome {
+    result: c_int,
+    value: c_int,
+    consumed: c_int,
+    position: libc::off_t,
+    tail: c_int,
+}
+
+fn run_prefix_stream<T>(
+    bridge: StreamBridge<T>,
+    target: *mut c_void,
+    kind: c_int,
+    format: *const T,
+    path: &CString,
+    files: ScanFiles,
+    stdin_cell: *mut *mut c_void,
+    wide: bool,
+) -> PrefixOutcome {
+    let stream = unsafe { (files.open)(path.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "provider fopen failed");
+    let saved_stdin = unsafe { stdin_cell.read() };
+    if kind >= 2 {
+        unsafe { stdin_cell.write(stream) };
+    }
+    let mut out = PrefixOutcome {
+        result: -999,
+        value: 917,
+        consumed: -1,
+        position: -1,
+        tail: -999,
+    };
+    out.result = unsafe {
+        bridge(
+            target,
+            kind,
+            stream,
+            format,
+            &mut out.value,
+            &mut out.consumed,
+        )
+    };
+    if kind >= 2 {
+        unsafe { stdin_cell.write(saved_stdin) };
+    }
+    out.position = unsafe { (files.tell)(stream) };
+    out.tail = if wide {
+        unsafe { (files.get_wide)(stream) as c_int }
+    } else {
+        unsafe { (files.get_byte)(stream) }
+    };
+    assert_eq!(unsafe { (files.close)(stream) }, 0);
+    out
+}
+
+#[test]
+fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
+    use frankenlibc_abi::{dlfcn_abi as dl, isoc_abi as iso, stdio_abi as io, wchar_abi as wc};
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Command;
+
+    // Redirected stdin is process state. An exact-test child prevents this
+    // matrix from changing the stdin seen by concurrently running tests.
+    const TEST: &str = "scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams";
+    const CHILD: &str = "FRANKENLIBC_SCANF_DIALECT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated dialect matrix");
+        assert!(
+            output.status.success(),
+            "dialect child failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("fl_scanf_dialects_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("bridge.c");
+    let library = dir.join("bridge.so");
+    std::fs::write(&source, DIALECT_BRIDGE).unwrap();
+    let output = Command::new("cc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-nostdlib",
+        ])
+        .arg(&source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .expect("compile C va_list bridge");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    type Open = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+    type Symbol = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let open: Open = unsafe { host_fn(c"dlopen", dl::dlopen as *const ()) };
+    let symbol: Symbol = unsafe { host_fn(c"dlsym", dl::dlsym as *const ()) };
+    let close: Close = unsafe { host_fn(c"dlclose", dl::dlclose as *const ()) };
+    let path = CString::new(library.as_os_str().as_bytes()).unwrap();
+    let handle = unsafe { open(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "host dlopen of bridge failed");
+    let resolve = |name: &std::ffi::CStr| {
+        let address = unsafe { symbol(handle, name.as_ptr()) };
+        assert!(!address.is_null(), "missing C bridge {name:?}");
+        address
+    };
+    let narrow: StreamBridge<c_char> = unsafe { std::mem::transmute(resolve(c"narrow_stream")) };
+    let wide: StreamBridge<libc::wchar_t> = unsafe { std::mem::transmute(resolve(c"wide_stream")) };
+    let wide_string: StringBridge<libc::wchar_t> =
+        unsafe { std::mem::transmute(resolve(c"wide_string")) };
+    let native = ScanFiles {
+        open: io::fopen,
+        close: io::fclose,
+        tell: io::ftello,
+        get_byte: io::fgetc,
+        get_wide: wc::fgetwc,
+    };
+    let host = ScanFiles {
+        open: unsafe { host_fn(c"fopen", io::fopen as *const ()) },
+        close: unsafe { host_fn(c"fclose", io::fclose as *const ()) },
+        tell: unsafe { host_fn(c"ftello", io::ftello as *const ()) },
+        get_byte: unsafe { host_fn(c"fgetc", io::fgetc as *const ()) },
+        get_wide: unsafe { host_fn(c"fgetwc", wc::fgetwc as *const ()) },
+    };
+    let native_stdin = std::ptr::addr_of_mut!(io::stdin);
+    let host_stdin = unsafe {
+        dlsym_oracle::host_addr(c"stdin", native_stdin.cast::<()>()).cast::<*mut c_void>()
+    };
+    let wchar = |text: &str| {
+        text.chars()
+            .map(|c| c as libc::wchar_t)
+            .chain([0])
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        ("0b101!", "%i%n"),
+        ("-0B101!", "%i%n"),
+        ("0b!", "%i%n"),
+        ("0b2!", "%i%n"),
+        ("0b", "%i%n"),
+        ("0b101!", "%1i%n"),
+        ("0b101!", "%2i%n"),
+        ("0b101!", "%3i%n"),
+        ("0x!", "%i%n"),
+        ("-0X!", "%i%n"),
+        ("0x", "%i%n"),
+        ("123!", "%i%n"),
+        ("?", "%i%n"),
+        ("", "%i%n"),
+    ];
+    let arms: [(&str, [*const (); 4], [*const (); 4], [*const (); 2]); 3] = [
+        (
+            "",
+            [
+                io::fscanf as *const (),
+                io::vfscanf as *const (),
+                io::scanf as *const (),
+                io::vscanf as *const (),
+            ],
+            [
+                wc::fwscanf as *const (),
+                wc::vfwscanf as *const (),
+                wc::wscanf as *const (),
+                wc::vwscanf as *const (),
+            ],
+            [wc::swscanf as *const (), wc::vswscanf as *const ()],
+        ),
+        (
+            "__isoc99_",
+            [
+                io::__isoc99_fscanf as *const (),
+                io::__isoc99_vfscanf as *const (),
+                io::__isoc99_scanf as *const (),
+                io::__isoc99_vscanf as *const (),
+            ],
+            [
+                iso::__isoc99_fwscanf as *const (),
+                iso::__isoc99_vfwscanf as *const (),
+                iso::__isoc99_wscanf as *const (),
+                iso::__isoc99_vwscanf as *const (),
+            ],
+            [
+                iso::__isoc99_swscanf as *const (),
+                iso::__isoc99_vswscanf as *const (),
+            ],
+        ),
+        (
+            "__isoc23_",
+            [
+                iso::__isoc23_fscanf as *const (),
+                iso::__isoc23_vfscanf as *const (),
+                iso::__isoc23_scanf as *const (),
+                iso::__isoc23_vscanf as *const (),
+            ],
+            [
+                iso::__isoc23_fwscanf as *const (),
+                iso::__isoc23_vfwscanf as *const (),
+                iso::__isoc23_wscanf as *const (),
+                iso::__isoc23_vwscanf as *const (),
+            ],
+            [
+                iso::__isoc23_swscanf as *const (),
+                iso::__isoc23_vswscanf as *const (),
+            ],
+        ),
+    ];
+    let file = dir.join("input");
+    let file_name = CString::new(file.as_os_str().as_bytes()).unwrap();
+    let mut comparisons = 0;
+    for (prefix, narrow_arms, wide_arms, string_arms) in arms {
+        for (kind, (narrow_name, wide_name)) in [
+            ("fscanf", "fwscanf"),
+            ("vfscanf", "vfwscanf"),
+            ("scanf", "wscanf"),
+            ("vscanf", "vwscanf"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let narrow_name = CString::new(format!("{prefix}{narrow_name}")).unwrap();
+            let wide_name = CString::new(format!("{prefix}{wide_name}")).unwrap();
+            let host_narrow = unsafe { dlsym_oracle::host_addr(&narrow_name, narrow_arms[kind]) };
+            let host_wide = unsafe { dlsym_oracle::host_addr(&wide_name, wide_arms[kind]) };
+            for (input, format) in cases {
+                std::fs::write(&file, input).unwrap();
+                let fmt = CString::new(format).unwrap();
+                let wfmt = wchar(format);
+                let expected_narrow = run_prefix_stream(
+                    narrow,
+                    host_narrow,
+                    kind as c_int,
+                    fmt.as_ptr(),
+                    &file_name,
+                    host,
+                    host_stdin,
+                    false,
+                );
+                let expected_wide = run_prefix_stream(
+                    wide,
+                    host_wide,
+                    kind as c_int,
+                    wfmt.as_ptr(),
+                    &file_name,
+                    host,
+                    host_stdin,
+                    true,
+                );
+                assert_eq!(
+                    expected_narrow, expected_wide,
+                    "GNU narrow/wide ASCII prefix parity"
+                );
+                for (owner, files) in [("native", native), ("foreign", host)] {
+                    let got = run_prefix_stream(
+                        narrow,
+                        narrow_arms[kind].cast_mut().cast(),
+                        kind as c_int,
+                        fmt.as_ptr(),
+                        &file_name,
+                        files,
+                        native_stdin,
+                        false,
+                    );
+                    assert_eq!(
+                        got, expected_narrow,
+                        "{narrow_name:?} {owner}: {input:?} {format:?}"
+                    );
+                    let got = run_prefix_stream(
+                        wide,
+                        wide_arms[kind].cast_mut().cast(),
+                        kind as c_int,
+                        wfmt.as_ptr(),
+                        &file_name,
+                        files,
+                        native_stdin,
+                        true,
+                    );
+                    assert_eq!(
+                        got, expected_wide,
+                        "{wide_name:?} {owner}: {input:?} {format:?}"
+                    );
+                    comparisons += 2;
+                }
+            }
+        }
+        for (is_v, suffix) in ["swscanf", "vswscanf"].into_iter().enumerate() {
+            let name = CString::new(format!("{prefix}{suffix}")).unwrap();
+            let expected = unsafe { dlsym_oracle::host_addr(&name, string_arms[is_v]) };
+            for (input, format) in cases {
+                let text = wchar(input);
+                let fmt = wchar(&format!("{format}%lc"));
+                let scan = |target| {
+                    let (mut value, mut consumed, mut tail) = (917, -1, '?' as libc::wchar_t);
+                    let rc = unsafe {
+                        wide_string(
+                            target,
+                            is_v as c_int,
+                            text.as_ptr(),
+                            fmt.as_ptr(),
+                            &mut value,
+                            &mut consumed,
+                            &mut tail,
+                        )
+                    };
+                    (rc, value, consumed, tail)
+                };
+                assert_eq!(
+                    scan(string_arms[is_v].cast_mut().cast()),
+                    scan(expected),
+                    "{name:?}: {input:?} {format:?}"
+                );
+                comparisons += 1;
+            }
+        }
+    }
+    assert_eq!(comparisons, 756);
+    println!("scanf dialect matrix: {comparisons} exact-symbol GNU comparisons");
+    assert_eq!(unsafe { close(handle) }, 0);
+}

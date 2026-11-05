@@ -251,6 +251,72 @@ int scan_values(unsigned route) {
     return 0;
 }
 
+/* These expectations were observed through the exact GNU symbol for each
+   route. A new glibc version does not change legacy/C99 %i into C23 %i. */
+int scan_dialects(unsigned route, int kind) {
+    EXPECT(route < 6 && kind >= 0 && kind <= 2, 1);
+    struct Case {
+        const char *text, *string_format, *stream_format;
+        int legacy_value, c23_value, legacy_count, c23_count;
+    };
+    static const struct Case cases[] = {
+        {"0b101!", "%i%n%c", "%i%n", 0, 5, 1, 5},
+        {"-0B101!", "%i%n%c", "%i%n", 0, -5, 2, 6},
+        {"+0b101!", "%i%n%c", "%i%n", 0, 5, 2, 6},
+        {"0b!", "%i%n%c", "%i%n", 0, 0, 1, 2},
+        {"0b2!", "%i%n%c", "%i%n", 0, 0, 1, 2},
+        {"0b", "%i%n%c", "%i%n", 0, 0, 1, 2},
+        {"0b101!", "%1i%n%c", "%1i%n", 0, 0, 1, 1},
+        {"0b101!", "%2i%n%c", "%2i%n", 0, 0, 1, 2},
+        {"0b101!", "%3i%n%c", "%3i%n", 0, 1, 1, 3},
+        {"-0b1!", "%3i%n%c", "%3i%n", 0, 0, 2, 3},
+        {"-0b1!", "%4i%n%c", "%4i%n", 0, -1, 2, 4},
+        {"0x!", "%i%n%c", "%i%n", 0, 0, 2, 2},
+        {"0x", "%i%n%c", "%i%n", 0, 0, 2, 2},
+        {"-0X!", "%i%n%c", "%i%n", 0, 0, 3, 3},
+        {"0x1!", "%1i%n%c", "%1i%n", 0, 0, 1, 1},
+        {"0x1!", "%2i%n%c", "%2i%n", 0, 0, 2, 2},
+        {"09!", "%i%n%c", "%i%n", 0, 0, 1, 1},
+        {"123!", "%i%n%c", "%i%n", 123, 123, 3, 3}
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+        const struct Case *c = &cases[i];
+        int value = 917, consumed = -1, result, tail;
+        int wanted_value = route >= 4 ? c->c23_value : c->legacy_value;
+        int wanted_count = route >= 4 ? c->c23_count : c->legacy_count;
+        int wanted_tail = c->text[wanted_count] ? c->text[wanted_count] : EOF;
+        if (kind == 0) {
+            char next = '?';
+            result = string_scanners[route](c->text, c->string_format,
+                                            &value, &consumed, &next);
+            EXPECT(result == (wanted_tail == EOF ? 1 : 2), 100 + (int)i);
+            tail = next == '?' && wanted_tail == EOF ? EOF : (unsigned char)next;
+        } else {
+            FILE *s = scan_memory((void *)c->text, strlen(c->text));
+            EXPECT(s, 200 + (int)i);
+            if (kind == 1) {
+                result = file_scanners[route](s, c->stream_format, &value, &consumed);
+            } else {
+                FILE *saved = stdin; stdin = s;
+                result = input_scanners[route](c->stream_format, &value, &consumed);
+                stdin = saved;
+            }
+            EXPECT(result == 1 && ftello(s) == wanted_count, 300 + (int)i);
+            tail = fgetc(s);
+            EXPECT(fclose(s) == 0, 400 + (int)i);
+        }
+        EXPECT(value == wanted_value && consumed == wanted_count, 500 + (int)i);
+        EXPECT(tail == wanted_tail, 600 + (int)i);
+    }
+    int consumed = -1; char tail = '?';
+    EXPECT(string_scanners[route]("0b101!", "%*i%n%c", &consumed, &tail) == 1, 701);
+    EXPECT(consumed == (route >= 4 ? 5 : 1) && tail == (route >= 4 ? '!' : 'b'), 702);
+    unsigned hex = 917; consumed = -1; tail = '?';
+    EXPECT(string_scanners[route]("0x!", "%x%n%c", &hex, &consumed, &tail) == 2, 703);
+    EXPECT(hex == 0 && consumed == 2 && tail == '!', 704);
+    return 0;
+}
+
 int scan_streams(const char *path, unsigned route) {
     EXPECT(route < 6, 1);
     FILE *s = fopen(path, "w+"); EXPECT(s, 2);
@@ -756,6 +822,33 @@ fn stream_scanning_aliases_preserve_variadic_values_and_versions() {
                     unsafe { std::mem::transmute(api.symbol(handle, c"scan_values")) };
                 for route in 0..6 {
                     assert_eq!(unsafe { call(route) }, 0, "scanner route {route}");
+                }
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn stream_scanning_dialects_preserve_prefix_counts_and_unread_input() {
+    isolated(
+        "stream_scanning_dialects_preserve_prefix_counts_and_unread_input",
+        false,
+        |api| {
+            for options in [&["-DSCAN_INPUT"][..], &["-DSCAN_INPUT", "-fno-plt"][..]] {
+                let fixture = Fixture::new(options);
+                let handle = api.open(&fixture.library, 0);
+                check_scan_frontends(api, handle);
+                let call: unsafe extern "C" fn(u32, c_int) -> c_int =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"scan_dialects")) };
+                for route in 0..6 {
+                    for kind in 0..3 {
+                        assert_eq!(
+                            unsafe { call(route, kind) },
+                            0,
+                            "scanner route {route}, input kind {kind}"
+                        );
+                    }
                 }
                 api.close(handle);
             }

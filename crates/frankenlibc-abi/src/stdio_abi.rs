@@ -54,6 +54,9 @@ type HostGetdelimFn =
 type HostGetlineFn =
     unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
 type HostVfscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
+#[cfg(not(feature = "standalone"))]
+type HostVfwscanfFn =
+    unsafe extern "C-unwind" fn(*mut c_void, *const libc::wchar_t, *mut c_void) -> c_int;
 type HostFgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
 type HostFsetposFn = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
 type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
@@ -80,6 +83,14 @@ static HOST_SETVBUF_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETDELIM_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETLINE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_ISOC99_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_ISOC23_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
+static HOST_VFWSCANF_FN: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
+static HOST_ISOC99_VFWSCANF_FN: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
+static HOST_ISOC23_VFWSCANF_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FGETPOS_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FSETPOS_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FREOPEN_FN: OnceLock<usize> = OnceLock::new();
@@ -3161,9 +3172,41 @@ unsafe fn host_setvbuf_fn() -> Option<HostSetvbufFn> {
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_vfscanf_fn() -> Option<HostVfscanfFn> {
-    unsafe { host_stdio_symbol(&HOST_VFSCANF_FN, "vfscanf") }
-        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+unsafe fn host_vfscanf_fn(dialect: ScanfDialect) -> Option<HostVfscanfFn> {
+    let (slot, name) = match dialect {
+        ScanfDialect::Legacy => (&HOST_VFSCANF_FN, "vfscanf"),
+        ScanfDialect::C99 => (&HOST_ISOC99_VFSCANF_FN, "__isoc99_vfscanf"),
+        ScanfDialect::C23 => (&HOST_ISOC23_VFSCANF_FN, "__isoc23_vfscanf"),
+    };
+    unsafe { host_stdio_symbol(slot, name) }.map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+/// Preserve the selected wide scanf dialect when the host owns the FILE.
+/// Native streams stay on the local wide engine; a foreign FILE must not be
+/// interpreted as a missing native stream and reported as empty input.
+#[cfg(not(feature = "standalone"))]
+pub(crate) unsafe fn try_host_vfwscanf(
+    stream: *mut c_void,
+    format: *const libc::wchar_t,
+    ap: *mut c_void,
+    dialect: ScanfDialect,
+) -> Option<c_int> {
+    if !may_delegate_to_host(stream, canonical_stream_id(stream)) {
+        return None;
+    }
+    let (slot, name) = match dialect {
+        ScanfDialect::Legacy => (&HOST_VFWSCANF_FN, "vfwscanf"),
+        ScanfDialect::C99 => (&HOST_ISOC99_VFWSCANF_FN, "__isoc99_vfwscanf"),
+        ScanfDialect::C23 => (&HOST_ISOC23_VFWSCANF_FN, "__isoc23_vfwscanf"),
+    };
+    let address = unsafe { host_stdio_symbol(slot, name) }?;
+    let host: HostVfwscanfFn = unsafe { std::mem::transmute(address) };
+    let result = unsafe { host(stream, format, ap) };
+    mark_host_io_started(stream);
+    if result < 0 {
+        unsafe { sync_host_errno(0) };
+    }
+    Some(result)
 }
 
 #[inline]
@@ -13765,12 +13808,22 @@ macro_rules! scanf_write_one {
     }};
 }
 
+/// The symbol the caller selected determines the scanf dialect, independently
+/// of the compiler used to build this library or the host libc's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScanfDialect {
+    Legacy,
+    C99,
+    C23,
+}
+
 /// Core scanf logic: parse format, scan input, return result and directives.
 pub(crate) fn scanf_core(
     input: &[u8],
     format: *const c_char,
+    dialect: ScanfDialect,
 ) -> Option<(ScanResult, ScanDirectives)> {
-    scanf_core_impl(input, format, false)
+    scanf_core_impl(input, format, false, dialect)
 }
 
 /// WIDE-stream variant for the `swscanf`/`fwscanf` family: `input` is the wide
@@ -13779,14 +13832,16 @@ pub(crate) fn scanf_core(
 pub(crate) fn scanf_core_wide(
     input: &[u8],
     format: *const c_char,
+    dialect: ScanfDialect,
 ) -> Option<(ScanResult, ScanDirectives)> {
-    scanf_core_impl(input, format, true)
+    scanf_core_impl(input, format, true, dialect)
 }
 
 fn scanf_core_impl(
     input: &[u8],
     format: *const c_char,
     wide_input: bool,
+    dialect: ScanfDialect,
 ) -> Option<(ScanResult, ScanDirectives)> {
     // PERF (bd-2g7oyh, same lever family as the sscanf input scan):
     // this is the SHARED scanf engine, so EVERY scanf variant (sscanf/fscanf/
@@ -13798,14 +13853,17 @@ fn scanf_core_impl(
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
     let mut directives = parse_scanf_format(fmt_bytes);
-    let result = if wide_input {
-        // Mark every conversion as reading from a wide stream so leading-
-        // whitespace skipping and `%s` token boundaries are Unicode-aware.
+    if wide_input || dialect == ScanfDialect::C23 {
+        // Keep the input and dialect flags on this call's directives: a nested
+        // scan must not change the outer call's prefix or whitespace policy.
         for dir in directives.as_mut_slice() {
             if let ScanDirective::Spec(spec) = dir {
-                spec.wide_input = true;
+                spec.wide_input = wide_input;
+                spec.binary_prefix = dialect == ScanfDialect::C23;
             }
         }
+    }
+    let result = if wide_input {
         frankenlibc_core::stdio::scanf::scan_input_wide(input, directives.as_slice())
     } else {
         scan_input(input, directives.as_slice())
@@ -14163,7 +14221,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return libc::EOF;
     }
     let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
-    let Some((result, directives)) = scanf_core(input, format) else {
+    let Some((result, directives)) = scanf_core(input, format, ScanfDialect::Legacy) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
@@ -14206,7 +14264,7 @@ pub unsafe extern "C-unwind" fn fscanf(
     // is false and both paths run the engine (bd-r8hpym).
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
-        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn() }
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn(ScanfDialect::Legacy) }
     {
         // SAFETY: on x86_64 Linux a Rust `VaListImpl` has C's `va_list` layout,
         // which is what every v* entry point here relies on.
@@ -14239,7 +14297,7 @@ pub unsafe extern "C-unwind" fn fscanf(
         return libc::EOF;
     }
 
-    let Some((result, directives)) = scanf_core(&input_buf, format) else {
+    let Some((result, directives)) = scanf_core(&input_buf, format, ScanfDialect::Legacy) else {
         scanf_finish_consume(id, scanf_seek_base, &input_buf, 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -14270,6 +14328,18 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
     }
     let stdin_ptr = active_stdin_stream();
     let stdin_id = canonical_stream_id(stdin_ptr);
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stdin_ptr, stdin_id)
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn(ScanfDialect::Legacy) }
+    {
+        let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+        let rc = unsafe { host_vfscanf(stdin_ptr, format, ap) };
+        mark_host_io_started(stdin_ptr);
+        if rc < 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, stdin_id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -14291,7 +14361,7 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
         return libc::EOF;
     }
 
-    let Some((result, directives)) = scanf_core(&input_buf, format) else {
+    let Some((result, directives)) = scanf_core(&input_buf, format, ScanfDialect::Legacy) else {
         scanf_finish_consume(stdin_id, scanf_seek_base, &input_buf, 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -14324,6 +14394,15 @@ pub unsafe extern "C" fn vsscanf(
     s: *const c_char,
     format: *const c_char,
     ap: *mut c_void,
+) -> c_int {
+    unsafe { vsscanf_with_dialect(s, format, ap, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vsscanf_with_dialect(
+    s: *const c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+    dialect: ScanfDialect,
 ) -> c_int {
     if s.is_null() || format.is_null() || ap.is_null() {
         return -1;
@@ -14387,7 +14466,7 @@ pub unsafe extern "C" fn vsscanf(
         return libc::EOF;
     }
     let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
-    let Some((result, directives)) = scanf_core(input, format) else {
+    let Some((result, directives)) = scanf_core(input, format, dialect) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
@@ -14434,6 +14513,16 @@ pub(crate) unsafe fn vfscanf_for_caller(
     ap: *mut c_void,
     caller: usize,
 ) -> c_int {
+    unsafe { vfscanf_with_dialect(stream, format, ap, caller, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vfscanf_with_dialect(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
     if stream.is_null() || format.is_null() || ap.is_null() {
         return -1;
     }
@@ -14441,7 +14530,7 @@ pub(crate) unsafe fn vfscanf_for_caller(
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
-        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn() }
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn(dialect) }
     {
         let rc = unsafe { host_vfscanf(stream, format, ap) };
         mark_host_io_started(stream);
@@ -14471,7 +14560,7 @@ pub(crate) unsafe fn vfscanf_for_caller(
         return libc::EOF;
     }
 
-    let Some((result, directives)) = scanf_core(&input_buf, format) else {
+    let Some((result, directives)) = scanf_core(&input_buf, format, dialect) else {
         scanf_finish_consume(id, scanf_seek_base, &input_buf, 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -14507,7 +14596,16 @@ pub(crate) unsafe fn vscanf_for_caller(
     ap: *mut c_void,
     caller: usize,
 ) -> c_int {
-    unsafe { vfscanf_for_caller(active_stdin_stream(), format, ap, caller) }
+    unsafe { vscanf_with_dialect(format, ap, caller, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vscanf_with_dialect(
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
+    unsafe { vfscanf_with_dialect(active_stdin_stream(), format, ap, caller, dialect) }
 }
 
 /// Write scanned values via raw va_list pointer (v* functions).
@@ -17500,7 +17598,14 @@ pub unsafe extern "C-unwind" fn setbuffer(stream: *mut c_void, buf: *mut c_char,
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc99_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
-    unsafe { vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+    unsafe {
+        vscanf_with_dialect(
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
+        )
+    }
 }
 
 /// `__isoc99_sscanf` — C99-conformant sscanf (alias for sscanf).
@@ -17571,7 +17676,7 @@ pub unsafe extern "C" fn __isoc99_sscanf(
         }
     }
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
-    unsafe { vsscanf(s, format, ap) }
+    unsafe { vsscanf_with_dialect(s, format, ap, ScanfDialect::C99) }
 }
 
 /// `__isoc99_fscanf` — C99-conformant fscanf (alias for fscanf).
@@ -17583,11 +17688,12 @@ pub unsafe extern "C-unwind" fn __isoc99_fscanf(
 ) -> c_int {
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
     unsafe {
-        vfscanf_for_caller(
+        vfscanf_with_dialect(
             stream,
             format,
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
         )
     }
 }
@@ -17595,7 +17701,14 @@ pub unsafe extern "C-unwind" fn __isoc99_fscanf(
 /// `__isoc99_vscanf` — C99-conformant vscanf (alias for vscanf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __isoc99_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    unsafe { vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+    unsafe {
+        vscanf_with_dialect(
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
+        )
+    }
 }
 
 /// `__isoc99_vsscanf` — C99-conformant vsscanf (alias for vsscanf).
@@ -17605,7 +17718,7 @@ pub unsafe extern "C" fn __isoc99_vsscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    unsafe { vsscanf(s, format, ap) }
+    unsafe { vsscanf_with_dialect(s, format, ap, ScanfDialect::C99) }
 }
 
 /// `__isoc99_vfscanf` — C99-conformant vfscanf (alias for vfscanf).
@@ -17616,11 +17729,12 @@ pub unsafe extern "C-unwind" fn __isoc99_vfscanf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe {
-        vfscanf_for_caller(
+        vfscanf_with_dialect(
             stream,
             format,
             ap,
             core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
         )
     }
 }

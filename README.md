@@ -3923,9 +3923,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 227,276 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 227,488 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
-| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,078 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,177 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

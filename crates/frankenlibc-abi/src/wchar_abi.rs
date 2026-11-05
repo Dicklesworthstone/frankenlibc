@@ -7173,6 +7173,8 @@ pub(crate) unsafe fn vfwprintf_for_caller(
 // wscanf family — Implemented (native scanf engine + wide conversion)
 // ===========================================================================
 
+use super::stdio_abi::ScanfDialect;
+
 unsafe fn wide_scanf_format_cstr(format: *const libc::wchar_t) -> Option<std::ffi::CString> {
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     if fmt_narrow.is_empty() {
@@ -7196,7 +7198,8 @@ pub unsafe extern "C" fn swscanf(
         return 0;
     };
     let input = unsafe { wide_input_to_narrow(s) };
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    let Some((result, directives)) =
+        super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), ScanfDialect::Legacy)
     else {
         return libc::EOF;
     };
@@ -7230,7 +7233,21 @@ unsafe fn scan_one_wide_char(
 pub unsafe extern "C-unwind" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> c_int {
     let caller = core::intrinsics::return_address() as usize;
     let stdin_ptr = super::stdio_abi::active_stdin_stream();
-    if format.is_null() || !super::stdio_abi::orient_stream_wide(stdin_ptr) {
+    if format.is_null() {
+        return libc::EOF;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe {
+        super::stdio_abi::try_host_vfwscanf(
+            stdin_ptr,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            ScanfDialect::Legacy,
+        )
+    } {
+        return result;
+    }
+    if !super::stdio_abi::orient_stream_wide(stdin_ptr) {
         return libc::EOF;
     }
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
@@ -7246,7 +7263,7 @@ pub unsafe extern "C-unwind" fn wscanf(format: *const libc::wchar_t, mut args: .
         let (input, scanf_seek_base) =
             unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(sid, 4096, caller) };
         let Some((result, directives)) =
-            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), ScanfDialect::Legacy)
         else {
             super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, 0);
             return None;
@@ -7272,7 +7289,21 @@ pub unsafe extern "C-unwind" fn fwscanf(
     mut args: ...
 ) -> c_int {
     let caller = core::intrinsics::return_address() as usize;
-    if stream.is_null() || format.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
+    if stream.is_null() || format.is_null() {
+        return libc::EOF;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe {
+        super::stdio_abi::try_host_vfwscanf(
+            stream,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            ScanfDialect::Legacy,
+        )
+    } {
+        return result;
+    }
+    if !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
@@ -7288,7 +7319,7 @@ pub unsafe extern "C-unwind" fn fwscanf(
         let (input, scanf_seek_base) =
             unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
         let Some((result, directives)) =
-            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), ScanfDialect::Legacy)
         else {
             super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
             return None;
@@ -7313,6 +7344,15 @@ pub unsafe extern "C" fn vswscanf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
+    unsafe { vswscanf_with_dialect(s, format, ap, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vswscanf_with_dialect(
+    s: *const libc::wchar_t,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    dialect: ScanfDialect,
+) -> c_int {
     if s.is_null() || format.is_null() || ap.is_null() {
         return libc::EOF;
     }
@@ -7320,7 +7360,8 @@ pub unsafe extern "C" fn vswscanf(
         return 0;
     };
     let input = unsafe { wide_input_to_narrow(s) };
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    let Some((result, directives)) =
+        super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), dialect)
     else {
         return libc::EOF;
     };
@@ -7353,7 +7394,24 @@ pub(crate) unsafe fn vwscanf_for_caller(
     ap: *mut std::ffi::c_void,
     caller: usize,
 ) -> c_int {
-    unsafe { vfwscanf_for_caller(super::stdio_abi::active_stdin_stream(), format, ap, caller) }
+    unsafe { vwscanf_with_dialect(format, ap, caller, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vwscanf_with_dialect(
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
+    unsafe {
+        vfwscanf_with_dialect(
+            super::stdio_abi::active_stdin_stream(),
+            format,
+            ap,
+            caller,
+            dialect,
+        )
+    }
 }
 
 /// Native `vfwscanf`: scan from stream with va_list.
@@ -7379,11 +7437,26 @@ pub(crate) unsafe fn vfwscanf_for_caller(
     ap: *mut std::ffi::c_void,
     caller: usize,
 ) -> c_int {
-    if stream.is_null()
-        || format.is_null()
-        || ap.is_null()
-        || !super::stdio_abi::orient_stream_wide(stream)
+    unsafe { vfwscanf_with_dialect(stream, format, ap, caller, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vfwscanf_with_dialect(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
+    if stream.is_null() || format.is_null() || ap.is_null() {
+        return libc::EOF;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) =
+        unsafe { super::stdio_abi::try_host_vfwscanf(stream, format, ap, dialect) }
     {
+        return result;
+    }
+    if !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
@@ -7399,7 +7472,7 @@ pub(crate) unsafe fn vfwscanf_for_caller(
         let (input, scanf_seek_base) =
             unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
         let Some((result, directives)) =
-            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), dialect)
         else {
             super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
             return None;
