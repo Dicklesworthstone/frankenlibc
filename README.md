@@ -634,6 +634,7 @@ This is L0 interpose functionality: installed modules use the host dynamic loade
 - Interpose (`L0/L1`): `dlopen`, `dlsym`, and `dlclose` are classified as `WrapsHostLibc`; local main-program handles and self-contained pathname ELF64 DSOs use the phase-1 native path, while remaining loader cases delegate to host `ld.so`.
 - `dlerror` is native thread-local state
 - Self-contained ELF64 plugins can bind descriptor I/O and modern `stat`, `fstat`, `lstat`, `fstatat`, their `64` variants, and `statx` to the existing native ABI implementations. The metadata bindings serve both PLT/GOT relocation and caller-relative versioned lookup (`GLIBC_2.33` for modern stat names, `GLIBC_2.28` for `statx`). Legacy `__*xstat` interfaces and old-kernel `statx` fallback are outside this tested plugin scope.
+- Native plugins can also import `getentropy` and the three `arc4random` APIs. Caller-relative lookup accepts `GLIBC_2.25` for `getentropy` and `GLIBC_2.36` for `arc4random`, `arc4random_buf`, and `arc4random_uniform`. Real PLT/GOT calls and kernel-fault behavior are tested on x86-64; AArch64 execution and ELF-versioned relocations are outside this test scope.
 - `dladdr` and `dl_iterate_phdr` are classified as `WrapsHostLibc`; standalone fallback paths remain narrower than host dynamic-linker metadata
 - Hardened mode heals invalid `dlopen` flags to `RTLD_NOW` before local resolution
 - Replacement-level L2/L3 forbids any residual host `dlopen`/`dlsym`/`dlclose` fallback; any such call would be a release-blocking gate failure
@@ -3918,7 +3919,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,823 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 226,833 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
 | `crates/frankenlibc-core/src/` | 203 Rust files, 1,167,964 lines including generated codec tables |
 | Runtime math controllers | 71 modules |

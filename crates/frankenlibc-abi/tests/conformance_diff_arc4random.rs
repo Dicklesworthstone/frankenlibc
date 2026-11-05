@@ -137,7 +137,24 @@ fn arc4random_diff_coverage_report() {
 #[test]
 #[cfg(target_arch = "x86_64")]
 fn diff_entropy_kernel_fault_contract() {
-    use std::ffi::{CString, c_int};
+    entropy_contract(None);
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn native_entropy_plt_protocol() {
+    entropy_contract(Some(false));
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn native_entropy_got_protocol() {
+    entropy_contract(Some(true));
+}
+
+#[cfg(target_arch = "x86_64")]
+fn entropy_contract(plugin: Option<bool>) {
+    use std::ffi::{CString, c_char, c_int};
     use std::os::unix::ffi::OsStrExt;
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -197,8 +214,157 @@ fn diff_entropy_kernel_fault_contract() {
         // the matching prototype. The helper rejects the native definition.
         unsafe { dlsym_oracle::host_addr(names[index], native[index].cast_const().cast()) }
     });
+    let plugin = plugin.map(|got| {
+        let source = root.join("plugin.c");
+        let library = root.join("plugin.so");
+        std::fs::write(&source, ENTROPY_PLUGIN).unwrap();
+        let output = Command::new("gcc")
+            .args([
+                "-shared",
+                "-fPIC",
+                "-nostdlib",
+                "-O2",
+                "-fno-builtin",
+                "-fno-stack-protector",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wl,--hash-style=both",
+                if got { "-fno-plt" } else { "-fplt" },
+            ])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let object = frankenlibc_core::elf::ElfLoader::new(0)
+            .parse(&std::fs::read(&library).unwrap())
+            .unwrap();
+        assert!(
+            object.needed_libraries.is_empty(),
+            "host dependencies in plugin"
+        );
+        for (index, (symbol, wrapper)) in [
+            ("getentropy", "entropy_call_getentropy"),
+            ("arc4random", "entropy_call_draw"),
+            ("arc4random_buf", "entropy_call_fill"),
+            ("arc4random_uniform", "entropy_call_uniform"),
+            ("__errno_location", "entropy_call_errno"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(
+                object
+                    .undefined_symbols()
+                    .any(|(_, s)| object.symbol_name(s) == Some(symbol))
+            );
+            let output = Command::new("objdump")
+                .args(["-dr", &format!("--disassemble={wrapper}")])
+                .arg(&library)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "objdump failed");
+            let text = String::from_utf8(output.stdout).unwrap();
+            if got {
+                assert!(
+                    text.contains('*') && !text.contains("@plt>"),
+                    "GOT wrapper{index}: {text}"
+                );
+            } else {
+                assert!(
+                    text.contains(&format!("<{symbol}@plt>")),
+                    "PLT wrapper{index}: {text}"
+                );
+            }
+        }
+        library
+    });
     let mut failures = Vec::new();
-    for (provider, functions) in [("GNU", host), ("native", native)] {
+    for (provider, mut functions) in [("GNU", host), ("native", native)] {
+        type Open = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+        type Symbol = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        let mut loaded: Option<(*mut c_void, Close)> = None;
+        if let Some(library) = &plugin {
+            use frankenlibc_abi::dlfcn_abi as dl;
+            let (open, close, symbol): (Open, Close, Symbol) = if provider == "native" {
+                (dl::dlopen, dl::dlclose, dl::dlsym)
+            } else {
+                // SAFETY: each resolved GNU function uses the matching C ABI;
+                // the oracle helper rejects the corresponding native address.
+                unsafe {
+                    (
+                        dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
+                        dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
+                        dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
+                    )
+                }
+            };
+            let path = CString::new(library.as_os_str().as_bytes()).unwrap();
+            // SAFETY: path is live and NUL-terminated; keep the DSO mapped
+            // until all child calls through its wrappers have completed.
+            let handle = unsafe { open(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(
+                !handle.is_null(),
+                "{provider} entropy plugin failed to load"
+            );
+            if provider == "native" {
+                assert!(
+                    dl::native_dso_handle_for_tests(handle),
+                    "host fallback is not native"
+                );
+            }
+            // SAFETY: the dependency-free C plugin declares these exact
+            // selector and caller-relative lookup function signatures.
+            let (select, lookup): (
+                unsafe extern "C" fn(u32, u32) -> *mut c_void,
+                unsafe extern "C" fn() -> c_int,
+            ) = unsafe {
+                let select = symbol(handle, c"entropy_plugin_function".as_ptr());
+                let lookup = symbol(handle, c"entropy_plugin_lookup".as_ptr());
+                assert!(!select.is_null() && !lookup.is_null());
+                (
+                    std::mem::transmute::<*mut c_void, unsafe extern "C" fn(u32, u32) -> *mut c_void>(
+                        select,
+                    ),
+                    std::mem::transmute::<*mut c_void, unsafe extern "C" fn() -> c_int>(lookup),
+                )
+            };
+            for (index, name) in [
+                c"entropy_call_getentropy",
+                c"entropy_call_draw",
+                c"entropy_call_fill",
+                c"entropy_call_uniform",
+                c"entropy_call_errno",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                // SAFETY: indices 0..5 address the plugin's declared tables.
+                // Its actual imports must match the independent provider table;
+                // the observer calls exported wrappers to exercise real PLT/GOT.
+                unsafe {
+                    assert_eq!(
+                        select(index as u32, 0),
+                        functions[index],
+                        "{provider}: import{index}"
+                    );
+                    let wrapper = select(index as u32, 1);
+                    assert!(!wrapper.is_null());
+                    assert_eq!(wrapper, symbol(handle, name.as_ptr()));
+                    functions[index] = wrapper;
+                }
+            }
+            // SAFETY: lookup is the plugin's checked zero-argument C entry.
+            assert_eq!(unsafe { lookup() }, 0, "{provider}: caller-relative lookup");
+            loaded = Some((handle, close));
+        }
         for id in 0..35 {
             let expected = if (9..18).contains(&id) || (21..27).contains(&id) {
                 128 + libc::SIGABRT
@@ -219,6 +385,10 @@ fn diff_entropy_kernel_fault_contract() {
                 failures.push((provider, id, observed, expected));
             }
         }
+        if let Some((handle, close)) = loaded {
+            // SAFETY: all child processes and plugin calls have completed.
+            assert_eq!(unsafe { close(handle) }, 0);
+        }
     }
     // SAFETY: all child processes have exited; no observer pointer is reused.
     assert_eq!(unsafe { libc::dlclose(handle) }, 0);
@@ -227,3 +397,49 @@ fn diff_entropy_kernel_fault_contract() {
         "entropy contract failures: {failures:?}"
     );
 }
+
+#[cfg(target_arch = "x86_64")]
+const ENTROPY_PLUGIN: &str = r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int entropy_call_getentropy(void *p, size_t n) { return getentropy(p, n); }
+uint32_t entropy_call_draw(void) { return arc4random(); }
+void entropy_call_fill(void *p, size_t n) { arc4random_buf(p, n); }
+uint32_t entropy_call_uniform(uint32_t n) { return arc4random_uniform(n); }
+int *entropy_call_errno(void) { return __errno_location(); }
+
+void *entropy_plugin_function(unsigned index, unsigned wrappers) {
+    void *const imports[] = {(void *)getentropy, (void *)arc4random,
+        (void *)arc4random_buf, (void *)arc4random_uniform, (void *)__errno_location};
+    void *const calls[] = {(void *)entropy_call_getentropy, (void *)entropy_call_draw,
+        (void *)entropy_call_fill, (void *)entropy_call_uniform, (void *)entropy_call_errno};
+    return index < 5 ? (wrappers ? calls[index] : imports[index]) : 0;
+}
+
+int entropy_plugin_lookup(void) {
+    const char *const names[] = {"getentropy", "arc4random", "arc4random_buf",
+        "arc4random_uniform", "__errno_location"};
+    const char *const versions[] = {"GLIBC_2.25", "GLIBC_2.36", "GLIBC_2.36",
+        "GLIBC_2.36", "GLIBC_2.2.5"};
+    const char *const rejected[] = {"GLIBC_2.2.5", "GLIBC_2.17", "GLIBC_2.25",
+        "GLIBC_2.34", "GLIBC_2.36", "GLIBC_9.99", "GLIBC_PRIVATE", ""};
+    for (unsigned i = 0; i < 5; i++) {
+        void *expected = entropy_plugin_function(i, 0);
+        dlerror();
+        if (dlsym(RTLD_DEFAULT, names[i]) != expected || dlerror()) return 1;
+        if (dlvsym(RTLD_DEFAULT, names[i], versions[i]) != expected || dlerror()) return 2;
+        for (unsigned j = 0; j < 8; j++) {
+            if ((i == 0 && j == 2) || (i > 0 && i < 4 && j == 4) ||
+                (i == 4 && j == 0)) continue;
+            if (dlvsym(RTLD_DEFAULT, names[i], rejected[j]) || !dlerror() || dlerror())
+                return 3;
+        }
+    }
+    return 0;
+}
+"#;

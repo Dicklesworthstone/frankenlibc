@@ -38,7 +38,13 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "nftw" | "nftw64" => "GLIBC_2.3.3",
         _ => "GLIBC_2.2.5",
     };
-    let supported = if matches!(name, "fcntl64" | "statx") {
+    let supported = if name == "getentropy" {
+        "GLIBC_2.25"
+    } else if matches!(name, "arc4random" | "arc4random_buf" | "arc4random_uniform") {
+        // Entropy interfaces postdate both architecture baselines; do not
+        // lower these versions to AArch64's initial GLIBC_2.17 namespace.
+        "GLIBC_2.36"
+    } else if matches!(name, "fcntl64" | "statx") {
         // These public interfaces postdate both architecture baselines.
         "GLIBC_2.28"
     } else if name == "execveat" {
@@ -64,6 +70,10 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     // no fixed-arity shim that could read a nonexistent mode argument.
     let address = match name {
         "__errno_location" => errno::__errno_location as *const (),
+        "getentropy" => unistd::getentropy as *const (),
+        "arc4random" => unistd::arc4random as *const (),
+        "arc4random_buf" => unistd::arc4random_buf as *const (),
+        "arc4random_uniform" => unistd::arc4random_uniform as *const (),
         "open" => unistd::open as *const (),
         "open64" => unistd::open64 as *const (),
         "openat" => unistd::openat as *const (),
