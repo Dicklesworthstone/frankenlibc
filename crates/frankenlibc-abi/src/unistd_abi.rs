@@ -6466,28 +6466,118 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
         unsafe { set_abi_errno(libc::EIO) };
         return -1;
     }
+    if length == 0 {
+        return 0;
+    }
     if known_remaining(buffer as usize).is_some_and(|remaining| remaining < length) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    match unsafe { syscall::sys_getrandom(buffer as *mut u8, length, 0) } {
-        Ok(n) if (n as usize) >= length => 0,
-        _ => {
-            unsafe { set_abi_errno(libc::EIO) };
-            -1
+    let mut filled = 0;
+    while filled < length {
+        // Let the kernel reject invalid regions with EFAULT. Wrapping pointer
+        // arithmetic does not assume a Rust allocation for unchecked C input.
+        let destination = buffer.cast::<u8>().wrapping_add(filled);
+        // SAFETY: the syscall copies only into the requested caller region;
+        // the kernel validates access before reporting successful progress.
+        match entropy_retry(|| unsafe { syscall::sys_getrandom(destination, length - filled, 0) }) {
+            Ok(n) if n > 0 && n as usize <= length - filled => filled += n as usize,
+            result => {
+                let error = result.err().unwrap_or(errno::EIO);
+                // SAFETY: report the actual syscall error, or EIO for an
+                // impossible empty/oversized successful kernel response.
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
         }
     }
+    0
 }
 
 // ---------------------------------------------------------------------------
 // arc4random family — implemented via SYS_getrandom
 // ---------------------------------------------------------------------------
 
+/// These entropy APIs are not cancellation points. Retry interrupted raw
+/// syscalls without entering the public, cancellable I/O wrappers.
+fn entropy_retry<T>(mut call: impl FnMut() -> Result<T, c_int>) -> Result<T, c_int> {
+    loop {
+        match call() {
+            Err(errno::EINTR) => continue,
+            result => return result,
+        }
+    }
+}
+
+/// Old kernels without getrandom still need an initialized kernel pool before
+/// /dev/urandom can be used. All descriptors are private and close-on-exec;
+/// any failure terminates instead of returning uninitialized caller bytes.
+unsafe fn arc4random_device_fill(mut destination: *mut u8, mut remaining: usize) {
+    let open = |path: &CStr| {
+        entropy_retry(|| {
+            // SAFETY: each path is a live NUL-terminated device-name literal.
+            unsafe {
+                syscall::sys_openat(
+                    libc::AT_FDCWD,
+                    path.as_ptr().cast(),
+                    libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOCTTY,
+                    0,
+                )
+            }
+        })
+    };
+    let random = match open(c"/dev/random") {
+        Ok(fd) => fd,
+        // SAFETY: abort has no return path and uses the raw signal backend.
+        Err(_) => unsafe { crate::stdlib_abi::abort() },
+    };
+    let mut ready = libc::pollfd {
+        fd: random,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let initialized = entropy_retry(|| {
+        // SAFETY: ready is one writable pollfd; a negative timeout waits for
+        // pool initialization, with EINTR retried by entropy_retry.
+        unsafe { syscall::sys_poll((&raw mut ready).cast(), 1, -1) }
+    });
+    let closed = syscall::sys_close(random);
+    if initialized != Ok(1) || ready.revents & libc::POLLIN == 0 || closed.is_err() {
+        // SAFETY: no entropy is published after a device or readiness failure.
+        unsafe { crate::stdlib_abi::abort() };
+    }
+    let device = match open(c"/dev/urandom") {
+        Ok(fd) => fd,
+        // SAFETY: a missing fallback must not turn into predictable output.
+        Err(_) => unsafe { crate::stdlib_abi::abort() },
+    };
+    while remaining != 0 {
+        let read = entropy_retry(|| {
+            // SAFETY: destination covers the still-unwritten caller region.
+            unsafe { syscall::sys_read(device, destination, remaining) }
+        });
+        match read {
+            Ok(n) if n > 0 && n <= remaining => {
+                destination = destination.wrapping_add(n);
+                remaining -= n;
+            }
+            // SAFETY: abort rather than returning partial fallback output.
+            _ => unsafe { crate::stdlib_abi::abort() },
+        }
+    }
+    if syscall::sys_close(device).is_err() {
+        // SAFETY: do not silently accept a failed private-descriptor cleanup.
+        unsafe { crate::stdlib_abi::abort() };
+    }
+}
+
 /// BSD `arc4random` — return a random 32-bit value.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn arc4random() -> u32 {
     let mut val: u32 = 0;
-    let _ = unsafe { syscall::sys_getrandom(&mut val as *mut u32 as *mut u8, 4, 0) };
+    // SAFETY: val is a writable four-byte output object. Share the complete-
+    // or-abort contract instead of treating a syscall error as a zero draw.
+    unsafe { arc4random_buf((&raw mut val).cast(), std::mem::size_of_val(&val)) };
     val
 }
 
@@ -6497,8 +6587,9 @@ pub unsafe extern "C" fn arc4random() -> u32 {
 /// populated with strong random bytes. Linux `getrandom(2)` guarantees a
 /// full read only for sizes <= 256; larger requests may short-read when
 /// a signal interrupts the syscall, so loop until the whole buffer is
-/// filled, retrying on EINTR. On any other error we fall back to a
-/// /dev/urandom read so the caller still gets entropy. (bd-ubkl7)
+/// filled, retrying on EINTR. ENOSYS selects an initialized /dev/urandom
+/// fallback; other errors and empty reads abort rather than silently returning
+/// partial output. Preserve the existing null-pointer repair and zero no-op.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn arc4random_buf(buf: *mut c_void, nbytes: usize) {
     if nbytes == 0 || buf.is_null() {
@@ -6507,19 +6598,20 @@ pub unsafe extern "C" fn arc4random_buf(buf: *mut c_void, nbytes: usize) {
     let mut written: usize = 0;
     while written < nbytes {
         let remaining = nbytes - written;
-        let dst = unsafe { (buf as *mut u8).add(written) };
-        match unsafe { syscall::sys_getrandom(dst, remaining, 0) } {
-            Ok(n) if n > 0 => {
+        let dst = buf.cast::<u8>().wrapping_add(written);
+        // SAFETY: dst covers remaining writable bytes in the caller's region.
+        match entropy_retry(|| unsafe { syscall::sys_getrandom(dst, remaining, 0) }) {
+            Ok(n) if n > 0 && n as usize <= remaining => {
                 written += n as usize;
             }
-            Ok(_) => {
-                // Zero-byte "success" would be an infinite loop.
-                break;
+            Err(errno::ENOSYS) => {
+                // SAFETY: fill exactly the remaining caller region, preserving
+                // bytes already obtained before the syscall became unavailable.
+                unsafe { arc4random_device_fill(dst, remaining) };
+                return;
             }
-            Err(e) if e == errno::EINTR => {
-                continue;
-            }
-            Err(_) => break,
+            // SAFETY: errors/zero progress may not publish incomplete entropy.
+            _ => unsafe { crate::stdlib_abi::abort() },
         }
     }
 }

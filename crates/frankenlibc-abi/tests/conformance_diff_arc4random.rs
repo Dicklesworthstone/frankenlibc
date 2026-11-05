@@ -17,6 +17,9 @@ use std::ffi::c_void;
 
 use frankenlibc_abi::unistd_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 unsafe extern "C" {
     fn arc4random() -> u32;
     fn arc4random_buf(buf: *mut c_void, nbytes: usize);
@@ -128,5 +131,99 @@ fn diff_arc4random_uniform_distribution_bias_check() {
 fn arc4random_diff_coverage_report() {
     eprintln!(
         "{{\"family\":\"libc arc4random + arc4random_buf + arc4random_uniform\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0}}",
+    );
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn diff_entropy_kernel_fault_contract() {
+    use std::ffi::{CString, c_int};
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let root = std::env::temp_dir().join(format!(
+        "frankenlibc-entropy-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let library = root.join("observer.so");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/integration/fixture_random_multibyte.c");
+    let output = Command::new("gcc")
+        .args(["-shared", "-fPIC", "-O2", "-Wall", "-Wextra", "-Werror"])
+        .arg(source)
+        .args(["-o"])
+        .arg(&library)
+        .arg("-ldl")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "C observer link failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let path = CString::new(library.as_os_str().as_bytes()).unwrap();
+    // SAFETY: path is NUL-terminated and stays live during dlopen. The shared
+    // observer and its function pointers remain loaded through all children.
+    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "could not load C entropy observer");
+    // SAFETY: the C symbol has the declaration below in the fixture.
+    let run: unsafe extern "C" fn(u32, *const *mut c_void) -> c_int = unsafe {
+        let address = libc::dlsym(handle, c"flc_entropy_run".as_ptr());
+        assert!(!address.is_null());
+        std::mem::transmute(address)
+    };
+    let native = [
+        fl::getentropy as *mut c_void,
+        fl::arc4random as *mut c_void,
+        fl::arc4random_buf as *mut c_void,
+        fl::arc4random_uniform as *mut c_void,
+        frankenlibc_abi::errno_abi::__errno_location as *mut c_void,
+    ];
+    let names = [
+        c"getentropy",
+        c"arc4random",
+        c"arc4random_buf",
+        c"arc4random_uniform",
+        c"__errno_location",
+    ];
+    let host = std::array::from_fn::<_, 5, _>(|index| {
+        // SAFETY: only obtain the actual GNU address here; C calls it using
+        // the matching prototype. The helper rejects the native definition.
+        unsafe { dlsym_oracle::host_addr(names[index], native[index].cast_const().cast()) }
+    });
+    let mut failures = Vec::new();
+    for (provider, functions) in [("GNU", host), ("native", native)] {
+        for id in 0..35 {
+            let expected = if (9..18).contains(&id) || (21..27).contains(&id) {
+                128 + libc::SIGABRT
+            } else {
+                0
+            };
+            // SAFETY: the live function table matches all five C declarations;
+            // the C runner isolates each irreversible seccomp policy in a child.
+            let observed = unsafe { run(id, functions.as_ptr()) };
+            eprintln!(
+                "entropy provider={provider} case={id} result={observed} expected={expected}"
+            );
+            if provider == "GNU" && id >= 32 && observed == 112 {
+                eprintln!("GNU case={id}: kernel injection unexercised; no retry proof");
+                continue;
+            }
+            if observed != expected {
+                failures.push((provider, id, observed, expected));
+            }
+        }
+    }
+    // SAFETY: all child processes have exited; no observer pointer is reused.
+    assert_eq!(unsafe { libc::dlclose(handle) }, 0);
+    assert!(
+        failures.is_empty(),
+        "entropy contract failures: {failures:?}"
     );
 }
