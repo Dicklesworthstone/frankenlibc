@@ -4240,14 +4240,148 @@ pub unsafe extern "C-unwind" fn __pread64(
 ) -> SSizeT {
     unsafe { crate::io_abi::pread_cp(fd, buf, count, offset) }
 }
-// __printf_fp: glibc-internal float printf helper — returns -1 (not exposed in public API)
+/// GNU floating-point output helper used by custom printf handlers.
+///
+/// Arguments follow the printf callback ABI: `args[0]` points to a double or
+/// long double, rather than holding its value. Reuse the native formatter and
+/// FILE writers so extended precision, rounding, locale and stream ownership
+/// agree with the ordinary printf family. A cookie write can unwind through
+/// this helper, just as through printf_size.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __printf_fp(
-    _fp: *mut c_void,
-    _info: *const c_void,
-    _args: *const *const c_void,
+pub unsafe extern "C-unwind" fn __printf_fp(
+    fp: *mut c_void,
+    info: *const c_void,
+    args: *const *const c_void,
 ) -> c_int {
-    -1 // internal glibc helper, not called directly by applications
+    use frankenlibc_core::stdio::printf::{
+        FormatFlags, FormatSpec, LengthMod, Precision, Width, format_float, take_render_failure,
+    };
+
+    if fp.is_null() || info.is_null() || args.is_null() {
+        // SAFETY: only the calling thread's errno is modified.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: the callback contract supplies a live printf_info and one
+    // argument-address slot. Its type is selected by the GNU flag fields.
+    let info = unsafe { &*info.cast::<PrintfInfo>() };
+    // SAFETY: args has at least one initialized pointer slot.
+    let arg = unsafe { *args };
+    if arg.is_null()
+        || !u8::try_from(info.spec)
+            .is_ok_and(|spec| matches!(spec, b'e' | b'E' | b'f' | b'F' | b'g' | b'G'))
+    {
+        // SAFETY: reject malformed callback metadata before reading the value.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    let extended = info.flags & (1 | (1 << 12)) != 0;
+    let spec = FormatSpec::new(
+        FormatFlags {
+            force_sign: info.flags & (1 << 6) != 0,
+            space_sign: info.flags & (1 << 4) != 0,
+            alt_form: info.flags & (1 << 3) != 0,
+            group: info.flags & (1 << 7) != 0,
+            i18n: info.flags & (1 << 11) != 0,
+            ..FormatFlags::default()
+        },
+        Width::None,
+        if info.precision < 0 {
+            Precision::None
+        } else {
+            Precision::Fixed(info.precision as usize)
+        },
+        if extended {
+            LengthMod::BigL
+        } else {
+            LengthMod::None
+        },
+        info.spec as u8,
+        None,
+    );
+    let mut output = Vec::new();
+    let _ = take_render_failure();
+    if extended {
+        if cfg!(target_arch = "x86_64") && info.flags & (1 << 12) == 0 {
+            let mut bytes = [0u8; 10];
+            // SAFETY: an x87 long double has ten significant readable bytes.
+            unsafe { std::ptr::copy_nonoverlapping(arg.cast::<u8>(), bytes.as_mut_ptr(), 10) };
+            spec.render_long_double_arg(&bytes, &mut output);
+        } else {
+            // SAFETY: binary128 arguments occupy sixteen bytes. Reading the
+            // bits avoids narrowing the value or changing its NaN payload.
+            let bits = unsafe { std::ptr::read_unaligned(arg.cast::<u128>()) };
+            spec.render_binary128_arg(bits, &mut output);
+        }
+    } else {
+        // SAFETY: an ordinary callback argument points to a double.
+        let value = unsafe { std::ptr::read_unaligned(arg.cast::<f64>()) };
+        format_float(value, &spec, &mut output);
+    }
+    let failure = take_render_failure();
+    if failure != 0 {
+        // SAFETY: propagate the formatter's thread-local error before output.
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
+
+    let wide = info.flags & (1 << 10) != 0;
+    let characters = match std::str::from_utf8(&output) {
+        Ok(text) => text.chars().count(),
+        Err(_) if !wide => output.len(),
+        Err(_) => {
+            // SAFETY: wide output must represent complete characters.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return -1;
+        }
+    };
+    let length = if wide { characters } else { output.len() };
+    let width = info.width.max(0) as usize;
+    // GNU float field widths count localized separator/radix characters,
+    // while a narrow callback returns the number of bytes actually written.
+    let padding = width.saturating_sub(characters);
+    let Ok(count) = c_int::try_from(length.saturating_add(padding)) else {
+        // SAFETY: the return value cannot represent this output length.
+        unsafe { set_abi_errno(libc::EOVERFLOW) };
+        return -1;
+    };
+    // Callback metadata permits left alignment with zero padding and padding
+    // characters other than space/zero. Ordinary printf flag normalization
+    // would erase these distinctions. Special values always use spaces.
+    let special = [b"inf", b"INF", b"nan", b"NAN"]
+        .iter()
+        .any(|suffix| output.ends_with(*suffix));
+    let pad = if special { b' ' as WcharT } else { info.pad };
+    let left = info.flags & (1 << 5) != 0;
+    let zero = pad == b'0' as WcharT;
+    let sign_len = usize::from(zero && output.first().is_some_and(|b| b"-+ ".contains(b)));
+    let write_padding = || {
+        // GNU narrows the padding field to C char even for wide output, but
+        // tests the original wchar value when deciding zero/sign placement.
+        let byte = pad as c_char;
+        // SAFETY: each write uses the caller's live stream and initialized
+        // padding. Ordinary ASCII padding shares the bounded writer.
+        unsafe {
+            if !wide || (byte as u8).is_ascii() {
+                printf_size_padding(fp, wide, byte as u8, padding)
+            } else {
+                (0..padding)
+                    .all(|_| crate::wchar_abi::fputwc(byte as WcharT as u32, fp) != u32::MAX)
+            }
+        }
+    };
+    // SAFETY: initialized slices remain live throughout synchronous output.
+    // For right zero padding, the sign precedes the zeroes; left padding
+    // always follows the complete number, including an exponent if present.
+    let ok = unsafe {
+        (left || zero || write_padding())
+            && printf_size_write(fp, wide, &output[..sign_len])
+            && (left || !zero || write_padding())
+            && printf_size_write(fp, wide, &output[sign_len..])
+            && (!left || write_padding())
+    };
+    if ok { count } else { -1 }
 }
 /// `__profile_frequency` — the sampling rate `profil`/`sprofil` report.
 ///

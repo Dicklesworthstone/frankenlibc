@@ -3737,6 +3737,449 @@ fn printf_fp_returns_negative() {
     assert_eq!(r, -1);
 }
 
+#[path = "common/dlsym_oracle.rs"]
+mod printf_fp_oracle;
+
+/// Keep the GNU callback layout explicit: the two u16 fields share the C
+/// bitfield/user word, and pad follows them at offset sixteen.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct FpCallbackInfo {
+    precision: c_int,
+    width: c_int,
+    spec: libc::wchar_t,
+    flags: u16,
+    user: u16,
+    pad: libc::wchar_t,
+}
+
+type FpCallback =
+    unsafe extern "C-unwind" fn(*mut c_void, *const c_void, *const *const c_void) -> c_int;
+type FpFinish = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+
+// Keep the regression executable against the original C-only stub as well
+// as the repaired C-unwind helper; call its declared type without transmuting
+// a function pointer or substituting a test implementation.
+unsafe extern "C-unwind" fn native_fp_callback(
+    stream: *mut c_void,
+    info: *const c_void,
+    args: *const *const c_void,
+) -> c_int {
+    // SAFETY: the test supplies a live FILE, metadata and argument-address slot.
+    unsafe { __printf_fp(stream, info, args) }
+}
+
+struct FpOracleApi {
+    render: FpCallback,
+    memory: unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void,
+    wide_memory: unsafe extern "C" fn(*mut *mut u32, *mut usize) -> *mut c_void,
+    flush: FpFinish,
+    close: FpFinish,
+    error: FpFinish,
+    errno: unsafe extern "C" fn() -> *mut c_int,
+    free: unsafe extern "C" fn(*mut c_void),
+}
+
+impl FpOracleApi {
+    fn new(native: bool) -> Self {
+        use frankenlibc_abi::{malloc_abi, stdio_abi, wchar_abi};
+        if native {
+            Self {
+                render: native_fp_callback,
+                memory: stdio_abi::fmemopen,
+                wide_memory: wchar_abi::open_wmemstream,
+                flush: stdio_abi::fflush,
+                close: stdio_abi::fclose,
+                error: stdio_abi::ferror,
+                errno: __errno_location,
+                free: malloc_abi::free,
+            }
+        } else {
+            // SAFETY: each signature matches the GNU declaration. The common
+            // resolver rejects an oracle that resolves to the tested frontend.
+            unsafe {
+                Self {
+                    render: printf_fp_oracle::host_fn(c"__printf_fp", __printf_fp as *const ()),
+                    memory: printf_fp_oracle::host_fn(
+                        c"fmemopen",
+                        stdio_abi::fmemopen as *const (),
+                    ),
+                    wide_memory: printf_fp_oracle::host_fn(
+                        c"open_wmemstream",
+                        wchar_abi::open_wmemstream as *const (),
+                    ),
+                    flush: printf_fp_oracle::host_fn(c"fflush", stdio_abi::fflush as *const ()),
+                    close: printf_fp_oracle::host_fn(c"fclose", stdio_abi::fclose as *const ()),
+                    error: printf_fp_oracle::host_fn(c"ferror", stdio_abi::ferror as *const ()),
+                    errno: printf_fp_oracle::host_fn(
+                        c"__errno_location",
+                        __errno_location as *const (),
+                    ),
+                    free: printf_fp_oracle::host_fn(c"free", malloc_abi::free as *const ()),
+                }
+            }
+        }
+    }
+
+    /// Both providers receive the same metadata and argument bytes, but each
+    /// owns its own FILE, errno location and allocation/free pair.
+    unsafe fn output(
+        &self,
+        info: &FpCallbackInfo,
+        value: *const c_void,
+    ) -> (c_int, c_int, Vec<u32>) {
+        let args = [value];
+        if info.flags & (1 << 10) != 0 {
+            let mut buffer = ptr::null_mut();
+            let mut length = 0usize;
+            // SAFETY: the output slots remain alive through closing the stream.
+            let stream = unsafe { (self.wide_memory)(&mut buffer, &mut length) };
+            assert!(!stream.is_null());
+            // SAFETY: all callback metadata and the value are live for the call.
+            let (result, error) = unsafe {
+                *(self.errno)() = libc::E2BIG;
+                let result = (self.render)(
+                    stream,
+                    (info as *const FpCallbackInfo).cast(),
+                    args.as_ptr(),
+                );
+                (result, *(self.errno)())
+            };
+            assert_eq!(unsafe { (self.flush)(stream) }, 0);
+            assert_eq!(unsafe { (self.close)(stream) }, 0);
+            assert!(!buffer.is_null());
+            // SAFETY: successful close publishes length initialized wide chars.
+            let output = unsafe { std::slice::from_raw_parts(buffer, length).to_vec() };
+            assert_eq!(unsafe { *buffer.add(length) }, 0);
+            unsafe { (self.free)(buffer.cast()) };
+            (result, error, output)
+        } else {
+            let mut buffer = [0xa5u8; 8192];
+            // SAFETY: fmemopen borrows the initialized buffer until close.
+            let stream =
+                unsafe { (self.memory)(buffer.as_mut_ptr().cast(), buffer.len(), c"w".as_ptr()) };
+            assert!(!stream.is_null());
+            // SAFETY: callback pointers and stream are live, as in the wide arm.
+            let (result, error) = unsafe {
+                *(self.errno)() = libc::E2BIG;
+                let result = (self.render)(
+                    stream,
+                    (info as *const FpCallbackInfo).cast(),
+                    args.as_ptr(),
+                );
+                (result, *(self.errno)())
+            };
+            assert_eq!(unsafe { (self.flush)(stream) }, 0);
+            assert_eq!(unsafe { (self.close)(stream) }, 0);
+            let length = buffer
+                .iter()
+                .position(|&byte| byte == 0)
+                .expect("terminator");
+            assert!(buffer[length + 1..].iter().all(|&byte| byte == 0xa5));
+            (
+                result,
+                error,
+                buffer[..length]
+                    .iter()
+                    .map(|&byte| u32::from(byte))
+                    .collect(),
+            )
+        }
+    }
+}
+
+#[test]
+fn printf_fp_double_formats_match_live_gnu() {
+    assert_eq!(std::mem::size_of::<FpCallbackInfo>(), 20);
+    assert_eq!(std::mem::offset_of!(FpCallbackInfo, pad), 16);
+    let native = FpOracleApi::new(true);
+    let host = FpOracleApi::new(false);
+    let values = [
+        0.0,
+        -0.0,
+        1.25,
+        -1.25,
+        9.999,
+        1e20,
+        1e-20,
+        f64::from_bits(1),
+        f64::MAX,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
+    for value in values {
+        for conversion in *b"eEfFgG" {
+            for precision in [-1, 0, 2, 17] {
+                for (width, flags, pad) in [
+                    (0, 0, b' '),
+                    (23, 1 << 6, b' '),
+                    (23, (1 << 3) | (1 << 4), b'0'),
+                    (23, (1 << 5) | (1 << 6), b' '),
+                    (23, (1 << 5) | (1 << 6), b'0'),
+                    (23, 1 << 4, b'x'),
+                    (23, (1 << 5) | (1 << 6), b'x'),
+                ] {
+                    for wide in [false, true] {
+                        let info = FpCallbackInfo {
+                            precision,
+                            width,
+                            spec: conversion as libc::wchar_t,
+                            flags: flags | if wide { 1 << 10 } else { 0 },
+                            user: 0,
+                            pad: pad as libc::wchar_t,
+                        };
+                        let value_ptr = (&value as *const f64).cast();
+                        let expected = unsafe { host.output(&info, value_ptr) };
+                        assert_eq!(expected.0 as usize, expected.2.len(), "GNU {info:?}");
+                        assert_eq!(
+                            unsafe { native.output(&info, value_ptr) },
+                            expected,
+                            "{info:?}, value bits {:016x}",
+                            value.to_bits()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn printf_fp_localized_width_counts_characters_and_returns_bytes() {
+    use frankenlibc_core::stdio::printf::{clear_thread_numeric, set_thread_numeric};
+    struct RestoreNumeric;
+    impl Drop for RestoreNumeric {
+        fn drop(&mut self) {
+            clear_thread_numeric();
+        }
+    }
+    let native = FpOracleApi::new(true);
+    let _restore = RestoreNumeric;
+    // GNU fr_FR grouping, installed directly in the formatter's thread-local
+    // cache so this regression does not depend on host locale data packages.
+    set_thread_numeric(b",", "\u{202f}".as_bytes(), &[3, 0]);
+    let value = 1_234_567.25f64;
+    let digits = "1\u{202f}234\u{202f}567,25";
+    for pad in [' ', '0', 'x'] {
+        for left in [false, true] {
+            let padding = pad.to_string().repeat(10);
+            let expected = if left {
+                format!("+{digits}{padding}")
+            } else if pad == '0' {
+                format!("+{padding}{digits}")
+            } else {
+                format!("{padding}+{digits}")
+            };
+            assert_eq!(expected.chars().count(), 23);
+            assert_eq!(expected.len(), 27);
+            for wide in [false, true] {
+                let info = FpCallbackInfo {
+                    precision: 2,
+                    width: 23,
+                    spec: b'f' as libc::wchar_t,
+                    flags: (1 << 6)
+                        | (1 << 7)
+                        | if left { 1 << 5 } else { 0 }
+                        | if wide { 1 << 10 } else { 0 },
+                    user: 0,
+                    pad: pad as libc::wchar_t,
+                };
+                let output = if wide {
+                    expected.chars().map(u32::from).collect()
+                } else {
+                    expected.bytes().map(u32::from).collect()
+                };
+                assert_eq!(
+                    unsafe { native.output(&info, (&value as *const f64).cast()) },
+                    (if wide { 23 } else { 27 }, libc::E2BIG, output),
+                    "{info:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn printf_fp_wide_padding_matches_gnu_byte_conversion() {
+    let native = FpOracleApi::new(true);
+    let host = FpOracleApi::new(false);
+    for value in [1.25f64, -1.25, f64::INFINITY, f64::NAN] {
+        for pad in ['\u{202f}', '\u{2605}', '\u{1030}'] {
+            for left in [false, true] {
+                let info = FpCallbackInfo {
+                    precision: 2,
+                    width: 12,
+                    spec: b'f' as libc::wchar_t,
+                    flags: (1 << 6) | (1 << 10) | if left { 1 << 5 } else { 0 },
+                    user: 0,
+                    pad: pad as libc::wchar_t,
+                };
+                let value_ptr = (&value as *const f64).cast();
+                assert_eq!(
+                    unsafe { native.output(&info, value_ptr) },
+                    unsafe { host.output(&info, value_ptr) },
+                    "{info:?}, bits={:016x}",
+                    value.to_bits()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn printf_fp_long_double_preserves_extended_range_and_precision() {
+    let native = FpOracleApi::new(true);
+    let host = FpOracleApi::new(false);
+    // Exact x87 encodings, independent of the native float conversion code:
+    // 1 + 2^-63, pi, 2^1024, a subnormal, negative zero and infinity.
+    for (significand, exponent) in [
+        (0x8000_0000_0000_0001u64, 0x3fffu16),
+        (0xc90f_daa2_2168_c235, 0x4000),
+        (0x8000_0000_0000_0000, 0x43ff),
+        (1, 0),
+        (0, 0x8000),
+        (0x8000_0000_0000_0000, 0x7fff),
+    ] {
+        let mut value = [0u8; 16];
+        value[..8].copy_from_slice(&significand.to_ne_bytes());
+        value[8..10].copy_from_slice(&exponent.to_ne_bytes());
+        for conversion in *b"eEfFgG" {
+            for precision in [0, 6, 25] {
+                for wide in [false, true] {
+                    let info = FpCallbackInfo {
+                        precision,
+                        width: 30,
+                        spec: conversion as libc::wchar_t,
+                        flags: 1 | (1 << 6) | if wide { 1 << 10 } else { 0 },
+                        user: 0,
+                        pad: b'0' as libc::wchar_t,
+                    };
+                    let expected = unsafe { host.output(&info, value.as_ptr().cast()) };
+                    assert_eq!(expected.0 as usize, expected.2.len());
+                    assert_eq!(
+                        unsafe { native.output(&info, value.as_ptr().cast()) },
+                        expected,
+                        "{info:?}, x87={value:02x?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn printf_fp_stream_errors_match_live_gnu() {
+    for native in [false, true] {
+        let api = FpOracleApi::new(native);
+        let mut buffer = *b"unchanged\0";
+        let original = buffer;
+        // SAFETY: a read-only memory stream with a live backing buffer.
+        let stream =
+            unsafe { (api.memory)(buffer.as_mut_ptr().cast(), buffer.len(), c"r".as_ptr()) };
+        assert!(!stream.is_null());
+        let info = FpCallbackInfo {
+            precision: 2,
+            width: 0,
+            spec: b'f' as libc::wchar_t,
+            flags: 0,
+            user: 0,
+            pad: b' ' as libc::wchar_t,
+        };
+        let value = 1.25f64;
+        let args = [(&value as *const f64).cast::<c_void>()];
+        // SAFETY: the read-only stream rejects the attempted output, and the
+        // value and metadata are valid for both independent providers.
+        unsafe {
+            *(api.errno)() = 0;
+            assert_eq!(
+                (api.render)(
+                    stream,
+                    (&info as *const FpCallbackInfo).cast(),
+                    args.as_ptr()
+                ),
+                -1,
+                "native={native}"
+            );
+            assert_eq!(*(api.errno)(), libc::EBADF, "native={native}");
+            assert_ne!((api.error)(stream), 0, "native={native}");
+            assert_eq!((api.close)(stream), 0);
+        }
+        assert_eq!(buffer, original);
+    }
+}
+
+#[test]
+fn printf_fp_binary128_keeps_bits_beyond_double_precision() {
+    let native = FpOracleApi::new(true);
+    let host = FpOracleApi::new(false);
+    // 1 + 2^-112 and 2^1024: neither value can be narrowed to double.
+    for value in [(0x3fffu128 << 112) | 1, 0x43ffu128 << 112] {
+        for conversion in *b"eEfFgG" {
+            for wide in [false, true] {
+                let info = FpCallbackInfo {
+                    precision: 40,
+                    width: 0,
+                    spec: conversion as libc::wchar_t,
+                    flags: 1 | (1 << 12) | if wide { 1 << 10 } else { 0 },
+                    user: 0,
+                    pad: b' ' as libc::wchar_t,
+                };
+                let value_ptr = (&value as *const u128).cast();
+                let expected = unsafe { host.output(&info, value_ptr) };
+                assert_eq!(expected.0 as usize, expected.2.len());
+                assert_eq!(
+                    unsafe { native.output(&info, value_ptr) },
+                    expected,
+                    "{info:?}, binary128={value:032x}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn printf_fp_obeys_all_rounding_modes() {
+    use frankenlibc_abi::fenv_abi::{fegetround, fesetround};
+    struct Restore(c_int);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            // SAFETY: restore the calling thread's saved floating environment.
+            unsafe { fesetround(self.0) };
+        }
+    }
+    let _restore = Restore(unsafe { fegetround() });
+    let native = FpOracleApi::new(true);
+    let host = FpOracleApi::new(false);
+    // x86 fenv encodings: nearest, downward, upward, toward zero.
+    for rounding in [0, 0x400, 0x800, 0xc00] {
+        assert_eq!(unsafe { fesetround(rounding) }, 0);
+        for value in [2.5f64, -2.5, 0.125, -0.125, 9.999, -9.999] {
+            for conversion in *b"efg" {
+                for precision in [0, 2] {
+                    let info = FpCallbackInfo {
+                        precision,
+                        width: 12,
+                        spec: conversion as libc::wchar_t,
+                        flags: 1 << 6,
+                        user: 0,
+                        pad: b'0' as libc::wchar_t,
+                    };
+                    let value_ptr = (&value as *const f64).cast();
+                    assert_eq!(
+                        unsafe { native.output(&info, value_ptr) },
+                        unsafe { host.output(&info, value_ptr) },
+                        "{info:?}, rounding={rounding:#x}, bits={:016x}",
+                        value.to_bits()
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn overflow_family_routes_through_native_stream_helpers() {
     let stream = unsafe { tmpfile() };

@@ -193,7 +193,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5552,
+      "source_line": 5686,
       "line_marker": "bdflush: deprecated Linux syscall",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "unsupported_platform_contract",
@@ -301,7 +301,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5242,
+      "source_line": 5376,
       "line_marker": "pub unsafe extern \"C\" fn __fentry__()",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -331,7 +331,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 9390,
+      "source_line": 9524,
       "line_marker": "__gconv_open",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -491,7 +491,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 7033,
+      "source_line": 7167,
       "line_marker": "// rcmd/rcmd_af: rsh remote command",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "deterministic_fallback",
@@ -513,16 +513,17 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4245,
-      "line_marker": "pub unsafe extern \"C\" fn __printf_fp(",
+      "source_line": 4251,
+      "line_marker": "pub unsafe extern \"C-unwind\" fn __printf_fp(",
       "support_matrix_status": "Implemented",
-      "semantic_class": "deterministic_fallback",
-      "contract_kind": "declared_unconditional_error",
-      "current_behavior": "The exported internal floating formatter currently ignores its arguments and returns -1. Native public printf behavior does not qualify this distinct internal entrypoint.",
-      "user_risk": "Declared symbols can link while valid positive behavior is unavailable.",
-      "required_followup": "Review the GLIBC_PRIVATE argument/FILE contract and add real provider-bound float-format cases under bd-reality-202609-lx578q.7 before claiming this helper is implemented semantically.",
+      "semantic_class": "limited_bootstrap",
+      "contract_kind": "native_float_callback_subset",
+      "current_behavior": "The GNU printf callback ABI now renders e/E/f/F/g/G through native formatting and FILE output, including double, x87 long double, binary128, narrow/wide output and callback-specific padding. Direct GNU-oracle regressions exercise values, rounding, counts and stream errors; these bounded cases do not qualify every locale, callback-registration or private ABI configuration.",
+      "user_risk": "The native helper no longer fails unconditionally, but full GNU callback and locale semantics remain unqualified.",
+      "required_followup": "Qualify remaining locale and callback integration configurations under bd-reality-202609-lx578q.7 before claiming release-level semantic parity.",
       "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs"
       ],
       "review_status": "source_observed_semantics_unqualified"
     }
@@ -533,11 +534,11 @@
     "seed_overlay_covered": 10,
     "new_entries": 9,
     "by_semantic_class": {
-      "limited_bootstrap": 6,
+      "limited_bootstrap": 7,
       "proof_gap": 5,
       "compat_noop": 2,
       "unsupported_platform_contract": 1,
-      "deterministic_fallback": 4,
+      "deterministic_fallback": 3,
       "abort_only": 1
     },
     "by_source_path": {
@@ -615,10 +616,10 @@
         }
       }
     },
-    "source_tree_sha256": "2389f3b5d461aca57409e7d286e3a18a3bb100595eca0f6581b4e184c6d72f67",
+    "source_tree_sha256": "041b74a0eb2027e96a229debaa36b84acafd7d2e54bc6f63494469c036d526ea",
     "version_script_sha256": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
     "support_rows_sha256": "2a5959cdc7bba469d56ee7d8e5c0e561851e6cf9e77343719b266d8547e48f48",
-    "contract_rows_sha256": "39e3b9db4fdd958df256cf4797087e1b0434bacbb237f254843a15a0962babda",
+    "contract_rows_sha256": "f3c77e66b78f6dbc104547461e2d61028bcc6fe83bf69e339f36844a203f511b",
     "summary": {
       "declared_symbol_count": 4730,
       "raw_source_symbol_count": 4720,

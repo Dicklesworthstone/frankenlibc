@@ -3357,6 +3357,12 @@ unsafe fn write_bytes_without_runtime_policy(
     }
 
     if stream_obj.is_mem_backed() {
+        if !stream_obj.is_writable() {
+            stream_obj.set_error();
+            // SAFETY: only the calling thread's errno is modified.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
         let written = stream_obj.mem_write(bytes);
         if written < bytes.len() {
             stream_obj.set_error();
@@ -5859,6 +5865,13 @@ pub(crate) unsafe fn fwrite_for_caller(
 
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
+        if !s.is_writable() {
+            s.set_error();
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            // SAFETY: publish the write-access error after policy bookkeeping.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
         let written = s.mem_write(src);
         let complete_items = written.checked_div(size).unwrap_or(0);
         runtime_policy::observe(
@@ -16351,6 +16364,10 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
         stream.set_offset(end.saturating_add(stream.pending_flush().len()) as i64);
     }
     let Some(result) = stream.buffer_write(bytes) else {
+        // The core marks a read-only stream's error flag. Cookie-backed
+        // fmemopen/fopencookie writers must publish the matching ABI errno.
+        // SAFETY: only the calling thread's errno is modified.
+        unsafe { set_abi_errno(errno::EBADF) };
         return 0;
     };
     let flush_needed = result.flush_needed;
