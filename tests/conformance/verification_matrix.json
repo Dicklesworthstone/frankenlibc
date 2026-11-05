@@ -28242,11 +28242,11 @@
       "coverage": {
         "unit_tests": {
           "status": "partial",
-          "artifacts": "focused before/after complete; exact source fresh replay pending"
+          "artifacts": "Focused two-parent before/after observed both modes; exact initial744 workspace compile proof/ignored-input archive retained; final merged-source receipt and full106parents/mode pending."
         },
         "e2e_scripts": {
           "status": "missing",
-          "artifacts": "pending"
+          "artifacts": "Driver implemented and GCCanalyzed; final release8positive+8wrong-provider processes have not executed."
         }
       },
       "coverage_summary": {
@@ -28260,7 +28260,14 @@
         "bead_id": "bd-reality-202609-lx578q.7.34",
         "stream": "e2e",
         "status": "partial",
-        "unit_cmds": [],
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_strtol_family --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
+          "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/cf9c8268124e42d6/out/conformance_strtol_family-cf9c8268124e42d6 native_integer_extended_ --nocapture --test-threads=1",
+          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/cf9c8268124e42d6/out/conformance_strtol_family-cf9c8268124e42d6 native_integer_extended_ --nocapture --test-threads=1",
+          "cargo check -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"'",
+          "cargo clippy -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"' -- -D warnings",
+          "cargo fmt --check"
+        ],
         "e2e_cmds": [],
         "expected_assertions": [
           "41 actual imports=40 integer parsers plus errno; 34 new bindings, six existing retained",
@@ -28269,12 +28276,24 @@
           "No arbitrary locale, ARM execution, ELF-versioned relocation, full workspace runtime or performance claim"
         ],
         "log_schema_refs": [],
-        "artifact_paths": [],
+        "artifact_paths": [
+          "hz3:/data/tmp/frankenlibc-native-integer-20261105/before",
+          "hz3:/data/tmp/frankenlibc-native-integer-20261105/before-corrected",
+          "hz3:/data/tmp/frankenlibc-native-integer-20261105/before-verified",
+          "vmi1156319:/data/tmp/frankenlibc-native-integer-20261105/after-verified",
+          "vmi1156319:/data/tmp/frankenlibc-native-integer-20261105/freeze",
+          "vmi1152480:/data/tmp/frankenlibc-native-integer-20261105/workspace-check",
+          "vmi1156319:/data/tmp/frankenlibc-native-integer-20261105/workspace-clippy",
+          "/data/tmp/frankenlibc-native-integer-final-20261105",
+          "/data/tmp/frankenlibc-native-integer-honesty-20261105"
+        ],
         "perf_proof_refs": [],
         "close_blockers": [
-          "Final source-bound receipt, deployed controls, regressions, workspace checks and publication pending"
+          "Merged source a8a407468 final release,16 deployed provider/control processes and106-parent/mode replay have not executed: RCH disk reservations/slots refused before start.",
+          "Merged-source workspace check/Clippy/fmt and5metadata gates not executed; initial744 compiler success is separate evidence.",
+          "Exact a8 source-bound two-parent receipt, complete-evidence admission and publication required before closing; current receipt path is planned and does not yet exist."
         ],
-        "notes": "Current acceptance corrected against primary GNU ABI lists before resolver change; original preserved in Bead comment3367. SOLO source freeze.",
+        "notes": "Implementation published at a8a407468bf5ff165ec987619beed7b185d4c06e, Bead stays in_progress. 34existing parsers newly bound; six existing narrow parsers retained; no parser engine edit. Actual exploratory before-verified onhz3 compiled0 then bothmodes0passed/2failed/3filtered after GNU positives, native handle rejects host fallback. Actual exploratory after-verified onvmi1156319 compiled0 then bothmodes test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out. Eachprovider/form/mode imports41,records8320,lookup451; total33280paired comparisons acrossfour test executions. Exploratory source_base77ea is startingbase only, not fullsource proof; two changed Rust hashes match published mapping/tests. Exact H1=744cb847674a7d355bcfa708fba598f45c75bc76 broad compiler proof: check0,1295.06s;Clippy-Dwarnings0,1211.62s;bothworkspace/alltargets/keepgoing,fmt0;3177 identical stable inputs,2903tracked matchedGitH1 and274ignored archived locally in initial-ignored-source. Do not promote H1 to mergedH2. H2merges peer scanf changes ec0a314e7, preserves peer work; producercensus committed after actual completion, updated README ABI227488/core1168177; census policy/summary/anchors/modulecounts/unknownedges unchanged. UBS0/0critical61warnings23info=47testassertions,3inputclones,11fixtureallocations reviewed; targetedscan excludesCargo/AST phases, not compiler proof. GCCfixture+driveranalyzer0. Author-created version expectation corrected before product mapping: narrowll_l x862.3.3, sixotherlegacylocale2.3,allC232.38; original full acceptance and win/lose split preserved comment3367; fourth family adds41 negatives410->451, no bad case removed. InitialGNUfailure is not feature RED; initialrunnerexpected nullhandle but actualfailurehostfallback, corrected and bothmodesrerun before mapping. Precompiletypedendguardcopy bug fixed andtruepassedcell guardedvolatile; inertafter-runnercombinedlinecount corrected before successfuladmission. Initialfmtfailure retained. Repeated final RCH admissions refused103/120 with started:false fordisk/slots; hz3 source-lock completionunconfirmed jobrchw-78a25eeb-a45c-46f6-bb97-f6ceac43fd24 recovered terminalacktrue/exit1 with no replay; laterhz3namespacefailure issuedno source/executiongrant; no localbuild or compiledartifactdownload or manualfleet/cache/lock/slot/budget/deadline intervention. Invalid comma-list --worker attempt failed argument parsing, corrected via documentedRCH_WORKER list. Standard brimport altered derived trackedcert metadata and removedheadcert; generatedbytes retained and exacttrackedbytes restored, no source deletion. Full20honestyanswers and all TODOs retained inBead; separate-hat SOLO, no independentreview. Prior148matrixrows unchanged. No finalH2receipt/deployed/regression/metadata/workspace-green claim; required e2e remainsmissing, unitcoveragepartial. No ARM/arbitrarylocale/ELF-versioned-relocation/standalone/performance/universalsafety/fullworkspaceruntime/broadreadiness or classificationpromotion claim. Pending existing gate commands saved in final-release-regression-metadata-record.py,merged-check.py,merged-clippy.py under artifact directory; resume only through strict normal RCH admission, with manifest/source guard. Source and partial progress published to bothrequiredrefs; no closure.",
         "result_receipts": [
           "/data/tmp/frankenlibc-native-integer-20261105/final-record/record/receipt.json"
         ],
@@ -28297,7 +28316,7 @@
             "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs"
           ],
           "source": {
-            "commit": "744cb847674a7d355bcfa708fba598f45c75bc76",
+            "commit": "a8a407468bf5ff165ec987619beed7b185d4c06e",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -28305,7 +28324,7 @@
               "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
               "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
               "FEATURE_PARITY.md": "428435c3c87ef930683d61546c3753bce6758f6b869eb3b80fe4e786254c91ba",
-              "README.md": "d52b1b352801a416b8230fdd1ab66ecd500df880218dcd6f47b2a3c1b7f40bff",
+              "README.md": "efeb81641861e5ab362717d20f440913866719be90af6cfd0e917b4dff891025",
               "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
               "crates/frankenlibc-abi/build.rs": "1f3706508dfe8c8a6d124cd60a66914f77ad11ebed368740a08eb03c1f3541c1",
               "crates/frankenlibc-abi/src/aio_completion.rs": "442076b3f9a02501de7fb5d8b5c825bd1b5c946897a3a7799cff6e7794af5751",
@@ -28368,7 +28387,7 @@
               "crates/frankenlibc-abi/src/io_internal_abi.rs": "8d1a507fa2c2ca27246ed0b53db20310ebaefcdd846c641634fe66f111227415",
               "crates/frankenlibc-abi/src/iov_snapshot.rs": "6eca6451aa3af5bdc63a71f77ae29848a3b49304f0d75febb757936b650a6141",
               "crates/frankenlibc-abi/src/iov_snapshot_tests.rs": "be7826e1a2999666b5aa06634ff1d3194fa3512e31454da160c9a7981a4c7938",
-              "crates/frankenlibc-abi/src/isoc_abi.rs": "a6fe01bb7d9ddc98cdd7cb4dc54229da4e72b7201bfff00177129347f11d753b",
+              "crates/frankenlibc-abi/src/isoc_abi.rs": "d55dcf5fdbf1a7fc22230d82aaab5bd1996bd92c6dc80789e529d217e9fcb4c6",
               "crates/frankenlibc-abi/src/lib.rs": "654ef7dadaf52aef1f6e70ce29f04b355ab6ab126a5f93e83db8723b25d6f969",
               "crates/frankenlibc-abi/src/locale_abi.rs": "4cd7dcb5d717a2e0f167d482aa657106cd0010789f49adac23847f220e872afa",
               "crates/frankenlibc-abi/src/locale_catalog.rs": "24e7d943efdfe7e70977d6b6fc457e381c16ae62c7e30ac5855dbe2df04278fc",
@@ -28419,7 +28438,7 @@
               "crates/frankenlibc-abi/src/startup_abi.rs": "7f0b2c3fd7f6a5c18c449b67a3c4f547dc169732c77c18444655afe49fcc3b01",
               "crates/frankenlibc-abi/src/startup_helpers.rs": "abe5abb2c919c33160c134bc7262559c34874baa2f67f7c37a229510a3be821e",
               "crates/frankenlibc-abi/src/stdbit_abi.rs": "31040f26f9a7a95895b1b8bc7bd0af664ab1f8c9d6c4ad97837ccac8be740aed",
-              "crates/frankenlibc-abi/src/stdio_abi.rs": "eff7939e1f3c8ce6ace2c31894de86960fd8ce2455b6f5dc308cf51776d58f55",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "5ad8adda61026af48b370008dade1bea3aaf67c907136992394f8fb771a43c7d",
               "crates/frankenlibc-abi/src/stdlib_abi.rs": "20ea9d4f0ffcbf39a7119a67b90f72b764875235b891a75ff62627eadb0aaebc",
               "crates/frankenlibc-abi/src/string_abi.rs": "02cf9882e9323b039cfc1a6abb7a674dfd1d0d618f3791ca2bba1a488645425c",
               "crates/frankenlibc-abi/src/termios_abi.rs": "1599b188df446f85648cfcb5c797887d1340394692d3073ba1ac61492d2ef500",
@@ -28428,7 +28447,7 @@
               "crates/frankenlibc-abi/src/unistd_abi.rs": "b7403d937bc060df5e5f3a3e159c23022005184e50f69513d5826fbd3edb9a41",
               "crates/frankenlibc-abi/src/util.rs": "acd7685ea4433c04cedba0d411ee94f6c2e88b2f6d86168e79907c7ef6adeaac",
               "crates/frankenlibc-abi/src/wait_snapshot.rs": "1c3743eae4b70ae8cbeaf355d17d5a757b32773b8ba80dfb02e8c42a2de0787d",
-              "crates/frankenlibc-abi/src/wchar_abi.rs": "2b2236c86c572edf7cb6234ed16439e4896c9a5f81d21c0893b31b0a2c27a467",
+              "crates/frankenlibc-abi/src/wchar_abi.rs": "0e6015864699d51261b3a56de8b2663ab329bdce38774c218647d02a95564609",
               "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
               "crates/frankenlibc-abi/tests/conformance_diff_arc4random.rs": "f38d81f559e2bcc032eafc3c31d8ad0921ec46d57d30731edd01eb04579cff9d",
               "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
@@ -28603,7 +28622,7 @@
               "crates/frankenlibc-core/src/stdio/mod.rs": "86d631da4e6a7a472c8b89ce46c051174496f65b98cce163d2988a3ef02c167f",
               "crates/frankenlibc-core/src/stdio/printf.rs": "88e1c1f254326d8a71644416c0c01f21185539296aca5b1476aeb1a9a850cf1c",
               "crates/frankenlibc-core/src/stdio/printf_tables.rs": "900343e6efb1c4e707b3ccd79f1f0f13519710ee196b313d514bde20e81f7233",
-              "crates/frankenlibc-core/src/stdio/scanf.rs": "3b2628acf786d7b5e32491537edfa0143bca3b12caf0aa61a2401e0d8fa9d6e1",
+              "crates/frankenlibc-core/src/stdio/scanf.rs": "22f0d674a46f7587ded8a97e069f9d1bbe96d39f43d555ad0d0a96cc9f6424b0",
               "crates/frankenlibc-core/src/stdio/scanf_tables.rs": "66458c8b1463b10f20b349094cb158ee6584767f06ec597a47c33c9c9f665330",
               "crates/frankenlibc-core/src/stdio/snprintb.rs": "028ddb5519947032dd1b201a6db3c098b711560860bce86b1dfec69f8c777714",
               "crates/frankenlibc-core/src/stdio/vis.rs": "76438acfce9c527f61b50d57f3377387796d68af486e283993ed1e8000293589",
@@ -28782,11 +28801,11 @@
               "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e",
               "tests/conformance/docs_semantic_claims.v1.json": "14cb0b5c2dffe8e0c8890fab139fa99fb34ca1063b9653b0d3c77bda1a9189f9",
               "tests/conformance/global_resolver_abi.c": "fe8c32237b5d110b2eb7b5b9bc524b08d84b875e8c07910df7d23ce6b745ea44",
-              "tests/conformance/host_delegation_census.v1.json": "4cf18c974486c5d44558bb10323c7afa811e80360697134d0fa8af189c7c7a3d",
+              "tests/conformance/host_delegation_census.v1.json": "e23684bfc3cbfe42b717ec9e36d2dc6c64f18d794509f621632cbdfa7ad55343",
               "tests/conformance/oracle_precedence_divergence.v1.json": "8c1e222d25c46731f99c4b17dc2f69e8157f3e559c922fb1312040ea585a719a",
               "tests/conformance/replacement_levels.json": "08d80866c84d90c3e0b40865cf31210b59b051efd50a30649d309865f0bff8a2",
               "tests/conformance/rresvport_abi.c": "fdfeec098a36660a4c49d8c3ee5d11dd1c248f294f571134ed7bcc2ac51248b1",
-              "tests/conformance/semantic_contract_inventory.v1.json": "06f66dd00845f72e749d446c4f46dc9582c695012a49e3fd24edadcd46c61fbe",
+              "tests/conformance/semantic_contract_inventory.v1.json": "462801f25c3720b0e7028464365c97daa25bc2f7c2421d97b861b3249ae0a2ba",
               "tests/conformance/semantic_contract_symbol_join.v1.json": "23719a6dd3a355b31939c65f40411ea846d519a6d5abc949dd5d4018e5db8496",
               "tests/conformance/support_semantic_overlay.v1.json": "1ec91ad5b10ced74d8536a840f1ce26289e422da09a6ee68a99c57fea1717ad7",
               "tests/conformance/symbol_universe_normalization.v1.json": "8684a78d23a328b36766bd556cd93ef5e484bfb2fdaf0409e106a6f7efd54448",
