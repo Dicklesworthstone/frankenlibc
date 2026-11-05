@@ -1,11 +1,13 @@
-//! Allocation, byte-string and integer parsing entry points for the native loader.
+//! Allocation, byte-string, ctype and integer entry points for the native loader.
 //!
 //! Bind to FrankenLibC's existing ABI bodies, never to host allocator addresses
 //! discovered by symbol name. In particular, calloc/realloc/strdup results must
 //! remain compatible with the free already supplied to native plugins.
 //! This is a bounded addition to the runtime surface, not a new libc engine.
 
-use crate::{malloc_abi as allocation, stdlib_abi as stdlib, string_abi as strings};
+use crate::{
+    ctype_abi as ctype, malloc_abi as allocation, stdlib_abi as stdlib, string_abi as strings,
+};
 
 #[path = "dlfcn_io.rs"]
 mod io;
@@ -50,6 +52,24 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     } else {
         "GLIBC_2.2.5"
     };
+    // The table accessors were introduced after the x86-64 baseline. Keep
+    // their real version separate from the ordinary byte-ctype functions.
+    let ctype_table = match name {
+        "__ctype_b_loc" => Some(ctype::__ctype_b_loc as *const ()),
+        "__ctype_tolower_loc" => Some(ctype::__ctype_tolower_loc as *const ()),
+        "__ctype_toupper_loc" => Some(ctype::__ctype_toupper_loc as *const ()),
+        _ => None,
+    };
+    if let Some(function) = ctype_table {
+        let table_version = if cfg!(target_arch = "aarch64") {
+            baseline
+        } else {
+            "GLIBC_2.3"
+        };
+        return version
+            .is_none_or(|version| version == table_version)
+            .then_some(function as usize as u64);
+    }
     if version.is_some_and(|version| version != baseline) {
         return None;
     }
@@ -70,6 +90,22 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "strtoull" => stdlib::strtoull as *const (),
         "strtoimax" => stdlib::strtoimax as *const (),
         "strtoumax" => stdlib::strtoumax as *const (),
+        "isalnum" => ctype::isalnum as *const (),
+        "isalpha" => ctype::isalpha as *const (),
+        "isblank" => ctype::isblank as *const (),
+        "iscntrl" => ctype::iscntrl as *const (),
+        "isdigit" => ctype::isdigit as *const (),
+        "isgraph" => ctype::isgraph as *const (),
+        "islower" => ctype::islower as *const (),
+        "isprint" => ctype::isprint as *const (),
+        "ispunct" => ctype::ispunct as *const (),
+        "isspace" => ctype::isspace as *const (),
+        "isupper" => ctype::isupper as *const (),
+        "isxdigit" => ctype::isxdigit as *const (),
+        "isascii" => ctype::isascii as *const (),
+        "toascii" => ctype::toascii as *const (),
+        "tolower" => ctype::tolower as *const (),
+        "toupper" => ctype::toupper as *const (),
         "memchr" => strings::memchr as *const (),
         "memrchr" => strings::memrchr as *const (),
         "memcmp" => strings::memcmp as *const (),

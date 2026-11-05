@@ -23,6 +23,303 @@ use std::ffi::{CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::{ctype_abi as fl, locale_abi as fl_locale};
 
+#[cfg(target_arch = "x86_64")]
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn native_ctype_plt_protocol() {
+    native_ctype_protocol(false);
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn native_ctype_got_protocol() {
+    native_ctype_protocol(true);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn native_ctype_protocol(got: bool) {
+    use frankenlibc_abi::dlfcn_abi as dl;
+    use frankenlibc_core::elf::ElfLoader;
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    type Open = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+    type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type Sym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    type Selector = unsafe extern "C" fn(u32, u32) -> *mut c_void;
+    type Probe = unsafe extern "C" fn(c_int, *mut c_int);
+    type Run = unsafe extern "C" fn() -> c_int;
+
+    let root = std::env::temp_dir().join(format!(
+        "frankenlibc-ctype-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let source = root.join("ctype.c");
+    let library = root.join("ctype.so");
+    std::fs::write(&source, CTYPE_PLUGIN).unwrap();
+    let output = Command::new("gcc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-O2",
+            "-fno-builtin",
+            "-fno-stack-protector",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wl,--hash-style=both",
+            if got { "-fno-plt" } else { "-fplt" },
+        ])
+        .arg(&source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let object = ElfLoader::new(0)
+        .parse(&std::fs::read(&library).unwrap())
+        .unwrap();
+    assert!(object.needed_libraries.is_empty());
+    let names = [
+        c"isalnum",
+        c"isalpha",
+        c"isblank",
+        c"iscntrl",
+        c"isdigit",
+        c"isgraph",
+        c"islower",
+        c"isprint",
+        c"ispunct",
+        c"isspace",
+        c"isupper",
+        c"isxdigit",
+        c"isascii",
+        c"toascii",
+        c"tolower",
+        c"toupper",
+        c"__ctype_b_loc",
+        c"__ctype_tolower_loc",
+        c"__ctype_toupper_loc",
+    ];
+    let native = [
+        fl::isalnum as *mut c_void,
+        fl::isalpha as *mut c_void,
+        fl::isblank as *mut c_void,
+        fl::iscntrl as *mut c_void,
+        fl::isdigit as *mut c_void,
+        fl::isgraph as *mut c_void,
+        fl::islower as *mut c_void,
+        fl::isprint as *mut c_void,
+        fl::ispunct as *mut c_void,
+        fl::isspace as *mut c_void,
+        fl::isupper as *mut c_void,
+        fl::isxdigit as *mut c_void,
+        fl::isascii as *mut c_void,
+        fl::toascii as *mut c_void,
+        fl::tolower as *mut c_void,
+        fl::toupper as *mut c_void,
+        fl::__ctype_b_loc as *mut c_void,
+        fl::__ctype_tolower_loc as *mut c_void,
+        fl::__ctype_toupper_loc as *mut c_void,
+    ];
+    let host = std::array::from_fn::<_, 19, _>(|i| {
+        // SAFETY: the oracle resolves GNU and rejects the native address.
+        unsafe { dlsym_oracle::host_addr(names[i], native[i].cast_const().cast()) }
+    });
+    for name in names {
+        let name = name.to_str().unwrap();
+        assert!(
+            object
+                .undefined_symbols()
+                .any(|(_, s)| object.symbol_name(s) == Some(name)),
+            "missing actual import {name}"
+        );
+        let output = Command::new("objdump")
+            .args(["-dr", &format!("--disassemble=ctype_call_{name}")])
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            if got {
+                text.contains('*') && !text.contains("@plt>")
+            } else {
+                text.contains(&format!("<{name}@plt>"))
+            },
+            "{name}: {text}"
+        );
+    }
+    let mut reference = Vec::new();
+    for (provider, expected) in [("GNU", host), ("native", native)] {
+        let (open, close, symbol): (Open, Close, Sym) = if provider == "native" {
+            (dl::dlopen, dl::dlclose, dl::dlsym)
+        } else {
+            // SAFETY: GNU loader functions have these exact C prototypes.
+            unsafe {
+                (
+                    dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
+                    dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
+                    dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
+                )
+            }
+        };
+        let path = CString::new(library.as_os_str().as_bytes()).unwrap();
+        // SAFETY: path is NUL terminated; the DSO stays loaded through all calls.
+        let handle = unsafe { open(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        assert!(!handle.is_null(), "{provider}: ctype plugin load failed");
+        if provider == "native" {
+            assert!(
+                dl::native_dso_handle_for_tests(handle),
+                "host fallback is not native"
+            );
+        }
+        // SAFETY: these exported functions have the prototypes in CTYPE_PLUGIN.
+        let (select, probe, lookup) = unsafe {
+            let get = |name: &CStr| {
+                let p = symbol(handle, name.as_ptr());
+                assert!(!p.is_null());
+                p
+            };
+            (
+                std::mem::transmute::<*mut c_void, Selector>(get(c"ctype_function")),
+                std::mem::transmute::<*mut c_void, Probe>(get(c"ctype_probe")),
+                std::mem::transmute::<*mut c_void, Run>(get(c"ctype_lookup")),
+            )
+        };
+        for (i, name) in names.iter().enumerate() {
+            let wrapper = CString::new(format!("ctype_call_{}", name.to_str().unwrap())).unwrap();
+            // SAFETY: 0..19 are valid indices in both plugin tables.
+            unsafe {
+                assert_eq!(select(i as u32, 0), expected[i], "{provider}: {name:?}");
+                let call = select(i as u32, 1);
+                assert!(!call.is_null());
+                assert_eq!(call, symbol(handle, wrapper.as_ptr()));
+            }
+        }
+        // SAFETY: zero-argument C lookup checker declared below.
+        assert_eq!(unsafe { lookup() }, 0, "{provider}: lookup");
+        let mut observed = Vec::new();
+        for c in -128..=255 {
+            let mut guarded = [0x12345678; 35];
+            // SAFETY: probe writes exactly 33 ints; guard cells surround them.
+            unsafe { probe(c, guarded.as_mut_ptr().add(1)) };
+            assert_eq!((guarded[0], guarded[34]), (0x12345678, 0x12345678));
+            let record = &guarded[1..34];
+            for i in 0..12 {
+                assert_eq!(record[i], record[i + 16], "{provider}: macro {i}, {c}");
+            }
+            assert_eq!(record[14], record[28], "{provider}: macro tolower {c}");
+            assert_eq!(record[15], record[29], "{provider}: macro toupper {c}");
+            if provider == "native" {
+                assert_eq!(record, &reference[(c + 128) as usize], "ctype input={c}");
+            }
+            observed.push(record.to_vec());
+        }
+        assert_eq!(observed.len(), 384);
+        eprintln!("ctype provider={provider} got={got} records=384 fields=33 lookup=171");
+        if provider == "GNU" {
+            reference = observed;
+        }
+        // SAFETY: no function pointer into this DSO is used after unloading.
+        assert_eq!(unsafe { close(handle) }, 0);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+const CTYPE_PLUGIN: &str = r#"
+#define _GNU_SOURCE
+#include <ctype.h>
+#include <dlfcn.h>
+#include <stddef.h>
+#define IMPORT(name) \
+    extern int import_##name(int) __asm__(#name); \
+    int ctype_call_##name(int c) { return import_##name(c); }
+IMPORT(isalnum) IMPORT(isalpha) IMPORT(isblank) IMPORT(iscntrl)
+IMPORT(isdigit) IMPORT(isgraph) IMPORT(islower) IMPORT(isprint)
+IMPORT(ispunct) IMPORT(isspace) IMPORT(isupper) IMPORT(isxdigit)
+IMPORT(isascii) IMPORT(toascii) IMPORT(tolower) IMPORT(toupper)
+const unsigned short **ctype_call___ctype_b_loc(void) { return __ctype_b_loc(); }
+const int **ctype_call___ctype_tolower_loc(void) { return __ctype_tolower_loc(); }
+const int **ctype_call___ctype_toupper_loc(void) { return __ctype_toupper_loc(); }
+
+void *ctype_function(unsigned i, unsigned wrappers) {
+#define PTR(name) (void *)import_##name
+#define CALL(name) (void *)ctype_call_##name
+    void *const imports[] = {PTR(isalnum),PTR(isalpha),PTR(isblank),PTR(iscntrl),
+        PTR(isdigit),PTR(isgraph),PTR(islower),PTR(isprint),PTR(ispunct),PTR(isspace),
+        PTR(isupper),PTR(isxdigit),PTR(isascii),PTR(toascii),PTR(tolower),PTR(toupper),
+        (void *)__ctype_b_loc,(void *)__ctype_tolower_loc,(void *)__ctype_toupper_loc};
+    void *const calls[] = {CALL(isalnum),CALL(isalpha),CALL(isblank),CALL(iscntrl),
+        CALL(isdigit),CALL(isgraph),CALL(islower),CALL(isprint),CALL(ispunct),CALL(isspace),
+        CALL(isupper),CALL(isxdigit),CALL(isascii),CALL(toascii),CALL(tolower),CALL(toupper),
+        CALL(__ctype_b_loc),CALL(__ctype_tolower_loc),CALL(__ctype_toupper_loc)};
+    return i < 19 ? (wrappers ? calls[i] : imports[i]) : 0;
+}
+
+/* Actual function calls and ordinary ctype.h macro expansions in one record.
+ * Boolean normalization is the established POSIX ctype contract; table masks
+ * and conversion results are compared exactly, not normalized. */
+void ctype_probe(int c, int out[33]) {
+    out[0]=!!ctype_call_isalnum(c); out[1]=!!ctype_call_isalpha(c);
+    out[2]=!!ctype_call_isblank(c); out[3]=!!ctype_call_iscntrl(c);
+    out[4]=!!ctype_call_isdigit(c); out[5]=!!ctype_call_isgraph(c);
+    out[6]=!!ctype_call_islower(c); out[7]=!!ctype_call_isprint(c);
+    out[8]=!!ctype_call_ispunct(c); out[9]=!!ctype_call_isspace(c);
+    out[10]=!!ctype_call_isupper(c); out[11]=!!ctype_call_isxdigit(c);
+    out[12]=!!ctype_call_isascii(c); out[13]=ctype_call_toascii(c);
+    out[14]=ctype_call_tolower(c); out[15]=ctype_call_toupper(c);
+    out[16]=!!isalnum(c); out[17]=!!isalpha(c); out[18]=!!isblank(c);
+    out[19]=!!iscntrl(c); out[20]=!!isdigit(c); out[21]=!!isgraph(c);
+    out[22]=!!islower(c); out[23]=!!isprint(c); out[24]=!!ispunct(c);
+    out[25]=!!isspace(c); out[26]=!!isupper(c); out[27]=!!isxdigit(c);
+    out[28]=tolower(c); out[29]=toupper(c);
+    out[30]=(*ctype_call___ctype_b_loc())[c];
+    out[31]=(*ctype_call___ctype_tolower_loc())[c];
+    out[32]=(*ctype_call___ctype_toupper_loc())[c];
+}
+
+int ctype_lookup(void) {
+    const char *const names[] = {"isalnum","isalpha","isblank","iscntrl","isdigit",
+        "isgraph","islower","isprint","ispunct","isspace","isupper","isxdigit",
+        "isascii","toascii","tolower","toupper","__ctype_b_loc",
+        "__ctype_tolower_loc","__ctype_toupper_loc"};
+    const char *const bad[] = {"GLIBC_2.17","GLIBC_2.25","GLIBC_2.34",
+        "GLIBC_9.99","GLIBC_PRIVATE",""};
+    for (unsigned i=0; i<19; i++) {
+        void *want=ctype_function(i,0); dlerror();
+        if (dlsym(RTLD_DEFAULT,names[i]) != want || dlerror()) return 1;
+        if (dlvsym(RTLD_DEFAULT,names[i],i<16 ? "GLIBC_2.2.5" : "GLIBC_2.3") != want ||
+            dlerror()) return 2;
+        if (dlvsym(RTLD_DEFAULT,names[i],i<16 ? "GLIBC_2.3" : "GLIBC_2.2.5") ||
+            !dlerror() || dlerror()) return 5;
+        for (unsigned j=0; j<6; j++)
+            if (dlvsym(RTLD_DEFAULT,names[i],bad[j]) || !dlerror() || dlerror()) return 3;
+    }
+    /* The pointer cells, not just their pointees, must remain stable. */
+    const unsigned short **(*volatile b)(void)=ctype_call___ctype_b_loc;
+    const int **(*volatile lower)(void)=ctype_call___ctype_tolower_loc;
+    const int **(*volatile upper)(void)=ctype_call___ctype_toupper_loc;
+    if (b()!=b() || lower()!=lower() || upper()!=upper()) return 4;
+    return 0;
+}
+"#;
+
 unsafe extern "C" {
     fn isascii(c: c_int) -> c_int;
     fn toascii(c: c_int) -> c_int;

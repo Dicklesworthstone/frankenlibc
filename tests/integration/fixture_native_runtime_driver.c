@@ -15,16 +15,17 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-/* Pin every integer import and its errno slot to the expected deployed image.
+/* Pin every selected import to the expected deployed image.
  * Raw newfstatat keeps the witness independent of public stat interposition. */
-static int integer_provider_matches(void *handle) {
-    const char *expected = getenv("FLC_INTEGER_EXPECT_PROVIDER");
+static int import_provider_matches(void *handle, const char *variable,
+                                   const char *selector, unsigned count) {
+    const char *expected = getenv(variable);
     struct stat want;
     if (!expected || syscall(SYS_newfstatat, AT_FDCWD, expected, &want, 0)) return 0;
     void *(*select_import)(unsigned, unsigned) =
-        (void *(*)(unsigned, unsigned))dlsym(handle, "integer_function");
+        (void *(*)(unsigned, unsigned))dlsym(handle, selector);
     if (!select_import) return 0;
-    for (unsigned i = 0; i < 10; i++) {
+    for (unsigned i = 0; i < count; i++) {
         Dl_info info;
         struct stat actual;
         if (!dladdr(select_import(i, 0), &info) || !info.dli_fname ||
@@ -42,12 +43,32 @@ int main(int argc, char **argv) {
         fputs("host fallback is not native execution\n", stderr);
         dlclose(handle); return 66;
     }
-    if (strcmp(argv[2], "integer_smoke") == 0 && !integer_provider_matches(handle)) {
+    if (strcmp(argv[2], "integer_smoke") == 0 &&
+        !import_provider_matches(handle, "FLC_INTEGER_EXPECT_PROVIDER", "integer_function", 10)) {
         fputs("integer import provider mismatch\n", stderr);
         dlclose(handle); return 42;
     }
+    if (strcmp(argv[2], "ctype_smoke") == 0 &&
+        !import_provider_matches(handle, "FLC_CTYPE_EXPECT_PROVIDER", "ctype_function", 19)) {
+        fputs("ctype import provider mismatch\n", stderr);
+        dlclose(handle); return 42;
+    }
     int result;
-    if (strncmp(argv[2], "cancel", 6) == 0) {
+    if (strcmp(argv[2], "ctype_smoke") == 0) {
+        int (*lookup)(void) = (int (*)(void))dlsym(handle, "ctype_lookup");
+        void (*probe)(int, int *) = (void (*)(int, int *))dlsym(handle, "ctype_probe");
+        if (!lookup || !probe) return 70;
+        result = lookup();
+        if (result == 0) for (int c = -128; c <= 255; c++) {
+            int out[35];
+            for (unsigned i = 0; i < 35; i++) out[i] = 0x12345678;
+            probe(c, out + 1);
+            if (out[0] != 0x12345678 || out[34] != 0x12345678) return 73;
+            printf("ctype %d", c);
+            for (unsigned i = 1; i < 34; i++) printf(" %d", out[i]);
+            putchar('\n');
+        }
+    } else if (strncmp(argv[2], "cancel", 6) == 0) {
         unsigned which = (unsigned)strtoul(argv[2] + 6, 0, 10);
         if (which > 4) return 67;
         int (*run)(unsigned) = (int (*)(unsigned))dlsym(handle, "cancellation");
