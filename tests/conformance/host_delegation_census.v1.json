@@ -2237,7 +2237,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 121,
-    "source_tree_sha256": "1eea2380955d01891aa7a898b1ebc9a827d063a1ce9cc5004d607020f7e65c2e",
+    "source_tree_sha256": "d18d478f96b09e127c0ae7fc39efefe7b8c26ab1348f5690b99fcb12b664d02f",
     "version": 16
   },
   "module_census": [
@@ -20799,7 +20799,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
-      "sha256": "f240873ae4c61e733465b9a0791940cb42cd3634b72329938a1abf681958275e"
+      "sha256": "20ea9d4f0ffcbf39a7119a67b90f72b764875235b891a75ff62627eadb0aaebc"
     },
     {
       "path": "crates/frankenlibc-abi/src/string_abi.rs",

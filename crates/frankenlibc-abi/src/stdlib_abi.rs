@@ -1493,6 +1493,7 @@ pub unsafe extern "C" fn strtol(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_long {
+    // SAFETY: the caller's C pointer preconditions are forwarded to the shared body.
     unsafe { strtol_with_binary_prefix(nptr, endptr, base, false) }
 }
 
@@ -1623,6 +1624,7 @@ pub unsafe extern "C" fn strtoimax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> intmax_t {
+    // SAFETY: the caller's C pointer preconditions are forwarded to the shared body.
     unsafe { strtoimax_with_binary_prefix(nptr, endptr, base, false) }
 }
 
@@ -1741,6 +1743,7 @@ pub unsafe extern "C" fn strtoul(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulong {
+    // SAFETY: the caller's C pointer preconditions are forwarded to the shared body.
     unsafe { strtoul_with_binary_prefix(nptr, endptr, base, false) }
 }
 
@@ -1846,6 +1849,7 @@ pub unsafe extern "C" fn strtoumax(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> uintmax_t {
+    // SAFETY: the caller's C pointer preconditions are forwarded to the shared body.
     unsafe { strtoumax_with_binary_prefix(nptr, endptr, base, false) }
 }
 
