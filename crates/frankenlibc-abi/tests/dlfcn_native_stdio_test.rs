@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use frankenlibc_abi::{dlfcn_abi as dl, stdio_abi as stdio};
+use frankenlibc_abi::{
+    dlfcn_abi as dl, isoc_abi as isoc, malloc_abi as allocation, stdio_abi as stdio,
+};
 use frankenlibc_core::elf::ElfLoader;
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -31,7 +33,9 @@ const SOURCE: &str = r#"#define _GNU_SOURCE
  X(fopen) X(fdopen) X(freopen) X(fclose) X(fread) X(fwrite) \
  X(fgetc) X(fputc) X(fgets) X(fputs) X(ungetc) X(fseek) X(ftell) X(rewind) \
  X(feof) X(ferror) X(clearerr) X(fflush) X(setbuf) X(setvbuf) X(fileno) \
- X(flockfile) X(ftrylockfile) X(funlockfile)
+ X(flockfile) X(ftrylockfile) X(funlockfile) \
+ X(fopen64) X(freopen64) X(fseeko) X(ftello) X(fseeko64) X(ftello64) \
+ X(fgetpos) X(fsetpos) X(fgetpos64) X(fsetpos64)
 #define NAME(n) #n,
 static const char *const names[] = { FRONTENDS(NAME) };
 #define ADDRESS(n) (void *)(uintptr_t)&n,
@@ -117,6 +121,201 @@ int stream_write_locked(void *ptr, int byte, size_t lines) {
     return 0;
 }
 int stream_close_shared(void *ptr) { return fclose(ptr); }
+int stream_large_offsets(const char *path) {
+    const off64_t offset = ((off64_t)5 << 30) + 7;
+    FILE *s = fopen64(path, "w+"); EXPECT(s, 1);
+    EXPECT(fseeko64(s, offset, SEEK_SET) == 0, 2);
+    EXPECT(ftello64(s) == offset && ftello(s) == offset, 3);
+    fpos_t start; EXPECT(fgetpos(s, &start) == 0, 4);
+    EXPECT(fputs("large", s) >= 0 && fflush(s) == 0, 5);
+    fpos64_t end; EXPECT(fgetpos64(s, &end) == 0, 6);
+    EXPECT(ftello64(s) == offset + 5, 7);
+    EXPECT(fsetpos(s, &start) == 0 && fgetc(s) == 'l', 8);
+    EXPECT(fsetpos64(s, &end) == 0 && fputc('!', s) == '!', 9);
+    EXPECT(fflush(s) == 0 && ftello64(s) == offset + 6, 10);
+    errno = 0;
+    EXPECT(fseeko64(s, -1, SEEK_SET) == -1 && errno == EINVAL, 11);
+    EXPECT(ftello64(s) == offset + 6, 12);
+    EXPECT(freopen64(path, "r", s) == s, 13);
+    EXPECT(fseeko(s, offset - 1, SEEK_SET) == 0, 14);
+    EXPECT(fgetc(s) == 0, 15);
+    char bytes[6]; EXPECT(fread(bytes, 1, sizeof bytes, s) == sizeof bytes, 16);
+    EXPECT(bytes[0] == 'l' && bytes[4] == 'e' && bytes[5] == '!', 17);
+    EXPECT(ftello(s) == offset + 6 && fgetc(s) == EOF && feof(s), 18);
+    EXPECT(fclose(s) == 0, 19);
+    return 0;
+}
+
+#ifdef SCAN_INPUT
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Explicit assembler names prevent the host headers from silently changing
+   the legacy/C99/C23 contract selected by each test. */
+#define DECLARE_SCANNERS(P, S) \
+ extern int P##scanf(const char *, ...) __asm__(S "scanf"); \
+ extern int P##fscanf(FILE *, const char *, ...) __asm__(S "fscanf"); \
+ extern int P##sscanf(const char *, const char *, ...) __asm__(S "sscanf"); \
+ extern int P##vscanf(const char *, va_list) __asm__(S "vscanf"); \
+ extern int P##vfscanf(FILE *, const char *, va_list) __asm__(S "vfscanf"); \
+ extern int P##vsscanf(const char *, const char *, va_list) __asm__(S "vsscanf")
+DECLARE_SCANNERS(legacy_, "");
+DECLARE_SCANNERS(c99_, "__isoc99_");
+DECLARE_SCANNERS(c23_, "__isoc23_");
+
+#define SCAN_FRONTENDS(X) \
+ X(legacy_scanf, "scanf") X(legacy_fscanf, "fscanf") X(legacy_sscanf, "sscanf") \
+ X(legacy_vscanf, "vscanf") X(legacy_vfscanf, "vfscanf") X(legacy_vsscanf, "vsscanf") \
+ X(c99_scanf, "__isoc99_scanf") X(c99_fscanf, "__isoc99_fscanf") \
+ X(c99_sscanf, "__isoc99_sscanf") X(c99_vscanf, "__isoc99_vscanf") \
+ X(c99_vfscanf, "__isoc99_vfscanf") X(c99_vsscanf, "__isoc99_vsscanf") \
+ X(c23_scanf, "__isoc23_scanf") X(c23_fscanf, "__isoc23_fscanf") \
+ X(c23_sscanf, "__isoc23_sscanf") X(c23_vscanf, "__isoc23_vscanf") \
+ X(c23_vfscanf, "__isoc23_vfscanf") X(c23_vsscanf, "__isoc23_vsscanf")
+#define SCAN_NAME(F, N) N,
+static const char *const scan_names[] = { SCAN_FRONTENDS(SCAN_NAME) };
+#define SCAN_ADDRESS(F, N) (void *)(uintptr_t)&F,
+static void *const scan_addresses[] = { SCAN_FRONTENDS(SCAN_ADDRESS) };
+size_t scan_frontend_count(void) { return sizeof scan_addresses / sizeof scan_addresses[0]; }
+void *scan_frontend(size_t index, int dynamic, const char *version) {
+    if (index >= scan_frontend_count()) return 0;
+    if (!dynamic) return scan_addresses[index];
+    void *result = version ? dlvsym(RTLD_DEFAULT, scan_names[index], version)
+                           : dlsym(RTLD_DEFAULT, scan_names[index]);
+    __asm__ __volatile__("" : "+r"(result));
+    return result;
+}
+
+/* Genuine C va_list forwarding, including more pointer destinations than
+   fit in the integer argument registers. No Rust reconstruction of va_list. */
+#define VSCAN_ADAPTERS(P) \
+ static int P##string_v(const char *input, const char *format, ...) { \
+    va_list ap; va_start(ap, format); \
+    int result = P##vsscanf(input, format, ap); va_end(ap); return result; \
+ } \
+ static int P##file_v(FILE *stream, const char *format, ...) { \
+    va_list ap; va_start(ap, format); \
+    int result = P##vfscanf(stream, format, ap); va_end(ap); return result; \
+ } \
+ static int P##input_v(const char *format, ...) { \
+    va_list ap; va_start(ap, format); \
+    int result = P##vscanf(format, ap); va_end(ap); return result; \
+ }
+VSCAN_ADAPTERS(legacy_)
+VSCAN_ADAPTERS(c99_)
+VSCAN_ADAPTERS(c23_)
+
+typedef int (*StringScan)(const char *, const char *, ...);
+typedef int (*FileScan)(FILE *, const char *, ...);
+typedef int (*InputScan)(const char *, ...);
+static StringScan const string_scanners[] = {
+    legacy_sscanf, legacy_string_v, c99_sscanf, c99_string_v, c23_sscanf, c23_string_v
+};
+static FileScan const file_scanners[] = {
+    legacy_fscanf, legacy_file_v, c99_fscanf, c99_file_v, c23_fscanf, c23_file_v
+};
+static InputScan const input_scanners[] = {
+    legacy_scanf, legacy_input_v, c99_scanf, c99_input_v, c23_scanf, c23_input_v
+};
+
+static FILE *scan_memory(void *data, size_t length) {
+    /* An unversioned -nostdlib import can bind glibc's pre-2.22 compatibility
+       fmemopen. Select the modern contract the native runtime supplies. */
+    typedef FILE *(*MemoryOpen)(void *, size_t, const char *);
+    MemoryOpen open = (MemoryOpen)dlvsym(RTLD_DEFAULT, "fmemopen", "GLIBC_2.22");
+    return open ? open(data, length, "r") : 0;
+}
+
+int scan_values(unsigned route) {
+    EXPECT(route < 6, 1);
+    int a = 0, consumed = -1;
+    unsigned b = 0; long c = 0; unsigned long long d = 0;
+    short e = 0; unsigned char f = 0; double g = 0; char word[4] = {0};
+    int count = string_scanners[route]("17 23 31 47 59 61 2.5 xyz!",
+        "%d %u %ld %llu %hd %hhu %lf %3s%n",
+        &a, &b, &c, &d, &e, &f, &g, word, &consumed);
+    EXPECT(count == 8 && consumed == 25, 2);
+    EXPECT(a == 17 && b == 23 && c == 31 && d == 47 && e == 59 && f == 61, 3);
+    EXPECT(g == 2.5 && strcmp(word, "xyz") == 0, 4);
+    a = 917; consumed = -1;
+    EXPECT(string_scanners[route]("?", "%d%n", &a, &consumed) == 0, 5);
+    EXPECT(a == 917 && consumed == -1, 6);
+    EXPECT(string_scanners[route]("", "%d", &a) == EOF && a == 917, 7);
+    EXPECT(string_scanners[route]("7 99 11", "%d %*d %ld%n", &a, &c, &consumed) == 2, 8);
+    EXPECT(a == 7 && c == 11 && consumed == 7, 9);
+    if (route >= 4) {
+        EXPECT(string_scanners[route]("0b101!", "%i%n", &a, &consumed) == 1, 10);
+        EXPECT(a == 5 && consumed == 5, 11);
+    }
+    return 0;
+}
+
+int scan_streams(const char *path, unsigned route) {
+    EXPECT(route < 6, 1);
+    FILE *s = fopen(path, "w+"); EXPECT(s, 2);
+    EXPECT(fputs("17 23 tail!", s) >= 0 && fseeko(s, 0, SEEK_SET) == 0, 3);
+    int a = 0, consumed = -1; unsigned b = 0;
+    EXPECT(file_scanners[route](s, "%d %u%n", &a, &b, &consumed) == 2, 4);
+    EXPECT(a == 17 && b == 23 && consumed == 5 && ftello(s) == 5, 5);
+    EXPECT(fgetc(s) == ' ', 6);
+    a = 917;
+    EXPECT(file_scanners[route](s, "%d", &a) == 0 && a == 917 && !feof(s), 7);
+    char word[5] = {0};
+    EXPECT(file_scanners[route](s, "%4[a-z]%n", word, &consumed) == 1, 8);
+    EXPECT(strcmp(word, "tail") == 0 && consumed == 4 && ftello(s) == 10, 9);
+    EXPECT(fgetc(s) == '!' && fgetc(s) == EOF && feof(s) && !ferror(s), 10);
+    EXPECT(file_scanners[route](s, "%d", &a) == EOF && a == 917, 11);
+    EXPECT(fclose(s) == 0, 12);
+
+    char memory[] = "31 word!";
+    s = scan_memory(memory, sizeof memory - 1); EXPECT(s, 13);
+    EXPECT(file_scanners[route](s, "%d %4[a-z]%n", &a, word, &consumed) == 2, 14);
+    EXPECT(a == 31 && strcmp(word, "word") == 0 && consumed == 7 && ftello(s) == 7, 15);
+    EXPECT(fgetc(s) == '!' && fgetc(s) == EOF && feof(s), 16);
+    EXPECT(fclose(s) == 0, 17);
+
+    char empty = 0;
+    s = scan_memory(&empty, 0); EXPECT(s, 18);
+    EXPECT(file_scanners[route](s, "%d", &a) == EOF && feof(s) && !ferror(s), 19);
+    EXPECT(fclose(s) == 0, 20);
+    return 0;
+}
+
+int scan_standard_input(unsigned route) {
+    EXPECT(route < 6, 1);
+    char text[] = "41 59!";
+    FILE *s = scan_memory(text, sizeof text - 1); EXPECT(s, 2);
+    FILE *saved = stdin;
+    stdin = s;
+    int a = 0, consumed = -1; unsigned b = 0;
+    int result = input_scanners[route]("%d %u%n", &a, &b, &consumed);
+    stdin = saved;
+    int tail = fgetc(s);
+    int closed = fclose(s);
+    EXPECT(result == 2 && a == 41 && b == 59 && consumed == 5, 3);
+    EXPECT(tail == '!' && closed == 0, 4);
+    return 0;
+}
+
+char *scan_allocate(unsigned route, int stream) {
+    if (route >= 6) return 0;
+    char *word = 0; int consumed = -1, result;
+    char input[] = "allocated tail";
+    if (stream) {
+        FILE *s = scan_memory(input, sizeof input - 1);
+        if (!s) return 0;
+        result = file_scanners[route](s, "%ms%n", &word, &consumed);
+        if (fclose(s)) { free(word); return 0; }
+    } else {
+        result = string_scanners[route](input, "%ms%n", &word, &consumed);
+    }
+    if (result != 1 || consumed != 9) { free(word); return 0; }
+    return word;
+}
+void scan_release(void *pointer) { free(pointer); }
+#endif
+
 #ifdef LIFECYCLE_PATH
 static int init_result;
 __attribute__((constructor)) static void initialize(void) {
@@ -165,6 +364,58 @@ fn frontends() -> Vec<(&'static str, *const ())> {
         ("flockfile", stdio::flockfile as *const ()),
         ("ftrylockfile", stdio::ftrylockfile as *const ()),
         ("funlockfile", stdio::funlockfile as *const ()),
+        ("fopen64", stdio::fopen64 as *const ()),
+        ("freopen64", stdio::freopen64 as *const ()),
+        ("fseeko", stdio::fseeko as *const ()),
+        ("ftello", stdio::ftello as *const ()),
+        ("fseeko64", stdio::fseeko64 as *const ()),
+        ("ftello64", stdio::ftello64 as *const ()),
+        ("fgetpos", stdio::fgetpos as *const ()),
+        ("fsetpos", stdio::fsetpos as *const ()),
+        ("fgetpos64", stdio::fgetpos64 as *const ()),
+        ("fsetpos64", stdio::fsetpos64 as *const ()),
+    ]
+}
+
+fn scan_frontends() -> Vec<(&'static CStr, *const (), &'static CStr)> {
+    let base = c"GLIBC_2.2.5";
+    let c99 = c"GLIBC_2.7";
+    let c23 = c"GLIBC_2.38";
+    vec![
+        (c"scanf", stdio::scanf as *const (), base),
+        (c"fscanf", stdio::fscanf as *const (), base),
+        (c"sscanf", stdio::sscanf as *const (), base),
+        (c"vscanf", stdio::vscanf as *const (), base),
+        (c"vfscanf", stdio::vfscanf as *const (), base),
+        (c"vsscanf", stdio::vsscanf as *const (), base),
+        (c"__isoc99_scanf", stdio::__isoc99_scanf as *const (), c99),
+        (c"__isoc99_fscanf", stdio::__isoc99_fscanf as *const (), c99),
+        (c"__isoc99_sscanf", stdio::__isoc99_sscanf as *const (), c99),
+        (c"__isoc99_vscanf", stdio::__isoc99_vscanf as *const (), c99),
+        (
+            c"__isoc99_vfscanf",
+            stdio::__isoc99_vfscanf as *const (),
+            c99,
+        ),
+        (
+            c"__isoc99_vsscanf",
+            stdio::__isoc99_vsscanf as *const (),
+            c99,
+        ),
+        (c"__isoc23_scanf", isoc::__isoc23_scanf as *const (), c23),
+        (c"__isoc23_fscanf", isoc::__isoc23_fscanf as *const (), c23),
+        (c"__isoc23_sscanf", isoc::__isoc23_sscanf as *const (), c23),
+        (c"__isoc23_vscanf", isoc::__isoc23_vscanf as *const (), c23),
+        (
+            c"__isoc23_vfscanf",
+            isoc::__isoc23_vfscanf as *const (),
+            c23,
+        ),
+        (
+            c"__isoc23_vsscanf",
+            isoc::__isoc23_vsscanf as *const (),
+            c23,
+        ),
     ]
 }
 
@@ -299,10 +550,78 @@ impl Fixture {
                 "compiler elided import {name}"
             );
         }
+        if extra.contains(&"-DSCAN_INPUT") {
+            for (name, _, _) in scan_frontends() {
+                let name = name.to_str().unwrap();
+                assert!(
+                    object
+                        .undefined_symbols()
+                        .any(|(_, symbol)| object.symbol_name(symbol) == Some(name)),
+                    "compiler elided scanner import {name}"
+                );
+            }
+        }
         Self { dir, library }
     }
     fn path(&self, name: &str) -> CString {
         CString::new(self.dir.join(name).as_os_str().as_bytes()).unwrap()
+    }
+}
+
+fn check_frontend(
+    api: Api,
+    query: Frontend,
+    index: usize,
+    name: &CStr,
+    expected: *const (),
+    version: &CStr,
+) {
+    // Resolve the incumbent independently; a host-loaded fixture must bind to
+    // this exact provider, and a native fixture must bind to the Rust frontend.
+    let host = unsafe { dlsym_oracle::host_addr_versioned(name, version, expected) };
+    let direct = unsafe { query(index, 0, std::ptr::null()) };
+    assert_eq!(
+        direct,
+        if api.native {
+            expected.cast_mut().cast()
+        } else {
+            host
+        },
+        "{name:?}: wrong provider"
+    );
+    assert_eq!(
+        direct,
+        unsafe { query(index, 1, std::ptr::null()) },
+        "{name:?}: direct/dynamic mismatch"
+    );
+    assert_eq!(
+        direct,
+        unsafe { query(index, 1, version.as_ptr()) },
+        "{name:?}: versioned mismatch"
+    );
+    for unsupported in [
+        c"GLIBC_2.2.5",
+        c"GLIBC_2.7",
+        c"GLIBC_2.38",
+        c"GLIBC_PRIVATE",
+        c"GLIBC_9.99",
+    ] {
+        if unsupported != version {
+            assert!(
+                unsafe { query(index, 1, unsupported.as_ptr()) }.is_null(),
+                "{name:?}: accepted unsupported version {unsupported:?}"
+            );
+        }
+    }
+}
+
+fn check_scan_frontends(api: Api, handle: *mut c_void) {
+    let count: unsafe extern "C" fn() -> usize =
+        unsafe { std::mem::transmute(api.symbol(handle, c"scan_frontend_count")) };
+    let query: Frontend = unsafe { std::mem::transmute(api.symbol(handle, c"scan_frontend")) };
+    assert_eq!(unsafe { count() }, scan_frontends().len());
+    for (index, (name, expected, version)) in scan_frontends().into_iter().enumerate() {
+        check_frontend(api, query, index, name, expected, version);
     }
 }
 
@@ -391,6 +710,125 @@ fn stream_binary_roundtrip_and_flush_visibility() {
         |api| one_path(api, c"stream_roundtrip", Some(b"ab\0cd\n!")),
     );
 }
+
+#[test]
+fn stream_large_file_seeks_preserve_positions_and_sparse_bytes() {
+    isolated(
+        "stream_large_file_seeks_preserve_positions_and_sparse_bytes",
+        false,
+        |api| {
+            use std::io::{Read, Seek, SeekFrom};
+
+            let fixture = Fixture::new(&["-fno-plt"]);
+            let handle = api.open(&fixture.library, 0);
+            let query: Frontend =
+                unsafe { std::mem::transmute(api.symbol(handle, c"stream_frontend")) };
+            for (index, (name, expected)) in frontends().into_iter().enumerate() {
+                let name = CString::new(name).unwrap();
+                check_frontend(api, query, index, &name, expected, c"GLIBC_2.2.5");
+            }
+            let call: OnePath =
+                unsafe { std::mem::transmute(api.symbol(handle, c"stream_large_offsets")) };
+            assert_eq!(unsafe { call(fixture.path("sparse").as_ptr()) }, 0);
+            let mut file = std::fs::File::open(fixture.dir.join("sparse")).unwrap();
+            let offset = (5_u64 << 30) + 7;
+            assert_eq!(file.metadata().unwrap().len(), offset + 6);
+            file.seek(SeekFrom::Start(offset - 1)).unwrap();
+            let mut bytes = [0; 7];
+            file.read_exact(&mut bytes).unwrap();
+            assert_eq!(&bytes, b"\0large!");
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn stream_scanning_aliases_preserve_variadic_values_and_versions() {
+    isolated(
+        "stream_scanning_aliases_preserve_variadic_values_and_versions",
+        false,
+        |api| {
+            for options in [&["-DSCAN_INPUT"][..], &["-DSCAN_INPUT", "-fno-plt"][..]] {
+                let fixture = Fixture::new(options);
+                let handle = api.open(&fixture.library, 0);
+                check_scan_frontends(api, handle);
+                let call: unsafe extern "C" fn(u32) -> c_int =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"scan_values")) };
+                for route in 0..6 {
+                    assert_eq!(unsafe { call(route) }, 0, "scanner route {route}");
+                }
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn stream_scanning_preserves_leftovers_offsets_and_failure_state() {
+    isolated(
+        "stream_scanning_preserves_leftovers_offsets_and_failure_state",
+        false,
+        |api| {
+            let fixture = Fixture::new(&["-DSCAN_INPUT"]);
+            let handle = api.open(&fixture.library, 0);
+            check_scan_frontends(api, handle);
+            let call: unsafe extern "C" fn(*const c_char, u32) -> c_int =
+                unsafe { std::mem::transmute(api.symbol(handle, c"scan_streams")) };
+            for route in 0..6 {
+                assert_eq!(
+                    unsafe { call(fixture.path("records").as_ptr(), route) },
+                    0,
+                    "scanner route {route}"
+                );
+                assert_eq!(
+                    std::fs::read(fixture.dir.join("records")).unwrap(),
+                    b"17 23 tail!"
+                );
+            }
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn stream_scanning_owns_allocations_and_honors_redirected_stdin() {
+    isolated(
+        "stream_scanning_owns_allocations_and_honors_redirected_stdin",
+        false,
+        |api| {
+            let fixture = Fixture::new(&["-DSCAN_INPUT", "-fno-plt"]);
+            let handle = api.open(&fixture.library, 0);
+            check_scan_frontends(api, handle);
+            let input: unsafe extern "C" fn(u32) -> c_int =
+                unsafe { std::mem::transmute(api.symbol(handle, c"scan_standard_input")) };
+            let allocate: unsafe extern "C" fn(u32, c_int) -> *mut c_char =
+                unsafe { std::mem::transmute(api.symbol(handle, c"scan_allocate")) };
+            let release: unsafe extern "C" fn(*mut c_void) =
+                unsafe { std::mem::transmute(api.symbol(handle, c"scan_release")) };
+            for route in 0..6 {
+                assert_eq!(unsafe { input(route) }, 0, "stdin scanner route {route}");
+                for stream in 0..2 {
+                    let pointer = unsafe { allocate(route, stream) };
+                    assert!(
+                        !pointer.is_null(),
+                        "allocation route {route}, stream={stream}"
+                    );
+                    assert_eq!(unsafe { CStr::from_ptr(pointer) }.to_bytes(), b"allocated");
+                    if api.native {
+                        assert!(
+                            allocation::known_remaining_for_tests(pointer as usize)
+                                .is_some_and(|remaining| remaining >= 10),
+                            "scanner allocation escaped native ownership"
+                        );
+                    }
+                    unsafe { release(pointer.cast()) };
+                }
+            }
+            api.close(handle);
+        },
+    );
+}
+
 #[test]
 fn stream_descriptor_transfer_and_failed_fdopen_ownership() {
     isolated(
