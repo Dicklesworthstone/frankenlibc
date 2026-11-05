@@ -102,6 +102,8 @@ int memory_advice_probe(void) { return madvise(NULL, 0, MADV_NORMAL); }
 
 int memory_virtual_mappings(void) {
     errno = 1234;
+    VM_CHECK(getpagesize() == VM_PAGE && errno == 1234);
+    VM_CHECK(sysconf(_SC_PAGESIZE) == VM_PAGE && errno == 1234);
     unsigned char *p = mmap(NULL, 2 * VM_PAGE, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     VM_CHECK(p != MAP_FAILED && errno == 1234);
@@ -263,6 +265,8 @@ void *memory_function(unsigned index) {
         case 34: return (void *)munlockall;
         case 35: return (void *)mlock2;
         case 36: return (void *)__errno_location;
+        case 37: return (void *)getpagesize;
+        case 38: return (void *)sysconf;
         default: return 0;
     }
 }
@@ -280,7 +284,7 @@ __attribute__((destructor)) static void fini(void) {
 #endif
 "#;
 
-fn symbols() -> [(&'static str, *const ()); 37] {
+fn symbols() -> [(&'static str, *const ()); 39] {
     [
         ("calloc", allocation::calloc as *const ()),
         ("realloc", allocation::realloc as *const ()),
@@ -322,6 +326,8 @@ fn symbols() -> [(&'static str, *const ()); 37] {
         ("munlockall", mapping::munlockall as *const ()),
         ("mlock2", mapping::mlock2 as *const ()),
         ("__errno_location", errno::__errno_location as *const ()),
+        ("getpagesize", unistd::getpagesize as *const ()),
+        ("sysconf", unistd::sysconf as *const ()),
     ]
 }
 

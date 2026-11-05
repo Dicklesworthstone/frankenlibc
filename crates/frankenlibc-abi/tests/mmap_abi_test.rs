@@ -236,7 +236,7 @@ fn mremap_grow_mapping() {
     // Write a marker
     unsafe { *(ptr as *mut u8) = 77 };
 
-    let new_ptr = unsafe { mremap(ptr, old_len, new_len, libc::MREMAP_MAYMOVE, ptr::null_mut()) };
+    let new_ptr = unsafe { mremap(ptr, old_len, new_len, libc::MREMAP_MAYMOVE) };
     assert_ne!(new_ptr, libc::MAP_FAILED, "mremap should succeed");
 
     // Marker should be preserved
@@ -410,7 +410,7 @@ fn mremap_shrink_mapping() {
     unsafe { *(ptr as *mut u8) = 88 };
 
     // Shrinking does not require MREMAP_MAYMOVE
-    let new_ptr = unsafe { mremap(ptr, old_len, new_len, 0, ptr::null_mut()) };
+    let new_ptr = unsafe { mremap(ptr, old_len, new_len, 0) };
     assert_ne!(new_ptr, libc::MAP_FAILED, "mremap shrink should succeed");
     assert_eq!(new_ptr, ptr, "shrink should keep same address");
     let val = unsafe { *(new_ptr as *const u8) };
@@ -622,17 +622,37 @@ fn under_mremap_grows_anon_mapping() {
         )
     };
     assert_ne!(ptr, libc::MAP_FAILED);
-    let new_ptr = unsafe {
-        __mremap(
-            ptr,
-            small,
-            large,
-            libc::MREMAP_MAYMOVE,
+    unsafe { *ptr.cast::<u8>() = 91 };
+    let new_ptr = unsafe { __mremap(ptr, small, large, libc::MREMAP_MAYMOVE) };
+    assert_ne!(new_ptr, libc::MAP_FAILED);
+    assert_eq!(unsafe { *new_ptr.cast::<u8>() }, 91);
+    unsafe { *new_ptr.cast::<u8>().add(large - 1) = 92 };
+
+    // The same variadic alias must also consume the optional fixed target.
+    let target = unsafe {
+        mmap(
             std::ptr::null_mut(),
+            large,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
         )
     };
-    assert_ne!(new_ptr, libc::MAP_FAILED);
-    assert_eq!(unsafe { munmap(new_ptr, large) }, 0);
+    assert_ne!(target, libc::MAP_FAILED);
+    let fixed = unsafe {
+        __mremap(
+            new_ptr,
+            large,
+            large,
+            libc::MREMAP_MAYMOVE | libc::MREMAP_FIXED,
+            target,
+        )
+    };
+    assert_eq!(fixed, target);
+    assert_eq!(unsafe { *fixed.cast::<u8>() }, 91);
+    assert_eq!(unsafe { *fixed.cast::<u8>().add(large - 1) }, 92);
+    assert_eq!(unsafe { munmap(fixed, large) }, 0);
 }
 
 #[test]

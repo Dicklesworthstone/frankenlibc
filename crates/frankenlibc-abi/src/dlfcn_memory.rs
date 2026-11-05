@@ -92,6 +92,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "malloc_usable_size" => allocation::malloc_usable_size as *const (),
         // Native plugins share the ABI's VM policy, syscall and errno paths.
         // Taking the real function address also retains msync's unwind ABI.
+        "getpagesize" => unistd::getpagesize as *const (),
+        "sysconf" => unistd::sysconf as *const (),
         "mmap" => mapping::mmap as *const (),
         "mmap64" => unistd::mmap64 as *const (),
         "munmap" => mapping::munmap as *const (),

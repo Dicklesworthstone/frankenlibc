@@ -362,7 +362,7 @@ fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
                         m.len,
                         new_len,
                         pick_remap_flags(*flags_sel),
-                        std::ptr::null_mut(),
+                        std::ptr::null_mut::<c_void>(),
                     )
                 };
                 assert_eq!(
@@ -373,7 +373,7 @@ fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
             }
             let new_len = pick_len_pages(*new_len_pages);
             let flags = pick_remap_flags(*flags_sel) & !libc::MREMAP_FIXED; // keep things safe
-            let new_addr = unsafe { mremap(m.addr, m.len, new_len, flags, std::ptr::null_mut()) };
+            let new_addr = unsafe { mremap(m.addr, m.len, new_len, flags) };
             if new_addr == MAP_FAILED {
                 return;
             }

@@ -394,16 +394,22 @@ pub unsafe extern "C" fn munlockall() -> c_int {
 
 /// Linux `mremap` — remap a virtual memory address.
 ///
-/// When `flags` includes `MREMAP_FIXED`, the `new_address` parameter specifies
-/// the new mapping target. Without `MREMAP_FIXED`, `new_address` is ignored.
+/// The optional fifth argument supplies the target only with `MREMAP_FIXED`.
+/// Other calls have four arguments and must not read an absent target.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mremap(
     old_address: *mut c_void,
     old_size: usize,
     new_size: usize,
     flags: c_int,
-    new_address: *mut c_void,
+    mut args: ...
 ) -> *mut c_void {
+    let new_address = if flags & libc::MREMAP_FIXED != 0 {
+        // SAFETY: MREMAP_FIXED requires one additional pointer argument.
+        unsafe { args.next_arg::<*mut c_void>() }
+    } else {
+        std::ptr::null_mut()
+    };
     let (_, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         old_address as usize,
@@ -460,7 +466,13 @@ pub unsafe extern "C" fn __mremap(
     old_size: usize,
     new_size: usize,
     flags: c_int,
-    new_address: *mut c_void,
+    mut args: ...
 ) -> *mut c_void {
+    let new_address = if flags & libc::MREMAP_FIXED != 0 {
+        // SAFETY: the alias has the same optional-argument contract as mremap.
+        unsafe { args.next_arg::<*mut c_void>() }
+    } else {
+        std::ptr::null_mut()
+    };
     unsafe { mremap(old_address, old_size, new_size, flags, new_address) }
 }
