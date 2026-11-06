@@ -338,6 +338,13 @@
       "text": "if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlinfo\") {"
     },
     {
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5914",
+      "line": 5914,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "text": "&& let Some(raw) = crate::host_resolve::resolve_host_symbol_raw(\"fwide\")"
+    },
+    {
       "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:53",
       "line": 53,
       "module": "host_resolve",
@@ -1716,6 +1723,24 @@
     },
     {
       "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5914",
+      "exported_function_id": "glibc_internal_abi::fwide@5900",
+      "exported_symbol": "fwide",
+      "expression": "&& let Some(raw) = crate::host_resolve::resolve_host_symbol_raw(\"fwide\")",
+      "helper_function": "fwide",
+      "helper_function_id": "glibc_internal_abi::fwide@5900",
+      "host_symbol": "fwide",
+      "id": "glibc_internal_abi:fwide:5900:001",
+      "line": 5914,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "reachability_hops": 0,
+      "reachability_path": [
+        "glibc_internal_abi::fwide@5900"
+      ]
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
       "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5276",
       "exported_function_id": "glibc_internal_abi::profil@5292",
       "exported_symbol": "profil",
@@ -2237,7 +2262,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 122,
-    "source_tree_sha256": "5912d6771239ba768695503b58b29844b6675849dac722b27807312fa18d5481",
+    "source_tree_sha256": "3183ef14abb44ac695ce3fa6d427be8f23e7fa47c07d4245c825d2b599029e5e",
     "version": 16
   },
   "module_census": [
@@ -2246,7 +2271,7 @@
       "module": "dlfcn_abi"
     },
     {
-      "host_delegating_symbol_count": 4,
+      "host_delegating_symbol_count": 5,
       "module": "glibc_internal_abi"
     },
     {
@@ -3136,7 +3161,7 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "c573f2a485a6880f4f128f8c801cdee654aa0f5f5064dcef9748e2ae3b9b95da",
+        "support_matrix_sha256": "d935fdf48175efd0e17220640c8d8a88d011f441bacb2d9a958928391f812eaf",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 9160,
@@ -3517,6 +3542,7 @@
           "_IO_list_all",
           "__errno_location",
           "dlsym",
+          "fwide",
           "pthread_exit",
           "pthread_setcanceltype",
           "pthread_testcancel"
@@ -3526,6 +3552,7 @@
           "_IO_list_all",
           "__errno_location",
           "dlsym",
+          "fwide",
           "pthread_exit",
           "pthread_setcanceltype",
           "pthread_testcancel"
@@ -7802,7 +7829,8 @@
         ],
         "fwide": [
           "_IO_list_all",
-          "dlsym"
+          "dlsym",
+          "fwide"
         ],
         "fwprintf": [
           "<dynamic>",
@@ -11459,8 +11487,8 @@
         "_IO_funlockfile": 3,
         "_IO_fwrite": 9,
         "_IO_getc": 9,
-        "_IO_getline": 9,
-        "_IO_getline_info": 9,
+        "_IO_getline": 10,
+        "_IO_getline_info": 10,
         "_IO_gets": 9,
         "_IO_padn": 9,
         "_IO_peekc_locked": 9,
@@ -12256,7 +12284,7 @@
         "ftrylockfile": 3,
         "funlockfile": 3,
         "funopen": 2,
-        "fwide": 2,
+        "fwide": 3,
         "fwprintf": 9,
         "fwrite": 9,
         "fwrite_unlocked": 9,
@@ -13093,14 +13121,14 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18189,
+      "resolved_call_edge_count": 18191,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1679,
         "exported_symbol_with_unknown_call_edge_count": 83,
-        "host_dependency_callsite_count": 6180,
+        "host_dependency_callsite_count": 6183,
         "standalone_admission_ready": false,
-        "unique_terminal_host_callsite_count": 102,
+        "unique_terminal_host_callsite_count": 103,
         "unknown_reachable_call_edge_count": 30
       },
       "terminal_host_callsites": [
@@ -13390,6 +13418,15 @@
           "function_id": "glibc_internal_abi::dlinfo@5683",
           "host_symbol": "dlinfo",
           "line": 5740,
+          "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+        },
+        {
+          "delegation_kind": "resolve_host_symbol_raw_literal",
+          "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5914",
+          "expression": "&& let Some(raw) = crate::host_resolve::resolve_host_symbol_raw(\"fwide\")",
+          "function_id": "glibc_internal_abi::fwide@5900",
+          "host_symbol": "fwide",
+          "line": 5914,
           "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
         },
         {
@@ -15408,7 +15445,7 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "c573f2a485a6880f4f128f8c801cdee654aa0f5f5064dcef9748e2ae3b9b95da",
+        "support_matrix_sha256": "d935fdf48175efd0e17220640c8d8a88d011f441bacb2d9a958928391f812eaf",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 9147,
@@ -19546,7 +19583,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17972,
+      "resolved_call_edge_count": 17973,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 593,
@@ -20629,7 +20666,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "sha256": "07858185046e264e589ff73ffce7dbe99a473e015f9f3ec8544d09f27602ef46"
+      "sha256": "b4b41271c128a2a4eeee8ae592f3cb09d3147a817cb3f0d1e6bc30f9e77cdcea"
     },
     {
       "path": "crates/frankenlibc-abi/src/grp_abi.rs",
@@ -20657,7 +20694,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/io_internal_abi.rs",
-      "sha256": "8d1a507fa2c2ca27246ed0b53db20310ebaefcdd846c641634fe66f111227415"
+      "sha256": "9f481f7995d1d3c489dd86fc5f9664e0e0c11fcbc4444788a221469b47a83513"
     },
     {
       "path": "crates/frankenlibc-abi/src/iov_snapshot.rs",
@@ -20913,11 +20950,11 @@
     }
   ],
   "summary": {
-    "broader_source_reference_count": 192,
+    "broader_source_reference_count": 193,
     "exported_symbol_count": 4664,
     "exported_symbol_with_unknown_call_edge_count": 0,
-    "host_delegating_symbol_count": 33,
-    "host_delegation_callsite_count": 48,
+    "host_delegating_symbol_count": 34,
+    "host_delegation_callsite_count": 49,
     "module_count": 6,
     "required_anchor_count": 9,
     "required_anchor_present_count": 9,
@@ -21065,6 +21102,22 @@
       "module": "glibc_internal_abi",
       "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5683",
       "symbol": "dlinfo"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "glibc_internal_abi:fwide:5900:001"
+      ],
+      "delegation_kinds": [
+        "resolve_host_symbol_raw_literal"
+      ],
+      "function_id": "glibc_internal_abi::fwide@5900",
+      "host_symbols": [
+        "fwide"
+      ],
+      "module": "glibc_internal_abi",
+      "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5900",
+      "symbol": "fwide"
     },
     {
       "callsite_count": 1,

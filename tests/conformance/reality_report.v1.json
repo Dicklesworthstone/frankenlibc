@@ -4,9 +4,9 @@
   "source_commit": "d94f7ebf03a550850b07d18fbf871864b2adaf1b",
   "total_exported": 4119,
   "counts": {
-    "implemented": 2415,
+    "implemented": 2414,
     "raw_syscall": 408,
-    "wraps_host_libc": 1278,
+    "wraps_host_libc": 1279,
     "glibc_call_through": 0,
     "stub": 18
   },
