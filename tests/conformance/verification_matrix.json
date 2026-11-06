@@ -30302,7 +30302,7 @@
       "coverage": {
         "unit_tests": {
           "status": "partial",
-          "artifacts": "Pending final-source required quality checks and named receipt"
+          "artifacts": "Actual passed runtime reports atvmi1152480 proof-2-{green,regression,fmt}, source4548c23a0; final192 onlyREADME changes. Fullworkspace compiler checks and namedreceipt pending."
         }
       },
       "coverage_summary": {
@@ -30316,7 +30316,25 @@
         "bead_id": "bd-reality-202609-lx578q.7.37",
         "stream": "e2e",
         "status": "partial",
-        "unit_cmds": [],
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_fscanf_host_stream --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --test-threads=1",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --test-threads=1",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-core --lib stdio::scanf::tests:: --config 'build.fingerprint=\"content\"' -- --test-threads=1",
+          "cargo test -Zchecksum-freshness -j1 --locked --manifest-path tools/stdio_synth/Cargo.toml --lib --config 'build.fingerprint=\"content\"' -- --test-threads=1",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --no-run --message-format=json --config 'build.fingerprint=\"content\"' --test isoc_abi_test --test conformance_diff_swscanf --test conformance_diff_isoc_sscanf_alias --test conformance_diff_vsscanf_fast_paths",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/b2f5eaaa3e4dddc4/out/isoc_abi_test-b2f5eaaa3e4dddc4 --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/b2f5eaaa3e4dddc4/out/isoc_abi_test-b2f5eaaa3e4dddc4 --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/36eaae18a7fec045/out/conformance_diff_swscanf-36eaae18a7fec045 --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/36eaae18a7fec045/out/conformance_diff_swscanf-36eaae18a7fec045 --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/941aee37d32843fc/out/conformance_diff_isoc_sscanf_alias-941aee37d32843fc --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/941aee37d32843fc/out/conformance_diff_isoc_sscanf_alias-941aee37d32843fc --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/941aee37d32843fc/out/conformance_diff_isoc_sscanf_alias-941aee37d32843fc --exact the_aliases_take_the_decimal_int_fast_path --test-threads=1",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/a184088e1f22c622/out/conformance_diff_vsscanf_fast_paths-a184088e1f22c622 --test-threads=1 --show-output",
+          "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/a184088e1f22c622/out/conformance_diff_vsscanf_fast_paths-a184088e1f22c622 --test-threads=1 --show-output",
+          "cargo fmt --check",
+          "cargo fmt --manifest-path tools/stdio_synth/Cargo.toml --check"
+        ],
         "e2e_cmds": [],
         "expected_assertions": [
           "All original1680comparisons remain;3120 exact-symbol GNU comparisons per mode across52inputs and3dialects",
@@ -30328,16 +30346,22 @@
         "artifact_paths": [
           "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/red-1",
           "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/green-1",
+          "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/proof-1-fmt",
+          "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/proof-2-fmt",
+          "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/proof-2-green",
+          "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/proof-2-regression",
+          "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/proof-2-record",
+          "vmi1152480:/data/tmp/frankenlibc-scanf-pointer-20261106/metadata-192",
+          "/data/tmp/frankenlibc-scanf-pointer-evidence-20261106",
           "/data/tmp/frankenlibc-native-integer-honesty-20261105/resumed-review-audit.txt"
         ],
         "perf_proof_refs": [],
         "close_blockers": [
-          "Required final-source quality checks and named execution receipt pending"
+          "Final192426134 source fullworkspace check and clippy --keep-going not executed: normalRCH diskreservation admission120",
+          "Named nonzero execution receipt still required before closure; no receipt is being claimed"
         ],
-        "notes": "Actual RED6f785d35f:3passed1failed both modes, GNU parses123 as291 while native rejects. Live GNU2.43 standalone oracle25cases checked numeric and partialnil cursors. Original28integer inputs preserved byte-for-byte; new24pointer inputs; full64bit observation with signed32 signextension and unsigned32 zeroextension preserves all original information. No validator/CI/runtime-environment hardcoding or threshold relaxation. Sourcef300fcdb9. Fullworkspace runtime tests not run due destructive fixtures. SOLO reexecution, not independent verification; no release/performance/standalone/universal-safety claim. Two normalRCH120 diskreservation refusals before compiler, no guard/limit/worker changes. UBS4existing dlsym transmutations reviewed against exactC signatures, no suppression. First final-source formatting gate failed on two new layouts; both manually corrected without behavioral change. Final source 4548c23a095d28f0b904920dcbd0436f03f31e94.",
-        "result_receipts": [
-          "/data/tmp/frankenlibc-scanf-pointer-20261106/proof-2-record/record/receipt.json"
-        ],
+        "notes": "PARTIAL, BEAD REMAINS IN_PROGRESS. Actual compiled RED6f785d35f:3passed1failed/mode; native rejects bare123 pointer input, GNU returns291. Live GNU2.43 oracle25cases established numeric/nil cursor rules. Actual runtime passes at f300fcdb9 and4548c23a0:4ABI parents/mode enforcing3120 comparisons/mode,82core,11synth;4548 also53nearbyABI parents/mode and expectedwrongstrictchild101.3120=52inputs*3dialects*20shapes,1872native-owned/string+1248foreign-stream; original28integer inputs/1680comparisons preserved byte-for-byte, confirmed against91c54. Signed32 signextension and unsigned32 zeroextension retain original observations; pointer uses full64bits and typedvoid**. First formatting gate found two new layouts, corrected manually; root/tool fmt0 at4548. Subsequent docs gate correctly failed a one-line README census error in4548;192426134 corrects README only, with runtime/test bytes unchanged. All513source inputs frozen at192426134. Fullcheck120 onvmi1156319,clippy120 onvmi1227854,finalproof120 twice onvmi1152480,fullcheck120 onhz4: every refusal before compiler, not a passing check or code failure. Shared live reservations leave no checked worker room for the standard reservation; no guard,budget,floor,worker,cache,daemon or peer-process changes. All actual incomplete/failure reports retained; no local compilation or compiledartifact download. Source192 published to both requiredrefs, but completion/closure awaits fullchecks and namedreceipt. SOLO review, not independent verification. No fullworkspace runtime tests,release,standalone,performance,overflowerrno or universal-safety proof. Existing4dlsym transmutation UBS findings reviewed against exactC signatures and lifetimes; no suppression/gate/acceptance weakening. Final192 documentation metadata gate passes in canonical localcheckout with actual Gitindex (bash scripts/check_docs_semantic_claims.sh; no compiler/test executable). DirectSSH metadata attempt failed with an older workerGitindex because CARGO_TARGET_DIR is unset outsideRCH; that retained metadata failure is not a runtime regression or valid census qualification. No environment/validator change made to force it green. History clarification: externalwriter daaec9655 committed partial matrix rebinding between4548 and192; runtime/test/build source bytes are unchanged, and README is the only changed qualified source input. The metadata-only UBS invocation exits3 because JSON/JSONL have no supported scanner; actual Rust UBS results remain recorded, and JSON syntax/Bead state/acceptance/prior151 preservation were checked directly.",
+        "result_receipts": [],
         "closure_evidence": {
           "behavior": "Parse full-width hexadecimal pointers and GNU nil spellings with correct success and failed-token consumption across narrow/wide strings and streams",
           "acceptance_sha256": "1a2339948663d4a466e368db6ccc6cb8beec0a755155d9287314874f9e5bd0c7",
@@ -30351,7 +30375,7 @@
             "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs"
           ],
           "source": {
-            "commit": "4548c23a095d28f0b904920dcbd0436f03f31e94",
+            "commit": "192426134a29c2d7cd85b23cdaa274fabc8499ae",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -30359,7 +30383,7 @@
               "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
               "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
               "FEATURE_PARITY.md": "428435c3c87ef930683d61546c3753bce6758f6b869eb3b80fe4e786254c91ba",
-              "README.md": "8e71919a4bbc3b11380d1812fedaf510d298193400b66c99033ccaae584c120a",
+              "README.md": "c703089cf7f3715e25a935790a95bb21a6e84b0c860fe650f4db35659afb9aab",
               "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
               "crates/frankenlibc-abi/build.rs": "1f3706508dfe8c8a6d124cd60a66914f77ad11ebed368740a08eb03c1f3541c1",
               "crates/frankenlibc-abi/src/aio_completion.rs": "442076b3f9a02501de7fb5d8b5c825bd1b5c946897a3a7799cff6e7794af5751",
