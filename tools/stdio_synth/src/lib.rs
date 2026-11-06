@@ -1409,7 +1409,10 @@ mod tests {
         assert_eq!(table[b'd' as usize].handler, ScanfHandler::SignedDecimal);
         assert_eq!(table[b'i' as usize].handler, ScanfHandler::SignedAutoBase);
         assert_eq!(table[b'b' as usize].handler, ScanfHandler::UnsignedBinary);
-        assert_eq!(table[b'b' as usize].arg_category, ScanfArgCategory::UnsignedInt);
+        assert_eq!(
+            table[b'b' as usize].arg_category,
+            ScanfArgCategory::UnsignedInt
+        );
         assert_eq!(table[b'b' as usize].length_mask, 0b0111_1111);
         assert!(table[b'b' as usize].skips_leading_whitespace);
         assert_eq!(table[b's' as usize].handler, ScanfHandler::String);

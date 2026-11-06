@@ -148,7 +148,9 @@ impl ScanfRoute {
                 Some(ScanOperationKind::Int(IntScanKind::UnsignedDecimal))
             }
             ScanfHandler::UnsignedOctal => Some(ScanOperationKind::Int(IntScanKind::UnsignedOctal)),
-            ScanfHandler::UnsignedBinary => Some(ScanOperationKind::Int(IntScanKind::UnsignedBinary)),
+            ScanfHandler::UnsignedBinary => {
+                Some(ScanOperationKind::Int(IntScanKind::UnsignedBinary))
+            }
             ScanfHandler::UnsignedHex => Some(ScanOperationKind::Int(IntScanKind::UnsignedHex)),
             ScanfHandler::Float => Some(ScanOperationKind::Float),
             ScanfHandler::Character => Some(ScanOperationKind::Character),
