@@ -735,6 +735,8 @@ All five claims have completion-contract artifacts under `tests/conformance/*_co
 
 Legacy narrow and wide integer entrypoints keep the older prefix rule: in the C locale, `wcstol(L"0b101", ..., 0)` returns zero and stops before `b`, while `__isoc23_wcstol` consumes the binary prefix and returns five. The wide parsers continue past an internal scan window when leading whitespace, a sign, or a permitted prefix could still lead to digits. The corresponding `_l` wrappers are tested with C-locale handles; this does not establish arbitrary-locale conformance.
 
+The shared scanf engine follows GNU 2.43 for incomplete integer prefixes: `0x` and C23 `0b` consume the prefix but fail to match an integer, leaving the destination and a following `%n` untouched. A field containing only the leading zero still converts. GNU 2.42 accepted incomplete prefixes as zero; invalid-prefix comparisons against that older behavior will differ.
+
 ---
 
 ## Runtime Math Controllers
@@ -3925,7 +3927,7 @@ Selected project health snapshot:
 | Tracked Rust files in `crates/` | 2,891 |
 | `crates/frankenlibc-abi/src/` | 121 Rust files, 227,488 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
-| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,177 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,230 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

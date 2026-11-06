@@ -427,6 +427,9 @@ impl ScanSpec {
         true
     }
 
+    /// A missing outer result is a failure before consuming a token; a missing
+    /// value inside a result is a matching failure at the returned position.
+    /// Suppressed successful conversions still return their parsed value.
     fn scan_at(
         &self,
         input: &[u8],
@@ -1118,11 +1121,21 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                             failed_alloc: spec.alloc && !spec.suppress,
                         };
                     }
-                    Some((val, new_pos)) => {
+                    Some((None, new_pos)) => {
+                        // An incomplete integer token consumes its sign/prefix
+                        // but neither assigns a value nor reaches later %n or
+                        // suppressed directives (GNU 2.43 semantics).
+                        return ScanResult {
+                            values,
+                            count,
+                            consumed: new_pos,
+                            input_failure: false,
+                            failed_alloc: false,
+                        };
+                    }
+                    Some((Some(v), new_pos)) => {
                         pos = new_pos;
-                        if !spec.suppress
-                            && let Some(v) = val
-                        {
+                        if !spec.suppress {
                             let counts_as_assignment = !matches!(v, ScanValue::CharsConsumed(_));
                             values.push(v);
                             if counts_as_assignment {
@@ -1297,8 +1310,8 @@ fn scan_int(
         false
     };
 
-    // GNU scanf counts the leading zero as a digit even when a consumed hex
-    // prefix is not followed by a digit (including a field ending at `0x`).
+    // A base prefix is consumed input, not a significand digit. GNU 2.43
+    // rejects a bare prefix even when a field width ends immediately after it.
     let mut any_digit = false;
     // Optional 0x/0X prefix for hex.
     if base == 16
@@ -1309,7 +1322,6 @@ fn scan_int(
     {
         i += 2;
         chars_read += 2;
-        any_digit = true;
     }
 
     // Digits. The accumulator saturates to u64::MAX on overflow; glibc
@@ -1391,7 +1403,7 @@ fn scan_int(
     }
 
     if !any_digit {
-        return None;
+        return Some((None, i));
     }
 
     let value = if signed {
@@ -1441,8 +1453,8 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         false
     };
 
-    // As in the explicit hex conversion, a consumed prefix includes a valid
-    // zero digit. GNU scanf assigns zero for bare `0x` (and C23 `0b`).
+    // As in explicit hex conversion, a prefix needs a following digit. Retain
+    // its consumed position separately from whether conversion succeeded.
     let mut any_digit = false;
     // Detect base (hex 0x, C23 binary 0b, octal 0, decimal otherwise).
     let base = if i < input.len() && chars_read < max_chars && input[i] == b'0' {
@@ -1452,7 +1464,6 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         {
             i += 2;
             chars_read += 2;
-            any_digit = true;
             16u32
         } else if spec.binary_prefix
             && i + 1 < input.len()
@@ -1461,7 +1472,6 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         {
             i += 2;
             chars_read += 2;
-            any_digit = true;
             2u32
         } else {
             8u32
@@ -1550,7 +1560,7 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
     }
 
     if !any_digit {
-        return None;
+        return Some((None, i));
     }
 
     let signed_val = clamp_signed_magnitude(val, negative, overflowed);
@@ -2535,16 +2545,27 @@ mod tests {
 
     #[test]
     fn test_scan_auto_int_binary_prefix_without_following_digits() {
-        // The independently resolved GNU __isoc23_sscanf assigns zero and
-        // consumes the prefix, even without a following binary digit.
+        // GNU 2.43 consumes an incomplete prefix but performs no assignment;
+        // in particular, a following %n must not execute.
         let dirs = c23_format(b"%i%n");
-        for input in [b"0b2".as_slice(), b"0b", b"0bx"] {
+        for input in [b"0b2".as_slice(), b"0b", b"0bx", b"-0B!", b"+0b"] {
             let result = scan_input(input, &dirs);
-            assert_eq!(result.count, 1, "input={input:?}");
-            assert!(matches!(result.values[0], ScanValue::SignedInt(0)));
-            assert!(matches!(result.values[1], ScanValue::CharsConsumed(2)));
-            assert_eq!(result.consumed, 2);
+            assert_eq!(result.count, 0, "input={input:?}");
+            assert!(result.values.is_empty(), "input={input:?}");
+            let expected = if matches!(input[0], b'-' | b'+') { 3 } else { 2 };
+            assert_eq!(result.consumed, expected, "input={input:?}");
+            assert!(!result.input_failure, "input={input:?}");
         }
+        let dirs = c23_format(b"%1i%n");
+        let result = scan_input(b"0b!", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(0)));
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(1)));
+        let dirs = c23_format(b"%i%n");
+        let result = scan_input(b"0b0!", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(0)));
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(3)));
     }
 
     #[test]
@@ -2580,24 +2601,48 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_integer_bare_hex_prefix_assigns_zero() {
-        // GNU's legacy, C99 and C23 scanf all retain the initial zero. This
-        // differs from strtol's end-pointer rule for an incomplete prefix.
+    fn test_scan_integer_bare_hex_prefix_is_matching_failure() {
+        // GNU 2.43 rejects incomplete prefixes in both explicit and auto-base
+        // conversions, without rewinding the consumed sign/prefix.
         for fmt in [b"%i%n".as_slice(), b"%x%n", b"%2i%n", b"%2x%n"] {
             let dirs = parse_scanf_format(fmt);
             for input in [b"0x".as_slice(), b"0xZ", b"0X!"] {
                 let result = scan_input(input, &dirs);
-                assert_eq!(result.count, 1, "fmt={fmt:?} input={input:?}");
-                assert!(matches!(
-                    result.values[0],
-                    ScanValue::SignedInt(0) | ScanValue::UnsignedInt(0)
-                ));
-                assert!(matches!(result.values[1], ScanValue::CharsConsumed(2)));
+                assert_eq!(result.count, 0, "fmt={fmt:?} input={input:?}");
+                assert!(result.values.is_empty(), "fmt={fmt:?} input={input:?}");
                 assert_eq!(result.consumed, 2);
+                assert!(!result.input_failure);
             }
         }
         let dirs = parse_scanf_format(b"%i");
         assert_eq!(scan_input(b"0x1f", &dirs).count, 1);
+        for fmt in [b"%1i%n".as_slice(), b"%1x%n"] {
+            let dirs = parse_scanf_format(fmt);
+            let result = scan_input(b"0x!", &dirs);
+            assert_eq!(result.count, 1);
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(1)));
+        }
+    }
+
+    #[test]
+    fn test_scan_incomplete_integer_keeps_prior_assignments_and_stops() {
+        for fmt in [b"%d%i%n".as_slice(), b"%d%x%n"] {
+            let dirs = parse_scanf_format(fmt);
+            let result = scan_input(b"7 -0x!", &dirs);
+            assert_eq!(result.count, 1);
+            assert_eq!(result.values.len(), 1);
+            assert!(matches!(result.values[0], ScanValue::SignedInt(7)));
+            assert_eq!(result.consumed, 5);
+            assert!(!result.input_failure);
+        }
+        for fmt in [b"%*i%n%i".as_slice(), b"%*x%n%x"] {
+            let dirs = parse_scanf_format(fmt);
+            let result = scan_input(b"0x!", &dirs);
+            assert_eq!(result.count, 0);
+            assert!(result.values.is_empty());
+            assert_eq!(result.consumed, 2);
+            assert!(!result.input_failure);
+        }
     }
 
     #[test]
@@ -3276,23 +3321,31 @@ mod tests {
 
     #[test]
     fn glibc_binary_prefix_0b_parity() {
-        // GNU 2.39's exact exported symbols differ; libc's version alone does
-        // not opt the legacy/C99 symbols into the C23 grammar.
+        // Only C23 enables the binary prefix. GNU 2.43 treats a field ending
+        // inside that prefix as a consuming matching failure.
         for (format, legacy_n, c23_n, c23_value) in [
-            (b"%i%n".as_slice(), 1, 5, 5),
-            (b"%1i%n", 1, 1, 0),
-            (b"%2i%n", 1, 2, 0),
-            (b"%3i%n", 1, 3, 1),
+            (b"%i%n".as_slice(), 1, 5, Some(5)),
+            (b"%1i%n", 1, 1, Some(0)),
+            (b"%2i%n", 1, 2, None),
+            (b"%3i%n", 1, 3, Some(1)),
         ] {
-            for (dirs, count, value) in [
-                (parse_scanf_format(format), legacy_n, 0),
+            for (dirs, consumed, value) in [
+                (parse_scanf_format(format), legacy_n, Some(0)),
                 (c23_format(format), c23_n, c23_value),
             ] {
                 let result = scan_input(b"0b101!", &dirs);
-                assert_eq!(result.count, 1);
-                assert!(matches!(result.values[0], ScanValue::SignedInt(v) if v == value));
-                assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == count));
-                assert_eq!(result.consumed, count);
+                if let Some(value) = value {
+                    assert_eq!(result.count, 1);
+                    assert!(matches!(result.values[0], ScanValue::SignedInt(v) if v == value));
+                    assert!(
+                        matches!(result.values[1], ScanValue::CharsConsumed(n) if n == consumed)
+                    );
+                } else {
+                    assert_eq!(result.count, 0);
+                    assert!(result.values.is_empty());
+                }
+                assert_eq!(result.consumed, consumed);
+                assert!(!result.input_failure);
             }
         }
     }
