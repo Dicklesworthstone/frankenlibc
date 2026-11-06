@@ -132,6 +132,36 @@ impl ResolverConfig {
         config
     }
 
+    /// Apply a caller-supplied snapshot of the standard resolver environment.
+    ///
+    /// `LOCALDOMAIN` replaces the file's search list, including when explicitly
+    /// empty. `RES_OPTIONS` amends the file's options, with later values taking
+    /// precedence. Keeping the environment read at the ABI boundary lets both
+    /// address lookups and caller-owned `res_state` use the same parser.
+    pub fn apply_overrides(&mut self, localdomain: Option<&[u8]>, options: Option<&[u8]>) {
+        if let Some(domain) = localdomain {
+            let mut domains = domain.split(u8::is_ascii_whitespace);
+            // GNU retains an initial empty component as a root suffix: a
+            // leading space tries the bare name before later search domains.
+            // Interior/trailing whitespace does not add more root suffixes.
+            self.search = domains
+                .next()
+                .into_iter()
+                .chain(domains.filter(|part| !part.is_empty()))
+                .filter_map(|part| core::str::from_utf8(part).ok().map(str::to_owned))
+                .collect();
+            self.domain = self.search.first().cloned();
+        }
+        if let Some(options) = options {
+            for option in options
+                .split(u8::is_ascii_whitespace)
+                .filter(|part| !part.is_empty())
+            {
+                self.parse_option(option);
+            }
+        }
+    }
+
     /// Parse a single line from resolv.conf.
     fn parse_line(&mut self, line: &[u8]) {
         // Skip empty lines and comments
@@ -310,6 +340,72 @@ mod tests {
         let config = ResolverConfig::parse(b"");
         assert_eq!(config.nameservers.len(), 1);
         assert_eq!(config.nameservers[0].to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn environment_overrides_replace_search_and_amend_options() {
+        let mut config = ResolverConfig::parse(
+            b"nameserver 192.0.2.53\ndomain file.test\noptions ndots:1 timeout:9 attempts:4 rotate\n",
+        );
+        config.apply_overrides(
+            Some(b"first.test\tsecond.test"),
+            Some(b"ndots:3 timeout:2 attempts:1 use-vc trust-ad"),
+        );
+        assert_eq!(config.search, ["first.test", "second.test"]);
+        assert_eq!(config.domain.as_deref(), Some("first.test"));
+        assert_eq!((config.ndots, config.timeout, config.attempts), (3, 2, 1));
+        assert!(config.rotate && config.use_vc && config.trust_ad);
+        assert_eq!(
+            config.nameservers,
+            ["192.0.2.53".parse::<IpAddr>().unwrap()]
+        );
+    }
+
+    #[test]
+    fn absent_and_empty_environment_values_have_distinct_search_semantics() {
+        let mut config = ResolverConfig::parse(b"domain file.test\noptions timeout:7\n");
+        config.apply_overrides(None, None);
+        assert_eq!(config.search, ["file.test"]);
+        assert_eq!(config.domain.as_deref(), Some("file.test"));
+        config.apply_overrides(Some(b""), Some(b""));
+        assert_eq!(config.search, [""]);
+        assert_eq!(config.domain.as_deref(), Some(""));
+        assert_eq!(config.timeout, 7);
+        config.apply_overrides(Some(b" \t "), None);
+        assert_eq!(config.search, [""]);
+    }
+
+    #[test]
+    fn environment_leading_whitespace_retains_one_root_search_suffix() {
+        let mut config = ResolverConfig::parse(b"search file.test\n");
+        config.apply_overrides(Some(b" \tfirst.test  second.test \t"), None);
+        assert_eq!(config.search, ["", "first.test", "second.test"]);
+        assert_eq!(config.domain.as_deref(), Some(""));
+        config.apply_overrides(Some(b"first.test  second.test \t"), None);
+        assert_eq!(config.search, ["first.test", "second.test"]);
+    }
+
+    #[test]
+    fn environment_options_share_file_limits_and_ignore_invalid_values() {
+        let mut config = ResolverConfig::parse(b"options ndots:2 timeout:7 attempts:3\n");
+        config.apply_overrides(
+            None,
+            Some(b"ndots:bad timeout:-1 attempts:4294967296 unknown-option"),
+        );
+        assert_eq!((config.ndots, config.timeout, config.attempts), (2, 7, 3));
+        config.apply_overrides(None, Some(b"ndots:99 timeout:99 attempts:99"));
+        assert_eq!((config.ndots, config.timeout, config.attempts), (15, 30, 5));
+        config.apply_overrides(None, Some(b"ndots:0 timeout:0 attempts:0"));
+        assert_eq!((config.ndots, config.timeout, config.attempts), (0, 1, 1));
+    }
+
+    #[test]
+    fn environment_search_retains_domains_beyond_the_public_state_slots() {
+        let domains: Vec<String> = (0..12).map(|index| format!("d{index}.test")).collect();
+        let mut config = ResolverConfig::parse(b"");
+        config.apply_overrides(Some(domains.join(" ").as_bytes()), None);
+        assert_eq!(config.search, domains);
+        assert_eq!(config.nameservers, ["127.0.0.1".parse::<IpAddr>().unwrap()]);
     }
 
     #[test]

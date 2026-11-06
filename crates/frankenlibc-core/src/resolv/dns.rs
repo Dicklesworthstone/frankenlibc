@@ -592,7 +592,9 @@ pub fn build_search_names(hostname: &[u8], search_domains: &[String], ndots: u32
     names.extend(search_domains.iter().map(|domain| {
         let mut fqdn = hostname.to_vec();
         fqdn.push(b'.');
-        fqdn.extend_from_slice(domain.as_bytes());
+        if domain != "." {
+            fqdn.extend_from_slice(domain.as_bytes());
+        }
         fqdn
     }));
     if !absolute_first {
@@ -1010,6 +1012,21 @@ mod tests {
                     vec![hostname.to_vec()]
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_search_names_root_suffix_keeps_conditional_bare_fallback() {
+        for root in ["", "."] {
+            let domains = vec!["corp.example".to_owned(), root.to_owned()];
+            assert_eq!(
+                build_search_names(b"printer", &domains, 1),
+                vec![
+                    b"printer.corp.example".to_vec(),
+                    b"printer.".to_vec(),
+                    b"printer".to_vec(),
+                ]
+            );
         }
     }
 
