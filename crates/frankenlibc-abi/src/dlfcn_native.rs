@@ -83,6 +83,9 @@ pub(crate) use inspection::address_info_extra as native_address_info_extra;
 mod phdr;
 pub(super) use phdr::iterate as iterate_phdr;
 
+#[path = "dlfcn_unwind.rs"]
+mod unwind;
+
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
@@ -219,6 +222,9 @@ struct NativeDso {
     needed: Vec<usize>,
     needed_by_name: Vec<(String, usize)>,
     dependencies: Vec<usize>,
+    // Rust drops fields in declaration order: unregister unwind tables while
+    // their bytes are still mapped, on both rollback and ordinary retirement.
+    unwind: unwind::Frames,
     mapping: Mapping,
     phdrs: phdr::Headers,
     object: LoadedObject,
@@ -702,6 +708,7 @@ fn map_object(
         dependencies: needed.clone(),
         needed,
         needed_by_name,
+        unwind: unwind::Frames::default(),
         mapping,
         phdrs,
         object,
@@ -818,6 +825,9 @@ impl SymbolLookup for Resolver<'_> {
 }
 
 fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
+    // Rollback must release the registry mutex before dropping registrations,
+    // whose runtime may allocate/free its private unwind bookkeeping.
+    let mut pending = Vec::new();
     let mut dsos = registry().lock().ok()?;
     // Another opener may have completed while this transaction read its files.
     if let Some(index) = dsos
@@ -874,7 +884,6 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         }
     };
     let root = ids[0]?;
-    let mut pending = Vec::new();
     for &index in &new_indexes {
         let needed = group[index]
             .needed
@@ -1013,6 +1022,14 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     for (dso, &index) in pending.iter().zip(&new_indexes) {
         protect_object(dso, &group[index].image, true)?;
     }
+    // Registration follows the last protection change, so rollback never
+    // asks the unwinder to read a temporarily inaccessible metadata page.
+    // Keep OPERATIONS, but release the registry across runtime bookkeeping.
+    drop(dsos);
+    for dso in &mut pending {
+        dso.unwind = unwind::Frames::register(&dso.object, &dso.mapping)?;
+    }
+    dsos = registry().lock().ok()?;
     // Resident staging pins are temporary. No published reference, scope or
     // lifetime edge changes before this point. Dropping pending on failure
     // rolls back mappings; releasing the group's pins then permits collection.
@@ -1326,12 +1343,18 @@ fn collect_unreachable() -> Option<()> {
         // Drain those entries too before dropping any mapping in this batch.
         cxa::finalize_owners(&ids)?;
         let mut dsos = registry().lock().ok()?;
-        dsos.retain(|dso| !ids.contains(&dso.id));
+        let retired = dsos
+            .extract_if(.., |dso| ids.contains(&dso.id))
+            .collect::<Vec<_>>();
         introspection::refresh_links(&mut dsos);
         for dso in dsos.iter_mut() {
             dso.lookup_scopes.retain(|scope| !ids.contains(&scope.root));
         }
         phdr::retired(ids.len());
+        drop(dsos);
+        // Release unwind runtime bookkeeping while code/metadata is mapped,
+        // without holding the registry mutex across allocator operations.
+        drop(retired);
         // Nested closes can make an external provider unreachable. Recompute
         // after dropping this batch's edges instead of leaking that provider.
     }

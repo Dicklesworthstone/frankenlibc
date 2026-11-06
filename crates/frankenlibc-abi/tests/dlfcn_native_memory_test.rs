@@ -797,18 +797,174 @@ fn memory_runtime_comparator_unwind_returns_through_native_imports() {
             unsafe extern "C-unwind" fn stop(_: *const c_void, _: *const c_void) -> c_int {
                 std::panic::panic_any(0x51ca1a_u32);
             }
-            let fixture = Fixture::new(&[]);
-            let handle = api.open(&fixture.path, 0);
-            assert_memory_providers(api, handle);
-            let callback: Callback =
-                unsafe { std::mem::transmute(api.symbol(handle, c"memory_algorithm_callback")) };
-            for which in 0..3 {
-                let result = std::panic::catch_unwind(|| unsafe { callback(which, stop) });
-                let payload = result.expect_err("comparator must actually unwind");
-                assert_eq!(payload.downcast_ref::<u32>(), Some(&0x51ca1a_u32));
-                assert_eq!(api.run(handle, c"memory_algorithms"), 0);
+            #[repr(C)]
+            #[derive(Default)]
+            struct Bases {
+                text: usize,
+                data: usize,
+                function: usize,
             }
-            api.close(handle);
+            unsafe extern "C" {
+                fn _Unwind_Find_FDE(pc: *const c_void, bases: *mut Bases) -> *const c_void;
+            }
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                for stripped in [false, true] {
+                    let fixture = Fixture::new(flags);
+                    if stripped {
+                        // Dynamic linking and unwind discovery must use the
+                        // program headers even when no section table remains.
+                        let mut bytes = std::fs::read(&fixture.path).unwrap();
+                        bytes[40..48].fill(0); // e_shoff
+                        bytes[58..64].fill(0); // e_shentsize, e_shnum, e_shstrndx
+                        std::fs::write(&fixture.path, bytes).unwrap();
+                    }
+                    for _ in 0..2 {
+                        let handle = api.open(&fixture.path, 0);
+                        assert_memory_providers(api, handle);
+                        let address = api.symbol(handle, c"memory_algorithm_callback");
+                        let callback: Callback = unsafe { std::mem::transmute(address) };
+                        let mut bases = Bases::default();
+                        assert!(
+                            !unsafe { _Unwind_Find_FDE(address, &mut bases) }.is_null(),
+                            "the active unwinder must discover the actual plugin frame"
+                        );
+                        assert_eq!(bases.function, address as usize);
+                        for which in 0..3 {
+                            let result =
+                                std::panic::catch_unwind(|| unsafe { callback(which, stop) });
+                            let payload = result.expect_err("comparator must actually unwind");
+                            assert_eq!(payload.downcast_ref::<u32>(), Some(&0x51ca1a_u32));
+                            assert_eq!(api.run(handle, c"memory_algorithms"), 0);
+                        }
+                        api.close(handle);
+                        assert!(
+                            unsafe { _Unwind_Find_FDE(address, &mut bases) }.is_null(),
+                            "unload must remove the frame before its mapping disappears"
+                        );
+                    }
+                }
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_rejects_malformed_unwind_metadata_before_publication() {
+    isolated(
+        "memory_runtime_rejects_malformed_unwind_metadata_before_publication",
+        true,
+        |api| {
+            use frankenlibc_core::elf::ProgramType;
+
+            for case in 0..9 {
+                let fixture = Fixture::new(&[]);
+                // This gate tests failed native admission. A no-DT_NEEDED
+                // plugin importing host symbols deliberately qualifies for
+                // interpose fallback, so use a self-contained ELF instead.
+                let source = fixture.dir.join("unwind-only.c");
+                std::fs::write(&source, "int unwind_probe(void) { return 19; }\n").unwrap();
+                compile(&source, &fixture.path, &[]);
+                let original = std::fs::read(&fixture.path).unwrap();
+                let object = ElfLoader::new(0).parse(&original).unwrap();
+                assert!(object.needed_libraries.is_empty());
+                assert!(object.dynsym.iter().all(|symbol| {
+                    !symbol.is_undefined() || object.symbol_name(symbol).is_none_or(str::is_empty)
+                }));
+                let (index, header) = object
+                    .program_headers
+                    .iter()
+                    .enumerate()
+                    .find(|(_, header)| header.p_type == ProgramType::GnuEhFrame)
+                    .unwrap();
+                let at = header.p_offset as usize;
+                assert_eq!(original[at + 1], 0x1b, "fixture uses pcrel32");
+                let relative = i32::from_le_bytes(original[at + 4..at + 8].try_into().unwrap());
+                let frame_vaddr = (header.p_vaddr as usize + 4)
+                    .checked_add_signed(relative as isize)
+                    .unwrap();
+                let load = object
+                    .program_headers
+                    .iter()
+                    .find(|load| {
+                        load.is_load()
+                            && load.p_vaddr <= frame_vaddr as u64
+                            && (frame_vaddr as u64) < load.p_vaddr + load.p_filesz
+                    })
+                    .unwrap();
+                let frame = (load.p_offset + frame_vaddr as u64 - load.p_vaddr) as usize;
+                let mut bytes = original.clone();
+                match case {
+                    0 => {
+                        // The four-byte encoded pointer is truncated to one
+                        // byte, while the ELF/program table itself is valid.
+                        let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+                        let size = u16::from_le_bytes(bytes[54..56].try_into().unwrap()) as usize;
+                        let ph = phoff + index * size;
+                        bytes[ph + 32..ph + 40].copy_from_slice(&5_u64.to_le_bytes());
+                        bytes[ph + 40..ph + 48].copy_from_slice(&5_u64.to_le_bytes());
+                    }
+                    1 => bytes[at + 4..at + 8].copy_from_slice(&i32::MAX.to_le_bytes()),
+                    2 => bytes[frame..frame + 4].copy_from_slice(&(u32::MAX - 1).to_le_bytes()),
+                    3 | 5 => {
+                        // An FDE must name a preceding CIE record in this
+                        // stream, not wrap outside the native mapping.
+                        let length = u32::from_le_bytes(bytes[frame..frame + 4].try_into().unwrap())
+                            as usize;
+                        let next = frame + 4 + length;
+                        assert_ne!(&bytes[next + 4..next + 8], &[0; 4]);
+                        if case == 3 {
+                            bytes[next + 4..next + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+                        } else {
+                            // FDE containing only the CIE delta, with neither
+                            // PC nor range, is not a valid unwind record.
+                            bytes[next..next + 4].copy_from_slice(&4_u32.to_le_bytes());
+                        }
+                    }
+                    // CIE containing only its ID, without a version or
+                    // augmentation string, must never reach the unwinder.
+                    4 => bytes[frame..frame + 4].copy_from_slice(&4_u32.to_le_bytes()),
+                    6 => {
+                        assert_eq!(
+                            &bytes[frame + 8..frame + 17],
+                            &[1, b'z', b'R', 0, 1, 0x78, 16, 1, 0x1b]
+                        );
+                        bytes[frame + 15] = 0x7f; // augmentation extends beyond its CIE
+                    }
+                    7 => {
+                        // Two R markers with different widths must not make
+                        // validation and the active unwinder disagree.
+                        bytes[frame + 8..frame + 24].copy_from_slice(&[
+                            1, b'z', b'R', b'R', 0, 1, 0x78, 16, 2, 0, 0x1b, 0, 0, 0, 0, 0,
+                        ]);
+                    }
+                    8 => {
+                        // Some registration runtimes stop scanning at S;
+                        // accepting a later R would change their PC width.
+                        bytes[frame + 8..frame + 24].copy_from_slice(&[
+                            1, b'z', b'S', b'R', 0, 1, 0x78, 16, 1, 0x1b, 0, 0, 0, 0, 0, 0,
+                        ]);
+                    }
+                    _ => unreachable!(),
+                }
+                std::fs::write(&fixture.path, bytes).unwrap();
+                let name = CString::new(fixture.path.as_os_str().as_bytes()).unwrap();
+                let rejected = unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) };
+                assert!(
+                    rejected.is_null(),
+                    "malformed unwind case {case} must fail native admission; native handle: {}",
+                    dl::native_dso_handle_for_tests(rejected)
+                );
+                assert!(
+                    unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }
+                        .is_null()
+                );
+                // A failed transaction cannot reserve this inode or poison
+                // the registry; restoring the fixture makes the same path usable.
+                std::fs::write(&fixture.path, original).unwrap();
+                let handle = api.open(&fixture.path, 0);
+                assert_eq!(api.run(handle, c"unwind_probe"), 19);
+                api.close(handle);
+            }
         },
     );
 }
