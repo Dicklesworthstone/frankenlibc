@@ -2638,6 +2638,8 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
 /// The two independent locale facets read by a floating conversion. Category
 /// data is immutable and retained for the process lifetime, so this snapshot
 /// neither borrows a locale object nor changes the calling thread's selection.
+/// Like its ABI conversion callers, it is excluded from the lib unit-test build.
+#[cfg(not(test))]
 #[derive(Clone, Copy)]
 pub(crate) struct NumericLocale {
     pub(crate) radix: &'static [u8],
@@ -2645,6 +2647,7 @@ pub(crate) struct NumericLocale {
     ctype: Resolved,
 }
 
+#[cfg(not(test))]
 impl NumericLocale {
     fn from_categories(numeric: Resolved, ctype: Resolved) -> Self {
         let (radix, wide_radix) = match numeric {
