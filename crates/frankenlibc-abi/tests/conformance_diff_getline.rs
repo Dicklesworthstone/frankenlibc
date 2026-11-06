@@ -4,8 +4,8 @@
 //!
 //! Both read up to a delimiter (newline or arbitrary byte) from a
 //! FILE*, allocating/growing the line buffer as needed. fl uses its
-//! own FILE* implementation; tests below use fmemopen so we can run
-//! both sides on identical in-memory streams.
+//! own FILE* implementation; tests below use identical in-memory data and
+//! nonblocking pipes to check both providers, including sticky stream errors.
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
@@ -181,6 +181,129 @@ fn host_getline_grows_a_frankenlibc_segment_buffer_safely() {
     unsafe {
         malloc::free(line.cast());
         fclose(fp);
+    }
+}
+
+#[test]
+fn fd_line_input_preserves_pushback_until_error_is_cleared() {
+    use frankenlibc_abi::stdio_abi as fl;
+
+    fn observe(native: bool, unbuffered: bool, warmed: bool, write_error: bool, line: bool) {
+        let mut fds = [-1; 2];
+        // SAFETY: pipe2 initializes both descriptor slots on success. The pipe
+        // is nonblocking so even a broken sticky-error guard cannot hang.
+        assert_eq!(
+            unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK) },
+            0
+        );
+        // SAFETY: fdopen takes ownership of the valid read descriptor; each
+        // provider later closes its own FILE and allocation exactly once.
+        unsafe {
+            let stream = if native {
+                fl::fdopen(fds[0], c"r".as_ptr())
+            } else {
+                libc::fdopen(fds[0], c"r".as_ptr()).cast()
+            };
+            assert!(!stream.is_null());
+            let buffer_mode = if unbuffered {
+                libc::_IONBF
+            } else {
+                libc::_IOFBF
+            };
+            let buffered = if native {
+                fl::setvbuf(stream, std::ptr::null_mut(), buffer_mode, 0)
+            } else {
+                libc::setvbuf(stream.cast(), std::ptr::null_mut(), buffer_mode, 0)
+            };
+            assert_eq!(buffered, 0);
+            let mut output = std::ptr::null_mut();
+            let mut capacity = 0usize;
+            let delimiter = if line { b'\n' } else { b';' };
+            let scan = |p, n| match (native, line) {
+                (true, true) => fl::getline(p, n, stream),
+                (true, false) => fl::getdelim(p, n, delimiter as c_int, stream),
+                (false, true) => getline(p, n, stream.cast()),
+                (false, false) => getdelim(p, n, delimiter as c_int, stream.cast()),
+            };
+            if warmed {
+                let input = [b'W', delimiter];
+                assert_eq!(libc::write(fds[1], input.as_ptr().cast(), input.len()), 2);
+                assert_eq!(scan(&mut output, &mut capacity), 2);
+            }
+            let initial_error = if write_error {
+                if native {
+                    fl::fputc(b'X' as c_int, stream) as isize
+                } else {
+                    libc::fputc(b'X' as c_int, stream.cast()) as isize
+                }
+            } else {
+                scan(&mut output, &mut capacity)
+            };
+            assert_eq!(initial_error, -1);
+            let pushed = if native {
+                fl::ungetc(b'P' as c_int, stream)
+            } else {
+                libc::ungetc(b'P' as c_int, stream.cast())
+            };
+            assert_eq!(pushed, b'P' as c_int);
+            let input = [b'Z', delimiter];
+            assert_eq!(libc::write(fds[1], input.as_ptr().cast(), input.len()), 2);
+            *libc::__errno_location() = 0x5EED;
+            let stopped = scan(&mut output, &mut capacity);
+            let saved_errno = *libc::__errno_location();
+            let error = if native {
+                fl::ferror(stream)
+            } else {
+                libc::ferror(stream.cast())
+            };
+            let eof = if native {
+                fl::feof(stream)
+            } else {
+                libc::feof(stream.cast())
+            };
+            if native {
+                fl::clearerr(stream);
+            } else {
+                libc::clearerr(stream.cast());
+            }
+            let recovered = scan(&mut output, &mut capacity);
+            let bytes = if recovered >= 0 && !output.is_null() && capacity > recovered as usize {
+                // SAFETY: successful line input initializes recovered bytes
+                // and a NUL; its reported capacity bounds this complete slice.
+                std::slice::from_raw_parts(output.cast::<u8>(), recovered as usize + 1).to_vec()
+            } else {
+                Vec::new()
+            };
+            let closed = if native {
+                fl::fclose(stream)
+            } else {
+                libc::fclose(stream.cast())
+            };
+            if native {
+                frankenlibc_abi::malloc_abi::free(output.cast());
+            } else {
+                libc::free(output.cast());
+            }
+            assert_eq!(libc::close(fds[1]), 0);
+            assert_eq!(closed, 0);
+            assert_eq!(
+                (stopped, saved_errno, error != 0, eof != 0),
+                (-1, 0x5EED, true, false)
+            );
+            assert_eq!(recovered, 3);
+            assert_eq!(bytes, [b'P', b'Z', delimiter, 0]);
+        }
+    }
+
+    for unbuffered in [false, true] {
+        for warmed in [false, true] {
+            for write_error in [false, true] {
+                for line in [false, true] {
+                    observe(false, unbuffered, warmed, write_error, line);
+                    observe(true, unbuffered, warmed, write_error, line);
+                }
+            }
+        }
     }
 }
 

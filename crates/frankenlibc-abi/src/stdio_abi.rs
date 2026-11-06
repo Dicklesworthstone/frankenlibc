@@ -15408,6 +15408,12 @@ unsafe fn getdelim_fill_stream(
     buf: &mut Vec<u8>,
     caller: usize,
 ) {
+    // GNU line input stops on an existing error, even when ungetc or scanf
+    // left readable bytes. Check before read_until_delim consumes that input;
+    // clearerr must leave it available to the next successful read.
+    if s.is_error() {
+        return;
+    }
     let caller = stream_io_caller(s, caller);
     loop {
         match s.read_until_delim(delim_byte, &mut *buf) {

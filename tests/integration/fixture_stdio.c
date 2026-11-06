@@ -817,6 +817,21 @@ static int test_fd_read_error(enum fd_read_api api, int unbuffered,
         for (size_t i = sizeof(expected); i < sizeof(bytes); ++i)
             if (bytes[i] != 0xA5) failed = 1;
     }
+    int sticky = 1;
+    if (api == FD_GETLINE || api == FD_GETDELIM) {
+        /* An existing error stops line input even with a pushed-back byte.
+         * Queue data before recovery so a broken implementation that consumed
+         * the pushback still terminates on the blocking EINTR pipe. */
+        sticky = ungetc('P', stream) == 'P';
+        errno = 0x5EED;
+        ssize_t stopped = api == FD_GETLINE ? getline(&line, &capacity, stream)
+                                            : getdelim(&line, &capacity, '\n', stream);
+        sticky &= stopped == -1 && errno == 0x5EED && ferror(stream) && !feof(stream);
+        sticky &= fd_error_writer >= 0 && write(fd_error_writer, "Z", 1) == 1;
+        clearerr(stream);
+        sticky &= fgetc(stream) == 'P' && !ferror(stream) && !feof(stream);
+        failed |= !sticky;
+    }
     /* The error is sticky, but clearerr must allow the same stream to consume
      * new data. This also exercises cache reuse after an interrupted refill. */
     clearerr(stream);
@@ -824,10 +839,10 @@ static int test_fd_read_error(enum fd_read_api api, int unbuffered,
                     write(fd_error_writer, "Z", 1) == 1 && fgetc(stream) == 'Z' &&
                     !ferror(stream) && !feof(stream);
     failed |= !recovered;
-    printf("fd-error:%s:%s:%s:%s:%s result=%ld errno=%d error=%d eof=%d signals=%d recovery=%d\n",
+    printf("fd-error:%s:%s:%s:%s:%s result=%ld errno=%d error=%d eof=%d signals=%d sticky=%d recovery=%d\n",
            names[api], unbuffered ? "unbuffered" : "buffered",
            interrupted ? "EINTR" : "EAGAIN", partial ? "partial" : "empty",
-           warmed ? "warm" : "cold", result, saved_errno, error, eof, signals, recovered);
+           warmed ? "warm" : "cold", result, saved_errno, error, eof, signals, sticky, recovered);
     free(line);
     if (fclose(stream) != 0) failed = 1;
     if (fd_error_writer >= 0 && close(fd_error_writer) != 0) failed = 1;
