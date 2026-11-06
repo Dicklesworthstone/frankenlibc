@@ -29593,7 +29593,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.36",
       "title": "Wire binary scanf conversions through the shared integer engine",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
