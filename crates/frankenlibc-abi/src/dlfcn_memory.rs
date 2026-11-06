@@ -53,13 +53,26 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     } else {
         "GLIBC_2.2.5"
     };
-    // mlock2 postdates both architecture baselines. A known name with an
-    // unsupported version must stay rejected by runtime_export, rather than
-    // escaping into host lookup and a different errno/policy domain.
-    if name == "mlock2" {
+    // These APIs postdate the x86-64 baseline. A known name with an unsupported
+    // version must stay rejected by runtime_export, rather than escaping into
+    // host lookup and a different errno, environment or callback domain.
+    let versioned = match name {
+        "mlock2" => Some((mapping::mlock2 as *const (), "GLIBC_2.27")),
+        "secure_getenv" => Some((stdlib::secure_getenv as *const (), "GLIBC_2.17")),
+        "qsort_r" => Some((
+            stdlib::qsort_r as *const (),
+            if cfg!(target_arch = "aarch64") {
+                baseline
+            } else {
+                "GLIBC_2.8"
+            },
+        )),
+        _ => None,
+    };
+    if let Some((function, expected_version)) = versioned {
         return version
-            .is_none_or(|version| version == "GLIBC_2.27")
-            .then_some(mapping::mlock2 as *const () as usize as u64);
+            .is_none_or(|version| version == expected_version)
+            .then_some(function as usize as u64);
     }
     let locale_version = if cfg!(target_arch = "aarch64") {
         baseline
@@ -158,6 +171,27 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "atoi" => stdlib::atoi as *const (),
         "atol" => stdlib::atol as *const (),
         "atoll" => stdlib::atoll as *const (),
+        "atof" => stdlib::atof as *const (),
+        "strtod" => stdlib::strtod as *const (),
+        "strtof" => stdlib::strtof as *const (),
+        "wcstod" => wide::wcstod as *const (),
+        "wcstof" => wide::wcstof as *const (),
+        // Use the actual x87 return shims, not the f64 conversion functions.
+        // The current non-x86-64 bodies do not implement binary128 long double.
+        #[cfg(target_arch = "x86_64")]
+        "strtold" => stdlib::strtold as *const (),
+        #[cfg(target_arch = "x86_64")]
+        "wcstold" => wide::wcstold as *const (),
+        // Share the process environment and putenv's caller-owned storage with
+        // ordinary ABI callers; never resolve an independent host-only table.
+        "getenv" => stdlib::getenv as *const (),
+        "setenv" => stdlib::setenv as *const (),
+        "unsetenv" => stdlib::unsetenv as *const (),
+        "putenv" => stdlib::putenv as *const (),
+        "clearenv" => stdlib::clearenv as *const (),
+        // The direct addresses retain extern "C-unwind" for user comparators.
+        "qsort" => stdlib::qsort as *const (),
+        "bsearch" => stdlib::bsearch as *const (),
         "strtol" => stdlib::strtol as *const (),
         "strtoul" => stdlib::strtoul as *const (),
         "strtoll" => stdlib::strtoll as *const (),

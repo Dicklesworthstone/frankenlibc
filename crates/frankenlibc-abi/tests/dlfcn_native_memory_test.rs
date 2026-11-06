@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::{
     dlfcn_abi as dl, errno_abi as errno, malloc_abi as allocation, mmap_abi as mapping,
-    string_abi as strings, unistd_abi as unistd,
+    stdlib_abi as stdlib, string_abi as strings, unistd_abi as unistd, wchar_abi as wide,
 };
 use frankenlibc_core::elf::ElfLoader;
 
@@ -34,6 +34,7 @@ const SOURCE: &str = r#"#define _GNU_SOURCE
 #include <errno.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <wchar.h>
 
 #ifdef LOCAL_COMPARE
 int memcmp(const void *left, const void *right, size_t n) {
@@ -86,6 +87,145 @@ int memory_strings(void) {
     if (output[0] != 'x' || output[1] || output[2] || output[3]) return 9;
     if (strcat(output, "yz") != output || strncat(output, "abcd", 2) != output) return 10;
     if (strcmp(output, "xyzab")) return 11;
+    return 0;
+}
+
+#define SCALAR_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+#define FLOAT_CASE(function, character, text, expected, consumed, error) do { \
+    const character *input = (text); \
+    character *end = NULL; \
+    errno = 1234; \
+    SCALAR_CHECK(function(input, &end) == (expected)); \
+    SCALAR_CHECK(end == input + (consumed) && errno == (error)); \
+} while (0)
+
+int memory_floating_conversions(void) {
+    SCALAR_CHECK(atof(" \t-3.25tail") == -3.25);
+    FLOAT_CASE(strtod, char, " \t-12.5tail", -12.5, 7, 1234);
+    FLOAT_CASE(strtod, char, "0x1.8p+2!", 6.0, 8, 1234);
+    FLOAT_CASE(strtod, char, "1e+", 1.0, 1, 1234);
+    FLOAT_CASE(strtod, char, " no-number", 0.0, 0, 1234);
+    FLOAT_CASE(strtod, char, "1e9999!", __builtin_inf(), 6, ERANGE);
+    FLOAT_CASE(strtod, char, "1e-9999!", 0.0, 7, ERANGE);
+    FLOAT_CASE(strtof, char, "0x1.8p-1!", 0.75f, 8, 1234);
+    FLOAT_CASE(strtof, char, "1e+", 1.0f, 1, 1234);
+    FLOAT_CASE(strtof, char, " no-number", 0.0f, 0, 1234);
+    FLOAT_CASE(strtof, char, "1e9999!", __builtin_inff(), 6, ERANGE);
+    FLOAT_CASE(strtof, char, "1e-9999!", 0.0f, 7, ERANGE);
+    /* 2^-60 is visible in x87 extended precision but lost by an f64 shim. */
+    FLOAT_CASE(strtold, char, "0x1.000000000000001p0!",
+               0x1.000000000000001p0L, 21, 1234);
+    FLOAT_CASE(strtold, char, " no-number", 0.0L, 0, 1234);
+    FLOAT_CASE(strtold, char, "1e9999!", __builtin_infl(), 6, ERANGE);
+    FLOAT_CASE(wcstod, wchar_t, L" \t-12.5tail", -12.5, 7, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"0x1.8p+2!", 6.0, 8, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"1e+", 1.0, 1, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L" no-number", 0.0, 0, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"1e9999!", __builtin_inf(), 6, ERANGE);
+    FLOAT_CASE(wcstof, wchar_t, L"0x1.8p-1!", 0.75f, 8, 1234);
+    FLOAT_CASE(wcstof, wchar_t, L"1e-9999!", 0.0f, 7, ERANGE);
+    FLOAT_CASE(wcstold, wchar_t, L"0x1.000000000000001p0!",
+               0x1.000000000000001p0L, 21, 1234);
+    FLOAT_CASE(wcstold, wchar_t, L"1e9999!", __builtin_infl(), 6, ERANGE);
+    union { double value; uint64_t bits; } negative_double = {strtod("-0", NULL)};
+    union { float value; uint32_t bits; } negative_float = {wcstof(L"-0", NULL)};
+    SCALAR_CHECK(negative_double.bits == UINT64_C(0x8000000000000000));
+    SCALAR_CHECK(negative_float.bits == UINT32_C(0x80000000));
+    char *end = NULL;
+    const char nan[] = "NAN(payload)!";
+    double value = strtod(nan, &end);
+    SCALAR_CHECK(value != value && end == nan + 12);
+    return 0;
+}
+
+int memory_environment(void) {
+    const char *name = "FRANKENLIBC_NATIVE_ADMISSION";
+    SCALAR_CHECK(unsetenv(name) == 0 && getenv(name) == NULL);
+    char copied[] = "alpha";
+    SCALAR_CHECK(setenv(name, copied, 1) == 0);
+    copied[0] = 'z';
+    SCALAR_CHECK(getenv(name) && !strcmp(getenv(name), "alpha"));
+    SCALAR_CHECK(secure_getenv(name) == getenv(name));
+    SCALAR_CHECK(setenv(name, "ignored", 0) == 0);
+    SCALAR_CHECK(!strcmp(getenv(name), "alpha"));
+    SCALAR_CHECK(setenv(name, "beta", 1) == 0);
+    SCALAR_CHECK(!strcmp(getenv(name), "beta"));
+    char shared[] = "FRANKENLIBC_NATIVE_ADMISSION=delta";
+    char *value = strchr(shared, '=') + 1;
+    SCALAR_CHECK(putenv(shared) == 0 && getenv(name) == value);
+    value[0] = 'D';
+    SCALAR_CHECK(!strcmp(getenv(name), "Delta"));
+    char remove[] = "FRANKENLIBC_NATIVE_ADMISSION";
+    SCALAR_CHECK(putenv(remove) == 0 && getenv(name) == NULL);
+    SCALAR_CHECK(setenv(name, "", 1) == 0 && getenv(name) && !*getenv(name));
+    SCALAR_CHECK(unsetenv(name) == 0 && getenv(name) == NULL);
+    errno = 0;
+    SCALAR_CHECK(setenv("", "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    SCALAR_CHECK(setenv("invalid=name", "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    SCALAR_CHECK(unsetenv("") == -1 && errno == EINVAL);
+    errno = 0;
+    SCALAR_CHECK(unsetenv("invalid=name") == -1 && errno == EINVAL);
+    /* Leave a value for an independent process-environment observer. */
+    SCALAR_CHECK(setenv("FRANKENLIBC_NATIVE_SHARED", "from-plugin", 1) == 0);
+    return 0;
+}
+
+const char *memory_environment_value(void) {
+    return getenv("FRANKENLIBC_NATIVE_SHARED");
+}
+
+int memory_environment_clear(void) {
+    SCALAR_CHECK(setenv("FRANKENLIBC_NATIVE_SHARED", "before-clear", 1) == 0);
+    SCALAR_CHECK(clearenv() == 0);
+    SCALAR_CHECK(getenv("FRANKENLIBC_NATIVE_SHARED") == NULL);
+    SCALAR_CHECK(setenv("FRANKENLIBC_NATIVE_SHARED", "after-clear", 1) == 0);
+    SCALAR_CHECK(!strcmp(getenv("FRANKENLIBC_NATIVE_SHARED"), "after-clear"));
+    SCALAR_CHECK(unsetenv("FRANKENLIBC_NATIVE_SHARED") == 0);
+    return 0;
+}
+
+static unsigned compare_calls;
+static int scalar_compare(const void *a, const void *b) {
+    ++compare_calls;
+    int left = *(const int *)a, right = *(const int *)b;
+    return (left > right) - (left < right);
+}
+static int scalar_compare_r(const void *a, const void *b, void *direction) {
+    return *(int *)direction * scalar_compare(a, b);
+}
+int memory_algorithms(void) {
+    int values[] = {7, -3, 7, 0, 19, -3, 5};
+    const int expected[] = {-3, -3, 0, 5, 7, 7, 19};
+    compare_calls = 0;
+    qsort(values, 7, sizeof(int), scalar_compare);
+    SCALAR_CHECK(compare_calls > 0 && !memcmp(values, expected, sizeof values));
+    int key = 7;
+    int *found = bsearch(&key, values, 7, sizeof(int), scalar_compare);
+    SCALAR_CHECK(found && found >= values && found < values + 7 && *found == key);
+    key = 8;
+    SCALAR_CHECK(bsearch(&key, values, 7, sizeof(int), scalar_compare) == NULL);
+    unsigned before = compare_calls;
+    SCALAR_CHECK(bsearch(&key, values, 0, sizeof(int), scalar_compare) == NULL);
+    qsort(values, 0, sizeof(int), scalar_compare);
+    SCALAR_CHECK(compare_calls == before);
+    int descending = -1;
+    qsort_r(values, 7, sizeof(int), scalar_compare_r, &descending);
+    for (unsigned i = 0; i < 7; ++i) SCALAR_CHECK(values[i] == expected[6 - i]);
+    return 0;
+}
+
+typedef int (*scalar_comparator)(const void *, const void *);
+static int scalar_callback_r(const void *left, const void *right, void *context) {
+    return (*(scalar_comparator *)context)(left, right);
+}
+int memory_algorithm_callback(unsigned which, scalar_comparator compare) {
+    int values[] = {1, 2, 3}, key = 2;
+    if (which == 0) qsort(values, 3, sizeof(int), compare);
+    else if (which == 1) (void)bsearch(&key, values, 3, sizeof(int), compare);
+    else if (which == 2) qsort_r(values, 3, sizeof(int), scalar_callback_r, &compare);
+    else return -1;
     return 0;
 }
 
@@ -267,6 +407,22 @@ void *memory_function(unsigned index) {
         case 36: return (void *)__errno_location;
         case 37: return (void *)getpagesize;
         case 38: return (void *)sysconf;
+        case 39: return (void *)atof;
+        case 40: return (void *)strtod;
+        case 41: return (void *)strtof;
+        case 42: return (void *)strtold;
+        case 43: return (void *)wcstod;
+        case 44: return (void *)wcstof;
+        case 45: return (void *)wcstold;
+        case 46: return (void *)getenv;
+        case 47: return (void *)setenv;
+        case 48: return (void *)unsetenv;
+        case 49: return (void *)putenv;
+        case 50: return (void *)clearenv;
+        case 51: return (void *)secure_getenv;
+        case 52: return (void *)qsort;
+        case 53: return (void *)bsearch;
+        case 54: return (void *)qsort_r;
         default: return 0;
     }
 }
@@ -284,7 +440,7 @@ __attribute__((destructor)) static void fini(void) {
 #endif
 "#;
 
-fn symbols() -> [(&'static str, *const ()); 39] {
+fn symbols() -> [(&'static str, *const ()); 55] {
     [
         ("calloc", allocation::calloc as *const ()),
         ("realloc", allocation::realloc as *const ()),
@@ -328,6 +484,22 @@ fn symbols() -> [(&'static str, *const ()); 39] {
         ("__errno_location", errno::__errno_location as *const ()),
         ("getpagesize", unistd::getpagesize as *const ()),
         ("sysconf", unistd::sysconf as *const ()),
+        ("atof", stdlib::atof as *const ()),
+        ("strtod", stdlib::strtod as *const ()),
+        ("strtof", stdlib::strtof as *const ()),
+        ("strtold", stdlib::strtold as *const ()),
+        ("wcstod", wide::wcstod as *const ()),
+        ("wcstof", wide::wcstof as *const ()),
+        ("wcstold", wide::wcstold as *const ()),
+        ("getenv", stdlib::getenv as *const ()),
+        ("setenv", stdlib::setenv as *const ()),
+        ("unsetenv", stdlib::unsetenv as *const ()),
+        ("putenv", stdlib::putenv as *const ()),
+        ("clearenv", stdlib::clearenv as *const ()),
+        ("secure_getenv", stdlib::secure_getenv as *const ()),
+        ("qsort", stdlib::qsort as *const ()),
+        ("bsearch", stdlib::bsearch as *const ()),
+        ("qsort_r", stdlib::qsort_r as *const ()),
     ]
 }
 
@@ -523,6 +695,125 @@ fn memory_runtime_got_calls_reach_owned_implementations() {
 }
 
 #[test]
+fn memory_runtime_floating_conversions_preserve_c_values_and_errno() {
+    isolated(
+        "memory_runtime_floating_conversions_preserve_c_values_and_errno",
+        false,
+        |api| {
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                assert_eq!(api.run(handle, c"memory_floating_conversions"), 0);
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_environment_mutations_share_process_state() {
+    isolated(
+        "memory_runtime_environment_mutations_share_process_state",
+        false,
+        |api| {
+            type Value = unsafe extern "C" fn() -> *const c_char;
+            type Setenv = unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_int;
+            // The observer uses the independent host environment API. A private
+            // plugin-only map would fail both directions of this exchange.
+            let host_setenv: Setenv =
+                unsafe { dlsym_oracle::host_fn(c"setenv", stdlib::setenv as *const ()) };
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                assert_eq!(api.run(handle, c"memory_environment"), 0);
+                assert_eq!(
+                    std::env::var("FRANKENLIBC_NATIVE_SHARED").as_deref(),
+                    Ok("from-plugin")
+                );
+                assert_eq!(
+                    unsafe {
+                        host_setenv(
+                            c"FRANKENLIBC_NATIVE_SHARED".as_ptr(),
+                            c"from-host".as_ptr(),
+                            1,
+                        )
+                    },
+                    0
+                );
+                let value: Value =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_environment_value")) };
+                let actual = unsafe { value() };
+                assert!(!actual.is_null());
+                assert_eq!(unsafe { CStr::from_ptr(actual) }, c"from-host");
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_clearenv_clears_and_rebuilds_the_process_environment() {
+    isolated(
+        "memory_runtime_clearenv_clears_and_rebuilds_the_process_environment",
+        false,
+        |api| {
+            let fixture = Fixture::new(&[]);
+            let handle = api.open(&fixture.path, 0);
+            assert_memory_providers(api, handle);
+            assert_eq!(api.run(handle, c"memory_environment_clear"), 0);
+            assert_eq!(std::env::vars_os().count(), 0);
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_sort_and_search_invoke_c_comparators() {
+    isolated(
+        "memory_runtime_sort_and_search_invoke_c_comparators",
+        false,
+        |api| {
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                assert_eq!(api.run(handle, c"memory_algorithms"), 0);
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_comparator_unwind_returns_through_native_imports() {
+    isolated(
+        "memory_runtime_comparator_unwind_returns_through_native_imports",
+        false,
+        |api| {
+            type Compare = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
+            type Callback = unsafe extern "C-unwind" fn(u32, Compare) -> c_int;
+            unsafe extern "C-unwind" fn stop(_: *const c_void, _: *const c_void) -> c_int {
+                std::panic::panic_any(0x51ca1a_u32);
+            }
+            let fixture = Fixture::new(&[]);
+            let handle = api.open(&fixture.path, 0);
+            assert_memory_providers(api, handle);
+            let callback: Callback =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_algorithm_callback")) };
+            for which in 0..3 {
+                let result = std::panic::catch_unwind(|| unsafe { callback(which, stop) });
+                let payload = result.expect_err("comparator must actually unwind");
+                assert_eq!(payload.downcast_ref::<u32>(), Some(&0x51ca1a_u32));
+                assert_eq!(api.run(handle, c"memory_algorithms"), 0);
+            }
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
 fn memory_runtime_dynamic_addresses_match_direct_imports() {
     isolated(
         "memory_runtime_dynamic_addresses_match_direct_imports",
@@ -535,12 +826,13 @@ fn memory_runtime_dynamic_addresses_match_direct_imports() {
                 unsafe { std::mem::transmute(api.symbol(h, c"memory_function")) };
             let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
             for (index, (name, expected)) in symbols().into_iter().enumerate() {
-                let valid_version = if name == "mlock2" {
-                    c"GLIBC_2.27"
-                } else {
-                    c"GLIBC_2.2.5"
+                let valid_version = match name {
+                    "mlock2" => c"GLIBC_2.27",
+                    "secure_getenv" => c"GLIBC_2.17",
+                    "qsort_r" => c"GLIBC_2.8",
+                    _ => c"GLIBC_2.2.5",
                 };
-                let wrong_version = if name == "mlock2" {
+                let wrong_version = if valid_version != c"GLIBC_2.2.5" {
                     c"GLIBC_2.2.5"
                 } else {
                     c"GLIBC_2.27"
