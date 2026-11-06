@@ -315,7 +315,20 @@ const DIALECT_BRIDGE: &str = r#"
 #include <stdarg.h>
 #include <stdio.h>
 #include <wchar.h>
+#define STREAM_CALL(T, P, V) \
+    (kind == 0 ? ((int (*)(FILE *, const T *, ...))fn)(s, format, V, n) : \
+     kind == 1 ? P##_file_v(fn, s, format, V, n) : \
+     kind == 2 ? ((int (*)(const T *, ...))fn)(format, V, n) : \
+     kind == 3 ? P##_input_v(fn, format, V, n) : -999)
+#define STRING_CALL(T, P, V) \
+    (is_v ? P##_string_v(fn, input, format, V, n, tail) : \
+     ((int (*)(const T *, const T *, ...))fn)(input, format, V, n, tail))
 #define BRIDGE(T, P) \
+static int P##_binary_format(const T *format) { \
+    /* This bridge only receives the numeric formats in the matrix below. */ \
+    for (; *format; ++format) if (*format == 'b') return 1; \
+    return 0; \
+} \
 static int P##_file_v(void *fn, FILE *s, const T *format, ...) { \
     va_list ap; va_start(ap, format); \
     int rc = ((int (*)(FILE *, const T *, va_list))fn)(s, format, ap); \
@@ -332,18 +345,21 @@ static int P##_string_v(void *fn, const T *input, const T *format, ...) { \
     va_end(ap); return rc; \
 } \
 int P##_stream(void *fn, int kind, FILE *s, const T *format, int *value, int *n) { \
-    switch (kind) { \
-    case 0: return ((int (*)(FILE *, const T *, ...))fn)(s, format, value, n); \
-    case 1: return P##_file_v(fn, s, format, value, n); \
-    case 2: return ((int (*)(const T *, ...))fn)(format, value, n); \
-    case 3: return P##_input_v(fn, format, value, n); \
-    default: return -999; \
+    if (P##_binary_format(format)) { \
+        unsigned int binary_value = (unsigned int)*value; \
+        int rc = STREAM_CALL(T, P, &binary_value); \
+        *value = (int)binary_value; return rc; \
     } \
+    return STREAM_CALL(T, P, value); \
 } \
 int P##_string(void *fn, int is_v, const T *input, const T *format, \
                int *value, int *n, T *tail) { \
-    if (is_v) return P##_string_v(fn, input, format, value, n, tail); \
-    return ((int (*)(const T *, const T *, ...))fn)(input, format, value, n, tail); \
+    if (P##_binary_format(format)) { \
+        unsigned int binary_value = (unsigned int)*value; \
+        int rc = STRING_CALL(T, P, &binary_value); \
+        *value = (int)binary_value; return rc; \
+    } \
+    return STRING_CALL(T, P, value); \
 }
 BRIDGE(char, narrow)
 BRIDGE(wchar_t, wide)
@@ -558,6 +574,20 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         ("123!", "%i%n"),
         ("?", "%i%n"),
         ("", "%i%n"),
+        ("101!", "%b%n"),
+        ("0b101!", "%b%n"),
+        ("-0B101!", "%b%n"),
+        ("+0b101!", "%b%n"),
+        ("0b!", "%b%n"),
+        ("0b2!", "%b%n"),
+        ("0b", "%b%n"),
+        ("0b101!", "%1b%n"),
+        ("0b101!", "%2b%n"),
+        ("0b101!", "%3b%n"),
+        ("2!", "%b%n"),
+        ("", "%b%n"),
+        (" 101!", "%b%n"),
+        ("1012!", "%b%n"),
     ];
     let arms = [
         ScanDialect {
@@ -734,7 +764,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
             }
         }
     }
-    assert_eq!(comparisons, 756);
+    assert_eq!(comparisons, 1512);
     println!("scanf dialect matrix: {comparisons} exact-symbol GNU comparisons");
     assert_eq!(unsafe { close(handle) }, 0);
 }
