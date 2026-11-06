@@ -12,6 +12,7 @@ use std::ffi::{
 use std::ptr;
 
 use crate::errno_abi::set_abi_errno;
+use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
@@ -394,11 +395,8 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
     const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
     const MAX_FIXED_SIGNIFICANT_DIGITS: u32 = 15;
 
-    // This scanner reads "." as the radix; under another LC_NUMERIC radix the
-    // core parser handles the token (glibc: de_DE parses "1,5", stops at ".").
-    if !frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
-        return None;
-    }
+    // The caller has selected C syntax, either from the current locale or an
+    // explicit locale object. Do not consult ambient locale state here.
     let start = ptr.cast::<u8>();
     let mut cursor = start;
 
@@ -708,7 +706,7 @@ fn env_name_scan_bound(ptr: *const c_char) -> usize {
         .unwrap_or(ENV_NAME_SCAN_LIMIT)
 }
 
-/// Length of the strtod/strtof token prefix at `ptr`: leading C whitespace,
+/// Bounds of the strto* float token prefix at `ptr`: leading locale whitespace,
 /// then the bytes a decimal, hex, inf or nan(...) token can contain (plus the
 /// locale radix). The parser never looks past it. Requiring the NUL within a
 /// 128 KiB scan made strtod parse nothing when the string ran on (gnulib
@@ -716,29 +714,62 @@ fn env_name_scan_bound(ptr: *const c_char) -> usize {
 /// the NUL uncapped would cost O(buffer) per call for a program walking a
 /// large buffer number by number. Stops at a known allocation bound.
 #[inline]
-unsafe fn scan_numeric_token(ptr: *const c_char) -> usize {
+unsafe fn scan_numeric_token(ptr: *const c_char, locale: NumericLocale) -> (usize, usize) {
     let bound = known_remaining(ptr as usize).unwrap_or(usize::MAX);
-    let radix = frankenlibc_core::stdio::printf::numeric_radix_byte();
     let p = ptr.cast::<u8>();
     let mut i = 0usize;
     // SAFETY: each byte read precedes the string's NUL (the loops stop on any
     // byte outside the token set, NUL included) and lies within `bound`.
     unsafe {
-        while i < bound && matches!(*p.add(i), b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+        while i < bound && *p.add(i) != 0 && locale.byte_is_space(*p.add(i)) {
             i += 1;
         }
+        let start = i;
         while i < bound {
             let b = *p.add(i);
-            if !(b.is_ascii_alphanumeric()
-                || matches!(b, b'+' | b'-' | b'.' | b'(' | b')' | b'_')
-                || (radix == Some(b) && b != 0))
+            if b == locale.radix[0]
+                && locale.radix.len() <= bound - i
+                && locale
+                    .radix
+                    .iter()
+                    .enumerate()
+                    .all(|(offset, &expected)| *p.add(i + offset) == expected)
+            {
+                i += locale.radix.len();
+                continue;
+            }
+            if !(b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.' | b'(' | b')' | b'_'))
             {
                 break;
             }
             i += 1;
         }
+        (start, i)
     }
-    i
+}
+
+/// Parse a locale token with one of the locale-independent numeric engines.
+/// The result's offset always refers to the original input, including a
+/// multibyte radix and leading LC_CTYPE whitespace. No conversion consumes
+/// nothing, even when the whitespace scan made progress.
+pub(crate) unsafe fn parse_narrow_float<T>(
+    nptr: *const c_char,
+    locale: NumericLocale,
+    parse: impl FnOnce(&[u8]) -> (T, usize, bool),
+) -> (T, usize, bool) {
+    // SAFETY: the caller supplies a readable C string; the scanner checks its
+    // known allocation bound and stops before a NUL or non-token character.
+    let (leading, end) = unsafe { scan_numeric_token(nptr, locale) };
+    let bytes =
+        unsafe { std::slice::from_raw_parts(nptr.cast::<u8>().add(leading), end - leading) };
+    let token = frankenlibc_core::stdlib::conversion::LocaleFloatToken::new(bytes, locale.radix);
+    let (value, consumed, range_error) = parse(token.bytes());
+    let original_consumed = if consumed == 0 {
+        0
+    } else {
+        leading + token.original_consumed(consumed)
+    };
+    (value, original_consumed, range_error)
 }
 
 #[inline]
@@ -3078,6 +3109,10 @@ pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
 /// `endptr`, if non-null, will be set to point past the last parsed character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    unsafe { strtod_in(nptr, endptr, NumericLocale::current()) }
+}
+
+unsafe fn strtod_in(nptr: *const c_char, endptr: *mut *mut c_char, locale: NumericLocale) -> f64 {
     if nptr.is_null() {
         if !endptr.is_null() {
             unsafe { *endptr = nptr as *mut c_char };
@@ -3111,6 +3146,7 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     };
 
     if profile.is_none()
+        && locale.narrow_is_c()
         && let Some((value, consumed)) = unsafe { parse_strtod_short_decimal_c_string_fast(nptr) }
     {
         if !endptr.is_null() {
@@ -3119,9 +3155,15 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         return value;
     }
 
-    let len = unsafe { scan_numeric_token(nptr) };
-    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len) };
-    let (val, consumed, exact) = frankenlibc_core::stdlib::conversion::strtod_impl(slice);
+    let (val, consumed, range_error) = unsafe {
+        parse_narrow_float(nptr, locale, |bytes| {
+            let (value, consumed, exact) =
+                frankenlibc_core::stdlib::conversion::strtod_impl_c(bytes);
+            let range_error =
+                consumed > 0 && strtod_result_is_erange(value, &bytes[..consumed], exact);
+            (value, consumed, range_error)
+        })
+    };
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
@@ -3133,11 +3175,8 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     // An EXACTLY-representable subnormal is NOT underflow (glibc raises ERANGE
     // only for inexact underflow), so suppress the false positive when the
     // parser reports the result exact. (bd-2g7oyh.187, CONFORMANCE: numeric diff)
-    if consumed > 0 {
-        let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
-        if strtod_result_is_erange(val, consumed_bytes, exact) {
-            unsafe { set_abi_errno(libc::ERANGE) };
-        }
+    if range_error {
+        unsafe { set_abi_errno(libc::ERANGE) };
     }
 
     if let Some(p) = profile {
@@ -3240,6 +3279,10 @@ fn contains_nonzero_significand_digit(bytes: &[u8]) -> bool {
 /// Same safety requirements as `strtod`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -> f32 {
+    unsafe { strtof_in(nptr, endptr, NumericLocale::current()) }
+}
+
+unsafe fn strtof_in(nptr: *const c_char, endptr: *mut *mut c_char, locale: NumericLocale) -> f32 {
     if nptr.is_null() {
         if !endptr.is_null() {
             unsafe { *endptr = nptr as *mut c_char };
@@ -3271,10 +3314,15 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
         Some(decision.profile)
     };
 
-    let len = unsafe { scan_numeric_token(nptr) };
-    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len) };
-    let (value, consumed, exact_subnormal) =
-        frankenlibc_core::stdlib::conversion::strtof_impl(slice);
+    let (value, consumed, range_error) = unsafe {
+        parse_narrow_float(nptr, locale, |bytes| {
+            let (value, consumed, exact) =
+                frankenlibc_core::stdlib::conversion::strtof_impl_c(bytes);
+            let range_error =
+                consumed > 0 && strtof_result_is_erange(value, &bytes[..consumed], exact);
+            (value, consumed, range_error)
+        })
+    };
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
@@ -3282,11 +3330,8 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
     // Exact f32 subnormals are not underflow (glibc raises ERANGE only for
     // inexact underflow), so the parser's flag suppresses the false positive.
     // (bd-2g7oyh.187)
-    if consumed > 0 {
-        let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
-        if strtof_result_is_erange(value, consumed_bytes, exact_subnormal) {
-            unsafe { set_abi_errno(libc::ERANGE) };
-        }
+    if range_error {
+        unsafe { set_abi_errno(libc::ERANGE) };
     }
 
     if let Some(p) = profile {
@@ -3999,6 +4044,15 @@ pub unsafe extern "C" fn recallocarray(
 /// `nptr` must be NUL-terminated or NULL. `endptr`, when non-NULL, must be
 /// writable. `out` must address ten writable bytes.
 pub unsafe extern "C" fn strtold_into(nptr: *const c_char, endptr: *mut *mut c_char, out: *mut u8) {
+    unsafe { strtold_in(nptr, endptr, NumericLocale::current(), out) };
+}
+
+unsafe fn strtold_in(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    locale: NumericLocale,
+    out: *mut u8,
+) {
     if nptr.is_null() {
         // SAFETY: the caller guarantees ten writable bytes.
         unsafe { core::ptr::write_bytes(out, 0, 10) };
@@ -4008,20 +4062,22 @@ pub unsafe extern "C" fn strtold_into(nptr: *const c_char, endptr: *mut *mut c_c
         }
         return;
     }
-    // SAFETY: bounded scan over a NUL-terminated string.
-    let (len, _) = unsafe { scan_c_string(nptr, None) };
-    // SAFETY: `scan_c_string` reports a length inside the readable region.
-    let bytes = unsafe { core::slice::from_raw_parts(nptr as *const u8, len) };
-    let scan = frankenlibc_core::float128::strtold_scan(bytes);
-    // SAFETY: ten writable bytes by contract; `scan.bytes` is exactly ten.
-    unsafe { core::ptr::copy_nonoverlapping(scan.bytes.as_ptr(), out, 10) };
+    // SAFETY: bounded token scan over a readable C string.
+    let (bytes, consumed, range_error) = unsafe {
+        parse_narrow_float(nptr, locale, |bytes| {
+            let scan = frankenlibc_core::float128::strtold_scan_c(bytes);
+            (scan.bytes, scan.consumed, scan.range_error)
+        })
+    };
+    // SAFETY: ten writable bytes by contract; `bytes` is exactly ten.
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 10) };
     if !endptr.is_null() {
         // A `consumed` of zero is the no-conversion case, and adding zero
         // restores the caller's original pointer, which is exactly the contract.
         // SAFETY: `consumed` never exceeds the scanned length.
-        unsafe { *endptr = nptr.add(scan.consumed) as *mut c_char };
+        unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
-    if scan.range_error {
+    if range_error {
         // SAFETY: errno slot for the calling thread.
         unsafe { set_abi_errno(errno::ERANGE) };
     }
@@ -6133,17 +6189,25 @@ pub unsafe extern "C" fn cfsetspeed(termios: *mut libc::termios, speed: libc::sp
 }
 
 // ===========================================================================
-// Locale-aware _l variants — C/POSIX locale passthrough
+// Locale-aware _l variants
 // ===========================================================================
 
-/// `strtod_l` — locale-aware string to double. C locale: delegates to strtod.
+/// `strtod_l` — string to double using the explicit locale's LC_NUMERIC and
+/// LC_CTYPE, independently of the global and calling thread's locales.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtod_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> f64 {
-    unsafe { strtod(nptr, endptr) }
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0.0;
+    };
+    unsafe { strtod_in(nptr, endptr, locale) }
 }
 
 /// `strtof_l` — locale-aware string to float.
@@ -6151,9 +6215,39 @@ pub unsafe extern "C" fn strtod_l(
 pub unsafe extern "C" fn strtof_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> f32 {
-    unsafe { strtof(nptr, endptr) }
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0.0;
+    };
+    unsafe { strtof_in(nptr, endptr, locale) }
+}
+
+/// Memory-returning form of `strtold_l` used by x87 ABI shims.
+///
+/// # Safety
+///
+/// The input and end-pointer requirements are those of `strtold_l`; `out`
+/// addresses ten writable bytes.
+pub unsafe extern "C" fn strtold_l_into(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    locale: *mut c_void,
+    out: *mut u8,
+) {
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        unsafe { core::ptr::write_bytes(out, 0, 10) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return;
+    };
+    unsafe { strtold_in(nptr, endptr, locale, out) };
 }
 
 /// `strtold_l` — locale-aware string to long double.
@@ -6165,19 +6259,16 @@ pub unsafe extern "C" fn strtold_l(
     _endptr: *mut *mut c_char,
     _locale: *mut c_void,
 ) {
-    // The locale argument arrives in RDX and is deliberately overwritten with
-    // the out-buffer pointer: fl implements the C locale only, so `strtold_l`
-    // has always ignored it (the previous body discarded it too). That lets
-    // this reuse `strtold_into` rather than carry a second helper whose only
-    // difference is an unused parameter.
+    // Preserve the locale in RDX; the memory-returning helper's fourth
+    // argument is the ten-byte result slot in RCX.
     core::arch::naked_asm!(
         "sub rsp, 24",
-        "mov rdx, rsp",
+        "mov rcx, rsp",
         "call {into}",
         "fld tbyte ptr [rsp]",
         "add rsp, 24",
         "ret",
-        into = sym strtold_into,
+        into = sym strtold_l_into,
     )
 }
 
@@ -6187,9 +6278,9 @@ pub unsafe extern "C" fn strtold_l(
 pub unsafe extern "C" fn strtold_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> f64 {
-    unsafe { strtold(nptr, endptr) }
+    unsafe { strtod_l(nptr, endptr, locale) }
 }
 
 /// `strtol_l` — locale-aware string to long.

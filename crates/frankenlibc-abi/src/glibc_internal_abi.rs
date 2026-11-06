@@ -697,19 +697,16 @@ pub unsafe extern "C" fn __ffs(i: c_int) -> c_int {
 // __wcstod/f/ld/l/ll/ul/ull _internal/_l: now exported from wchar_abi.rs
 
 // ==========================================================================
-// f128 internal parse variants — native (f64 precision, no true f128 in Rust)
+// f128 internal parse variants
 // ==========================================================================
-// __strtof128_internal: parse _Float128 literal. Since Rust lacks f128, we
-// provide f64-precision parsing via strtod. The `group` flag (thousands
-// grouping) is accepted but ignored — glibc also ignores it for non-locale.
+// The internal entrypoints retain their binary128 ABI and share the current
+// locale parser. The GNU `group` extension is not implemented here.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strtof128_internal(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
     _group: c_int,
 ) -> f128 {
-    // The `group` (thousands-grouping) flag is ignored, matching glibc for the
-    // non-locale path.
     f128::from_bits(unsafe { strtof128_bits(nptr, endptr) })
 }
 
@@ -719,8 +716,8 @@ pub unsafe extern "C" fn __wcstof128_internal(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     _group: c_int,
-) -> f64 {
-    unsafe { crate::wchar_abi::wcstod(nptr, endptr) }
+) -> f128 {
+    f128::from_bits(unsafe { wcstof128_bits(nptr, endptr) })
 }
 
 // ==========================================================================
@@ -883,8 +880,7 @@ pub unsafe extern "C" fn strtof32_l(
     endptr: *mut *mut c_char,
     loc: *mut c_void,
 ) -> f32 {
-    let _ = loc;
-    unsafe { crate::stdlib_abi::strtof(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtof_l(nptr, endptr, loc) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof32x(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
@@ -896,8 +892,7 @@ pub unsafe extern "C" fn strtof32x_l(
     endptr: *mut *mut c_char,
     loc: *mut c_void,
 ) -> f64 {
-    let _ = loc;
-    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtod_l(nptr, endptr, loc) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof64(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
@@ -909,8 +904,7 @@ pub unsafe extern "C" fn strtof64_l(
     endptr: *mut *mut c_char,
     loc: *mut c_void,
 ) -> f64 {
-    let _ = loc;
-    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtod_l(nptr, endptr, loc) }
 }
 /// `strtof64x` — `_Float64x` is x87 80-bit on x86-64, the same ABI class as
 /// `long double`, so this returns in ST(0) exactly like
@@ -957,16 +951,15 @@ pub unsafe extern "C" fn strtof64x_l(
     _endptr: *mut *mut c_char,
     _loc: *mut c_void,
 ) {
-    // The locale arrives in RDX and is discarded, so the out-buffer
-    // pointer takes its place — as in `strtold_l`.
+    // Preserve the explicit locale in RDX and pass the output slot in RCX.
     core::arch::naked_asm!(
         "sub rsp, 24",
-        "mov rdx, rsp",
+        "mov rcx, rsp",
         "call {into}",
         "fld tbyte ptr [rsp]",
         "add rsp, 24",
         "ret",
-        into = sym crate::stdlib_abi::strtold_into,
+        into = sym crate::stdlib_abi::strtold_l_into,
     )
 }
 
@@ -978,24 +971,14 @@ pub unsafe extern "C" fn strtof64x_l(
     endptr: *mut *mut c_char,
     loc: *mut c_void,
 ) -> f64 {
-    let _ = loc;
-    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtod_l(nptr, endptr, loc) }
 }
-/// Correctly-rounded `strtof128` core: parses the strtod grammar (whitespace,
-/// sign, inf/infinity, nan[(...)], hex `0x..p..`, decimal `..e..`), sets
-/// `*endptr` to the first unconsumed byte (or `nptr` if no conversion), sets
-/// errno ERANGE on overflow/underflow, and returns the binary128 bit pattern.
-unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 {
+/// Binary128 parser for a bounded C-syntax token. The locale adapters below
+/// translate radix/whitespace and map the consumed count to the caller's
+/// original input; arithmetic and NaN payload handling remain shared.
+fn strtof128_c_scan(input: &[u8]) -> (u128, usize, bool) {
     use frankenlibc_core::float128::{decimal_to_binary128, hex_to_binary128};
-    let set_end = |i: usize| {
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr.add(i) as *mut c_char };
-        }
-    };
-    if nptr.is_null() {
-        return 0;
-    }
-    let at = |i: usize| -> u8 { unsafe { *nptr.add(i) as u8 } };
+    let at = |i: usize| -> u8 { input.get(i).copied().unwrap_or(0) };
     let ieq = |b: u8, c: u8| b.to_ascii_lowercase() == c;
     let bytes = |a: usize, b: usize| -> Vec<u8> { (a..b).map(&at).collect() };
 
@@ -1025,8 +1008,7 @@ unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 
         {
             j += 5;
         }
-        set_end(j);
-        return sign | (0x7fffu128 << 112);
+        return (sign | (0x7fffu128 << 112), j, false);
     }
     // nan[(n-char-sequence)]
     if ieq(at(i), b'n') && ieq(at(i + 1), b'a') && ieq(at(i + 2), b'n') {
@@ -1043,8 +1025,11 @@ unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 
                 j = k + 1;
             }
         }
-        set_end(j);
-        return sign | (0x7fffu128 << 112) | (1u128 << 111) | (payload & ((1u128 << 111) - 1));
+        return (
+            sign | (0x7fffu128 << 112) | (1u128 << 111) | (payload & ((1u128 << 111) - 1)),
+            j,
+            false,
+        );
     }
 
     // hex float: 0x H* [. H*] [pP [+-] D+]
@@ -1089,13 +1074,11 @@ unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 
                     after = e;
                 }
             }
-            set_end(after);
             let ih = bytes(int_start, int_end);
             let fh = bytes(frac_start, frac_end);
             let nonzero = ih.iter().chain(fh.iter()).any(|&d| d != b'0');
             let bits = hex_to_binary128(neg, &ih, &fh, binexp);
-            set_strtof128_errno(bits, sign, nonzero);
-            return bits;
+            return (bits, after, strtof128_result_is_erange(bits, sign, nonzero));
         }
         // "0x" with no hex digits: the "0" is a decimal zero (fall through).
     }
@@ -1116,8 +1099,7 @@ unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 
         frac_end = i;
     }
     if int_end == int_start && frac_end == frac_start {
-        set_end(0); // no conversion: endptr = original nptr
-        return 0;
+        return (0, 0, false); // no conversion: endptr = original nptr
     }
     let mut dexp_e: i64 = 0;
     let mut after = i;
@@ -1143,26 +1125,25 @@ unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 
             after = e;
         }
     }
-    set_end(after);
-
     let mut digits = bytes(int_start, int_end);
     digits.extend_from_slice(&bytes(frac_start, frac_end));
-    let dexp_total = dexp_e - (frac_end - frac_start) as i64;
+    let Some(first_nonzero) = digits.iter().position(|&digit| digit != b'0') else {
+        // Zero remains signed zero for every exponent, without a range error.
+        return (sign, after, false);
+    };
+    let digits = &digits[first_nonzero..];
+    let dexp_total = dexp_e.saturating_sub((frac_end - frac_start) as i64);
     // Order-of-magnitude guard: bound the big-integer work and short-circuit
     // values clearly outside binary128's range (~10^4932 .. 10^-4966).
-    let order = digits.len() as i64 + dexp_total;
+    let order = (digits.len() as i64).saturating_add(dexp_total);
     if order > 5000 {
-        unsafe { set_abi_errno(libc::ERANGE) };
-        return sign | (0x7fffu128 << 112);
+        return (sign | (0x7fffu128 << 112), after, true);
     }
     if order < -5100 {
-        unsafe { set_abi_errno(libc::ERANGE) };
-        return sign; // underflow to signed zero
+        return (sign, after, true); // underflow to signed zero
     }
-    let nonzero = digits.iter().any(|&d| d != b'0');
-    let bits = decimal_to_binary128(neg, &digits, dexp_total as i32);
-    set_strtof128_errno(bits, sign, nonzero);
-    bits
+    let bits = decimal_to_binary128(neg, digits, dexp_total as i32);
+    (bits, after, strtof128_result_is_erange(bits, sign, true))
 }
 
 /// Parse a `nan(...)` n-char-sequence as a base-0 unsigned integer (glibc uses
@@ -1189,18 +1170,40 @@ fn parse_nan_payload(seq: &[u8]) -> u128 {
     v
 }
 
-/// Set errno ERANGE for a strtof128 range error, matching glibc: overflow to
+/// Report a strtof128 range error: overflow to
 /// infinity, underflow to a subnormal, or a nonzero value flushed to zero.
-fn set_strtof128_errno(bits: u128, sign: u128, input_nonzero: bool) {
+fn strtof128_result_is_erange(bits: u128, sign: u128, input_nonzero: bool) -> bool {
     let exp_field = (bits >> 112) & 0x7fff;
     let mantissa = bits & ((1u128 << 112) - 1);
-    if exp_field == 0x7fff && mantissa == 0 {
-        unsafe { set_abi_errno(libc::ERANGE) }; // overflow -> inf
-    } else if exp_field == 0 && mantissa != 0 {
-        unsafe { set_abi_errno(libc::ERANGE) }; // underflow -> subnormal
-    } else if bits == sign && input_nonzero {
-        unsafe { set_abi_errno(libc::ERANGE) }; // nonzero value flushed to zero
+    (exp_field == 0x7fff && mantissa == 0)
+        || (exp_field == 0 && mantissa != 0)
+        || (bits == sign && input_nonzero)
+}
+
+unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 {
+    unsafe { strtof128_in(nptr, endptr, crate::locale_abi::NumericLocale::current()) }
+}
+
+unsafe fn strtof128_in(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    locale: crate::locale_abi::NumericLocale,
+) -> u128 {
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0;
     }
+    let (bits, consumed, range_error) =
+        unsafe { crate::stdlib_abi::parse_narrow_float(nptr, locale, strtof128_c_scan) };
+    if !endptr.is_null() {
+        unsafe { *endptr = nptr.add(consumed).cast_mut() };
+    }
+    if range_error {
+        unsafe { set_abi_errno(libc::ERANGE) };
+    }
+    bits
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1213,8 +1216,14 @@ pub unsafe extern "C" fn strtof128_l(
     endptr: *mut *mut c_char,
     loc: *mut c_void,
 ) -> f128 {
-    let _ = loc;
-    f128::from_bits(unsafe { strtof128_bits(nptr, endptr) })
+    let Some(locale) = crate::locale_abi::NumericLocale::for_handle(loc) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0.0;
+    };
+    f128::from_bits(unsafe { strtof128_in(nptr, endptr, locale) })
 }
 
 // wcstof32 → wcstof, wcstof64/f32x → wcstod, wcstof64x/f128 → wcstold
@@ -1228,8 +1237,7 @@ pub unsafe extern "C" fn wcstof32_l(
     endptr: *mut *mut WcharT,
     loc: *mut c_void,
 ) -> f32 {
-    let _ = loc;
-    unsafe { crate::wchar_abi::wcstof(nptr.cast(), endptr.cast()) }
+    unsafe { crate::wchar_abi::wcstof_l(nptr.cast(), endptr.cast(), loc) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstof32x(nptr: *const WcharT, endptr: *mut *mut WcharT) -> f64 {
@@ -1241,8 +1249,7 @@ pub unsafe extern "C" fn wcstof32x_l(
     endptr: *mut *mut WcharT,
     loc: *mut c_void,
 ) -> f64 {
-    let _ = loc;
-    unsafe { crate::wchar_abi::wcstod(nptr.cast(), endptr.cast()) }
+    unsafe { crate::wchar_abi::wcstod_l(nptr.cast(), endptr.cast(), loc) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstof64(nptr: *const WcharT, endptr: *mut *mut WcharT) -> f64 {
@@ -1254,8 +1261,7 @@ pub unsafe extern "C" fn wcstof64_l(
     endptr: *mut *mut WcharT,
     loc: *mut c_void,
 ) -> f64 {
-    let _ = loc;
-    unsafe { crate::wchar_abi::wcstod(nptr.cast(), endptr.cast()) }
+    unsafe { crate::wchar_abi::wcstod_l(nptr.cast(), endptr.cast(), loc) }
 }
 /// `wcstof64x` — `_Float64x` is x87 80-bit on x86-64, the same ABI class as
 /// `long double`, so this returns in ST(0) exactly like
@@ -1302,16 +1308,15 @@ pub unsafe extern "C" fn wcstof64x_l(
     _endptr: *mut *mut WcharT,
     _loc: *mut c_void,
 ) {
-    // The locale arrives in RDX and is discarded, so the out-buffer
-    // pointer takes its place — as in `strtold_l`.
+    // Preserve the explicit locale in RDX and pass the output slot in RCX.
     core::arch::naked_asm!(
         "sub rsp, 24",
-        "mov rdx, rsp",
+        "mov rcx, rsp",
         "call {into}",
         "fld tbyte ptr [rsp]",
         "add rsp, 24",
         "ret",
-        into = sym crate::wchar_abi::wcstold_into,
+        into = sym crate::wchar_abi::wcstold_l_into,
     )
 }
 
@@ -1323,36 +1328,38 @@ pub unsafe extern "C" fn wcstof64x_l(
     endptr: *mut *mut WcharT,
     loc: *mut c_void,
 ) -> f64 {
-    let _ = loc;
-    unsafe { crate::wchar_abi::wcstod(nptr.cast(), endptr.cast()) }
+    unsafe { crate::wchar_abi::wcstod_l(nptr.cast(), endptr.cast(), loc) }
 }
-/// Wide `strtof128`: the float grammar is pure ASCII, so copy the leading ASCII
-/// run into a narrow buffer, parse with strtof128_bits, and map the consumed
-/// byte count back to wide chars (1:1). A non-ASCII wide char terminates the
-/// number. errno is set by strtof128_bits.
+/// Wide binary128 uses the same locale projection and bounded C-token parser
+/// as the other widths, with one output byte per consumed wide character.
 unsafe fn wcstof128_bits(nptr: *const WcharT, endptr: *mut *mut WcharT) -> u128 {
+    unsafe { wcstof128_in(nptr, endptr, crate::locale_abi::NumericLocale::current()) }
+}
+
+unsafe fn wcstof128_in(
+    nptr: *const WcharT,
+    endptr: *mut *mut WcharT,
+    locale: crate::locale_abi::NumericLocale,
+) -> u128 {
     if nptr.is_null() {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
         return 0;
     }
-    let mut buf: Vec<u8> = Vec::new();
-    let mut n = 0usize;
-    loop {
-        let w = unsafe { *nptr.add(n) };
-        if w <= 0 || w >= 128 {
-            break;
-        }
-        buf.push(w as u8);
-        n += 1;
-        if buf.len() >= 1_000_000 {
-            break;
-        }
-    }
-    buf.push(0);
-    let mut nend: *mut c_char = std::ptr::null_mut();
-    let bits = unsafe { strtof128_bits(buf.as_ptr() as *const c_char, &mut nend) };
+    let (bits, consumed, range_error) = unsafe {
+        crate::wchar_abi::wide_parse_float(
+            nptr.cast(),
+            locale,
+            strtof128_c_scan,
+            |_value, _prefix, range_error| range_error,
+        )
+    };
     if !endptr.is_null() {
-        let off = nend as usize - buf.as_ptr() as usize;
-        unsafe { *endptr = nptr.add(off) as *mut WcharT };
+        unsafe { *endptr = nptr.add(consumed).cast_mut() };
+    }
+    if range_error {
+        unsafe { set_abi_errno(libc::ERANGE) };
     }
     bits
 }
@@ -1367,8 +1374,14 @@ pub unsafe extern "C" fn wcstof128_l(
     endptr: *mut *mut WcharT,
     loc: *mut c_void,
 ) -> f128 {
-    let _ = loc;
-    f128::from_bits(unsafe { wcstof128_bits(nptr, endptr) })
+    let Some(locale) = crate::locale_abi::NumericLocale::for_handle(loc) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0.0;
+    };
+    f128::from_bits(unsafe { wcstof128_in(nptr, endptr, locale) })
 }
 
 // Wide string extras

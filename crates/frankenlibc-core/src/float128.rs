@@ -485,9 +485,20 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
     let mut end = digits.len();
     while end > 1 && digits[end - 1] == b'0' {
         end -= 1;
-        dexp += 1;
+        dexp = dexp.saturating_add(1);
     }
     digits = &digits[..end];
+
+    // Bound public core callers too: the ABI's scanner is not the only
+    // entrypoint. Saturated exponents must never become enormous powers or
+    // overflow when negated to construct a denominator.
+    let decimal_exponent = i64::from(dexp).saturating_add(digits.len() as i64);
+    if decimal_exponent > 5000 {
+        return sign | (0x7fffu128 << 112);
+    }
+    if decimal_exponent < -5100 {
+        return sign;
+    }
 
     let s = BigUint::from_decimal(digits);
     // value = num/den, exact.
@@ -539,7 +550,7 @@ pub fn decimal_to_x87_extended(negative: bool, digits: &[u8], dexp: i32) -> [u8;
     let mut end = digits.len();
     while end > 1 && digits[end - 1] == b'0' {
         end -= 1;
-        dexp += 1;
+        dexp = dexp.saturating_add(1);
     }
     digits = &digits[..end];
 
@@ -549,7 +560,7 @@ pub fn decimal_to_x87_extended(negative: bool, digits: &[u8], dexp: i32) -> [u8;
     // the representable range (max finite is ~1.19e4932, min subnormal
     // ~3.65e-4951, and anything below half of that rounds to zero), so no
     // in-range input can reach them.
-    let decimal_exponent = i64::from(dexp) + digits.len() as i64;
+    let decimal_exponent = i64::from(dexp).saturating_add(digits.len() as i64);
     if decimal_exponent > 5000 {
         return encode_x87(negative, 1 << 63, 0x7fff);
     }
@@ -688,7 +699,17 @@ pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp:
         return sign;
     }
     // value = M · 2^e2.
-    let e2 = binexp - 4 * frac_hex.len() as i64;
+    let e2 = binexp.saturating_sub((frac_hex.len() as i64).saturating_mul(4));
+    let order = e2.saturating_add(m.bit_len() as i64 - 1);
+    // Bound the magnitude before constructing a denominator or shifting. The
+    // exponent alone is insufficient: a long significand can cancel a large
+    // negative exponent while leaving a perfectly ordinary result.
+    if order > 16383 {
+        return sign | (0x7fffu128 << 112);
+    }
+    if order < -16495 {
+        return sign;
+    }
     let (num, den) = if e2 >= 0 {
         (m.shl_bits(e2 as u32), BigUint::one())
     } else {
@@ -922,14 +943,14 @@ pub fn hex_to_x87_extended(
         return encode_x87(negative, 0, 0);
     }
     // value = M · 2^e2.
-    let e2 = binexp - 4 * frac_hex.len() as i64;
-    // Bound the shift before taking it. `0x1p999999999` must answer "infinity"
-    // rather than attempt a shift by a billion bits; the thresholds are far
-    // outside the 15-bit exponent range so no representable input reaches them.
-    if e2 > 20_000 {
+    let e2 = binexp.saturating_sub((frac_hex.len() as i64).saturating_mul(4));
+    let order = e2.saturating_add(m.bit_len() as i64 - 1);
+    // Test the whole value's order, not the exponent alone. Appending zeros
+    // after a hex radix changes e2 but must not change the represented number.
+    if order > 16383 {
         return encode_x87(negative, 1 << 63, 0x7fff);
     }
-    if e2 < -20_000 {
+    if order < -16446 {
         return encode_x87(negative, 0, 0);
     }
     let (num, den) = if e2 >= 0 {
@@ -991,8 +1012,9 @@ pub fn strtold_scan(s: &[u8]) -> X87Scan {
     }
 }
 
-/// [`strtold_scan`] for input whose radix is ".".
-pub(crate) fn strtold_scan_c(s: &[u8]) -> X87Scan {
+/// [`strtold_scan`] for input whose radix is ".", independent of the current
+/// locale. ABI callers use this after resolving an explicit locale object.
+pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
     let at = |i: usize| -> u8 { s.get(i).copied().unwrap_or(0) };
     let is_digit = |b: u8| b.is_ascii_digit();
     let is_hex = |b: u8| b.is_ascii_hexdigit();
@@ -2343,6 +2365,88 @@ mod tests {
                 core::str::from_utf8(input).unwrap_or("<non-utf8>")
             );
         }
+    }
+
+    #[test]
+    fn hex_extreme_exponents_bound_big_integer_work() {
+        for negative in [false, true] {
+            let sign = u128::from(negative) << 127;
+            assert_eq!(
+                hex_to_binary128(negative, b"1", b"8", i64::MAX),
+                sign | (0x7fffu128 << 112)
+            );
+            assert_eq!(hex_to_binary128(negative, b"1", b"8", i64::MIN), sign);
+            assert_eq!(
+                hex_to_x87_extended(negative, b"1", b"8", i64::MAX),
+                encode_x87(negative, 1 << 63, 0x7fff)
+            );
+            assert_eq!(
+                hex_to_x87_extended(negative, b"1", b"8", i64::MIN),
+                encode_x87(negative, 0, 0)
+            );
+            for exponent in [i64::MIN, i64::MAX] {
+                assert_eq!(hex_to_binary128(negative, b"0", b"0", exponent), sign);
+                assert_eq!(
+                    hex_to_x87_extended(negative, b"0", b"0", exponent),
+                    encode_x87(negative, 0, 0)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decimal_extreme_exponents_preserve_sign_and_zero() {
+        for negative in [false, true] {
+            let sign = u128::from(negative) << 127;
+            for digits in [&b"1"[..], &b"10"[..], &b"1000"[..]] {
+                assert_eq!(
+                    decimal_to_binary128(negative, digits, i32::MAX),
+                    sign | (0x7fffu128 << 112)
+                );
+                assert_eq!(decimal_to_binary128(negative, digits, i32::MIN), sign);
+                assert_eq!(
+                    decimal_to_x87_extended(negative, digits, i32::MAX),
+                    encode_x87(negative, 1 << 63, 0x7fff)
+                );
+                assert_eq!(
+                    decimal_to_x87_extended(negative, digits, i32::MIN),
+                    encode_x87(negative, 0, 0)
+                );
+            }
+            for exponent in [i32::MIN, i32::MAX] {
+                assert_eq!(decimal_to_binary128(negative, b"000", exponent), sign);
+                assert_eq!(
+                    decimal_to_x87_extended(negative, b"000", exponent),
+                    encode_x87(negative, 0, 0)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hex_exponent_bounds_include_significand_magnitude() {
+        // Appending fractional zeros leaves the value exactly one even when
+        // the internal integer and negative binary scale each exceed 20k bits.
+        let fraction = vec![b'0'; 6_000];
+        assert_eq!(
+            hex_to_binary128(false, b"1", &fraction, 0),
+            0x3fffu128 << 112
+        );
+        assert_eq!(
+            hex_to_x87_extended(false, b"1", &fraction, 0),
+            encode_x87(false, 1 << 63, 0x3fff)
+        );
+        // Keep half-minimum-subnormal ties inside the exact rounding path.
+        assert_eq!(hex_to_binary128(false, b"1", b"", -16495), 0);
+        assert_eq!(hex_to_binary128(false, b"1", b"8", -16495), 1);
+        assert_eq!(
+            hex_to_x87_extended(false, b"1", b"", -16446),
+            encode_x87(false, 0, 0)
+        );
+        assert_eq!(
+            hex_to_x87_extended(false, b"1", b"8", -16446),
+            encode_x87(false, 1, 0)
+        );
     }
 
     /// NaN carries the integer bit AND the quiet bit. An x87 NaN with a clear

@@ -15,6 +15,7 @@ use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
@@ -5103,13 +5104,75 @@ fn float_stop_may_extend_at_bound(prefix: &[u8], consumed: usize) -> bool {
 /// big buffer) was 16-125x slower than glibc (measured wcstod_longbuf_ab). A real number lives
 /// in the bounded window; only if it fills the entire all-ASCII window with no NUL (i.e. it may
 /// legitimately extend past the bound) do we re-scan unbounded for an exact value/endptr.
-unsafe fn wide_parse_float<T: Copy>(
+pub(crate) unsafe fn wide_parse_float<T: Copy>(
     nptr: *const libc::wchar_t,
+    locale: NumericLocale,
     parse: impl Fn(&[u8]) -> (T, usize, bool),
     is_erange: impl Fn(T, &[u8], bool) -> bool,
 ) -> (T, usize, bool) {
     let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
     let mut ascii_heap: Vec<u8> = Vec::new();
+    if !locale.wide_is_c() {
+        let bound = known_remaining(nptr as usize).map_or(usize::MAX, bytes_to_wchars);
+        let mut leading = 0;
+        while leading < bound {
+            // SAFETY: each read is before the string's NUL and inside a known
+            // allocation when available. Only initial LC_CTYPE space is skipped.
+            let wc = unsafe { *nptr.add(leading) as u32 };
+            if wc == 0 || !locale.wide_is_space(wc) {
+                break;
+            }
+            leading += 1;
+        }
+        // Wide decimal points occupy one wchar regardless of their multibyte
+        // representation. A non-ASCII point gets a non-ASCII placeholder that
+        // cannot collide with any other accepted token character.
+        let radix = u8::try_from(locale.wide_radix)
+            .ok()
+            .filter(u8::is_ascii)
+            .unwrap_or(0xff);
+        let mut len = 0;
+        while leading + len < bound {
+            // SAFETY: same bounded, NUL-terminated input as above.
+            let wc = unsafe { *nptr.add(leading + len) as u32 };
+            let byte = if wc == locale.wide_radix {
+                radix
+            } else if wc < 0x80 {
+                let byte = wc as u8;
+                if !(byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'+' | b'-' | b'.' | b'(' | b')' | b'_'))
+                {
+                    break;
+                }
+                byte
+            } else {
+                break;
+            };
+            if len < WIDE_ASCII_STACK {
+                ascii_stack[len] = byte;
+            } else {
+                if len == WIDE_ASCII_STACK {
+                    ascii_heap.extend_from_slice(&ascii_stack);
+                }
+                ascii_heap.push(byte);
+            }
+            len += 1;
+        }
+        let projected = if len <= WIDE_ASCII_STACK {
+            &ascii_stack[..len]
+        } else {
+            &ascii_heap[..]
+        };
+        let token =
+            frankenlibc_core::stdlib::conversion::LocaleFloatToken::new(projected, &[radix]);
+        let (value, consumed, exact) = parse(token.bytes());
+        let erange = consumed > 0 && is_erange(value, &token.bytes()[..consumed], exact);
+        return (
+            value,
+            if consumed == 0 { 0 } else { leading + consumed },
+            erange,
+        );
+    }
     // SAFETY: bounded scan; reads at most WIDE_FLOAT_SCAN wchars from a valid wide string.
     let (len, term) = unsafe { scan_w_float_window(nptr as *const u32, WIDE_FLOAT_SCAN) };
     // SAFETY: bounded by the measured length.
@@ -5574,6 +5637,14 @@ pub unsafe extern "C" fn wcstod(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
 ) -> f64 {
+    unsafe { wcstod_in(nptr, endptr, NumericLocale::current()) }
+}
+
+unsafe fn wcstod_in(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    locale: NumericLocale,
+) -> f64 {
     if nptr.is_null() {
         if !endptr.is_null() {
             // SAFETY: caller-provided endptr is writable when non-null.
@@ -5586,7 +5657,7 @@ pub unsafe extern "C" fn wcstod(
     // skips the scan+project+strtod machinery. Exact ⇒ no ERANGE; just write endptr + return.
     // It ends the integer at any non-digit, so only under a "." radix: under de_DE's ','
     // "1,5" is 1.5, not 1.
-    if frankenlibc_core::stdio::printf::numeric_radix_is_dot()
+    if locale.wide_is_c()
         && let Some((value, consumed)) = unsafe { parse_wcstod_integer_fast(nptr as *const u32) }
     {
         if !endptr.is_null() {
@@ -5606,11 +5677,17 @@ pub unsafe extern "C" fn wcstod(
     let (value, consumed, erange) = unsafe {
         wide_parse_float(
             nptr,
-            |ascii: &[u8]| match crate::stdlib_abi::parse_strtod_short_decimal_c_string_fast(
-                ascii.as_ptr() as *const std::ffi::c_char,
-            ) {
-                Some((v, c)) => (v, c, false),
-                None => frankenlibc_core::stdlib::conversion::strtod_impl(ascii),
+            locale,
+            |ascii: &[u8]| {
+                if locale.wide_is_c()
+                    && let Some((v, c)) =
+                        crate::stdlib_abi::parse_strtod_short_decimal_c_string_fast(
+                            ascii.as_ptr().cast(),
+                        )
+                {
+                    return (v, c, false);
+                }
+                frankenlibc_core::stdlib::conversion::strtod_impl_c(ascii)
             },
             crate::stdlib_abi::strtod_result_is_erange,
         )
@@ -7570,6 +7647,14 @@ pub unsafe extern "C" fn wcstof(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
 ) -> f32 {
+    unsafe { wcstof_in(nptr, endptr, NumericLocale::current()) }
+}
+
+unsafe fn wcstof_in(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    locale: NumericLocale,
+) -> f32 {
     if nptr.is_null() {
         if !endptr.is_null() {
             // SAFETY: caller-provided endptr is writable when non-null.
@@ -7582,7 +7667,8 @@ pub unsafe extern "C" fn wcstof(
     let (value, consumed, erange) = unsafe {
         wide_parse_float(
             nptr,
-            frankenlibc_core::stdlib::conversion::strtof_impl,
+            locale,
+            frankenlibc_core::stdlib::conversion::strtof_impl_c,
             crate::stdlib_abi::strtof_result_is_erange,
         )
     };
@@ -7861,6 +7947,15 @@ pub unsafe extern "C" fn wcstold_into(
     endptr: *mut *mut libc::wchar_t,
     out: *mut u8,
 ) {
+    unsafe { wcstold_in(nptr, endptr, NumericLocale::current(), out) };
+}
+
+unsafe fn wcstold_in(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    locale: NumericLocale,
+    out: *mut u8,
+) {
     if nptr.is_null() {
         // SAFETY: the caller guarantees ten writable bytes.
         unsafe { core::ptr::write_bytes(out, 0, 10) };
@@ -7874,8 +7969,9 @@ pub unsafe extern "C" fn wcstold_into(
     let (bytes, consumed, erange) = unsafe {
         wide_parse_float(
             nptr,
+            locale,
             |ascii: &[u8]| {
-                let scan = frankenlibc_core::float128::strtold_scan(ascii);
+                let scan = frankenlibc_core::float128::strtold_scan_c(ascii);
                 (scan.bytes, scan.consumed, scan.range_error)
             },
             |_value: [u8; 10], _prefix: &[u8], range_error: bool| range_error,
@@ -8849,9 +8945,16 @@ pub unsafe extern "C" fn wcstoull_l(
 pub unsafe extern "C" fn wcstof_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> f32 {
-    unsafe { wcstof(nptr, endptr) }
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0.0;
+    };
+    unsafe { wcstof_in(nptr, endptr, locale) }
 }
 
 /// `wcstod_l` — locale-aware wide string to double.
@@ -8859,9 +8962,39 @@ pub unsafe extern "C" fn wcstof_l(
 pub unsafe extern "C" fn wcstod_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> f64 {
-    unsafe { wcstod(nptr, endptr) }
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return 0.0;
+    };
+    unsafe { wcstod_in(nptr, endptr, locale) }
+}
+
+/// Memory-returning form of `wcstold_l` used by x87 ABI shims.
+///
+/// # Safety
+///
+/// The input and end-pointer requirements are those of `wcstold_l`; `out`
+/// addresses ten writable bytes.
+pub unsafe extern "C" fn wcstold_l_into(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    locale: *mut c_void,
+    out: *mut u8,
+) {
+    let Some(locale) = NumericLocale::for_handle(locale) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        unsafe { core::ptr::write_bytes(out, 0, 10) };
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.cast_mut() };
+        }
+        return;
+    };
+    unsafe { wcstold_in(nptr, endptr, locale, out) };
 }
 
 /// `wcstold_l` — locale-aware wide string to `long double`, returned in ST(0).
@@ -8873,16 +9006,15 @@ pub unsafe extern "C" fn wcstold_l(
     _endptr: *mut *mut libc::wchar_t,
     _locale: *mut c_void,
 ) {
-    // The locale arrives in RDX and is overwritten with the out-buffer pointer:
-    // fl implements the C locale only and the previous body discarded it too.
+    // Keep the locale in RDX and pass the output slot as the fourth argument.
     core::arch::naked_asm!(
         "sub rsp, 24",
-        "mov rdx, rsp",
+        "mov rcx, rsp",
         "call {into}",
         "fld tbyte ptr [rsp]",
         "add rsp, 24",
         "ret",
-        into = sym wcstold_into,
+        into = sym wcstold_l_into,
     )
 }
 
@@ -8892,9 +9024,9 @@ pub unsafe extern "C" fn wcstold_l(
 pub unsafe extern "C" fn wcstold_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> f64 {
-    unsafe { wcstold(nptr, endptr) }
+    unsafe { wcstod_l(nptr, endptr, locale) }
 }
 
 // ===========================================================================
@@ -10048,18 +10180,18 @@ pub unsafe extern "C" fn __wcstoull_l(
 pub unsafe extern "C" fn __wcstod_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
-    _l: *mut c_void,
+    locale: *mut c_void,
 ) -> f64 {
-    unsafe { wcstod(nptr, endptr) }
+    unsafe { wcstod_l(nptr, endptr, locale) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wcstof_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
-    _l: *mut c_void,
+    locale: *mut c_void,
 ) -> f32 {
-    unsafe { wcstof(nptr, endptr) }
+    unsafe { wcstof_l(nptr, endptr, locale) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -10070,17 +10202,15 @@ pub unsafe extern "C" fn __wcstold_l(
     _endptr: *mut *mut libc::wchar_t,
     _l: *mut c_void,
 ) {
-    // The third argument (the locale) arrives in RDX and is discarded, which
-    // is what lets the out-buffer pointer take its place. Every previous body
-    // ignored it too.
+    // Preserve the explicit locale and the public long-double calling convention.
     core::arch::naked_asm!(
         "sub rsp, 24",
-        "mov rdx, rsp",
+        "mov rcx, rsp",
         "call {into}",
         "fld tbyte ptr [rsp]",
         "add rsp, 24",
         "ret",
-        into = sym wcstold_into,
+        into = sym wcstold_l_into,
     )
 }
 
@@ -10090,9 +10220,9 @@ pub unsafe extern "C" fn __wcstold_l(
 pub unsafe extern "C" fn __wcstold_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
-    _l: *mut c_void,
+    locale: *mut c_void,
 ) -> f64 {
-    unsafe { wcstod(nptr, endptr) }
+    unsafe { wcstod_l(nptr, endptr, locale) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

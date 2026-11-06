@@ -2635,6 +2635,103 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
     found
 }
 
+/// The two independent locale facets read by a floating conversion. Category
+/// data is immutable and retained for the process lifetime, so this snapshot
+/// neither borrows a locale object nor changes the calling thread's selection.
+#[derive(Clone, Copy)]
+pub(crate) struct NumericLocale {
+    pub(crate) radix: &'static [u8],
+    pub(crate) wide_radix: u32,
+    ctype: Resolved,
+}
+
+impl NumericLocale {
+    fn from_categories(numeric: Resolved, ctype: Resolved) -> Self {
+        let (radix, wide_radix) = match numeric {
+            Resolved::Builtin(_) => (&b"."[..], u32::from(b'.')),
+            Resolved::Named(category) => (
+                category
+                    .blob
+                    .string(0)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(b"."),
+                // _NL_NUMERIC_DECIMAL_POINT_WC is a word, independent of the
+                // LC_CTYPE encoding in a mixed-category locale object.
+                category
+                    .blob
+                    .word(3)
+                    .filter(|&wc| wc != 0)
+                    .unwrap_or(u32::from(b'.')),
+            ),
+        };
+        Self {
+            radix,
+            wide_radix,
+            ctype,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn current() -> Self {
+        let category = |cat| {
+            thread_category(cat).unwrap_or_else(|| {
+                global_named(cat)
+                    .map_or_else(|| Resolved::Builtin(category_charset(cat)), Resolved::Named)
+            })
+        };
+        Self::from_categories(
+            category(locale_core::LC_NUMERIC),
+            category(locale_core::LC_CTYPE),
+        )
+    }
+
+    pub(crate) fn for_handle(handle: LocaleT) -> Option<Self> {
+        let categories = categories_for_handle(handle)?;
+        Some(Self::from_categories(
+            categories[locale_core::LC_NUMERIC as usize],
+            categories[locale_core::LC_CTYPE as usize],
+        ))
+    }
+
+    #[inline]
+    pub(crate) fn narrow_is_c(self) -> bool {
+        self.radix == b"." && category_byte_ctype(self.ctype).is_none()
+    }
+
+    #[inline]
+    pub(crate) fn wide_is_c(self) -> bool {
+        self.wide_radix == u32::from(b'.')
+            && matches!(self.ctype, Resolved::Builtin(Charset::Ascii))
+    }
+
+    #[inline]
+    pub(crate) fn byte_is_space(self, byte: u8) -> bool {
+        match category_byte_ctype(self.ctype) {
+            // glibc's public ctype class words store _ISspace in network
+            // byte order. Bytes are unsigned here, as required by isspace.
+            Some(tables) => tables.class[usize::from(byte) + 128] & (1u16 << 5).to_be() != 0,
+            None => matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r'),
+        }
+    }
+
+    pub(crate) fn wide_is_space(self, wc: u32) -> bool {
+        let tables = match self.ctype {
+            Resolved::Named(category) => category.ctype.as_ref(),
+            Resolved::Builtin(Charset::Ascii) => {
+                return matches!(wc, 0x09..=0x0d | 0x20);
+            }
+            Resolved::Builtin(Charset::Utf8) => {
+                // SAFETY: the cache retains immutable compiled tables.
+                unsafe { c_utf8_ctype_tables().as_ref() }
+            }
+        };
+        tables.map_or_else(
+            || frankenlibc_core::string::wchar::iswspace(wc),
+            |tables| tables.is_class(5, wc),
+        )
+    }
+}
+
 fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
     for charset in [Charset::Ascii, Charset::Utf8] {
         if categories

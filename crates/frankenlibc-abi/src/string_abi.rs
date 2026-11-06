@@ -15472,18 +15472,18 @@ pub unsafe extern "C" fn __strtoull_l(
 pub unsafe extern "C" fn __strtod_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> f64 {
-    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtod_l(nptr, endptr, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strtof_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> f32 {
-    unsafe { crate::stdlib_abi::strtof(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtof_l(nptr, endptr, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15494,17 +15494,11 @@ pub unsafe extern "C" fn __strtold_l(
     _endptr: *mut *mut c_char,
     _l: *mut c_void,
 ) {
-    // The third argument (the locale) arrives in RDX and is discarded, which
-    // is what lets the out-buffer pointer take its place. Every previous body
-    // ignored it too.
+    // Preserve all arguments and the x87 return convention of the public
+    // locale-aware entrypoint. A Rust f64 forwarding body would lose both.
     core::arch::naked_asm!(
-        "sub rsp, 24",
-        "mov rdx, rsp",
-        "call {into}",
-        "fld tbyte ptr [rsp]",
-        "add rsp, 24",
-        "ret",
-        into = sym crate::stdlib_abi::strtold_into,
+        "jmp {target}",
+        target = sym crate::stdlib_abi::strtold_l,
     )
 }
 
@@ -15514,9 +15508,9 @@ pub unsafe extern "C" fn __strtold_l(
 pub unsafe extern "C" fn __strtold_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> f64 {
-    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtold_l(nptr, endptr, l) }
 }
 
 /// `__strftime_l` — locale-aware strftime forwarding.

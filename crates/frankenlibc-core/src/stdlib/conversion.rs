@@ -942,8 +942,9 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
     }
 }
 
-/// [`strtod_impl`] for input whose radix is ".".
-pub(crate) fn strtod_impl_c(s: &[u8]) -> (f64, usize, bool) {
+/// [`strtod_impl`] for input whose radix is ".", independent of the current
+/// locale. ABI callers use this after resolving an explicit locale object.
+pub fn strtod_impl_c(s: &[u8]) -> (f64, usize, bool) {
     let len = crate::string::strlen(s);
     let slice = &s[..len];
 
@@ -1298,6 +1299,70 @@ fn max_float_token_len(s: &[u8]) -> usize {
     i
 }
 
+/// A locale float token in the C grammar, with an offset map back to its
+/// original byte sequence. A radix may occupy several bytes, but a valid
+/// subject sequence consumes at most one of them. Leading locale whitespace
+/// is removed by the ABI before constructing this value.
+pub struct LocaleFloatToken<'a> {
+    bytes: std::borrow::Cow<'a, [u8]>,
+    radix: Option<(usize, usize)>,
+}
+
+impl<'a> LocaleFloatToken<'a> {
+    pub fn new(input: &'a [u8], radix: &[u8]) -> Self {
+        let start = usize::from(matches!(input.first(), Some(b'+' | b'-')));
+        let special = input.get(start..start + 3).is_some_and(|word| {
+            word.eq_ignore_ascii_case(b"inf") || word.eq_ignore_ascii_case(b"nan")
+        });
+        if radix == b"." || radix.is_empty() || special {
+            return Self {
+                bytes: std::borrow::Cow::Borrowed(input),
+                radix: None,
+            };
+        }
+        let mut bytes = Vec::with_capacity(input.len());
+        let mut replacement = None;
+        let mut offset = 0;
+        while offset < input.len() {
+            if input[offset..].starts_with(radix) {
+                // A second radix cannot extend a floating subject sequence.
+                if replacement.is_some() {
+                    break;
+                }
+                replacement = Some((bytes.len(), radix.len() - 1));
+                bytes.push(b'.');
+                offset += radix.len();
+            } else if input[offset] == b'.' {
+                // '.' is a delimiter when LC_NUMERIC selects another radix.
+                break;
+            } else {
+                bytes.push(input[offset]);
+                offset += 1;
+            }
+        }
+        Self {
+            bytes: std::borrow::Cow::Owned(bytes),
+            radix: replacement,
+        }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// An incomplete exponent may rewind before the translated radix. Only
+    /// add its extra input bytes when the parser actually consumed the point.
+    pub fn original_consumed(&self, consumed: usize) -> usize {
+        consumed
+            + self.radix.map_or(
+                0,
+                |(offset, extra)| {
+                    if consumed > offset { extra } else { 0 }
+                },
+            )
+    }
+}
+
 /// A float token under a non-"." LC_NUMERIC radix, rewritten to the C form the
 /// parsers read: the radix byte becomes '.', and a literal '.' becomes a byte
 /// no float contains, so parsing stops there as glibc's does (under de_DE,
@@ -1343,8 +1408,9 @@ pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
     }
 }
 
-/// [`strtof_impl`] for input whose radix is ".".
-fn strtof_impl_c(s: &[u8]) -> (f32, usize, bool) {
+/// [`strtof_impl`] for input whose radix is ".", independent of the current
+/// locale. ABI callers use this after resolving an explicit locale object.
+pub fn strtof_impl_c(s: &[u8]) -> (f32, usize, bool) {
     // Fast decimal path: bound the token with a cheap maximal float-char scan and parse the
     // f32 natively, SKIPPING the full strtod_impl f64 parse below (whose f64 value the
     // decimal case discarded — it was called only for `consumed`). This is a double parse
@@ -1415,6 +1481,44 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
+
+    #[test]
+    fn locale_float_token_preserves_original_end_offsets() {
+        let cases: &[(&[u8], &[u8], f64, usize)] = &[
+            (b"1.5tail", b".", 1.5, 3),
+            (b"1,5tail", b",", 1.5, 3),
+            (b"1.5tail", b",", 1.0, 1),
+            (b"1\xd9\xab5e+tail", b"\xd9\xab", 1.5, 4),
+            (b"0x1\xd9\xab8p+", b"\xd9\xab", 1.5, 6),
+            (b"1\xd9\xab5\xd9\xab2", b"\xd9\xab", 1.5, 4),
+            (b"-0x\xd9\xabp1", b"\xd9\xab", -0.0, 2),
+            (b"+\xd9\xab", b"\xd9\xab", 0.0, 0),
+            (b"\xd9", b"\xd9\xab", 0.0, 0),
+            (b"inf\xd9\xab5", b"\xd9\xab", f64::INFINITY, 3),
+        ];
+        for &(input, radix, expected, offset) in cases {
+            let token = LocaleFloatToken::new(input, radix);
+            let (value, consumed, _) = strtod_impl_c(token.bytes());
+            assert_eq!(value.to_bits(), expected.to_bits(), "input={input:?}");
+            assert_eq!(token.original_consumed(consumed), offset, "input={input:?}");
+        }
+    }
+
+    #[test]
+    fn locale_float_token_does_not_rewrite_special_payloads() {
+        for input in [
+            &b"NaN(0x123)"[..],
+            &b"-nan(payload_name)"[..],
+            &b"+INFINITY"[..],
+        ] {
+            // Even a radix also present in a payload must not alter the
+            // non-numeric grammar or its consumed offset.
+            let token = LocaleFloatToken::new(input, b"_");
+            assert_eq!(token.bytes(), input);
+            let (_, consumed, _) = strtod_impl_c(token.bytes());
+            assert_eq!(token.original_consumed(consumed), input.len());
+        }
+    }
 
     #[test]
     fn swar_parse_eight_matches_scalar() {
