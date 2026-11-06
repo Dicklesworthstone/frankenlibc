@@ -29659,9 +29659,9 @@
         "close_blockers": [
           "Remaining actual quality checks,fresh receipt and publication"
         ],
-        "notes": "Original compiled RED source5301670903e2917d39db64bc22b824197fb6cb8b:3passed1failed both modes;GNU positive native rejected documented b conversion. Original gates preserved;C unsigned temporaries avoid varargs pointer type mismatch. Generator snapshot extended intentionally for a new route with old19routes preserved;no output-regeneration to hide failure,no ABI writer change,no legacy i dialect change. SOLO review;no independent verifier,wholeworkspace runtime,formalproof,performance,standalone or universal safety claim. Fullquality attempts onhz4/vmi122 stopped120 before compiler due normaldiskreservation;hz3 namespace103 before grant,not code failure. Raw diagnostics retained. All remote policies unchanged. First stdio-synth10passed1failed caught handler-ID drift; corrected by appending both enums, preserving original proof assertion. Remote fmt1 caught two new layouts; manually corrected, no formatter writes. Both first failures retained; only final-source reexecution may close. Additional unchanged strict-only allocation gate failed when incorrectly run in hardened mode:9strict passed,8hardened passed/1failed. Preserved original control>=1 and3aliases==0; isolate exact strict subprocess, require child1passed and strictmode. Other8semantic tests remain in outer mode. This newly admits hardened outer invocation while still executing strict routing; no hardened zero-allocation/performance claim. Source/comment predeclares win/lose3383, raw final-regression failure retained; no skip/allow/tolerance/runtime change.",
+        "notes": "Original compiled RED source5301670903e2917d39db64bc22b824197fb6cb8b:3passed1failed both modes;GNU positive native rejected documented b conversion. Original gates preserved;C unsigned temporaries avoid varargs pointer type mismatch. Generator snapshot extended intentionally for a new route with old19routes preserved;no output-regeneration to hide failure,no ABI writer change,no legacy i dialect change. SOLO review;no independent verifier,wholeworkspace runtime,formalproof,performance,standalone or universal safety claim. Fullquality attempts onhz4/vmi122 stopped120 before compiler due normaldiskreservation;hz3 namespace103 before grant,not code failure. Raw diagnostics retained. All remote policies unchanged. First stdio-synth10passed1failed caught handler-ID drift; corrected by appending both enums, preserving original proof assertion. Remote fmt1 caught two new layouts; manually corrected, no formatter writes. Both first failures retained; only final-source reexecution may close. Additional unchanged strict-only allocation gate failed when incorrectly run in hardened mode:9strict passed,8hardened passed/1failed. Preserved original control>=1 and3aliases==0; isolate exact strict subprocess, require child1passed and strictmode. Other8semantic tests remain in outer mode. This newly admits hardened outer invocation while still executing strict routing; no hardened zero-allocation/performance claim. Source/comment predeclares win/lose3383, raw final-regression failure retained; no skip/allow/tolerance/runtime change. Aggregated8b job hit normal1800s execution deadline duringClippy (137, not lint result or OOM evidence); fullcheck0 retained, raw incomplete job reports retained. Remaining complete checks split into separate normalRCH jobs without changing either command scope, budget, floor or deadline. Finalsourcea89 changes only FFI safety/count comments after8b; exact final-source full checks/receipt still required. External writer committed partial evidence and rebased our7commits onto upstream394e12a6d at02:57:13UTC; source changes versus original series are exactly two resolver files (114insertions,1deletion), all five .36comments retained. Original RED530167 now has rebased equivalentabb573095; original8b equivalent525563ee2, scanner/test behavior-file blobs unchanged across each rebase pair. Old raw logs/SHAs remain actual observations; final qualification binds the new reachable source, preserving resolver changes. README census refreshed to actual1168431lines. This is not independent verification of upstream resolver claims.",
         "result_receipts": [
-          "/data/tmp/frankenlibc-scanf-binary-20261106/resume-record/record/receipt.json"
+          "/data/tmp/frankenlibc-scanf-binary-20261106/audited-record/record/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Parse documented unsigned binary scanf conversions across legacy,C99,C23 and narrow/wide string and stream paths",
@@ -29680,7 +29680,7 @@
             "crates/frankenlibc-abi/tests/conformance_diff_isoc_sscanf_alias.rs"
           ],
           "source": {
-            "commit": "8b01f9c1f2989ee5d8357d882254c4fa53345270",
+            "commit": "c9c4157d2ece7aacd91ac2b3678f61d8cdb107b5",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -29688,7 +29688,7 @@
               "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
               "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
               "FEATURE_PARITY.md": "428435c3c87ef930683d61546c3753bce6758f6b869eb3b80fe4e786254c91ba",
-              "README.md": "eb5f343a571127523c1b95a734d6fe1128b8617c3316126c8a4e2518401d8af7",
+              "README.md": "beb73e8adc73ee8f58fb5a2b72fc0affe8e34d4774c4b47358b40c09678442a9",
               "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
               "crates/frankenlibc-abi/build.rs": "1f3706508dfe8c8a6d124cd60a66914f77ad11ebed368740a08eb03c1f3541c1",
               "crates/frankenlibc-abi/src/aio_completion.rs": "442076b3f9a02501de7fb5d8b5c825bd1b5c946897a3a7799cff6e7794af5751",
@@ -29815,9 +29815,9 @@
               "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
               "crates/frankenlibc-abi/tests/conformance_diff_arc4random.rs": "f38d81f559e2bcc032eafc3c31d8ad0921ec46d57d30731edd01eb04579cff9d",
               "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
-              "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "edeedc4891421cce7d269c80d183eff54f8600b1363df9cf28fdb810fdd536f9",
+              "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "e28f9eb3d13abc1ea82302b164518a0aa61f8ef874435c1ff13635bbe2e1c0b4",
               "crates/frankenlibc-abi/tests/conformance_diff_getrandom.rs": "021429fb71f236784adf99a180975b132f18678583524ed07a5811b7e793e2c3",
-              "crates/frankenlibc-abi/tests/conformance_diff_isoc_sscanf_alias.rs": "5a65e2c7dc91067361b1ebe16178164535649cf99a0c2803031721cfa28d7078",
+              "crates/frankenlibc-abi/tests/conformance_diff_isoc_sscanf_alias.rs": "f77c39ab4d552e03f1b535b6d59e0d06769d49c26c2e998d19de3a7180e414f4",
               "crates/frankenlibc-abi/tests/conformance_diff_posix_fallocate.rs": "67e2fee832390a7375b7a96f4deffb12f2fbebf950ce21fbe7702264525a7af0",
               "crates/frankenlibc-abi/tests/conformance_diff_stdlib_numeric.rs": "f3bb74a46d2b82a78196f2a97e98ef35e5ee13d1438e2e73fdcc8585bdeac783",
               "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs": "8d40939e0f2881c32608535a880a2b98a9d2ca7e97531d3cad8c236a10032603",
@@ -29961,8 +29961,8 @@
               "crates/frankenlibc-core/src/pwd/shadow.rs": "3ea0ecda4c3665c2ed48ba02ac53b248b487060c2123f7ed66f5d35fda5db815",
               "crates/frankenlibc-core/src/rcu/mod.rs": "f3ddae2adcab014eadba4807b07296341b6c9d731a918ea57fdda48dc5366d82",
               "crates/frankenlibc-core/src/resolv/b64.rs": "037fb43f051adf69b1eced5b5e55d8d1f72dbc6080be11bf778d505ae2744ba4",
-              "crates/frankenlibc-core/src/resolv/config.rs": "3de7adfcf7529f54e0e74eb2694de4987b6db8c5004011fc655c41d0c26aff8c",
-              "crates/frankenlibc-core/src/resolv/dns.rs": "4753caa4c82a87bd9ae7bce61acf7e30d93575e0c73b4609813da50cbd56c0a5",
+              "crates/frankenlibc-core/src/resolv/config.rs": "707be9884b1bd842bd28abc6373f7eff232f325b935870b819158813534e7d9e",
+              "crates/frankenlibc-core/src/resolv/dns.rs": "c78966e8cec083f2c56f858d100b944ec9ca8fd254ec970b9417bb3a4a315786",
               "crates/frankenlibc-core/src/resolv/dns_name.rs": "45a734e09abfdc8e30001c8c32dc38e507f4fd59083bd24a4050e49c8450d2b0",
               "crates/frankenlibc-core/src/resolv/messages.rs": "dd3036b297d3f843254409db35759f796a98210a02ea5bbfa52847c9bc82ccea",
               "crates/frankenlibc-core/src/resolv/mod.rs": "25870ce1e35e02f91830aa2dde15ee1e8ea4575e193a1648b8634c8197fd4a67",
