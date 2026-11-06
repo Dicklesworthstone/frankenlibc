@@ -1416,13 +1416,14 @@ pub fn strtof_impl_c(s: &[u8]) -> (f32, usize, bool) {
     // decimal case discarded — it was called only for `consumed`). This is a double parse
     // that made wcstof/strtof ~1.3-1.4x slower than glibc (wcstod_survey). Safe & byte-
     // identical: `parse_decimal_f32_prefix` rejects hex/inf/nan and `parse::<f32>` rejects
-    // over-consumed junk, so any miss falls through to the unchanged full path; on success
-    // `tok` equals strtod's consumed and the f32 value is the same one the full path's
-    // `parse_decimal_f32_prefix(slice, consumed)` would return.
+    // over-consumed junk, so any miss falls through to the exact parser; on success
+    // `tok` equals the C subject sequence's consumed length. Subnormals go through
+    // the exact engine so their exactness is known rather than guessed.
     // A `0x`/`0X` hex-float prefix must NOT take the decimal fast path: `max_float_token_len`
     // stops at the `x` (not a decimal-float char), which would hide the prefix from
     // `parse_decimal_f32_prefix` and mis-parse "0x…" as a bare "0". Detect it at the token
-    // start and fall through to `strtod_impl`, which handles hex floats.
+    // start and fall through to the Binary32 engine, which rounds hex directly
+    // to float precision instead of losing a sticky bit through an f64 intermediate.
     let mut hp = 0usize;
     while hp < s.len() && is_c_space(s[hp]) {
         hp += 1;
@@ -1436,33 +1437,17 @@ pub fn strtof_impl_c(s: &[u8]) -> (f32, usize, bool) {
         let tok = max_float_token_len(s);
         if tok > 0
             && let Some(value) = parse_decimal_f32_prefix(s, tok)
+            && value.is_normal()
         {
             return (value, tok, false);
         }
     }
 
-    let (wide, consumed, wide_exact) = strtod_impl_c(s);
-    if consumed == 0 {
-        return (wide as f32, consumed, false);
-    }
-
-    let len = crate::string::strlen(s);
-    let slice = &s[..len];
-    if let Some(value) = parse_decimal_f32_prefix(slice, consumed) {
-        // Decimal subnormals are inexact in practice (a short decimal almost
-        // never equals an exact f32 subnormal), so no exact-subnormal flag.
-        return (value, consumed, false);
-    }
-
-    // Hex/special path: narrow preserving a NaN payload (plain `as f32` drops
-    // it). The f32 result is an EXACT subnormal iff the f64 parse was lossless
-    // AND the f64->f32 narrowing was lossless (`value as f64` — always exact
-    // widening — round-trips to `wide`) AND the result is a nonzero f32
-    // subnormal. (bd-2g7oyh.187)
-    let value = narrow_f64_to_f32(wide);
-    let exact_subnormal =
-        wide_exact && (value as f64 == wide) && value != 0.0 && value.abs() < f32::MIN_POSITIVE;
-    (value, consumed, exact_subnormal)
+    use crate::float128::{BinaryFormat, RoundingMode, parse_binary_c};
+    let parsed = parse_binary_c(s, BinaryFormat::Binary32, RoundingMode::Nearest);
+    let value = f32::from_bits(parsed.bits as u32);
+    let exact_subnormal = !parsed.status.inexact && value.is_subnormal();
+    (value, parsed.consumed, exact_subnormal)
 }
 
 /// C `strtof` -- parse float from string, returns (value, bytes_consumed).
@@ -2271,6 +2256,22 @@ mod tests {
         let (val, consumed) = strtof(input);
         assert_eq!(val.to_bits(), 0x3f80_0001);
         assert_eq!(consumed, 27);
+    }
+
+    #[test]
+    fn test_strtof_hex_rounds_directly_to_f32() {
+        for (input, expected) in [
+            (&b"0x1.000001000000000000000001p0"[..], 0x3f80_0001),
+            (&b"-0x1.000001000000000000000001p0"[..], 0xbf80_0001),
+        ] {
+            let (value, consumed, _) = strtof_impl_c(input);
+            assert_eq!(value.to_bits(), expected);
+            assert_eq!(consumed, input.len());
+        }
+        let (value, consumed, exact) = strtof_impl_c(b"0x1p-149");
+        assert_eq!(value.to_bits(), 1);
+        assert_eq!(consumed, 8);
+        assert!(exact);
     }
 
     #[test]

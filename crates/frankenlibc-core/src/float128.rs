@@ -73,6 +73,129 @@ impl RoundingMode {
     }
 }
 
+/// Binary formats accepted by the exact string-conversion engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinaryFormat {
+    Binary32,
+    Binary64,
+    X87,
+    Binary128,
+}
+
+impl BinaryFormat {
+    const fn precision(self) -> u32 {
+        match self {
+            Self::Binary32 => 24,
+            Self::Binary64 => 53,
+            Self::X87 => 64,
+            Self::Binary128 => 113,
+        }
+    }
+
+    const fn bias(self) -> i64 {
+        match self {
+            Self::Binary32 => 127,
+            Self::Binary64 => 1023,
+            Self::X87 | Self::Binary128 => 16383,
+        }
+    }
+
+    const fn min_exponent(self) -> i64 {
+        1 - self.bias()
+    }
+
+    const fn min_subnormal_exponent(self) -> i64 {
+        self.min_exponent() - (self.precision() - 1) as i64
+    }
+
+    const fn significand_storage_bits(self) -> u32 {
+        match self {
+            Self::X87 => 64,
+            _ => self.precision() - 1,
+        }
+    }
+
+    const fn sign(self, negative: bool) -> u128 {
+        if !negative {
+            return 0;
+        }
+        1u128
+            << match self {
+                Self::Binary32 => 31,
+                Self::Binary64 => 63,
+                Self::X87 => 79,
+                Self::Binary128 => 127,
+            }
+    }
+
+    fn encode(self, negative: bool, significand: u128, exponent: u16) -> u128 {
+        let stored = self.significand_storage_bits();
+        self.sign(negative)
+            | (u128::from(exponent) << stored)
+            | (significand & ((1u128 << stored) - 1))
+    }
+
+    fn infinity(self, negative: bool) -> u128 {
+        let integer_bit = if self == Self::X87 { 1u128 << 63 } else { 0 };
+        self.encode(negative, integer_bit, (2 * self.bias() + 1) as u16)
+    }
+
+    fn quiet_nan(self, negative: bool, payload: u64) -> u128 {
+        let quiet_bit = 1u128 << (self.precision() - 2);
+        let integer_bit = if self == Self::X87 { 1u128 << 63 } else { 0 };
+        self.encode(
+            negative,
+            integer_bit | quiet_bit | (u128::from(payload) & (quiet_bit - 1)),
+            (2 * self.bias() + 1) as u16,
+        )
+    }
+
+    fn max_finite(self, negative: bool) -> u128 {
+        self.encode(
+            negative,
+            (1u128 << self.precision()) - 1,
+            (2 * self.bias()) as u16,
+        )
+    }
+}
+
+/// Floating-point exceptions and range errors implied by a conversion,
+/// computed without changing hardware flags. The ABI applies these only
+/// after selecting the final token.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FloatStatus {
+    pub inexact: bool,
+    pub underflow: bool,
+    pub overflow: bool,
+    /// A GNU NaN payload integer exceeded `u64::MAX`. This sets `ERANGE`
+    /// without raising a floating-point exception.
+    pub payload_overflow: bool,
+}
+
+impl FloatStatus {
+    /// Whether the conversion must report `ERANGE`.
+    pub const fn range_error(self) -> bool {
+        self.underflow || self.overflow || self.payload_overflow
+    }
+}
+
+/// A rounded value in the destination format's storage representation.
+/// X87 uses the low 80 bits, with its sign in bit 79 and explicit integer bit
+/// in bit 63. No conversion through another floating-point type is involved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BinaryConversion {
+    pub bits: u128,
+    pub status: FloatStatus,
+}
+
+/// A C floating-point token and its correctly rounded destination value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BinaryParse {
+    pub bits: u128,
+    pub consumed: usize,
+    pub status: FloatStatus,
+}
+
 #[derive(Clone, Copy)]
 enum MagnitudeRounding {
     Even,
@@ -242,22 +365,26 @@ impl BigUint {
         (q, r)
     }
 
-    /// `round(self / d)` with round-half-to-even. `d` must be nonzero.
-    fn round_div(&self, d: &BigUint) -> BigUint {
+    /// Round `self / d` once and retain whether any remainder was discarded.
+    /// `d` must be nonzero. The direction applies to the unsigned magnitude.
+    fn round_div(&self, d: &BigUint, rounding: MagnitudeRounding) -> (BigUint, bool) {
         use core::cmp::Ordering;
         let (mut q, r) = self.divrem(d);
-        let mut r2 = r;
-        r2.shl1_inplace();
-        match r2.cmp(d) {
-            Ordering::Greater => q.add_small(1),
-            Ordering::Less => {}
-            Ordering::Equal => {
-                if q.is_odd() {
+        let inexact = !r.is_zero();
+        match rounding {
+            MagnitudeRounding::Away if inexact => q.add_small(1),
+            MagnitudeRounding::Even => {
+                let mut r2 = r;
+                r2.shl1_inplace();
+                let comparison = r2.cmp(d);
+                if comparison == Ordering::Greater || (comparison == Ordering::Equal && q.is_odd())
+                {
                     q.add_small(1);
                 }
             }
+            _ => {}
         }
-        q
+        (q, inexact)
     }
 
     /// `self * 10^p`.
@@ -473,11 +600,30 @@ pub fn classify_binary128(bits: u128) -> F128Class {
 /// normal, subnormal, signed zero, and overflow-to-infinity — the core of a
 /// correctly-rounded strtof128 (bd-nkr0ga).
 pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
-    let sign = if negative { 1u128 << 127 } else { 0 };
+    decimal_to_binary(
+        negative,
+        digits,
+        i64::from(dexp),
+        BinaryFormat::Binary128,
+        RoundingMode::Nearest,
+    )
+    .bits
+}
+
+/// Convert an exact decimal significand directly to its destination format.
+/// The exponent and leading/trailing zeros are normalized before allocating
+/// large integers; even saturated exponent fields have bounded work.
+pub fn decimal_to_binary(
+    negative: bool,
+    digits: &[u8],
+    dexp: i64,
+    format: BinaryFormat,
+    rounding: RoundingMode,
+) -> BinaryConversion {
     // Drop leading zeros; an all-zero significand is a signed zero.
     let lead = match digits.iter().position(|&d| d != b'0') {
         Some(s) => s,
-        None => return sign,
+        None => return exact_binary(format.sign(negative)),
     };
     let mut digits = &digits[lead..];
     // Drop trailing zeros into the exponent to keep S small.
@@ -492,12 +638,17 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
     // Bound public core callers too: the ABI's scanner is not the only
     // entrypoint. Saturated exponents must never become enormous powers or
     // overflow when negated to construct a denominator.
-    let decimal_exponent = i64::from(dexp).saturating_add(digits.len() as i64);
-    if decimal_exponent > 5000 {
-        return sign | (0x7fffu128 << 112);
+    let decimal_exponent = dexp.saturating_add(digits.len() as i64);
+    let (minimum_order, maximum_order) = match format {
+        BinaryFormat::Binary32 => (-60, 50),
+        BinaryFormat::Binary64 => (-400, 400),
+        BinaryFormat::X87 | BinaryFormat::Binary128 => (-5100, 5000),
+    };
+    if decimal_exponent > maximum_order {
+        return overflow_binary(negative, format, rounding);
     }
-    if decimal_exponent < -5100 {
-        return sign;
+    if decimal_exponent < minimum_order {
+        return tiny_binary(negative, format, rounding);
     }
 
     let s = BigUint::from_decimal(digits);
@@ -507,7 +658,7 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
     } else {
         (s, BigUint::one().mul_pow10((-dexp) as u32))
     };
-    rational_to_binary128(sign, &num, &den)
+    rational_to_binary(negative, &num, &den, format, rounding)
 }
 
 /// Correctly-rounded x87 80-bit extended ("long double" on x86-64 SysV) for the
@@ -516,12 +667,9 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
 ///
 /// ## Why this is not "parse to binary128, then narrow"
 ///
-/// That would DOUBLE ROUND. binary128 carries 113 mantissa bits and x87 carries
-/// 64; a two-step rounding is only guaranteed to agree with a single one when
-/// the wider format has at least `2p + 2` bits, i.e. 130 here. It has 113, so
-/// there are decimal inputs where narrowing a correctly-rounded binary128 gives
-/// a different answer than rounding the exact value once. Sharing the exact
-/// rational instead makes the question moot.
+/// That can DOUBLE ROUND: an intermediate value may land exactly on an x87
+/// midpoint after losing a nonzero tail. Sharing the original exact rational
+/// lets each destination make its own single rounding decision.
 ///
 /// ## The layout differs from IEEE in a way that matters twice
 ///
@@ -531,7 +679,7 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
 ///  * the exponent offset changes. A 64-bit significand puts the binary point
 ///    63 places up, so `exp_field = k + 63 + 16383`, against binary128's
 ///    `k + 112 + 16383`.
-///  * subnormal promotion must be done BY HAND. [`rational_to_binary128`] can
+///  * subnormal promotion must be done BY HAND. An implicit-bit encoding can
 ///    let a carry out of the fraction field land in the exponent field and
 ///    promote itself to the smallest normal; here bit 63 belongs to the
 ///    significand, so a subnormal that rounds up to `2^63` has to have its
@@ -539,43 +687,16 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
 ///    0 and 1 is identical — both mean `2^-16445` per unit — which is precisely
 ///    what makes that rewrite value-preserving.
 pub fn decimal_to_x87_extended(negative: bool, digits: &[u8], dexp: i32) -> [u8; 10] {
-    // Drop leading zeros; an all-zero significand is a signed zero.
-    let lead = match digits.iter().position(|&d| d != b'0') {
-        Some(s) => s,
-        None => return encode_x87(negative, 0, 0),
-    };
-    let mut digits = &digits[lead..];
-    // Drop trailing zeros into the exponent to keep S small.
-    let mut dexp = dexp;
-    let mut end = digits.len();
-    while end > 1 && digits[end - 1] == b'0' {
-        end -= 1;
-        dexp = dexp.saturating_add(1);
-    }
-    digits = &digits[..end];
-
-    // Reject absurd exponents before building the bignum rather than after.
-    // Without this, `strtold("1e999999999")` would try to materialise a
-    // 400-megabyte integer to answer "infinity". The thresholds are far outside
-    // the representable range (max finite is ~1.19e4932, min subnormal
-    // ~3.65e-4951, and anything below half of that rounds to zero), so no
-    // in-range input can reach them.
-    let decimal_exponent = i64::from(dexp).saturating_add(digits.len() as i64);
-    if decimal_exponent > 5000 {
-        return encode_x87(negative, 1 << 63, 0x7fff);
-    }
-    if decimal_exponent < -5000 {
-        return encode_x87(negative, 0, 0);
-    }
-
-    let s = BigUint::from_decimal(digits);
-    // value = num/den, exact.
-    let (num, den) = if dexp >= 0 {
-        (s.mul_pow10(dexp as u32), BigUint::one())
-    } else {
-        (s, BigUint::one().mul_pow10((-dexp) as u32))
-    };
-    rational_to_x87(negative, &num, &den)
+    x87_storage(
+        decimal_to_binary(
+            negative,
+            digits,
+            i64::from(dexp),
+            BinaryFormat::X87,
+            RoundingMode::Nearest,
+        )
+        .bits,
+    )
 }
 
 /// Pack a sign, a 64-bit significand and a 15-bit exponent field into the ten
@@ -588,50 +709,12 @@ fn encode_x87(negative: bool, significand: u64, exp_field: u16) -> [u8; 10] {
     out
 }
 
-/// Correctly-rounded x87 extended for the positive rational `num/den`.
-fn rational_to_x87(negative: bool, num: &BigUint, den: &BigUint) -> [u8; 10] {
-    if num.is_zero() {
-        return encode_x87(negative, 0, 0);
-    }
-    // Find k so that m = round(value / 2^k) is a 64-bit significand. The search
-    // mirrors rational_to_binary128's: the first estimate is off by at most a
-    // bit or two, and rounding can carry into a new bit, so it iterates.
-    let mut k = num.bit_len() as i64 - den.bit_len() as i64 - 64;
-    let mut m = BigUint { limbs: Vec::new() };
-    for _ in 0..6 {
-        m = if k >= 0 {
-            num.round_div(&den.clone().shl_bits(k as u32))
-        } else {
-            num.clone().shl_bits((-k) as u32).round_div(den)
-        };
-        match m.bit_len().cmp(&64) {
-            core::cmp::Ordering::Less => k -= 1,
-            core::cmp::Ordering::Greater => k += 1,
-            core::cmp::Ordering::Equal => break,
-        }
-    }
-
-    let exp_field = k + 16446;
-    if exp_field >= 0x7fff {
-        // Overflow to infinity. Note the integer bit is SET: on x87 an infinity
-        // with a clear bit 63 is a "pseudo-infinity", which no processor since
-        // the 80287 produces and which later ones treat as invalid.
-        return encode_x87(negative, 1 << 63, 0x7fff);
-    }
-    if exp_field >= 1 {
-        return encode_x87(negative, low128(&m) as u64, exp_field as u16);
-    }
-
-    // Subnormal: round onto the subnormal grid, whose ulp is 2^-16445.
-    let m_sub = low128(&num.clone().shl_bits(16445).round_div(den)) as u64;
-    if m_sub >> 63 == 1 {
-        // Rounded all the way up to the smallest normal. Exponent fields 0 and 1
-        // denote the same scale, so this is a relabelling, not a rescale — but
-        // it must be done, because an exponent field of 0 with bit 63 set is a
-        // "pseudo-denormal" rather than the normal number meant here.
-        return encode_x87(negative, m_sub, 1);
-    }
-    encode_x87(negative, m_sub, 0)
+fn x87_storage(bits: u128) -> [u8; 10] {
+    encode_x87(
+        bits & (1u128 << 79) != 0,
+        bits as u64,
+        ((bits >> 64) & 0x7fff) as u16,
+    )
 }
 
 /// Low 128 bits of a (<=128-bit) BigUint.
@@ -640,44 +723,136 @@ fn low128(b: &BigUint) -> u128 {
     g(0) | (g(1) << 32) | (g(2) << 64) | (g(3) << 96)
 }
 
-/// Correctly-rounded binary128 bits for the positive rational `num/den`, with
-/// `sign` (0 or 1<<127) applied. `num` may be zero (-> signed zero); `den` must
-/// be nonzero. Shared by the decimal and hex parsers.
-fn rational_to_binary128(sign: u128, num: &BigUint, den: &BigUint) -> u128 {
+fn exact_binary(bits: u128) -> BinaryConversion {
+    BinaryConversion {
+        bits,
+        status: FloatStatus::default(),
+    }
+}
+
+fn overflow_binary(
+    negative: bool,
+    format: BinaryFormat,
+    rounding: RoundingMode,
+) -> BinaryConversion {
+    let bits = match rounding.magnitude(negative) {
+        MagnitudeRounding::Truncate => format.max_finite(negative),
+        _ => format.infinity(negative),
+    };
+    BinaryConversion {
+        bits,
+        status: FloatStatus {
+            inexact: true,
+            overflow: true,
+            ..FloatStatus::default()
+        },
+    }
+}
+
+/// A nonzero magnitude strictly below half the smallest subnormal.
+fn tiny_binary(negative: bool, format: BinaryFormat, rounding: RoundingMode) -> BinaryConversion {
+    let significand = u128::from(matches!(
+        rounding.magnitude(negative),
+        MagnitudeRounding::Away
+    ));
+    BinaryConversion {
+        bits: format.encode(negative, significand, 0),
+        status: FloatStatus {
+            inexact: true,
+            underflow: true,
+            ..FloatStatus::default()
+        },
+    }
+}
+
+fn round_binary_grid(
+    num: &BigUint,
+    den: &BigUint,
+    quantum: i64,
+    rounding: MagnitudeRounding,
+) -> (u128, bool) {
+    let (significand, inexact) = if quantum >= 0 {
+        num.round_div(&den.clone().shl_bits(quantum as u32), rounding)
+    } else {
+        num.clone()
+            .shl_bits((-quantum) as u32)
+            .round_div(den, rounding)
+    };
+    (low128(&significand), inexact)
+}
+
+/// Round the original rational directly to the destination format. An
+/// unbounded-exponent rounding establishes overflow and tininess; a tiny
+/// value is then rounded from the ORIGINAL rational on the subnormal grid.
+/// Using the intermediate rounded significand there would double round.
+fn rational_to_binary(
+    negative: bool,
+    num: &BigUint,
+    den: &BigUint,
+    format: BinaryFormat,
+    rounding: RoundingMode,
+) -> BinaryConversion {
     if num.is_zero() {
-        return sign;
+        return exact_binary(format.sign(negative));
     }
-    // Find k so that m = round(value / 2^k) is a 113-bit normal significand.
-    let mut k = num.bit_len() as i64 - den.bit_len() as i64 - 113;
-    let mut m = BigUint { limbs: Vec::new() };
-    for _ in 0..6 {
-        m = if k >= 0 {
-            num.round_div(&den.clone().shl_bits(k as u32))
-        } else {
-            num.clone().shl_bits((-k) as u32).round_div(den)
+    let mut exponent = num.bit_len() as i64 - den.bit_len() as i64;
+    let comparison = if exponent >= 0 {
+        num.cmp(&den.clone().shl_bits(exponent as u32))
+    } else {
+        num.clone().shl_bits((-exponent) as u32).cmp(den)
+    };
+    if comparison == core::cmp::Ordering::Less {
+        exponent -= 1;
+    }
+    if exponent > format.bias() {
+        return overflow_binary(negative, format, rounding);
+    }
+    if exponent < format.min_subnormal_exponent() - 1 {
+        return tiny_binary(negative, format, rounding);
+    }
+    let precision = format.precision();
+    let magnitude_rounding = rounding.magnitude(negative);
+    let (mut significand, inexact) = round_binary_grid(
+        num,
+        den,
+        exponent - i64::from(precision - 1),
+        magnitude_rounding,
+    );
+    if significand >= 1u128 << precision {
+        significand >>= 1;
+        exponent += 1;
+    }
+    if exponent > format.bias() {
+        return overflow_binary(negative, format, rounding);
+    }
+    if exponent < format.min_exponent() {
+        let (significand, inexact) = round_binary_grid(
+            num,
+            den,
+            format.min_subnormal_exponent(),
+            magnitude_rounding,
+        );
+        // A carry promotes to the smallest normal, including x87's explicit
+        // integer bit. Tininess was established before restricting the grid:
+        // an inexact midpoint can therefore report underflow even when its
+        // final value is the smallest normal.
+        let exponent_field = u16::from(significand >= 1u128 << (precision - 1));
+        return BinaryConversion {
+            bits: format.encode(negative, significand, exponent_field),
+            status: FloatStatus {
+                inexact,
+                underflow: inexact,
+                ..FloatStatus::default()
+            },
         };
-        match m.bit_len().cmp(&113) {
-            core::cmp::Ordering::Less => k -= 1,
-            core::cmp::Ordering::Greater => k += 1,
-            core::cmp::Ordering::Equal => break,
-        }
     }
-
-    let exp_field = k + 16495;
-    if exp_field >= 0x7fff {
-        return sign | (0x7fffu128 << 112); // overflow -> infinity
+    BinaryConversion {
+        bits: format.encode(negative, significand, (exponent + format.bias()) as u16),
+        status: FloatStatus {
+            inexact,
+            ..FloatStatus::default()
+        },
     }
-    if exp_field >= 1 {
-        // Normal: strip the implicit leading bit from the 113-bit significand.
-        let frac = low128(&m) & ((1u128 << 112) - 1);
-        return sign | ((exp_field as u128) << 112) | frac;
-    }
-
-    // Subnormal: round value onto the subnormal grid (ulp = 2^-16494). The ulp
-    // count placed in the low 112 bits lets a carry into bit 112 promote to the
-    // smallest normal automatically.
-    let m_sub = num.clone().shl_bits(16494).round_div(den);
-    sign | (low128(&m_sub) & ((1u128 << 113) - 1))
 }
 
 /// Correctly-rounded binary128 bits for a hexadecimal-float significand:
@@ -686,7 +861,28 @@ fn rational_to_binary128(sign: u128, num: &BigUint, den: &BigUint) -> u128 {
 /// value of the `p` exponent. Handles overflow/subnormal/zero like the decimal
 /// path.
 pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp: i64) -> u128 {
-    let sign = if negative { 1u128 << 127 } else { 0 };
+    hex_to_binary(
+        negative,
+        int_hex,
+        frac_hex,
+        binexp,
+        BinaryFormat::Binary128,
+        RoundingMode::Nearest,
+    )
+    .bits
+}
+
+/// Convert a hexadecimal significand and exponent with one rounding to the
+/// selected format. Magnitude bounds include every significand digit before
+/// any exponent-dependent allocation, including very long cancelling inputs.
+pub fn hex_to_binary(
+    negative: bool,
+    int_hex: &[u8],
+    frac_hex: &[u8],
+    binexp: i64,
+    format: BinaryFormat,
+    rounding: RoundingMode,
+) -> BinaryConversion {
     let mut m = BigUint { limbs: Vec::new() };
     let mut any = false;
     for &h in int_hex.iter().chain(frac_hex.iter()) {
@@ -696,7 +892,7 @@ pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp:
         any |= d != 0;
     }
     if !any {
-        return sign;
+        return exact_binary(format.sign(negative));
     }
     // value = M · 2^e2.
     let e2 = binexp.saturating_sub((frac_hex.len() as i64).saturating_mul(4));
@@ -704,18 +900,18 @@ pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp:
     // Bound the magnitude before constructing a denominator or shifting. The
     // exponent alone is insufficient: a long significand can cancel a large
     // negative exponent while leaving a perfectly ordinary result.
-    if order > 16383 {
-        return sign | (0x7fffu128 << 112);
+    if order > format.bias() {
+        return overflow_binary(negative, format, rounding);
     }
-    if order < -16495 {
-        return sign;
+    if order < format.min_subnormal_exponent() - 1 {
+        return tiny_binary(negative, format, rounding);
     }
     let (num, den) = if e2 >= 0 {
         (m.shl_bits(e2 as u32), BigUint::one())
     } else {
         (m, BigUint::one().shl_bits((-e2) as u32))
     };
-    rational_to_binary128(sign, &num, &den)
+    rational_to_binary(negative, &num, &den, format, rounding)
 }
 
 /// `ecvt`-style digits for an x87 `long double`: `ndigit` significant digits,
@@ -931,34 +1127,17 @@ pub fn hex_to_x87_extended(
     frac_hex: &[u8],
     binexp: i64,
 ) -> [u8; 10] {
-    let mut m = BigUint { limbs: Vec::new() };
-    let mut any = false;
-    for &h in int_hex.iter().chain(frac_hex.iter()) {
-        let d = (h as char).to_digit(16).unwrap_or(0);
-        m.mul_small(16);
-        m.add_small(d);
-        any |= d != 0;
-    }
-    if !any {
-        return encode_x87(negative, 0, 0);
-    }
-    // value = M · 2^e2.
-    let e2 = binexp.saturating_sub((frac_hex.len() as i64).saturating_mul(4));
-    let order = e2.saturating_add(m.bit_len() as i64 - 1);
-    // Test the whole value's order, not the exponent alone. Appending zeros
-    // after a hex radix changes e2 but must not change the represented number.
-    if order > 16383 {
-        return encode_x87(negative, 1 << 63, 0x7fff);
-    }
-    if order < -16446 {
-        return encode_x87(negative, 0, 0);
-    }
-    let (num, den) = if e2 >= 0 {
-        (m.shl_bits(e2 as u32), BigUint::one())
-    } else {
-        (m, BigUint::one().shl_bits((-e2) as u32))
-    };
-    rational_to_x87(negative, &num, &den)
+    x87_storage(
+        hex_to_binary(
+            negative,
+            int_hex,
+            frac_hex,
+            binexp,
+            BinaryFormat::X87,
+            RoundingMode::Nearest,
+        )
+        .bits,
+    )
 }
 
 /// What [`strtold_scan`] found.
@@ -996,14 +1175,11 @@ pub struct X87Scan {
 ///   "  1.5xyz"  consumes 5          trailing garbage simply ends the scan
 /// ```
 ///
-/// ## `ERANGE` covers subnormals, not just zero
-///
-/// glibc raises `ERANGE` for every result whose exponent field is zero, and
-/// that includes values which are exactly representable: the minimum subnormal
-/// parses to significand 1 WITH `ERANGE`, while the smallest normal one
-/// exponent step above it does not. Testing only for a zero result would miss
-/// the whole subnormal range. The guard against a plain `"0"` is that the input
-/// had a nonzero significand.
+/// Range status comes from the exact conversion, rather than the encoded
+/// result's exponent: exact subnormals preserve `errno`, while a tiny inexact
+/// value can report `ERANGE` even if rounding promotes it to the smallest
+/// normal. This core convenience API uses round-to-nearest, ties-to-even;
+/// ABI entrypoints pass the caller's direction to [`parse_binary_c`].
 pub fn strtold_scan(s: &[u8]) -> X87Scan {
     // A non-"." LC_NUMERIC radix: parse the C form (offsets unchanged).
     match crate::stdlib::conversion::c_radix_copy(s) {
@@ -1015,6 +1191,20 @@ pub fn strtold_scan(s: &[u8]) -> X87Scan {
 /// [`strtold_scan`] for input whose radix is ".", independent of the current
 /// locale. ABI callers use this after resolving an explicit locale object.
 pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
+    let parsed = parse_binary_c(s, BinaryFormat::X87, RoundingMode::Nearest);
+    X87Scan {
+        bytes: x87_storage(parsed.bits),
+        consumed: parsed.consumed,
+        range_error: parsed.status.range_error(),
+    }
+}
+
+/// Scan a bounded C-locale floating-point subject sequence and round its
+/// exact value directly to the requested destination format. Input may be
+/// NUL-terminated or end at the slice boundary. No floating-point operations
+/// or environment mutations occur, so callers may discard a speculative
+/// prefix without leaking exception flags.
+pub fn parse_binary_c(s: &[u8], format: BinaryFormat, rounding: RoundingMode) -> BinaryParse {
     let at = |i: usize| -> u8 { s.get(i).copied().unwrap_or(0) };
     let is_digit = |b: u8| b.is_ascii_digit();
     let is_hex = |b: u8| b.is_ascii_hexdigit();
@@ -1041,16 +1231,17 @@ pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
         if matches_ci(j, b"inity") {
             j += 5;
         }
-        return X87Scan {
-            bytes: encode_x87(negative, 1 << 63, 0x7fff),
+        return BinaryParse {
+            bits: format.infinity(negative),
             consumed: j,
-            range_error: false,
+            status: FloatStatus::default(),
         };
     }
 
     if matches_ci(i, b"nan") {
         let mut j = i + 3;
         let mut payload = 0u64;
+        let mut payload_overflow = false;
         if at(j) == b'(' {
             let start = j + 1;
             let mut k = start;
@@ -1058,18 +1249,17 @@ pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
                 k += 1;
             }
             if at(k) == b')' {
-                payload = parse_base0(&s[start..k]);
+                (payload, payload_overflow) = parse_nan_tag(&s[start..k]);
                 j = k + 1;
             }
         }
-        // Quiet NaN: exponent all ones, integer bit AND quiet bit set. An x87
-        // NaN with a clear integer bit is a "pseudo-NaN", which later parts
-        // reject as invalid rather than treating as a NaN.
-        let significand = (0b11u64 << 62) | (payload & ((1u64 << 62) - 1));
-        return X87Scan {
-            bytes: encode_x87(negative, significand, 0x7fff),
+        return BinaryParse {
+            bits: format.quiet_nan(negative, payload),
             consumed: j,
-            range_error: false,
+            status: FloatStatus {
+                payload_overflow,
+                ..FloatStatus::default()
+            },
         };
     }
 
@@ -1116,29 +1306,26 @@ pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
                     after = e;
                 }
             }
-            let nonzero = s[int_start..int_end]
-                .iter()
-                .chain(s[frac_start..frac_end].iter())
-                .any(|&b| b != b'0');
-            let bytes = hex_to_x87_extended(
+            let converted = hex_to_binary(
                 negative,
                 &s[int_start..int_end],
                 &s[frac_start..frac_end],
                 binexp,
+                format,
+                rounding,
             );
-            let range_error = x87_range_error(&bytes, nonzero);
-            return X87Scan {
-                bytes,
+            return BinaryParse {
+                bits: converted.bits,
                 consumed: after,
-                range_error,
+                status: converted.status,
             };
         }
         // "0x" with no hex digits at all: the "0" is a decimal zero and the "x"
         // is not consumed.
-        return X87Scan {
-            bytes: encode_x87(negative, 0, 0),
+        return BinaryParse {
+            bits: format.sign(negative),
             consumed: i + 1,
-            range_error: false,
+            status: FloatStatus::default(),
         };
     }
 
@@ -1159,10 +1346,10 @@ pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
     if int_end == int_start && frac_end == frac_start {
         // No conversion. `consumed` is zero so the caller restores the original
         // pointer rather than reporting where the scan gave up.
-        return X87Scan {
-            bytes: [0u8; 10],
+        return BinaryParse {
+            bits: 0,
             consumed: 0,
-            range_error: false,
+            status: FloatStatus::default(),
         };
     }
 
@@ -1197,38 +1384,19 @@ pub fn strtold_scan_c(s: &[u8]) -> X87Scan {
     digits.extend_from_slice(&s[int_start..int_end]);
     digits.extend_from_slice(&s[frac_start..frac_end]);
     let dexp = dexp_e.saturating_sub((frac_end - frac_start) as i64);
-    let nonzero = digits.iter().any(|&b| b != b'0');
-    // The conversion clamps absurd exponents itself; saturating to i32 here
-    // only has to avoid wrapping on the way in.
-    let dexp = dexp.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-    let bytes = decimal_to_x87_extended(negative, &digits, dexp);
-    let range_error = x87_range_error(&bytes, nonzero);
-    X87Scan {
-        bytes,
+    let converted = decimal_to_binary(negative, &digits, dexp, format, rounding);
+    BinaryParse {
+        bits: converted.bits,
         consumed: after,
-        range_error,
+        status: converted.status,
     }
 }
 
-/// `ERANGE` iff the value overflowed to infinity, or a nonzero input landed on
-/// a zero exponent field (subnormal or flushed to zero).
-fn x87_range_error(bytes: &[u8; 10], nonzero: bool) -> bool {
-    let exp_field = u16::from_le_bytes([bytes[8], bytes[9]]) & 0x7fff;
-    if exp_field == 0x7fff {
-        return true;
-    }
-    exp_field == 0 && nonzero
-}
-
-/// `strtoull(seq, NULL, 0)` semantics: an optional sign, an optional `0x`/`0`
-/// base prefix, then digits, stopping at the first invalid one. A sequence that
-/// yields no digits is zero rather than an error, which is what glibc does with
-/// `nan(abc)`.
-fn parse_base0(seq: &[u8]) -> u64 {
+/// GNU NaN tags use a base-0 unsigned 64-bit integer for every destination
+/// width, including binary128. A nonnumeric suffix discards the payload, but
+/// does not discard a range error from an overflowing numeric prefix.
+fn parse_nan_tag(seq: &[u8]) -> (u64, bool) {
     let mut i = 0usize;
-    if matches!(seq.first(), Some(b'+') | Some(b'-')) {
-        i = 1;
-    }
     let mut radix = 10u32;
     if seq.len() > i + 1 && seq[i] == b'0' && (seq[i + 1] | 0x20) == b'x' {
         radix = 16;
@@ -1239,18 +1407,29 @@ fn parse_base0(seq: &[u8]) -> u64 {
     }
     let start = i;
     let mut value = 0u64;
+    let mut overflow = false;
     while i < seq.len() {
         match (seq[i] as char).to_digit(radix) {
             Some(d) => {
-                value = value
-                    .wrapping_mul(u64::from(radix))
-                    .wrapping_add(u64::from(d));
+                if let Some(next) = value
+                    .checked_mul(u64::from(radix))
+                    .and_then(|v| v.checked_add(u64::from(d)))
+                {
+                    value = next;
+                } else {
+                    value = u64::MAX;
+                    overflow = true;
+                }
                 i += 1;
             }
             None => break,
         }
     }
-    if i == start { 0 } else { value }
+    if i == start || i != seq.len() {
+        (0, overflow)
+    } else {
+        (value, overflow)
+    }
 }
 
 /// Round a canonical significand (`digits`, `exp10`) — where the value equals
@@ -2364,6 +2543,220 @@ mod tests {
                 "{:?} must consume nothing",
                 core::str::from_utf8(input).unwrap_or("<non-utf8>")
             );
+        }
+    }
+
+    #[test]
+    fn binary_parser_rounds_once_to_each_destination() {
+        let above_float_midpoint = b"0x1.000001000000000000000001p0";
+        let parsed = parse_binary_c(
+            above_float_midpoint,
+            BinaryFormat::Binary32,
+            RoundingMode::Nearest,
+        );
+        assert_eq!(parsed.bits, 0x3f80_0001);
+        assert_eq!(parsed.consumed, above_float_midpoint.len());
+        assert!(parsed.status.inexact);
+        assert!(!parsed.status.range_error());
+
+        for (format, low, high, sign) in [
+            (
+                BinaryFormat::Binary32,
+                0x3dcc_cccc,
+                0x3dcc_cccd,
+                1u128 << 31,
+            ),
+            (
+                BinaryFormat::Binary64,
+                0x3fb9_9999_9999_9999,
+                0x3fb9_9999_9999_999a,
+                1u128 << 63,
+            ),
+            (
+                BinaryFormat::X87,
+                0x3ffb_cccc_cccc_cccc_cccc,
+                0x3ffb_cccc_cccc_cccc_cccd,
+                1u128 << 79,
+            ),
+            (
+                BinaryFormat::Binary128,
+                0x3ffb_9999_9999_9999_9999_9999_9999_9999,
+                0x3ffb_9999_9999_9999_9999_9999_9999_999a,
+                1u128 << 127,
+            ),
+        ] {
+            for mode in [
+                RoundingMode::Nearest,
+                RoundingMode::Downward,
+                RoundingMode::Upward,
+                RoundingMode::TowardZero,
+            ] {
+                for negative in [false, true] {
+                    let input = if negative { &b"-0.1"[..] } else { &b"0.1"[..] };
+                    let round_up = mode == RoundingMode::Nearest
+                        || (mode == RoundingMode::Upward && !negative)
+                        || (mode == RoundingMode::Downward && negative);
+                    let parsed = parse_binary_c(input, format, mode);
+                    assert_eq!(
+                        parsed.bits,
+                        (if round_up { high } else { low }) | (if negative { sign } else { 0 }),
+                        "{format:?} {mode:?} {negative}"
+                    );
+                    assert_eq!(
+                        parsed.status,
+                        FloatStatus {
+                            inexact: true,
+                            ..FloatStatus::default()
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn binary_parser_distinguishes_exact_tiny_and_directed_range_results() {
+        for (format, min_subnormal_exponent, sign, max_finite, infinity) in [
+            (
+                BinaryFormat::Binary32,
+                -149,
+                1u128 << 31,
+                0x7f7f_ffff,
+                0x7f80_0000,
+            ),
+            (
+                BinaryFormat::Binary64,
+                -1074,
+                1u128 << 63,
+                0x7fef_ffff_ffff_ffff,
+                0x7ff0_0000_0000_0000,
+            ),
+            (
+                BinaryFormat::X87,
+                -16445,
+                1u128 << 79,
+                0x7ffe_ffff_ffff_ffff_ffff,
+                0x7fff_8000_0000_0000_0000,
+            ),
+            (
+                BinaryFormat::Binary128,
+                -16494,
+                1u128 << 127,
+                0x7ffe_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+                0x7fff_0000_0000_0000_0000_0000_0000_0000,
+            ),
+        ] {
+            for mode in [
+                RoundingMode::Nearest,
+                RoundingMode::Downward,
+                RoundingMode::Upward,
+                RoundingMode::TowardZero,
+            ] {
+                for negative in [false, true] {
+                    let prefix = if negative { "-" } else { "" };
+                    let sign = if negative { sign } else { 0 };
+                    let exact = format!("{prefix}0x1p{min_subnormal_exponent}");
+                    let parsed = parse_binary_c(exact.as_bytes(), format, mode);
+                    assert_eq!(parsed.bits, sign | 1);
+                    assert_eq!(parsed.status, FloatStatus::default());
+
+                    let away = (mode == RoundingMode::Upward && !negative)
+                        || (mode == RoundingMode::Downward && negative);
+                    let half = format!("{prefix}0x1p{}", min_subnormal_exponent - 1);
+                    let parsed = parse_binary_c(half.as_bytes(), format, mode);
+                    assert_eq!(parsed.bits, sign | u128::from(away));
+                    assert_eq!(
+                        parsed.status,
+                        FloatStatus {
+                            inexact: true,
+                            underflow: true,
+                            ..FloatStatus::default()
+                        }
+                    );
+
+                    let huge = format!("{prefix}10e9999999999999999999999999999");
+                    let parsed = parse_binary_c(huge.as_bytes(), format, mode);
+                    let expected = if away || mode == RoundingMode::Nearest {
+                        infinity
+                    } else {
+                        max_finite
+                    };
+                    assert_eq!(parsed.bits, sign | expected);
+                    assert_eq!(
+                        parsed.status,
+                        FloatStatus {
+                            inexact: true,
+                            overflow: true,
+                            ..FloatStatus::default()
+                        }
+                    );
+
+                    let zero = format!("{prefix}0e-9999999999999999999999999999");
+                    let parsed = parse_binary_c(zero.as_bytes(), format, mode);
+                    assert_eq!(parsed.bits, sign);
+                    assert_eq!(parsed.status, FloatStatus::default());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn binary_parser_tininess_uses_unbounded_precision_rounding() {
+        // Both round to the smallest normal. Half a subnormal ULP below it
+        // remains tiny at precision 24 with an unrestricted exponent; one
+        // quarter of that ULP already rounds to a normal at that stage.
+        for (input, underflow) in [
+            (&b"0x1.fffffep-127"[..], true),
+            (&b"0x1.ffffffp-127"[..], false),
+        ] {
+            let parsed = parse_binary_c(input, BinaryFormat::Binary32, RoundingMode::Nearest);
+            assert_eq!(parsed.bits, 0x0080_0000);
+            assert!(parsed.status.inexact);
+            assert_eq!(parsed.status.underflow, underflow);
+        }
+    }
+
+    #[test]
+    fn binary_parser_preserves_grammar_and_nan_payload_status() {
+        for format in [
+            BinaryFormat::Binary32,
+            BinaryFormat::Binary64,
+            BinaryFormat::X87,
+            BinaryFormat::Binary128,
+        ] {
+            for input in [&b""[..], b" \t-.", b"  +", b"e1", b"- 1"] {
+                let parsed = parse_binary_c(input, format, RoundingMode::Nearest);
+                assert_eq!(parsed.bits, 0);
+                assert_eq!(parsed.consumed, 0);
+                assert_eq!(parsed.status, FloatStatus::default());
+            }
+            for (input, consumed) in [(&b"1e+"[..], 1), (b"0x1p-", 3), (b"1\0e999", 1)] {
+                let parsed = parse_binary_c(input, format, RoundingMode::Nearest);
+                assert_eq!(parsed.consumed, consumed);
+                assert_eq!(
+                    parsed.bits,
+                    decimal_to_binary(false, b"1", 0, format, RoundingMode::Nearest).bits
+                );
+                assert_eq!(parsed.status, FloatStatus::default());
+            }
+            for (input, payload, overflow) in [
+                (&b"nan(42)"[..], 42, false),
+                (b"nan(123xyz)", 0, false),
+                (b"nan(089)", 0, false),
+                (b"nan(18446744073709551616)", u64::MAX, true),
+                (b"nan(18446744073709551616xyz)", 0, true),
+            ] {
+                let parsed = parse_binary_c(input, format, RoundingMode::Nearest);
+                assert_eq!(parsed.bits, format.quiet_nan(false, payload));
+                assert_eq!(parsed.consumed, input.len());
+                assert_eq!(
+                    parsed.status,
+                    FloatStatus {
+                        payload_overflow: overflow,
+                        ..FloatStatus::default()
+                    }
+                );
+            }
         }
     }
 
