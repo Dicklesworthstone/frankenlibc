@@ -52,6 +52,10 @@ mod g {
         pub fn fclose(f: *mut c_void) -> c_int;
         pub fn ferror(f: *mut c_void) -> c_int;
         pub fn feof(f: *mut c_void) -> c_int;
+        pub fn fgetc(f: *mut c_void) -> c_int;
+        pub fn ungetc(c: c_int, f: *mut c_void) -> c_int;
+        pub fn clearerr(f: *mut c_void);
+        pub fn getdelim(p: *mut *mut c_char, n: *mut usize, d: c_int, f: *mut c_void) -> isize;
     }
 }
 use frankenlibc_abi::stdio_abi as fl;
@@ -60,6 +64,184 @@ use frankenlibc_abi::stdio_abi as fl;
 /// each call so "errno was left alone" is a positive observation rather than
 /// the absence of one.
 const SENTINEL_ERRNO: c_int = 0x5EED;
+
+#[derive(Debug, PartialEq)]
+struct CookieLineObservation {
+    length: isize,
+    bytes: Vec<u8>,
+    error: bool,
+    eof: bool,
+    errno: c_int,
+}
+
+#[derive(Debug, PartialEq)]
+struct CookieLineSequence {
+    lines: Vec<CookieLineObservation>,
+    buffer_result: c_int,
+    push_result: c_int,
+    sticky_line_called: bool,
+    sticky_char_called: bool,
+    eof_char: c_int,
+    close_result: c_int,
+    close_calls: usize,
+}
+
+struct LineCookie {
+    data: &'static [u8],
+    position: usize,
+    calls: usize,
+    closed: usize,
+}
+
+unsafe extern "C-unwind" fn line_cookie_read(
+    cookie: *mut c_void,
+    output: *mut c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: observe_cookie_lines keeps this state alive through fclose and
+    // performs its stream operations sequentially.
+    let state = unsafe { &mut *cookie.cast::<LineCookie>() };
+    state.calls += 1;
+    let copied = count.min(3).min(state.data.len() - state.position);
+    if copied == 0 {
+        return 0;
+    }
+    // SAFETY: the callback receives count writable bytes; the static input is
+    // disjoint and copied is bounded by both regions' remaining lengths.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            state.data.as_ptr().add(state.position),
+            output.cast(),
+            copied,
+        );
+    }
+    state.position += copied;
+    copied as isize
+}
+
+unsafe extern "C-unwind" fn line_cookie_close(cookie: *mut c_void) -> c_int {
+    // SAFETY: the state remains live until the single fclose below completes.
+    unsafe { (*cookie.cast::<LineCookie>()).closed += 1 };
+    0
+}
+
+fn observe_cookie_lines(native: bool, mode: c_int, delimiter: u8) -> CookieLineSequence {
+    let mut state = LineCookie {
+        data: if delimiter == b'\n' {
+            b"a\0b\nnext\nlast"
+        } else {
+            b"a\0b;next;last"
+        },
+        position: 0,
+        calls: 0,
+        closed: 0,
+    };
+    let funcs = CookieIoFuncs {
+        read: Some(line_cookie_read),
+        close: Some(line_cookie_close),
+        ..CookieIoFuncs::default()
+    };
+    // SAFETY: the hook state, NUL-terminated mode, and output slots stay live
+    // through the matching provider's fclose. No stream escapes this helper.
+    unsafe {
+        let cookie = (&mut state as *mut LineCookie).cast();
+        let stream = if native {
+            fl::fopencookie(cookie, c"r".as_ptr(), funcs)
+        } else {
+            g::fopencookie(cookie, c"r".as_ptr(), funcs)
+        };
+        assert!(!stream.is_null());
+        let set_buffer = if native { fl::setvbuf } else { g::setvbuf };
+        let push = if native { fl::ungetc } else { g::ungetc };
+        let scan = if native { fl::getdelim } else { g::getdelim };
+        let error = if native { fl::ferror } else { g::ferror };
+        let eof = if native { fl::feof } else { g::feof };
+        let clear = if native { fl::clearerr } else { g::clearerr };
+        let read_char = if native { fl::fgetc } else { g::fgetc };
+        let close = if native { fl::fclose } else { g::fclose };
+        let buffer_result = set_buffer(stream, std::ptr::null_mut(), mode, 0);
+        let push_result = push(b'P' as c_int, stream);
+        let mut line = std::ptr::null_mut();
+        let mut capacity = 0;
+        let mut read_line = || {
+            plant_errno();
+            let length = scan(&mut line, &mut capacity, delimiter as c_int, stream);
+            let saved_errno = read_errno();
+            let bytes = if length >= 0 && !line.is_null() && capacity > length as usize {
+                // SAFETY: successful getdelim initializes length bytes plus a
+                // NUL in this allocation; the reported capacity is checked.
+                std::slice::from_raw_parts(line.cast::<u8>(), length as usize + 1).to_vec()
+            } else {
+                Vec::new()
+            };
+            CookieLineObservation {
+                length,
+                bytes,
+                error: error(stream) != 0,
+                eof: eof(stream) != 0,
+                errno: saved_errno,
+            }
+        };
+        let mut lines = vec![read_line(), read_line(), read_line()];
+        let stopped_calls = state.calls;
+        lines.push(read_line());
+        let sticky_line_called = state.calls != stopped_calls;
+        let eof_char = read_char(stream);
+        let sticky_char_called = state.calls != stopped_calls;
+        clear(stream);
+        state.position = 0;
+        lines.push(read_line());
+        let close_result = close(stream);
+        if native {
+            frankenlibc_abi::malloc_abi::free(line.cast());
+        } else {
+            libc::free(line.cast());
+        }
+        CookieLineSequence {
+            lines,
+            buffer_result,
+            push_result,
+            sticky_line_called,
+            sticky_char_called,
+            eof_char,
+            close_result,
+            close_calls: state.closed,
+        }
+    }
+}
+
+#[test]
+fn cookie_line_input_uses_callbacks_and_preserves_stop_state() {
+    assert_ne!(g::getdelim as *const (), fl::getdelim as *const ());
+    for mode in [libc::_IOFBF, libc::_IONBF] {
+        for delimiter in [b'\n', b';'] {
+            let host = observe_cookie_lines(false, mode, delimiter);
+            assert_eq!(
+                host.lines.iter().map(|l| l.length).collect::<Vec<_>>(),
+                [5, 5, 4, -1, 4]
+            );
+            assert_eq!(host.lines[0].bytes, [b'P', b'a', 0, b'b', delimiter, 0]);
+            assert_eq!(host.lines[1].bytes, [b'n', b'e', b'x', b't', delimiter, 0]);
+            assert_eq!(host.lines[2].bytes, b"last\0");
+            assert!(host.lines[3].bytes.is_empty());
+            assert_eq!(host.lines[4].bytes, [b'a', 0, b'b', delimiter, 0]);
+            assert!(
+                host.lines
+                    .iter()
+                    .all(|l| l.errno == SENTINEL_ERRNO && !l.error)
+            );
+            assert_eq!(
+                host.lines.iter().map(|l| l.eof).collect::<Vec<_>>(),
+                [false, false, true, true, false]
+            );
+            assert_eq!((host.buffer_result, host.push_result), (0, b'P' as c_int));
+            assert!(!host.sticky_line_called && !host.sticky_char_called);
+            assert_eq!(host.eof_char, libc::EOF);
+            assert_eq!((host.close_result, host.close_calls), (0, 1));
+            assert_eq!(observe_cookie_lines(true, mode, delimiter), host);
+        }
+    }
+}
 
 fn plant_errno() {
     unsafe { *g::__errno_location() = SENTINEL_ERRNO };
