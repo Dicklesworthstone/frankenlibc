@@ -3945,7 +3945,7 @@ Selected project health snapshot:
 | Tracked Rust files in `crates/` | 2,892 |
 | `crates/frankenlibc-abi/src/` | 122 Rust files, 228,342 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
-| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,502 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 203 Rust files, 1,169,104 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
