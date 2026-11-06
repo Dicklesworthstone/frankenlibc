@@ -377,6 +377,14 @@ struct ScanFiles {
     tell: FtelloFn,
     get_byte: FgetcFn,
     get_wide: FgetwcFn,
+    stdin_cell: *mut *mut c_void,
+}
+
+struct ScanDialect {
+    prefix: &'static str,
+    narrow: [*const (); 4],
+    wide: [*const (); 4],
+    wide_string: [*const (); 2],
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -395,14 +403,13 @@ fn run_prefix_stream<T>(
     format: *const T,
     path: &CString,
     files: ScanFiles,
-    stdin_cell: *mut *mut c_void,
     wide: bool,
 ) -> PrefixOutcome {
     let stream = unsafe { (files.open)(path.as_ptr(), c"r".as_ptr()) };
     assert!(!stream.is_null(), "provider fopen failed");
-    let saved_stdin = unsafe { stdin_cell.read() };
+    let saved_stdin = unsafe { files.stdin_cell.read() };
     if kind >= 2 {
-        unsafe { stdin_cell.write(stream) };
+        unsafe { files.stdin_cell.write(stream) };
     }
     let mut out = PrefixOutcome {
         result: -999,
@@ -422,7 +429,7 @@ fn run_prefix_stream<T>(
         )
     };
     if kind >= 2 {
-        unsafe { stdin_cell.write(saved_stdin) };
+        unsafe { files.stdin_cell.write(saved_stdin) };
     }
     out.position = unsafe { (files.tell)(stream) };
     out.tail = if wide {
@@ -500,16 +507,27 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         assert!(!address.is_null(), "missing C bridge {name:?}");
         address
     };
+    // SAFETY: DIALECT_BRIDGE defines narrow_stream with this exact C signature;
+    // resolve rejects null and the bridge handle stays open until after all calls.
     let narrow: StreamBridge<c_char> = unsafe { std::mem::transmute(resolve(c"narrow_stream")) };
+    // SAFETY: the same bridge defines wide_stream with wchar_t pointers, matching
+    // libc::wchar_t on this Linux target, and its handle remains open below.
     let wide: StreamBridge<libc::wchar_t> = unsafe { std::mem::transmute(resolve(c"wide_stream")) };
+    // SAFETY: wide_string has exactly StringBridge<wchar_t>'s seven arguments;
+    // its non-null address remains valid until close(handle) after the matrix.
     let wide_string: StringBridge<libc::wchar_t> =
         unsafe { std::mem::transmute(resolve(c"wide_string")) };
+    let native_stdin = std::ptr::addr_of_mut!(io::stdin);
+    let host_stdin = unsafe {
+        dlsym_oracle::host_addr(c"stdin", native_stdin.cast::<()>()).cast::<*mut c_void>()
+    };
     let native = ScanFiles {
         open: io::fopen,
         close: io::fclose,
         tell: io::ftello,
         get_byte: io::fgetc,
         get_wide: wc::fgetwc,
+        stdin_cell: native_stdin,
     };
     let host = ScanFiles {
         open: unsafe { host_fn(c"fopen", io::fopen as *const ()) },
@@ -517,10 +535,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         tell: unsafe { host_fn(c"ftello", io::ftello as *const ()) },
         get_byte: unsafe { host_fn(c"fgetc", io::fgetc as *const ()) },
         get_wide: unsafe { host_fn(c"fgetwc", wc::fgetwc as *const ()) },
-    };
-    let native_stdin = std::ptr::addr_of_mut!(io::stdin);
-    let host_stdin = unsafe {
-        dlsym_oracle::host_addr(c"stdin", native_stdin.cast::<()>()).cast::<*mut c_void>()
+        stdin_cell: host_stdin,
     };
     let wchar = |text: &str| {
         text.chars()
@@ -544,66 +559,72 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         ("?", "%i%n"),
         ("", "%i%n"),
     ];
-    let arms: [(&str, [*const (); 4], [*const (); 4], [*const (); 2]); 3] = [
-        (
-            "",
-            [
+    let arms = [
+        ScanDialect {
+            prefix: "",
+            narrow: [
                 io::fscanf as *const (),
                 io::vfscanf as *const (),
                 io::scanf as *const (),
                 io::vscanf as *const (),
             ],
-            [
+            wide: [
                 wc::fwscanf as *const (),
                 wc::vfwscanf as *const (),
                 wc::wscanf as *const (),
                 wc::vwscanf as *const (),
             ],
-            [wc::swscanf as *const (), wc::vswscanf as *const ()],
-        ),
-        (
-            "__isoc99_",
-            [
+            wide_string: [wc::swscanf as *const (), wc::vswscanf as *const ()],
+        },
+        ScanDialect {
+            prefix: "__isoc99_",
+            narrow: [
                 io::__isoc99_fscanf as *const (),
                 io::__isoc99_vfscanf as *const (),
                 io::__isoc99_scanf as *const (),
                 io::__isoc99_vscanf as *const (),
             ],
-            [
+            wide: [
                 iso::__isoc99_fwscanf as *const (),
                 iso::__isoc99_vfwscanf as *const (),
                 iso::__isoc99_wscanf as *const (),
                 iso::__isoc99_vwscanf as *const (),
             ],
-            [
+            wide_string: [
                 iso::__isoc99_swscanf as *const (),
                 iso::__isoc99_vswscanf as *const (),
             ],
-        ),
-        (
-            "__isoc23_",
-            [
+        },
+        ScanDialect {
+            prefix: "__isoc23_",
+            narrow: [
                 iso::__isoc23_fscanf as *const (),
                 iso::__isoc23_vfscanf as *const (),
                 iso::__isoc23_scanf as *const (),
                 iso::__isoc23_vscanf as *const (),
             ],
-            [
+            wide: [
                 iso::__isoc23_fwscanf as *const (),
                 iso::__isoc23_vfwscanf as *const (),
                 iso::__isoc23_wscanf as *const (),
                 iso::__isoc23_vwscanf as *const (),
             ],
-            [
+            wide_string: [
                 iso::__isoc23_swscanf as *const (),
                 iso::__isoc23_vswscanf as *const (),
             ],
-        ),
+        },
     ];
     let file = dir.join("input");
     let file_name = CString::new(file.as_os_str().as_bytes()).unwrap();
     let mut comparisons = 0;
-    for (prefix, narrow_arms, wide_arms, string_arms) in arms {
+    for ScanDialect {
+        prefix,
+        narrow: narrow_arms,
+        wide: wide_arms,
+        wide_string: string_arms,
+    } in arms
+    {
         for (kind, (narrow_name, wide_name)) in [
             ("fscanf", "fwscanf"),
             ("vfscanf", "vfwscanf"),
@@ -628,7 +649,6 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                     fmt.as_ptr(),
                     &file_name,
                     host,
-                    host_stdin,
                     false,
                 );
                 let expected_wide = run_prefix_stream(
@@ -638,14 +658,22 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                     wfmt.as_ptr(),
                     &file_name,
                     host,
-                    host_stdin,
                     true,
                 );
                 assert_eq!(
                     expected_narrow, expected_wide,
                     "GNU narrow/wide ASCII prefix parity"
                 );
-                for (owner, files) in [("native", native), ("foreign", host)] {
+                for (owner, files) in [
+                    ("native", native),
+                    (
+                        "foreign",
+                        ScanFiles {
+                            stdin_cell: native_stdin,
+                            ..host
+                        },
+                    ),
+                ] {
                     let got = run_prefix_stream(
                         narrow,
                         narrow_arms[kind].cast_mut().cast(),
@@ -653,7 +681,6 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                         fmt.as_ptr(),
                         &file_name,
                         files,
-                        native_stdin,
                         false,
                     );
                     assert_eq!(
@@ -667,7 +694,6 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                         wfmt.as_ptr(),
                         &file_name,
                         files,
-                        native_stdin,
                         true,
                     );
                     assert_eq!(
