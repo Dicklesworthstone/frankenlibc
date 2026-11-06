@@ -1,6 +1,6 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::{
-    dlfcn_abi as dl, errno_abi as errno, malloc_abi as allocation, mmap_abi as mapping,
-    stdlib_abi as stdlib, string_abi as strings, unistd_abi as unistd, wchar_abi as wide,
+    dlfcn_abi as dl, errno_abi as errno, glibc_internal_abi as internal, locale_abi as locale,
+    malloc_abi as allocation, mmap_abi as mapping, stdlib_abi as stdlib, string_abi as strings,
+    unistd_abi as unistd, wchar_abi as wide,
 };
 use frankenlibc_core::elf::ElfLoader;
 
@@ -35,6 +36,20 @@ const SOURCE: &str = r#"#define _GNU_SOURCE
 #include <sys/mman.h>
 #include <unistd.h>
 #include <wchar.h>
+#include <locale.h>
+#include <langinfo.h>
+
+extern locale_t __newlocale(int, const char *, locale_t);
+extern locale_t __duplocale(locale_t);
+extern void __freelocale(locale_t);
+extern locale_t __uselocale(locale_t);
+extern char *__nl_langinfo_l(nl_item, locale_t);
+extern double __strtod_l(const char *, char **, locale_t);
+extern float __strtof_l(const char *, char **, locale_t);
+extern long double __strtold_l(const char *, char **, locale_t);
+extern double __wcstod_l(const wchar_t *, wchar_t **, locale_t);
+extern float __wcstof_l(const wchar_t *, wchar_t **, locale_t);
+extern long double __wcstold_l(const wchar_t *, wchar_t **, locale_t);
 
 #ifdef LOCAL_COMPARE
 int memcmp(const void *left, const void *right, size_t n) {
@@ -135,6 +150,72 @@ int memory_floating_conversions(void) {
     const char nan[] = "NAN(payload)!";
     double value = strtod(nan, &end);
     SCALAR_CHECK(value != value && end == nan + 12);
+    return 0;
+}
+
+#define LOCALE_FLOAT_CASE(function, character, text, expected, consumed, loc) do { \
+    const character *input = (text); \
+    character *end = NULL; \
+    errno = 1234; \
+    SCALAR_CHECK(function(input, &end, loc) == (expected)); \
+    SCALAR_CHECK(end == input + (consumed) && errno == 1234); \
+} while (0)
+
+int memory_locales(const char *name) {
+    SCALAR_CHECK(setlocale(LC_ALL, "C") != NULL);
+    locale_t c = __newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    locale_t numeric = newlocale(LC_NUMERIC_MASK, name, (locale_t)0);
+    SCALAR_CHECK(c && numeric);
+    SCALAR_CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, numeric), ","));
+    SCALAR_CHECK(!strcmp(__nl_langinfo_l(RADIXCHAR, c), "."));
+    locale_t duplicate = __duplocale(numeric);
+    SCALAR_CHECK(duplicate != (locale_t)0);
+    freelocale(numeric);
+    SCALAR_CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, duplicate), ","));
+    locale_t thread = duplocale(duplicate);
+    SCALAR_CHECK(thread != (locale_t)0);
+    locale_t previous = uselocale(thread);
+    SCALAR_CHECK(previous != (locale_t)0);
+    SCALAR_CHECK(__uselocale((locale_t)0) == thread);
+    SCALAR_CHECK(!strcmp(nl_langinfo(RADIXCHAR), ","));
+    SCALAR_CHECK(!strcmp(localeconv()->decimal_point, ","));
+    /* A thread-local selection must not mutate the global C locale. */
+    SCALAR_CHECK(!strcmp(setlocale(LC_NUMERIC, NULL), "C"));
+    FLOAT_CASE(strtod, char, "12,5!", 12.5, 4, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"12,5!", 12.5, 4, 1234);
+    LOCALE_FLOAT_CASE(strtod_l, char, "12.5!", 12.5, 4, c);
+    LOCALE_FLOAT_CASE(strtod_l, char, "12,5!", 12.0, 2, c);
+    LOCALE_FLOAT_CASE(strtof_l, char, "-0x1,8p+2!", -6.0f, 9, duplicate);
+    LOCALE_FLOAT_CASE(strtold_l, char, "0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    LOCALE_FLOAT_CASE(wcstod_l, wchar_t, L"12.5!", 12.5, 4, c);
+    LOCALE_FLOAT_CASE(wcstof_l, wchar_t, L"-0x1,8p+2!", -6.0f, 9, duplicate);
+    LOCALE_FLOAT_CASE(wcstold_l, wchar_t, L"0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    LOCALE_FLOAT_CASE(__strtod_l, char, "1,25e+!", 1.25, 4, duplicate);
+    LOCALE_FLOAT_CASE(__strtof_l, char, "1,25!", 1.25f, 4, duplicate);
+    LOCALE_FLOAT_CASE(__strtold_l, char, "0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    LOCALE_FLOAT_CASE(__wcstod_l, wchar_t, L"1,25e+!", 1.25, 4, duplicate);
+    LOCALE_FLOAT_CASE(__wcstof_l, wchar_t, L"1,25!", 1.25f, 4, duplicate);
+    LOCALE_FLOAT_CASE(__wcstold_l, wchar_t, L"0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    SCALAR_CHECK(uselocale((locale_t)0) == thread);
+    SCALAR_CHECK(__uselocale(previous) == thread);
+    SCALAR_CHECK(!strcmp(nl_langinfo(RADIXCHAR), "."));
+    __freelocale(thread);
+    __freelocale(duplicate);
+    __freelocale(c);
+    return 0;
+}
+
+locale_t memory_locale_create(const char *name) {
+    return newlocale(LC_NUMERIC_MASK, name, (locale_t)0);
+}
+
+int memory_locale_accept(locale_t loc) {
+    SCALAR_CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, loc), ","));
+    LOCALE_FLOAT_CASE(strtod_l, char, "3,75!", 3.75, 4, loc);
     return 0;
 }
 
@@ -423,6 +504,31 @@ void *memory_function(unsigned index) {
         case 52: return (void *)qsort;
         case 53: return (void *)bsearch;
         case 54: return (void *)qsort_r;
+        case 55: return (void *)newlocale;
+        case 56: return (void *)duplocale;
+        case 57: return (void *)freelocale;
+        case 58: return (void *)uselocale;
+        case 59: return (void *)nl_langinfo_l;
+        case 60: return (void *)setlocale;
+        case 61: return (void *)localeconv;
+        case 62: return (void *)nl_langinfo;
+        case 63: return (void *)strtod_l;
+        case 64: return (void *)strtof_l;
+        case 65: return (void *)strtold_l;
+        case 66: return (void *)wcstod_l;
+        case 67: return (void *)wcstof_l;
+        case 68: return (void *)wcstold_l;
+        case 69: return (void *)__newlocale;
+        case 70: return (void *)__duplocale;
+        case 71: return (void *)__freelocale;
+        case 72: return (void *)__uselocale;
+        case 73: return (void *)__nl_langinfo_l;
+        case 74: return (void *)__strtod_l;
+        case 75: return (void *)__strtof_l;
+        case 76: return (void *)__strtold_l;
+        case 77: return (void *)__wcstod_l;
+        case 78: return (void *)__wcstof_l;
+        case 79: return (void *)__wcstold_l;
         default: return 0;
     }
 }
@@ -440,7 +546,7 @@ __attribute__((destructor)) static void fini(void) {
 #endif
 "#;
 
-fn symbols() -> [(&'static str, *const ()); 55] {
+fn symbols() -> [(&'static str, *const ()); 80] {
     [
         ("calloc", allocation::calloc as *const ()),
         ("realloc", allocation::realloc as *const ()),
@@ -500,6 +606,31 @@ fn symbols() -> [(&'static str, *const ()); 55] {
         ("qsort", stdlib::qsort as *const ()),
         ("bsearch", stdlib::bsearch as *const ()),
         ("qsort_r", stdlib::qsort_r as *const ()),
+        ("newlocale", locale::newlocale as *const ()),
+        ("duplocale", locale::duplocale as *const ()),
+        ("freelocale", locale::freelocale as *const ()),
+        ("uselocale", locale::uselocale as *const ()),
+        ("nl_langinfo_l", locale::nl_langinfo_l as *const ()),
+        ("setlocale", locale::setlocale as *const ()),
+        ("localeconv", locale::localeconv as *const ()),
+        ("nl_langinfo", locale::nl_langinfo as *const ()),
+        ("strtod_l", stdlib::strtod_l as *const ()),
+        ("strtof_l", stdlib::strtof_l as *const ()),
+        ("strtold_l", stdlib::strtold_l as *const ()),
+        ("wcstod_l", wide::wcstod_l as *const ()),
+        ("wcstof_l", wide::wcstof_l as *const ()),
+        ("wcstold_l", wide::wcstold_l as *const ()),
+        ("__newlocale", internal::__newlocale as *const ()),
+        ("__duplocale", internal::__duplocale as *const ()),
+        ("__freelocale", internal::__freelocale as *const ()),
+        ("__uselocale", internal::__uselocale as *const ()),
+        ("__nl_langinfo_l", internal::__nl_langinfo_l as *const ()),
+        ("__strtod_l", strings::__strtod_l as *const ()),
+        ("__strtof_l", strings::__strtof_l as *const ()),
+        ("__strtold_l", strings::__strtold_l as *const ()),
+        ("__wcstod_l", wide::__wcstod_l as *const ()),
+        ("__wcstof_l", wide::__wcstof_l as *const ()),
+        ("__wcstold_l", wide::__wcstold_l as *const ()),
     ]
 }
 
@@ -616,6 +747,15 @@ fn compile(source: &Path, output: &Path, flags: &[&str]) {
 }
 
 fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
+    isolated_with_environment(name, native_only, scenario, &[]);
+}
+
+fn isolated_with_environment(
+    name: &str,
+    native_only: bool,
+    scenario: fn(Api),
+    environment: &[(&str, &OsStr)],
+) {
     if let Ok(mode) = std::env::var("FRANKENLIBC_MEMORY_CHILD") {
         assert!(matches!(mode.as_str(), "host" | "native"));
         scenario(Api::new(mode == "native"));
@@ -630,6 +770,7 @@ fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
             .env("FRANKENLIBC_MEMORY_CHILD", mode)
+            .envs(environment.iter().copied())
             .spawn()
             .unwrap();
         let start = Instant::now();
@@ -708,6 +849,95 @@ fn memory_runtime_floating_conversions_preserve_c_values_and_errno() {
                 api.close(handle);
             }
         },
+    );
+}
+
+#[test]
+fn memory_runtime_locales_share_handles_and_preserve_explicit_categories() {
+    let locale_dir = if std::env::var_os("FRANKENLIBC_MEMORY_CHILD").is_none() {
+        let path = std::env::temp_dir().join(format!(
+            "frankenlibc-memory-locales-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let output = Command::new("localedef")
+            .args(["--no-archive", "-i", "de_DE", "-f", "UTF-8"])
+            .arg(path.join("de_DE.UTF-8"))
+            .output()
+            .expect("localedef and de_DE locale source are required");
+        assert!(
+            output.status.success(),
+            "localedef: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        path
+    } else {
+        // The isolated child already inherited its parent's LOCPATH.
+        PathBuf::new()
+    };
+    isolated_with_environment(
+        "memory_runtime_locales_share_handles_and_preserve_explicit_categories",
+        false,
+        |api| {
+            type Locales = unsafe extern "C" fn(*const c_char) -> c_int;
+            type Create = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+            type Accept = unsafe extern "C" fn(*mut c_void) -> c_int;
+            type New = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
+            type Free = unsafe extern "C" fn(*mut c_void);
+            type Parse = unsafe extern "C" fn(*const c_char, *mut *mut c_char, *mut c_void) -> f64;
+            let (new, free, parse): (New, Free, Parse) = if api.native {
+                (locale::newlocale, locale::freelocale, stdlib::strtod_l)
+            } else {
+                unsafe {
+                    (
+                        dlsym_oracle::host_fn(c"newlocale", locale::newlocale as *const ()),
+                        dlsym_oracle::host_fn(c"freelocale", locale::freelocale as *const ()),
+                        dlsym_oracle::host_fn(c"strtod_l", stdlib::strtod_l as *const ()),
+                    )
+                }
+            };
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                let run: Locales =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_locales")) };
+                assert_eq!(unsafe { run(c"de_DE.UTF-8".as_ptr()) }, 0);
+                let create: Create =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_locale_create")) };
+                let accept: Accept =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_locale_accept")) };
+                let caller_locale = unsafe {
+                    new(
+                        libc::LC_NUMERIC_MASK,
+                        c"de_DE.UTF-8".as_ptr(),
+                        std::ptr::null_mut(),
+                    )
+                };
+                assert!(!caller_locale.is_null());
+                assert_eq!(unsafe { accept(caller_locale) }, 0);
+                unsafe { free(caller_locale) };
+                let plugin_locale = unsafe { create(c"de_DE.UTF-8".as_ptr()) };
+                assert!(!plugin_locale.is_null());
+                api.close(handle);
+                // A locale belongs to the runtime, not to the DSO that made
+                // it: ordinary ABI callers can consume and retire it after
+                // the plugin itself has been unmapped.
+                let input = c"6,25!";
+                let mut end = std::ptr::null_mut();
+                assert_eq!(
+                    unsafe { parse(input.as_ptr(), &mut end, plugin_locale) },
+                    6.25
+                );
+                assert_eq!(end.cast_const(), unsafe { input.as_ptr().add(4) });
+                unsafe { free(plugin_locale) };
+            }
+        },
+        &[("LOCPATH", locale_dir.as_os_str())],
     );
 }
 
@@ -986,6 +1216,9 @@ fn memory_runtime_dynamic_addresses_match_direct_imports() {
                     "mlock2" => c"GLIBC_2.27",
                     "secure_getenv" => c"GLIBC_2.17",
                     "qsort_r" => c"GLIBC_2.8",
+                    "newlocale" | "duplocale" | "freelocale" | "uselocale" | "__uselocale"
+                    | "nl_langinfo_l" | "strtod_l" | "strtof_l" | "strtold_l" | "wcstod_l"
+                    | "wcstof_l" | "wcstold_l" => c"GLIBC_2.3",
                     _ => c"GLIBC_2.2.5",
                 };
                 let wrong_version = if valid_version != c"GLIBC_2.2.5" {

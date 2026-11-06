@@ -6,8 +6,9 @@
 //! This is a bounded addition to the runtime surface, not a new libc engine.
 
 use crate::{
-    ctype_abi as ctype, isoc_abi as c23, malloc_abi as allocation, mmap_abi as mapping,
-    stdlib_abi as stdlib, string_abi as strings, unistd_abi as unistd, wchar_abi as wide,
+    ctype_abi as ctype, glibc_internal_abi as internal, isoc_abi as c23, locale_abi as locale,
+    malloc_abi as allocation, mmap_abi as mapping, stdlib_abi as stdlib, string_abi as strings,
+    unistd_abi as unistd, wchar_abi as wide,
 };
 
 #[path = "dlfcn_io.rs"]
@@ -79,6 +80,44 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     } else {
         "GLIBC_2.3"
     };
+    // Locale objects and their consumers must use the same native registry.
+    // A host newlocale handle is not interchangeable with a native snapshot.
+    // The private aliases predate the public POSIX names on x86-64, except
+    // __uselocale, whose version is the same as its public counterpart.
+    let locale_function = match name {
+        "newlocale" => Some((locale::newlocale as *const (), locale_version)),
+        "duplocale" => Some((locale::duplocale as *const (), locale_version)),
+        "freelocale" => Some((locale::freelocale as *const (), locale_version)),
+        "uselocale" => Some((locale::uselocale as *const (), locale_version)),
+        "nl_langinfo_l" => Some((locale::nl_langinfo_l as *const (), locale_version)),
+        "strtod_l" => Some((stdlib::strtod_l as *const (), locale_version)),
+        "strtof_l" => Some((stdlib::strtof_l as *const (), locale_version)),
+        "wcstod_l" => Some((wide::wcstod_l as *const (), locale_version)),
+        "wcstof_l" => Some((wide::wcstof_l as *const (), locale_version)),
+        #[cfg(target_arch = "x86_64")]
+        "strtold_l" => Some((stdlib::strtold_l as *const (), locale_version)),
+        #[cfg(target_arch = "x86_64")]
+        "wcstold_l" => Some((wide::wcstold_l as *const (), locale_version)),
+        "__newlocale" => Some((internal::__newlocale as *const (), baseline)),
+        "__duplocale" => Some((internal::__duplocale as *const (), baseline)),
+        "__freelocale" => Some((internal::__freelocale as *const (), baseline)),
+        "__uselocale" => Some((internal::__uselocale as *const (), locale_version)),
+        "__nl_langinfo_l" => Some((internal::__nl_langinfo_l as *const (), baseline)),
+        "__strtod_l" => Some((strings::__strtod_l as *const (), baseline)),
+        "__strtof_l" => Some((strings::__strtof_l as *const (), baseline)),
+        "__wcstod_l" => Some((wide::__wcstod_l as *const (), baseline)),
+        "__wcstof_l" => Some((wide::__wcstof_l as *const (), baseline)),
+        #[cfg(target_arch = "x86_64")]
+        "__strtold_l" => Some((strings::__strtold_l as *const (), baseline)),
+        #[cfg(target_arch = "x86_64")]
+        "__wcstold_l" => Some((wide::__wcstold_l as *const (), baseline)),
+        _ => None,
+    };
+    if let Some((function, expected_version)) = locale_function {
+        return version
+            .is_none_or(|version| version == expected_version)
+            .then_some(function as usize as u64);
+    }
     // Narrow long-long locale aliases arrived later on x86-64; their wide
     // counterparts use GLIBC_2.3. All legacy names share the ARM baseline.
     let narrow_ll_locale_version = if cfg!(target_arch = "aarch64") {
@@ -182,6 +221,9 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "strtold" => stdlib::strtold as *const (),
         #[cfg(target_arch = "x86_64")]
         "wcstold" => wide::wcstold as *const (),
+        "setlocale" => locale::setlocale as *const (),
+        "localeconv" => locale::localeconv as *const (),
+        "nl_langinfo" => locale::nl_langinfo as *const (),
         // Share the process environment and putenv's caller-owned storage with
         // ordinary ABI callers; never resolve an independent host-only table.
         "getenv" => stdlib::getenv as *const (),
