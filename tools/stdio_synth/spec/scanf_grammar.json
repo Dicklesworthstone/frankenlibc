@@ -62,6 +62,12 @@
         "input": "octal integer",
         "skips_leading_whitespace": true
       },
+      "b": {
+        "name": "unsigned_binary",
+        "target": "unsigned integer family pointer",
+        "input": "binary integer with optional 0b/0B prefix in all standards modes",
+        "skips_leading_whitespace": true
+      },
       "x": {
         "name": "unsigned_hex",
         "target": "unsigned integer family pointer",

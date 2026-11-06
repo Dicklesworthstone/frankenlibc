@@ -400,6 +400,7 @@ struct ScanDialect {
     prefix: &'static str,
     narrow: [*const (); 4],
     wide: [*const (); 4],
+    narrow_string: [*const (); 2],
     wide_string: [*const (); 2],
 }
 
@@ -529,6 +530,10 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
     // SAFETY: the same bridge defines wide_stream with wchar_t pointers, matching
     // libc::wchar_t on this Linux target, and its handle remains open below.
     let wide: StreamBridge<libc::wchar_t> = unsafe { std::mem::transmute(resolve(c"wide_stream")) };
+    // SAFETY: narrow_string uses exactly StringBridge<char>'s signature and
+    // the bridge handle stays open throughout the calls below.
+    let narrow_string: StringBridge<c_char> =
+        unsafe { std::mem::transmute(resolve(c"narrow_string")) };
     // SAFETY: wide_string has exactly StringBridge<wchar_t>'s seven arguments;
     // its non-null address remains valid until close(handle) after the matrix.
     let wide_string: StringBridge<libc::wchar_t> =
@@ -604,6 +609,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                 wc::wscanf as *const (),
                 wc::vwscanf as *const (),
             ],
+            narrow_string: [io::sscanf as *const (), io::vsscanf as *const ()],
             wide_string: [wc::swscanf as *const (), wc::vswscanf as *const ()],
         },
         ScanDialect {
@@ -619,6 +625,10 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                 iso::__isoc99_vfwscanf as *const (),
                 iso::__isoc99_wscanf as *const (),
                 iso::__isoc99_vwscanf as *const (),
+            ],
+            narrow_string: [
+                io::__isoc99_sscanf as *const (),
+                io::__isoc99_vsscanf as *const (),
             ],
             wide_string: [
                 iso::__isoc99_swscanf as *const (),
@@ -639,6 +649,10 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                 iso::__isoc23_wscanf as *const (),
                 iso::__isoc23_vwscanf as *const (),
             ],
+            narrow_string: [
+                iso::__isoc23_sscanf as *const (),
+                iso::__isoc23_vsscanf as *const (),
+            ],
             wide_string: [
                 iso::__isoc23_swscanf as *const (),
                 iso::__isoc23_vswscanf as *const (),
@@ -652,6 +666,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         prefix,
         narrow: narrow_arms,
         wide: wide_arms,
+        narrow_string: narrow_string_arms,
         wide_string: string_arms,
     } in arms
     {
@@ -734,6 +749,35 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                 }
             }
         }
+        for (is_v, suffix) in ["sscanf", "vsscanf"].into_iter().enumerate() {
+            let name = CString::new(format!("{prefix}{suffix}")).unwrap();
+            let expected = unsafe { dlsym_oracle::host_addr(&name, narrow_string_arms[is_v]) };
+            for (input, format) in cases {
+                let text = CString::new(input).unwrap();
+                let fmt = CString::new(format!("{format}%c")).unwrap();
+                let scan = |target| {
+                    let (mut value, mut consumed, mut tail) = (917, -1, b'?' as c_char);
+                    let rc = unsafe {
+                        narrow_string(
+                            target,
+                            is_v as c_int,
+                            text.as_ptr(),
+                            fmt.as_ptr(),
+                            &mut value,
+                            &mut consumed,
+                            &mut tail,
+                        )
+                    };
+                    (rc, value, consumed, tail)
+                };
+                assert_eq!(
+                    scan(narrow_string_arms[is_v].cast_mut().cast()),
+                    scan(expected),
+                    "{name:?}: {input:?} {format:?}"
+                );
+                comparisons += 1;
+            }
+        }
         for (is_v, suffix) in ["swscanf", "vswscanf"].into_iter().enumerate() {
             let name = CString::new(format!("{prefix}{suffix}")).unwrap();
             let expected = unsafe { dlsym_oracle::host_addr(&name, string_arms[is_v]) };
@@ -764,7 +808,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
             }
         }
     }
-    assert_eq!(comparisons, 1512);
+    assert_eq!(comparisons, 1680);
     println!("scanf dialect matrix: {comparisons} exact-symbol GNU comparisons");
     assert_eq!(unsafe { close(handle) }, 0);
 }

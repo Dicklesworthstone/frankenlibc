@@ -33,6 +33,7 @@ enum ScanfHandler {
     SignedAutoBase,
     UnsignedDecimal,
     UnsignedOctal,
+    UnsignedBinary,
     UnsignedHex,
     Float,
     Character,
@@ -72,6 +73,7 @@ enum IntScanKind {
     SignedAutoBase,
     UnsignedDecimal,
     UnsignedOctal,
+    UnsignedBinary,
     UnsignedHex,
 }
 
@@ -146,6 +148,7 @@ impl ScanfRoute {
                 Some(ScanOperationKind::Int(IntScanKind::UnsignedDecimal))
             }
             ScanfHandler::UnsignedOctal => Some(ScanOperationKind::Int(IntScanKind::UnsignedOctal)),
+            ScanfHandler::UnsignedBinary => Some(ScanOperationKind::Int(IntScanKind::UnsignedBinary)),
             ScanfHandler::UnsignedHex => Some(ScanOperationKind::Int(IntScanKind::UnsignedHex)),
             ScanfHandler::Float => Some(ScanOperationKind::Float),
             ScanfHandler::Character => Some(ScanOperationKind::Character),
@@ -448,6 +451,7 @@ impl IntScanKind {
             IntScanKind::SignedAutoBase => scan_int_auto(input, pos, spec),
             IntScanKind::UnsignedDecimal => scan_int(input, pos, spec, 10, false),
             IntScanKind::UnsignedOctal => scan_int(input, pos, spec, 8, false),
+            IntScanKind::UnsignedBinary => scan_int(input, pos, spec, 2, false),
             IntScanKind::UnsignedHex => scan_int(input, pos, spec, 16, false),
         }
     }
@@ -1313,12 +1317,13 @@ fn scan_int(
     // A base prefix is consumed input, not a significand digit. GNU 2.43
     // rejects a bare prefix even when a field width ends immediately after it.
     let mut any_digit = false;
-    // Optional 0x/0X prefix for hex.
-    if base == 16
+    // Explicit %b accepts 0b/0B in every standards mode, independently of
+    // the dialect flag that controls binary prefixes for %i.
+    if matches!(base, 2 | 16)
         && i + 1 < input.len()
         && chars_read + 2 <= max_chars
         && input[i] == b'0'
-        && (input[i + 1] == b'x' || input[i + 1] == b'X')
+        && input[i + 1].eq_ignore_ascii_case(&if base == 2 { b'b' } else { b'x' })
     {
         i += 2;
         chars_read += 2;
@@ -2541,6 +2546,77 @@ mod tests {
         let result = scan_input(b"-0b1010", &dirs);
         assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::SignedInt(-10)));
+    }
+
+    #[test]
+    fn test_scan_binary_all_integer_lengths_and_dialects() {
+        for (format, expected) in [
+            (b"%hhb%n".as_slice(), 251),
+            (b"%hb%n", 65531),
+            (b"%b%n", u32::MAX as u64 - 4),
+            (b"%lb%n", u64::MAX - 4),
+            (b"%llb%n", u64::MAX - 4),
+            (b"%jb%n", u64::MAX - 4),
+            (b"%zb%n", u64::MAX - 4),
+            (b"%tb%n", u64::MAX - 4),
+        ] {
+            // Unlike %i, %b accepts a binary prefix in every standards mode.
+            for dirs in [parse_scanf_format(format), c23_format(format)] {
+                let result = scan_input(b"-0B101!", &dirs);
+                assert_eq!(result.count, 1, "format={format:?}");
+                assert_eq!(result.values.len(), 2);
+                assert!(matches!(result.values[0], ScanValue::UnsignedInt(v) if v == expected));
+                assert!(matches!(result.values[1], ScanValue::CharsConsumed(6)));
+                assert_eq!(result.consumed, 6);
+            }
+        }
+        let dirs = parse_scanf_format(b"%llb%n");
+        for bits in [64, 65, 600] {
+            let input = "1".repeat(bits);
+            let result = scan_input(input.as_bytes(), &dirs);
+            assert_eq!(result.count, 1);
+            assert!(matches!(result.values[0], ScanValue::UnsignedInt(u64::MAX)));
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == bits));
+        }
+    }
+
+    #[test]
+    fn test_scan_binary_width_failure_and_suppression() {
+        for (input, format, consumed) in [
+            (b"0b!".as_slice(), b"%b%n".as_slice(), 2),
+            (b"-0B", b"%b%n", 3),
+            (b"0b101!", b"%2b%n", 2),
+            (b"0b!", b"%*b%n%d", 2),
+            (b"2!", b"%b%n", 0),
+        ] {
+            let result = scan_input(input, &parse_scanf_format(format));
+            assert_eq!(result.count, 0, "input={input:?} format={format:?}");
+            assert!(result.values.is_empty());
+            assert_eq!(result.consumed, consumed);
+            assert!(!result.input_failure);
+        }
+        for (format, value, consumed) in [(b"%1b%n".as_slice(), 0, 1), (b"%3b%n", 1, 3)] {
+            let result = scan_input(b"0b101!", &parse_scanf_format(format));
+            assert_eq!(result.count, 1);
+            assert!(matches!(result.values[0], ScanValue::UnsignedInt(v) if v == value));
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == consumed));
+        }
+        let result = scan_input(b"101 7!", &parse_scanf_format(b"%*b%n%d"));
+        assert_eq!(result.count, 1);
+        assert_eq!(result.values.len(), 2);
+        assert!(matches!(result.values[0], ScanValue::CharsConsumed(3)));
+        assert!(matches!(result.values[1], ScanValue::SignedInt(7)));
+        assert_eq!(result.consumed, 5);
+        let result = scan_input(b"7 -0b!", &parse_scanf_format(b"%d%b%n"));
+        assert_eq!(result.count, 1);
+        assert_eq!(result.values.len(), 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(7)));
+        assert_eq!(result.consumed, 5);
+        assert!(!result.input_failure);
+        let result = scan_input(b"\t ", &parse_scanf_format(b"%b%n"));
+        assert_eq!(result.count, 0);
+        assert!(result.values.is_empty());
+        assert!(result.input_failure);
     }
 
     #[test]

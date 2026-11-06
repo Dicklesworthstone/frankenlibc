@@ -158,6 +158,7 @@ pub enum ScanfHandler {
     SignedAutoBase,
     UnsignedDecimal,
     UnsignedOctal,
+    UnsignedBinary,
     UnsignedHex,
     Float,
     Character,
@@ -503,6 +504,7 @@ pub fn generate_scanf_table(grammar: &ScanfGrammar) -> [ScanfRoute; 256] {
             }
             "unsigned_decimal" => (ScanfHandler::UnsignedDecimal, ScanfArgCategory::UnsignedInt),
             "unsigned_octal" => (ScanfHandler::UnsignedOctal, ScanfArgCategory::UnsignedInt),
+            "unsigned_binary" => (ScanfHandler::UnsignedBinary, ScanfArgCategory::UnsignedInt),
             "unsigned_hex" | "unsigned_hex_upper" => {
                 (ScanfHandler::UnsignedHex, ScanfArgCategory::UnsignedInt)
             }
@@ -527,6 +529,7 @@ pub fn generate_scanf_table(grammar: &ScanfGrammar) -> [ScanfRoute; 256] {
             | ScanfHandler::SignedAutoBase
             | ScanfHandler::UnsignedDecimal
             | ScanfHandler::UnsignedOctal
+            | ScanfHandler::UnsignedBinary
             | ScanfHandler::UnsignedHex
             | ScanfHandler::CharsConsumed => 0b0111_1111,
             ScanfHandler::Float => 0b1000_0100,
@@ -675,6 +678,7 @@ pub fn emit_scanf_table_source(table: &[ScanfRoute; 256]) -> String {
             ScanfHandler::SignedAutoBase => "ScanfHandler::SignedAutoBase",
             ScanfHandler::UnsignedDecimal => "ScanfHandler::UnsignedDecimal",
             ScanfHandler::UnsignedOctal => "ScanfHandler::UnsignedOctal",
+            ScanfHandler::UnsignedBinary => "ScanfHandler::UnsignedBinary",
             ScanfHandler::UnsignedHex => "ScanfHandler::UnsignedHex",
             ScanfHandler::Float => "ScanfHandler::Float",
             ScanfHandler::Character => "ScanfHandler::Character",
@@ -760,7 +764,7 @@ fn ordered_valid_printf_indices(table: &[PrintfRoute; 256]) -> Vec<usize> {
 }
 
 fn ordered_valid_scanf_indices(table: &[ScanfRoute; 256]) -> Vec<usize> {
-    const PREFERRED_ORDER: &[u8] = b"diuoxXfFeEgGaAcs[np";
+    const PREFERRED_ORDER: &[u8] = b"diuobxXfFeEgGaAcs[np";
     ordered_valid_indices(PREFERRED_ORDER, |idx| {
         table[idx].handler != ScanfHandler::Invalid
     })
@@ -1404,6 +1408,10 @@ mod tests {
 
         assert_eq!(table[b'd' as usize].handler, ScanfHandler::SignedDecimal);
         assert_eq!(table[b'i' as usize].handler, ScanfHandler::SignedAutoBase);
+        assert_eq!(table[b'b' as usize].handler, ScanfHandler::UnsignedBinary);
+        assert_eq!(table[b'b' as usize].arg_category, ScanfArgCategory::UnsignedInt);
+        assert_eq!(table[b'b' as usize].length_mask, 0b0111_1111);
+        assert!(table[b'b' as usize].skips_leading_whitespace);
         assert_eq!(table[b's' as usize].handler, ScanfHandler::String);
         assert_eq!(table[b'[' as usize].handler, ScanfHandler::Scanset);
         assert_eq!(

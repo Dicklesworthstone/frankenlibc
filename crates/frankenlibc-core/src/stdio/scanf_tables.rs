@@ -51,6 +51,12 @@ pub const SCANF_TABLE: [ScanfRoute; 256] = {
         true,
         ScanfArgCategory::UnsignedInt,
     );
+    table[b'b' as usize] = route(
+        ScanfHandler::UnsignedBinary,
+        0b0111_1111,
+        true,
+        ScanfArgCategory::UnsignedInt,
+    );
     table[b'x' as usize] = route(
         ScanfHandler::UnsignedHex,
         0b0111_1111,
