@@ -823,6 +823,30 @@ fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
 
 #[test]
 fn the_aliases_take_the_decimal_int_fast_path() {
+    // This checks strict routing. Hardened mode deliberately uses the engine
+    // instead, so isolate the probe before the process's immutable mode is read.
+    const TEST: &str = "the_aliases_take_the_decimal_int_fast_path";
+    const CHILD: &str = "FRANKENLIBC_SSCANF_STRICT_ROUTING_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env("FRANKENLIBC_MODE", "strict")
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated strict routing probe");
+        assert!(
+            output.status.success(),
+            "strict routing child failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+    assert_eq!(std::env::var("FRANKENLIBC_MODE").as_deref(), Ok("strict"));
+
     // POSITIVE CONTROL first. `strict_decimal_int_format_count` accepts at most
     // STRICT_INT_LIST_MAX (four) `%d` fields, so a FIVE-field format cannot be
     // served by the fast path through ANY arm and must reach the engine — whose directive list spills
