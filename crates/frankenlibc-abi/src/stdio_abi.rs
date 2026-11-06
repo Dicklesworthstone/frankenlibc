@@ -4577,9 +4577,25 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
 
         if let Some(cell) = stream_cell(id) {
             let mut byte = [0u8; 1];
-            if cell.lock().buffered_read_into(&mut byte) == 1 {
+            let mut s = cell.lock();
+            if s.buffered_read_into(&mut byte) == 1 {
+                drop(s);
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
                 return byte[0] as c_int;
+            }
+            // EOF stays set until clearerr/ungetc; do not call the backend
+            // again. A previous error alone does not forbid a character retry.
+            if s.is_eof() {
+                drop(s);
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return libc::EOF;
+            }
+            if !s.is_readable() {
+                drop(s);
+                // SAFETY: only this thread's errno cell is modified.
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return libc::EOF;
             }
         }
 
@@ -15556,9 +15572,18 @@ pub(crate) unsafe fn getdelim_for_caller(
     let buf = &mut scratch.0;
     buf.clear();
 
-    if fixed_mem_cookie(id).is_some() {
-        // The shared memory cursor owns its input window. Reuse the ordinary
-        // byte reader so scanf/ungetc pushback is consumed before that window.
+    if is_cookie_stream(id) {
+        // Cookie streams have no descriptor. Reuse the callback-aware reader,
+        // including the fixed-memory cursor and scanf/ungetc pushback.
+        // Unlike fgetc, GNU getdelim stops on a pre-existing error indicator.
+        let stopped = stream_cell(id).is_some_and(|cell| {
+            let s = cell.lock();
+            s.is_eof() || s.is_error()
+        });
+        if stopped {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        }
         loop {
             let byte = unsafe { fgetc_for_caller(stream, caller) };
             if byte == libc::EOF {

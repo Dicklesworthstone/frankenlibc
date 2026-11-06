@@ -514,15 +514,24 @@ static int close_line_cookie(void *opaque) {
     return 0;
 }
 
+typedef ssize_t (*cookie_getline_fn)(char **, size_t *, FILE *);
+typedef ssize_t (*cookie_getdelim_fn)(char **, size_t *, int, FILE *);
+static cookie_getline_fn cookie_getline;
+static cookie_getdelim_fn cookie_getdelim, cookie_getdelim_alias;
+
 static ssize_t cookie_line_call(int api, char **line, size_t *capacity, FILE *stream) {
-    if (api == 0) return getline(line, capacity, stream);
-    if (api == 1) return getdelim(line, capacity, ';', stream);
-    typedef ssize_t (*getdelim_fn)(char **, size_t *, int, FILE *);
-    getdelim_fn call = (getdelim_fn)dlsym(RTLD_DEFAULT, "__getdelim");
-    return call ? call(line, capacity, api == 2 ? '\n' : ';', stream) : -99;
+    if (api == 0) return cookie_getline(line, capacity, stream);
+    if (api == 1) return cookie_getdelim(line, capacity, ';', stream);
+    return cookie_getdelim_alias(line, capacity, api == 2 ? '\n' : ';', stream);
 }
 
 static int test_cookie_line_reads(void) {
+    /* Resolve before planting errno, and call exact public entrypoints instead
+     * of letting a glibc header inline getline as __getdelim. */
+    cookie_getline = (cookie_getline_fn)dlsym(RTLD_DEFAULT, "getline");
+    cookie_getdelim = (cookie_getdelim_fn)dlsym(RTLD_DEFAULT, "getdelim");
+    cookie_getdelim_alias = (cookie_getdelim_fn)dlsym(RTLD_DEFAULT, "__getdelim");
+    if (!cookie_getline || !cookie_getdelim || !cookie_getdelim_alias) return 1;
     int failed = 0, cases = 0;
     for (int api = 0; api < 4; ++api) {
         for (int unbuffered = 0; unbuffered < 2; ++unbuffered) {
@@ -548,6 +557,8 @@ static int test_cookie_line_reads(void) {
             length = cookie_line_call(api, &line, &capacity, stream);
             bad |= length != 4 || capacity < 5 || memcmp(line, "last", 5) || !feof(stream) || ferror(stream);
             int calls_at_eof = cookie.calls;
+            bad |= fgetc(stream) != EOF;
+            bad |= cookie.calls != calls_at_eof;
             bad |= cookie_line_call(api, &line, &capacity, stream) != -1;
             bad |= cookie.calls != calls_at_eof;
             clearerr(stream);
@@ -594,6 +605,25 @@ static int test_cookie_line_reads(void) {
                     failed += bad != 0; ++cases;
                 }
             }
+
+            struct line_cookie write_only = {.data = payload, .length = sizeof(payload)};
+            stream = fopencookie(&write_only, "w", (cookie_io_functions_t){
+                .read = read_line_cookie, .close = close_line_cookie});
+            if (!stream) return 1;
+            bad = setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0) != 0;
+            line = NULL; capacity = 0;
+            errno = 0x5EED;
+            bad |= cookie_line_call(api, &line, &capacity, stream) != -1;
+            bad |= errno != EBADF || !ferror(stream) || feof(stream) || write_only.calls;
+            clearerr(stream);
+            errno = 0x5EED;
+            bad |= fgetc(stream) != EOF;
+            bad |= errno != EBADF || !ferror(stream) || feof(stream) || write_only.calls;
+            free(line);
+            bad |= fclose(stream) != 0 || write_only.closed != 1;
+            printf("cookie-lines api=%d unbuffered=%d write-only=%s\n",
+                   api, unbuffered, bad ? "FAIL" : "PASS");
+            failed += bad != 0; ++cases;
         }
     }
     printf("fixture_stdio cookie-lines: %s (%d cases, %d failed)\n",
@@ -1440,7 +1470,7 @@ static int test_fmemopen_coherence(void) {
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "cookie-lines") == 0) {
         const char *symbols[] = {"fopencookie", "getline", "getdelim", "__getdelim",
-                                 "ungetc", "setvbuf", "clearerr", "ferror", "feof", "fclose"};
+                                 "fgetc", "ungetc", "setvbuf", "clearerr", "ferror", "feof", "fclose"};
         if (argc != 3 || check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_cookie_line_reads();

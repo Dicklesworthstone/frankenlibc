@@ -98,7 +98,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${COOKIE_LINES_ONLY}" -eq 1 ]]; then
     error_kind=cookie-lines
     error_mode=cookie-lines
-    error_cases=72
+    error_cases=80
     error_option=--cookie-lines
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
