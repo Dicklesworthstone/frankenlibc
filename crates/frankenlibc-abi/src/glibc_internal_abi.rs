@@ -4491,11 +4491,7 @@ pub unsafe extern "C" fn __sbrk(increment: isize) -> *mut c_void {
 // __secure_getenv: native — return null if AT_SECURE, else getenv
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __secure_getenv(name: *const c_char) -> *mut c_char {
-    // Check AT_SECURE — if set, return null for security
-    if unsafe { crate::stdlib_abi::getauxval(libc::AT_SECURE as c_ulong) } != 0 {
-        return std::ptr::null_mut();
-    }
-    unsafe { crate::stdlib_abi::getenv(name) as *mut c_char }
+    unsafe { crate::stdlib_abi::secure_getenv(name) }
 }
 // __select: `select`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

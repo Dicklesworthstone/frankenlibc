@@ -2702,20 +2702,25 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
 
 /// GNU `secure_getenv` — getenv that returns null in secure execution mode.
 ///
-/// We conservatively treat setuid/setgid transitions as secure execution and
-/// return null in that context.
+/// AT_SECURE records the kernel's decision at process startup. Current IDs are
+/// not a substitute: a privileged process can drop its credentials later, and
+/// file capabilities can request secure execution without changing either ID.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn secure_getenv(name: *const c_char) -> *mut c_char {
-    let uid = unsafe { crate::unistd_abi::getuid() };
-    let euid = unsafe { crate::unistd_abi::geteuid() };
-    let gid = unsafe { crate::unistd_abi::getgid() };
-    let egid = unsafe { crate::unistd_abi::getegid() };
-
-    if uid != euid || gid != egid {
-        return ptr::null_mut();
-    }
-
-    unsafe { getenv(name) }
+    // getauxval's native cache is bootstrap/reentry-safe. Preserve errno even
+    // if the auxiliary vector is unavailable; an unknown security state must
+    // not expose environment data by treating a failed lookup as AT_SECURE=0.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    unsafe { set_abi_errno(0) };
+    let secure = unsafe { getauxval(libc::AT_SECURE as c_ulong) };
+    let known = unsafe { *crate::errno_abi::__errno_location() == 0 };
+    let result = if known && secure == 0 {
+        unsafe { getenv(name) }
+    } else {
+        ptr::null_mut()
+    };
+    unsafe { set_abi_errno(saved_errno) };
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -5885,6 +5890,31 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
             _ => return unsafe { getauxval_uncached(type_) },
         }
     }
+}
+
+/// Model one startup-security auxiliary-vector entry for conformance tests.
+///
+/// # Safety
+///
+/// Run only in an isolated test process with no concurrent auxiliary-vector
+/// readers. This hook is absent unless the conformance-testing feature is set;
+/// it is not exported as a C ABI entrypoint.
+#[cfg(feature = "conformance-testing")]
+#[doc(hidden)]
+pub unsafe fn set_secure_auxv_for_conformance(value: Option<usize>) {
+    use std::sync::atomic::Ordering;
+    // Preserve the real process's other auxv entries before modeling this one.
+    unsafe { getauxval(libc::AT_SECURE as c_ulong) };
+    assert_eq!(AUXV_CACHE_STATE.load(Ordering::Acquire), AUXV_CACHE_READY);
+    let index = libc::AT_SECURE as usize;
+    let bit = 1u64 << index;
+    if let Some(value) = value {
+        AUXV_CACHE_VALUES[index].store(value, Ordering::Relaxed);
+        AUXV_CACHE_PRESENT.fetch_or(bit, Ordering::Relaxed);
+    } else {
+        AUXV_CACHE_PRESENT.fetch_and(!bit, Ordering::Relaxed);
+    }
+    AUXV_CACHE_STATE.store(AUXV_CACHE_READY, Ordering::Release);
 }
 
 // ===========================================================================

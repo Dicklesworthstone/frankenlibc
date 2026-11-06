@@ -27319,120 +27319,252 @@ pub unsafe extern "C-unwind" fn obstack_vprintf(
 // POSIX ucontext (getcontext/setcontext/makecontext/swapcontext)
 // ===========================================================================
 
-/// `getcontext` — save current execution context (x86_64 native).
-/// Saves all callee-saved registers, signal mask, and return address into ucontext_t.
+// The synchronous System V context contract resumes at the C caller's return
+// address, not inside a Rust function which has already returned. Capture and
+// restore therefore stay in naked assembly, including the swapcontext entry.
+// Layout comes from the public x86-64 GNU ucontext ABI. Floating-point *control
+// state* is preserved; caller-saved vector/x87 data registers are not promised.
+#[cfg(target_arch = "x86_64")]
+mod ucontext_layout {
+    pub const GREGS: usize = core::mem::offset_of!(libc::ucontext_t, uc_mcontext)
+        + core::mem::offset_of!(libc::mcontext_t, gregs);
+    pub const FPREGS: usize = core::mem::offset_of!(libc::ucontext_t, uc_mcontext)
+        + core::mem::offset_of!(libc::mcontext_t, fpregs);
+    pub const SIGMASK: usize = core::mem::offset_of!(libc::ucontext_t, uc_sigmask);
+    // libc keeps the embedded fpstate private; it immediately follows sigset_t
+    // in the public GNU layout. FNSTENV's 28-byte environment and MXCSR fit it.
+    pub const FPSTATE: usize = SIGMASK + core::mem::size_of::<libc::sigset_t>();
+    pub const MXCSR: usize = core::mem::offset_of!(libc::_libc_fpstate, mxcsr);
+
+    pub const fn reg(index: libc::c_int) -> usize {
+        GREGS + index as usize * core::mem::size_of::<libc::greg_t>()
+    }
+
+    const _: () = {
+        assert!(GREGS == 40 && FPREGS == 224 && SIGMASK == 296);
+        assert!(FPSTATE == 424 && MXCSR == 24);
+        assert!(
+            FPSTATE + core::mem::size_of::<libc::_libc_fpstate>()
+                <= core::mem::size_of::<libc::ucontext_t>()
+        );
+    };
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" fn ucontext_error(error: c_int) -> c_int {
+    // SAFETY: the naked entries tail-call here with an ordinary C call frame.
+    unsafe { set_abi_errno(error) };
+    -1
+}
+
+/// `getcontext` — capture the calling C frame, signal mask, and FP environment.
+///
+/// Synchronous x86-64 contexts are supported. Active CET shadow stacks require
+/// a separate shadow-stack backend and are rejected with ENOTSUP before any
+/// context or thread state is changed.
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
 pub unsafe extern "C" fn getcontext(ucp: *mut libc::ucontext_t) -> c_int {
-    if ucp.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    // ucontext_t offsets for x86_64 (glibc layout):
-    // uc_mcontext.gregs is at offset 40 in ucontext_t
-    // REG_* indices (x86_64): RBX=4, RBP=6, R12=9, R13=10, R14=11, R15=12,
-    //                         RSP=15, RIP=16
-    unsafe {
-        let ctx = &mut *ucp;
-        // Save callee-saved registers via inline asm
-        let rbx: u64;
-        let rbp: u64;
-        let r12: u64;
-        let r13: u64;
-        let r14: u64;
-        let r15: u64;
-        let rsp: u64;
-        std::arch::asm!(
-            "mov {rbx}, rbx",
-            "mov {rbp}, rbp",
-            "mov {r12}, r12",
-            "mov {r13}, r13",
-            "mov {r14}, r14",
-            "mov {r15}, r15",
-            "lea {rsp}, [rsp + 8]", // caller's rsp (before call pushed return addr)
-            rbx = out(reg) rbx,
-            rbp = out(reg) rbp,
-            r12 = out(reg) r12,
-            r13 = out(reg) r13,
-            r14 = out(reg) r14,
-            r15 = out(reg) r15,
-            rsp = out(reg) rsp,
-            options(nomem, nostack, preserves_flags),
-        );
-        // Return address is at [rsp - 8] from the caller's perspective.
-        // After `call getcontext`, the return address was pushed, and we computed
-        // rsp = rsp + 8 (the caller's original rsp). So return addr is at rsp - 8.
-        let rip = *((rsp as *const u64).wrapping_sub(1));
-
-        ctx.uc_mcontext.gregs[libc::REG_RBX as usize] = rbx as i64;
-        ctx.uc_mcontext.gregs[libc::REG_RBP as usize] = rbp as i64;
-        ctx.uc_mcontext.gregs[libc::REG_R12 as usize] = r12 as i64;
-        ctx.uc_mcontext.gregs[libc::REG_R13 as usize] = r13 as i64;
-        ctx.uc_mcontext.gregs[libc::REG_R14 as usize] = r14 as i64;
-        ctx.uc_mcontext.gregs[libc::REG_R15 as usize] = r15 as i64;
-        ctx.uc_mcontext.gregs[libc::REG_RSP as usize] = rsp as i64;
-        ctx.uc_mcontext.gregs[libc::REG_RIP as usize] = rip as i64;
-        ctx.uc_mcontext.gregs[libc::REG_RAX as usize] = 0; // getcontext returns 0
-
-        // Save signal mask
-        let mut mask: libc::sigset_t = std::mem::zeroed();
-        crate::signal_abi::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
-        ctx.uc_sigmask = mask;
-    }
-    0
+    // SAFETY: a jump retains the original caller's stack and callee-saved
+    // registers. r10 is an internal selector, not a System V argument register.
+    core::arch::naked_asm!(
+        "xor r10d, r10d",
+        "jmp {capture}",
+        capture = sym ucontext_capture,
+    );
 }
 
-/// `setcontext` — restore execution context (x86_64 native).
-/// Restores registers and jumps to saved return address. Does not return on success.
+// rdi is the output context; r10 is either zero (getcontext) or the target
+// context (swapcontext). Both public entries JUMP here, so [rsp] is still the
+// original C return address. No Rust frame is ever resumed a second time.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "C" fn ucontext_capture() -> c_int {
+    // SAFETY: the public C contract supplies writable ucontext_t storage and,
+    // for swapcontext, a live initialized target. Only the kernel-sized signal
+    // set is passed to rt_sigprocmask. Every register is saved before reuse.
+    core::arch::naked_asm!(
+        "test rdi, rdi",
+        "jz 8f",
+        // Intel SDM: RDSSPQ is a NOP when CET is absent or disabled. Initialize
+        // its destination so baseline x86-64 needs no CPUID or feature flag.
+        "xor eax, eax",
+        "rdsspq rax",
+        "test rax, rax",
+        "jnz 7f",
+        "mov [rdi + {rbx}], rbx",
+        "mov [rdi + {rbp}], rbp",
+        "mov [rdi + {r12}], r12",
+        "mov [rdi + {r13}], r13",
+        "mov [rdi + {r14}], r14",
+        "mov [rdi + {r15}], r15",
+        "mov [rdi + {rdi}], rdi",
+        "mov [rdi + {rsi}], rsi",
+        "mov [rdi + {rdx}], rdx",
+        "mov [rdi + {rcx}], rcx",
+        "mov [rdi + {r8}], r8",
+        "mov [rdi + {r9}], r9",
+        "mov rax, [rsp]",
+        "mov [rdi + {rip}], rax",
+        "lea rax, [rsp + 8]",
+        "mov [rdi + {rsp}], rax",
+        "mov qword ptr [rdi + {rax}], 0",
+        "lea rax, [rdi + {fpstate}]",
+        "mov [rdi + {fpregs}], rax",
+        "fnstenv [rax]",
+        // FNSTENV masks x87 exceptions; immediately restore the live state.
+        "fldenv [rax]",
+        "stmxcsr [rax + {mxcsr}]",
+        "lea rdx, [rdi + {sigmask}]",
+        "mov r8, r10",
+        "xor esi, esi",
+        "xor edi, edi",
+        "test r8, r8",
+        "jz 2f",
+        "lea rsi, [r8 + {sigmask}]",
+        "mov edi, {setmask}",
+        "2:",
+        // Query for getcontext; atomically exchange masks for swapcontext.
+        "mov r10d, 8",
+        "mov eax, {sigprocmask}",
+        "syscall",
+        "cmp rax, -4095",
+        "jae 9f",
+        "test r8, r8",
+        "jnz {restore}",
+        "xor eax, eax",
+        "ret",
+        "7:",
+        "mov edi, {enotsup}",
+        "jmp {error}",
+        "8:",
+        "mov edi, {efault}",
+        "jmp {error}",
+        "9:",
+        "neg eax",
+        "mov edi, eax",
+        "jmp {error}",
+        rbx = const ucontext_layout::reg(libc::REG_RBX),
+        rbp = const ucontext_layout::reg(libc::REG_RBP),
+        r12 = const ucontext_layout::reg(libc::REG_R12),
+        r13 = const ucontext_layout::reg(libc::REG_R13),
+        r14 = const ucontext_layout::reg(libc::REG_R14),
+        r15 = const ucontext_layout::reg(libc::REG_R15),
+        rdi = const ucontext_layout::reg(libc::REG_RDI),
+        rsi = const ucontext_layout::reg(libc::REG_RSI),
+        rdx = const ucontext_layout::reg(libc::REG_RDX),
+        rcx = const ucontext_layout::reg(libc::REG_RCX),
+        r8 = const ucontext_layout::reg(libc::REG_R8),
+        r9 = const ucontext_layout::reg(libc::REG_R9),
+        rip = const ucontext_layout::reg(libc::REG_RIP),
+        rsp = const ucontext_layout::reg(libc::REG_RSP),
+        rax = const ucontext_layout::reg(libc::REG_RAX),
+        fpstate = const ucontext_layout::FPSTATE,
+        fpregs = const ucontext_layout::FPREGS,
+        mxcsr = const ucontext_layout::MXCSR,
+        sigmask = const ucontext_layout::SIGMASK,
+        setmask = const libc::SIG_SETMASK,
+        sigprocmask = const libc::SYS_rt_sigprocmask,
+        enotsup = const libc::ENOTSUP,
+        efault = const libc::EFAULT,
+        restore = sym ucontext_restore,
+        error = sym ucontext_error,
+    );
+}
+
+/// `setcontext` — restore a synchronous x86-64 context without a Rust frame.
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
 pub unsafe extern "C" fn setcontext(ucp: *const libc::ucontext_t) -> c_int {
-    if ucp.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    unsafe {
-        let ctx = &*ucp;
-        // Restore signal mask
-        crate::signal_abi::sigprocmask(libc::SIG_SETMASK, &ctx.uc_sigmask, std::ptr::null_mut());
-
-        let rbx = ctx.uc_mcontext.gregs[libc::REG_RBX as usize] as u64;
-        let rbp = ctx.uc_mcontext.gregs[libc::REG_RBP as usize] as u64;
-        let r12 = ctx.uc_mcontext.gregs[libc::REG_R12 as usize] as u64;
-        let r13 = ctx.uc_mcontext.gregs[libc::REG_R13 as usize] as u64;
-        let r14 = ctx.uc_mcontext.gregs[libc::REG_R14 as usize] as u64;
-        let r15 = ctx.uc_mcontext.gregs[libc::REG_R15 as usize] as u64;
-        let rsp = ctx.uc_mcontext.gregs[libc::REG_RSP as usize] as u64;
-        let rip = ctx.uc_mcontext.gregs[libc::REG_RIP as usize] as u64;
-        let rax = ctx.uc_mcontext.gregs[libc::REG_RAX as usize] as u64;
-
-        std::arch::asm!(
-            "mov rbx, {rbx}",
-            "mov rbp, {rbp}",
-            "mov r12, {r12}",
-            "mov r13, {r13}",
-            "mov r14, {r14}",
-            "mov r15, {r15}",
-            "mov rsp, {rsp}",
-            "jmp {rip}",
-            rbx = in(reg) rbx,
-            rbp = in(reg) rbp,
-            r12 = in(reg) r12,
-            r13 = in(reg) r13,
-            r14 = in(reg) r14,
-            r15 = in(reg) r15,
-            rsp = in(reg) rsp,
-            rip = in(reg) rip,
-            in("rax") rax,
-            options(noreturn),
-        );
-    }
+    // SAFETY: valid contexts come from getcontext/makecontext/swapcontext.
+    // Failures return on the original stack before restoring any registers.
+    core::arch::naked_asm!(
+        "test rdi, rdi",
+        "jz 8f",
+        "xor eax, eax",
+        "rdsspq rax",
+        "test rax, rax",
+        "jnz 7f",
+        "mov r8, rdi",
+        "lea rsi, [rdi + {sigmask}]",
+        "mov edi, {setmask}",
+        "xor edx, edx",
+        "mov r10d, 8",
+        "mov eax, {sigprocmask}",
+        "syscall",
+        "cmp rax, -4095",
+        "jae 9f",
+        "jmp {restore}",
+        "7:",
+        "mov edi, {enotsup}",
+        "jmp {error}",
+        "8:",
+        "mov edi, {efault}",
+        "jmp {error}",
+        "9:",
+        "neg eax",
+        "mov edi, eax",
+        "jmp {error}",
+        sigmask = const ucontext_layout::SIGMASK,
+        setmask = const libc::SIG_SETMASK,
+        sigprocmask = const libc::SYS_rt_sigprocmask,
+        enotsup = const libc::ENOTSUP,
+        efault = const libc::EFAULT,
+        restore = sym ucontext_restore,
+        error = sym ucontext_error,
+    );
 }
 
-/// `makecontext` — modify context for new function (x86_64 native).
-/// Sets up the context to call `func` with `argc` integer arguments on the
-/// stack pointed to by `uc_stack`. When `func` returns, execution continues
-/// at `uc_link` (if set) or the process exits.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "C" fn ucontext_restore() -> ! {
+    // SAFETY: r8 holds the initialized context after its signal mask was
+    // successfully installed. Fixed registers avoid compiler-allocated inputs
+    // being overwritten while restoring that same register bank. r8 is last.
+    core::arch::naked_asm!(
+        "mov rdx, [r8 + {fpregs}]",
+        "fldenv [rdx]",
+        "ldmxcsr [rdx + {mxcsr}]",
+        "mov r11, [r8 + {rip}]",
+        "mov rsp, [r8 + {rsp}]",
+        "mov rbx, [r8 + {rbx}]",
+        "mov rbp, [r8 + {rbp}]",
+        "mov r12, [r8 + {r12}]",
+        "mov r13, [r8 + {r13}]",
+        "mov r14, [r8 + {r14}]",
+        "mov r15, [r8 + {r15}]",
+        "mov rdi, [r8 + {rdi}]",
+        "mov rsi, [r8 + {rsi}]",
+        "mov rdx, [r8 + {rdx}]",
+        "mov rcx, [r8 + {rcx}]",
+        "mov r9, [r8 + {r9}]",
+        "mov r8, [r8 + {r8}]",
+        "xor eax, eax",
+        "jmp r11",
+        fpregs = const ucontext_layout::FPREGS,
+        mxcsr = const ucontext_layout::MXCSR,
+        rip = const ucontext_layout::reg(libc::REG_RIP),
+        rsp = const ucontext_layout::reg(libc::REG_RSP),
+        rbx = const ucontext_layout::reg(libc::REG_RBX),
+        rbp = const ucontext_layout::reg(libc::REG_RBP),
+        r12 = const ucontext_layout::reg(libc::REG_R12),
+        r13 = const ucontext_layout::reg(libc::REG_R13),
+        r14 = const ucontext_layout::reg(libc::REG_R14),
+        r15 = const ucontext_layout::reg(libc::REG_R15),
+        rdi = const ucontext_layout::reg(libc::REG_RDI),
+        rsi = const ucontext_layout::reg(libc::REG_RSI),
+        rdx = const ucontext_layout::reg(libc::REG_RDX),
+        rcx = const ucontext_layout::reg(libc::REG_RCX),
+        r9 = const ucontext_layout::reg(libc::REG_R9),
+        r8 = const ucontext_layout::reg(libc::REG_R8),
+    );
+}
+
+/// `makecontext` — prepare an aligned stack and arbitrary integer arguments.
+/// The first six words go in argument registers; all remaining words are
+/// delivered on the new stack. The successor is captured at preparation time.
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn makecontext(
@@ -27441,113 +27573,117 @@ pub unsafe extern "C" fn makecontext(
     argc: c_int,
     mut args: ...
 ) {
-    if ucp.is_null() {
+    if ucp.is_null() || func.is_none() || argc < 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return;
     }
+    let mut shadow_stack: usize = 0;
+    // SAFETY: RDSSPQ only observes the current thread; it is a NOP on pre-CET
+    // CPUs. Do not prepare an unusable context for an active shadow stack.
     unsafe {
-        let ctx = &mut *ucp;
-        let stack_top = (ctx.uc_stack.ss_sp as usize + ctx.uc_stack.ss_size) & !0xF; // 16-byte align
-
-        // Extract integer arguments from va_list (up to 6 go in registers on x86_64)
-        let mut int_args = [0u64; 8];
-        for slot in int_args.iter_mut().take((argc as usize).min(8)) {
-            *slot = args.next_arg::<u64>();
-        }
-
-        // Set up stack: push return address (context_exit trampoline), then args > 6
-        let mut sp = stack_top as *mut u64;
-
-        // If argc > 6, push extra args on stack in reverse order
-        if argc > 6 {
-            for i in (6..(argc as usize).min(8)).rev() {
-                sp = sp.sub(1);
-                *sp = int_args[i];
-            }
-        }
-
-        // Push return address: when func returns, we should switch to uc_link
-        // or exit. Use a trampoline.
-        sp = sp.sub(1);
-        *sp = ucontext_trampoline as *const () as u64;
-
-        // Store uc_link pointer in r12 so the trampoline can find it
-        ctx.uc_mcontext.gregs[libc::REG_R12 as usize] = if ctx.uc_link.is_null() {
-            0
+        core::arch::asm!("rdsspq {}", inout(reg) shadow_stack, options(nomem, nostack, preserves_flags));
+    }
+    if shadow_stack != 0 {
+        unsafe { set_abi_errno(libc::ENOTSUP) };
+        return;
+    }
+    // SAFETY: ucp denotes a context initialized by getcontext. The caller owns
+    // the entire uc_stack region and supplies argc promoted integer words.
+    let ctx = unsafe { &mut *ucp };
+    let base = ctx.uc_stack.ss_sp as usize;
+    let stack_args = (argc as usize).saturating_sub(6);
+    let sp = base
+        .checked_add(ctx.uc_stack.ss_size)
+        .and_then(|end| {
+            stack_args
+                .checked_mul(8)
+                .and_then(|bytes| end.checked_sub(bytes))
+        })
+        .and_then(|end| (end & !15).checked_sub(8));
+    let Some(sp) = sp.filter(|&sp| base != 0 && sp >= base) else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return;
+    };
+    const ARG_REGS: [c_int; 6] = [
+        libc::REG_RDI,
+        libc::REG_RSI,
+        libc::REG_RDX,
+        libc::REG_RCX,
+        libc::REG_R8,
+        libc::REG_R9,
+    ];
+    for index in 0..argc as usize {
+        // SAFETY: the x86-64 GNU extension transports full-width argument
+        // slots, including pointers. Each stack word is inside the checked
+        // region above; register arguments do not consume stack space.
+        let value = unsafe { args.next_arg::<u64>() };
+        if index < ARG_REGS.len() {
+            ctx.uc_mcontext.gregs[ARG_REGS[index] as usize] = value as libc::greg_t;
         } else {
-            ctx.uc_link as i64
-        };
-
-        // Set registers for the function call (x86_64 calling convention)
-        ctx.uc_mcontext.gregs[libc::REG_RIP as usize] =
-            func.map_or(0, |f| f as *const () as usize as i64);
-        ctx.uc_mcontext.gregs[libc::REG_RSP as usize] = sp as i64;
-        ctx.uc_mcontext.gregs[libc::REG_RBP as usize] = 0; // clean frame
-
-        // First 6 args go in rdi, rsi, rdx, rcx, r8, r9
-        if argc > 0 {
-            ctx.uc_mcontext.gregs[libc::REG_RDI as usize] = int_args[0] as i64;
-        }
-        if argc > 1 {
-            ctx.uc_mcontext.gregs[libc::REG_RSI as usize] = int_args[1] as i64;
-        }
-        if argc > 2 {
-            ctx.uc_mcontext.gregs[libc::REG_RDX as usize] = int_args[2] as i64;
-        }
-        if argc > 3 {
-            ctx.uc_mcontext.gregs[libc::REG_RCX as usize] = int_args[3] as i64;
-        }
-        if argc > 4 {
-            ctx.uc_mcontext.gregs[libc::REG_R8 as usize] = int_args[4] as i64;
-        }
-        if argc > 5 {
-            ctx.uc_mcontext.gregs[libc::REG_R9 as usize] = int_args[5] as i64;
+            unsafe {
+                (sp as *mut u64)
+                    .add(1 + index - ARG_REGS.len())
+                    .write(value)
+            };
         }
     }
+    // SAFETY: sp is the checked, 8-mod-16 return-address slot. A normal RET
+    // reaches the naked trampoline with a 16-byte-aligned stack.
+    unsafe { (sp as *mut usize).write(ucontext_trampoline as *const () as usize) };
+    ctx.uc_mcontext.gregs[libc::REG_R12 as usize] = ctx.uc_link as libc::greg_t;
+    ctx.uc_mcontext.gregs[libc::REG_RIP as usize] =
+        func.map_or(0, |f| f as *const () as usize as libc::greg_t);
+    ctx.uc_mcontext.gregs[libc::REG_RSP as usize] = sp as libc::greg_t;
+    ctx.uc_mcontext.gregs[libc::REG_RBP as usize] = 0;
 }
 
 /// Trampoline called when the function passed to `makecontext` returns.
-/// Switches to `uc_link` if set, otherwise exits the process.
+/// Normal exit is required for a null successor: atexit handlers and buffered
+/// output must run, rather than silently disappearing through exit_group.
 #[cfg(target_arch = "x86_64")]
-unsafe extern "C" fn ucontext_trampoline() {
-    // r12 holds the uc_link pointer (set by makecontext)
-    let uc_link: u64;
-    unsafe {
-        std::arch::asm!("mov {}, r12", out(reg) uc_link, options(nomem, nostack));
-    }
-    if uc_link != 0 {
-        unsafe { setcontext(uc_link as *const libc::ucontext_t) };
-    }
-    // No uc_link — exit the thread/process
-    frankenlibc_core::syscall::sys_exit_group(0);
+#[unsafe(naked)]
+unsafe extern "C" fn ucontext_trampoline() -> ! {
+    // SAFETY: the completed function preserved r12, and its RET left rsp
+    // aligned for CALL (not for tail-jumping to an ordinary Rust function).
+    core::arch::naked_asm!(
+        "test r12, r12",
+        "jz 2f",
+        "mov rdi, r12",
+        "call {restore}",
+        "mov edi, eax",
+        "call {exit}",
+        "ud2",
+        "2:",
+        "xor edi, edi",
+        "call {exit}",
+        "ud2",
+        restore = sym setcontext,
+        exit = sym crate::stdlib_abi::exit,
+    );
 }
 
-/// `swapcontext` — save current context and switch to new context (x86_64 native).
+/// `swapcontext` — exchange synchronous contexts, resuming with return value 0.
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
 pub unsafe extern "C" fn swapcontext(
     oucp: *mut libc::ucontext_t,
     ucp: *const libc::ucontext_t,
 ) -> c_int {
-    if oucp.is_null() || ucp.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    // Save current context
-    let rc = unsafe { getcontext(oucp) };
-    if rc != 0 {
-        return 0;
-    }
-    // When this saved context is later restored, execution resumes immediately
-    // after the getcontext call. Make that resumed call return non-zero so this
-    // wrapper can complete instead of switching back to `ucp` again.
-    unsafe {
-        (*oucp).uc_mcontext.gregs[libc::REG_RAX as usize] = 1;
-    }
-
-    // Now switch to the new context
-    unsafe { setcontext(ucp) };
-    // setcontext does not return on success
-    -1
+    // SAFETY: preserve the original call frame; capture validates oucp. The
+    // target pointer must be nonnull before it is used as the swap selector.
+    core::arch::naked_asm!(
+        "test rsi, rsi",
+        "jz 2f",
+        "mov r10, rsi",
+        "jmp {capture}",
+        "2:",
+        "mov edi, {efault}",
+        "jmp {error}",
+        capture = sym ucontext_capture,
+        efault = const libc::EFAULT,
+        error = sym ucontext_error,
+    );
 }
 
 #[cfg(not(target_arch = "x86_64"))]
