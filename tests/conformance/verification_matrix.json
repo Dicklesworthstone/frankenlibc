@@ -28207,7 +28207,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.34",
       "title": "Connect existing wide and C23 integer parsers to native plugins",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
@@ -28929,7 +28929,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.35",
       "title": "scanf: reject incomplete integer prefixes while retaining consumed input",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
