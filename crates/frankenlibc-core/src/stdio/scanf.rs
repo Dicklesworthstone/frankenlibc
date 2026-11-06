@@ -2552,7 +2552,11 @@ mod tests {
             let result = scan_input(input, &dirs);
             assert_eq!(result.count, 0, "input={input:?}");
             assert!(result.values.is_empty(), "input={input:?}");
-            let expected = if matches!(input[0], b'-' | b'+') { 3 } else { 2 };
+            let expected = if matches!(input[0], b'-' | b'+') {
+                3
+            } else {
+                2
+            };
             assert_eq!(result.consumed, expected, "input={input:?}");
             assert!(!result.input_failure, "input={input:?}");
         }
