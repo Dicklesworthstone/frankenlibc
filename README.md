@@ -645,6 +645,14 @@ The loader is intentionally narrow at L1 (interpose); the broad dynamic-linking 
 
 ---
 
+## System V contexts
+
+On x86-64, `getcontext`, `setcontext`, `makecontext`, and `swapcontext` support synchronous C coroutine contexts. Naked capture/restore entries preserve the caller's stack and continuation, callee-saved registers, integer argument registers, signal mask, and x87/MXCSR control state. `makecontext` supports arguments beyond the six register slots, aligns the new stack, and captures `uc_link` when the context is prepared. A null successor uses normal process exit, including exit handlers and stream flushing.
+
+The C/assembly protocol in `crates/frankenlibc-abi/tests/unistd_abi_test.rs` passes explicit native and independent GNU function tables through repeated switches, register checks, distinct signal/FP environments, and 0–12 argument cases. Run it with `cargo test -p frankenlibc-abi --test unistd_abi_test ucontext_protocol:: -- --nocapture`; its child processes have bounded deadlines. This is synchronous x86-64 coverage, not qualification of signal-created contexts or AArch64. Active CET shadow stacks are explicitly rejected with `ENOTSUP` before a context or thread state is changed; a shadow-stack switching backend remains unimplemented.
+
+---
+
 ## setjmp / longjmp — Guarded Non-Local Jumps
 
 `setjmp`/`longjmp` are inherently unsafe at the ABI level: a writable `jmp_buf` holds a stack pointer and a return address.

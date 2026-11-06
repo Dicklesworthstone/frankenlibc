@@ -2584,102 +2584,566 @@ fn euidaccess_missing_path_fails_with_enoent() {
 // getcontext / setcontext / makecontext / swapcontext tests
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    fn getcontext(ucp: *mut libc::ucontext_t) -> c_int;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod ucontext_protocol {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::OnceLock;
+
+    // Context restoration returns twice and replaces the running stack. Keep
+    // that protocol entirely in C/assembly, where volatile state and the SysV
+    // register contract can be checked without unwinding through Rust frames.
+    // Every context entry comes from the supplied function table; merely
+    // compiling this fixture against the host cannot qualify the native arm.
+    // The same source supports a standalone release-DSO probe when compiled
+    // with -DFRANKENLIBC_UCONTEXT_STANDALONE and linked with -ldl.
+    const C_SOURCE: &str = r#"
+#define _GNU_SOURCE
+#include <ucontext.h>
+#include <stdint.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <stddef.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+
+struct context_api {
+    int (*get)(ucontext_t *);
+    int (*set)(const ucontext_t *);
+    void (*make)(ucontext_t *, void (*)(void), int, ...);
+    int (*swap)(ucontext_t *, const ucontext_t *);
+    int *(*error_location)(void);
+};
+static struct context_api api;
+#define CHECK(expr) do { if (!(expr)) { \
+    fprintf(stderr, "ucontext assertion at C line %d: %s\n", __LINE__, #expr); \
+    _Exit(90); \
+} } while (0)
+
+static ucontext_t saved, main_ctx, first_ctx, second_ctx;
+static unsigned char first_stack[65536] __attribute__((aligned(16)));
+static unsigned char second_stack[65536] __attribute__((aligned(16)));
+static volatile int resumed, turns, link_stage;
+static sigset_t original_mask;
+static unsigned short original_cw, first_cw, second_cw;
+static unsigned int original_mxcsr, first_mxcsr, second_mxcsr;
+
+static unsigned short read_cw(void) {
+    unsigned short value;
+    __asm__ volatile("fnstcw %0" : "=m" (value));
+    return value;
+}
+static unsigned int read_mxcsr(void) {
+    unsigned int value;
+    __asm__ volatile("stmxcsr %0" : "=m" (value));
+    return value;
+}
+static void set_fp(unsigned short cw, unsigned int mxcsr) {
+    __asm__ volatile("fldcw %0\n\tldmxcsr %1" : : "m" (cw), "m" (mxcsr));
+}
+static void set_mask(int block_first) {
+    sigset_t mask = original_mask;
+    CHECK(sigdelset(&mask, block_first ? SIGUSR2 : SIGUSR1) == 0);
+    CHECK(sigaddset(&mask, block_first ? SIGUSR1 : SIGUSR2) == 0);
+    CHECK(sigprocmask(SIG_SETMASK, &mask, NULL) == 0);
+}
+static void check_environment(int first) {
+    sigset_t mask;
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &mask) == 0);
+    CHECK(sigismember(&mask, SIGUSR1) == first);
+    CHECK(sigismember(&mask, SIGUSR2) == !first);
+    CHECK(read_cw() == (first ? first_cw : second_cw));
+    CHECK((read_mxcsr() & ~0x3fu) ==
+          ((first ? first_mxcsr : second_mxcsr) & ~0x3fu));
+}
+static void restore_environment(void) {
+    CHECK(sigprocmask(SIG_SETMASK, &original_mask, NULL) == 0);
+    set_fp(original_cw, original_mxcsr);
+}
+static void test_get_set(void) {
+    resumed = 0;
+    set_mask(1);
+    set_fp(first_cw, first_mxcsr);
+    CHECK(api.get(&saved) == 0);
+    if (!resumed) {
+        resumed = 1;
+        set_mask(0);
+        set_fp(second_cw, second_mxcsr);
+        CHECK(api.set(&saved) == 0);
+        CHECK(0 && "setcontext returned instead of restoring getcontext");
+    }
+    CHECK(resumed == 1);
+    check_environment(1);
+    restore_environment();
 }
 
-#[test]
-fn getcontext_returns_zero() {
-    let mut ctx: libc::ucontext_t = unsafe { std::mem::zeroed() };
-    let rc = unsafe { getcontext(&mut ctx) };
-    assert_eq!(rc, 0, "getcontext should return 0 on success");
+// The wrappers preserve their own caller's registers, install six distinct
+// 64-bit values, and verify those values after the actual context restoration.
+// RBP is included; the C compiler cannot quietly reserve it for a frame pointer.
+#define REG_SAVE \
+    "push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n sub $40,%rsp\n"
+#define REG_VALUES \
+    "movabs $0x1122334455667788,%rbx\n movabs $0x2233445566778899,%rbp\n" \
+    "movabs $0x33445566778899aa,%r12\n movabs $0x445566778899aabb,%r13\n" \
+    "movabs $0x5566778899aabbcc,%r14\n movabs $0x66778899aabbccdd,%r15\n"
+#define REG_CHECK \
+    "movabs $0x1122334455667788,%rdx\n cmp %rdx,%rbx\n jne 8f\n" \
+    "movabs $0x2233445566778899,%rdx\n cmp %rdx,%rbp\n jne 8f\n" \
+    "movabs $0x33445566778899aa,%rdx\n cmp %rdx,%r12\n jne 8f\n" \
+    "movabs $0x445566778899aabb,%rdx\n cmp %rdx,%r13\n jne 8f\n" \
+    "movabs $0x5566778899aabbcc,%rdx\n cmp %rdx,%r14\n jne 8f\n" \
+    "movabs $0x66778899aabbccdd,%rdx\n cmp %rdx,%r15\n jne 8f\n" \
+    "xor %eax,%eax\n jmp 9f\n 8: mov $1,%eax\n"
+#define REG_RETURN \
+    "9: add $40,%rsp\n pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n ret\n"
+__attribute__((visibility("hidden")))
+int fl_context_get_registers(const struct context_api *, ucontext_t *);
+__attribute__((visibility("hidden")))
+int fl_context_swap_registers(const struct context_api *, ucontext_t *, const ucontext_t *);
+// Some glibc syscall-error paths leave R12 holding the target context. Protect
+// the C driver's locals while testing the returned error; the successful-swap
+// wrapper above independently checks every callee-saved register.
+__attribute__((visibility("hidden")))
+int fl_context_failed_swap(const struct context_api *, ucontext_t *, const ucontext_t *);
+__asm__(
+    ".text\n .globl fl_context_get_registers\n .hidden fl_context_get_registers\n"
+    ".type fl_context_get_registers,@function\n fl_context_get_registers:\n"
+    REG_SAVE
+    "mov %rdi,0(%rsp)\n mov %rsi,8(%rsp)\n movq $0,16(%rsp)\n"
+    REG_VALUES
+    "mov 0(%rsp),%rax\n mov 8(%rsp),%rdi\n call *0(%rax)\n"
+    "test %eax,%eax\n jne 8f\n cmpq $0,16(%rsp)\n jne 1f\n"
+    "movq $1,16(%rsp)\n xor %ebx,%ebx\n xor %ebp,%ebp\n"
+    "xor %r12d,%r12d\n xor %r13d,%r13d\n xor %r14d,%r14d\n xor %r15d,%r15d\n"
+    "mov 0(%rsp),%rax\n mov 8(%rsp),%rdi\n call *8(%rax)\n jmp 8f\n 1:\n"
+    REG_CHECK REG_RETURN
+    ".size fl_context_get_registers,.-fl_context_get_registers\n"
+    ".globl fl_context_swap_registers\n .hidden fl_context_swap_registers\n"
+    ".type fl_context_swap_registers,@function\n fl_context_swap_registers:\n"
+    REG_SAVE
+    "mov %rdi,%rax\n mov %rsi,%rdi\n mov %rdx,%rsi\n"
+    REG_VALUES
+    "call *24(%rax)\n test %eax,%eax\n jne 8f\n"
+    REG_CHECK REG_RETURN
+    ".size fl_context_swap_registers,.-fl_context_swap_registers\n"
+    ".globl fl_context_failed_swap\n .hidden fl_context_failed_swap\n"
+    ".type fl_context_failed_swap,@function\n fl_context_failed_swap:\n"
+    "push %r12\n mov %rdi,%rax\n mov %rsi,%rdi\n mov %rdx,%rsi\n"
+    "call *24(%rax)\n pop %r12\n ret\n"
+    ".size fl_context_failed_swap,.-fl_context_failed_swap\n"
+);
+
+static void first_coroutine(void) {
+    for (int i = 0; i < 16; ++i) {
+        CHECK(turns == i * 2);
+        check_environment(1);
+        ++turns;
+        CHECK(fl_context_swap_registers(&api, &first_ctx, &second_ctx) == 0);
+        check_environment(1);
+    }
+    // Returning must transfer to main_ctx through uc_link.
+}
+static void second_coroutine(void) {
+    for (int i = 0; i < 16; ++i) {
+        CHECK(turns == i * 2 + 1);
+        check_environment(0);
+        ++turns;
+        CHECK(fl_context_swap_registers(&api, &second_ctx, &first_ctx) == 0);
+        check_environment(0);
+    }
+    CHECK(0 && "the first coroutine should return to its uc_link");
+}
+static void prepare(ucontext_t *ctx, unsigned char *stack, ucontext_t *link) {
+    CHECK(api.get(ctx) == 0);
+    ctx->uc_stack.ss_sp = stack;
+    ctx->uc_stack.ss_size = sizeof(first_stack);
+    ctx->uc_stack.ss_flags = 0;
+    ctx->uc_link = link;
+}
+static void test_swaps(void) {
+    turns = 0;
+    set_mask(1);
+    set_fp(first_cw, first_mxcsr);
+    prepare(&first_ctx, first_stack, &main_ctx);
+    api.make(&first_ctx, first_coroutine, 0);
+    set_mask(0);
+    set_fp(second_cw, second_mxcsr);
+    prepare(&second_ctx, second_stack, &main_ctx);
+    api.make(&second_ctx, second_coroutine, 0);
+    restore_environment();
+    CHECK(fl_context_swap_registers(&api, &main_ctx, &first_ctx) == 0);
+    CHECK(turns == 32);
+    CHECK(read_cw() == original_cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (original_mxcsr & ~0x3fu));
+    sigset_t mask;
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &mask) == 0);
+    CHECK(sigismember(&mask, SIGUSR1) == sigismember(&original_mask, SIGUSR1));
+    CHECK(sigismember(&mask, SIGUSR2) == sigismember(&original_mask, SIGUSR2));
 }
 
-#[test]
-fn getcontext_saves_stack_pointer() {
-    let mut ctx: libc::ucontext_t = unsafe { std::mem::zeroed() };
-    let rc = unsafe { getcontext(&mut ctx) };
-    assert_eq!(rc, 0);
-
-    // RSP should be saved and point somewhere in the current stack
-    let saved_rsp = ctx.uc_mcontext.gregs[libc::REG_RSP as usize];
-    assert_ne!(saved_rsp, 0, "saved RSP should not be zero");
-
-    // It should be reasonably close to our current stack frame
-    let local_var: u64 = 0;
-    let local_addr = &local_var as *const u64 as usize;
-    let diff = (saved_rsp as usize).abs_diff(local_addr);
-    // Stack frames are typically within 64KB of each other
-    assert!(
-        diff < 65536,
-        "saved RSP should be near current stack, diff={diff}"
-    );
+static uintptr_t expected[12];
+static uint64_t pointer_payload = UINT64_C(0xfedcba9876543210);
+static volatile int argument_count, argument_calls;
+__attribute__((used,visibility("hidden"))) volatile unsigned long fl_entry_alignment;
+static void check_args(const uintptr_t *args, int count) {
+    CHECK(count == argument_count);
+    CHECK(fl_entry_alignment == 8);
+    for (int i = 0; i < count; ++i) CHECK(args[i] == expected[i]);
+    if (count) CHECK(*(const uint64_t *)args[0] == pointer_payload);
+    ++argument_calls;
+}
+#define ARG_ENTRY(n) \
+    __attribute__((visibility("hidden"))) void args##n(void); \
+    __asm__(".text\n .globl args" #n "\n .hidden args" #n "\n" \
+            ".type args" #n ",@function\n args" #n ":\n" \
+            "mov %rsp,%rax\n and $15,%eax\n mov %rax,fl_entry_alignment(%rip)\n" \
+            "jmp args" #n "_body\n .size args" #n ",.-args" #n "\n"); \
+    __attribute__((used,visibility("hidden")))
+ARG_ENTRY(0) void args0_body(void) { check_args(NULL, 0); }
+ARG_ENTRY(1) void args1_body(uintptr_t a) { uintptr_t v[] = {a}; check_args(v, 1); }
+ARG_ENTRY(6) void args6_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f) {
+    uintptr_t v[] = {a,b,c,d,e,f}; check_args(v, 6);
+}
+ARG_ENTRY(7) void args7_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g) {
+    uintptr_t v[] = {a,b,c,d,e,f,g}; check_args(v, 7);
+}
+ARG_ENTRY(8) void args8_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g, uintptr_t h) {
+    uintptr_t v[] = {a,b,c,d,e,f,g,h}; check_args(v, 8);
+}
+ARG_ENTRY(9) void args9_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g, uintptr_t h, uintptr_t i) {
+    uintptr_t v[] = {a,b,c,d,e,f,g,h,i}; check_args(v, 9);
+}
+ARG_ENTRY(12) void args12_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g, uintptr_t h,
+    uintptr_t i, uintptr_t j, uintptr_t k, uintptr_t l) {
+    uintptr_t v[] = {a,b,c,d,e,f,g,h,i,j,k,l}; check_args(v, 12);
+}
+static void test_arguments(void) {
+    expected[0] = (uintptr_t)&pointer_payload;
+    CHECK(expected[0] > UINT32_MAX);
+    for (int i = 1; i < 12; ++i)
+        expected[i] = UINT64_C(0xabcdef1200000000) + (uintptr_t)i * 0x10101;
+    static const int counts[] = {0,1,6,7,8,9,12};
+    void (*functions[])(void) = {args0,args1,args6,args7,args8,args9,args12};
+    argument_calls = 0;
+    for (unsigned i = 0; i < sizeof(counts)/sizeof(counts[0]); ++i) {
+        argument_count = counts[i];
+        fl_entry_alignment = 0;
+        prepare(&first_ctx, first_stack, &main_ctx);
+        api.make(&first_ctx, functions[i], counts[i],
+            expected[0],expected[1],expected[2],expected[3],expected[4],expected[5],
+            expected[6],expected[7],expected[8],expected[9],expected[10],expected[11]);
+        CHECK(fl_context_swap_registers(&api, &main_ctx, &first_ctx) == 0);
+        CHECK(argument_calls == (int)i + 1);
+    }
+}
+static void link_first(void) { CHECK(link_stage == 0); link_stage = 1; }
+static void link_second(void) { CHECK(link_stage == 1); link_stage = 2; }
+static void test_link_chain(void) {
+    link_stage = 0;
+    prepare(&second_ctx, second_stack, &main_ctx);
+    api.make(&second_ctx, link_second, 0);
+    prepare(&first_ctx, first_stack, &second_ctx);
+    api.make(&first_ctx, link_first, 0);
+    CHECK(fl_context_swap_registers(&api, &main_ctx, &first_ctx) == 0);
+    CHECK(link_stage == 2);
+}
+static void empty_context(void) {}
+static void test_null_link(void) {
+    // A fresh host stdio stream avoids assumptions about the test runner's
+    // stdout buffering. Returning from uc_link == NULL must call exit and
+    // flush it; a direct exit_group/_exit loses this marker.
+    FILE *stream = fdopen(dup(STDOUT_FILENO), "w");
+    static char buffer[4096];
+    CHECK(stream != NULL);
+    CHECK(setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) == 0);
+    CHECK(fputs("ucontext-null-link-flushed\n", stream) >= 0);
+    prepare(&first_ctx, first_stack, NULL);
+    api.make(&first_ctx, empty_context, 0);
+    CHECK(api.swap(&main_ctx, &first_ctx) == 0);
+    CHECK(0 && "a NULL uc_link must exit the process");
+}
+static void unexpected_context(void) {
+    CHECK(0 && "a failed signal-mask syscall must not switch context");
+}
+static void test_syscall_failure(void) {
+    prepare(&first_ctx, first_stack, NULL);
+    api.make(&first_ctx, unexpected_context, 0);
+    int *error = api.error_location();
+    CHECK(error != NULL);
+    unsigned short cw = read_cw();
+    unsigned int mxcsr = read_mxcsr();
+    struct sock_filter instructions[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigprocmask, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog filter = {
+        .len = sizeof(instructions) / sizeof(instructions[0]),
+        .filter = instructions,
+    };
+    CHECK(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0);
+    CHECK(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &filter) == 0);
+    volatile uintptr_t stack_sentinel = UINT64_C(0x123456789abcdef0);
+    *error = 0;
+    CHECK(api.get(&saved) == -1);
+    CHECK(*error == EPERM);
+    CHECK(stack_sentinel == UINT64_C(0x123456789abcdef0));
+    CHECK(read_cw() == cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (mxcsr & ~0x3fu));
+    *error = 0;
+    CHECK(api.set(&first_ctx) == -1);
+    CHECK(*error == EPERM);
+    CHECK(stack_sentinel == UINT64_C(0x123456789abcdef0));
+    CHECK(read_cw() == cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (mxcsr & ~0x3fu));
+    *error = 0;
+    CHECK(fl_context_failed_swap(&api, &saved, &first_ctx) == -1);
+    CHECK(*error == EPERM);
+    CHECK(stack_sentinel == UINT64_C(0x123456789abcdef0));
+    CHECK(read_cw() == cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (mxcsr & ~0x3fu));
+    // The filter is confined to this fresh subprocess. Avoid returning into
+    // Rust thread cleanup, which can legitimately need rt_sigprocmask itself.
+    static const char marker[] = "ucontext-syscall-error-ok\n";
+    CHECK(write(STDOUT_FILENO, marker, sizeof(marker) - 1) == sizeof(marker) - 1);
+    _Exit(0);
+}
+int fl_ucontext_probe(const struct context_api *functions, int scenario) {
+    api = *functions;
+    CHECK(api.get && api.set && api.make && api.swap && api.error_location);
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &original_mask) == 0);
+    original_cw = read_cw();
+    original_mxcsr = read_mxcsr();
+    first_cw = (original_cw & ~0xc00u) | 0x400u;
+    second_cw = (original_cw & ~0xc00u) | 0x800u;
+    first_mxcsr = (original_mxcsr & ~0x6000u) | 0x4000u;
+    second_mxcsr = (original_mxcsr & ~0x6000u) | 0x2000u;
+    if (scenario == 1) test_null_link();
+    if (scenario == 2) test_syscall_failure();
+    CHECK(scenario == 0);
+    test_get_set();
+    CHECK(fl_context_get_registers(&api, &saved) == 0);
+    test_swaps();
+    test_arguments();
+    test_link_chain();
+    restore_environment();
+    return 0;
 }
 
-#[test]
-fn getcontext_saves_instruction_pointer() {
-    let mut ctx: libc::ucontext_t = unsafe { std::mem::zeroed() };
-    let rc = unsafe { getcontext(&mut ctx) };
-    assert_eq!(rc, 0);
-
-    // RIP should be non-zero and point into code (text segment)
-    let saved_rip = ctx.uc_mcontext.gregs[libc::REG_RIP as usize];
-    assert_ne!(saved_rip, 0, "saved RIP should not be zero");
+#ifdef FRANKENLIBC_UCONTEXT_STANDALONE
+int main(int argc, char **argv) {
+    CHECK(argc == 3);
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    CHECK(host != NULL);
+    int is_host = strcmp(argv[1], "host") == 0;
+    void *provider = is_host ? host : dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    CHECK(provider != NULL);
+    const char *names[] = {"getcontext", "setcontext", "makecontext", "swapcontext", "__errno_location"};
+    void *symbols[5];
+    for (int i = 0; i < 5; ++i) {
+        symbols[i] = dlsym(provider, names[i]);
+        CHECK(symbols[i] != NULL);
+        if (!is_host && i < 4) CHECK(symbols[i] != dlsym(host, names[i]));
+    }
+    struct context_api functions;
+    _Static_assert(sizeof(functions) == sizeof(symbols), "function-table ABI");
+    memcpy(&functions, symbols, sizeof(functions));
+    alarm(15);
+    int result = fl_ucontext_probe(&functions, atoi(argv[2]));
+    puts("ucontext-protocol-ok");
+    return result;
 }
+#endif
+"#;
 
-/// Test makecontext + swapcontext in a subprocess.
-/// Context switching is not safe in multi-threaded test harness,
-/// so we fork a child process to run the actual test.
-#[test]
-fn makecontext_swapcontext_round_trip() {
-    // Fork a subprocess to safely test context switching (avoids SIGSEGV
-    // from multi-threaded test harness conflicts with context manipulation).
-    let result = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(concat!(
-            "cat > /tmp/frankenlibc_ucontext_test.c << 'CEOF'\n",
-            "#include <ucontext.h>\n",
-            "#include <stdio.h>\n",
-            "#include <stdlib.h>\n",
-            "static ucontext_t main_ctx, func_ctx;\n",
-            "static int called = 0;\n",
-            "static void test_func(void) { called = 1; }\n",
-            "int main(void) {\n",
-            "    char stack[65536];\n",
-            "    getcontext(&func_ctx);\n",
-            "    func_ctx.uc_stack.ss_sp = stack;\n",
-            "    func_ctx.uc_stack.ss_size = sizeof(stack);\n",
-            "    func_ctx.uc_link = &main_ctx;\n",
-            "    makecontext(&func_ctx, test_func, 0);\n",
-            "    swapcontext(&main_ctx, &func_ctx);\n",
-            "    if (!called) { fprintf(stderr, \"func not called\\n\"); return 1; }\n",
-            "    printf(\"OK\\n\");\n",
-            "    return 0;\n",
-            "}\n",
-            "CEOF\n",
-            "gcc -o /tmp/frankenlibc_ucontext_test /tmp/frankenlibc_ucontext_test.c && ",
-            "/tmp/frankenlibc_ucontext_test"
-        ))
-        .output();
+    fn fixture() -> &'static Path {
+        static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
+        FIXTURE
+            .get_or_init(|| {
+                let directory = std::env::temp_dir().join(format!(
+                    "frankenlibc-ucontext-{}-{}",
+                    std::process::id(),
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                ));
+                std::fs::create_dir(&directory).expect("create ucontext fixture directory");
+                let source = directory.join("ucontext_protocol.c");
+                let library = directory.join("ucontext_protocol.so");
+                std::fs::write(&source, C_SOURCE).expect("write ucontext C fixture");
+                let output = Command::new("cc")
+                    .args([
+                        "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
+                    ])
+                    .arg(&source)
+                    .arg("-o")
+                    .arg(&library)
+                    .output()
+                    .expect("compile ucontext C fixture (a C compiler is required)");
+                assert!(
+                    output.status.success(),
+                    "ucontext fixture compilation failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                library
+            })
+            .as_path()
+    }
 
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert!(
-                output.status.success() && stdout.trim() == "OK",
-                "ucontext round-trip test failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+    fn run_provider(provider: &str, scenario: i32) -> String {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ucontext_protocol::protocol_child",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("FRANKENLIBC_TEST_UCONTEXT_FIXTURE", fixture())
+            .env("FRANKENLIBC_TEST_UCONTEXT_PROVIDER", provider)
+            .env("FRANKENLIBC_TEST_UCONTEXT_SCENARIO", scenario.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn isolated ucontext protocol");
+        let started = Instant::now();
+        let mut timed_out = false;
+        while child.try_wait().expect("poll ucontext child").is_none() {
+            if started.elapsed() >= Duration::from_secs(20) {
+                child.kill().expect("kill timed-out ucontext child");
+                timed_out = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        Err(e) => {
-            // gcc not available — skip
-            eprintln!("skipping ucontext round-trip test: {e}");
+        let output = child.wait_with_output().expect("collect ucontext child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !timed_out && output.status.success(),
+            "{provider} ucontext scenario {scenario}: status={}, timed_out={timed_out}; stdout={stdout}; stderr={stderr}",
+            output.status
+        );
+        stdout.into_owned()
+    }
+
+    #[test]
+    fn native_context_protocol_matches_host() {
+        for provider in ["host", "native"] {
+            let output = run_provider(provider, 0);
+            assert!(
+                output.contains("ucontext-protocol-ok"),
+                "{provider}: {output}"
+            );
         }
     }
 
-    // Cleanup
-    let _ = std::fs::remove_file("/tmp/frankenlibc_ucontext_test.c");
-    let _ = std::fs::remove_file("/tmp/frankenlibc_ucontext_test");
+    #[test]
+    fn null_link_exits_and_flushes_streams() {
+        for provider in ["host", "native"] {
+            let output = run_provider(provider, 1);
+            assert!(
+                output.contains("ucontext-null-link-flushed"),
+                "{provider}: {output}"
+            );
+            assert!(
+                !output.contains("ucontext-protocol-ok"),
+                "NULL uc_link returned: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_mask_syscall_failures_return_without_switching() {
+        for provider in ["host", "native"] {
+            let output = run_provider(provider, 2);
+            assert!(
+                output.contains("ucontext-syscall-error-ok"),
+                "{provider}: {output}"
+            );
+            assert!(
+                !output.contains("ucontext-protocol-ok"),
+                "filtered child returned into Rust cleanup: {output}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "invoked with explicit provider by the bounded ucontext parent tests"]
+    fn protocol_child() {
+        use frankenlibc_abi::unistd_abi;
+        #[repr(C)]
+        struct ContextApi {
+            get: *const c_void,
+            set: *const c_void,
+            make: *const c_void,
+            swap: *const c_void,
+            error_location: *const c_void,
+        }
+        let native = ContextApi {
+            get: unistd_abi::getcontext as *const c_void,
+            set: unistd_abi::setcontext as *const c_void,
+            make: unistd_abi::makecontext as *const c_void,
+            swap: unistd_abi::swapcontext as *const c_void,
+            error_location: __errno_location as *const c_void,
+        };
+        let provider = std::env::var("FRANKENLIBC_TEST_UCONTEXT_PROVIDER").unwrap();
+        // SAFETY: host_addr verifies that all four oracle addresses differ from
+        // the native definitions. The C fixture consumes their exact C ABIs.
+        let functions = match provider.as_str() {
+            "native" => native,
+            "host" => unsafe {
+                ContextApi {
+                    get: dlsym_oracle::host_addr(c"getcontext", native.get.cast()),
+                    set: dlsym_oracle::host_addr(c"setcontext", native.set.cast()),
+                    make: dlsym_oracle::host_addr(c"makecontext", native.make.cast()),
+                    swap: dlsym_oracle::host_addr(c"swapcontext", native.swap.cast()),
+                    error_location: dlsym_oracle::host_addr(
+                        c"__errno_location",
+                        native.error_location.cast(),
+                    ),
+                }
+            },
+            other => panic!("unknown ucontext provider {other}"),
+        };
+        let path =
+            CString::new(std::env::var("FRANKENLIBC_TEST_UCONTEXT_FIXTURE").unwrap()).unwrap();
+        let scenario: c_int = std::env::var("FRANKENLIBC_TEST_UCONTEXT_SCENARIO")
+            .unwrap()
+            .parse()
+            .unwrap();
+        // SAFETY: this freshly executed subprocess owns the fixture for its
+        // entire lifetime; a corrupt context cannot affect the parent runner.
+        unsafe {
+            let handle = libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            assert!(!handle.is_null(), "load ucontext fixture");
+            let address = libc::dlsym(handle, c"fl_ucontext_probe".as_ptr());
+            assert!(!address.is_null(), "resolve ucontext fixture entry");
+            let probe: unsafe extern "C" fn(*const ContextApi, c_int) -> c_int =
+                std::mem::transmute(address);
+            assert_eq!(
+                probe(&functions, scenario),
+                0,
+                "{provider} ucontext protocol"
+            );
+        }
+        println!("ucontext-protocol-ok");
+    }
 }
 
 // ---------------------------------------------------------------------------
