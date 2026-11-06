@@ -1018,11 +1018,12 @@ mod numeric_locales {
         count
     }
 
-    fn exact_rounding(native: LocaleApi, host: LocaleApi, parsers: &[Parser]) -> usize {
-        // This gate preserves the existing numerical engine's scope. All
-        // inputs are exactly representable in every return type; it proves
-        // locale selection does not change rounding state, not correct
-        // directed rounding of arbitrary inexact conversions.
+    fn rounding(native: LocaleApi, host: LocaleApi, parsers: &[Parser]) -> usize {
+        // Locale normalization must reach the same correctly rounded engine
+        // as the C paths, including inexact values, tiny results, and overflow.
+        // The deeper bits/errno/exception matrix lives in strtod_edges; these
+        // rows additionally exercise every explicit-l alias with both radix
+        // encodings and check that the selected rounding mode is preserved.
         type SetRound = unsafe extern "C" fn(c_int) -> c_int;
         type GetRound = unsafe extern "C" fn() -> c_int;
         let (set, get): (SetRound, GetRound) = unsafe {
@@ -1032,33 +1033,56 @@ mod numeric_locales {
             )
         };
         let original = unsafe { get() };
-        let handles = (
-            native.create(c"ps_AF.UTF-8", libc::LC_ALL_MASK, "٫".as_bytes()),
-            host.create(c"ps_AF.UTF-8", libc::LC_ALL_MASK, "٫".as_bytes()),
-        );
         let mut count = 0;
-        for mode in [0, 0x400, 0x800, 0xc00] {
-            assert_eq!(unsafe { set(mode) }, 0);
-            for text in ["1٫5", "-2٫25", "0x1٫8p-1", "-0٫0", "\u{2003}8٫125tail"] {
-                count += compare(
-                    parsers,
-                    native,
-                    host,
-                    handles,
-                    &format!("round={mode:#x}"),
-                    text,
-                    true,
-                );
-                assert_eq!(unsafe { get() }, mode, "conversion changed rounding mode");
-                assert_eq!(unsafe { fenv_abi::fegetround() }, mode);
+        for (name, radix) in [(c"de_DE.UTF-8", ","), (c"ps_AF.UTF-8", "٫")] {
+            let handles = (
+                native.create(name, libc::LC_ALL_MASK, radix.as_bytes()),
+                host.create(name, libc::LC_ALL_MASK, radix.as_bytes()),
+            );
+            for mode in [0, 0x400, 0x800, 0xc00] {
+                assert_eq!(unsafe { set(mode) }, 0);
+                for text in [
+                    "1.5",
+                    "-2.25",
+                    "0x1.8p-1",
+                    "-0.0",
+                    "\u{2003}8.125tail",
+                    "0.1",
+                    "-0.1",
+                    "+0.1tail",
+                    "0x1.000001000000000000000001p0",
+                    "-0x1.000001000000000000000001p0",
+                    "0x1.000000ffffffffffffffffffffp0",
+                    "-0x1.000000ffffffffffffffffffffp0",
+                    "1.0000000000000000000000000000000001",
+                    "-1.0000000000000000000000000000000001",
+                    "0x1p-16494",
+                    "-0x1p-16495",
+                    "1e999999999",
+                    "-1e999999999",
+                    "1e-999999999",
+                    "-1e-999999999",
+                ] {
+                    count += compare(
+                        parsers,
+                        native,
+                        host,
+                        handles,
+                        &format!("locale={name:?} round={mode:#x}"),
+                        &text.replace('.', radix),
+                        true,
+                    );
+                    assert_eq!(unsafe { get() }, mode, "conversion changed rounding mode");
+                    assert_eq!(unsafe { fenv_abi::fegetround() }, mode);
+                }
+            }
+            // SAFETY: neither object was selected, and all calls finished.
+            unsafe {
+                (native.free)(handles.0);
+                (host.free)(handles.1);
             }
         }
         assert_eq!(unsafe { set(original) }, 0);
-        // SAFETY: neither object was selected, and all calls finished.
-        unsafe {
-            (native.free)(handles.0);
-            (host.free)(handles.1);
-        }
         count
     }
 
@@ -1235,7 +1259,7 @@ mod numeric_locales {
         let comparisons = match scenario.as_str() {
             "matrix" => matrix(native, host, &parsers),
             "selection" => selection(native, host, &parsers),
-            "exact_rounding" => exact_rounding(native, host, &parsers),
+            "rounding" => rounding(native, host, &parsers),
             "threads" => concurrent(),
             "guarded_radix" => guarded_radix(native, host, &parsers),
             other => panic!("unknown scenario {other}"),
@@ -1278,7 +1302,7 @@ mod numeric_locales {
         for scenario in [
             "matrix",
             "selection",
-            "exact_rounding",
+            "rounding",
             "threads",
             "guarded_radix",
         ] {

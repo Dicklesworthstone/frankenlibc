@@ -8,6 +8,7 @@ use std::mem::size_of;
 use std::simd::{Select, Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 use std::sync::{Mutex, OnceLock};
 
+use frankenlibc_core::float128::{BinaryFormat, BinaryParse, RoundingMode};
 use frankenlibc_core::stdio::StdioStream;
 use frankenlibc_core::stdio::printf::{FormatSegment, parse_format_string};
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
@@ -5464,8 +5465,19 @@ unsafe fn parse_wcstod_integer_fast(nptr: *const u32) -> Option<(f64, usize)> {
     {
         return None;
     }
-    let v = acc as f64;
-    Some((if negative { -v } else { v }, i))
+    // Encode the known-exact integer directly. An unsigned-to-float cast can
+    // lower to floating subtraction, whose exact zero is negative under
+    // FE_DOWNWARD; applying the input sign afterward would reverse both zeros.
+    // Here acc <= 2^53, so normalizing it loses no nonzero significand bits.
+    let magnitude = if acc == 0 {
+        0
+    } else {
+        let leading = acc.leading_zeros();
+        let exponent = u64::from(63 - leading) + 1023;
+        let significand = (acc << leading) >> 11;
+        (exponent << 52) | (significand & ((1u64 << 52) - 1))
+    };
+    Some((f64::from_bits(magnitude | (u64::from(negative) << 63)), i))
 }
 
 // A bounded window can end before the first digit, or between a permitted
@@ -5666,40 +5678,39 @@ unsafe fn wcstod_in(
         return value;
     }
 
-    // Bounded scan + zero-alloc projection (see wide_parse_float): O(number), not O(buffer).
-    // glibc 2.38+ raises ERANGE on wide float over/underflow — wide_parse_float applies the
-    // same rule strtod uses, over the consumed prefix. The projected ASCII is NUL-terminated,
-    // so try narrow strtod's short-decimal/exact fast path on it FIRST — it wins exact
-    // scientific/decimal tokens (e.g. "-1.5e10" was 1.71x glibc via the slow strtod_impl,
-    // now parity/win). It only returns for exactly-representable values (never ERANGE, so
-    // erange=false); anything else falls through to the full core parser. Byte-identical:
-    // it is the same fast path narrow strtod uses over the same ASCII bytes.
-    let (value, consumed, erange) = unsafe {
+    // Probe a bounded window without changing errno or floating status. Only
+    // the final result is published if an incomplete token requires extension.
+    let rounding = RoundingMode::current();
+    let (parsed, consumed, _) = unsafe {
         wide_parse_float(
             nptr,
             locale,
             |ascii: &[u8]| {
                 if locale.wide_is_c()
-                    && let Some((v, c)) =
-                        crate::stdlib_abi::parse_strtod_short_decimal_c_string_fast(
-                            ascii.as_ptr().cast(),
-                        )
+                    && let Some((v, c, status)) =
+                        crate::stdlib_abi::parse_strtod_c_string_fast(ascii.as_ptr().cast(), false)
                 {
-                    return (v, c, false);
+                    return (
+                        BinaryParse {
+                            bits: u128::from(v.to_bits()),
+                            consumed: c,
+                            status,
+                        },
+                        c,
+                        false,
+                    );
                 }
-                frankenlibc_core::stdlib::conversion::strtod_impl_c(ascii)
+                crate::stdlib_abi::parse_float_c(ascii, BinaryFormat::Binary64, rounding)
             },
-            crate::stdlib_abi::strtod_result_is_erange,
+            |_parsed, _prefix, range_error| range_error,
         )
     };
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by the parsed prefix length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
-    if erange {
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
-    value
+    crate::stdlib_abi::apply_float_status(parsed.status);
+    f64::from_bits(parsed.bits as u64)
 }
 
 // ---------------------------------------------------------------------------
@@ -7664,22 +7675,21 @@ unsafe fn wcstof_in(
     }
 
     // Bounded scan + zero-alloc projection (see wide_parse_float): O(number), not O(buffer).
-    let (value, consumed, erange) = unsafe {
+    let rounding = RoundingMode::current();
+    let (parsed, consumed, _) = unsafe {
         wide_parse_float(
             nptr,
             locale,
-            frankenlibc_core::stdlib::conversion::strtof_impl_c,
-            crate::stdlib_abi::strtof_result_is_erange,
+            |ascii| crate::stdlib_abi::parse_float_c(ascii, BinaryFormat::Binary32, rounding),
+            |_parsed, _prefix, range_error| range_error,
         )
     };
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by the parsed prefix length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
-    if erange {
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
-    value
+    crate::stdlib_abi::apply_float_status(parsed.status);
+    f32::from_bits(parsed.bits as u32)
 }
 
 #[inline]
@@ -7965,28 +7975,24 @@ unsafe fn wcstold_in(
         }
         return;
     }
+    let rounding = RoundingMode::current();
     // SAFETY: bounded scan and projection over a valid wide string.
-    let (bytes, consumed, erange) = unsafe {
+    let (parsed, consumed, _) = unsafe {
         wide_parse_float(
             nptr,
             locale,
-            |ascii: &[u8]| {
-                let scan = frankenlibc_core::float128::strtold_scan_c(ascii);
-                (scan.bytes, scan.consumed, scan.range_error)
-            },
-            |_value: [u8; 10], _prefix: &[u8], range_error: bool| range_error,
+            |ascii| crate::stdlib_abi::parse_float_c(ascii, BinaryFormat::X87, rounding),
+            |_parsed, _prefix, range_error| range_error,
         )
     };
+    let bytes = parsed.bits.to_le_bytes();
     // SAFETY: ten writable bytes by contract.
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 10) };
     if !endptr.is_null() {
         // SAFETY: `consumed` is bounded by the parsed prefix length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
-    if erange {
-        // SAFETY: errno slot for the calling thread.
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
+    crate::stdlib_abi::apply_float_status(parsed.status);
 }
 
 /// `wcstold` — wide string to `long double`, returned in ST(0).

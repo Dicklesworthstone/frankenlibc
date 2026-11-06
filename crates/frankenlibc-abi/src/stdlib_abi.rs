@@ -16,6 +16,9 @@ use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
+use frankenlibc_core::float128::{
+    BinaryFormat, BinaryParse, FloatStatus, RoundingMode, parse_binary_c,
+};
 use frankenlibc_core::{errno, stdlib::conversion::ConversionStatus};
 
 /// Length of a NUL-terminated numeric argument for the strto*/ato* family.
@@ -383,15 +386,17 @@ unsafe fn parse_strtol_c_string_fast(
     Some((value, consumed, ConversionStatus::Success))
 }
 
-/// Deployed `strtod` specialization for short decimal tokens whose grammar is
-/// regular enough to parse as a C-string transducer. Exact integer-valued
-/// decimals (`12345`, `1.234567e10`) stay on the integer path; short fixed
-/// decimals (`3.14159`) hand the already-scanned token to Rust's
-/// correctly-rounded parser without the full core parser's extra NUL scan.
+/// Single-pass C-syntax specialization. Exact integer-valued decimals work in
+/// every rounding direction. When permitted, short fixed decimals use one
+/// nearest-mode division of exactly represented integers; divisibility by the
+/// denominator's power of five determines whether the result is inexact.
+/// Wide-window probes disable that division until the token boundary is known,
+/// so an incomplete window cannot leave a spurious floating exception behind.
 #[inline]
-pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
+pub(crate) unsafe fn parse_strtod_c_string_fast(
     ptr: *const c_char,
-) -> Option<(f64, usize)> {
+    allow_nearest_division: bool,
+) -> Option<(f64, usize, FloatStatus)> {
     const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
     const MAX_FIXED_SIGNIFICANT_DIGITS: u32 = 15;
 
@@ -408,7 +413,6 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
         cursor = unsafe { cursor.add(1) };
     }
 
-    let token_start = cursor;
     let mut byte = unsafe { *cursor };
     let negative = if byte == b'-' {
         cursor = unsafe { cursor.add(1) };
@@ -520,12 +524,18 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
     let consumed = unsafe { cursor.offset_from(start) as usize };
     let mut shift = exp10.checked_sub(frac_digits)?;
     while shift < 0 {
-        if !saw_exponent && frac_digits <= 15 && significant_digits <= MAX_FIXED_SIGNIFICANT_DIGITS
+        if allow_nearest_division
+            && !saw_exponent
+            && frac_digits <= 15
+            && significant_digits <= MAX_FIXED_SIGNIFICANT_DIGITS
         {
-            let token_len = unsafe { cursor.offset_from(token_start) as usize };
-            let token = unsafe { std::slice::from_raw_parts(token_start, token_len) };
-            let token = unsafe { core::str::from_utf8_unchecked(token) };
-            return token.parse::<f64>().ok().map(|value| (value, consumed));
+            let denominator = 10u64.pow(frac_digits as u32);
+            let value = (acc as f64) / (denominator as f64);
+            let status = FloatStatus {
+                inexact: !acc.is_multiple_of(5u64.pow(frac_digits as u32)),
+                ..FloatStatus::default()
+            };
+            return Some((if negative { -value } else { value }, consumed, status));
         }
         if !acc.is_multiple_of(10) {
             return None;
@@ -535,7 +545,11 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
     }
 
     if acc == 0 {
-        return Some((if negative { -0.0 } else { 0.0 }, consumed));
+        return Some((
+            if negative { -0.0 } else { 0.0 },
+            consumed,
+            FloatStatus::default(),
+        ));
     }
     if shift > 22 {
         return None;
@@ -550,7 +564,11 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
     }
 
     let value = value as f64;
-    Some((if negative { -value } else { value }, consumed))
+    Some((
+        if negative { -value } else { value },
+        consumed,
+        FloatStatus::default(),
+    ))
 }
 
 use frankenlibc_core::syscall as raw_syscall;
@@ -770,6 +788,55 @@ pub(crate) unsafe fn parse_narrow_float<T>(
         leading + token.original_consumed(consumed)
     };
     (value, original_consumed, range_error)
+}
+
+/// Adapter for the locale token scanners. The full status travels with the
+/// value so a speculative wide-window parse cannot change errno or fenv.
+pub(crate) fn parse_float_c(
+    bytes: &[u8],
+    format: BinaryFormat,
+    mode: RoundingMode,
+) -> (BinaryParse, usize, bool) {
+    let parsed = parse_binary_c(bytes, format, mode);
+    (parsed, parsed.consumed, parsed.status.range_error())
+}
+
+/// Publish the selected conversion's range error and masked sticky exception
+/// flags without clearing existing flags or changing rounding/mask controls.
+/// Delivery of unmasked floating-point traps is a separate ABI obligation.
+pub(crate) fn apply_float_status(status: FloatStatus) {
+    if status.range_error() {
+        // SAFETY: updates only the calling thread's ABI errno slot.
+        unsafe { set_abi_errno(libc::ERANGE) };
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let flags = (u32::from(status.inexact) << 5)
+            | (u32::from(status.underflow) << 4)
+            | (u32::from(status.overflow) << 3);
+        if flags != 0 {
+            // SAFETY: MXCSR status bits are ORed into its existing value;
+            // rounding, denormal controls and exception masks are preserved.
+            unsafe {
+                crate::fenv_abi::write_mxcsr(crate::fenv_abi::read_mxcsr() | flags);
+            }
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let flags = (u64::from(status.inexact) << 4)
+            | (u64::from(status.underflow) << 3)
+            | (u64::from(status.overflow) << 2);
+        if flags != 0 {
+            let previous: u64;
+            // SAFETY: unprivileged access to this thread's floating status;
+            // FPCR and every already-set FPSR bit remain unchanged.
+            unsafe {
+                core::arch::asm!("mrs {}, fpsr", out(reg) previous, options(nomem, nostack, preserves_flags));
+                core::arch::asm!("msr fpsr, {}", in(reg) previous | flags, options(nomem, nostack, preserves_flags));
+            }
+        }
+    }
 }
 
 #[inline]
@@ -3145,39 +3212,31 @@ unsafe fn strtod_in(nptr: *const c_char, endptr: *mut *mut c_char, locale: Numer
         Some(decision.profile)
     };
 
+    let rounding = RoundingMode::current();
     if profile.is_none()
         && locale.narrow_is_c()
-        && let Some((value, consumed)) = unsafe { parse_strtod_short_decimal_c_string_fast(nptr) }
+        && let Some((value, consumed, status)) =
+            unsafe { parse_strtod_c_string_fast(nptr, rounding == RoundingMode::Nearest) }
     {
         if !endptr.is_null() {
             unsafe { *endptr = nptr.add(consumed) as *mut c_char };
         }
+        apply_float_status(status);
         return value;
     }
 
-    let (val, consumed, range_error) = unsafe {
+    let (parsed, consumed, _) = unsafe {
         parse_narrow_float(nptr, locale, |bytes| {
-            let (value, consumed, exact) =
-                frankenlibc_core::stdlib::conversion::strtod_impl_c(bytes);
-            let range_error =
-                consumed > 0 && strtod_result_is_erange(value, &bytes[..consumed], exact);
-            (value, consumed, range_error)
+            parse_float_c(bytes, BinaryFormat::Binary64, rounding)
         })
     };
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
 
-    // POSIX strtod: on overflow set errno=ERANGE and return ±HUGE_VAL;
-    // on underflow set errno=ERANGE and return a value at most as
-    // large in magnitude as DBL_MIN. Detect both from the parsed
-    // result + the consumed prefix and set errno accordingly.
-    // An EXACTLY-representable subnormal is NOT underflow (glibc raises ERANGE
-    // only for inexact underflow), so suppress the false positive when the
-    // parser reports the result exact. (bd-2g7oyh.187, CONFORMANCE: numeric diff)
-    if range_error {
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
+    // The exact converter distinguishes inexact underflow from an exact
+    // subnormal and reports overflow even when a directed result is finite.
+    apply_float_status(parsed.status);
 
     if let Some(p) = profile {
         runtime_policy::observe(
@@ -3187,89 +3246,7 @@ unsafe fn strtod_in(nptr: *const c_char, endptr: *mut *mut c_char, locale: Numer
             false,
         );
     }
-    val
-}
-
-/// Case-insensitive check for "inf" or "infinity" anywhere in the consumed
-/// prefix — used to distinguish a literal Infinity input from an overflow
-/// result for strtod errno reporting.
-fn contains_inf_literal(bytes: &[u8]) -> bool {
-    if bytes.len() < 3 {
-        return false;
-    }
-    bytes.windows(3).any(|w| {
-        w[0].eq_ignore_ascii_case(&b'i')
-            && w[1].eq_ignore_ascii_case(&b'n')
-            && w[2].eq_ignore_ascii_case(&b'f')
-    })
-}
-
-fn finite_float_underflowed_f64(value: f64, consumed: &[u8]) -> bool {
-    value.is_finite()
-        && value.abs() < f64::MIN_POSITIVE
-        && contains_nonzero_significand_digit(consumed)
-}
-
-fn finite_float_underflowed_f32(value: f32, consumed: &[u8]) -> bool {
-    value.is_finite()
-        && value.abs() < f32::MIN_POSITIVE
-        && contains_nonzero_significand_digit(consumed)
-}
-
-/// Whether a parsed `f64` strtod/wcstod result must raise `ERANGE`: overflow to
-/// ±inf without a literal `inf` in the consumed text, or an inexact underflow
-/// (an exactly-representable subnormal does NOT count — glibc only flags inexact
-/// underflow). `exact` is `strtod_impl`'s exactness flag. Shared by strtod and
-/// wcstod so the narrow and wide parsers agree (glibc 2.38+ raises ERANGE on the
-/// wide path too — it previously suppressed it, a divergence fl used to mirror).
-pub(crate) fn strtod_result_is_erange(value: f64, consumed: &[u8], exact: bool) -> bool {
-    let overflowed = value.is_infinite() && !contains_inf_literal(consumed);
-    let exact_subnormal = exact && value != 0.0 && value.abs() < f64::MIN_POSITIVE;
-    let underflowed = !exact_subnormal && finite_float_underflowed_f64(value, consumed);
-    overflowed || underflowed
-}
-
-/// `f32` counterpart of [`strtod_result_is_erange`] for strtof/wcstof.
-/// `exact_subnormal` is `strtof_impl`'s flag (true when the result is an exactly
-/// representable subnormal, which is not an underflow).
-pub(crate) fn strtof_result_is_erange(value: f32, consumed: &[u8], exact_subnormal: bool) -> bool {
-    let overflowed = value.is_infinite() && !contains_inf_literal(consumed);
-    let underflowed = !exact_subnormal && finite_float_underflowed_f32(value, consumed);
-    overflowed || underflowed
-}
-
-/// Whether the consumed prefix has a non-zero significand digit.
-///
-/// Exponent digits do not count: exact-zero inputs like `0e-400` must not set
-/// `ERANGE`, while non-zero underflows like `1e-400` must.
-fn contains_nonzero_significand_digit(bytes: &[u8]) -> bool {
-    let mut i = 0usize;
-    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i < bytes.len() && matches!(bytes[i], b'+' | b'-') {
-        i += 1;
-    }
-
-    let is_hex = i + 1 < bytes.len() && bytes[i] == b'0' && matches!(bytes[i + 1], b'x' | b'X');
-    if is_hex {
-        i += 2;
-        while i < bytes.len() && !matches!(bytes[i], b'p' | b'P') {
-            if matches!(bytes[i], b'1'..=b'9' | b'A'..=b'F' | b'a'..=b'f') {
-                return true;
-            }
-            i += 1;
-        }
-        return false;
-    }
-
-    while i < bytes.len() && !matches!(bytes[i], b'e' | b'E') {
-        if matches!(bytes[i], b'1'..=b'9') {
-            return true;
-        }
-        i += 1;
-    }
-    false
+    f64::from_bits(parsed.bits as u64)
 }
 
 /// C `strtof` -- converts string to float with endptr.
@@ -3314,25 +3291,17 @@ unsafe fn strtof_in(nptr: *const c_char, endptr: *mut *mut c_char, locale: Numer
         Some(decision.profile)
     };
 
-    let (value, consumed, range_error) = unsafe {
+    let rounding = RoundingMode::current();
+    let (parsed, consumed, _) = unsafe {
         parse_narrow_float(nptr, locale, |bytes| {
-            let (value, consumed, exact) =
-                frankenlibc_core::stdlib::conversion::strtof_impl_c(bytes);
-            let range_error =
-                consumed > 0 && strtof_result_is_erange(value, &bytes[..consumed], exact);
-            (value, consumed, range_error)
+            parse_float_c(bytes, BinaryFormat::Binary32, rounding)
         })
     };
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
 
-    // Exact f32 subnormals are not underflow (glibc raises ERANGE only for
-    // inexact underflow), so the parser's flag suppresses the false positive.
-    // (bd-2g7oyh.187)
-    if range_error {
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
+    apply_float_status(parsed.status);
 
     if let Some(p) = profile {
         runtime_policy::observe(
@@ -3342,7 +3311,7 @@ unsafe fn strtof_in(nptr: *const c_char, endptr: *mut *mut c_char, locale: Numer
             false,
         );
     }
-    value
+    f32::from_bits(parsed.bits as u32)
 }
 
 // ---------------------------------------------------------------------------
@@ -4062,14 +4031,16 @@ unsafe fn strtold_in(
         }
         return;
     }
+    let rounding = RoundingMode::current();
     // SAFETY: bounded token scan over a readable C string.
-    let (bytes, consumed, range_error) = unsafe {
+    let (parsed, consumed, _) = unsafe {
         parse_narrow_float(nptr, locale, |bytes| {
-            let scan = frankenlibc_core::float128::strtold_scan_c(bytes);
-            (scan.bytes, scan.consumed, scan.range_error)
+            parse_float_c(bytes, BinaryFormat::X87, rounding)
         })
     };
-    // SAFETY: ten writable bytes by contract; `bytes` is exactly ten.
+    let bytes = parsed.bits.to_le_bytes();
+    // SAFETY: ten writable bytes by contract; the low ten bytes are the x87
+    // memory representation, with no intervening floating-point conversion.
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 10) };
     if !endptr.is_null() {
         // A `consumed` of zero is the no-conversion case, and adding zero
@@ -4077,10 +4048,7 @@ unsafe fn strtold_in(
         // SAFETY: `consumed` never exceeds the scanned length.
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
-    if range_error {
-        // SAFETY: errno slot for the calling thread.
-        unsafe { set_abi_errno(errno::ERANGE) };
-    }
+    apply_float_status(parsed.status);
 }
 
 /// `strtold` — convert a string to `long double`.

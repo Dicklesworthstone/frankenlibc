@@ -18,6 +18,7 @@ use std::ffi::{c_char, c_int, c_void};
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::util::scan_c_string;
+use frankenlibc_core::float128::{BinaryFormat, RoundingMode};
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -973,213 +974,6 @@ pub unsafe extern "C" fn strtof64x_l(
 ) -> f64 {
     unsafe { crate::stdlib_abi::strtod_l(nptr, endptr, loc) }
 }
-/// Binary128 parser for a bounded C-syntax token. The locale adapters below
-/// translate radix/whitespace and map the consumed count to the caller's
-/// original input; arithmetic and NaN payload handling remain shared.
-fn strtof128_c_scan(input: &[u8]) -> (u128, usize, bool) {
-    use frankenlibc_core::float128::{decimal_to_binary128, hex_to_binary128};
-    let at = |i: usize| -> u8 { input.get(i).copied().unwrap_or(0) };
-    let ieq = |b: u8, c: u8| b.to_ascii_lowercase() == c;
-    let bytes = |a: usize, b: usize| -> Vec<u8> { (a..b).map(&at).collect() };
-
-    let mut i = 0usize;
-    while matches!(at(i), b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) {
-        i += 1;
-    }
-    let mut neg = false;
-    match at(i) {
-        b'+' => i += 1,
-        b'-' => {
-            neg = true;
-            i += 1;
-        }
-        _ => {}
-    }
-    let sign: u128 = if neg { 1u128 << 127 } else { 0 };
-
-    // inf / infinity
-    if ieq(at(i), b'i') && ieq(at(i + 1), b'n') && ieq(at(i + 2), b'f') {
-        let mut j = i + 3;
-        if ieq(at(j), b'i')
-            && ieq(at(j + 1), b'n')
-            && ieq(at(j + 2), b'i')
-            && ieq(at(j + 3), b't')
-            && ieq(at(j + 4), b'y')
-        {
-            j += 5;
-        }
-        return (sign | (0x7fffu128 << 112), j, false);
-    }
-    // nan[(n-char-sequence)]
-    if ieq(at(i), b'n') && ieq(at(i + 1), b'a') && ieq(at(i + 2), b'n') {
-        let mut j = i + 3;
-        let mut payload: u128 = 0;
-        if at(j) == b'(' {
-            let seq_start = j + 1;
-            let mut k = seq_start;
-            while at(k) != 0 && (at(k).is_ascii_alphanumeric() || at(k) == b'_') {
-                k += 1;
-            }
-            if at(k) == b')' {
-                payload = parse_nan_payload(&bytes(seq_start, k));
-                j = k + 1;
-            }
-        }
-        return (
-            sign | (0x7fffu128 << 112) | (1u128 << 111) | (payload & ((1u128 << 111) - 1)),
-            j,
-            false,
-        );
-    }
-
-    // hex float: 0x H* [. H*] [pP [+-] D+]
-    if at(i) == b'0' && ieq(at(i + 1), b'x') {
-        let int_start = i + 2;
-        let mut j = int_start;
-        while at(j).is_ascii_hexdigit() {
-            j += 1;
-        }
-        let int_end = j;
-        let (mut frac_start, mut frac_end) = (j, j);
-        if at(j) == b'.' {
-            j += 1;
-            frac_start = j;
-            while at(j).is_ascii_hexdigit() {
-                j += 1;
-            }
-            frac_end = j;
-        }
-        if int_end != int_start || frac_end != frac_start {
-            let mut binexp: i64 = 0;
-            let mut after = j;
-            if ieq(at(j), b'p') {
-                let mut e = j + 1;
-                let mut eneg = false;
-                match at(e) {
-                    b'+' => e += 1,
-                    b'-' => {
-                        eneg = true;
-                        e += 1;
-                    }
-                    _ => {}
-                }
-                let ed = e;
-                let mut val: i64 = 0;
-                while at(e).is_ascii_digit() {
-                    val = val.saturating_mul(10).saturating_add((at(e) - b'0') as i64);
-                    e += 1;
-                }
-                if e > ed {
-                    binexp = if eneg { -val } else { val };
-                    after = e;
-                }
-            }
-            let ih = bytes(int_start, int_end);
-            let fh = bytes(frac_start, frac_end);
-            let nonzero = ih.iter().chain(fh.iter()).any(|&d| d != b'0');
-            let bits = hex_to_binary128(neg, &ih, &fh, binexp);
-            return (bits, after, strtof128_result_is_erange(bits, sign, nonzero));
-        }
-        // "0x" with no hex digits: the "0" is a decimal zero (fall through).
-    }
-
-    // decimal: D* [. D*] [eE [+-] D+]
-    let int_start = i;
-    while at(i).is_ascii_digit() {
-        i += 1;
-    }
-    let int_end = i;
-    let (mut frac_start, mut frac_end) = (i, i);
-    if at(i) == b'.' {
-        i += 1;
-        frac_start = i;
-        while at(i).is_ascii_digit() {
-            i += 1;
-        }
-        frac_end = i;
-    }
-    if int_end == int_start && frac_end == frac_start {
-        return (0, 0, false); // no conversion: endptr = original nptr
-    }
-    let mut dexp_e: i64 = 0;
-    let mut after = i;
-    if ieq(at(i), b'e') {
-        let mut e = i + 1;
-        let mut eneg = false;
-        match at(e) {
-            b'+' => e += 1,
-            b'-' => {
-                eneg = true;
-                e += 1;
-            }
-            _ => {}
-        }
-        let ed = e;
-        let mut val: i64 = 0;
-        while at(e).is_ascii_digit() {
-            val = val.saturating_mul(10).saturating_add((at(e) - b'0') as i64);
-            e += 1;
-        }
-        if e > ed {
-            dexp_e = if eneg { -val } else { val };
-            after = e;
-        }
-    }
-    let mut digits = bytes(int_start, int_end);
-    digits.extend_from_slice(&bytes(frac_start, frac_end));
-    let Some(first_nonzero) = digits.iter().position(|&digit| digit != b'0') else {
-        // Zero remains signed zero for every exponent, without a range error.
-        return (sign, after, false);
-    };
-    let digits = &digits[first_nonzero..];
-    let dexp_total = dexp_e.saturating_sub((frac_end - frac_start) as i64);
-    // Order-of-magnitude guard: bound the big-integer work and short-circuit
-    // values clearly outside binary128's range (~10^4932 .. 10^-4966).
-    let order = (digits.len() as i64).saturating_add(dexp_total);
-    if order > 5000 {
-        return (sign | (0x7fffu128 << 112), after, true);
-    }
-    if order < -5100 {
-        return (sign, after, true); // underflow to signed zero
-    }
-    let bits = decimal_to_binary128(neg, digits, dexp_total as i32);
-    (bits, after, strtof128_result_is_erange(bits, sign, true))
-}
-
-/// Parse a `nan(...)` n-char-sequence as a base-0 unsigned integer (glibc uses
-/// the payload as the NaN mantissa bits), stopping at the first invalid digit.
-fn parse_nan_payload(seq: &[u8]) -> u128 {
-    if seq.is_empty() {
-        return 0;
-    }
-    let (base, digits): (u128, &[u8]) =
-        if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
-            (16, &seq[2..])
-        } else if seq[0] == b'0' && seq.len() > 1 {
-            (8, &seq[1..])
-        } else {
-            (10, seq)
-        };
-    let mut v: u128 = 0;
-    for &c in digits {
-        match (c as char).to_digit(base as u32) {
-            Some(d) => v = v.wrapping_mul(base).wrapping_add(d as u128),
-            None => break,
-        }
-    }
-    v
-}
-
-/// Report a strtof128 range error: overflow to
-/// infinity, underflow to a subnormal, or a nonzero value flushed to zero.
-fn strtof128_result_is_erange(bits: u128, sign: u128, input_nonzero: bool) -> bool {
-    let exp_field = (bits >> 112) & 0x7fff;
-    let mantissa = bits & ((1u128 << 112) - 1);
-    (exp_field == 0x7fff && mantissa == 0)
-        || (exp_field == 0 && mantissa != 0)
-        || (bits == sign && input_nonzero)
-}
-
 unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 {
     unsafe { strtof128_in(nptr, endptr, crate::locale_abi::NumericLocale::current()) }
 }
@@ -1195,15 +989,17 @@ unsafe fn strtof128_in(
         }
         return 0;
     }
-    let (bits, consumed, range_error) =
-        unsafe { crate::stdlib_abi::parse_narrow_float(nptr, locale, strtof128_c_scan) };
+    let rounding = RoundingMode::current();
+    let (parsed, consumed, _) = unsafe {
+        crate::stdlib_abi::parse_narrow_float(nptr, locale, |bytes| {
+            crate::stdlib_abi::parse_float_c(bytes, BinaryFormat::Binary128, rounding)
+        })
+    };
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed).cast_mut() };
     }
-    if range_error {
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
-    bits
+    crate::stdlib_abi::apply_float_status(parsed.status);
+    parsed.bits
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1347,21 +1143,20 @@ unsafe fn wcstof128_in(
         }
         return 0;
     }
-    let (bits, consumed, range_error) = unsafe {
+    let rounding = RoundingMode::current();
+    let (parsed, consumed, _) = unsafe {
         crate::wchar_abi::wide_parse_float(
             nptr.cast(),
             locale,
-            strtof128_c_scan,
+            |bytes| crate::stdlib_abi::parse_float_c(bytes, BinaryFormat::Binary128, rounding),
             |_value, _prefix, range_error| range_error,
         )
     };
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed).cast_mut() };
     }
-    if range_error {
-        unsafe { set_abi_errno(libc::ERANGE) };
-    }
-    bits
+    crate::stdlib_abi::apply_float_status(parsed.status);
+    parsed.bits
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

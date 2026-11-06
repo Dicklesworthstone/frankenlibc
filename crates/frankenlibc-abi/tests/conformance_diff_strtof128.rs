@@ -5,32 +5,56 @@
 #![feature(f128)]
 #![allow(unsafe_code)]
 
-use frankenlibc_abi::glibc_internal_abi as fl;
+use frankenlibc_abi::{errno_abi, glibc_internal_abi as fl};
 use std::ffi::{CString, c_char, c_int};
+use std::sync::OnceLock;
 
-unsafe extern "C" {
-    fn strtof128(nptr: *const c_char, endptr: *mut *mut c_char) -> f128;
-    fn wcstof128(nptr: *const i32, endptr: *mut *mut i32) -> f128;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type Narrow = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f128;
+type Wide = unsafe extern "C" fn(*const i32, *mut *mut i32) -> f128;
+type Errno = unsafe extern "C" fn() -> *mut c_int;
+
+struct Host {
+    narrow: Narrow,
+    wide: Wide,
+    errno: Errno,
 }
 
-fn errno_loc() -> *mut c_int {
-    unsafe { libc::__errno_location() }
+fn host() -> &'static Host {
+    static HOST: OnceLock<Host> = OnceLock::new();
+    HOST.get_or_init(|| {
+        // SAFETY: all signatures match the public C declarations. The oracle
+        // resolver rejects addresses that equal the native implementations.
+        unsafe {
+            Host {
+                narrow: dlsym_oracle::host_fn(c"strtof128", fl::strtof128 as *const ()),
+                wide: dlsym_oracle::host_fn(c"wcstof128", fl::wcstof128 as *const ()),
+                errno: dlsym_oracle::host_fn(
+                    c"__errno_location",
+                    errno_abi::__errno_location as *const (),
+                ),
+            }
+        }
+    })
 }
 
 /// (bits, endptr offset from start, errno).
 fn glibc(s: &CString) -> (u128, isize, c_int) {
+    let host = host();
     let mut end: *mut c_char = std::ptr::null_mut();
-    unsafe { *errno_loc() = 0 };
-    let v = unsafe { strtof128(s.as_ptr(), &mut end) };
+    unsafe { *(host.errno)() = 0 };
+    let v = unsafe { (host.narrow)(s.as_ptr(), &mut end) };
     let off = end as isize - s.as_ptr() as isize;
-    (v.to_bits(), off, unsafe { *errno_loc() })
+    (v.to_bits(), off, unsafe { *(host.errno)() })
 }
 fn frank(s: &CString) -> (u128, isize, c_int) {
     let mut end: *mut c_char = std::ptr::null_mut();
-    unsafe { *errno_loc() = 0 };
+    unsafe { *errno_abi::__errno_location() = 0 };
     let v = unsafe { fl::strtof128(s.as_ptr(), &mut end) };
     let off = end as isize - s.as_ptr() as isize;
-    (v.to_bits(), off, unsafe { *errno_loc() })
+    (v.to_bits(), off, unsafe { *errno_abi::__errno_location() })
 }
 
 fn check(s: &str, mism: &mut Vec<String>) {
@@ -162,18 +186,19 @@ fn wide(s: &str) -> Vec<i32> {
         .collect()
 }
 fn gw(w: &[i32]) -> (u128, isize, c_int) {
+    let host = host();
     let mut end: *mut i32 = std::ptr::null_mut();
-    unsafe { *errno_loc() = 0 };
-    let v = unsafe { wcstof128(w.as_ptr(), &mut end) };
+    unsafe { *(host.errno)() = 0 };
+    let v = unsafe { (host.wide)(w.as_ptr(), &mut end) };
     let off = (end as isize - w.as_ptr() as isize) / 4;
-    (v.to_bits(), off, unsafe { *errno_loc() })
+    (v.to_bits(), off, unsafe { *(host.errno)() })
 }
 fn fw(w: &[i32]) -> (u128, isize, c_int) {
     let mut end: *mut i32 = std::ptr::null_mut();
-    unsafe { *errno_loc() = 0 };
+    unsafe { *errno_abi::__errno_location() = 0 };
     let v = unsafe { fl::wcstof128(w.as_ptr(), &mut end) };
     let off = (end as isize - w.as_ptr() as isize) / 4;
-    (v.to_bits(), off, unsafe { *errno_loc() })
+    (v.to_bits(), off, unsafe { *errno_abi::__errno_location() })
 }
 
 #[test]
