@@ -15585,10 +15585,23 @@ pub(crate) unsafe fn getdelim_for_caller(
             return -1;
         };
         unsafe { *lineptr = prepared.cast() };
-        // SAFETY: only this thread's host errno slot is written.
-        unsafe { crate::host_resolve::write_host_errno_if_available(saved_errno) };
+        // SAFETY: only this thread's ABI and host errno slots are written.
+        unsafe {
+            set_abi_errno(saved_errno);
+            crate::host_resolve::write_host_errno_if_available(saved_errno);
+        }
         let rc = unsafe { host_getdelim(lineptr, n, delim, stream) };
-        let returned_errno = crate::host_resolve::host_errno(saved_errno);
+        let host_errno = crate::host_resolve::host_errno(saved_errno);
+        // A host-owned cookie callback can use our interposed errno accessor.
+        // If glibc left its slot unchanged, retain the callback's ABI errno;
+        // a changed host slot carries the host operation's error instead.
+        // SAFETY: the ABI accessor returns this thread's initialized errno.
+        let callback_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let returned_errno = if host_errno == saved_errno {
+            callback_errno
+        } else {
+            host_errno
+        };
         // SAFETY: the host initializes capacity when it supplies a buffer, but
         // may leave both slots untouched after an existing stream error.
         let (returned, capacity) = unsafe {
@@ -15599,8 +15612,8 @@ pub(crate) unsafe fn getdelim_for_caller(
         if rc >= 0 {
             mark_host_io_started(stream);
         }
-        // A partial line can succeed while setting ferror/errno. Preserve that
-        // observation as well as an unchanged errno on an existing error.
+        // Preserve errno on partial success and on an existing error.
+        // SAFETY: only this thread's ABI errno is updated.
         unsafe { set_abi_errno(returned_errno) };
         return rc;
     }
@@ -15728,10 +15741,20 @@ unsafe fn getline_for_caller(
             return -1;
         };
         unsafe { *lineptr = prepared.cast() };
-        // SAFETY: only this thread's host errno slot is written.
-        unsafe { crate::host_resolve::write_host_errno_if_available(saved_errno) };
+        // SAFETY: only this thread's ABI and host errno slots are written.
+        unsafe {
+            set_abi_errno(saved_errno);
+            crate::host_resolve::write_host_errno_if_available(saved_errno);
+        }
         let rc = unsafe { host_getline(lineptr, n, stream) };
-        let returned_errno = crate::host_resolve::host_errno(saved_errno);
+        let host_errno = crate::host_resolve::host_errno(saved_errno);
+        // SAFETY: a host cookie callback can write this thread's ABI slot.
+        let callback_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let returned_errno = if host_errno == saved_errno {
+            callback_errno
+        } else {
+            host_errno
+        };
         // SAFETY: the host need not initialize capacity on a pre-existing error
         // when it has left the buffer NULL.
         let (returned, capacity) = unsafe {

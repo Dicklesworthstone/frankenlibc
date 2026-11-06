@@ -1477,15 +1477,17 @@ static int test_host_line_buffer_growth(int use_getline) {
     return bad != 0;
 }
 
-static int test_host_line_partial_error(int use_getline) {
+static int test_host_line_partial_error(int use_getline, int cookie_source) {
     void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
     if (!host) return 1;
     FILE *(*host_cookie)(void *, const char *, cookie_io_functions_t) = dlsym(host, "fopencookie");
+    FILE *(*host_fdopen)(int, const char *) = dlsym(host, "fdopen");
     cookie_getline_fn read_line = (cookie_getline_fn)dlsym(RTLD_DEFAULT, "getline");
     cookie_getdelim_fn read_field = (cookie_getdelim_fn)dlsym(RTLD_DEFAULT, "getdelim");
     Dl_info provider = {0};
-    if (!host_cookie || !read_line || !read_field ||
-        !dladdr((void *)host_cookie, &provider) || !provider.dli_fname) {
+    if (!host_cookie || !host_fdopen || !read_line || !read_field ||
+        !dladdr(cookie_source ? (void *)host_cookie : (void *)host_fdopen, &provider) ||
+        !provider.dli_fname) {
         dlclose(host);
         return 1;
     }
@@ -1495,8 +1497,22 @@ static int test_host_line_partial_error(int use_getline) {
         return 1;
     }
     struct nonblocking_cookie cookie = {.remaining = 3};
-    FILE *stream = host_cookie(&cookie, "r", (cookie_io_functions_t){.read = read_cookie_eagain});
-    if (!stream) { dlclose(host); return 1; }
+    int fds[2] = {-1, -1};
+    FILE *stream;
+    if (cookie_source) {
+        stream = host_cookie(&cookie, "r", (cookie_io_functions_t){.read = read_cookie_eagain});
+    } else {
+        if (pipe2(fds, O_NONBLOCK)) { dlclose(host); return 1; }
+        if (write(fds[1], "abc", 3) != 3) {
+            close(fds[0]); close(fds[1]); dlclose(host); return 1;
+        }
+        stream = host_fdopen(fds[0], "r");
+    }
+    if (!stream) {
+        if (fds[0] >= 0) close(fds[0]);
+        if (fds[1] >= 0) close(fds[1]);
+        dlclose(host); return 1;
+    }
     char *line = NULL;
     size_t capacity = 0;
     errno = 0x5EED;
@@ -1507,10 +1523,12 @@ static int test_host_line_partial_error(int use_getline) {
     bad |= !line || capacity < 4 || memcmp(line, "abc\0", 4);
     free(line);
     bad |= fclose(stream) != 0;
+    if (fds[1] >= 0) bad |= close(fds[1]) != 0;
     bad |= dlclose(host) != 0;
-    if (bad) fprintf(stderr, "FAIL host-line-partial api=%d result=%zd errno=%d\n",
-                     use_getline, result, saved_errno);
-    printf("host-line-partial api=%s pass=%d\n", use_getline ? "getline" : "getdelim", !bad);
+    if (bad) fprintf(stderr, "FAIL host-line-partial api=%d cookie=%d result=%zd errno=%d\n",
+                     use_getline, cookie_source, result, saved_errno);
+    printf("host-line-partial api=%s cookie=%d pass=%d\n",
+           use_getline ? "getline" : "getdelim", cookie_source, !bad);
     return bad != 0;
 }
 
@@ -1593,8 +1611,10 @@ static int test_fmemopen_coherence(void) {
     for (int line = 0; line <= 1; ++line) {
         failed += test_host_line_buffer_growth(line);
         ++cases;
-        failed += test_host_line_partial_error(line);
-        ++cases;
+        for (int cookie = 0; cookie <= 1; ++cookie) {
+            failed += test_host_line_partial_error(line, cookie);
+            ++cases;
+        }
     }
     printf("fixture_stdio fmemopen: %s (%d cases, %d failed)\n",
            failed ? "FAIL" : "PASS", cases, failed);
