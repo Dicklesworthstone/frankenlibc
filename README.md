@@ -737,6 +737,8 @@ Legacy narrow and wide integer entrypoints keep the older prefix rule: in the C 
 
 The shared scanf engine supports unsigned binary `%b`, including an optional `0b`/`0B` prefix in legacy, C99 and C23 modes. It follows GNU 2.43 for incomplete integer prefixes: `0x` and accepted `0b` consume the prefix but fail to match an integer, leaving the destination and a following `%n` untouched. A field containing only the leading zero still converts. GNU 2.42 accepted incomplete prefixes as zero; invalid-prefix comparisons against that older behavior will differ.
 
+Pointer `%p` conversions share the unsigned hexadecimal scanner: they accept bare or `0x`/`0X`-prefixed digits, optional signs and GNU's case-insensitive `(nil)`, preserving the full pointer width. An incomplete `(nil)` spelling consumes its matched prefix and leaves the first mismatching character unread; a field width below five prevents that spelling from matching. The live GNU differential matrix checks numeric values, failed assignments, `%n`, stream positions and trailing characters across narrow/wide string and stream entry points in all three dialects.
+
 ---
 
 ## Runtime Math Controllers
@@ -3927,7 +3929,7 @@ Selected project health snapshot:
 | Tracked Rust files in `crates/` | 2,891 |
 | `crates/frankenlibc-abi/src/` | 121 Rust files, 227,488 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
-| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,431 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,499 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

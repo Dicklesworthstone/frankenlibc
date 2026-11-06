@@ -1426,7 +1426,13 @@ fn scan_int(
         } else {
             val
         };
-        ScanValue::UnsignedInt(narrow_unsigned(uval, spec.length))
+        if spec.writes_pointer() {
+            // `%p` uses the hexadecimal scanner, but stores a whole pointer,
+            // not the default-width unsigned int used by `%x`.
+            ScanValue::Pointer(uval as usize)
+        } else {
+            ScanValue::UnsignedInt(narrow_unsigned(uval, spec.length))
+        }
     };
 
     Some((Some(value), i))
@@ -2140,7 +2146,7 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
     ))
 }
 
-/// Scan a pointer (%p). Expects 0xHEX or (nil).
+/// Scan a pointer (%p): unsigned hexadecimal or GNU's case-insensitive (nil).
 fn scan_pointer(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
@@ -2149,40 +2155,21 @@ fn scan_pointer(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
 
     let max_chars = effective_width(spec, usize::MAX);
 
-    // Check for "(nil)".
-    if input[pos..].starts_with(b"(nil)") && max_chars >= 5 {
-        return Some((Some(ScanValue::Pointer(0)), pos + 5));
+    // GNU attempts this spelling only when the whole token fits the width.
+    // On failure, matched prefix bytes stay consumed; the first mismatch
+    // stays unread. Return a matching failure even if that prefix reaches EOF.
+    if input[pos] == b'(' && max_chars >= 5 {
+        let mut i = pos;
+        for expected in b"(nil)" {
+            if input.get(i).is_none_or(|b| !b.eq_ignore_ascii_case(expected)) {
+                return Some((None, i));
+            }
+            i += 1;
+        }
+        return Some((Some(ScanValue::Pointer(0)), i));
     }
 
-    // Expect 0x prefix.
-    if pos + 2 > input.len()
-        || input[pos] != b'0'
-        || (input[pos + 1] != b'x' && input[pos + 1] != b'X')
-    {
-        return None;
-    }
-
-    let mut i = pos + 2;
-    let mut chars_read = 2usize;
-    let mut val: usize = 0;
-    let mut any_digit = false;
-
-    while i < input.len() && chars_read < max_chars {
-        let d = match digit_value(input[i], 16) {
-            Some(d) => d,
-            None => break,
-        };
-        any_digit = true;
-        val = val.wrapping_mul(16).wrapping_add(d as usize);
-        i += 1;
-        chars_read += 1;
-    }
-
-    if !any_digit {
-        return None;
-    }
-
-    Some((Some(ScanValue::Pointer(val)), i))
+    scan_int(input, pos, spec, 16, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -3327,6 +3314,87 @@ mod tests {
         let result = scan_input(b"0xdeadbeef", &dirs);
         assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::Pointer(0xdeadbeef)));
+    }
+
+    #[test]
+    fn test_scan_pointer_hexadecimal_and_nil() {
+        for (input, format, value, consumed) in [
+            (b"123!".as_slice(), b"%p%n".as_slice(), 0x123, 3),
+            (b"0!", b"%p%n", 0, 1),
+            (b"+0Xabc!", b"%p%n", 0xabc, 6),
+            (b"-1!", b"%p%n", usize::MAX, 2),
+            (b"ABCdef!", b"%p%n", 0xabcdef, 6),
+            (b"(nil)!", b"%p%n", 0, 5),
+            (b"(NIL)!", b"%p%n", 0, 5),
+            (b"(nIl)!", b"%5p%n", 0, 5),
+            (b"0x1!", b"%1p%n", 0, 1),
+            (b"0x1!", b"%3p%n", 1, 3),
+            (b" \t123!", b"%p%n", 0x123, 5),
+        ] {
+            let result = scan_input(input, &parse_scanf_format(format));
+            assert_eq!(result.count, 1, "input={input:?} format={format:?}");
+            assert_eq!(result.values.len(), 2);
+            assert!(matches!(result.values[0], ScanValue::Pointer(v) if v == value));
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(n) if n == consumed));
+            assert_eq!(result.consumed, consumed);
+            assert!(!result.input_failure);
+        }
+        // The default `%x` destination is 32-bit; `%p` must retain all 64
+        // bits rather than applying that default integer narrowing.
+        #[cfg(target_pointer_width = "64")]
+        for (input, value) in [
+            (b"0xffffffffffffffff!".as_slice(), usize::MAX),
+            (b"8000000000000001!", 0x8000_0000_0000_0001),
+        ] {
+            let result = scan_input(input, &parse_scanf_format(b"%p%n"));
+            assert_eq!(result.count, 1);
+            assert!(matches!(result.values[0], ScanValue::Pointer(v) if v == value));
+            assert_eq!(result.consumed, input.len() - 1);
+        }
+    }
+
+    #[test]
+    fn test_scan_pointer_failure_width_and_suppression() {
+        for (input, format, consumed) in [
+            (b"0x!".as_slice(), b"%p%n".as_slice(), 2),
+            (b"0x", b"%p%n", 2),
+            (b"0x1!", b"%2p%n", 2),
+            (b"(ni!", b"%p%n", 3),
+            (b"(nil", b"%p%n", 4),
+            (b"(", b"%p%n", 1),
+            (b"(nix)!", b"%p%n", 3),
+            (b"(nilX", b"%p%n", 4),
+            (b"+(nil)!", b"%p%n", 1),
+            (b"(nil)!", b"%3p%n", 0),
+            (b"(nil)!", b"%4p%n", 0),
+            (b"!", b"%p%n", 0),
+            (b"(nix)!", b"%*p%n%d", 3),
+        ] {
+            let result = scan_input(input, &parse_scanf_format(format));
+            assert_eq!(result.count, 0, "input={input:?} format={format:?}");
+            assert!(result.values.is_empty());
+            assert_eq!(result.consumed, consumed);
+            assert!(!result.input_failure);
+        }
+        for input in [b"".as_slice(), b" \t"] {
+            let result = scan_input(input, &parse_scanf_format(b"%p%n"));
+            assert_eq!(result.count, 0);
+            assert!(result.values.is_empty());
+            assert!(result.input_failure);
+        }
+        for input in [b"123 7!".as_slice(), b"(NiL) 7!"] {
+            let result = scan_input(input, &parse_scanf_format(b"%*p%n%d"));
+            assert_eq!(result.count, 1);
+            assert_eq!(result.values.len(), 2);
+            assert!(matches!(result.values[1], ScanValue::SignedInt(7)));
+            assert_eq!(result.consumed, input.len() - 1);
+        }
+        let result = scan_input(b"7 (nix)!", &parse_scanf_format(b"%d%p%n"));
+        assert_eq!(result.count, 1);
+        assert_eq!(result.values.len(), 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(7)));
+        assert_eq!(result.consumed, 5);
+        assert!(!result.input_failure);
     }
 
     #[test]
