@@ -222,7 +222,7 @@ fn observe_cookie_lines(native: bool, mode: c_int, delimiter: u8) -> CookieLineS
 fn cookie_line_input_uses_callbacks_and_preserves_stop_state() {
     assert_ne!(g::getdelim as *const (), fl::getdelim as *const ());
     for mode in [libc::_IOFBF, libc::_IONBF] {
-        for delimiter in [b'\n', b';'] {
+        for delimiter in *b"\n;" {
             let host = observe_cookie_lines(false, mode, delimiter);
             assert_eq!(
                 host.lines.iter().map(|l| l.length).collect::<Vec<_>>(),
