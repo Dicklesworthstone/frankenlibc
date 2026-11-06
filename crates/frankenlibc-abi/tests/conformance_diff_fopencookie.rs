@@ -292,7 +292,11 @@ fn observe_null_line_buffer(
             g::fopencookie(cookie, c"r".as_ptr(), funcs)
         };
         assert!(!stream.is_null());
-        let set_buffer = if native_stream { fl::setvbuf } else { g::setvbuf };
+        let set_buffer = if native_stream {
+            fl::setvbuf
+        } else {
+            g::setvbuf
+        };
         let read_char = if native_stream { fl::fgetc } else { g::fgetc };
         let error = if native_stream { fl::ferror } else { g::ferror };
         let eof = if native_stream { fl::feof } else { g::feof };
@@ -307,7 +311,11 @@ fn observe_null_line_buffer(
             let scan = if native_call { fl::getline } else { g::getline };
             scan(&mut line, capacity.as_mut_ptr(), stream)
         } else {
-            let scan = if native_call { fl::getdelim } else { g::getdelim };
+            let scan = if native_call {
+                fl::getdelim
+            } else {
+                g::getdelim
+            };
             scan(&mut line, capacity.as_mut_ptr(), b'\n' as c_int, stream)
         };
         let saved_errno = read_errno();
