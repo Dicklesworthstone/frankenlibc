@@ -28241,34 +28241,31 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
-          "artifacts": "Fresh5f mandatory checks and named receipt pending; .7.35 scanf correction blocks closure."
+          "status": "complete",
+          "artifacts": "hz3:/data/tmp/frankenlibc-qualification-20261106/final-record/record/receipt.json;2namedparents;vmi1227854:/data/tmp/frankenlibc-qualification-20261106/fresh-regression/report.json;106parents/mode(1report-only)"
         },
         "e2e_scripts": {
-          "status": "partial",
-          "artifacts": "Earlier3a21 real release passed; fresh scanner-change release replay pending."
+          "status": "complete",
+          "artifacts": "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/report.json;33280pairs,8wrong-provider42"
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 2,
-        "complete": 0,
-        "partial": 2,
+        "complete": 2,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.34",
         "stream": "e2e",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_strtol_family --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
-          "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/cf9c8268124e42d6/out/conformance_strtol_family-cf9c8268124e42d6 native_integer_extended_ --nocapture --test-threads=1",
-          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/cf9c8268124e42d6/out/conformance_strtol_family-cf9c8268124e42d6 native_integer_extended_ --nocapture --test-threads=1",
+          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/cf9c8268124e42d6/out/conformance_strtol_family-cf9c8268124e42d6 native_integer_extended_ --test-threads=1",
           "cargo check -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"'",
           "cargo clippy -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"' -- -D warnings",
           "cargo fmt --check",
-          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_strtol_family --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
-          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/cf9c8268124e42d6/out/conformance_strtol_family-cf9c8268124e42d6 native_integer_extended_ --test-threads=1",
           "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --no-run --message-format=json --config 'build.fingerprint=\"content\"' --test conformance_diff_wcstoimax --test isoc_abi_test --test conformance_strtol_family --test conformance_diff_ctype --test strtol_family_differential_fuzz --test dlfcn_native_memory_test --test dlfcn_native_io_test",
           "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/39aba52fbcb6ada2/out/conformance_diff_wcstoimax-39aba52fbcb6ada2 --nocapture --test-threads=1",
           "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/b2f5eaaa3e4dddc4/out/isoc_abi_test-b2f5eaaa3e4dddc4 --nocapture --test-threads=1",
@@ -28287,41 +28284,41 @@
         ],
         "e2e_cmds": [
           "cargo build -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --release --message-format=json --config 'build.fingerprint=\"content\"'",
-          "gcc -O2 -fno-builtin -Wall -Wextra -Werror -fanalyzer -fsyntax-only /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/integer_extended.c",
+          "gcc -O2 -fno-builtin -Wall -Wextra -Werror -fanalyzer -fsyntax-only /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/integer_extended.c",
           "gcc -O2 -fno-builtin -Wall -Wextra -Werror -fanalyzer -fsyntax-only tests/integration/fixture_native_runtime_driver.c",
-          "gcc -O2 -fno-builtin -Wall -Wextra -Werror tests/integration/fixture_native_runtime_driver.c -o /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver -ldl",
-          "gcc -shared -fPIC -nostdlib -O2 -fno-builtin -fno-stack-protector -Wall -Wextra -Werror -Wl,--hash-style=both -fplt /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/integer_extended.c -o /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so",
-          "readelf -dW /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so",
-          "readelf --dyn-syms --wide /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so",
-          "objdump -dr /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke native",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke native",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke native",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/plt.so integer_ext_smoke native",
-          "gcc -shared -fPIC -nostdlib -O2 -fno-builtin -fno-stack-protector -Wall -Wextra -Werror -Wl,--hash-style=both -fno-plt /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/integer_extended.c -o /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so",
-          "readelf -dW /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so",
-          "readelf --dyn-syms --wide /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so",
-          "objdump -dr /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke native",
-          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke native",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke native",
-          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/candidate.so /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/driver /data/tmp/frankenlibc-native-integer-20261105/fresh-deployed/got.so integer_ext_smoke native",
+          "gcc -O2 -fno-builtin -Wall -Wextra -Werror tests/integration/fixture_native_runtime_driver.c -o /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver -ldl",
+          "gcc -shared -fPIC -nostdlib -O2 -fno-builtin -fno-stack-protector -Wall -Wextra -Werror -Wl,--hash-style=both -fplt /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/integer_extended.c -o /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so",
+          "readelf -dW /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so",
+          "readelf --dyn-syms --wide /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so",
+          "objdump -dr /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke native",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke native",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke native",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/plt.so integer_ext_smoke native",
+          "gcc -shared -fPIC -nostdlib -O2 -fno-builtin -fno-stack-protector -Wall -Wextra -Werror -Wl,--hash-style=both -fno-plt /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/integer_extended.c -o /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so",
+          "readelf -dW /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so",
+          "readelf --dyn-syms --wide /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so",
+          "objdump -dr /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke native",
+          "env FRANKENLIBC_MODE=strict LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke native",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke native",
+          "env FRANKENLIBC_MODE=hardened LC_ALL=C FLC_INTEGER_EXT_EXPECT_PROVIDER=/usr/lib/x86_64-linux-gnu/libc.so.6 LD_PRELOAD=/data/tmp/frankenlibc-qualification-20261106/fresh-deployed/candidate.so /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/driver /data/tmp/frankenlibc-qualification-20261106/fresh-deployed/got.so integer_ext_smoke native",
           "rustc -Vv",
           "cargo -V",
           "gcc --version",
-          "env RCH_BUILD_SOURCE=a8a407468bf5ff165ec987619beed7b185d4c06e bash scripts/check_semantic_contract_inventory.sh",
-          "env RCH_BUILD_SOURCE=a8a407468bf5ff165ec987619beed7b185d4c06e bash scripts/check_semantic_contract_symbol_join.sh",
-          "env RCH_BUILD_SOURCE=a8a407468bf5ff165ec987619beed7b185d4c06e bash scripts/check_semantic_contract_drift.sh",
-          "env RCH_BUILD_SOURCE=a8a407468bf5ff165ec987619beed7b185d4c06e bash scripts/check_docs_semantic_claims.sh",
-          "env RCH_BUILD_SOURCE=a8a407468bf5ff165ec987619beed7b185d4c06e bash scripts/check_host_delegation_census.sh"
+          "env RCH_BUILD_SOURCE=5f2494c251b8ebed857e1d9c9756e51ac7139ded bash scripts/check_semantic_contract_inventory.sh",
+          "env RCH_BUILD_SOURCE=5f2494c251b8ebed857e1d9c9756e51ac7139ded bash scripts/check_semantic_contract_symbol_join.sh",
+          "env RCH_BUILD_SOURCE=5f2494c251b8ebed857e1d9c9756e51ac7139ded bash scripts/check_semantic_contract_drift.sh",
+          "env RCH_BUILD_SOURCE=5f2494c251b8ebed857e1d9c9756e51ac7139ded bash scripts/check_docs_semantic_claims.sh",
+          "env RCH_BUILD_SOURCE=5f2494c251b8ebed857e1d9c9756e51ac7139ded bash scripts/check_host_delegation_census.sh"
         ],
         "expected_assertions": [
           "41 actual imports=40 integer parsers plus errno; 34 new bindings, six existing retained",
@@ -28331,28 +28328,22 @@
         ],
         "log_schema_refs": [],
         "artifact_paths": [
-          "hz3:/data/tmp/frankenlibc-native-integer-20261105/before",
-          "hz3:/data/tmp/frankenlibc-native-integer-20261105/before-corrected",
-          "hz3:/data/tmp/frankenlibc-native-integer-20261105/before-verified",
-          "vmi1156319:/data/tmp/frankenlibc-native-integer-20261105/after-verified",
-          "vmi1156319:/data/tmp/frankenlibc-native-integer-20261105/freeze",
-          "vmi1152480:/data/tmp/frankenlibc-native-integer-20261105/workspace-check",
-          "vmi1156319:/data/tmp/frankenlibc-native-integer-20261105/workspace-clippy",
-          "/data/tmp/frankenlibc-native-integer-final-20261105",
+          "hz3:/data/tmp/frankenlibc-qualification-20261106/workspace-check",
+          "hz3:/data/tmp/frankenlibc-qualification-20261106/final-record",
+          "hz3:/data/tmp/frankenlibc-qualification-20261106/scanf-record-captured",
+          "hz4:/data/tmp/frankenlibc-qualification-20261106/workspace-clippy-retry",
+          "hz4:/data/tmp/frankenlibc-qualification-20261106/workspace-clippy",
+          "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/fresh-deployed",
+          "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/fresh-regression",
+          "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/metadata-final",
+          "vmi1152480:/data/tmp/frankenlibc-qualification-20261106/scanf-review-corrected",
+          "vmi1152480:/data/tmp/frankenlibc-native-integer-review-20261106/scanf-review",
           "/data/tmp/frankenlibc-native-integer-honesty-20261105",
-          "vmi1149989:/data/tmp/frankenlibc-native-integer-20261105/fresh-deployed",
-          "vmi1149989:/data/tmp/frankenlibc-native-integer-20261105/fresh-regression",
-          "vmi1149989:/data/tmp/frankenlibc-native-integer-20261105/metadata-final",
-          "vmi1149989:/data/tmp/frankenlibc-native-integer-20261105/final-record",
-          "hz3:/data/tmp/frankenlibc-native-integer-20261105/workspace-clippy-merged",
-          "vmi1153651:/data/tmp/frankenlibc-native-integer-20261105/workspace-check-merged"
+          "/data/tmp/frankenlibc-qualified-evidence-20261106"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "Source5f249 scanner fix core and mandatory workspace checks pending; .7.35 blocks closure.",
-          "Fresh5f249 release/regression/metadata/record and complete evidence publication required."
-        ],
-        "notes": "Implementation published at a8a407468bf5ff165ec987619beed7b185d4c06e, Bead stays in_progress. 34existing parsers newly bound; six existing narrow parsers retained; no parser engine edit. Actual exploratory before-verified onhz3 compiled0 then bothmodes0passed/2failed/3filtered after GNU positives, native handle rejects host fallback. Actual exploratory after-verified onvmi1156319 compiled0 then bothmodes test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out. Eachprovider/form/mode imports41,records8320,lookup451; total33280paired comparisons acrossfour test executions. Exploratory source_base77ea is startingbase only, not fullsource proof; two changed Rust hashes match published mapping/tests. Exact H1=744cb847674a7d355bcfa708fba598f45c75bc76 broad compiler proof: check0,1295.06s;Clippy-Dwarnings0,1211.62s;bothworkspace/alltargets/keepgoing,fmt0;3177 identical stable inputs,2903tracked matchedGitH1 and274ignored archived locally in initial-ignored-source. Do not promote H1 to mergedH2. H2merges peer scanf changes ec0a314e7, preserves peer work; producercensus committed after actual completion, updated README ABI227488/core1168177; census policy/summary/anchors/modulecounts/unknownedges unchanged. UBS0/0critical61warnings23info=47testassertions,3inputclones,11fixtureallocations reviewed; targetedscan excludesCargo/AST phases, not compiler proof. GCCfixture+driveranalyzer0. Author-created version expectation corrected before product mapping: narrowll_l x862.3.3, sixotherlegacylocale2.3,allC232.38; original full acceptance and win/lose split preserved comment3367; fourth family adds41 negatives410->451, no bad case removed. InitialGNUfailure is not feature RED; initialrunnerexpected nullhandle but actualfailurehostfallback, corrected and bothmodesrerun before mapping. Precompiletypedendguardcopy bug fixed andtruepassedcell guardedvolatile; inertafter-runnercombinedlinecount corrected before successfuladmission. Initialfmtfailure retained. Repeated final RCH admissions refused103/120 with started:false fordisk/slots; hz3 source-lock completionunconfirmed jobrchw-78a25eeb-a45c-46f6-bb97-f6ceac43fd24 recovered terminalacktrue/exit1 with no replay; laterhz3namespacefailure issuedno source/executiongrant; no localbuild or compiledartifactdownload or manualfleet/cache/lock/slot/budget/deadline intervention. Invalid comma-list --worker attempt failed argument parsing, corrected via documentedRCH_WORKER list. Standard brimport altered derived trackedcert metadata and removedheadcert; generatedbytes retained and exacttrackedbytes restored, no source deletion. Full20honestyanswers and all TODOs retained inBead; separate-hat SOLO, no independentreview. Prior148matrixrows unchanged. No finalH2receipt/deployed/regression/metadata/workspace-green claim; required e2e remainsmissing, unitcoveragepartial. No ARM/arbitrarylocale/ELF-versioned-relocation/standalone/performance/universalsafety/fullworkspaceruntime/broadreadiness or classificationpromotion claim. Pending existing gate commands saved in final-release-regression-metadata-record.py,merged-check.py,merged-clippy.py under artifact directory; resume only through strict normal RCH admission, with manifest/source guard. Source and partial progress published to bothrequiredrefs; no closure. UPDATE2026-11-05T23:27Z: former external blocker cleared through normal admission, no overrides. Fresh release16processes all expected,33280paired comparisons/8wrong-provider42. Fresh212regressionparents(2existingreport-only),both2Mnarrowfuzz/0div;5metadata gates0. a8receipt observed compiled+executed2requiredparents/3filtered andadmit0, receiptSHA276c199788697722b6ec46779e9ca3764d13278a7ede933e7d28c5354b4f524b, executablef33280e960cfc039684d366ae95b07a3904ad30af7f0a2619ab2fe474206eb7a. Initialpendingstatementsabovearehistorical, not claims these now-observed runs remain unexecuted. Workspacecheckvmi1153651/Clippyhz3 actuallyrunning; no closure untilremainingrequirements observed. Fresh review: a8 workspacecheck0/fmt0 observed but Clippy101 found argument-count and tuple-complexity errors in merged scanf helper. Manual named-type/provider-stdin grouping preserves756 comparisons, all cases/pointers/assertions and guard settings. Qualification now targets3a21aa067ab219497c836942181f9bd60a4f283e with509 frozen source inputs; old a8 passes remain historical. UBS reports3 existing C bridge transmute findings, reviewed exact signatures and handle lifetimes; no suppression, no clean UBS claim. New actual GNU2.43 scanf prefix divergence retained at3a21; correction5f249 blocks this Bead through.7.35. Earlier3a21 release/regression/metadata/receipt pass remains historical, not final5f qualification.",
+        "close_blockers": [],
+        "notes": "Implementation published at a8a407468bf5ff165ec987619beed7b185d4c06e, Bead stays in_progress. 34existing parsers newly bound; six existing narrow parsers retained; no parser engine edit. Actual exploratory before-verified onhz3 compiled0 then bothmodes0passed/2failed/3filtered after GNU positives, native handle rejects host fallback. Actual exploratory after-verified onvmi1156319 compiled0 then bothmodes test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out. Eachprovider/form/mode imports41,records8320,lookup451; total33280paired comparisons acrossfour test executions. Exploratory source_base77ea is startingbase only, not fullsource proof; two changed Rust hashes match published mapping/tests. Exact H1=744cb847674a7d355bcfa708fba598f45c75bc76 broad compiler proof: check0,1295.06s;Clippy-Dwarnings0,1211.62s;bothworkspace/alltargets/keepgoing,fmt0;3177 identical stable inputs,2903tracked matchedGitH1 and274ignored archived locally in initial-ignored-source. Do not promote H1 to mergedH2. H2merges peer scanf changes ec0a314e7, preserves peer work; producercensus committed after actual completion, updated README ABI227488/core1168177; census policy/summary/anchors/modulecounts/unknownedges unchanged. UBS0/0critical61warnings23info=47testassertions,3inputclones,11fixtureallocations reviewed; targetedscan excludesCargo/AST phases, not compiler proof. GCCfixture+driveranalyzer0. Author-created version expectation corrected before product mapping: narrowll_l x862.3.3, sixotherlegacylocale2.3,allC232.38; original full acceptance and win/lose split preserved comment3367; fourth family adds41 negatives410->451, no bad case removed. InitialGNUfailure is not feature RED; initialrunnerexpected nullhandle but actualfailurehostfallback, corrected and bothmodesrerun before mapping. Precompiletypedendguardcopy bug fixed andtruepassedcell guardedvolatile; inertafter-runnercombinedlinecount corrected before successfuladmission. Initialfmtfailure retained. Repeated final RCH admissions refused103/120 with started:false fordisk/slots; hz3 source-lock completionunconfirmed jobrchw-78a25eeb-a45c-46f6-bb97-f6ceac43fd24 recovered terminalacktrue/exit1 with no replay; laterhz3namespacefailure issuedno source/executiongrant; no localbuild or compiledartifactdownload or manualfleet/cache/lock/slot/budget/deadline intervention. Invalid comma-list --worker attempt failed argument parsing, corrected via documentedRCH_WORKER list. Standard brimport altered derived trackedcert metadata and removedheadcert; generatedbytes retained and exacttrackedbytes restored, no source deletion. Full20honestyanswers and all TODOs retained inBead; separate-hat SOLO, no independentreview. Prior148matrixrows unchanged. No finalH2receipt/deployed/regression/metadata/workspace-green claim; required e2e remainsmissing, unitcoveragepartial. No ARM/arbitrarylocale/ELF-versioned-relocation/standalone/performance/universalsafety/fullworkspaceruntime/broadreadiness or classificationpromotion claim. Pending existing gate commands saved in final-release-regression-metadata-record.py,merged-check.py,merged-clippy.py under artifact directory; resume only through strict normal RCH admission, with manifest/source guard. Source and partial progress published to bothrequiredrefs; no closure. UPDATE2026-11-05T23:27Z: former external blocker cleared through normal admission, no overrides. Fresh release16processes all expected,33280paired comparisons/8wrong-provider42. Fresh212regressionparents(2existingreport-only),both2Mnarrowfuzz/0div;5metadata gates0. a8receipt observed compiled+executed2requiredparents/3filtered andadmit0, receiptSHA276c199788697722b6ec46779e9ca3764d13278a7ede933e7d28c5354b4f524b, executablef33280e960cfc039684d366ae95b07a3904ad30af7f0a2619ab2fe474206eb7a. Initialpendingstatementsabovearehistorical, not claims these now-observed runs remain unexecuted. Workspacecheckvmi1153651/Clippyhz3 actuallyrunning; no closure untilremainingrequirements observed. Fresh review: a8 workspacecheck0/fmt0 observed but Clippy101 found argument-count and tuple-complexity errors in merged scanf helper. Manual named-type/provider-stdin grouping preserves756 comparisons, all cases/pointers/assertions and guard settings. Qualification now targets3a21aa067ab219497c836942181f9bd60a4f283e with509 frozen source inputs; old a8 passes remain historical. UBS reports3 existing C bridge transmute findings, reviewed exact signatures and handle lifetimes; no suppression, no clean UBS claim. New actual GNU2.43 scanf prefix divergence retained at3a21; correction5f249 blocks this Bead through.7.35. Earlier3a21 release/regression/metadata/receipt pass remains historical, not final5f qualification. First hz4 Clippy attempt terminated137 because RCH disk-output monitor missed its scan deadline; no lint result credited, no OOM inference. Raw failure retained. Retry uses same source/flags/guard settings and fresh report directory; cached compiler work is ordinary Cargo reuse, not inherited proof. FINAL observed qualification: source5f2494c251b8ebed857e1d9c9756e51ac7139ded; named gate compiled0/executed2passed0failed, receiptSHAf5c598b16eadd15144476bf2975ef000d047ceadfe70a10141cc0763efb30ede, executableSHAad3a791535e1a9c771fd0d27a6e153566884a93acede193edc9a4a2f7f568e18. Whole workspacecheck0, Clippy-Dwarnings0, both alltargets/keepgoing, fmt0. Same3177 recorded unchanged workspace Rust/Cargo inputs:2903tracked verified againstGitH plus274ignored (273Rustprobes+Cargo.lock) byte-matched to existing physical source archive. This is a conservative frozen inputset, not3177 executed tests or a hermetic/Git-alone reproduction claim. Full workspace runtime tests unrun. All actual Rust/GCC/fmt execution strict normalRCH; no local builds, compiled-artifact downloads, guard/budget/floor/deadline/worker/cache/daemon changes. All first failures retained. SOLO rechecks, no independent verification or broad readiness claim. Source+complete evidence must be published and exact both refs verified before closure. Fresh release8positive/8wrong-provider42 processes,66560providerrecords/33280paired comparisons,41actualpins/nativehandle witness, GCCfixture+driveranalyzers0. ReleaseSHAb7005d7a274150931af5133a111133cfd652e493c35c8660e6faa3cda911ea08, driverSHA848b967aa6e3afb7232edd32796f2f8c299a11c25796c441174205a010fc292e, GNUsha85e64f97e348786a8fb4d9f3d52fec289e2fb86bba20f0731dfe61990525e0f7. Fresh106parents/mode includes one existing report-only ctype parent per mode;212total is not212uniformly assertive parents. Repeated named gates are not additional distinct coverage. Original version/oracle/runner corrections retained3367-3369; .35 really blocks closure until its own conditions are satisfied. No arbitrarylocale,ARM execution,ELF-versionedrelocation,performance,standalone or universalsafety claim.",
         "result_receipts": [
           "/data/tmp/frankenlibc-qualification-20261106/final-record/record/receipt.json"
         ],
@@ -28972,22 +28963,32 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
-          "artifacts": "Source5f249 existing ABI4parents/mode passed; full core group and mandatory compiler/receipt checks pending."
+          "status": "complete",
+          "artifacts": "hz3:/data/tmp/frankenlibc-qualification-20261106/scanf-record-captured/record/receipt.json;4namedparents;vmi1152480:/data/tmp/frankenlibc-qualification-20261106/scanf-review-corrected/report.json;4parents/mode+78core;fullcompilerreports"
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 1,
-        "complete": 0,
-        "partial": 1,
+        "complete": 1,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.35",
         "stream": "e2e",
-        "status": "partial",
-        "unit_cmds": [],
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_fscanf_host_stream --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
+          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --test-threads=1",
+          "cargo check -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"'",
+          "cargo clippy -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"' -- -D warnings",
+          "cargo fmt --check",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_fscanf_host_stream --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-core --lib stdio::scanf::tests:: --config 'build.fingerprint=\"content\"' -- --nocapture --test-threads=1",
+          "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --nocapture --test-threads=1",
+          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --nocapture --test-threads=1"
+        ],
         "e2e_cmds": [],
         "expected_assertions": [
           "Original GNU2.43 dialect matrix remains756 exact-symbol comparisons per mode",
@@ -28997,16 +28998,24 @@
         ],
         "log_schema_refs": [],
         "artifact_paths": [
+          "hz3:/data/tmp/frankenlibc-qualification-20261106/workspace-check",
+          "hz3:/data/tmp/frankenlibc-qualification-20261106/final-record",
+          "hz3:/data/tmp/frankenlibc-qualification-20261106/scanf-record-captured",
+          "hz4:/data/tmp/frankenlibc-qualification-20261106/workspace-clippy-retry",
+          "hz4:/data/tmp/frankenlibc-qualification-20261106/workspace-clippy",
+          "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/fresh-deployed",
+          "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/fresh-regression",
+          "vmi1227854:/data/tmp/frankenlibc-qualification-20261106/metadata-final",
+          "vmi1152480:/data/tmp/frankenlibc-qualification-20261106/scanf-review-corrected",
           "vmi1152480:/data/tmp/frankenlibc-native-integer-review-20261106/scanf-review",
-          "vmi1152480:/data/tmp/frankenlibc-qualification-20261106/scanf-review-corrected"
+          "/data/tmp/frankenlibc-native-integer-honesty-20261105",
+          "/data/tmp/frankenlibc-qualified-evidence-20261106"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "Full core group,workspacecheck/Clippy/fmt,source-bound record/admit and publication pending."
-        ],
-        "notes": "Compiled3a21/GNU2.43 strict3passed1failed is RED, original dynamicGNU gate unchanged. Manual safe scanner correction plus3explicitly stale2.42 unit expectations; originals retained at3a21. Prefix-zero successful assignments rejected under2.43; validzero/width1 successes retained. No host-version sniff, suppression, skip, tolerance or dependency change. Core UBS0,0critical447warnings166info; actual compiler proof pending. SOLO fresh pass, not independent verification. No olderGNU2.42 invalid-prefix parity,performance,standalone or broadreadiness claim.",
+        "close_blockers": [],
+        "notes": "Compiled3a21/GNU2.43 strict3passed1failed is RED, original dynamicGNU gate unchanged. Manual safe scanner correction plus3explicitly stale2.42 unit expectations; originals retained at3a21. Prefix-zero successful assignments rejected under2.43; validzero/width1 successes retained. No host-version sniff, suppression, skip, tolerance or dependency change. Core UBS0,0critical447warnings166info; actual compiler proof pending. SOLO fresh pass, not independent verification. No olderGNU2.42 invalid-prefix parity,performance,standalone or broadreadiness claim. Initial author-created --nocapture receipt invocation rejected executed_count_mismatch: actual4passed but one interleaved label. Correct only to default libtest capture, all4required names/strict parser/tests unchanged; original failed raw outputs retained, no proof credited. First hz4 Clippy attempt terminated137 because RCH disk-output monitor missed its scan deadline; no lint result credited, no OOM inference. Raw failure retained. Retry uses same source/flags/guard settings and fresh report directory; cached compiler work is ordinary Cargo reuse, not inherited proof. FINAL observed qualification: source5f2494c251b8ebed857e1d9c9756e51ac7139ded; named gate compiled0/executed4passed0failed, receiptSHA4408e31a3b48d4cfc63941ae01634633ee2d1aa02372a22cbd246b68da690a16, executableSHAce051d56486b254e274972d8a353274af654e17bbbf0f67f9af908ee187508be. Whole workspacecheck0, Clippy-Dwarnings0, both alltargets/keepgoing, fmt0. Same3177 recorded unchanged workspace Rust/Cargo inputs:2903tracked verified againstGitH plus274ignored (273Rustprobes+Cargo.lock) byte-matched to existing physical source archive. This is a conservative frozen inputset, not3177 executed tests or a hermetic/Git-alone reproduction claim. Full workspace runtime tests unrun. All actual Rust/GCC/fmt execution strict normalRCH; no local builds, compiled-artifact downloads, guard/budget/floor/deadline/worker/cache/daemon changes. All first failures retained. SOLO rechecks, no independent verification or broad readiness claim. Source+complete evidence must be published and exact both refs verified before closure. Existing4ABIparents/mode retain756childcomparisons/mode; all78core scanf tests pass. GNU2.43 live oracle, incomplete-prefix destinations/%n untouched, consumed prefix kept, validzero/width1/priorassignment/suppression controls. Original3a21/GNU2.43 real failure, cbd formatter1 and rejected --nocapture receipt retained. Correct3older2.42 core expectations with primary/live oracle and explicit win/lose split; no dynamic test assertion/case or strict receipt parser change. Correct new receipt only to default libtest capture, same4required names. OlderGNU2.42 invalid-prefix parity not claimed. No new unsafe or suppressions. HelperUBS1 flags3existing legitimate C bridge transmute sites reviewed with exact signatures/lifetimes; core UBS0 before format-only edit,447warnings reviewed, not compiler proof.",
         "result_receipts": [
-          "/data/tmp/frankenlibc-qualification-20261106/scanf-record/record/receipt.json"
+          "/data/tmp/frankenlibc-qualification-20261106/scanf-record-captured/record/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Reject incomplete scanf integer prefixes without assignments or rewinding the consumed prefix (GNU2.43)",
@@ -29546,7 +29555,6 @@
           "gate": {
             "command": [
               "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac",
-              "--nocapture",
               "--test-threads=1"
             ],
             "environment": {
