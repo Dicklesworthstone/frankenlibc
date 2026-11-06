@@ -15442,6 +15442,20 @@ unsafe fn getdelim_fill_stream(
     }
 }
 
+/// The capacity is an input only when the caller supplied a buffer. In the
+/// NULL-buffer case it is an output slot and may be uninitialized.
+///
+/// # Safety
+/// If `buffer` is non-null, `capacity` points to an initialized size_t.
+unsafe fn getdelim_capacity(buffer: *mut c_char, capacity: *const usize) -> usize {
+    if buffer.is_null() {
+        0
+    } else {
+        // SAFETY: only a supplied buffer requires an initialized input capacity.
+        unsafe { *capacity }
+    }
+}
+
 /// Shared getdelim tail: (re)allocate `*lineptr` to fit `buf` + NUL, copy, NUL-terminate.
 /// Returns the line length, or -1 (empty read / ENOMEM). No observe/membrane — the caller
 /// handles telemetry (the fast path skips it).
@@ -15455,7 +15469,9 @@ unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) 
     }
     let needed = buf.len() + 1; // +1 for NUL terminator
     let current_buf = unsafe { *lineptr };
-    let current_size = unsafe { *n };
+    // SAFETY: a non-null input buffer has an initialized capacity; otherwise
+    // n is only an output and must not be read.
+    let current_size = unsafe { getdelim_capacity(current_buf, n) };
     let out_buf = if current_buf.is_null() || current_size < needed {
         let new_size = needed.max(128);
         // SAFETY: FrankenLibC realloc routes segment, fallback-tracked host,
@@ -15545,15 +15561,28 @@ pub(crate) unsafe fn getdelim_for_caller(
     if may_delegate_to_host(stream, id)
         && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
     {
+        // SAFETY: valid output slots; capacity is an input only for a supplied buffer.
+        let (buffer, capacity) = unsafe {
+            let buffer = *lineptr;
+            (buffer, getdelim_capacity(buffer, n))
+        };
+        // SAFETY: the valid caller buffer and its input capacity match; a NULL
+        // buffer is paired with zero capacity.
         let Some(prepared) =
-            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer((*lineptr).cast(), *n) })
+            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer(buffer.cast(), capacity) })
         else {
             unsafe { set_abi_errno(errno::ENOMEM) };
             return -1;
         };
         unsafe { *lineptr = prepared.cast() };
         let rc = unsafe { host_getdelim(lineptr, n, delim, stream) };
-        crate::malloc_abi::finish_host_realloc_buffer(unsafe { (*lineptr).cast() }, unsafe { *n });
+        // SAFETY: the host initializes capacity when it supplies a buffer, but
+        // may leave both slots untouched after an existing stream error.
+        let (returned, capacity) = unsafe {
+            let returned = *lineptr;
+            (returned, getdelim_capacity(returned, n))
+        };
+        crate::malloc_abi::finish_host_realloc_buffer(returned.cast(), capacity);
         if rc < 0 {
             unsafe { sync_host_errno(0) };
         } else {
@@ -15669,15 +15698,28 @@ unsafe fn getline_for_caller(
     if may_delegate_to_host(stream, _id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
+        // SAFETY: valid output slots; a NULL buffer leaves capacity output-only.
+        let (buffer, capacity) = unsafe {
+            let buffer = *lineptr;
+            (buffer, getdelim_capacity(buffer, n))
+        };
+        // SAFETY: the caller buffer, if present, is a valid realloc allocation
+        // whose capacity was initialized by the caller.
         let Some(prepared) =
-            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer((*lineptr).cast(), *n) })
+            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer(buffer.cast(), capacity) })
         else {
             unsafe { set_abi_errno(errno::ENOMEM) };
             return -1;
         };
         unsafe { *lineptr = prepared.cast() };
         let rc = unsafe { host_getline(lineptr, n, stream) };
-        crate::malloc_abi::finish_host_realloc_buffer(unsafe { (*lineptr).cast() }, unsafe { *n });
+        // SAFETY: the host need not initialize capacity on a pre-existing error
+        // when it has left the buffer NULL.
+        let (returned, capacity) = unsafe {
+            let returned = *lineptr;
+            (returned, getdelim_capacity(returned, n))
+        };
+        crate::malloc_abi::finish_host_realloc_buffer(returned.cast(), capacity);
         if rc < 0 {
             unsafe { sync_host_errno(0) };
         } else {

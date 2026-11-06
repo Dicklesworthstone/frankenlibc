@@ -606,6 +606,25 @@ static int test_cookie_line_reads(void) {
                 }
             }
 
+            struct line_cookie fresh = {.data = payload, .length = sizeof(payload)};
+            stream = fopencookie(&fresh, "r", (cookie_io_functions_t){
+                .read = read_line_cookie, .close = close_line_cookie});
+            if (!stream) return 1;
+            bad = setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0) != 0;
+            line = NULL;
+            size_t fresh_capacity; /* Output-only when line is NULL. */
+            errno = 0x5EED;
+            length = cookie_line_call(api, &line, &fresh_capacity, stream);
+            bad |= length != 4 || errno != 0x5EED || !line || fresh_capacity < 5;
+            if (length == 4 && line && fresh_capacity >= 5)
+                bad |= memcmp(line, payload, 4) || line[4] != 0;
+            bad |= ferror(stream) || feof(stream);
+            free(line);
+            bad |= fclose(stream) != 0 || fresh.closed != 1;
+            printf("cookie-lines api=%d unbuffered=%d null-buffer=%s\n",
+                   api, unbuffered, bad ? "FAIL" : "PASS");
+            failed += bad != 0; ++cases;
+
             struct line_cookie write_only = {.data = payload, .length = sizeof(payload)};
             stream = fopencookie(&write_only, "w", (cookie_io_functions_t){
                 .read = read_line_cookie, .close = close_line_cookie});

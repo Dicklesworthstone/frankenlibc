@@ -56,6 +56,7 @@ mod g {
         pub fn ungetc(c: c_int, f: *mut c_void) -> c_int;
         pub fn clearerr(f: *mut c_void);
         pub fn getdelim(p: *mut *mut c_char, n: *mut usize, d: c_int, f: *mut c_void) -> isize;
+        pub fn getline(p: *mut *mut c_char, n: *mut usize, f: *mut c_void) -> isize;
     }
 }
 use frankenlibc_abi::stdio_abi as fl;
@@ -91,6 +92,7 @@ struct LineCookie {
     position: usize,
     calls: usize,
     closed: usize,
+    error: c_int,
 }
 
 unsafe extern "C-unwind" fn line_cookie_read(
@@ -104,6 +106,11 @@ unsafe extern "C-unwind" fn line_cookie_read(
     state.calls += 1;
     let copied = count.min(3).min(state.data.len() - state.position);
     if copied == 0 {
+        if state.error != 0 {
+            // SAFETY: glibc supplies this thread's writable errno slot.
+            unsafe { *g::__errno_location() = state.error };
+            return -1;
+        }
         return 0;
     }
     // SAFETY: the callback receives count writable bytes; the static input is
@@ -135,6 +142,7 @@ fn observe_cookie_lines(native: bool, mode: c_int, delimiter: u8) -> CookieLineS
         position: 0,
         calls: 0,
         closed: 0,
+        error: 0,
     };
     let funcs = CookieIoFuncs {
         read: Some(line_cookie_read),
@@ -239,6 +247,136 @@ fn cookie_line_input_uses_callbacks_and_preserves_stop_state() {
             assert_eq!(host.eof_char, libc::EOF);
             assert_eq!((host.close_result, host.close_calls), (0, 1));
             assert_eq!(observe_cookie_lines(true, mode, delimiter), host);
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct NullBufferObservation {
+    line: CookieLineObservation,
+    buffer_null: bool,
+    capacity_valid: bool,
+    buffer_result: c_int,
+    preflight: Option<c_int>,
+    called_after_error: bool,
+    close_result: c_int,
+    close_calls: usize,
+}
+
+fn observe_null_line_buffer(
+    native_call: bool,
+    native_stream: bool,
+    use_getline: bool,
+    mode: c_int,
+    stopped: bool,
+) -> NullBufferObservation {
+    let mut state = LineCookie {
+        data: if stopped { b"" } else { b"line\n" },
+        position: 0,
+        calls: 0,
+        closed: 0,
+        error: if stopped { libc::EIO } else { 0 },
+    };
+    let funcs = CookieIoFuncs {
+        read: Some(line_cookie_read),
+        close: Some(line_cookie_close),
+        ..CookieIoFuncs::default()
+    };
+    // SAFETY: all slots and the cookie stay live until fclose; the capacity
+    // slot is output-only while line is NULL. It is read only after success.
+    unsafe {
+        let cookie = (&mut state as *mut LineCookie).cast();
+        let stream = if native_stream {
+            fl::fopencookie(cookie, c"r".as_ptr(), funcs)
+        } else {
+            g::fopencookie(cookie, c"r".as_ptr(), funcs)
+        };
+        assert!(!stream.is_null());
+        let set_buffer = if native_stream { fl::setvbuf } else { g::setvbuf };
+        let read_char = if native_stream { fl::fgetc } else { g::fgetc };
+        let error = if native_stream { fl::ferror } else { g::ferror };
+        let eof = if native_stream { fl::feof } else { g::feof };
+        let close = if native_stream { fl::fclose } else { g::fclose };
+        let buffer_result = set_buffer(stream, std::ptr::null_mut(), mode, 0);
+        let preflight = stopped.then(|| read_char(stream));
+        let previous_calls = state.calls;
+        let mut line = std::ptr::null_mut();
+        let mut capacity = std::mem::MaybeUninit::<usize>::uninit();
+        plant_errno();
+        let length = if use_getline {
+            let scan = if native_call { fl::getline } else { g::getline };
+            scan(&mut line, capacity.as_mut_ptr(), stream)
+        } else {
+            let scan = if native_call { fl::getdelim } else { g::getdelim };
+            scan(&mut line, capacity.as_mut_ptr(), b'\n' as c_int, stream)
+        };
+        let saved_errno = read_errno();
+        let capacity_valid = if length >= 0 {
+            capacity.assume_init() > length as usize
+        } else {
+            false
+        };
+        let bytes = if length >= 0 && !line.is_null() && capacity_valid {
+            std::slice::from_raw_parts(line.cast::<u8>(), length as usize + 1).to_vec()
+        } else {
+            Vec::new()
+        };
+        let observation = CookieLineObservation {
+            length,
+            bytes,
+            error: error(stream) != 0,
+            eof: eof(stream) != 0,
+            errno: saved_errno,
+        };
+        let buffer_null = line.is_null();
+        let called_after_error = stopped && state.calls != previous_calls;
+        let close_result = close(stream);
+        if native_call {
+            frankenlibc_abi::malloc_abi::free(line.cast());
+        } else {
+            libc::free(line.cast());
+        }
+        NullBufferObservation {
+            line: observation,
+            buffer_null,
+            capacity_valid,
+            buffer_result,
+            preflight,
+            called_after_error,
+            close_result,
+            close_calls: state.closed,
+        }
+    }
+}
+
+#[test]
+fn cookie_line_null_buffer_ignores_uninitialized_capacity() {
+    assert_ne!(g::getline as *const (), fl::getline as *const ());
+    for mode in [libc::_IOFBF, libc::_IONBF] {
+        for use_getline in [false, true] {
+            for stopped in [false, true] {
+                let host = observe_null_line_buffer(false, false, use_getline, mode, stopped);
+                assert_eq!(host.line.length, if stopped { -1 } else { 5 });
+                assert_eq!(
+                    host.line.bytes,
+                    if stopped { &b""[..] } else { &b"line\n\0"[..] }
+                );
+                assert_eq!(host.line.errno, SENTINEL_ERRNO);
+                assert_eq!((host.line.error, host.line.eof), (stopped, false));
+                assert_eq!((host.buffer_null, host.capacity_valid), (stopped, !stopped));
+                assert_eq!(host.preflight, stopped.then_some(libc::EOF));
+                assert!(!host.called_after_error);
+                assert_eq!(
+                    (host.buffer_result, host.close_result, host.close_calls),
+                    (0, 0, 1)
+                );
+                for native_stream in [false, true] {
+                    assert_eq!(
+                        observe_null_line_buffer(true, native_stream, use_getline, mode, stopped),
+                        host
+                    );
+                }
+            }
         }
     }
 }

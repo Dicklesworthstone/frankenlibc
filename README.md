@@ -739,7 +739,7 @@ The shared scanf engine supports unsigned binary `%b`, including an optional `0b
 
 Pointer `%p` conversions share the unsigned hexadecimal scanner: they accept bare or `0x`/`0X`-prefixed digits, optional signs and GNU's case-insensitive `(nil)`, preserving the full pointer width. An incomplete `(nil)` spelling consumes its matched prefix and leaves the first mismatching character unread; a field width below five prevents that spelling from matching. The live GNU differential matrix checks numeric values, failed assignments, `%n`, stream positions and trailing characters across narrow/wide string and stream entry points in all three dialects.
 
-Native `getline`, `getdelim` and `__getdelim` read user `fopencookie` streams through their callbacks, including pushback and embedded NUL bytes. Line input stops on existing EOF or error indicators until they are cleared; character input can retry after an error, while EOF and read permissions prevent an inappropriate callback. The `--cookie-lines` stdio qualifier exercises 80 cases per provider through the exact exported APIs, with buffering, short reads, buffer growth, errors and recovery.
+Native `getline`, `getdelim` and `__getdelim` read user `fopencookie` streams through their callbacks, including pushback and embedded NUL bytes. Line input stops on existing EOF or error indicators until they are cleared; character input can retry after an error, while EOF and read permissions prevent an inappropriate callback. A null input buffer leaves the capacity slot output-only, including when a host stream already has an error. The `--cookie-lines` stdio qualifier exercises 88 cases per provider through the exact exported APIs, with buffering, short reads, buffer growth, errors and recovery.
 
 ---
 
@@ -3929,7 +3929,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,823 native/direct-syscall rows (68.5%), 1,278 host-backed wrapper rows (31.0%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,891 |
-| `crates/frankenlibc-abi/src/` | 121 Rust files, 227,513 lines |
+| `crates/frankenlibc-abi/src/` | 121 Rust files, 227,555 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,794 lines |
 | `crates/frankenlibc-core/src/` | 203 Rust files, 1,168,502 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
