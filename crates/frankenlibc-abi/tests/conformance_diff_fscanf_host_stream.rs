@@ -313,8 +313,10 @@ fn scanf_and_its_isoc_aliases_exact_char_matches_glibc_on_stdin() {
 // named legacy/C99/C23 symbol or silently replace the independent host oracle.
 const DIALECT_BRIDGE: &str = r#"
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <wchar.h>
+_Static_assert(sizeof(uintptr_t) == 8 && sizeof(void *) == 8, "Linux LP64 bridge");
 #define STREAM_CALL(T, P, V) \
     (kind == 0 ? ((int (*)(FILE *, const T *, ...))fn)(s, format, V, n) : \
      kind == 1 ? P##_file_v(fn, s, format, V, n) : \
@@ -324,9 +326,12 @@ const DIALECT_BRIDGE: &str = r#"
     (is_v ? P##_string_v(fn, input, format, V, n, tail) : \
      ((int (*)(const T *, const T *, ...))fn)(input, format, V, n, tail))
 #define BRIDGE(T, P) \
-static int P##_binary_format(const T *format) { \
+static int P##_numeric_kind(const T *format) { \
     /* This bridge only receives the numeric formats in the matrix below. */ \
-    for (; *format; ++format) if (*format == 'b') return 1; \
+    for (; *format; ++format) { \
+        if (*format == 'b') return 1; \
+        if (*format == 'p') return 2; \
+    } \
     return 0; \
 } \
 static int P##_file_v(void *fn, FILE *s, const T *format, ...) { \
@@ -344,22 +349,38 @@ static int P##_string_v(void *fn, const T *input, const T *format, ...) { \
     int rc = ((int (*)(const T *, const T *, va_list))fn)(input, format, ap); \
     va_end(ap); return rc; \
 } \
-int P##_stream(void *fn, int kind, FILE *s, const T *format, int *value, int *n) { \
-    if (P##_binary_format(format)) { \
+int P##_stream(void *fn, int kind, FILE *s, const T *format, uint64_t *value, int *n) { \
+    int target_kind = P##_numeric_kind(format); \
+    if (target_kind == 2) { \
+        void *pointer_value = (void *)(uintptr_t)*value; \
+        int rc = STREAM_CALL(T, P, &pointer_value); \
+        *value = (uint64_t)(uintptr_t)pointer_value; return rc; \
+    } \
+    if (target_kind == 1) { \
         unsigned int binary_value = (unsigned int)*value; \
         int rc = STREAM_CALL(T, P, &binary_value); \
-        *value = (int)binary_value; return rc; \
+        *value = binary_value; return rc; \
     } \
-    return STREAM_CALL(T, P, value); \
+    int signed_value = (int)*value; \
+    int rc = STREAM_CALL(T, P, &signed_value); \
+    *value = (uint64_t)(int64_t)signed_value; return rc; \
 } \
 int P##_string(void *fn, int is_v, const T *input, const T *format, \
-               int *value, int *n, T *tail) { \
-    if (P##_binary_format(format)) { \
+               uint64_t *value, int *n, T *tail) { \
+    int target_kind = P##_numeric_kind(format); \
+    if (target_kind == 2) { \
+        void *pointer_value = (void *)(uintptr_t)*value; \
+        int rc = STRING_CALL(T, P, &pointer_value); \
+        *value = (uint64_t)(uintptr_t)pointer_value; return rc; \
+    } \
+    if (target_kind == 1) { \
         unsigned int binary_value = (unsigned int)*value; \
         int rc = STRING_CALL(T, P, &binary_value); \
-        *value = (int)binary_value; return rc; \
+        *value = binary_value; return rc; \
     } \
-    return STRING_CALL(T, P, value); \
+    int signed_value = (int)*value; \
+    int rc = STRING_CALL(T, P, &signed_value); \
+    *value = (uint64_t)(int64_t)signed_value; return rc; \
 }
 BRIDGE(char, narrow)
 BRIDGE(wchar_t, wide)
@@ -370,7 +391,7 @@ type StreamBridge<T> = unsafe extern "C" fn(
     c_int,
     *mut c_void,
     *const T,
-    *mut c_int,
+    *mut u64,
     *mut c_int,
 ) -> c_int;
 type StringBridge<T> = unsafe extern "C" fn(
@@ -378,7 +399,7 @@ type StringBridge<T> = unsafe extern "C" fn(
     c_int,
     *const T,
     *const T,
-    *mut c_int,
+    *mut u64,
     *mut c_int,
     *mut T,
 ) -> c_int;
@@ -407,7 +428,7 @@ struct ScanDialect {
 #[derive(Debug, PartialEq, Eq)]
 struct PrefixOutcome {
     result: c_int,
-    value: c_int,
+    value: u64,
     consumed: c_int,
     position: libc::off_t,
     tail: c_int,
@@ -593,6 +614,30 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         ("", "%b%n"),
         (" 101!", "%b%n"),
         ("1012!", "%b%n"),
+        ("123!", "%p%n"),
+        ("0!", "%p%n"),
+        ("0x123!", "%p%n"),
+        ("ABCdef!", "%p%n"),
+        ("-1!", "%p%n"),
+        ("+0Xabc!", "%p%n"),
+        ("0xffffffffffffffff!", "%p%n"),
+        ("8000000000000001!", "%p%n"),
+        ("0x!", "%p%n"),
+        ("(nil)!", "%p%n"),
+        ("(NIL)!", "%p%n"),
+        ("(nIl)!", "%p%n"),
+        ("(ni!", "%p%n"),
+        ("(nil", "%p%n"),
+        ("(", "%p%n"),
+        ("(nix)!", "%p%n"),
+        ("(nil)!", "%3p%n"),
+        ("0x1!", "%1p%n"),
+        ("0x1!", "%2p%n"),
+        ("0x1!", "%3p%n"),
+        (" \t123!", "%p%n"),
+        ("!", "%p%n"),
+        ("", "%p%n"),
+        ("0x", "%p%n"),
     ];
     let arms = [
         ScanDialect {
@@ -758,10 +803,11 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                 let text = CString::new(input).unwrap();
                 let fmt = CString::new(format!("{format}%c")).unwrap();
                 let scan = |target| {
-                    let (mut value, mut consumed, mut tail) = (917, -1, b'?' as c_char);
+                    let (mut value, mut consumed, mut tail) = (917u64, -1, b'?' as c_char);
                     // SAFETY: the resolved bridge has this exact signature.
                     // Both strings are NUL-terminated and its three output slots
-                    // remain live; each format scans one integer, %n and %c.
+                    // remain live; each format scans one numeric/pointer item,
+                    // %n and %c, using typed C temporaries in the bridge.
                     let rc = unsafe {
                         narrow_string(
                             target,
@@ -790,7 +836,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
                 let text = wchar(input);
                 let fmt = wchar(&format!("{format}%lc"));
                 let scan = |target| {
-                    let (mut value, mut consumed, mut tail) = (917, -1, '?' as libc::wchar_t);
+                    let (mut value, mut consumed, mut tail) = (917u64, -1, '?' as libc::wchar_t);
                     let rc = unsafe {
                         wide_string(
                             target,
@@ -813,7 +859,7 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
             }
         }
     }
-    assert_eq!(comparisons, 1680);
+    assert_eq!(comparisons, 3120);
     println!("scanf dialect matrix: {comparisons} exact-symbol GNU comparisons");
     assert_eq!(unsafe { close(handle) }, 0);
 }
