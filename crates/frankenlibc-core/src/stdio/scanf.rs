@@ -2161,7 +2161,10 @@ fn scan_pointer(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
     if input[pos] == b'(' && max_chars >= 5 {
         let mut i = pos;
         for expected in b"(nil)" {
-            if input.get(i).is_none_or(|b| !b.eq_ignore_ascii_case(expected)) {
+            if input
+                .get(i)
+                .is_none_or(|b| !b.eq_ignore_ascii_case(expected))
+            {
                 return Some((None, i));
             }
             i += 1;

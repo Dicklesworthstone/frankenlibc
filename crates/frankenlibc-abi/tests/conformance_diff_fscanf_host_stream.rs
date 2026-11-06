@@ -386,14 +386,8 @@ BRIDGE(char, narrow)
 BRIDGE(wchar_t, wide)
 "#;
 
-type StreamBridge<T> = unsafe extern "C" fn(
-    *mut c_void,
-    c_int,
-    *mut c_void,
-    *const T,
-    *mut u64,
-    *mut c_int,
-) -> c_int;
+type StreamBridge<T> =
+    unsafe extern "C" fn(*mut c_void, c_int, *mut c_void, *const T, *mut u64, *mut c_int) -> c_int;
 type StringBridge<T> = unsafe extern "C" fn(
     *mut c_void,
     c_int,
