@@ -483,6 +483,124 @@ static int check_stdio_providers(const char *expected, const char *const *symbol
     return failed;
 }
 
+/* Line input must use the cookie hooks, including short reads and errors;
+ * these streams intentionally have no kernel descriptor to read from. */
+struct line_cookie {
+    const unsigned char *data;
+    size_t length, position;
+    int error, calls, closed;
+};
+
+static ssize_t read_line_cookie(void *opaque, char *buf, size_t count) {
+    struct line_cookie *cookie = opaque;
+    ++cookie->calls;
+    size_t available = cookie->length - cookie->position;
+    if (available) {
+        if (count > available) count = available;
+        if (count > 3) count = 3; /* force multiple successful callbacks */
+        memcpy(buf, cookie->data + cookie->position, count);
+        cookie->position += count;
+        return (ssize_t)count;
+    }
+    if (cookie->error) {
+        errno = cookie->error;
+        return -1;
+    }
+    return 0;
+}
+
+static int close_line_cookie(void *opaque) {
+    ++((struct line_cookie *)opaque)->closed;
+    return 0;
+}
+
+static ssize_t cookie_line_call(int api, char **line, size_t *capacity, FILE *stream) {
+    if (api == 0) return getline(line, capacity, stream);
+    if (api == 1) return getdelim(line, capacity, ';', stream);
+    typedef ssize_t (*getdelim_fn)(char **, size_t *, int, FILE *);
+    getdelim_fn call = (getdelim_fn)dlsym(RTLD_DEFAULT, "__getdelim");
+    return call ? call(line, capacity, api == 2 ? '\n' : ';', stream) : -99;
+}
+
+static int test_cookie_line_reads(void) {
+    int failed = 0, cases = 0;
+    for (int api = 0; api < 4; ++api) {
+        for (int unbuffered = 0; unbuffered < 2; ++unbuffered) {
+            unsigned char payload[] = {'a', 0, 'b', '\n', 'n', 'e', 'x', 't', '\n', 'l', 'a', 's', 't'};
+            unsigned char delimiter = api % 2 ? ';' : '\n';
+            payload[3] = payload[8] = delimiter;
+            struct line_cookie cookie = {.data = payload, .length = sizeof(payload)};
+            FILE *stream = fopencookie(&cookie, "r", (cookie_io_functions_t){
+                .read = read_line_cookie, .close = close_line_cookie});
+            if (!stream) return 1;
+            int bad = setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0) != 0;
+            bad |= ungetc('P', stream) != 'P';
+            char *line = malloc(2);
+            size_t capacity = 2;
+            if (!line) { fclose(stream); return 1; }
+            ssize_t length = cookie_line_call(api, &line, &capacity, stream);
+            const unsigned char first[] = {'P', 'a', 0, 'b', delimiter, 0};
+            bad |= length != 5 || capacity < 6 || memcmp(line, first, sizeof(first));
+            bad |= ferror(stream) != 0 || feof(stream) != 0;
+            length = cookie_line_call(api, &line, &capacity, stream);
+            const unsigned char second[] = {'n', 'e', 'x', 't', delimiter, 0};
+            bad |= length != 5 || capacity < 6 || memcmp(line, second, sizeof(second));
+            length = cookie_line_call(api, &line, &capacity, stream);
+            bad |= length != 4 || capacity < 5 || memcmp(line, "last", 5) || !feof(stream) || ferror(stream);
+            int calls_at_eof = cookie.calls;
+            bad |= cookie_line_call(api, &line, &capacity, stream) != -1;
+            bad |= cookie.calls != calls_at_eof;
+            clearerr(stream);
+            cookie.position = 0;
+            bad |= cookie_line_call(api, &line, &capacity, stream) != 4;
+            bad |= !line || capacity < 5 || memcmp(line, payload, 4) || line[4] != 0 ||
+                   ferror(stream) || feof(stream);
+            free(line);
+            bad |= fclose(stream) != 0 || cookie.closed != 1;
+            printf("cookie-lines api=%d unbuffered=%d sequence=%s\n", api, unbuffered, bad ? "FAIL" : "PASS");
+            failed += bad != 0; ++cases;
+
+            for (int error_case = 0; error_case < 4; ++error_case) {
+                for (int partial = 0; partial < 2; ++partial) {
+                    const int errors[] = {0, EINTR, EAGAIN, EIO};
+                    struct line_cookie error_cookie = {
+                        .data = (const unsigned char *)"abc", .length = partial ? 3 : 0,
+                        .error = errors[error_case]};
+                    stream = fopencookie(&error_cookie, "r", (cookie_io_functions_t){
+                        .read = read_line_cookie, .close = close_line_cookie});
+                    if (!stream) return 1;
+                    bad = setvbuf(stream, NULL, unbuffered ? _IONBF : _IOFBF, 0) != 0;
+                    line = NULL; capacity = 0;
+                    errno = 0x5EED;
+                    length = cookie_line_call(api, &line, &capacity, stream);
+                    int saved_errno = errno;
+                    bad |= length != (partial ? 3 : -1);
+                    bad |= saved_errno != (error_case ? errors[error_case] : 0x5EED);
+                    bad |= !!ferror(stream) != !!error_case || !!feof(stream) != !error_case;
+                    if (partial) bad |= !line || capacity < 4 || memcmp(line, "abc", 4);
+                    int calls_at_stop = error_cookie.calls;
+                    errno = 0x5EED;
+                    bad |= cookie_line_call(api, &line, &capacity, stream) != -1;
+                    bad |= error_cookie.calls != calls_at_stop || errno != 0x5EED;
+                    clearerr(stream);
+                    error_cookie.position = 0; error_cookie.length = 3; error_cookie.error = 0;
+                    bad |= cookie_line_call(api, &line, &capacity, stream) != 3;
+                    bad |= !line || capacity < 4 || memcmp(line, "abc", 4) ||
+                           !feof(stream) || ferror(stream);
+                    free(line);
+                    bad |= fclose(stream) != 0 || error_cookie.closed != 1;
+                    printf("cookie-lines api=%d unbuffered=%d error=%d partial=%d result=%s\n",
+                           api, unbuffered, errors[error_case], partial, bad ? "FAIL" : "PASS");
+                    failed += bad != 0; ++cases;
+                }
+            }
+        }
+    }
+    printf("fixture_stdio cookie-lines: %s (%d cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", cases, failed);
+    return failed != 0;
+}
+
 /* Real descriptor errors must stay visible at the FILE boundary. The second
  * alarm supplies data and EOF only as a bounded negative control: an incorrect
  * EINTR retry then produces a mismatching result instead of hanging this test.
@@ -1320,6 +1438,13 @@ static int test_fmemopen_coherence(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "cookie-lines") == 0) {
+        const char *symbols[] = {"fopencookie", "getline", "getdelim", "__getdelim",
+                                 "ungetc", "setvbuf", "clearerr", "ferror", "feof", "fclose"};
+        if (argc != 3 || check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_cookie_line_reads();
+    }
     if (argc >= 2 && strcmp(argv[1], "fmemopen") == 0) {
         const char *symbols[] = {"fmemopen", "fgetc", "fread", "fgets", "__isoc99_fscanf",
                                  "getline", "fwrite", "fflush", "ftell", "fseek", "ungetc",
