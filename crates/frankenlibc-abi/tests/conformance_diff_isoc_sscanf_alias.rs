@@ -26,9 +26,9 @@
 //!    alone cannot prove this: the fast path and the engine agree by
 //!    construction, so a gate that only compares return values passes whether or
 //!    not the routing exists. Allocation count separates them. The fast path
-//!    fills a fixed `[c_int; 3]` and allocates nothing; the engine spills its
+//!    fills a fixed `[c_int; 4]` and allocates nothing; the engine spills its
 //!    directive list past the inline capacity and allocates. The test carries a
-//!    POSITIVE CONTROL — a four-field format, which
+//!    POSITIVE CONTROL — a five-field format, which
 //!    `strict_decimal_int_format_count` rejects by construction — so the zero it
 //!    asserts is read against an observed non-zero from the same counter in the
 //!    same process, not against an assumption that the counter works.
@@ -793,7 +793,7 @@ fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
     let mut v: [c_int; 5] = [0; 5];
 
     // Warm one-time lazy initialisation so it is not billed to the measured call.
-    // SAFETY: at most four `int *` are read; four are supplied.
+    // SAFETY: at most five `int *` are read; five are supplied.
     unsafe {
         f(
             cin.as_ptr(),
@@ -862,8 +862,8 @@ fn the_aliases_take_the_decimal_int_fast_path() {
          discriminate the fast path from the engine and this gate proves nothing"
     );
 
-    // Now the routing itself, on the three-field format — the widest one the fast
-    // path accepts, and the one whose engine equivalent allocates.
+    // Now the routing itself, on a three-field format whose engine equivalent
+    // allocates, while the strict fast path stays within its four-field limit.
     for (name, arm) in fl_arms() {
         let n = allocs_for(arm, "7 8 9", "%d %d %d");
         println!("{name}(\"7 8 9\", \"%d %d %d\") allocations={n}");
