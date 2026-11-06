@@ -247,8 +247,8 @@
       "text": "let lookup = crate::host_resolve::resolve_host_symbol_raw(if version.is_some() {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/dlfcn_native.rs:1160",
-      "line": 1160,
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_native.rs:1177",
+      "line": 1177,
       "module": "dlfcn_native",
       "path": "crates/frankenlibc-abi/src/dlfcn_native.rs",
       "text": "match unsafe { super::host_dlsym(libc::RTLD_DEFAULT, name.as_ptr()) } {"
@@ -2236,8 +2236,8 @@
   "detector": {
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
-    "source_file_count": 121,
-    "source_tree_sha256": "395ee9ba15fc41643ba607294188d3a28386e46e92dcc48fbd9286a0f688b1d6",
+    "source_file_count": 122,
+    "source_tree_sha256": "94b0cf5c44e80938f19e5a42b958bdaab3533598b094f3c11c53f086cfcf314e",
     "version": 16
   },
   "module_census": [
@@ -2299,7 +2299,7 @@
   },
   "profile_census": {
     "interpose-release-linux-x86_64": {
-      "active_source_file_count": 116,
+      "active_source_file_count": 117,
       "active_source_files": [
         "crates/frankenlibc-abi/src/aio_completion.rs",
         "crates/frankenlibc-abi/src/aio_queue.rs",
@@ -2339,6 +2339,7 @@
         "crates/frankenlibc-abi/src/dlfcn_thread_exit.rs",
         "crates/frankenlibc-abi/src/dlfcn_tls.rs",
         "crates/frankenlibc-abi/src/dlfcn_unique.rs",
+        "crates/frankenlibc-abi/src/dlfcn_unwind.rs",
         "crates/frankenlibc-abi/src/dlfcn_versions.rs",
         "crates/frankenlibc-abi/src/efun_abi.rs",
         "crates/frankenlibc-abi/src/erf_tables.rs",
@@ -3138,7 +3139,7 @@
         "support_matrix_sha256": "c573f2a485a6880f4f128f8c801cdee654aa0f5f5064dcef9748e2ae3b9b95da",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9138,
+      "function_count": 9148,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -13092,7 +13093,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18125,
+      "resolved_call_edge_count": 18146,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1679,
@@ -13303,11 +13304,11 @@
         },
         {
           "delegation_kind": "host_dlsym_helper",
-          "evidence": "crates/frankenlibc-abi/src/dlfcn_native.rs:1160",
+          "evidence": "crates/frankenlibc-abi/src/dlfcn_native.rs:1177",
           "expression": "match unsafe { super::host_dlsym(libc::RTLD_DEFAULT, name.as_ptr()) } {",
-          "function_id": "dlfcn_native::imports_resolve_in_host_scope@1145",
+          "function_id": "dlfcn_native::imports_resolve_in_host_scope@1162",
           "host_symbol": "dlsym",
-          "line": 1160,
+          "line": 1177,
           "path": "crates/frankenlibc-abi/src/dlfcn_native.rs"
         },
         {
@@ -14537,7 +14538,7 @@
       ]
     },
     "standalone-release-linux-x86_64": {
-      "active_source_file_count": 115,
+      "active_source_file_count": 116,
       "active_source_files": [
         "crates/frankenlibc-abi/src/aio_completion.rs",
         "crates/frankenlibc-abi/src/aio_queue.rs",
@@ -14577,6 +14578,7 @@
         "crates/frankenlibc-abi/src/dlfcn_thread_exit.rs",
         "crates/frankenlibc-abi/src/dlfcn_tls.rs",
         "crates/frankenlibc-abi/src/dlfcn_unique.rs",
+        "crates/frankenlibc-abi/src/dlfcn_unwind.rs",
         "crates/frankenlibc-abi/src/dlfcn_versions.rs",
         "crates/frankenlibc-abi/src/efun_abi.rs",
         "crates/frankenlibc-abi/src/erf_tables.rs",
@@ -15376,7 +15378,7 @@
         "support_matrix_sha256": "c573f2a485a6880f4f128f8c801cdee654aa0f5f5064dcef9748e2ae3b9b95da",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9125,
+      "function_count": 9135,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -19511,7 +19513,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 17908,
+      "resolved_call_edge_count": 17929,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 593,
@@ -20453,7 +20455,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/dlfcn_native.rs",
-      "sha256": "41bf434bad9613ee624e19d68b6fac0c04d4213ce7cc4ee26082fb911be0263f"
+      "sha256": "64ce9c8672f19d5b5421115a44348b55ee816e377164c23098bf7d09974169bf"
     },
     {
       "path": "crates/frankenlibc-abi/src/dlfcn_object_info.rs",
@@ -20510,6 +20512,10 @@
     {
       "path": "crates/frankenlibc-abi/src/dlfcn_unique.rs",
       "sha256": "2040f9a959c0818ae5eac3a06466cff320176eef700a77d89950561780dacb8e"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/dlfcn_unwind.rs",
+      "sha256": "b3e7cc89957648dc94f3c716a5e50f426faf52a565bcda6719794a8af4229a95"
     },
     {
       "path": "crates/frankenlibc-abi/src/dlfcn_versions.rs",
