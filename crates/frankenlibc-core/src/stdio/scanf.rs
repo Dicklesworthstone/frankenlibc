@@ -33,7 +33,6 @@ enum ScanfHandler {
     SignedAutoBase,
     UnsignedDecimal,
     UnsignedOctal,
-    UnsignedBinary,
     UnsignedHex,
     Float,
     Character,
@@ -41,6 +40,7 @@ enum ScanfHandler {
     Scanset,
     CharsConsumed,
     Pointer,
+    UnsignedBinary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

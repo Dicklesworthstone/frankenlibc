@@ -158,7 +158,6 @@ pub enum ScanfHandler {
     SignedAutoBase,
     UnsignedDecimal,
     UnsignedOctal,
-    UnsignedBinary,
     UnsignedHex,
     Float,
     Character,
@@ -166,6 +165,7 @@ pub enum ScanfHandler {
     Scanset,
     CharsConsumed,
     Pointer,
+    UnsignedBinary,
 }
 
 /// Assignment target category for scanf routes.
