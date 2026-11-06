@@ -30334,9 +30334,9 @@
         "close_blockers": [
           "Required final-source quality checks and named execution receipt pending"
         ],
-        "notes": "Actual RED6f785d35f:3passed1failed both modes, GNU parses123 as291 while native rejects. Live GNU2.43 standalone oracle25cases checked numeric and partialnil cursors. Original28integer inputs preserved byte-for-byte; new24pointer inputs; full64bit observation with signed32 signextension and unsigned32 zeroextension preserves all original information. No validator/CI/runtime-environment hardcoding or threshold relaxation. Sourcef300fcdb9. Fullworkspace runtime tests not run due destructive fixtures. SOLO reexecution, not independent verification; no release/performance/standalone/universal-safety claim. Two normalRCH120 diskreservation refusals before compiler, no guard/limit/worker changes. UBS4existing dlsym transmutations reviewed against exactC signatures, no suppression.",
+        "notes": "Actual RED6f785d35f:3passed1failed both modes, GNU parses123 as291 while native rejects. Live GNU2.43 standalone oracle25cases checked numeric and partialnil cursors. Original28integer inputs preserved byte-for-byte; new24pointer inputs; full64bit observation with signed32 signextension and unsigned32 zeroextension preserves all original information. No validator/CI/runtime-environment hardcoding or threshold relaxation. Sourcef300fcdb9. Fullworkspace runtime tests not run due destructive fixtures. SOLO reexecution, not independent verification; no release/performance/standalone/universal-safety claim. Two normalRCH120 diskreservation refusals before compiler, no guard/limit/worker changes. UBS4existing dlsym transmutations reviewed against exactC signatures, no suppression. First final-source formatting gate failed on two new layouts; both manually corrected without behavioral change. Final source 4548c23a095d28f0b904920dcbd0436f03f31e94.",
         "result_receipts": [
-          "/data/tmp/frankenlibc-scanf-pointer-20261106/proof-1-record/record/receipt.json"
+          "/data/tmp/frankenlibc-scanf-pointer-20261106/proof-2-record/record/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Parse full-width hexadecimal pointers and GNU nil spellings with correct success and failed-token consumption across narrow/wide strings and streams",
@@ -30351,7 +30351,7 @@
             "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs"
           ],
           "source": {
-            "commit": "f300fcdb9d5adbce62aaa6e0442a745d263bea4f",
+            "commit": "4548c23a095d28f0b904920dcbd0436f03f31e94",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -30359,7 +30359,7 @@
               "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
               "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
               "FEATURE_PARITY.md": "428435c3c87ef930683d61546c3753bce6758f6b869eb3b80fe4e786254c91ba",
-              "README.md": "28a5599f3a7bb8c0254fcbfe4d32fd9da75ee9ee98234650295fdc5121a0dd94",
+              "README.md": "8e71919a4bbc3b11380d1812fedaf510d298193400b66c99033ccaae584c120a",
               "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
               "crates/frankenlibc-abi/build.rs": "1f3706508dfe8c8a6d124cd60a66914f77ad11ebed368740a08eb03c1f3541c1",
               "crates/frankenlibc-abi/src/aio_completion.rs": "442076b3f9a02501de7fb5d8b5c825bd1b5c946897a3a7799cff6e7794af5751",
@@ -30486,7 +30486,7 @@
               "crates/frankenlibc-abi/tests/common/dlsym_oracle.rs": "30ad1a1dd755843cdc6b3c2a74c93a3ee9601d07641e698723bc2a88867f1ec2",
               "crates/frankenlibc-abi/tests/conformance_diff_arc4random.rs": "f38d81f559e2bcc032eafc3c31d8ad0921ec46d57d30731edd01eb04579cff9d",
               "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
-              "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "76e3b9c7cea678be538fedb406b89999bb7bd10f24b08296c0632687c56dcfee",
+              "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "e5bc3f79a10798e7ec79bf754511205297c3c37a98644647d4175fe31669179a",
               "crates/frankenlibc-abi/tests/conformance_diff_getrandom.rs": "021429fb71f236784adf99a180975b132f18678583524ed07a5811b7e793e2c3",
               "crates/frankenlibc-abi/tests/conformance_diff_isoc_sscanf_alias.rs": "f77c39ab4d552e03f1b535b6d59e0d06769d49c26c2e998d19de3a7180e414f4",
               "crates/frankenlibc-abi/tests/conformance_diff_posix_fallocate.rs": "67e2fee832390a7375b7a96f4deffb12f2fbebf950ce21fbe7702264525a7af0",
@@ -30659,7 +30659,7 @@
               "crates/frankenlibc-core/src/stdio/mod.rs": "86d631da4e6a7a472c8b89ce46c051174496f65b98cce163d2988a3ef02c167f",
               "crates/frankenlibc-core/src/stdio/printf.rs": "88e1c1f254326d8a71644416c0c01f21185539296aca5b1476aeb1a9a850cf1c",
               "crates/frankenlibc-core/src/stdio/printf_tables.rs": "900343e6efb1c4e707b3ccd79f1f0f13519710ee196b313d514bde20e81f7233",
-              "crates/frankenlibc-core/src/stdio/scanf.rs": "64b4c36cc715b847e3a81cbf98563053dfe67609c718b2d1a992cc4c54ff5ff6",
+              "crates/frankenlibc-core/src/stdio/scanf.rs": "b964beb4514b20c34edef66f315b427c97e9493a073e255ebcb990732f04b763",
               "crates/frankenlibc-core/src/stdio/scanf_tables.rs": "921ee58188b29124f8e2e2be24435b7f5e842d235eb48affb62a7e569b04fdb1",
               "crates/frankenlibc-core/src/stdio/snprintb.rs": "028ddb5519947032dd1b201a6db3c098b711560860bce86b1dfec69f8c777714",
               "crates/frankenlibc-core/src/stdio/vis.rs": "76438acfce9c527f61b50d57f3377387796d68af486e283993ed1e8000293589",
