@@ -93,7 +93,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${FMEMOPEN_ONLY}" -eq 1 ]]; then
     error_kind=fmemopen
     error_mode=fmemopen
-    error_cases=16
+    error_cases=18
     error_option=--fmemopen
   elif [[ "${COOKIE_LINES_ONLY}" -eq 1 ]]; then
     error_kind=cookie-lines

@@ -152,6 +152,12 @@ fn diff_getline_single_long_line() {
 
 #[test]
 fn host_getline_grows_a_frankenlibc_segment_buffer_safely() {
+    for use_getline in [true, false] {
+        check_host_line_buffer_growth(use_getline);
+    }
+}
+
+fn check_host_line_buffer_growth(use_getline: bool) {
     use frankenlibc_abi::malloc_abi as malloc;
 
     malloc::signal_runtime_ready_for_tests();
@@ -163,10 +169,49 @@ fn host_getline_grows_a_frankenlibc_segment_buffer_safely() {
 
     let initial = unsafe { malloc::malloc(16) };
     assert!(!initial.is_null());
-    assert!(malloc::malloc_segment_owned_for_tests(initial.cast_const()));
+    if frankenlibc_membrane::config::safety_level().heals_enabled() {
+        // Hardened malloc uses the membrane arena, rather than strict mode's
+        // segment heap. Both ownership classes must migrate before host realloc.
+        assert!(!malloc::malloc_segment_owned_for_tests(initial.cast_const()));
+        assert_eq!(
+            malloc::malloc_known_remaining_for_tests(initial.cast_const()),
+            Some(16)
+        );
+    } else {
+        assert!(malloc::malloc_segment_owned_for_tests(initial.cast_const()));
+    }
     let mut line = initial.cast::<c_char>();
     let mut capacity = 16usize;
-    let read = unsafe { frankenlibc_abi::stdio_abi::getline(&mut line, &mut capacity, fp.cast()) };
+    let scan = |p, n| unsafe {
+        if use_getline {
+            frankenlibc_abi::stdio_abi::getline(p, n, fp.cast())
+        } else {
+            frankenlibc_abi::stdio_abi::getdelim(p, n, b'\n' as c_int, fp.cast())
+        }
+    };
+    // SAFETY: the caller owns 16 writable bytes; fp is a live read-only host
+    // stream. The failed write plants its sticky error before any input.
+    unsafe {
+        std::ptr::write_bytes(line, 0x5A, capacity);
+        assert_eq!(libc::fputc(b'X' as c_int, fp), libc::EOF);
+        *libc::__errno_location() = 0x5EED;
+    }
+    assert_eq!(scan(&mut line, &mut capacity), -1);
+    assert_eq!(unsafe { *libc::__errno_location() }, 0x5EED);
+    assert_ne!(unsafe { libc::ferror(fp) }, 0);
+    assert_eq!(capacity, 16);
+    // SAFETY: the failed host call retained the supplied initialized 16-byte
+    // buffer. Its bytes and tracked bounds must survive the ownership move.
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(line.cast::<u8>(), capacity) },
+        [0x5A; 16]
+    );
+    assert_eq!(
+        malloc::malloc_known_remaining_for_tests(line.cast_const().cast()),
+        Some(16)
+    );
+    unsafe { libc::clearerr(fp) };
+    let read = scan(&mut line, &mut capacity);
     assert_eq!(read, content.len() as isize);
     assert!(capacity > content.len());
     assert_eq!(

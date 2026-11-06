@@ -1860,10 +1860,10 @@ pub(crate) unsafe fn host_passthrough_free(ptr: *mut c_void) {
     unsafe { native_libc_free(ptr) }
 }
 
-/// Move a caller buffer out of the segment heap before handing it to a host
+/// Move a caller buffer out of a native heap before handing it to a host
 /// libc API that may call the host allocator's `realloc` internally.
 ///
-/// Non-segment pointers keep their address, but any stale fallback-table row
+/// Host pointers keep their address, but any stale fallback-table row
 /// is removed because the host may replace that allocation without crossing
 /// our exported `realloc`.  The caller must invoke
 /// [`finish_host_realloc_buffer`] with the returned pointer/capacity after the
@@ -1938,7 +1938,55 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
         return Some(host);
     }
 
-    let _ = fallback_remove_sized(ptr);
+    // The fallback table contains host allocations, never live arena slots.
+    // Retire its row before the host can realloc behind our public boundary.
+    if fallback_remove_sized(ptr).is_some() {
+        return Some(ptr);
+    }
+
+    if let Some(pipeline) = crate::membrane_state::try_global_pipeline()
+        && let Some(slot) = pipeline.arena.lookup(ptr as usize)
+    {
+        // Arena allocations include a private header and cannot be passed to
+        // host realloc. Only a live allocation's exact user pointer may move.
+        if slot.user_base != ptr as usize || !slot.state.is_live() {
+            return None;
+        }
+        // Arena retirement may allocate bookkeeping storage. Reuse the public
+        // allocator's recursion and signal guards while moving this ownership.
+        let _reentry_guard = enter_allocator_reentry_guard()?;
+        let _signal_guard =
+            enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
+        // SAFETY: this buffer must be host-owned for the upcoming host API.
+        let host = unsafe { native_libc_malloc(capacity.max(1)) };
+        if host.is_null() {
+            return None;
+        }
+        if is_bump_ptr(host) {
+            // SAFETY: the failed host resolution's fallback has not escaped.
+            unsafe { native_libc_free(host) };
+            return None;
+        }
+        // SAFETY: a valid caller owns the live arena allocation exclusively;
+        // both buffers are disjoint and this prefix fits both allocations.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                ptr.cast::<u8>(),
+                host.cast::<u8>(),
+                slot.user_size.min(capacity),
+            );
+        }
+        if !matches!(
+            pipeline.free(ptr.cast()),
+            FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
+        ) {
+            // SAFETY: only the unexposed replacement allocation is released.
+            unsafe { native_libc_free(host) };
+            return None;
+        }
+        return Some(host);
+    }
+
     Some(ptr)
 }
 

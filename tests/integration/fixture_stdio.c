@@ -1420,6 +1420,63 @@ static int test_popen_lifecycle(void) {
 
 /* Caller-backed memory must be sampled at refill, never at open, and only
  * actual output may change it. This lane uses no filesystem objects. */
+static int test_host_line_buffer_growth(int use_getline) {
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!host) return 1;
+    FILE *(*host_fmemopen)(void *, size_t, const char *) = dlsym(host, "fmemopen");
+    cookie_getline_fn read_line = (cookie_getline_fn)dlsym(RTLD_DEFAULT, "getline");
+    cookie_getdelim_fn read_field = (cookie_getdelim_fn)dlsym(RTLD_DEFAULT, "getdelim");
+    Dl_info provider = {0};
+    if (!host_fmemopen || !read_line || !read_field ||
+        !dladdr((void *)host_fmemopen, &provider) || !provider.dli_fname) {
+        dlclose(host);
+        return 1;
+    }
+    const char *base = strrchr(provider.dli_fname, '/');
+    if (strcmp(base ? base + 1 : provider.dli_fname, "libc.so.6")) {
+        dlclose(host);
+        return 1;
+    }
+    char input[257];
+    memset(input, 'z', sizeof(input));
+    input[sizeof(input) - 1] = '\n';
+    FILE *stream = host_fmemopen(input, sizeof(input), "r");
+    char *line = malloc(16);
+    if (!stream || !line) {
+        if (stream) fclose(stream);
+        free(line);
+        dlclose(host);
+        return 1;
+    }
+    memset(line, 0x5A, 16);
+    size_t capacity = 16;
+    int bad = fputc('X', stream) != EOF;
+    errno = 0x5EED;
+    ssize_t result = use_getline ? read_line(&line, &capacity, stream)
+                                : read_field(&line, &capacity, '\n', stream);
+    ssize_t first_result = result;
+    int first_errno = errno, first_error = ferror(stream), first_eof = feof(stream);
+    size_t first_capacity = capacity;
+    bad |= result != -1 || first_errno != 0x5EED || !first_error || first_eof;
+    char expected[16];
+    memset(expected, 0x5A, sizeof(expected));
+    bad |= !line || capacity != 16 || memcmp(line, expected, sizeof(expected));
+    clearerr(stream);
+    result = use_getline ? read_line(&line, &capacity, stream)
+                        : read_field(&line, &capacity, '\n', stream);
+    bad |= result != (ssize_t)sizeof(input) || !line || capacity <= sizeof(input);
+    if (result == (ssize_t)sizeof(input) && line && capacity > sizeof(input))
+        bad |= memcmp(line, input, sizeof(input)) || line[sizeof(input)] != 0;
+    free(line);
+    bad |= fclose(stream) != 0;
+    bad |= dlclose(host) != 0;
+    if (bad) fprintf(stderr, "FAIL host-line-growth api=%d first=%zd errno=%d error=%d eof=%d capacity=%zu growth=%zd capacity=%zu\n",
+                     use_getline, first_result, first_errno, first_error, first_eof,
+                     first_capacity, result, capacity);
+    printf("host-line-growth api=%s pass=%d\n", use_getline ? "getline" : "getdelim", !bad);
+    return bad != 0;
+}
+
 static int test_fmemopen_coherence(void) {
     const char *modes[] = {"r", "r+"};
     int failed = 0, cases = 0;
@@ -1496,6 +1553,10 @@ static int test_fmemopen_coherence(void) {
         printf("fmemopen-sync mode=%s pass=%d\n", write_modes[m], !bad);
         failed += bad != 0; ++cases;
     }
+    for (int line = 0; line <= 1; ++line) {
+        failed += test_host_line_buffer_growth(line);
+        ++cases;
+    }
     printf("fixture_stdio fmemopen: %s (%d cases, %d failed)\n",
            failed ? "FAIL" : "PASS", cases, failed);
     return failed != 0;
@@ -1511,7 +1572,8 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "fmemopen") == 0) {
         const char *symbols[] = {"fmemopen", "fgetc", "fread", "fgets", "__isoc99_fscanf",
-                                 "getline", "fwrite", "fflush", "ftell", "fseek", "ungetc",
+                                 "getline", "getdelim", "malloc", "free", "fputc", "ferror",
+                                 "clearerr", "fwrite", "fflush", "ftell", "fseek", "ungetc",
                                  "setvbuf", "feof", "fclose"};
         if (argc != 3 || check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
