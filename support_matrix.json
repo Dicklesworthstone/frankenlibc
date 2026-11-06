@@ -19603,7 +19603,7 @@
     },
     {
       "symbol": "fwide",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
@@ -33222,22 +33222,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2415,
+    "implemented": 2414,
     "raw_syscall": 408,
-    "wraps_host_libc": 1278,
+    "wraps_host_libc": 1279,
     "glibc_call_through": 0,
     "stub": 18
   },
-  "implemented": 2415,
+  "implemented": 2414,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 18,
   "counts": {
-    "implemented": 2415,
+    "implemented": 2414,
     "raw_syscall": 408,
     "glibc_call_through": 0,
     "stub": 18,
-    "wraps_host_libc": 1278
+    "wraps_host_libc": 1279
   },
-  "wraps_host_libc": 1278
+  "wraps_host_libc": 1279
 }

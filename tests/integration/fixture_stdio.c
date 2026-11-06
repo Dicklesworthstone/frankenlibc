@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <wchar.h>
 
 static int make_temp_path(char path[64]) {
     strcpy(path, "/tmp/frankenlibc_fixture_stdio_XXXXXX");
@@ -1621,7 +1622,137 @@ static int test_fmemopen_coherence(void) {
     return failed != 0;
 }
 
+static int test_internal_line_reads(void) {
+    typedef size_t (*line_info_fn)(FILE *, char *, size_t, int, int, int *);
+    typedef size_t (*line_fn)(FILE *, char *, size_t, int, int);
+    line_info_fn read_info = (line_info_fn)dlsym(RTLD_DEFAULT, "_IO_getline_info");
+    line_fn read_line = (line_fn)dlsym(RTLD_DEFAULT, "_IO_getline");
+    if (!read_info || !read_line) return 1;
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!host) return 1;
+    FILE *(*host_fdopen)(int, const char *) = dlsym(host, "fdopen");
+    int (*host_fwide)(FILE *, int) = dlsym(host, "fwide");
+    int (*host_fgetc)(FILE *) = dlsym(host, "fgetc");
+    int (*host_feof)(FILE *) = dlsym(host, "feof");
+    int (*host_ferror)(FILE *) = dlsym(host, "ferror");
+    int (*host_fclose)(FILE *) = dlsym(host, "fclose");
+    void *host_functions[] = {(void *)host_fdopen, (void *)host_fwide,
+        (void *)host_fgetc, (void *)host_feof, (void *)host_ferror, (void *)host_fclose};
+    for (size_t i = 0; i < sizeof(host_functions) / sizeof(host_functions[0]); ++i) {
+        Dl_info provider = {0};
+        if (!host_functions[i] || !dladdr(host_functions[i], &provider) || !provider.dli_fname) {
+            dlclose(host); return 1;
+        }
+        const char *base = strrchr(provider.dli_fname, '/');
+        if (strcmp(base ? base + 1 : provider.dli_fname, "libc.so.6")) {
+            dlclose(host); return 1;
+        }
+    }
+    const char *inputs[] = {"", "abc", "ab\ncd", "", "abc", "abc"};
+    const size_t limits[] = {0, 2, 8};
+    int cases = 0, failed = 0;
+    for (int kind = 0; kind < 6; ++kind) {
+        for (size_t limit = 0; limit < sizeof(limits) / sizeof(limits[0]); ++limit) {
+            for (int extract = -1; extract <= 1; ++extract) {
+                for (int api = 0; api < 3; ++api) {
+                    char backing[8] = {0};
+                    size_t input_size = strlen(inputs[kind]);
+                    memcpy(backing, inputs[kind], input_size);
+                    int fds[2] = {-1, -1};
+                    FILE *stream;
+                    if (kind >= 3) {
+                        if (pipe2(fds, O_NONBLOCK)) { dlclose(host); return 1; }
+                        if (kind >= 4 && write(fds[1], backing, input_size) != (ssize_t)input_size) {
+                            close(fds[0]); close(fds[1]); dlclose(host); return 1;
+                        }
+                        stream = kind == 5 ? host_fdopen(fds[0], "r") : fdopen(fds[0], "r");
+                    } else {
+                        stream = fmemopen(backing, input_size, "r");
+                    }
+                    if (!stream) {
+                        if (fds[0] >= 0) close(fds[0]);
+                        if (fds[1] >= 0) close(fds[1]);
+                        dlclose(host); return 1;
+                    }
+                    int before = kind == 5 ? host_fwide(stream, 0) : fwide(stream, 0);
+                    before = (before > 0) - (before < 0);
+                    int bad = before != (kind >= 3 ? 0 : -1);
+                    unsigned char output[32];
+                    memset(output, 0xA5, sizeof(output));
+                    int status = 0x5EED;
+                    size_t n = limits[limit];
+                    size_t count = api == 2
+                        ? read_line(stream, (char *)output, n, '\n', extract)
+                        : read_info(stream, (char *)output, n, '\n', extract,
+                                    api == 0 ? &status : NULL);
+                    int orientation = kind == 5 ? host_fwide(stream, 0) : fwide(stream, 0);
+                    orientation = (orientation > 0) - (orientation < 0);
+                    int at_eof = (kind == 5 ? host_feof(stream) : feof(stream)) != 0;
+                    int error = (kind == 5 ? host_ferror(stream) : ferror(stream)) != 0;
+                    int next[2] = {kind == 5 ? host_fgetc(stream) : fgetc(stream), 0};
+                    next[1] = kind == 5 ? host_fgetc(stream) : fgetc(stream);
+
+                    size_t expected_count = 0;
+                    int expected_status = 0, expected_eof = 0, expected_error = 0;
+                    int expected_next[2] = {EOF, EOF};
+                    if (n == 0) {
+                        if (kind == 1 || kind == 2 || kind >= 4) {
+                            expected_next[0] = 'a'; expected_next[1] = 'b';
+                        }
+                    } else if (kind == 0 || kind == 3) {
+                        expected_status = EOF;
+                        expected_eof = kind == 0;
+                        expected_error = kind == 3;
+                    } else if (n == 2) {
+                        expected_count = 2;
+                        expected_next[0] = kind == 2 ? '\n' : 'c';
+                        expected_next[1] = kind == 2 ? 'c' : EOF;
+                    } else if (kind == 2) {
+                        expected_count = extract > 0 ? 3 : 2;
+                        expected_next[0] = extract < 0 ? '\n' : 'c';
+                        expected_next[1] = extract < 0 ? 'c' : 'd';
+                    } else {
+                        expected_count = 3;
+                        expected_status = EOF;
+                        expected_eof = kind == 1;
+                        expected_error = kind >= 4;
+                    }
+                    bad |= count != expected_count || count > n || orientation != -1;
+                    bad |= at_eof != expected_eof || error != expected_error;
+                    bad |= api == 0 ? status != expected_status : status != 0x5EED;
+                    bad |= next[0] != expected_next[0] || next[1] != expected_next[1];
+                    bad |= memcmp(output, backing, expected_count) != 0;
+                    for (size_t i = expected_count; i < sizeof(output); ++i)
+                        bad |= output[i] != 0xA5;
+                    bad |= (kind == 5 ? host_fclose(stream) : fclose(stream)) != 0;
+                    if (fds[1] >= 0) bad |= close(fds[1]) != 0;
+                    if (bad) fprintf(stderr,
+                        "FAIL internal-line kind=%d n=%zu extract=%d api=%d count=%zu status=%d orientation=%d eof=%d error=%d next=%d,%d\n",
+                        kind, n, extract, api, count, status, orientation,
+                        at_eof, error, next[0], next[1]);
+                    printf("internal-line kind=%d n=%zu extract=%d api=%d count=%zu status=%d orientation=%d eof=%d error=%d next=%d,%d\n",
+                           kind, n, extract, api, count, status, orientation,
+                           at_eof, error, next[0], next[1]);
+                    failed += bad != 0;
+                    ++cases;
+                }
+            }
+        }
+    }
+    printf("fixture_stdio internal-lines: %s (%d cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", cases, failed);
+    failed += dlclose(host) != 0;
+    return failed != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "internal-lines") == 0) {
+        const char *symbols[] = {"_IO_getline_info", "_IO_getline", "fmemopen", "fdopen",
+                                 "fwide", "fgetc", "ferror", "feof", "fclose"};
+        if (argc != 3 || check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_internal_line_reads();
+    }
     if (argc >= 2 && strcmp(argv[1], "cookie-lines") == 0) {
         const char *symbols[] = {"fopencookie", "getline", "getdelim", "__getdelim",
                                  "fgetc", "ungetc", "setvbuf", "clearerr", "ferror", "feof", "fclose"};

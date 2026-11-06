@@ -3398,7 +3398,8 @@ pub unsafe extern "C" fn _IO_free_wbackup_area(_fp: *mut c_void) {
 ///
 /// Reads up to `n` bytes from `fp` into `buf`, stopping at `delim`.
 /// If `extract_delim` > 0, the delimiter is included in the output.
-/// If `extract_delim` < 0, the delimiter is consumed but not stored.
+/// If `extract_delim` == 0, the delimiter is consumed but not stored.
+/// If `extract_delim` < 0, the delimiter is left unread.
 /// Returns the number of bytes stored (excluding any NUL).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_getline(
@@ -3413,7 +3414,8 @@ pub unsafe extern "C" fn _IO_getline(
 
 /// `_IO_getline_info` — read a line with extra info (native implementation).
 ///
-/// Same as `_IO_getline` but writes 1 to `*eof` if EOF was hit (when non-null).
+/// Same as `_IO_getline` but writes `EOF` to `*eof` on end-of-input or a read
+/// error, and zero otherwise (when non-null). No NUL terminator is written.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_getline_info(
     fp: *mut c_void,
@@ -3429,12 +3431,18 @@ pub unsafe extern "C" fn _IO_getline_info(
     if !eof.is_null() {
         unsafe { *eof = 0 };
     }
+    if n == 0 {
+        // GNU orients even an empty request, without reading or setting EOF.
+        // SAFETY: the caller supplies the live FILE used by this operation.
+        let _ = unsafe { crate::glibc_internal_abi::fwide(fp, -1) };
+        return 0;
+    }
     let mut count: usize = 0;
     while count < n {
         let ch = unsafe { stdio_abi::fgetc(fp) };
         if ch == libc::EOF {
             if !eof.is_null() {
-                unsafe { *eof = 1 };
+                unsafe { *eof = libc::EOF };
             }
             break;
         }
@@ -3443,9 +3451,8 @@ pub unsafe extern "C" fn _IO_getline_info(
                 unsafe { *buf.add(count) = ch as c_char };
                 count += 1;
             }
-            // extract_delim < 0: consume but don't store
-            // extract_delim == 0: put it back
-            if extract_delim == 0 {
+            // Zero consumes without storing; negative leaves it unread.
+            if extract_delim < 0 {
                 let _ = unsafe { stdio_abi::ungetc(ch, fp) };
             }
             break;

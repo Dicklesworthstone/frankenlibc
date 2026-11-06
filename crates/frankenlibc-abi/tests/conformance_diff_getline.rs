@@ -6,6 +6,7 @@
 //! FILE*, allocating/growing the line buffer as needed. fl uses its
 //! own FILE* implementation; tests below use identical in-memory data and
 //! nonblocking pipes to check both providers, including sticky stream errors.
+//! Bounded internal line helpers are compared for status, orientation and input recovery.
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
@@ -21,6 +22,24 @@ unsafe extern "C" {
         delim: c_int,
         stream: *mut libc::FILE,
     ) -> isize;
+    fn fwide(stream: *mut libc::FILE, mode: c_int) -> c_int;
+    #[link_name = "_IO_getline_info"]
+    fn host_io_getline_info(
+        stream: *mut libc::FILE,
+        buffer: *mut c_char,
+        size: usize,
+        delimiter: c_int,
+        extract: c_int,
+        status: *mut c_int,
+    ) -> usize;
+    #[link_name = "_IO_getline"]
+    fn host_io_getline(
+        stream: *mut libc::FILE,
+        buffer: *mut c_char,
+        size: usize,
+        delimiter: c_int,
+        extract: c_int,
+    ) -> usize;
 }
 
 /// Read all lines from a fmemopen-backed buffer, returning the sequence
@@ -350,6 +369,232 @@ fn fd_line_input_preserves_pushback_until_error_is_cleared() {
                     observe(true, unbuffered, warmed, write_error, line);
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn internal_line_input_matches_gnu_status_and_orientation() {
+    use frankenlibc_abi::{glibc_internal_abi as internal, io_internal_abi as io, stdio_abi as fl};
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct Observation {
+        count: usize,
+        status: Option<c_int>,
+        orientation: c_int,
+        eof: bool,
+        error: bool,
+        output: [u8; 32],
+        next: [c_int; 2],
+    }
+
+    fn observe(native: bool, kind: usize, size: usize, extract: c_int, api: usize) -> Observation {
+        let inputs: [&[u8]; 6] = [b"", b"abc", b"ab\ncd", b"", b"abc", b"abc"];
+        // The last arm passes a genuine host FILE to our internal reader.
+        let native_stream = native && kind != 5;
+        let mut backing = [0u8; 8];
+        backing[..inputs[kind].len()].copy_from_slice(inputs[kind]);
+        let mut fds = [-1; 2];
+        if kind >= 3 {
+            // SAFETY: both output descriptors are initialized on success. The
+            // live nonblocking writer keeps reads at EAGAIN instead of EOF.
+            assert_eq!(
+                unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK) },
+                0
+            );
+            if kind >= 4 {
+                // SAFETY: the fresh pipe has space for this live three-byte input.
+                assert_eq!(
+                    unsafe { libc::write(fds[1], inputs[kind].as_ptr().cast(), 3) },
+                    3
+                );
+            }
+        }
+        // SAFETY: backing stays live until this provider closes its stream;
+        // each fdopen consumes a valid read descriptor exactly once. Both
+        // providers receive a writable 32-byte output and a size at most 8.
+        unsafe {
+            let stream = match (native_stream, kind >= 3) {
+                (true, true) => fl::fdopen(fds[0], c"r".as_ptr()),
+                (true, false) => fl::fmemopen(
+                    backing.as_mut_ptr().cast(),
+                    inputs[kind].len(),
+                    c"r".as_ptr(),
+                ),
+                (false, true) => libc::fdopen(fds[0], c"r".as_ptr()).cast(),
+                (false, false) => fmemopen(
+                    backing.as_mut_ptr().cast(),
+                    inputs[kind].len(),
+                    c"r".as_ptr(),
+                )
+                .cast(),
+            };
+            assert!(!stream.is_null());
+            let orientation = |mode| {
+                if native_stream {
+                    internal::fwide(stream, mode)
+                } else {
+                    fwide(stream.cast(), mode)
+                }
+            };
+            assert_eq!(orientation(0).signum(), if kind >= 3 { 0 } else { -1 });
+            let mut output = [0xA5u8; 32];
+            let mut status = 0x5EED;
+            let status_ptr = if api == 0 {
+                &mut status
+            } else {
+                std::ptr::null_mut()
+            };
+            let count = match (native, api == 2) {
+                (true, false) => io::_IO_getline_info(
+                    stream,
+                    output.as_mut_ptr().cast(),
+                    size,
+                    b'\n' as c_int,
+                    extract,
+                    status_ptr,
+                ),
+                (true, true) => io::_IO_getline(
+                    stream,
+                    output.as_mut_ptr().cast(),
+                    size,
+                    b'\n' as c_int,
+                    extract,
+                ),
+                (false, false) => host_io_getline_info(
+                    stream.cast(),
+                    output.as_mut_ptr().cast(),
+                    size,
+                    b'\n' as c_int,
+                    extract,
+                    status_ptr,
+                ),
+                (false, true) => host_io_getline(
+                    stream.cast(),
+                    output.as_mut_ptr().cast(),
+                    size,
+                    b'\n' as c_int,
+                    extract,
+                ),
+            };
+            assert!(count <= size);
+            assert!(output[count..].iter().all(|&byte| byte == 0xA5));
+            let (eof, error) = if native_stream {
+                (fl::feof(stream) != 0, fl::ferror(stream) != 0)
+            } else {
+                (
+                    libc::feof(stream.cast()) != 0,
+                    libc::ferror(stream.cast()) != 0,
+                )
+            };
+            let after = orientation(0).signum();
+            let mut next = [-1; 2];
+            for byte in &mut next {
+                *byte = if native_stream {
+                    fl::fgetc(stream)
+                } else {
+                    libc::fgetc(stream.cast())
+                };
+            }
+            let closed = if native_stream {
+                fl::fclose(stream)
+            } else {
+                fclose(stream.cast())
+            };
+            assert_eq!(closed, 0);
+            if kind >= 3 {
+                assert_eq!(libc::close(fds[1]), 0);
+            }
+            Observation {
+                count,
+                status: (api == 0).then_some(status),
+                orientation: after,
+                eof,
+                error,
+                output,
+                next,
+            }
+        }
+    }
+
+    frankenlibc_abi::malloc_abi::signal_runtime_ready_for_tests();
+    for function in [
+        host_io_getline_info as *const c_void,
+        host_io_getline as *const c_void,
+    ] {
+        // SAFETY: dladdr initializes the output for a live function address;
+        // its filename remains owned by the permanently loaded GNU libc.
+        unsafe {
+            let mut info: libc::Dl_info = std::mem::zeroed();
+            assert_ne!(libc::dladdr(function, &mut info), 0);
+            assert!(!info.dli_fname.is_null());
+            let path = std::ffi::CStr::from_ptr(info.dli_fname).to_bytes();
+            assert_eq!(
+                path.rsplit(|&byte| byte == b'/').next(),
+                Some(&b"libc.so.6"[..])
+            );
+        }
+    }
+    let mut comparisons = 0;
+    for kind in 0..6 {
+        for size in [0, 2, 8] {
+            for extract in [-1, 0, 1] {
+                for api in 0..3 {
+                    let host = observe(false, kind, size, extract, api);
+                    assert_eq!(host.orientation, -1);
+                    if api == 0
+                        && size > 0
+                        && (kind == 0 || kind == 3 || ((kind == 1 || kind >= 4) && size == 8))
+                    {
+                        assert_eq!(host.status, Some(libc::EOF));
+                    }
+                    assert_eq!(
+                        observe(true, kind, size, extract, api),
+                        host,
+                        "kind={kind}, size={size}, extract={extract}, api={api}"
+                    );
+                    comparisons += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(comparisons, 162);
+}
+
+#[test]
+fn fwide_preserves_foreign_stream_orientation() {
+    use frankenlibc_abi::glibc_internal_abi as fl;
+
+    frankenlibc_abi::malloc_abi::signal_runtime_ready_for_tests();
+    for initial in [-1, 0, 1] {
+        for requested in [-1, 0, 1] {
+            let mut observed = [0; 2];
+            for (native, result) in observed.iter_mut().enumerate() {
+                let mut fds = [-1; 2];
+                // SAFETY: a fresh nonblocking pipe and genuine host FILE stay
+                // live through all orientation queries, then close once each.
+                unsafe {
+                    assert_eq!(libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK), 0);
+                    let stream = libc::fdopen(fds[0], c"r".as_ptr());
+                    assert!(!stream.is_null());
+                    assert_eq!(fwide(stream, initial).signum(), initial);
+                    *result = if native == 1 {
+                        fl::fwide(stream.cast(), requested)
+                    } else {
+                        fwide(stream, requested)
+                    }
+                    .signum();
+                    assert_eq!(fwide(stream, 0).signum(), *result);
+                    assert_eq!(libc::feof(stream), 0);
+                    assert_eq!(libc::ferror(stream), 0);
+                    assert_eq!(fclose(stream), 0);
+                    assert_eq!(libc::close(fds[1]), 0);
+                }
+            }
+            assert_eq!(
+                observed[0], observed[1],
+                "initial={initial}, requested={requested}"
+            );
         }
     }
 }

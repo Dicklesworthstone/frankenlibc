@@ -5895,7 +5895,7 @@ pub unsafe extern "C" fn futimesat(
     let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
     unsafe { crate::unistd_abi::utimensat(dirfd, pathname, times_ptr as *const _, 0) }
 }
-// fwide: native — always return 0 (unset, compatible with byte-oriented streams)
+// fwide: native orientation for owned streams, host dispatch for foreign FILEs.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
     // open_wmemstream streams are wide-oriented by construction (and sticky).
@@ -5906,7 +5906,20 @@ pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
     // unset and mode != 0; sticky thereafter) and return the result. Previously
     // `mode` was ignored entirely, so fwide(s, +1)/fwide(s, -1) never oriented
     // the stream and always returned 0. bd-ifu9ll.
-    crate::stdio_abi::stream_set_orientation(stream, mode).unwrap_or_default()
+    if let Some(orientation) = crate::stdio_abi::stream_set_orientation(stream, mode) {
+        return orientation;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if !stream.is_null()
+        && let Some(raw) = crate::host_resolve::resolve_host_symbol_raw("fwide")
+    {
+        type HostFwide = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+        // SAFETY: owned streams were handled above; the caller supplies a live
+        // host FILE, and the resolver returns glibc's exact fwide ABI.
+        let host_fwide: HostFwide = unsafe { core::mem::transmute(raw) };
+        return unsafe { host_fwide(stream, mode) };
+    }
+    0
 }
 // get_kernel_syms: removed in Linux 2.6 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
