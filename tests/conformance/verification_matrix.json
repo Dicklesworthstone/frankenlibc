@@ -29627,22 +29627,37 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "partial",
-          "artifacts": "vmi1152480:/data/tmp/frankenlibc-scanf-binary-20261106/green-1"
+          "status": "complete",
+          "artifacts": "hz3:/data/tmp/frankenlibc-scanf-binary-20261106/audited-record/record/receipt.json;4parents/mode+80core+11synth;53nearbyparents/mode(1strictchild);fullcompilerreports"
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 1,
-        "complete": 0,
-        "partial": 1,
+        "complete": 1,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.36",
         "stream": "e2e",
-        "status": "partial",
-        "unit_cmds": [],
+        "status": "complete",
+        "unit_cmds": [
+          "cargo check -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"'",
+          "cargo fmt --check",
+          "cargo fmt --manifest-path tools/stdio_synth/Cargo.toml --check",
+          "cargo clippy -Zchecksum-freshness -j1 --locked --workspace --all-targets --keep-going --config 'build.fingerprint=\"content\"' -- -D warnings",
+          "cargo fmt --check",
+          "cargo fmt --manifest-path tools/stdio_synth/Cargo.toml --check",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --test conformance_diff_fscanf_host_stream --no-run --message-format=json --config 'build.fingerprint=\"content\"'",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-core --lib stdio::scanf::tests:: --config 'build.fingerprint=\"content\"' -- --test-threads=1",
+          "cargo test -Zchecksum-freshness -j1 --locked --manifest-path tools/stdio_synth/Cargo.toml --lib --config 'build.fingerprint=\"content\"' -- --test-threads=1",
+          "cargo test -Zchecksum-freshness -j1 --locked -p frankenlibc-abi --no-run --message-format=json --config 'build.fingerprint=\"content\"' --test isoc_abi_test --test conformance_diff_swscanf --test conformance_diff_isoc_sscanf_alias --test conformance_diff_vsscanf_fast_paths",
+          "cargo fmt --check",
+          "cargo fmt --manifest-path tools/stdio_synth/Cargo.toml --check",
+          "env FRANKENLIBC_MODE=strict /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --test-threads=1",
+          "env FRANKENLIBC_MODE=hardened /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/2b08b10c0f9fe9ac/out/conformance_diff_fscanf_host_stream-2b08b10c0f9fe9ac --test-threads=1"
+        ],
         "e2e_cmds": [],
         "expected_assertions": [
           "All original756 comparisons remain;1680 exact-symbol GNU comparisons/mode with binary and narrow-string paths",
@@ -29653,13 +29668,18 @@
         "log_schema_refs": [],
         "artifact_paths": [
           "vmi1152480:/data/tmp/frankenlibc-scanf-binary-20261106/red-1",
-          "vmi1152480:/data/tmp/frankenlibc-scanf-binary-20261106/green-1"
+          "vmi1152480:/data/tmp/frankenlibc-scanf-binary-20261106/green-1",
+          "vmi1156319:/data/tmp/frankenlibc-scanf-binary-20261106/audited-check",
+          "vmi1227854:/data/tmp/frankenlibc-scanf-binary-20261106/audited-clippy",
+          "hz3:/data/tmp/frankenlibc-scanf-binary-20261106/audited-green",
+          "hz3:/data/tmp/frankenlibc-scanf-binary-20261106/audited-regression",
+          "hz3:/data/tmp/frankenlibc-scanf-binary-20261106/audited-record",
+          "/data/tmp/frankenlibc-scanf-binary-evidence-20261106",
+          "/data/tmp/frankenlibc-native-integer-honesty-20261105/resumed-review-audit.txt"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "Remaining actual quality checks,fresh receipt and publication"
-        ],
-        "notes": "Original compiled RED source5301670903e2917d39db64bc22b824197fb6cb8b:3passed1failed both modes;GNU positive native rejected documented b conversion. Original gates preserved;C unsigned temporaries avoid varargs pointer type mismatch. Generator snapshot extended intentionally for a new route with old19routes preserved;no output-regeneration to hide failure,no ABI writer change,no legacy i dialect change. SOLO review;no independent verifier,wholeworkspace runtime,formalproof,performance,standalone or universal safety claim. Fullquality attempts onhz4/vmi122 stopped120 before compiler due normaldiskreservation;hz3 namespace103 before grant,not code failure. Raw diagnostics retained. All remote policies unchanged. First stdio-synth10passed1failed caught handler-ID drift; corrected by appending both enums, preserving original proof assertion. Remote fmt1 caught two new layouts; manually corrected, no formatter writes. Both first failures retained; only final-source reexecution may close. Additional unchanged strict-only allocation gate failed when incorrectly run in hardened mode:9strict passed,8hardened passed/1failed. Preserved original control>=1 and3aliases==0; isolate exact strict subprocess, require child1passed and strictmode. Other8semantic tests remain in outer mode. This newly admits hardened outer invocation while still executing strict routing; no hardened zero-allocation/performance claim. Source/comment predeclares win/lose3383, raw final-regression failure retained; no skip/allow/tolerance/runtime change. Aggregated8b job hit normal1800s execution deadline duringClippy (137, not lint result or OOM evidence); fullcheck0 retained, raw incomplete job reports retained. Remaining complete checks split into separate normalRCH jobs without changing either command scope, budget, floor or deadline. Finalsourcea89 changes only FFI safety/count comments after8b; exact final-source full checks/receipt still required. External writer committed partial evidence and rebased our7commits onto upstream394e12a6d at02:57:13UTC; source changes versus original series are exactly two resolver files (114insertions,1deletion), all five .36comments retained. Original RED530167 now has rebased equivalentabb573095; original8b equivalent525563ee2, scanner/test behavior-file blobs unchanged across each rebase pair. Old raw logs/SHAs remain actual observations; final qualification binds the new reachable source, preserving resolver changes. README census refreshed to actual1168431lines. This is not independent verification of upstream resolver claims.",
+        "close_blockers": [],
+        "notes": "Original compiled RED source5301670903e2917d39db64bc22b824197fb6cb8b:3passed1failed both modes;GNU positive native rejected documented b conversion. Original gates preserved;C unsigned temporaries avoid varargs pointer type mismatch. Generator snapshot extended intentionally for a new route with old19routes preserved;no output-regeneration to hide failure,no ABI writer change,no legacy i dialect change. SOLO review;no independent verifier,wholeworkspace runtime,formalproof,performance,standalone or universal safety claim. Fullquality attempts onhz4/vmi122 stopped120 before compiler due normaldiskreservation;hz3 namespace103 before grant,not code failure. Raw diagnostics retained. All remote policies unchanged. First stdio-synth10passed1failed caught handler-ID drift; corrected by appending both enums, preserving original proof assertion. Remote fmt1 caught two new layouts; manually corrected, no formatter writes. Both first failures retained; only final-source reexecution may close. Additional unchanged strict-only allocation gate failed when incorrectly run in hardened mode:9strict passed,8hardened passed/1failed. Preserved original control>=1 and3aliases==0; isolate exact strict subprocess, require child1passed and strictmode. Other8semantic tests remain in outer mode. This newly admits hardened outer invocation while still executing strict routing; no hardened zero-allocation/performance claim. Source/comment predeclares win/lose3383, raw final-regression failure retained; no skip/allow/tolerance/runtime change. Aggregated8b job hit normal1800s execution deadline duringClippy (137, not lint result or OOM evidence); fullcheck0 retained, raw incomplete job reports retained. Remaining complete checks split into separate normalRCH jobs without changing either command scope, budget, floor or deadline. Finalsourcea89 changes only FFI safety/count comments after8b; exact final-source full checks/receipt still required. External writer committed partial evidence and rebased our7commits onto upstream394e12a6d at02:57:13UTC; source changes versus original series are exactly two resolver files (114insertions,1deletion), all five .36comments retained. Original RED530167 now has rebased equivalentabb573095; original8b equivalent525563ee2, scanner/test behavior-file blobs unchanged across each rebase pair. Old raw logs/SHAs remain actual observations; final qualification binds the new reachable source, preserving resolver changes. README census refreshed to actual1168431lines. This is not independent verification of upstream resolver claims. FINAL OBSERVED sourcec9c4157d2ece7aacd91ac2b3678f61d8cdb107b5: fullworkspacecheck0/1197.43s and Clippy-Dwarnings0/726.34s (both alltargets/keepgoing), workspace+standalone-tool fmt0, same3177 frozen Rust/Cargo inputs unchanged on both workers.2903tracked byte-matched toGitH and274ignored(273Rustprobes+Cargo.lock) matched existing physical source archive; standalone tools Cargo.lock additionally captured in513-source receipt. No Git-alone/hermetic claim.80core/11synth,4main ABI parents per mode with1680 exact-symbol comparisons/mode, original756 retained;1008native-owned/string calls and672foreign-stream interop calls per mode, not1680wholly-native algorithm cases.53nearby parents per mode include one strict-only allocation routing child per outer invocation; raw control3/threealiases0/child1passed and expected wrong-child-mode101 retained, no hardened zero-allocation/performance claim. Named4-parent actual compiler0/link/execution4passed0failed, receiptSHA6abbdbad7e11744f0a0e752403012326a13cf97eb829f8e2098c2530dcc004fd, executableSHAda3f77f03fa68a10ffb48767c9638b2c8b1e661ced7fe82d192b13f8895aa0f9.5metadata gates0, actualRust/Cargo/cc/GNU versions retained. No new unsafe runtime code, no new source files/dependencies, no gate suppression/assertion weakening, no local build/compiled-artifact download or manual resource/worker/daemon/cache/lock/monitor changes. Fullworkspace runtime unrun; no independent verification or broad readiness claim. Source+complete evidence must be published and exact both refs verified before actualclosure.",
         "result_receipts": [
           "/data/tmp/frankenlibc-scanf-binary-20261106/audited-record/record/receipt.json"
         ],
