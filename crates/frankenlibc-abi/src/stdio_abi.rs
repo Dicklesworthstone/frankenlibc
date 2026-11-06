@@ -15567,6 +15567,10 @@ pub(crate) unsafe fn getdelim_for_caller(
     if may_delegate_to_host(stream, id)
         && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
     {
+        // Native clone threads can own a different errno cell from glibc.
+        // Seed the host only after allocator handoff has finished its work.
+        // SAFETY: the ABI accessor returns this thread's initialized errno.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         // SAFETY: valid output slots; capacity is an input only for a supplied buffer.
         let (buffer, capacity) = unsafe {
             let buffer = *lineptr;
@@ -15581,7 +15585,10 @@ pub(crate) unsafe fn getdelim_for_caller(
             return -1;
         };
         unsafe { *lineptr = prepared.cast() };
+        // SAFETY: only this thread's host errno slot is written.
+        unsafe { crate::host_resolve::write_host_errno_if_available(saved_errno) };
         let rc = unsafe { host_getdelim(lineptr, n, delim, stream) };
+        let returned_errno = crate::host_resolve::host_errno(saved_errno);
         // SAFETY: the host initializes capacity when it supplies a buffer, but
         // may leave both slots untouched after an existing stream error.
         let (returned, capacity) = unsafe {
@@ -15589,11 +15596,12 @@ pub(crate) unsafe fn getdelim_for_caller(
             (returned, getdelim_capacity(returned, n))
         };
         crate::malloc_abi::finish_host_realloc_buffer(returned.cast(), capacity);
-        if rc < 0 {
-            unsafe { sync_host_errno(0) };
-        } else {
+        if rc >= 0 {
             mark_host_io_started(stream);
         }
+        // A partial line can succeed while setting ferror/errno. Preserve that
+        // observation as well as an unchanged errno on an existing error.
+        unsafe { set_abi_errno(returned_errno) };
         return rc;
     }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, true, 0);
@@ -15704,6 +15712,8 @@ unsafe fn getline_for_caller(
     if may_delegate_to_host(stream, _id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
+        // SAFETY: the ABI accessor returns this thread's initialized errno.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         // SAFETY: valid output slots; a NULL buffer leaves capacity output-only.
         let (buffer, capacity) = unsafe {
             let buffer = *lineptr;
@@ -15718,7 +15728,10 @@ unsafe fn getline_for_caller(
             return -1;
         };
         unsafe { *lineptr = prepared.cast() };
+        // SAFETY: only this thread's host errno slot is written.
+        unsafe { crate::host_resolve::write_host_errno_if_available(saved_errno) };
         let rc = unsafe { host_getline(lineptr, n, stream) };
+        let returned_errno = crate::host_resolve::host_errno(saved_errno);
         // SAFETY: the host need not initialize capacity on a pre-existing error
         // when it has left the buffer NULL.
         let (returned, capacity) = unsafe {
@@ -15726,11 +15739,12 @@ unsafe fn getline_for_caller(
             (returned, getdelim_capacity(returned, n))
         };
         crate::malloc_abi::finish_host_realloc_buffer(returned.cast(), capacity);
-        if rc < 0 {
-            unsafe { sync_host_errno(0) };
-        } else {
+        if rc >= 0 {
             mark_host_io_started(stream);
         }
+        // SAFETY: restore this thread's caller-visible errno after bookkeeping,
+        // including a successful partial line that carries a real read error.
+        unsafe { set_abi_errno(returned_errno) };
         return rc;
     }
     unsafe { getdelim_for_caller(lineptr, n, b'\n' as c_int, stream, caller) }
