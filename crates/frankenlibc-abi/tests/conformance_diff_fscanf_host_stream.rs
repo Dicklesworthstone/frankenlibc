@@ -751,12 +751,17 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
         }
         for (is_v, suffix) in ["sscanf", "vsscanf"].into_iter().enumerate() {
             let name = CString::new(format!("{prefix}{suffix}")).unwrap();
+            // SAFETY: each exact name has the same signature as its native arm;
+            // the oracle rejects self resolution and host libc stays loaded.
             let expected = unsafe { dlsym_oracle::host_addr(&name, narrow_string_arms[is_v]) };
             for (input, format) in cases {
                 let text = CString::new(input).unwrap();
                 let fmt = CString::new(format!("{format}%c")).unwrap();
                 let scan = |target| {
                     let (mut value, mut consumed, mut tail) = (917, -1, b'?' as c_char);
+                    // SAFETY: the resolved bridge has this exact signature.
+                    // Both strings are NUL-terminated and its three output slots
+                    // remain live; each format scans one integer, %n and %c.
                     let rc = unsafe {
                         narrow_string(
                             target,
