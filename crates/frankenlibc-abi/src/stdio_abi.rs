@@ -15378,7 +15378,7 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
 // POSIX `getdelim` — read until a delimiter, dynamically allocating the buffer.
 //
 // Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
-// `*lineptr` using `malloc`/`realloc`. Stores the line length in `*n`.
+// `*lineptr` using `malloc`/`realloc`. Stores the buffer capacity in `*n`.
 // Returns the number of bytes read (including delim), or -1 on error/EOF.
 thread_local! {
     /// Reusable getdelim scratch buffer — avoids a fresh `Vec::with_capacity(128)` (a per-line

@@ -172,7 +172,9 @@ fn check_host_line_buffer_growth(use_getline: bool) {
     if frankenlibc_membrane::config::safety_level().heals_enabled() {
         // Hardened malloc uses the membrane arena, rather than strict mode's
         // segment heap. Both ownership classes must migrate before host realloc.
-        assert!(!malloc::malloc_segment_owned_for_tests(initial.cast_const()));
+        assert!(!malloc::malloc_segment_owned_for_tests(
+            initial.cast_const()
+        ));
         assert_eq!(
             malloc::malloc_known_remaining_for_tests(initial.cast_const()),
             Some(16)
