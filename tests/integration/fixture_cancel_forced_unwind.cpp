@@ -110,6 +110,7 @@ static pthread_t native_join_target;
 static int native_join_target_value;
 static int native_join_sentinel;
 static std::atomic<int> native_join_started{0};
+static std::atomic<int> native_join_release{0};
 using NativeJoin = int (*)(pthread_t, void **);
 static NativeJoin native_alias_join;
 using NativeLegacyPush = void (*)(void *, void (*)(void *), void *);
@@ -182,6 +183,7 @@ static void native_c_cleanup(void *argument) {
 
 static void *native_join_target_worker(void *) {
   native_join_started.store(1, std::memory_order_release);
+  while (!native_join_release.load(std::memory_order_acquire)) {}
   return &native_join_target_value;
 }
 
@@ -483,6 +485,10 @@ static int native_probe(const char *name, const char *provider) {
   if (internal_io)
     native_require(getpwnam("root") != nullptr, "initialize passwd provider before cancellation");
   if (joining) {
+    // A finished target can take GNU's nonblocking join path. Keep the target
+    // live when probing pending cancellation through a blocking join; disabled
+    // and try-join controls still have an immediately available target.
+    native_join_release.store(disabled || noncanceling, std::memory_order_release);
     native_require(pthread_create(&native_join_target, nullptr, native_join_target_worker, nullptr) == 0,
                    "create joinable target");
     while (!native_join_started.load(std::memory_order_acquire)) {}
@@ -550,6 +556,7 @@ static int native_probe(const char *name, const char *provider) {
                                   rc == -1 && errno == EAGAIN && value == native_event_sentinel,
                        "counter state exposes whether canceled event I/O ran");
       } else if (joining) {
+        native_join_release.store(1, std::memory_order_release);
         if (disabled || noncanceling) {
           native_require(state->join_result == &native_join_target_value,
                          "noncanceling control really consumes target result");
