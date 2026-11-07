@@ -178,13 +178,15 @@ fn native_ldexp(x: f64, exp: c_int) -> f64 {
     result * f64::from_bits(((n + 1023) as u64) << 52)
 }
 
-// __pthread_unregister_cancel/restore, __pthread_unwind_next: now in pthread_abi.rs (no-op/abort stubs)
+// The modern __pthread_register_cancel family lives in pthread_abi.rs.
 
 // Pthread cleanup push/pop (4 symbols)
 // The `buf` parameter is a __pthread_cleanup_buffer struct that the caller allocates on its stack.
 // Layout (glibc): { void (*routine)(void*); void *arg; int canceltype; __pthread_cleanup_buffer *prev; }
-// We use the caller-provided buffer as a linked list node, storing routine+arg+prev.
-// TLS head pointer tracks the current thread's cleanup stack.
+// Host threads must use the host's chain so pthread_exit/cancel see the handlers.
+// The fallback below supports explicit push/pop and cancel-type preservation;
+// legacy callback buffers are not yet integrated into native forced unwinding.
+// Modern native __pthread_register_cancel buffers use their separate owned chain.
 #[cfg(feature = "owned-tls-cache")]
 static PTHREAD_CLEANUP_HEAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
     crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
@@ -216,20 +218,21 @@ fn with_pthread_cleanup_head<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
     }
 }
 
-// __pthread_cleanup_buffer layout offsets (x86_64):
+// __pthread_cleanup_buffer layout offsets (x86_64 and aarch64):
 // 0: routine (fn pointer, 8 bytes)
 // 8: arg (void*, 8 bytes)
 // 16: canceltype (int, 4 bytes)
 // 24: prev (__pthread_cleanup_buffer*, 8 bytes)
 const CLEANUP_OFF_ROUTINE: usize = 0;
 const CLEANUP_OFF_ARG: usize = 8;
+const CLEANUP_OFF_CANCELTYPE: usize = 16;
 const CLEANUP_OFF_PREV: usize = 24;
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _pthread_cleanup_push(
+unsafe fn legacy_cleanup_push(
     buf: *mut c_void,
     routine: *mut c_void,
     arg: *mut c_void,
+    deferred: bool,
 ) {
     if buf.is_null() {
         return;
@@ -243,22 +246,34 @@ pub unsafe extern "C" fn _pthread_cleanup_push(
         return;
     }
 
-    unsafe {
+    if let Some(push) = crate::pthread_abi::host_legacy_cleanup_push(deferred) {
+        // SAFETY: the caller provides the live GNU cleanup buffer and handler.
+        // Linking only our private TLS list would lose the handler on host exit.
+        unsafe { push(buf, routine, arg) };
+    } else {
         let buf_ptr = buf as *mut u8;
-        // Store routine and arg
-        (buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).write(routine);
-        (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).write(arg);
-        with_pthread_cleanup_head(|head| {
-            // Link to previous head and set this buffer as the new head.
-            (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).write(*head as *mut c_void);
-            *head = buf as usize;
-        });
+        // SAFETY: the caller owns an aligned, writable GNU cleanup buffer.
+        unsafe {
+            (buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).write(routine);
+            (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).write(arg);
+            with_pthread_cleanup_head(|head| {
+                (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).write(*head as *mut c_void);
+                *head = buf as usize;
+            });
+            if deferred {
+                // Setting DEFERRED cannot deliver a pending asynchronous
+                // request. Save the previous type in the ABI's private field.
+                crate::pthread_abi::pthread_setcanceltype(
+                    0,
+                    buf_ptr.add(CLEANUP_OFF_CANCELTYPE).cast(),
+                );
+            }
+        }
     }
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) {
+unsafe fn legacy_cleanup_pop(buf: *mut c_void, execute: c_int, restore: bool) {
     if buf.is_null() {
         return;
     }
@@ -269,43 +284,58 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) 
         return;
     }
 
-    unsafe {
+    if let Some(pop) = crate::pthread_abi::host_legacy_cleanup_pop(restore) {
+        // SAFETY: this matches a live buffer registered with the host family.
+        unsafe { pop(buf, execute) };
+    } else {
         let buf_ptr = buf as *mut u8;
-        let prev = (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).read();
-        with_pthread_cleanup_head(|head| {
-            // Restore previous head.
-            *head = prev as usize;
-        });
-        // Execute the handler if requested
-        if execute != 0 {
-            let routine: unsafe extern "C" fn(*mut c_void) =
-                std::mem::transmute((buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).read());
-            let arg = (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).read();
-            routine(arg);
+        // SAFETY: this is the matching live buffer supplied to push.
+        unsafe {
+            let prev = (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).read();
+            with_pthread_cleanup_head(|head| *head = prev as usize);
+            if restore {
+                // Unlink before restoring ASYNCHRONOUS: a pending request can
+                // unwind from setcanceltype and must see only enclosing frames.
+                let saved = buf_ptr.add(CLEANUP_OFF_CANCELTYPE).cast::<c_int>().read();
+                crate::pthread_abi::pthread_setcanceltype(saved, std::ptr::null_mut());
+            }
+            if execute != 0 {
+                let routine: unsafe extern "C-unwind" fn(*mut c_void) =
+                    std::mem::transmute((buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).read());
+                let arg = (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).read();
+                routine(arg);
+            }
         }
     }
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
 
-// _pthread_cleanup_push_defer: like push but also saves/sets canceltype to DEFERRED
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _pthread_cleanup_push_defer(
+pub unsafe extern "C-unwind" fn _pthread_cleanup_push(
     buf: *mut c_void,
     routine: *mut c_void,
     arg: *mut c_void,
 ) {
-    // Push the cleanup handler
-    unsafe { _pthread_cleanup_push(buf, routine, arg) };
-    // Save current canceltype and set to DEFERRED (0)
-    // For now, we don't implement cancellation, so this is a no-op beyond the push
+    unsafe { legacy_cleanup_push(buf, routine, arg, false) };
 }
 
-// _pthread_cleanup_pop_restore: like pop but also restores saved canceltype
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _pthread_cleanup_pop_restore(buf: *mut c_void, execute: c_int) {
-    // Restore canceltype (no-op for now since we don't implement cancellation)
-    // Pop the cleanup handler
-    unsafe { _pthread_cleanup_pop(buf, execute) };
+pub unsafe extern "C-unwind" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) {
+    unsafe { legacy_cleanup_pop(buf, execute, false) };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn _pthread_cleanup_push_defer(
+    buf: *mut c_void,
+    routine: *mut c_void,
+    arg: *mut c_void,
+) {
+    unsafe { legacy_cleanup_push(buf, routine, arg, true) };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn _pthread_cleanup_pop_restore(buf: *mut c_void, execute: c_int) {
+    unsafe { legacy_cleanup_pop(buf, execute, true) };
 }
 
 // Public pthread extras (12 symbols)

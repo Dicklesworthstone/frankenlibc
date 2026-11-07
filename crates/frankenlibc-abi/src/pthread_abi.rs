@@ -9390,6 +9390,66 @@ pub(crate) fn host_cancellation_thread() -> bool {
     current_threading_backend() == THREAD_BACKEND_HOST
 }
 
+pub(crate) type LegacyCleanupPush =
+    unsafe extern "C-unwind" fn(*mut c_void, *mut c_void, *mut c_void);
+pub(crate) type LegacyCleanupPop = unsafe extern "C-unwind" fn(*mut c_void, c_int);
+
+struct HostLegacyCleanup {
+    push: LegacyCleanupPush,
+    pop: LegacyCleanupPop,
+    push_defer: LegacyCleanupPush,
+    pop_restore: LegacyCleanupPop,
+}
+
+fn host_legacy_cleanup() -> Option<&'static HostLegacyCleanup> {
+    if !host_cancellation_thread() {
+        return None;
+    }
+    static FUNCTIONS: OnceLock<Option<HostLegacyCleanup>> = OnceLock::new();
+    FUNCTIONS
+        .get_or_init(|| {
+            // Resolve the whole family before linking a buffer: its matching
+            // pop must use the same chain. The raw resolver also finds GNU
+            // compatibility-only versions of push_defer and pop_restore.
+            let push = crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_push")?;
+            let pop = crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_pop")?;
+            let push_defer =
+                crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_push_defer")?;
+            let pop_restore =
+                crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_pop_restore")?;
+            // SAFETY: these are the GNU cleanup-buffer entrypoints in the
+            // host libc image, never our interposed exports. Both the handler
+            // call and restoration of asynchronous cancellation can unwind.
+            Some(unsafe {
+                HostLegacyCleanup {
+                    push: std::mem::transmute::<usize, LegacyCleanupPush>(push),
+                    pop: std::mem::transmute::<usize, LegacyCleanupPop>(pop),
+                    push_defer: std::mem::transmute::<usize, LegacyCleanupPush>(push_defer),
+                    pop_restore: std::mem::transmute::<usize, LegacyCleanupPop>(pop_restore),
+                }
+            })
+        })
+        .as_ref()
+}
+
+pub(crate) fn host_legacy_cleanup_push(deferred: bool) -> Option<LegacyCleanupPush> {
+    let functions = host_legacy_cleanup()?;
+    Some(if deferred {
+        functions.push_defer
+    } else {
+        functions.push
+    })
+}
+
+pub(crate) fn host_legacy_cleanup_pop(restore: bool) -> Option<LegacyCleanupPop> {
+    let functions = host_legacy_cleanup()?;
+    Some(if restore {
+        functions.pop_restore
+    } else {
+        functions.pop
+    })
+}
+
 /// The public GNU pthread header puts four private pointer words after the
 /// machine jump buffer and its (pointer-aligned) saved-mask flag. The first
 /// two words hold our previous entry and the deferred region's saved type.

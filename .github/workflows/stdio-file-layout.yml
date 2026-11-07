@@ -163,6 +163,44 @@ jobs:
             grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
               "artifacts/stdio-layout/registration-$mode.log"
           done
+      - name: Preserve legacy cleanup cancellation types through the Rust ABI
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test glibc_internal_abi_test pthread_cleanup -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/stdio-layout/legacy-cleanup-$mode.log"
+            grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+              "artifacts/stdio-layout/legacy-cleanup-$mode.log"
+          done
+      - name: Run legacy cleanup handlers on cancellation and thread exit
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          c++ -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_callback_unwind.cpp -ldl -o target/stdio-callback-unwind
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          host="$(env -u LD_PRELOAD ldd target/stdio-callback-unwind | awk '$1 == "libc.so.6" {print $3}')"
+          test -f "$host"
+          test -f "$library"
+          count=0
+          for case in pop pop-restore exit cancel restore-cancel pop-exit; do
+            prefix="artifacts/stdio-layout/legacy-cleanup-$case"
+            env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$host" \
+              timeout 20 target/stdio-callback-unwind --legacy-cleanup "$case" > "$prefix-host.out" 2> "$prefix-host.err"
+            grep -qx "legacy-cleanup:$case:PASS" "$prefix-host.out"
+            test ! -s "$prefix-host.err"
+            for mode in strict hardened; do
+              timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$library" \
+                target/stdio-callback-unwind --legacy-cleanup "$case" > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+              cmp "$prefix-host.out" "$prefix-$mode.out"
+              cmp "$prefix-host.err" "$prefix-$mode.err"
+            done
+            count=$((count + 1))
+          done
+          test "$count" -eq 6
       - name: Propagate registered C++ callback exceptions through every printf boundary
         if: always()
         shell: bash

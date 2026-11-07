@@ -3392,8 +3392,8 @@ fn pthread_cleanup_push_pop_executes_handler() {
         CALLED.store(val, Ordering::SeqCst);
     }
 
-    // Allocate a __pthread_cleanup_buffer (at least 32 bytes on x86_64)
-    let mut buf = [0u8; 64];
+    // The GNU cleanup buffer is 32 bytes with pointer alignment on both ISAs.
+    let mut buf = [0usize; 4];
     let buf_ptr = buf.as_mut_ptr() as *mut std::ffi::c_void;
 
     CALLED.store(0, Ordering::SeqCst);
@@ -3418,7 +3418,7 @@ fn pthread_cleanup_pop_no_execute() {
         CALLED2.store(99, Ordering::SeqCst);
     }
 
-    let mut buf = [0u8; 64];
+    let mut buf = [0usize; 4];
     let buf_ptr = buf.as_mut_ptr() as *mut std::ffi::c_void;
 
     CALLED2.store(0, Ordering::SeqCst);
@@ -3439,7 +3439,7 @@ fn pthread_cleanup_push_defer_pop_restore() {
         CALLED3.store(val, Ordering::SeqCst);
     }
 
-    let mut buf = [0u8; 64];
+    let mut buf = [0usize; 4];
     let buf_ptr = buf.as_mut_ptr() as *mut std::ffi::c_void;
 
     CALLED3.store(0, Ordering::SeqCst);
@@ -3452,6 +3452,109 @@ fn pthread_cleanup_push_defer_pop_restore() {
         _pthread_cleanup_pop_restore(buf_ptr, 1);
     }
     assert_eq!(CALLED3.load(Ordering::SeqCst), 7);
+}
+
+fn check_legacy_cleanup_cancellation_types() {
+    use frankenlibc_abi::pthread_abi::{pthread_setcancelstate, pthread_setcanceltype};
+    const ENABLE: libc::c_int = 0;
+    const DISABLE: libc::c_int = 1;
+    const DEFERRED: libc::c_int = 0;
+    const ASYNCHRONOUS: libc::c_int = 1;
+
+    struct Probe {
+        calls: usize,
+        cancel_type: libc::c_int,
+        result: libc::c_int,
+    }
+    unsafe extern "C-unwind" fn record_type(argument: *mut std::ffi::c_void) {
+        // SAFETY: the test keeps this probe live until its matching pop.
+        let probe = unsafe { &mut *argument.cast::<Probe>() };
+        probe.calls += 1;
+        probe.result = unsafe { pthread_setcanceltype(DEFERRED, &mut probe.cancel_type) };
+        probe.result |= unsafe { pthread_setcanceltype(probe.cancel_type, ptr::null_mut()) };
+    }
+
+    let mut outer = [0usize; 4];
+    let mut inner = [0usize; 4];
+    let mut outer_probe = Probe {
+        calls: 0,
+        cancel_type: -1,
+        result: -1,
+    };
+    let mut inner_probe = Probe {
+        calls: 0,
+        cancel_type: -1,
+        result: -1,
+    };
+    let mut saved_state = ENABLE;
+    let mut saved_type = DEFERRED;
+    let (mut in_outer, mut in_inner, mut after_inner, mut after_outer) = (-1, -1, -1, -1);
+    // Keep cancellation disabled while observing asynchronous settings, and
+    // restore all state/pop all buffers before any assertion can unwind.
+    let results = unsafe {
+        let disable = pthread_setcancelstate(DISABLE, &mut saved_state);
+        let asynchronous = pthread_setcanceltype(ASYNCHRONOUS, &mut saved_type);
+        _pthread_cleanup_push_defer(
+            outer.as_mut_ptr().cast(),
+            record_type as *mut std::ffi::c_void,
+            std::ptr::from_mut(&mut outer_probe).cast(),
+        );
+        let observe_outer = pthread_setcanceltype(DEFERRED, &mut in_outer);
+        _pthread_cleanup_push_defer(
+            inner.as_mut_ptr().cast(),
+            record_type as *mut std::ffi::c_void,
+            std::ptr::from_mut(&mut inner_probe).cast(),
+        );
+        // A change inside the nested region must not overwrite its saved type.
+        let change_inner = pthread_setcanceltype(ASYNCHRONOUS, &mut in_inner);
+        _pthread_cleanup_pop_restore(inner.as_mut_ptr().cast(), 1);
+        let observe_inner = pthread_setcanceltype(DEFERRED, &mut after_inner);
+        _pthread_cleanup_pop_restore(outer.as_mut_ptr().cast(), 1);
+        let restore_type = pthread_setcanceltype(saved_type, &mut after_outer);
+        let restore_state = pthread_setcancelstate(saved_state, ptr::null_mut());
+        [
+            disable,
+            asynchronous,
+            observe_outer,
+            change_inner,
+            observe_inner,
+            restore_type,
+            restore_state,
+        ]
+    };
+    assert_eq!(results, [0; 7]);
+    assert_eq!(
+        (in_outer, in_inner, after_inner),
+        (DEFERRED, DEFERRED, DEFERRED)
+    );
+    assert_eq!(after_outer, ASYNCHRONOUS);
+    assert_eq!((inner_probe.calls, outer_probe.calls), (1, 1));
+    assert_eq!((inner_probe.result, outer_probe.result), (0, 0));
+    assert_eq!(inner_probe.cancel_type, DEFERRED);
+    assert_eq!(
+        outer_probe.cancel_type, ASYNCHRONOUS,
+        "restore must precede the handler"
+    );
+}
+
+#[test]
+fn pthread_cleanup_defer_restores_nested_cancellation_types() {
+    check_legacy_cleanup_cancellation_types();
+}
+
+#[test]
+fn pthread_cleanup_native_defer_restores_nested_cancellation_types() {
+    use frankenlibc_abi::pthread_abi::{
+        pthread_threading_restore_for_tests, pthread_threading_swap_force_native_for_tests,
+    };
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(pthread_threading_swap_force_native_for_tests());
+    check_legacy_cleanup_cancellation_types();
 }
 
 // ===========================================================================
