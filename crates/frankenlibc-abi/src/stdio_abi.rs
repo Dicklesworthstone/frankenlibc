@@ -794,43 +794,61 @@ unsafe fn strict_scan_single_string_from(
     *end = p;
     1
 }
-/// Encode wide input as UTF-8, stopping at NUL, a wide-character limit, or a
-/// byte precision. A precision-bounded array need not have a terminator; stop
-/// before reading its next character once the output budget is exhausted.
+/// Encode wide-renderer input as UTF-8, stopping at NUL or a wide-character
+/// precision. A precision-bounded array need not have a terminator.
 /// Returns `(utf8_bytes, wide_char_count)`.
-unsafe fn wide_cstr_to_utf8(
-    ptr: *const u32,
-    limit: Option<usize>,
-    byte_limit: Option<usize>,
-) -> (Vec<u8>, usize) {
+unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, usize) {
     let mut out = Vec::new();
     let mut i = 0usize;
     loop {
-        if limit.is_some_and(|n| i >= n) || byte_limit.is_some_and(|n| out.len() >= n) {
+        if limit.is_some_and(|n| i >= n) {
             break;
         }
         // SAFETY: the caller supplies readable wide characters until NUL or
-        // precision is satisfied. Both limits are checked before this read.
+        // precision is satisfied. The limit is checked before this read.
         let wc = unsafe { *ptr.add(i) };
         if wc == 0 {
             break;
         }
-        match char::from_u32(wc) {
-            Some(c) => {
-                let mut b = [0u8; 4];
-                let encoded = c.encode_utf8(&mut b).as_bytes();
-                if byte_limit.is_some_and(|n| encoded.len() > n.saturating_sub(out.len())) {
-                    break;
-                }
-                out.extend_from_slice(encoded);
-            }
-            // Invalid wide char (surrogate / > U+10FFFF): glibc would error the
-            // whole call; we stop the conversion here (rare in practice).
-            None => break,
-        }
+        let mut encoded = [0; 6];
+        let Some(length) = frankenlibc_core::string::wchar::wctomb(wc, &mut encoded) else {
+            // This internal transport cannot encode a surrogate or high-bit
+            // wchar value. GNU's supported extended UTF-8 values still fit.
+            break;
+        };
+        out.extend_from_slice(&encoded[..length]);
         i += 1;
     }
     (out, i)
+}
+
+/// Encode a narrow printf's `%ls` using the active multibyte locale. Precision
+/// bounds output bytes; an array need not continue once that budget is met.
+/// Returns an encoding/allocation errno without publishing character data.
+unsafe fn wide_cstr_to_multibyte(
+    ptr: *const u32,
+    byte_limit: Option<usize>,
+) -> Result<Vec<u8>, c_int> {
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let mut out = Vec::new();
+    let mut index = 0;
+    while byte_limit.is_none_or(|limit| out.len() < limit) {
+        // SAFETY: the caller supplies wide characters through NUL or the
+        // byte-precision boundary, which is checked before this read.
+        let wc = unsafe { *ptr.add(index) };
+        if wc == 0 {
+            break;
+        }
+        let mut encoded = [0; 6];
+        let length = codec.encode(wc, &mut encoded).ok_or(errno::EILSEQ)?;
+        if byte_limit.is_some_and(|limit| length > limit - out.len()) {
+            break;
+        }
+        out.try_reserve(length).map_err(|_| errno::ENOMEM)?;
+        out.extend_from_slice(&encoded[..length]);
+        index += 1;
+    }
+    Ok(out)
 }
 
 /// Runtime-dispatch state for stream/syscall policy lookups.
@@ -7890,15 +7908,18 @@ unsafe fn extension_write(
     caller: usize,
 ) -> Result<usize, c_int> {
     if wide {
-        let text = std::str::from_utf8(bytes).map_err(|_| errno::EILSEQ)?;
-        let mut count = 0;
-        for ch in text.chars() {
+        // Validate the complete internal transport before publishing any of
+        // this chunk. GNU wide values can require five or six UTF-8 bytes.
+        let count = crate::wchar_abi::narrow_to_wide_count(bytes).ok_or(errno::EILSEQ)?;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let (wc, length) =
+                frankenlibc_core::string::wchar::mbtowc(&bytes[offset..]).ok_or(errno::EILSEQ)?;
             // SAFETY: stream is live and wide-oriented for this operation.
-            if unsafe { crate::wchar_abi::fputwc_for_caller(ch as u32, stream, caller) } == u32::MAX
-            {
+            if unsafe { crate::wchar_abi::fputwc_for_caller(wc, stream, caller) } == u32::MAX {
                 return Err(unsafe { *super::errno_abi::__errno_location() });
             }
-            count += 1;
+            offset += length;
         }
         Ok(count)
     } else {
@@ -7927,12 +7948,12 @@ struct ExtensionOutput {
 impl ExtensionOutput {
     unsafe fn write(&mut self, bytes: &[u8]) -> Result<usize, c_int> {
         if let Some(pending) = self.pending.as_mut() {
-            let text = std::str::from_utf8(bytes).map_err(|_| errno::EILSEQ)?;
+            let count = crate::wchar_abi::narrow_to_wide_count(bytes).ok_or(errno::EILSEQ)?;
             pending
                 .try_reserve(bytes.len())
                 .map_err(|_| errno::ENOMEM)?;
             pending.extend_from_slice(bytes);
-            Ok(text.chars().count())
+            Ok(count)
         } else {
             // SAFETY: the owner retains the live FILE and original caller.
             unsafe { extension_write(self.stream, bytes, self.wide, self.caller) }
@@ -9388,7 +9409,7 @@ pub(crate) unsafe fn render_segments(
                                     _ => None,
                                 };
                                 let (utf8, wide_count) =
-                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, limit, None) };
+                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
                                 if let Width::Fixed(w) = width_spec.width {
                                     let extra = utf8.len().saturating_sub(wide_count);
                                     width_spec.width = Width::Fixed(w + extra);
@@ -9406,10 +9427,44 @@ pub(crate) unsafe fn render_segments(
                                 };
                                 // SAFETY: the conversion stops before reading
                                 // beyond the precision-bounded wide array.
-                                let (utf8, _) = unsafe {
-                                    wide_cstr_to_utf8(ptr as *const u32, None, byte_limit)
+                                let multibyte = match unsafe {
+                                    wide_cstr_to_multibyte(ptr as *const u32, byte_limit)
+                                } {
+                                    Ok(bytes) => bytes,
+                                    Err(error) => {
+                                        if error == errno::EILSEQ
+                                            && byte_limit.is_none()
+                                            && !width_spec.flags.left_justify
+                                            && let Width::Fixed(width) = width_spec.width
+                                            && width != 0
+                                        {
+                                            // GNU emits width+1 spaces before this
+                                            // unbounded right-aligned encoding error.
+                                            // Bounded and left-aligned failures do not.
+                                            let Some(width) = width.checked_add(1) else {
+                                                frankenlibc_core::stdio::printf::note_render_failure(
+                                                    errno::EOVERFLOW,
+                                                );
+                                                break;
+                                            };
+                                            let mut padding = width_spec;
+                                            padding.width = Width::Fixed(width);
+                                            format_str(b"", &padding, &mut buf);
+                                        }
+                                        // An allocation failure while rendering the
+                                        // padding still takes precedence over EILSEQ.
+                                        let padding_error =
+                                            frankenlibc_core::stdio::printf::take_render_failure();
+                                        let error = if padding_error == 0 {
+                                            error
+                                        } else {
+                                            padding_error
+                                        };
+                                        frankenlibc_core::stdio::printf::note_render_failure(error);
+                                        break;
+                                    }
                                 };
-                                format_str(&utf8, &width_spec, &mut buf);
+                                format_str(&multibyte, &width_spec, &mut buf);
                             }
                         } else if wide_output {
                             // Wide printf narrow `%s`: the `char*` multibyte content
@@ -9475,15 +9530,21 @@ pub(crate) unsafe fn render_segments(
                 } else if resolved_spec.conversion == b'c'
                     && matches!(resolved_spec.length, LengthMod::L)
                 {
-                    // `%lc` / `%C`: the argument is a `wint_t` wide character, not
-                    // a byte. The default char path would emit only its low byte
-                    // (garbage for non-ASCII); instead UTF-8-encode the code point.
+                    // `%lc` / `%C`: wide output uses internal UTF-8; narrow
+                    // output must encode the wint_t in the active LC_CTYPE.
                     if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                        let mut utf8 = Vec::new();
-                        if let Some(c) = char::from_u32(raw as u32) {
-                            let mut b = [0u8; 4];
-                            utf8.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
-                        }
+                        let mut encoded = [0; 6];
+                        let length = if !wide_output {
+                            let codec = crate::locale_abi::active_multibyte_codec();
+                            let Some(length) = codec.encode(raw as u32, &mut encoded) else {
+                                frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
+                                break;
+                            };
+                            length
+                        } else {
+                            frankenlibc_core::string::wchar::wctomb(raw as u32, &mut encoded)
+                                .unwrap_or(0)
+                        };
                         // Precision is ignored for %c. Narrow printf: width is a
                         // BYTE field — the multibyte char's byte length counts
                         // toward it (no inflation). Wide printf: width counts WIDE
@@ -9492,10 +9553,10 @@ pub(crate) unsafe fn render_segments(
                         let mut width_spec = resolved_spec;
                         width_spec.precision = Precision::None;
                         if wide_output && let Width::Fixed(w) = width_spec.width {
-                            let extra = utf8.len().saturating_sub(1);
+                            let extra = length.saturating_sub(1);
                             width_spec.width = Width::Fixed(w + extra);
                         }
-                        format_str(&utf8, &width_spec, &mut buf);
+                        format_str(&encoded[..length], &width_spec, &mut buf);
                     }
                 } else if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                     // The CHEAP half of the predicate first, and it is what

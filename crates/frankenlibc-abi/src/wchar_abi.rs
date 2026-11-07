@@ -133,10 +133,27 @@ pub(crate) fn reserve_wide_output(stream: *mut c_void, requested: usize) -> Opti
 fn decode_wmemstream_bytes(data: &[u8]) -> Vec<u32> {
     match std::str::from_utf8(data) {
         Ok(s) => s.chars().map(|ch| ch as u32).collect(),
-        Err(_) => String::from_utf8_lossy(data)
-            .chars()
-            .map(|ch| ch as u32)
-            .collect(),
+        Err(_) => {
+            let mut wide = Vec::new();
+            let mut remaining = data;
+            while !remaining.is_empty() {
+                if let Some((wc, length)) = wchar_core::mbtowc(remaining) {
+                    wide.push(wc);
+                    remaining = &remaining[length..];
+                } else {
+                    // Preserve the former Rust lossy decoder's replacement
+                    // boundaries for malformed bytes, while retaining GNU's
+                    // valid extended wide values instead of replacing them.
+                    let length = std::str::from_utf8(remaining)
+                        .err()
+                        .and_then(|error| error.error_len())
+                        .unwrap_or(remaining.len());
+                    wide.push(wchar_core::REPLACEMENT_CODEPOINT);
+                    remaining = &remaining[length..];
+                }
+            }
+            wide
+        }
     }
 }
 
@@ -6568,7 +6585,7 @@ fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> Optio
 }
 
 /// Count wide characters in internal transport, independently of LC_CTYPE.
-fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
+pub(crate) fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
     let mut count = 0usize;
     let mut i = 0usize;
     while i < narrow.len() {

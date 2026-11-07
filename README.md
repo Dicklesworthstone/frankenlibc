@@ -1291,6 +1291,8 @@ Each case collects baseline + preload stdout/stderr, a metadata bundle (mode, ex
 
 These fixtures are the ground truth for differential verification: FrankenLibC's output for the same inputs must match glibc's behavior where conformance is claimed.
 
+The `conformance_diff_swscanf` wide-I/O tests require GNU `C.UTF-8` and ISO-8859-1 `fr_FR` locale data. For private fixtures, set `FRANKENLIBC_TEST_LOCALE_PATH` to an existing absolute directory containing the compiled `fr_FR/` locale, accessible to the test runner. The parent passes this explicit path to its isolated children while continuing to clear inherited `LOCPATH`; a missing directory or required locale fails the tests. This supports private `localedef --no-archive` output without changing the system locale archive.
+
 ### C Integration Fixtures
 
 `tests/integration/` contains 107 C source fixtures at this snapshot. The following older core set is representative, not exhaustive:
@@ -3943,7 +3945,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,822 native/direct-syscall rows (68.5%), 1,279 host-backed wrapper rows (31.1%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,898 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 232,467 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 232,545 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,795 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,172,897 lines including generated codec tables |
 | Runtime math controllers | 71 modules |

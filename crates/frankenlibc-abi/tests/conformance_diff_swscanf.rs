@@ -158,8 +158,17 @@ mod locale_scanning {
         if std::env::var(CHILD).as_deref() == Ok(test) {
             return true;
         }
+        let locale_path =
+            std::env::var_os("FRANKENLIBC_TEST_LOCALE_PATH").map(std::path::PathBuf::from);
+        if let Some(path) = &locale_path {
+            assert!(
+                path.is_absolute() && path.is_dir(),
+                "FRANKENLIBC_TEST_LOCALE_PATH must name an existing absolute directory: {path:?}"
+            );
+        }
         for mode in ["strict", "hardened"] {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
                 .args([
                     "--exact",
                     &format!("locale_scanning::{test}"),
@@ -170,9 +179,11 @@ mod locale_scanning {
                 .env("FRANKENLIBC_MODE", mode)
                 .env("LC_ALL", "C")
                 .env("LANG", "C")
-                .env_remove("LOCPATH")
-                .output()
-                .unwrap();
+                .env_remove("LOCPATH");
+            if let Some(path) = &locale_path {
+                command.env("LOCPATH", path);
+            }
+            let output = command.output().unwrap();
             assert!(
                 output.status.success(),
                 "{test}/{mode}:\n{}\n{}",
@@ -1755,6 +1766,272 @@ mod locale_scanning {
                     );
                     assert_current_multibyte_codec(engine, active);
                     unsafe { assert_eq!((engine.close)(stream), 0) };
+                }
+            }
+        }
+    }
+
+    type SnprintfFn = unsafe extern "C-unwind" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+    type VsnprintfFn =
+        unsafe extern "C-unwind" fn(*mut c_char, usize, *const c_char, *mut c_void) -> c_int;
+
+    unsafe extern "C-unwind" fn call_vsnprintf(
+        output: *mut c_char,
+        capacity: usize,
+        format: *const c_char,
+        mut args: ...
+    ) -> c_int {
+        // SAFETY: the caller's promoted arguments match this live va_list.
+        unsafe {
+            stdio_abi::vsnprintf(
+                output,
+                capacity,
+                format,
+                std::ptr::addr_of_mut!(args).cast(),
+            )
+        }
+    }
+
+    unsafe extern "C-unwind" fn call_host_vsnprintf(
+        output: *mut c_char,
+        capacity: usize,
+        format: *const c_char,
+        mut args: ...
+    ) -> c_int {
+        static PRINT: OnceLock<VsnprintfFn> = OnceLock::new();
+        let print = *PRINT.get_or_init(|| {
+            // SAFETY: resolve the independent GNU function with this exact ABI.
+            unsafe { host_fn(c"vsnprintf", stdio_abi::vsnprintf as *const ()) }
+        });
+        // SAFETY: the arguments and receiving buffer belong to this call.
+        unsafe {
+            print(
+                output,
+                capacity,
+                format,
+                std::ptr::addr_of_mut!(args).cast(),
+            )
+        }
+    }
+
+    #[test]
+    fn narrow_output_wide_arguments_use_active_codec() {
+        if !isolated("narrow_output_wide_arguments_use_active_codec") {
+            return;
+        }
+        // Both APIs use the shared renderer, with distinct variadic extraction.
+        let entries: [(&str, SnprintfFn, SnprintfFn); 2] = [
+            (
+                "snprintf",
+                // SAFETY: the independent host symbol has this exact ABI.
+                unsafe { host_fn(c"snprintf", stdio_abi::snprintf as *const ()) },
+                stdio_abi::snprintf,
+            ),
+            ("vsnprintf", call_host_vsnprintf, call_vsnprintf),
+        ];
+        for locale in [c"C.UTF-8", c"fr_FR", c"C"] {
+            select(locale);
+            for (entry, host_print, native_print) in entries {
+                for capacity in [0, 1, 4, 64] {
+                    for width in [-5, 0, 5] {
+                        for precision in [0, 1, 2, 3, 6, -1] {
+                            for input in [
+                                [0xe9, 0x41, 0, 0],
+                                [0x41, 0xd800, 0x42, 0],
+                                [0x41, 0x110000, 0x42, 0],
+                                [0, 0, 0, 0],
+                            ] {
+                                let mut expected = None;
+                                for (print, errno) in [
+                                    (host_print, host().errno),
+                                    (native_print, errno_abi::__errno_location as ErrnoFn),
+                                ] {
+                                    let mut output = [0xa5u8; 64];
+                                    let (mut before, mut after) = (SENTINEL, SENTINEL);
+                                    // SAFETY: the format matches two %n pointers,
+                                    // two promoted ints and a terminated wchar array;
+                                    // capacity fits the entire writable output.
+                                    let observed = unsafe {
+                                        *errno() = 23;
+                                        let rc = print(
+                                            output.as_mut_ptr().cast(),
+                                            capacity,
+                                            c"P%n%*.*ls%nQ".as_ptr(),
+                                            &mut before,
+                                            width,
+                                            precision,
+                                            input.as_ptr(),
+                                            &mut after,
+                                        );
+                                        (rc, *errno(), before, after, output)
+                                    };
+                                    if let Some(expected) = expected {
+                                        assert_eq!(
+                                            observed, expected,
+                                            "{locale:?}/{entry} cap={capacity} width={width} precision={precision} input={input:?}"
+                                        );
+                                    } else {
+                                        expected = Some(observed);
+                                    }
+                                }
+                            }
+                        }
+                        for wc in [0u32, 0xe9, 0x20ac, 0xd800, 0x110000, 0x80000000] {
+                            let mut expected = None;
+                            for (print, errno) in [
+                                (host_print, host().errno),
+                                (native_print, errno_abi::__errno_location as ErrnoFn),
+                            ] {
+                                let mut output = [0xa5u8; 64];
+                                let (mut before, mut after) = (SENTINEL, SENTINEL);
+                                // SAFETY: each %n owns its int, %lc takes the
+                                // promoted wint_t, and capacity fits output.
+                                let observed = unsafe {
+                                    *errno() = 23;
+                                    let rc = print(
+                                        output.as_mut_ptr().cast(),
+                                        capacity,
+                                        c"P%n%*lc%nQ".as_ptr(),
+                                        &mut before,
+                                        width,
+                                        wc,
+                                        &mut after,
+                                    );
+                                    (rc, *errno(), before, after, output)
+                                };
+                                if let Some(expected) = expected {
+                                    assert_eq!(
+                                        observed, expected,
+                                        "{locale:?}/{entry} cap={capacity} width={width} wc={wc:#x}"
+                                    );
+                                } else {
+                                    expected = Some(observed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_output_preserves_extended_wide_arguments() {
+        if !isolated("wide_output_preserves_extended_wide_arguments") {
+            return;
+        }
+        type SwprintfFn = unsafe extern "C-unwind" fn(*mut Wc, usize, *const Wc, ...) -> c_int;
+        type OpenWideMemoryFn = unsafe extern "C" fn(*mut *mut u32, *mut usize) -> *mut c_void;
+        // SAFETY: the GNU symbol has this exact variadic ABI.
+        let host_print: SwprintfFn = unsafe { host_fn(c"swprintf", fl::swprintf as *const ()) };
+        // SAFETY: both providers expose the same pointer/size ABI.
+        let host_open: OpenWideMemoryFn =
+            unsafe { host_fn(c"open_wmemstream", fl::open_wmemstream as *const ()) };
+        for locale in [c"C.UTF-8", c"fr_FR", c"C"] {
+            select(locale);
+            for wc in [0x110000, 0x200000, 0x4000000, 0x7fffffff] {
+                for width in [0, -4, 4] {
+                    let input = [wc, Wc::from(b'A'), 0];
+                    let format = w("P%*.*ls%*lc%nQ");
+                    let mut expected = None;
+                    for (print, errno) in [
+                        (host_print, host().errno),
+                        (
+                            fl::swprintf as SwprintfFn,
+                            errno_abi::__errno_location as ErrnoFn,
+                        ),
+                    ] {
+                        let mut output = [SENTINEL as Wc; 32];
+                        let mut count = SENTINEL;
+                        // SAFETY: format and input are terminated wchar arrays;
+                        // the argument types match, with a live count and buffer.
+                        let observed = unsafe {
+                            *errno() = 23;
+                            let rc = print(
+                                output.as_mut_ptr(),
+                                output.len(),
+                                format.as_ptr(),
+                                width,
+                                1,
+                                input.as_ptr(),
+                                width,
+                                wc as u32,
+                                &mut count,
+                            );
+                            (rc, *errno(), count, output)
+                        };
+                        if let Some(expected) = expected {
+                            assert_eq!(observed, expected, "{locale:?} width={width} wc={wc:#x}");
+                        } else {
+                            assert_eq!(observed.0, if width == 0 { 4 } else { 10 });
+                            expected = Some(observed);
+                        }
+                    }
+                    // Public wide memory streams use the buffered callback
+                    // sink, unlike the bounded swprintf sink above.
+                    for entry in ["fwprintf", "vfwprintf"] {
+                        let mut expected = None;
+                        for engine in wide_io_engines() {
+                            let (open, free, print): (OpenWideMemoryFn, FreeFn, FwprintfFn) =
+                                if engine.name == "host" {
+                                    (
+                                        host_open,
+                                        host().free,
+                                        if entry == "fwprintf" {
+                                            host_fwprintf()
+                                        } else {
+                                            call_host_vfwprintf
+                                        },
+                                    )
+                                } else {
+                                    (
+                                        fl::open_wmemstream,
+                                        malloc_abi::free,
+                                        if entry == "fwprintf" {
+                                            fl::fwprintf
+                                        } else {
+                                            call_vfwprintf
+                                        },
+                                    )
+                                };
+                            let (mut output, mut length) = (std::ptr::null_mut(), 0);
+                            let mut count = SENTINEL;
+                            // SAFETY: this provider owns the stream and output
+                            // allocation through close, then its matching free.
+                            // The format and promoted varargs match the call.
+                            let observed = unsafe {
+                                let stream = open(&mut output, &mut length);
+                                assert!(!stream.is_null());
+                                *(engine.errno)() = 23;
+                                let rc = print(
+                                    stream,
+                                    format.as_ptr(),
+                                    width,
+                                    1,
+                                    input.as_ptr(),
+                                    width,
+                                    wc as u32,
+                                    &mut count,
+                                );
+                                let error = *(engine.errno)();
+                                assert_eq!((engine.close)(stream), 0);
+                                assert!(!output.is_null());
+                                let contents =
+                                    std::slice::from_raw_parts(output, length + 1).to_vec();
+                                free(output.cast());
+                                (rc, error, count, length, contents)
+                            };
+                            if let Some(expected) = expected.as_ref() {
+                                assert_eq!(
+                                    &observed, expected,
+                                    "{locale:?}/{entry} width={width} wc={wc:#x}"
+                                );
+                            } else {
+                                assert_eq!(observed.0, if width == 0 { 4 } else { 10 });
+                                expected = Some(observed);
+                            }
+                        }
+                    }
                 }
             }
         }
