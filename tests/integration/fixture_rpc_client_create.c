@@ -21,6 +21,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <unistd.h>
 #ifdef __cplusplus
 #define STATIC_ASSERT static_assert
@@ -717,8 +718,353 @@ static void getrpcport_case(const char *name) {
     }
     CHECK(descriptor_count()==before);
 }
+
+/* Reliable-transport batching needs no portmapper or ambient network service.
+   The peer parses record fragments and RPC words independently of XDR. */
+typedef Client *(*BatchCreate)(void *,unsigned long,unsigned long,int *,unsigned,unsigned);
+typedef struct BatchExpected {
+    uint32_t program,version,procedure,argument,xid;
+} BatchExpected;
+typedef struct BatchPeer {
+    int fd,stale;
+    unsigned count,seen;
+    BatchExpected expected[1024];
+    uint32_t ids[1024];
+} BatchPeer;
+static Client *batch_reentrant_client;
+static unsigned batch_encodes,batch_decodes;
+static int batch_codec(void *x,void *data) {
+    int op=*(int *)x;
+    if(op==0) ++batch_encodes;
+    else if(op==1) ++batch_decodes;
+    return xdr_uint(x,data);
+}
+static int batch_bad_codec(void *x,void *data) {
+    CHECK(batch_codec(x,data));return 0;
+}
+static int batch_reenter_codec(void *x,void *data) {
+    Client *client=batch_reentrant_client;
+    uint32_t value=99;
+    struct timeval zero={0,0};
+    CHECK(client->ops->call(client,7,xdr_uint,&value,NULL,NULL,zero)==12);
+    int fd=-1;CHECK(!client->ops->control(client,6,&fd) && fd==-1);
+    errno=0;client->ops->destroy(client);CHECK(errno==EBUSY);
+    return batch_codec(x,data);
+}
+static void batch_provider(const void *operation) {
+    const char *candidate=getenv("FRANKENLIBC_TEST_LIBRARY");
+    if(candidate) {
+        Dl_info info;struct stat expected,actual;
+        if(!operation || !dladdr(operation,&info) || !info.dli_fname
+            || stat(candidate,&expected) || stat(info.dli_fname,&actual)
+            || expected.st_dev!=actual.st_dev || expected.st_ino!=actual.st_ino)
+            wrong_provider();
+    }
+}
+static void batch_empty(int fd) {
+    unsigned char byte;
+    errno=0;CHECK(recv(fd,&byte,1,MSG_DONTWAIT)==-1 && errno==EAGAIN);
+}
+static size_t batch_drain(int fd,unsigned char *bytes,size_t capacity) {
+    size_t used=0;
+    for(;;) {
+        CHECK(used<capacity);
+        ssize_t n=recv(fd,bytes+used,capacity-used,MSG_DONTWAIT);
+        if(n<0 && errno==EINTR) continue;
+        if(n<0 && errno==EAGAIN) return used;
+        CHECK(n>0);used+=(size_t)n;
+    }
+}
+static void batch_transfer(int fd,void *bytes,size_t size,int sending) {
+    unsigned char *at=(unsigned char *)bytes;
+    while(size) {
+        ssize_t n=sending?send(fd,at,size,MSG_NOSIGNAL):recv(fd,at,size,0);
+        if(n<0 && errno==EINTR) continue;
+        CHECK(n>0 && (size_t)n<=size);at+=n;size-=(size_t)n;
+    }
+}
+static uint32_t batch_word(const unsigned char *bytes) {
+    uint32_t value;memcpy(&value,bytes,4);return ntohl(value);
+}
+static void batch_read(BatchPeer *peer) {
+    unsigned char bytes[256];
+    size_t used=0;
+    for(unsigned fragments=0;;++fragments) {
+        uint32_t marker;
+        CHECK(fragments<128);
+        batch_transfer(peer->fd,&marker,4,0);marker=ntohl(marker);
+        size_t size=marker&0x7fffffffU;
+        CHECK(size<=sizeof(bytes)-used);
+        batch_transfer(peer->fd,bytes+used,size,0);used+=size;
+        if(marker&0x80000000U) break;
+    }
+    CHECK(used==44 && peer->seen<peer->count);
+    BatchExpected *expected=&peer->expected[peer->seen];
+    uint32_t xid=batch_word(bytes);
+    if(expected->xid) CHECK(xid==expected->xid);
+    for(unsigned i=0;i<peer->seen;i++) CHECK(peer->ids[i]!=xid);
+    peer->ids[peer->seen++]=xid;
+    CHECK(batch_word(bytes+4)==0 && batch_word(bytes+8)==2);
+    CHECK(batch_word(bytes+12)==expected->program && batch_word(bytes+16)==expected->version);
+    CHECK(batch_word(bytes+20)==expected->procedure);
+    for(size_t offset=24;offset<40;offset+=4) CHECK(batch_word(bytes+offset)==0);
+    CHECK(batch_word(bytes+40)==expected->argument);
+    if(expected->procedure==90 || expected->procedure==91 || peer->stale) {
+        uint32_t reply[]={htonl(xid),htonl(1),0,0,0,
+            htonl(expected->procedure==91?3:0),htonl(expected->argument^0x55aa55aaU)};
+        size_t size=expected->procedure==91?24:28;
+        /* Split both a record marker and an XDR word. */
+        uint32_t first=htonl(7),last=htonl(0x80000000U|(uint32_t)(size-7));
+        batch_transfer(peer->fd,&first,2,1);
+        batch_transfer(peer->fd,(unsigned char *)&first+2,2,1);
+        batch_transfer(peer->fd,reply,7,1);
+        batch_transfer(peer->fd,&last,4,1);
+        batch_transfer(peer->fd,(unsigned char *)reply+7,size-7,1);
+    }
+}
+static void *batch_server(void *opaque) {
+    BatchPeer *peer=(BatchPeer *)opaque;
+    while(peer->seen<peer->count) batch_read(peer);
+    return NULL;
+}
+static void batch_expect(BatchPeer *peer,unsigned long prog,unsigned long version,
+                         unsigned long procedure,uint32_t argument,uint32_t xid) {
+    CHECK(peer->count<1024);
+    BatchExpected *row=&peer->expected[peer->count++];
+    row->program=(uint32_t)prog;row->version=(uint32_t)version;
+    row->procedure=(uint32_t)procedure;row->argument=argument;row->xid=xid;
+}
+static void batch_flush(Client *client,BatchPeer *peer,unsigned long prog,
+                        unsigned long version,uint32_t argument,int rejected) {
+    uint32_t result=0xdeadbeefU;
+    struct timeval timeout={2,0};
+    batch_expect(peer,prog,version,rejected?91:90,argument,0);
+    pthread_t worker;CHECK(!pthread_create(&worker,NULL,batch_server,peer));
+    int status=client->ops->call(client,rejected?91:90,batch_codec,&argument,
+                               batch_codec,&result,timeout);
+    if(status!=(rejected?10:0)) fprintf(stderr,"BATCH_FLUSH_STATUS %d\n",status);
+    CHECK(status==(rejected?10:0));
+    CHECK(!pthread_join(worker,NULL) && peer->seen==peer->count);
+    CHECK(result==(rejected?0xdeadbeefU:argument^0x55aa55aaU));
+    RpcError error;memset(&error,0xa5,sizeof(error));client->ops->geterr(client,&error);
+    CHECK(error.status==(rejected?10:0));
+}
+#ifdef __cplusplus
+static void *batch_interrupted(void *opaque) {
+    Client *client=(Client *)opaque;
+    uint32_t value=999;struct timeval zero={0,0};
+    (void)client->ops->call(client,7,interrupt_xdr,&value,NULL,NULL,zero);
+    CHECK(0);return NULL;
+}
+#endif
+static void batch_case(const char *name) {
+    const int unix_socket=strstr(name,"-unix-")!=NULL;
+    const int owned=strstr(name,"-owned")!=NULL;
+    const int pressure=strstr(name,"-pressure")!=NULL;
+    BatchCreate direct=(BatchCreate)symbol(unix_socket?"clntunix_create":"clnttcp_create");
+    xdr_uint=(Xdr)symbol("xdr_u_int");
+    int before=descriptor_count();
+    BatchPeer peer;memset(&peer,0,sizeof(peer));
+    Client *client;int fd,listener=-1,flags;
+    unsigned send_size=pressure?100:strstr(name,"-partial-flush")?65536:512;
+    if(unix_socket) {
+        int pair[2];CHECK(!owned && !socketpair(AF_UNIX,SOCK_STREAM,0,pair));
+        fd=pair[0];peer.fd=pair[1];
+        struct sockaddr_un address;memset(&address,0,sizeof(address));
+        address.sun_family=AF_UNIX;strcpy(address.sun_path,"unused-borrowed-socket");
+        if(strstr(name,"-nonblock")) CHECK(!fcntl(fd,F_SETFL,O_NONBLOCK));
+        flags=fcntl(fd,F_GETFL);CHECK(flags>=0);
+        client=direct(&address,program,1,&fd,send_size,512);
+    } else {
+        listener=socket(AF_INET,SOCK_STREAM,0);CHECK(listener>=0);
+        struct sockaddr_in address;memset(&address,0,sizeof(address));
+        address.sin_family=AF_INET;address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+        CHECK(!bind(listener,(struct sockaddr *)&address,sizeof(address)) && !listen(listener,1));
+        socklen_t length=sizeof(address);
+        CHECK(!getsockname(listener,(struct sockaddr *)&address,&length));
+        fd=owned?-1:socket(AF_INET,SOCK_STREAM,0);
+        if(!owned) {
+            CHECK(fd>=0 && !connect(fd,(struct sockaddr *)&address,sizeof(address)));
+            if(strstr(name,"-nonblock")) CHECK(!fcntl(fd,F_SETFL,O_NONBLOCK));
+        }
+        flags=owned?0:fcntl(fd,F_GETFL);CHECK(flags>=0);
+        client=direct(&address,program,1,&fd,send_size,512);
+        CHECK(client);
+        peer.fd=accept(listener,NULL,NULL);CHECK(peer.fd>=0);
+        CHECK(!close(listener));listener=-1;
+    }
+    CHECK(client && fd>=0);
+    batch_provider((const void *)client->ops->call);
+    batch_provider((const void *)client->ops->geterr);
+    batch_provider((const void *)client->ops->destroy);
+    batch_provider((const void *)client->ops->control);
+    struct timeval io_timeout={3,0},zero={0,0},nonzero={0,30000};
+    CHECK(!setsockopt(peer.fd,SOL_SOCKET,SO_RCVTIMEO,&io_timeout,sizeof(io_timeout)));
+    CHECK(!setsockopt(peer.fd,SOL_SOCKET,SO_SNDTIMEO,&io_timeout,sizeof(io_timeout)));
+    unsigned long prog=program,version=1;
+    uint32_t input=11;
+    if(strstr(name,"-xid")) {
+        unsigned long id=100;CHECK(client->ops->control(client,11,&id));
+        /* Fixed live-GNU witnesses, including the serialized-word decrement
+           shared by TCP and Unix, rather than reproducing the implementation. */
+        id=0;CHECK(client->ops->control(client,10,&id) && id==99);
+        batch_expect(&peer,prog,version,7,input,0xffffff62U);
+    } else batch_expect(&peer,prog,version,7,input,0);
+    CHECK(client->ops->call(client,7,batch_codec,&input,NULL,NULL,zero)==0);
+    if(strstr(name,"-xid")) {
+        unsigned long id=0;CHECK(client->ops->control(client,10,&id) && id==0xffffff62UL);
+    }
+    CHECK(batch_encodes==1 && batch_decodes==0);
+    RpcError error;memset(&error,0xa5,sizeof(error));client->ops->geterr(client,&error);
+    CHECK(error.status==0);
+    batch_empty(peer.fd);
+    if(strstr(name,"-drop")) {
+        client->ops->destroy(client);
+        if(owned) {
+            unsigned char byte;CHECK(recv(peer.fd,&byte,1,0)==0);
+            errno=0;CHECK(fcntl(fd,F_GETFD)==-1 && errno==EBADF);
+        } else {
+            batch_empty(peer.fd);CHECK(fcntl(fd,F_GETFL)==flags);CHECK(!close(fd));
+        }
+        CHECK(!close(peer.fd) && descriptor_count()==before);return;
+    }
+    if(strstr(name,"-blocked-before-send") || strstr(name,"-partial-flush")) {
+        CHECK(unix_socket && !owned);
+        int small=1024;CHECK(!setsockopt(fd,SOL_SOCKET,SO_SNDBUF,&small,sizeof(small)));
+        unsigned char bytes[65536];
+        size_t filled=0;
+        if(strstr(name,"-blocked-before-send")) {
+            memset(bytes,0x5a,sizeof(bytes));
+            for(;;) {
+                ssize_t n=send(fd,bytes,1024,MSG_DONTWAIT|MSG_NOSIGNAL);
+                if(n<0 && errno==EINTR) continue;
+                if(n<0 && errno==EAGAIN) break;
+                CHECK(n>0);filled+=(size_t)n;CHECK(filled<sizeof(bytes));
+            }
+            CHECK(filled>0);
+            errno=0;CHECK(send(fd,bytes,1,MSG_DONTWAIT|MSG_NOSIGNAL)==-1 && errno==EAGAIN);
+        } else {
+            for(unsigned i=1;i<1000;i++) {
+                input=11+i;batch_expect(&peer,prog,version,7,input,0);
+                CHECK(client->ops->call(client,7,batch_codec,&input,NULL,NULL,zero)==0);
+            }
+            batch_empty(peer.fd);
+        }
+        input=9999;uint32_t result=0xdeadbeefU;
+        CHECK(client->ops->call(client,90,batch_codec,&input,batch_codec,&result,nonzero)==5);
+        CHECK(result==0xdeadbeefU && batch_decodes==0);
+        size_t received=batch_drain(peer.fd,bytes,sizeof(bytes));
+        if(filled) {
+            /* No RPC byte could escape, so draining only the filler permits
+               the earlier accepted batch to flush once on the next call. */
+            CHECK(received==filled);
+            for(size_t i=0;i<received;i++) CHECK(bytes[i]==0x5a);
+        } else {
+            /* Kernel backpressure interrupted the queued record sequence.
+               Verify real RPC bytes escaped, then disprove replay after drain. */
+            CHECK(received>=48 && received<peer.count*48);
+            for(size_t i=0;i+48<=received;i+=48) {
+                CHECK(batch_word(bytes+i)==0x8000002cU);
+                CHECK(batch_word(bytes+i+8)==0 && batch_word(bytes+i+12)==2);
+                CHECK(batch_word(bytes+i+16)==prog && batch_word(bytes+i+24)==7);
+                CHECK(batch_word(bytes+i+44)==11+i/48);
+            }
+            CHECK(client->ops->call(client,7,batch_codec,&input,NULL,NULL,zero)==5);
+            CHECK(client->ops->call(client,90,batch_codec,&input,batch_codec,&result,nonzero)==5);
+            CHECK(result==0xdeadbeefU && batch_decodes==0);batch_empty(peer.fd);
+            client->ops->geterr(client,&error);CHECK(error.status==5);
+            client->ops->destroy(client);
+            CHECK(fcntl(fd,F_GETFL)==flags && !close(fd));
+            CHECK(!close(peer.fd) && descriptor_count()==before);return;
+        }
+    } else if(strstr(name,"-closed-peer")) {
+        CHECK(!owned && !close(peer.fd));peer.fd=-1;
+        input=999;uint32_t result=0xdeadbeefU;
+        CHECK(client->ops->call(client,90,batch_codec,&input,batch_codec,&result,nonzero)==3);
+        CHECK(result==0xdeadbeefU && batch_decodes==0);
+        client->ops->geterr(client,&error);CHECK(error.status==3 && (int)error.first==EPIPE);
+        CHECK(client->ops->call(client,7,batch_codec,&input,NULL,NULL,zero)==3);
+        client->ops->destroy(client);
+        CHECK(fcntl(fd,F_GETFL)==flags && !close(fd) && descriptor_count()==before);return;
+    } else if(pressure) {
+        for(unsigned i=1;i<64;i++) {
+            input=11+i;batch_expect(&peer,prog,version,7,input,0);
+            CHECK(client->ops->call(client,7,batch_codec,&input,NULL,NULL,zero)==0);
+            if(i%2) { batch_read(&peer);batch_read(&peer);batch_empty(peer.fd); }
+        }
+        CHECK(peer.seen==64 && batch_decodes==0);
+    } else if(strstr(name,"-override-positive") || strstr(name,"-override-zero")) {
+        const int positive=strstr(name,"-override-positive")!=NULL;
+        const int batched=unix_socket?positive:!positive;
+        CHECK(client->ops->control(client,1,positive?&nonzero:&zero));
+        input=22;uint32_t result=0xdeadbeefU;
+        batch_expect(&peer,prog,version,7,input,0);
+        CHECK(client->ops->call(client,7,batch_codec,&input,NULL,&result,
+                               positive?zero:nonzero)==(batched?0:5));
+        CHECK(result==0xdeadbeefU && batch_decodes==0);
+        if(!batched) {
+            /* Late replies to timed-out requests must not become the next
+               call's result. Send them only after observing the timeout. */
+            peer.stale=1;batch_read(&peer);batch_read(&peer);peer.stale=0;
+        }
+        batch_empty(peer.fd);
+        CHECK(client->ops->control(client,1,&io_timeout));
+    } else if(strstr(name,"-send-only")) {
+        input=22;uint32_t result=0xdeadbeefU;
+        batch_expect(&peer,prog,version,7,input,0);
+        CHECK(client->ops->call(client,7,batch_codec,&input,batch_codec,&result,zero)==5);
+        CHECK(result==0xdeadbeefU && batch_decodes==0);
+        batch_read(&peer);batch_read(&peer);batch_empty(peer.fd);
+        CHECK(client->ops->control(client,1,&io_timeout));
+    } else {
+        if(strstr(name,"-encode-error")) {
+            input=999;
+            CHECK(client->ops->call(client,7,batch_bad_codec,&input,NULL,NULL,zero)==1);
+            batch_empty(peer.fd);
+        }
+#ifdef __cplusplus
+        if(strstr(name,"-throw") || strstr(name,"-exit")) {
+            scenario=name;
+            if(strstr(name,"-exit")) {
+                pthread_t worker;void *returned=NULL;
+                CHECK(!pthread_create(&worker,NULL,batch_interrupted,client));
+                CHECK(!pthread_join(worker,&returned) && returned==(void *)19);
+            } else {
+                int caught=0;
+                try { batch_interrupted(client); } catch(const CodecException &) { caught=1; }
+                CHECK(caught);
+            }
+            CHECK(destructors==1);batch_empty(peer.fd);
+        }
+#endif
+        if(strstr(name,"-xid")) {
+            unsigned long id=0x11223344UL;prog++;version=2;
+            CHECK(client->ops->control(client,15,&prog) && client->ops->control(client,13,&version));
+            CHECK(client->ops->control(client,11,&id));
+        }
+        input=22;batch_expect(&peer,prog,version,7,input,
+                              strstr(name,"-xid")?0x10223343U:0);
+        batch_reentrant_client=client;
+        CHECK(client->ops->call(client,7,strstr(name,"-reentry")?batch_reenter_codec:batch_codec,
+                               &input,NULL,NULL,zero)==0);
+        CHECK(batch_decodes==0);batch_empty(peer.fd);
+    }
+    peer.stale=strstr(name,"-stale")!=NULL;
+    batch_flush(client,&peer,prog,version,33,strstr(name,"-remote-error")!=NULL);
+    batch_empty(peer.fd);
+    /* A second ordinary call must not replay any retired batch records. */
+    batch_flush(client,&peer,prog,version,44,0);
+    batch_empty(peer.fd);
+    client->ops->destroy(client);
+    if(owned) { errno=0;CHECK(fcntl(fd,F_GETFD)==-1 && errno==EBADF); }
+    else { CHECK(fcntl(fd,F_GETFL)==flags);CHECK(!close(fd)); }
+    CHECK(!close(peer.fd) && descriptor_count()==before);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2); alarm(8);
+    if(!strncmp(argv[1],"batch-",6)) {
+        batch_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
+    }
     if(!strncmp(argv[1],"netname-",8)) {
         netname_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
     }

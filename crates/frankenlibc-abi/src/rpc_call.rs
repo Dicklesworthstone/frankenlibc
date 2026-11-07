@@ -1,4 +1,4 @@
-//! Shared CLIENT invocation and bounded AUTH_REJECTEDCRED recovery.
+//! Shared CLIENT invocation, stream batching and bounded AUTH_REJECTEDCRED recovery.
 //!
 //! RFC 5531 Appendix A permits returning from an expired AUTH_SHORT nickname
 //! to the original AUTH_SYS identity. No other remote status or local failure
@@ -26,7 +26,15 @@ pub(super) unsafe fn invoke(
     let timeout = if data.raw {
         0
     } else {
-        nanos(data.timeout.unwrap_or(timeout), false)?
+        // GNU's Unix client uses the by-value timeout for each invocation,
+        // including batching, even after CLSET_TIMEOUT. TCP/UDP use the
+        // configured override. Preserve those distinct public contracts.
+        let timeout = if data.unix_peer.is_some() {
+            timeout
+        } else {
+            data.timeout.unwrap_or(timeout)
+        };
+        nanos(timeout, false)?
     };
     let retry = nanos(data.retry, true)?;
     let deadline = if data.raw {
@@ -38,13 +46,18 @@ pub(super) unsafe fn invoke(
         Deadline::new(timeout)?
     };
     let arguments = arguments.ok_or_else(|| RpcError::status(1))?;
-    let results = results.ok_or_else(|| RpcError::status(2))?;
+    // Reliable transports accept a NULL result codec for batched calls. The
+    // transport's effective timeout selects batching; datagram and raw
+    // transports retain their required result-codec contract.
+    if results.is_none() && data.stream.is_none() {
+        return Err(RpcError::status(2));
+    }
     // SAFETY: C and C-unwind use the same public callback layout. Application
     // codecs may throw or call pthread_exit; all intervening Rust ownership
     // guards must run instead of aborting at a non-unwinding callback edge.
     type Codec = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int;
     let arguments: Codec = unsafe { std::mem::transmute(arguments) };
-    let results: Codec = unsafe { std::mem::transmute(results) };
+    let results: Option<Codec> = results.map(|callback| unsafe { std::mem::transmute(callback) });
     let auth = unsafe { (*client).auth };
     if auth.is_null() || unsafe { (*auth).operations.is_null() } {
         return Err(RpcError::remote(RemoteError::Authentication(7)));
@@ -107,6 +120,15 @@ pub(super) unsafe fn invoke(
             .checked_add(unsafe { super::super::mem_pos(&xdr) } as usize)
             .filter(|&length| length <= data.send.len())
             .ok_or_else(|| RpcError::status(1))?;
+        if results.is_none()
+            && deadline.nonblocking
+            && let Some(stream) = &mut data.stream
+        {
+            // Only a completely encoded call enters the queue. Failed or
+            // unwinding application codecs leave earlier accepted calls intact;
+            // flushing never re-enters their serializers or authenticators.
+            return stream.batch(&data.socket, &data.send[..used], data.send.len(), deadline);
+        }
         let length = if data.raw {
             // SAFETY: request/reply are disjoint owned buffers, and the bridge
             // releases TLS/registry/operation locks before dispatching C code.
@@ -198,6 +220,10 @@ pub(super) unsafe fn invoke(
                 if xdr.x_ops.is_null() {
                     return Err(RpcError::status(2));
                 }
+                // NULL with a nonzero timeout is not a batched call. Still
+                // report transport/remote failures faithfully, but never jump
+                // through NULL if the server unexpectedly supplies a result.
+                let results = results.ok_or_else(|| RpcError::status(2))?;
                 if unsafe { results((&mut xdr as *mut Xdr).cast(), result) } == 0 {
                     return Err(RpcError::status(2));
                 }

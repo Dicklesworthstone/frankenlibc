@@ -84,6 +84,8 @@ jobs:
           sudo python3 "$PWD/scripts/check_rpc_secretkey.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/secretkey"
           sudo python3 "$PWD/scripts/check_rpc_keyserv.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/keyserv"
           sudo python3 "$PWD/scripts/check_rpc_auth_des.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/auth-des"
+          # Batched TCP/Unix calls use only ephemeral loopback/socketpair peers.
+          python3 "$PWD/scripts/check_rpc_client_create.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/batch" --batch
           # Exclusive loopback port 111; never stop or reconfigure rpcbind.
           sudo python3 "$PWD/scripts/check_rpc_client_create.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/clients"
           # A fresh network namespace/veth pair contains every broadcast packet.

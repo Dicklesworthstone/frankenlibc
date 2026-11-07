@@ -5,6 +5,8 @@
 //! fresh connection would be unsafe for non-idempotent procedures. Borrowed file
 //! descriptors keep their file flags and are never reconnected or shut down.
 //! Unix clients enable SO_PASSCRED; the caller still owns a borrowed descriptor.
+//! Batched records retain their serialized bytes until pressure or an ordinary
+//! call flushes them. Destruction drops deferred calls without transmitting them.
 
 use super::super::rpc_svc::{UnixCredential, unix_receive, unix_send};
 use super::{Deadline, RpcError, SECOND, Socket, kernel, monotonic};
@@ -25,6 +27,7 @@ pub(super) struct Stream {
     failure: Option<RpcError>,
     chunk_credential: Option<UnixCredential>,
     record_credential: Option<UnixCredential>,
+    output: Vec<u8>,
 }
 
 impl Stream {
@@ -38,12 +41,74 @@ impl Stream {
             failure: None,
             chunk_credential: None,
             record_credential: None,
+            output: Vec::new(),
         }
     }
 
     fn poison<T>(&mut self, error: RpcError) -> Result<T, RpcError> {
         self.failure = Some(error);
         Err(error)
+    }
+
+    /// Accept one complete one-way call without waiting for a reply. The queue
+    /// is bounded by the configured send buffer and allocated only on first use.
+    /// Keep room for the next record marker, as the public record stream does.
+    pub(super) fn batch(
+        &mut self,
+        socket: &Socket,
+        request: &[u8],
+        limit: usize,
+        budget: Deadline,
+    ) -> Result<(), RpcError> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let marker = fragment_header(request.len(), true).map_err(record_error)?;
+        let required = self
+            .output
+            .len()
+            .checked_add(marker.len())
+            .and_then(|length| length.checked_add(request.len()))
+            .and_then(|length| length.checked_add(4))
+            .ok_or_else(|| RpcError::system(1, libc::EMSGSIZE))?;
+        if required >= limit {
+            // Pressure ships this complete call too. Never retain an unbounded
+            // backlog, split application codecs across callbacks, or replay a
+            // record that may already have reached the server.
+            return self.send_request(socket, request, budget);
+        }
+        if self.output.capacity() < limit {
+            self.output
+                .try_reserve_exact(limit - self.output.len())
+                .map_err(|_| RpcError::system(12, libc::ENOMEM))?;
+        }
+        self.output.extend_from_slice(&marker);
+        self.output.extend_from_slice(request);
+        Ok(())
+    }
+
+    fn send_request(
+        &mut self,
+        socket: &Socket,
+        request: &[u8],
+        budget: Deadline,
+    ) -> Result<(), RpcError> {
+        let marker = fragment_header(request.len(), true).map_err(record_error)?;
+        match write_chunks(
+            socket,
+            self.unix,
+            [&self.output, marker.as_slice(), request],
+            budget,
+        ) {
+            Ok(()) => {
+                // Capacity remains available for the next batch. No callbacks
+                // run while this queue is being sent or retired.
+                self.output.clear();
+                Ok(())
+            }
+            Err(failure) if failure.poison => self.poison(failure.error),
+            Err(failure) => Err(failure.error),
+        }
     }
 
     pub(super) fn exchange(
@@ -58,79 +123,7 @@ impl Stream {
             return Err(error);
         }
         let deadline = budget.at;
-        let marker = fragment_header(request.len(), true).map_err(record_error)?;
-        let mut sent = 0;
-        for bytes in [marker.as_slice(), request] {
-            let mut offset = 0;
-            while offset < bytes.len() {
-                // A zero timeout may send a complete call, as the UDP client
-                // does, but must never block. Check the same deadline on EINTR,
-                // short writes and EAGAIN rather than renewing a relative wait.
-                let now = match monotonic() {
-                    Ok(now) => now,
-                    Err(error) => {
-                        return if sent == 0 {
-                            Err(error)
-                        } else {
-                            self.poison(error)
-                        };
-                    }
-                };
-                if !budget.nonblocking && now >= deadline {
-                    let error = RpcError::status(5);
-                    return if sent == 0 {
-                        Err(error)
-                    } else {
-                        self.poison(error)
-                    };
-                }
-                // SAFETY: the exact remaining initialized slice is submitted;
-                // MSG_NOSIGNAL contains peer-close errors within this operation.
-                let result = if self.unix {
-                    unix_send(socket.fd, &bytes[offset..]).map(|count| count as usize)
-                } else {
-                    // SAFETY: the retained request slice outlives this send.
-                    kernel(unsafe {
-                        raw::syscall6(
-                            libc::SYS_sendto as usize,
-                            socket.fd as usize,
-                            bytes[offset..].as_ptr() as usize,
-                            bytes.len() - offset,
-                            (libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) as usize,
-                            0,
-                            0,
-                        )
-                    })
-                };
-                match result {
-                    Ok(0) => return self.poison(RpcError::system(3, libc::EPIPE)),
-                    Ok(count) => {
-                        offset += count;
-                        sent += count;
-                    }
-                    Err(libc::EINTR) => {
-                        if budget.nonblocking {
-                            let error = RpcError::status(5);
-                            return if sent == 0 {
-                                Err(error)
-                            } else {
-                                self.poison(error)
-                            };
-                        }
-                    }
-                    Err(libc::EAGAIN) => {
-                        if let Err(error) = wait(socket.fd, libc::POLLOUT, deadline, 3) {
-                            return if sent == 0 {
-                                Err(error)
-                            } else {
-                                self.poison(error)
-                            };
-                        }
-                    }
-                    Err(error) => return self.poison(RpcError::system(3, error)),
-                }
-            }
-        }
+        self.send_request(socket, request, budget)?;
         loop {
             if monotonic()? >= deadline {
                 // A complete request is already on the stream. Keep a partial
@@ -213,6 +206,87 @@ impl Stream {
             }
         }
     }
+}
+
+struct WriteFailure {
+    error: RpcError,
+    poison: bool,
+}
+
+/// Send every queued record before the current one, without changing borrowed
+/// descriptor flags. If any byte escaped, a failed flush cannot be retried:
+/// some of those non-idempotent procedures may already have executed.
+fn write_chunks(
+    socket: &Socket,
+    unix: bool,
+    chunks: [&[u8]; 3],
+    budget: Deadline,
+) -> Result<(), WriteFailure> {
+    let mut sent = 0;
+    for bytes in chunks {
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let now = monotonic().map_err(|error| WriteFailure {
+                error,
+                poison: sent != 0,
+            })?;
+            if !budget.nonblocking && now >= budget.at {
+                return Err(WriteFailure {
+                    error: RpcError::status(5),
+                    poison: sent != 0,
+                });
+            }
+            let result = if unix {
+                unix_send(socket.fd, &bytes[offset..]).map(|count| count as usize)
+            } else {
+                // SAFETY: each initialized slice stays live through this send.
+                // Per-call flags avoid SIGPIPE and any borrowed-fd flag change.
+                kernel(unsafe {
+                    raw::syscall6(
+                        libc::SYS_sendto as usize,
+                        socket.fd as usize,
+                        bytes[offset..].as_ptr() as usize,
+                        bytes.len() - offset,
+                        (libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL) as usize,
+                        0,
+                        0,
+                    )
+                })
+            };
+            match result {
+                Ok(0) => {
+                    return Err(WriteFailure {
+                        error: RpcError::system(3, libc::EPIPE),
+                        poison: true,
+                    });
+                }
+                Ok(count) => {
+                    offset += count;
+                    sent += count;
+                }
+                Err(libc::EINTR) if !budget.nonblocking => {}
+                Err(libc::EINTR) => {
+                    return Err(WriteFailure {
+                        error: RpcError::status(5),
+                        poison: sent != 0,
+                    });
+                }
+                Err(libc::EAGAIN) => {
+                    wait(socket.fd, libc::POLLOUT, budget.at, 3).map_err(|error| WriteFailure {
+                        error,
+                        poison: sent != 0,
+                    })?;
+                }
+                Err(error) => {
+                    return Err(WriteFailure {
+                        error: RpcError::system(3, error),
+                        poison: true,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn record_error(error: RecordError) -> RpcError {

@@ -44,6 +44,18 @@ DIAGNOSTICS = ('diag-status', 'diag-text', 'diag-errno', 'diag-auth', 'diag-prin
                'diag-reentry', 'diag-native-udp', 'diag-native-tcp')
 DIAGNOSTIC_UNWIND = ('diag-geterr-throw', 'diag-geterr-exit', 'diag-print-throw', 'diag-print-exit')
 
+BATCH_COMMON = tuple(
+    f'batch-{transport}-{case}'
+    for transport in ('tcp', 'unix')
+    for case in ('flush', 'pressure', 'drop', 'override-zero', 'override-positive',
+                 'send-only', 'stale', 'remote-error', 'xid', 'nonblock')
+) + ('batch-tcp-owned', 'batch-tcp-owned-drop')
+BATCH_OWNED = tuple(
+    f'batch-{transport}-{case}'
+    for transport in ('tcp', 'unix')
+    for case in ('encode-error', 'reentry', 'throw', 'exit')
+) + ('batch-unix-blocked-before-send', 'batch-unix-partial-flush', 'batch-unix-closed-peer')
+
 
 NETNAME_ROWS = {'netname-user': 76, 'netname-host': 152, 'netname-default': 7}
 
@@ -431,13 +443,100 @@ class Peers:
             sock.close()
 
 
+def batch_main(library, out):
+    """Run bounded TCP/Unix batching with an independent in-process wire peer."""
+    root = Path(__file__).resolve().parents[1]
+    out.mkdir(parents=True, exist_ok=True)
+    fixture = root / 'tests/integration/fixture_rpc_client_create.c'
+    inputs = [fixture, Path(__file__).resolve(),
+              root / '.github/workflows/rpc-client-create.yml']
+    inputs += [root / 'crates/frankenlibc-abi/src' / name for name in
+               ('rpc_abi.rs', 'rpc_udp.rs', 'rpc_tcp.rs', 'rpc_call.rs',
+                'rpc_svc.rs', 'iov_snapshot.rs')]
+    if library is not None:
+        inputs.append(library)
+
+    def hashes():
+        return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
+
+    before = hashes()
+    binaries = {False: out / 'batch-fixture', True: out / 'batch-fixture-unwind'}
+    for cpp, binary in binaries.items():
+        subprocess.run(['c++' if cpp else 'cc', '-x', 'c++' if cpp else 'c',
+                        '-std=c++17' if cpp else '-std=c11', '-O2', '-Wall',
+                        '-Wextra', '-Werror', str(fixture), '-ldl', '-pthread',
+                        '-o', str(binary)], check=True, timeout=60)
+    clean = {k: v for k, v in os.environ.items()
+             if k != 'LD_PRELOAD' and not k.startswith('FRANKENLIBC_')
+             and k != 'RPC_TEST_FORCE_HOST'}
+    report = dict(source_sha256=before, host=[], candidate=[], negative=[],
+                  required_host=len(BATCH_COMMON),
+                  required_candidate=2 * (len(BATCH_COMMON) + len(BATCH_OWNED)) if library else 0,
+                  required_negative=8 if library else 0)
+
+    def run(provider, case, env, negative=False):
+        cpp = case.endswith(('-throw', '-exit'))
+        try:
+            process = subprocess.run([str(binaries[cpp]), case], env=env,
+                                     capture_output=True, timeout=12)
+            code, stdout, stderr = process.returncode, process.stdout, process.stderr
+        except subprocess.TimeoutExpired as error:
+            code, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
+        expected = (113, b'', b'WRONG RPC PROVIDER\n') if negative else (
+            0, f'PASS {case}\n'.encode(), b'')
+        passed = (code, stdout, stderr) == expected
+        bucket = 'negative' if negative else 'host' if provider == 'host' else 'candidate'
+        report[bucket].append(dict(provider=provider, case=case, passed=passed, returncode=code))
+        stem = out / f'{provider}-{case}'
+        stem.with_suffix('.out').write_bytes(stdout)
+        stem.with_suffix('.err').write_bytes(stderr)
+        (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(f'{"PASS" if passed else "FAIL"} {provider}/{case}: rc={code}', flush=True)
+
+    for case in BATCH_COMMON:
+        run('host', case, clean)
+    if library is not None:
+        for mode in ('strict', 'hardened'):
+            env = dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
+                       FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE='0')
+            for case in BATCH_COMMON + BATCH_OWNED:
+                run(mode, case, env)
+            for transport in ('tcp', 'unix'):
+                case = f'batch-{transport}-flush'
+                run(f'{mode}-missing-preload', case,
+                    dict(clean, FRANKENLIBC_MODE=mode, FRANKENLIBC_TEST_LIBRARY=str(library)), True)
+                run(f'{mode}-forced-host', case, dict(env, RPC_TEST_FORCE_HOST='1'), True)
+    report['source_sha256_after'] = hashes()
+    counts_match = all(len(report[key]) == report[f'required_{key}']
+                       for key in ('host', 'candidate', 'negative'))
+    passed = (counts_match and before == report['source_sha256_after']
+              and all(row['passed'] for key in ('host', 'candidate', 'negative')
+                      for row in report[key]))
+    report['passed'] = passed
+    (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps(dict(passed=passed, **{key: len(report[key])
+                     for key in ('host', 'candidate', 'negative')})), flush=True)
+    return int(not passed)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('library', type=Path)
+    parser.add_argument('library', type=Path, nargs='?')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--batch', action='store_true', help='run TCP/Unix batching without port 111')
+    parser.add_argument('--host-only', action='store_true', help='characterize GNU batching without a candidate')
     parser.add_argument('--broadcast', action='store_true', help='run CALLIT broadcast in an isolated network namespace')
     parser.add_argument('--broadcast-child', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not __debug__:
+        parser.error('qualification requires Python assertions; do not use -O')
+    if args.batch:
+        if args.broadcast or args.broadcast_child or (args.library is None) != args.host_only:
+            parser.error('--batch requires a candidate library or --host-only')
+        library = args.library.resolve(strict=True) if args.library else None
+        return batch_main(library, args.output.resolve())
+    if args.library is None or args.host_only:
+        parser.error('a candidate library is required outside --batch --host-only')
     library = args.library.resolve(strict=True)
     root = Path(__file__).resolve().parents[1]
     out = args.output.resolve()
