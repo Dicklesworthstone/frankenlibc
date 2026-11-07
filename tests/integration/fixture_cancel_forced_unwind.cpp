@@ -487,7 +487,7 @@ static int native_probe(const char *name, const char *provider) {
   if (joining) {
     // A finished target can take GNU's nonblocking join path. Keep the target
     // live when probing pending cancellation through a blocking join; disabled
-    // and try-join controls still have an immediately available target.
+    // and try-join controls do not hold the target open.
     native_join_release.store(disabled || noncanceling, std::memory_order_release);
     native_require(pthread_create(&native_join_target, nullptr, native_join_target_worker, nullptr) == 0,
                    "create joinable target");
