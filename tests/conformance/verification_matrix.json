@@ -32330,7 +32330,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.40",
       "title": "Preserve GNU internal line-input status and zero-length orientation",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
@@ -32408,13 +32408,15 @@
           "/data/tmp/frankenlibc-fd-sticky-task-20261106.md",
           "/data/tmp/frankenlibc-native-integer-honesty-20261105/resumed-review-audit.txt",
           "/data/tmp/frankenlibc-io-line-review-20261106/release-qualification-1",
-          "/data/tmp/frankenlibc-io-line-review-20261106/closure-record-1"
+          "/data/tmp/frankenlibc-io-line-review-20261106/closure-record-1",
+          "/data/tmp/frankenlibc-io-line-first-publication-20261107.json",
+          "/data/tmp/frankenlibc-io-line-closed-fields-20261107.json",
+          "/data/tmp/frankenlibc-io-line-closed-admit-readonly-1.stdout",
+          "/data/tmp/frankenlibc-io-line-closed-admit-readonly-1.stderr"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "complete evidence publication pending"
-        ],
-        "notes": "IN_PROGRESS until publication is observed. Qualified runtime source683a; metadata-only4edad has identical3178 compiler inputs. All523 frozen files match both workers during/after full quality and final runtime probes. Linked9line/8cookie/23locale tests per mode0. H5 freshly rebuilt and executed9/0/0, all9 names required; receipt9bbea23833be1662b4af82d908aa2f165b3c63cb5ca58cd8ff69383a788f88a2, H5exe3dfca68dbc99b7dcb240b3f9bfe644721df1a231d663845a2def32d716066895; first-unit26a6ccfa separately retained, no assumed binary identity across build context. Release3de1e16e/probe86412c67 actual GNU/new162/112/88/22 per provider, both modes,4provider negatives2. Original79554/162fail per mode; original4f07 32/112+4/22fail per mode. Wrong C model reversed6delimiter expectations: actual GNU and new fail6 on old probe; original48; corrected GNU/new0, original54. Both sides retained and reexecuted; two expectation operators corrected from GNU, no assertion/case/timeout weakened. No worker/cache/guard/resource/profile/dependency changes; direct supported Cargo after opaque-wrapper cache-scope refusals; all refused attempts uncredited. No local compilation or FrankenLibC executable run; dispatcher GNU-only reference36cases disclosed. Source-only5gates0 are not runtime proof. UBS32critical includes one new valid zeroed Dl_info POD; no suppression/clean scan claim; metadata UBS3unsupported. Existing no-SMT and nix future warnings retained. fwide honestly downgrades one taxonomy row;4730 semantics stayunknown/full0,1085 prior reconciliation findings remain, standalone dependencies unchanged. All154 prior matrix rows preserved. Review/reexecution solo; no independent verifier, Miri/SMT/all-features/architecture/concurrency/universal-safety/performance or standalone completion claim. Broad parents remain open; see detailed TODO/audit for bounded work history and corrections.",
+        "close_blockers": [],
+        "notes": "CLOSED after complete code/evidence1ce4f5586028e991ca918048910e6cb272ae2aae was observed on both required refs00:09:56.116676UTC; actualclosed_at2026-11-07T00:10:16.811409482Z. Actual closed-record snapshots admitted with explicit --admit40: POST_TOTAL1/PASS1/DEFERRED0/FAIL0. RCH admission job refused120 before execution; exact READ-ONLY receipt/hash validator then ran viaSSH0, no compilation/test invocation or worktree/artifact write by the gate, no guard/resource/cache/worker changes. All compilation and FrankenLibC executable tests remain strict-RCH evidence. Source683a runtime and metadata-only4edad have identical3178 compiler inputs; all523 final frozen files match during/after complete quality and probes. Check0/1365.028s, Clippy0/1161.116s, alltargets/keepgoing/-Dwarnings; root/tool fmt0;5source-only gates0. Actual9line+8cookie+23locale per mode0; H5 fresh build0 and9/0/0 with all9names required. Receipt9bbea23833be1662b4af82d908aa2f165b3c63cb5ca58cd8ff69383a788f88a2, H5exe3dfca68dbc99b7dcb240b3f9bfe644721df1a231d663845a2def32d716066895; initial26a6 separately executed/retained, no assumed binary identity. Release3de/probe86412 live GNU/new162/112/88/22 per provider both modes0,4provider negatives2. Same probe old79554/162fail/mode; original4f07 32/112+4/22fail/mode. Original wrong C probe3565 actually GNU/new6fail,old48fail; corrected GNU/new0,old54. Two expectations corrected from GNU, six legitimate admits/six broken rejects measured, no case/flag/timeout weakened. All typed refusals/logging error/UBS32critical (new valid Dl_info POD) and metadata unsupported3 retained; no suppression/clean scan claim. No-SMT/nix future warnings unchanged. fwide taxonomy down1,4730unknown/full0,1085 prior reconciliation findings and standalone host sets unchanged. All154 prior matrix rows retained. Solo review and fresh reexecution, not independent verification, formal proof, all-features/architecture/concurrency/performance/universal-safety/standalone completion. No unrelated work reverted or files deleted; broader parents open. Full corrections/dispositions and retired-scope TODO linked in artifact paths.",
         "result_receipts": [
           "/data/tmp/frankenlibc-io-line-review-20261106/closure-record-1/receipt.json"
         ],
