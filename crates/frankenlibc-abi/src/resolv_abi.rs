@@ -1080,6 +1080,17 @@ fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache)
 }
 
 fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
+    // Keep the explicit procfs fixture inputs, but query configured addresses
+    // on real systems: IPv4 does not require a route, and procfs can be absent
+    // or describe a different network namespace. An unavailable/partial
+    // netlink snapshot leaves results unfiltered, as glibc does.
+    let procfs_override = [PROC_NET_ROUTE_PATH_ENV, PROC_NET_IF_INET6_PATH_ENV]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+    if !procfs_override {
+        return crate::unistd_abi::addrconfig_state_snapshot();
+    }
+
     #[cfg(feature = "owned-tls-cache")]
     let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
@@ -3000,7 +3011,18 @@ pub unsafe extern "C" fn getaddrinfo(
         }
     };
     let hints_value = if hints.is_null() {
-        None
+        // GNU defaults differ from an explicitly zeroed hints structure.
+        // The effective flags also belong in every returned addrinfo record.
+        Some(libc::addrinfo {
+            ai_flags: libc::AI_V4MAPPED | libc::AI_ADDRCONFIG,
+            ai_family: libc::AF_UNSPEC,
+            ai_socktype: 0,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_addr: ptr::null_mut(),
+            ai_canonname: ptr::null_mut(),
+            ai_next: ptr::null_mut(),
+        })
     } else {
         if !tracked_addr_region_fits(hints as usize, size_of::<libc::addrinfo>()) {
             record_resolver_stage_outcome(
@@ -3435,9 +3457,12 @@ pub unsafe extern "C" fn getaddrinfo(
         },
     }
 
+    // Keep unspecified-family lookups usable on loopback-only systems. A
+    // specifically requested, unconfigured family must still be rejected.
     if (flags & libc::AI_ADDRCONFIG) != 0
         && addrconfig_filter_eligible
         && let Some(state) = read_addrconfig_state_snapshot()
+        && (state.has_ipv4 || state.has_ipv6 || family != libc::AF_UNSPEC)
     {
         let unfiltered = nodes.len();
         let mut filtered = Vec::with_capacity(nodes.len());

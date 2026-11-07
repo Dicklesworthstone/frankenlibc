@@ -952,6 +952,101 @@ pub fn addrconfig_state_from_procfs(
     }
 }
 
+/// Derive `AI_ADDRCONFIG` from a complete Linux `RTM_GETADDR` dump.
+///
+/// Address availability is independent of the routing table: an address can
+/// be configured without a route. Netlink integer fields use native byte
+/// order, while `IFA_ADDRESS`/`IFA_LOCAL` payloads are network-order octets.
+/// `IFA_LOCAL` takes precedence for point-to-point interfaces. Loopback and
+/// unspecified addresses do not establish a configured family.
+///
+/// A partial, interrupted or failed dump is unknown, not evidence that an
+/// address family is absent. Callers must leave their results unfiltered
+/// when this returns `None`.
+#[must_use]
+pub fn addrconfig_state_from_netlink(data: &[u8]) -> Option<AddrConfigState> {
+    const HEADER: usize = 16;
+    const ADDRESS_HEADER: usize = 8;
+    const NLMSG_DONE: u16 = 3;
+    const RTM_NEWADDR: u16 = 20;
+    const NLM_F_DUMP_INTR: u16 = 0x10;
+
+    let mut state = AddrConfigState::default();
+    let mut remaining = data;
+    while !remaining.is_empty() {
+        let header = remaining.get(..HEADER)?;
+        let length = u32::from_ne_bytes(header[..4].try_into().ok()?) as usize;
+        let kind = u16::from_ne_bytes(header[4..6].try_into().ok()?);
+        let flags = u16::from_ne_bytes(header[6..8].try_into().ok()?);
+        if length < HEADER || flags & NLM_F_DUMP_INTR != 0 {
+            return None;
+        }
+        let message = remaining.get(..length)?;
+        let body = &message[HEADER..];
+        if kind == NLMSG_DONE {
+            // Modern kernels include an error code in NLMSG_DONE. Older
+            // kernels can send just the header. Never credit a failed dump.
+            if !body.is_empty() && i32::from_ne_bytes(body.get(..4)?.try_into().ok()?) != 0 {
+                return None;
+            }
+            return (remaining.len() == length).then_some(state);
+        }
+        if matches!(kind, 2 | 4) {
+            // NLMSG_ERROR / NLMSG_OVERRUN invalidate the entire snapshot.
+            return None;
+        }
+        if kind == RTM_NEWADDR {
+            let address_header = body.get(..ADDRESS_HEADER)?;
+            let family = i32::from(address_header[0]);
+            if matches!(family, AF_INET | AF_INET6) {
+                let width = if family == AF_INET { 4 } else { 16 };
+                let mut address = None;
+                let mut local = None;
+                let mut attributes = &body[ADDRESS_HEADER..];
+                while !attributes.is_empty() {
+                    let attr_header = attributes.get(..4)?;
+                    let attr_length =
+                        usize::from(u16::from_ne_bytes(attr_header[..2].try_into().ok()?));
+                    let attr_kind = u16::from_ne_bytes(attr_header[2..4].try_into().ok()?);
+                    if attr_length < 4 {
+                        return None;
+                    }
+                    let attribute = attributes.get(..attr_length)?;
+                    if matches!(attr_kind, 1 | 2) {
+                        let value = &attribute[4..];
+                        if value.len() != width {
+                            return None;
+                        }
+                        if attr_kind == 2 {
+                            local = Some(value);
+                        } else {
+                            address = Some(value);
+                        }
+                    }
+                    let aligned = attr_length.checked_add(3)? & !3;
+                    attributes = if attr_length == attributes.len() {
+                        &[]
+                    } else {
+                        attributes.get(aligned..)?
+                    };
+                }
+                let value = local.or(address)?;
+                if family == AF_INET {
+                    let ip = Ipv4Addr::from(<[u8; 4]>::try_from(value).ok()?);
+                    state.has_ipv4 |= !ip.is_loopback() && !ip.is_unspecified();
+                } else {
+                    let ip = Ipv6Addr::from(<[u8; 16]>::try_from(value).ok()?);
+                    state.has_ipv6 |= !ip.is_loopback() && !ip.is_unspecified();
+                }
+            }
+        }
+        let aligned = length.checked_add(3)? & !3;
+        remaining = remaining.get(aligned..)?;
+    }
+    // EOF without NLMSG_DONE may follow a failed recv or a truncated datagram.
+    None
+}
+
 /// Retain only address families permitted by the current `AI_ADDRCONFIG` state.
 pub fn apply_addrconfig_filter(results: &mut Vec<AddrInfo>, state: AddrConfigState) {
     results.retain(|info| state.supports_family(info.ai_family));
@@ -1647,6 +1742,178 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
 
         let missing_flags = b"fe800000000000000000000000000001 02 40 20 eth0\n";
         assert!(!parse_proc_net_if_inet6_has_ipv6(missing_flags));
+    }
+
+    fn addrconfig_nl_message(kind: u16, flags: u16, body: &[u8]) -> Vec<u8> {
+        let mut message = Vec::new();
+        message.extend_from_slice(&((16 + body.len()) as u32).to_ne_bytes());
+        message.extend_from_slice(&kind.to_ne_bytes());
+        message.extend_from_slice(&flags.to_ne_bytes());
+        message.extend_from_slice(&1u32.to_ne_bytes());
+        message.extend_from_slice(&0u32.to_ne_bytes());
+        message.extend_from_slice(body);
+        message.resize(message.len().next_multiple_of(4), 0);
+        message
+    }
+
+    fn addrconfig_nl_address(family: u8, attributes: &[(u16, &[u8])]) -> Vec<u8> {
+        // ifaddrmsg: family, prefix length, flags, scope, interface index.
+        let mut body = vec![family, 0, 0, 0, 2, 0, 0, 0];
+        for (kind, value) in attributes {
+            body.extend_from_slice(&((4 + value.len()) as u16).to_ne_bytes());
+            body.extend_from_slice(&kind.to_ne_bytes());
+            body.extend_from_slice(value);
+            body.resize(body.len().next_multiple_of(4), 0);
+        }
+        addrconfig_nl_message(20, 2, &body)
+    }
+
+    fn addrconfig_nl_dump(messages: &[Vec<u8>]) -> Vec<u8> {
+        let mut data = messages.concat();
+        data.extend(addrconfig_nl_message(3, 2, &0i32.to_ne_bytes()));
+        data
+    }
+
+    #[test]
+    fn addrconfig_netlink_counts_addresses_without_routes() {
+        let ipv4 = addrconfig_nl_address(AF_INET as u8, &[(1, &[192, 0, 2, 1])]);
+        let ipv6 = addrconfig_nl_address(
+            AF_INET6 as u8,
+            &[(
+                1,
+                &Ipv6Addr::from(0x20010db8000000000000000000000001u128).octets(),
+            )],
+        );
+        for (messages, expected) in [
+            (
+                vec![ipv4.clone()],
+                AddrConfigState {
+                    has_ipv4: true,
+                    has_ipv6: false,
+                },
+            ),
+            (
+                vec![ipv6.clone()],
+                AddrConfigState {
+                    has_ipv4: false,
+                    has_ipv6: true,
+                },
+            ),
+            (
+                vec![ipv4, ipv6],
+                AddrConfigState {
+                    has_ipv4: true,
+                    has_ipv6: true,
+                },
+            ),
+        ] {
+            assert_eq!(
+                addrconfig_state_from_netlink(&addrconfig_nl_dump(&messages)),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn addrconfig_netlink_ignores_loopback_and_unspecified_addresses() {
+        let data = addrconfig_nl_dump(&[
+            addrconfig_nl_address(AF_INET as u8, &[(1, &[127, 0, 0, 1])]),
+            addrconfig_nl_address(AF_INET as u8, &[(1, &[127, 42, 0, 1])]),
+            addrconfig_nl_address(AF_INET as u8, &[(1, &[0, 0, 0, 0])]),
+            addrconfig_nl_address(AF_INET6 as u8, &[(1, &Ipv6Addr::LOCALHOST.octets())]),
+            addrconfig_nl_address(AF_INET6 as u8, &[(1, &[0; 16])]),
+        ]);
+        assert_eq!(
+            addrconfig_state_from_netlink(&data),
+            Some(AddrConfigState::default())
+        );
+        assert_eq!(
+            addrconfig_state_from_netlink(&addrconfig_nl_dump(&[])),
+            Some(AddrConfigState::default())
+        );
+
+        let link_local = addrconfig_nl_dump(&[addrconfig_nl_address(
+            AF_INET6 as u8,
+            &[(
+                1,
+                &Ipv6Addr::from(0xfe800000000000000000000000000001u128).octets(),
+            )],
+        )]);
+        assert_eq!(
+            addrconfig_state_from_netlink(&link_local),
+            Some(AddrConfigState {
+                has_ipv4: false,
+                has_ipv6: true,
+            })
+        );
+    }
+
+    #[test]
+    fn addrconfig_netlink_prefers_local_point_to_point_address() {
+        for (peer, local, configured) in [
+            ([192, 0, 2, 1], [127, 0, 0, 1], false),
+            ([127, 0, 0, 1], [192, 0, 2, 1], true),
+        ] {
+            // Unknown and unaligned attributes may appear between the two
+            // address attributes; their padding is not another attribute.
+            let data = addrconfig_nl_dump(&[addrconfig_nl_address(
+                AF_INET as u8,
+                &[(1, &peer), (99, &[42]), (2, &local)],
+            )]);
+            assert_eq!(
+                addrconfig_state_from_netlink(&data),
+                Some(AddrConfigState {
+                    has_ipv4: configured,
+                    has_ipv6: false,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn addrconfig_netlink_rejects_partial_or_failed_dumps() {
+        let address = addrconfig_nl_address(AF_INET as u8, &[(1, &[192, 0, 2, 1])]);
+        let data = addrconfig_nl_dump(&[address.clone()]);
+        for end in 0..data.len() {
+            assert_eq!(
+                addrconfig_state_from_netlink(&data[..end]),
+                None,
+                "truncated at {end}"
+            );
+        }
+        for trailer in [
+            addrconfig_nl_message(2, 0, &(-5i32).to_ne_bytes()),
+            addrconfig_nl_message(4, 0, &[]),
+            addrconfig_nl_message(3, 0x12, &0i32.to_ne_bytes()),
+            addrconfig_nl_message(3, 2, &(-4i32).to_ne_bytes()),
+        ] {
+            let mut failed = address.clone();
+            failed.extend(trailer);
+            assert_eq!(addrconfig_state_from_netlink(&failed), None);
+        }
+        let mut interrupted = data;
+        interrupted[6..8].copy_from_slice(&0x12u16.to_ne_bytes());
+        assert_eq!(addrconfig_state_from_netlink(&interrupted), None);
+    }
+
+    #[test]
+    fn addrconfig_netlink_rejects_malformed_lengths_and_missing_address() {
+        let data = addrconfig_nl_dump(&[addrconfig_nl_address(
+            AF_INET as u8,
+            &[(1, &[192, 0, 2, 1])],
+        )]);
+        for length in [0u32, 15, u32::MAX] {
+            let mut malformed = data.clone();
+            malformed[..4].copy_from_slice(&length.to_ne_bytes());
+            assert_eq!(addrconfig_state_from_netlink(&malformed), None);
+        }
+        for length in [0u16, 3, 7, u16::MAX] {
+            let mut malformed = data.clone();
+            malformed[24..26].copy_from_slice(&length.to_ne_bytes());
+            assert_eq!(addrconfig_state_from_netlink(&malformed), None);
+        }
+        let missing = addrconfig_nl_dump(&[addrconfig_nl_address(AF_INET as u8, &[])]);
+        assert_eq!(addrconfig_state_from_netlink(&missing), None);
     }
 
     #[test]

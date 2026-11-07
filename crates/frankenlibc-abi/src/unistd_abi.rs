@@ -15102,13 +15102,19 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
             fd,
             recv_buf.as_mut_ptr(),
             recv_buf.len(),
-            0,
+            libc::MSG_TRUNC,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
         )
     } {
         if n <= 0 {
             break;
+        }
+        // MSG_TRUNC reports the full datagram length. Losing an address
+        // message must not turn a partial dump into an absent-family result.
+        if n as usize > recv_buf.len() {
+            let _ = syscall::sys_close(fd);
+            return Err(errno::ENOBUFS);
         }
         let data = &recv_buf[..n as usize];
         // Check for NLMSG_DONE
@@ -15134,6 +15140,13 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
 
     let _ = syscall::sys_close(fd);
     Ok(result)
+}
+
+/// A complete address dump for resolver AI_ADDRCONFIG selection. Do not
+/// infer missing families from a partial getifaddrs result or routing tables.
+pub(crate) fn addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
+    let data = netlink_dump(RTM_GETADDR, libc::AF_UNSPEC as u8).ok()?;
+    frankenlibc_core::resolv::addrconfig_state_from_netlink(&data)
 }
 
 /// Build a sockaddr from AF family and address bytes.

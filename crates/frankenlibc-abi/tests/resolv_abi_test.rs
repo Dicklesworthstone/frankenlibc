@@ -1876,6 +1876,159 @@ fn getaddrinfo_accepts_signed_service_port_field_like_glibc() {
 }
 
 #[test]
+fn getaddrinfo_default_hints_match_host_glibc() {
+    with_resolver_lock(|| {
+        // This is the real host's configuration, including its fail-open
+        // behavior if netlink is unavailable. No procfs fixture is installed.
+        // SAFETY: Symbols use the declared libc signatures. Each successful
+        // call returns a live chain released by its own matching allocator.
+        unsafe {
+            let host: GetaddrinfoFn =
+                dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ());
+            let host_free: FreeaddrinfoFn =
+                dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ());
+            let zeroed: libc::addrinfo = mem::zeroed();
+            for implicit in [true, false] {
+                let hints: *const libc::addrinfo = if implicit { ptr::null() } else { &zeroed };
+                let snapshot = |function: GetaddrinfoFn, free: FreeaddrinfoFn| {
+                    let mut result = ptr::null_mut();
+                    let rc = function(ptr::null(), c"8080".as_ptr(), hints, &mut result);
+                    let mut rows = Vec::new();
+                    let mut current = result;
+                    while !current.is_null() {
+                        let entry = &*current;
+                        rows.push((
+                            entry.ai_flags,
+                            entry.ai_family,
+                            entry.ai_socktype,
+                            entry.ai_protocol,
+                        ));
+                        current = entry.ai_next;
+                    }
+                    if !result.is_null() {
+                        free(result);
+                    }
+                    // Address preference sorting is tested separately. This
+                    // regression checks selection, socket profiles and flags.
+                    rows.sort_unstable();
+                    (rc, rows)
+                };
+                let expected = snapshot(host, host_free);
+                let actual = snapshot(resolv_abi::getaddrinfo, resolv_abi::freeaddrinfo);
+                assert_eq!(actual, expected, "implicit hints: {implicit}");
+                if expected.0 == 0 {
+                    assert!(!expected.1.is_empty());
+                    let flags = if implicit {
+                        libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                    } else {
+                        0
+                    };
+                    assert!(expected.1.iter().all(|row| row.0 == flags));
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn getaddrinfo_default_hints_filter_named_and_null_nodes() {
+    let route = b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n";
+    let loopback_v6 = b"00000000000000000000000000000001 01 80 10 80 lo\n";
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(route),
+        Some(loopback_v6),
+        |_| {
+            for node in [ptr::null(), c"dual-stack".as_ptr()] {
+                let mut result = ptr::null_mut();
+                // SAFETY: Node/service strings are valid and result is writable.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(node, c"8080".as_ptr(), ptr::null(), &mut result)
+                };
+                assert_eq!(rc, 0);
+                assert!(!result.is_null());
+                // SAFETY: A successful call returned this live addrinfo chain.
+                assert_eq!(
+                    unsafe { collect_addrinfo_families(result) },
+                    vec![libc::AF_INET]
+                );
+                let mut current = result;
+                while !current.is_null() {
+                    // SAFETY: getaddrinfo returned this live, owned chain.
+                    let entry = unsafe { &*current };
+                    assert_eq!(entry.ai_flags, libc::AI_V4MAPPED | libc::AI_ADDRCONFIG);
+                    current = entry.ai_next;
+                }
+                // SAFETY: The chain is owned by this call and freed once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+
+                // An explicit zeroed structure must continue requesting both
+                // families. The GNU defaults apply only to a NULL pointer.
+                // SAFETY: All-zero fields are valid for an addrinfo hints value.
+                let hints: libc::addrinfo = unsafe { mem::zeroed() };
+                // SAFETY: Strings, hints and writable result remain live.
+                let rc =
+                    unsafe { resolv_abi::getaddrinfo(node, c"8080".as_ptr(), &hints, &mut result) };
+                assert_eq!(rc, 0);
+                // SAFETY: The successful call returned a live chain.
+                let mut families = unsafe { collect_addrinfo_families(result) };
+                families.sort_unstable();
+                assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+                // SAFETY: This call owns the chain and releases it once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_default_hints_filter_ipv6_only_and_keep_unknown_configuration() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(b"Iface Destination Gateway Flags\n"),
+        Some(b"20010db8000000000000000000000001 02 80 00 20 eth0\n"),
+        |paths| {
+            let mut result = ptr::null_mut();
+            // SAFETY: The service is NUL-terminated and result is writable.
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), ptr::null(), &mut result)
+            };
+            assert_eq!(rc, 0);
+            // SAFETY: The successful call returned a live chain.
+            assert_eq!(
+                unsafe { collect_addrinfo_families(result) },
+                vec![libc::AF_INET6]
+            );
+            // SAFETY: This call owns the chain and releases it once.
+            unsafe { resolv_abi::freeaddrinfo(result) };
+
+            // An unreadable snapshot is unknown, not an IPv4-only/IPv6-only
+            // machine. Use a nonexistent path; no real configuration changes.
+            // SAFETY: The resolver test lock serializes environment mutations.
+            unsafe {
+                std::env::set_var(
+                    PROC_NET_IF_INET6_PATH_ENV,
+                    paths.if_inet6.with_extension("missing"),
+                );
+            }
+            // SAFETY: The service is NUL-terminated and result is writable.
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), ptr::null(), &mut result)
+            };
+            assert_eq!(rc, 0);
+            // SAFETY: The successful call returned a live chain.
+            let mut families = unsafe { collect_addrinfo_families(result) };
+            families.sort_unstable();
+            assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+            // SAFETY: This call owns the chain and releases it once.
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv4() {
     with_resolver_backends_and_addrconfig(
         Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
@@ -1975,6 +2128,7 @@ fn getaddrinfo_ai_addrconfig_ignores_malformed_ipv6_addrconfig_rows() {
             let service = CString::new("8080").unwrap();
             let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
             hints.ai_flags = libc::AI_ADDRCONFIG;
+            hints.ai_family = libc::AF_INET6;
             let mut res: *mut libc::addrinfo = ptr::null_mut();
 
             let rc = unsafe {
@@ -2132,24 +2286,60 @@ fn getaddrinfo_null_node_ai_addrconfig_preserves_both_families_on_dual_stack() {
 }
 
 #[test]
-fn getaddrinfo_null_node_ai_addrconfig_returns_noname_without_nonloopback_families() {
+fn getaddrinfo_default_hints_keep_unspecified_on_loopback_only_hosts() {
     with_resolver_backends_and_addrconfig(
         None,
         None,
-        Some(
-            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n",
-        ),
-        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        Some(b"Iface Destination Gateway Flags\nlo 00000000 00000000 0001\n"),
+        Some(b"00000000000000000000000000000001 01 80 10 80 lo\n"),
         |_| {
-            let service = CString::new("8080").unwrap();
-            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
-            hints.ai_flags = libc::AI_ADDRCONFIG;
-            let mut res: *mut libc::addrinfo = ptr::null_mut();
-
-            let rc =
-                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
-            assert_eq!(rc, libc::EAI_NONAME);
-            assert!(res.is_null());
+            for family in [
+                None,
+                Some(libc::AF_UNSPEC),
+                Some(libc::AF_INET),
+                Some(libc::AF_INET6),
+            ] {
+                // SAFETY: Zero is valid for every addrinfo hints field.
+                let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+                hints.ai_flags = libc::AI_ADDRCONFIG;
+                hints.ai_family = family.unwrap_or(libc::AF_UNSPEC);
+                let hints_ptr = if family.is_some() {
+                    &hints as *const libc::addrinfo
+                } else {
+                    ptr::null()
+                };
+                let mut result = ptr::null_mut();
+                // SAFETY: The service and optional hints remain live, and
+                // result is writable for the duration of the call.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), hints_ptr, &mut result)
+                };
+                if family.is_some_and(|value| value != libc::AF_UNSPEC) {
+                    assert_eq!(rc, libc::EAI_NONAME, "family: {family:?}");
+                    assert!(result.is_null());
+                    continue;
+                }
+                assert_eq!(rc, 0, "family: {family:?}");
+                assert!(!result.is_null());
+                // SAFETY: The successful call returned this live owned chain.
+                let mut families = unsafe { collect_addrinfo_families(result) };
+                families.sort_unstable();
+                assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+                let expected_flags = if family.is_none() {
+                    libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                } else {
+                    libc::AI_ADDRCONFIG
+                };
+                let mut current = result;
+                while !current.is_null() {
+                    // SAFETY: Every node belongs to the returned live chain.
+                    let entry = unsafe { &*current };
+                    assert_eq!(entry.ai_flags, expected_flags);
+                    current = entry.ai_next;
+                }
+                // SAFETY: This call owns the chain and releases it once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
         },
     );
 }
