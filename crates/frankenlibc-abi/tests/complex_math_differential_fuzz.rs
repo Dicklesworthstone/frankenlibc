@@ -464,7 +464,10 @@ fn csqrt_finite_exponent_range_vs_glibc() {
             actual.re,
             actual.im,
         );
-        for (part, got, want) in [("re", actual.re, expected.re), ("im", actual.im, expected.im)] {
+        for (part, got, want) in [
+            ("re", actual.re, expected.re),
+            ("im", actual.im, expected.im),
+        ] {
             assert!(
                 ulp(got, want) <= 4,
                 "csqrt({:e},{:e}) {part}: got {got:e}, expected {want:e} ({} ULP)",
@@ -473,7 +476,36 @@ fn csqrt_finite_exponent_range_vs_glibc() {
                 ulp(got, want),
             );
             if want == 0.0 {
-                assert_eq!(got.to_bits(), want.to_bits(), "csqrt {part} zero sign");
+                if z.im == 0.0 {
+                    // An exact branch-axis zero must preserve every bit.
+                    assert_eq!(
+                        got.to_bits(),
+                        want.to_bits(),
+                        "csqrt({:e},{:e}) {part} zero sign: got {got:e}, expected {want:e}",
+                        z.re,
+                        z.im,
+                    );
+                } else {
+                    // Both exact components are nonzero when im != 0. A host
+                    // zero is therefore underflow, and glibc can lose a correctly
+                    // rounded least subnormal through intermediate rounding.
+                    // Permit only that one-ULP distinction, with the same sign;
+                    // the independent regression below requires the correct
+                    // nonzero result for analytically bounded inputs.
+                    assert_eq!(
+                        got.is_sign_negative(),
+                        want.is_sign_negative(),
+                        "csqrt({:e},{:e}) {part} underflow sign",
+                        z.re,
+                        z.im,
+                    );
+                    assert!(
+                        ulp(got, want) <= 1,
+                        "csqrt({:e},{:e}) {part} underflow: got {got:e}, expected {want:e}",
+                        z.re,
+                        z.im,
+                    );
+                }
             }
         }
     };
@@ -500,6 +532,41 @@ fn csqrt_finite_exponent_range_vs_glibc() {
         }
     }
     assert!(checked > 20_000);
+}
+
+/// The smaller component is |y|/(2*d), where the dominant component d is
+/// arbitrarily close to sqrt(|x|). For eta = 2^-1074, both (|x|, |y|) =
+/// (0.5, eta) and (2, 2*eta) therefore approach eta/sqrt(2). More precisely,
+/// sqrt(|x|) < d < sqrt(2*|x|), so eta/2 < |y|/(2*d) < eta/sqrt(2).
+/// Nearest rounding must produce eta. This analytic expectation is independent
+/// of host glibc, which can prematurely underflow these components to zero.
+#[test]
+fn csqrt_preserves_correctly_rounded_least_subnormal_components() {
+    let least = f64::from_bits(1);
+    for (re, im) in [(0.5, least), (2.0, f64::from_bits(2))] {
+        for re_sign in [1.0, -1.0] {
+            for im_sign in [1.0, -1.0] {
+                let z = C {
+                    re: re * re_sign,
+                    im: im * im_sign,
+                };
+                // SAFETY: csqrt accepts every finite complex input by value.
+                let actual = unsafe { fl::csqrt(z) };
+                let (part, got, expected) = if z.re > 0.0 {
+                    ("im", actual.im, least.copysign(z.im))
+                } else {
+                    ("re", actual.re, least)
+                };
+                assert_eq!(
+                    got.to_bits(),
+                    expected.to_bits(),
+                    "csqrt({:e},{:e}) {part} must round to the signed least subnormal",
+                    z.re,
+                    z.im,
+                );
+            }
+        }
+    }
 }
 
 /// Deterministic C99 Annex G special-value contract for csqrt, checked
