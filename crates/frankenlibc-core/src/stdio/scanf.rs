@@ -11,6 +11,7 @@
 //! excludes `%n`, matching POSIX/glibc.
 
 use super::printf::LengthMod;
+use core::num::NonZeroUsize;
 
 /// Whitespace test matching C's `isspace` in the C locale. POSIX scanf
 /// defines both the white-space *directive* and the `%s`/`%[`-style
@@ -324,6 +325,8 @@ impl Default for ScanDirective {
 pub enum ScanDirective {
     /// Literal byte(s) to match.
     Literal(u8),
+    /// A non-ASCII literal in a wide format, matched as one complete character.
+    WideLiteral(u32),
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
     /// A conversion specifier.
@@ -350,6 +353,9 @@ pub enum ScanDirective {
 pub struct ScanSpec {
     pub suppress: bool,
     pub width: Option<usize>,
+    /// One-based POSIX destination index (`%2$s`), recognized by the wide parser.
+    /// Narrow parsing leaves this unset until its ABI writers support indices.
+    pub argument_index: Option<NonZeroUsize>,
     pub length: LengthMod,
     pub conversion: u8,
     /// Boxed so a spec without a scanset — every conversion except `%[...]` —
@@ -375,7 +381,7 @@ pub struct ScanSpec {
     /// fwscanf), whose bytes are the UTF-8 encoding of wide characters. In that
     /// mode leading-whitespace skipping and `%s` token boundaries recognise
     /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
-    /// entry points after parsing; defaults to false for narrow `sscanf`.
+    /// parser; defaults to false for narrow `sscanf`.
     pub wide_input: bool,
     /// Accept a `0b`/`0B` prefix for `%i`, as required by the C23 scanf aliases.
     /// Legacy and C99 entry points leave this false, even on a C23-capable libc.
@@ -494,6 +500,9 @@ pub struct ScanSet {
     /// Kept private so the representation stays an implementation detail;
     /// `contains` is the only reader.
     bits: [u64; 4],
+    /// Inclusive scalar ranges above U+00FF for a wide scanset. Empty narrow
+    /// and ASCII-only wide sets do not allocate storage for this slice.
+    wide_ranges: Box<[(u32, u32)]>,
 }
 
 /// Membership bits accumulated while parsing a `%[...]` set.
@@ -559,6 +568,7 @@ impl ScanSet {
         Self {
             negated,
             bits: bits.0,
+            wide_ranges: Box::default(),
         }
     }
 
@@ -566,6 +576,15 @@ impl ScanSet {
     #[inline]
     pub fn contains(&self, c: u8) -> bool {
         self.bits[(c >> 6) as usize] & (1u64 << (c & 63)) != 0
+    }
+
+    #[inline]
+    fn contains_wide(&self, c: u32) -> bool {
+        if c <= u8::MAX as u32 {
+            self.contains(c as u8)
+        } else {
+            self.wide_ranges.iter().any(|&(lo, hi)| lo <= c && c <= hi)
+        }
     }
 }
 
@@ -575,6 +594,17 @@ impl ScanSet {
 
 /// Parse a scanf format string into a list of directives.
 pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
+    parse_scanf_format_impl::<false>(fmt)
+}
+
+/// Parse the UTF-8 representation of a wide scanf format. Scansets and
+/// whitespace use wide characters, and destination indices are one-based.
+pub fn parse_scanf_format_wide(fmt: &[u8]) -> ScanDirectives {
+    parse_scanf_format_impl::<true>(fmt)
+}
+
+fn parse_scanf_format_impl<const WIDE_INPUT: bool>(fmt: &[u8]) -> ScanDirectives {
+    let wide_input = WIDE_INPUT;
     let mut directives = ScanDirectives::default();
     let mut i = 0;
 
@@ -598,15 +628,36 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
             let mut spec = ScanSpec {
                 suppress: false,
                 width: None,
+                argument_index: None,
                 length: LengthMod::None,
                 conversion: 0,
                 scanset: None,
                 simple_set: SimpleScanSet::None,
-                wide_input: false,
+                wide_input,
                 binary_prefix: false,
                 alloc: false,
                 route: ScanfRoute::invalid(),
             };
+
+            // Positional indices precede suppression and field width. Keeping
+            // this wide-only avoids changing narrow writers' argument order.
+            if wide_input && fmt[i].is_ascii_digit() {
+                let mut end = i;
+                let mut index = Some(0usize);
+                while end < fmt.len() && fmt[end].is_ascii_digit() {
+                    index = index
+                        .and_then(|n| n.checked_mul(10)?.checked_add((fmt[end] - b'0') as usize));
+                    end += 1;
+                }
+                if end < fmt.len() && fmt[end] == b'$' {
+                    let Some(index) = index.and_then(NonZeroUsize::new) else {
+                        directives.push(ScanDirective::Malformed);
+                        break;
+                    };
+                    spec.argument_index = Some(index);
+                    i = end + 1;
+                }
+            }
 
             // Assignment suppression.
             if i < fmt.len() && fmt[i] == b'*' {
@@ -682,7 +733,16 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                 break;
             }
 
-            if fmt[i] == b'[' {
+            if wide_input && fmt[i] == b'[' {
+                let Some((simple, set, end)) = parse_wide_scanset(fmt, i + 1) else {
+                    directives.push(ScanDirective::Malformed);
+                    break;
+                };
+                spec.conversion = b'[';
+                spec.simple_set = simple;
+                spec.scanset = set;
+                i = end;
+            } else if fmt[i] == b'[' {
                 // Parse scanset.
                 i += 1;
                 let mut negated = false;
@@ -782,13 +842,23 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
             }
 
             directives.push(ScanDirective::Spec(spec));
-        } else if is_c_space(fmt[i]) {
+        } else if ws_seq_len(fmt, i, wide_input) != 0 {
             directives.push(ScanDirective::Whitespace);
-            i += 1;
             // Consume additional whitespace in format.
-            while i < fmt.len() && is_c_space(fmt[i]) {
-                i += 1;
+            loop {
+                let len = ws_seq_len(fmt, i, wide_input);
+                if len == 0 {
+                    break;
+                }
+                i += len;
             }
+        } else if wide_input && !fmt[i].is_ascii() {
+            let Some((character, len)) = wide_character_at(fmt, i) else {
+                directives.push(ScanDirective::Malformed);
+                break;
+            };
+            directives.push(ScanDirective::WideLiteral(character));
+            i += len;
         } else {
             directives.push(ScanDirective::Literal(fmt[i]));
             i += 1;
@@ -796,6 +866,78 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
     }
 
     directives
+}
+
+/// Read one scalar from the internal UTF-8 representation without accepting a
+/// partial sequence as a scanset member or literal.
+fn wide_character_at(input: &[u8], pos: usize) -> Option<(u32, usize)> {
+    let len = utf8_seq_len(*input.get(pos)?);
+    let bytes = input.get(pos..pos.checked_add(len)?)?;
+    let character = core::str::from_utf8(bytes).ok()?.chars().next()?;
+    Some((character as u32, len))
+}
+
+fn parse_wide_scanset(
+    fmt: &[u8],
+    mut pos: usize,
+) -> Option<(SimpleScanSet, Option<Box<ScanSet>>, usize)> {
+    let negated = fmt.get(pos) == Some(&b'^');
+    pos += usize::from(negated);
+    let mut bits = ScanSetBits::default();
+    let mut ranges = Vec::new();
+    let mut insert_range = |lo: u32, hi: u32| {
+        if lo <= u8::MAX as u32 {
+            for c in lo..=hi.min(u8::MAX as u32) {
+                bits.insert(c as u8);
+            }
+        }
+        if hi > u8::MAX as u32 {
+            ranges.push((lo.max(u8::MAX as u32 + 1), hi));
+        }
+    };
+    if fmt.get(pos) == Some(&b']') {
+        insert_range(b']' as u32, b']' as u32);
+        pos += 1;
+    }
+    while fmt.get(pos).is_some_and(|&b| b != 0 && b != b']') {
+        let (lo, len) = wide_character_at(fmt, pos)?;
+        pos += len;
+        if fmt.get(pos) == Some(&b'-') && fmt.get(pos + 1).is_some_and(|&b| b != 0 && b != b']') {
+            let (hi, len) = wide_character_at(fmt, pos + 1)?;
+            pos += 1 + len;
+            if lo <= hi {
+                insert_range(lo, hi);
+            } else {
+                insert_range(lo, lo);
+                insert_range(b'-' as u32, b'-' as u32);
+                insert_range(hi, hi);
+            }
+        } else {
+            insert_range(lo, lo);
+        }
+    }
+    if fmt.get(pos) != Some(&b']') {
+        return None;
+    }
+    if ranges.is_empty()
+        && let Some(byte) = bits.single_member()
+    {
+        let simple = if negated {
+            SimpleScanSet::NegatedByte(byte)
+        } else {
+            SimpleScanSet::Byte(byte)
+        };
+        return Some((simple, None, pos + 1));
+    }
+    Some((
+        SimpleScanSet::None,
+        Some(Box::new(ScanSet {
+            negated,
+            bits: bits.0,
+            wide_ranges: ranges.into_boxed_slice(),
+        })),
+        pos + 1,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -941,7 +1083,9 @@ pub struct ScanResult {
     pub count: i32,
     /// Total input bytes consumed.
     pub consumed: usize,
-    /// Whether any input was consumed before matching failure.
+    /// Whether a required read failed. Callers report EOF only when `count` is
+    /// zero; wide scans also retain this flag after earlier assignments so a
+    /// stream adapter can distinguish exhausted input from a completed format.
     pub input_failure: bool,
     /// The conversion that stopped the scan was an assigning `%m` one. glibc
     /// stores NULL through its `char **` then -- even when the call returns EOF
@@ -950,11 +1094,34 @@ pub struct ScanResult {
     pub failed_alloc: bool,
 }
 
+/// Location of the conversion currently being delivered to a wide scan writer.
+/// All offsets address the internal UTF-8 input, even when the destination uses
+/// another encoding. For text conversions, the token excludes skipped leading
+/// whitespace. A failed `%m` notification has no value and an empty token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanWriteContext {
+    pub directive_index: usize,
+    pub token_start: usize,
+    pub token_end: usize,
+}
+
+/// Stop scanning when a destination cannot accept the current conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanWriteError {
+    /// Absolute UTF-8 byte offset consumed by this conversion. This must lie
+    /// within the supplied token and on a character boundary. The engine
+    /// defensively clamps an invalid offset and rounds it down to a boundary.
+    pub consumed: usize,
+    /// Whether this failure should return EOF when no assignment preceded it.
+    /// An ABI writer may separately override the return for fatal ENOMEM.
+    pub input_failure: bool,
+}
+
 /// Scan input according to parsed directives.
 /// Run the parsed directives against a NARROW (byte) input stream (sscanf et al.):
 /// `%s`/`%c`/`%[` field widths count bytes.
 pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
-    scan_input_impl(input, directives, false)
+    scan_input_impl::<true, false, _>(input, directives, |_, _, _| Ok(()))
 }
 
 /// The engine's `%f` spec, built ONCE.
@@ -969,6 +1136,7 @@ fn default_float_spec() -> &'static ScanSpec {
         let mut spec = ScanSpec {
             suppress: false,
             width: None,
+            argument_index: None,
             length: LengthMod::None,
             conversion: b'f',
             scanset: None,
@@ -1009,13 +1177,45 @@ pub fn scan_default_float(input: &[u8], pos: usize) -> Option<(f64, usize)> {
 /// characters (whole UTF-8 sequences), matching the C wide-scanf semantics, even
 /// without an `l` length modifier.
 pub fn scan_input_wide(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
-    scan_input_impl(input, directives, true)
+    scan_input_impl::<true, true, _>(input, directives, |_, _, _| Ok(()))
 }
 
-fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool) -> ScanResult {
+/// Scan a wide input with a writer invoked before parsing the next directive.
+///
+/// `input` is the valid UTF-8 representation of wide characters, and directives
+/// should come from [`parse_scanf_format_wide`]. Each successful nonsuppressed
+/// conversion is delivered once. `None` is delivered only for a reached,
+/// nonsuppressed `%m` conversion which failed before producing a value, so the
+/// writer can clear that allocation destination. Suppressed conversions never
+/// call the writer and therefore do not perform destination encoding.
+///
+/// A writer error leaves prior assignments intact and prevents later directives
+/// (including `%n`) from running. This sink API leaves [`ScanResult::values`]
+/// empty; the ordinary collecting APIs use the same scanner without allocating
+/// a callback or adding dynamic dispatch.
+pub fn scan_input_wide_with<F>(input: &[u8], directives: &[ScanDirective], writer: F) -> ScanResult
+where
+    F: FnMut(&ScanSpec, Option<&ScanValue>, ScanWriteContext) -> Result<(), ScanWriteError>,
+{
+    scan_input_impl::<false, true, _>(input, directives, writer)
+}
+
+fn scan_input_impl<const COLLECT: bool, const WIDE_INPUT: bool, F>(
+    input: &[u8],
+    directives: &[ScanDirective],
+    mut writer: F,
+) -> ScanResult
+where
+    F: FnMut(&ScanSpec, Option<&ScanValue>, ScanWriteContext) -> Result<(), ScanWriteError>,
+{
+    let wide_input = WIDE_INPUT;
     let mut pos = 0;
     let mut values = ScanValues::default();
     let mut count: i32 = 0;
+    // Count wide characters only when `%n` requests them, and visit each input
+    // byte at most once across repeated `%n` directives.
+    let mut count_prefix_end = 0;
+    let mut wide_char_count = 0;
     // NOTE: there is deliberately no running `input_failure` flag any more.
     // Each arm below decides EOF from what IT observed -- a directive that
     // demanded input and did not get it -- rather than from whether some
@@ -1025,7 +1225,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     // it got cleared by a SUPPRESSED conversion (reporting 0 for
     // `swscanf("1", " %*2xx")`, which glibc answers -1).
 
-    for dir in directives {
+    for (directive_index, dir) in directives.iter().enumerate() {
         match dir {
             // Malformed format: stop with the assignments already made and
             // report a MATCHING failure, not EOF. glibc returns 0 for
@@ -1081,6 +1281,19 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                 }
                 pos += 1;
             }
+            ScanDirective::WideLiteral(expected) => {
+                let character = wide_character_at(input, pos);
+                if character.is_none_or(|(actual, _)| actual != *expected) {
+                    return ScanResult {
+                        values,
+                        count,
+                        consumed: pos,
+                        input_failure: pos >= input.len(),
+                        failed_alloc: false,
+                    };
+                }
+                pos += character.expect("the complete wide literal matched").1;
+            }
             ScanDirective::Spec(spec) => {
                 let result = spec.scan_at(input, pos, wide_input);
                 match result {
@@ -1095,6 +1308,11 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                         // while sscanf("ab", "%2c") == 1 and consumes both bytes.
                         // Without this the engine reported a match failure and the
                         // caller returned 0 where the host returns EOF (bd-7ilguh).
+                        let stopped_pos = if wide_input && spec.skips_leading_whitespace() {
+                            skip_ws(input, pos, true)
+                        } else {
+                            pos
+                        };
                         let exhausted_before_conversion = if spec.skips_leading_whitespace() {
                             skip_ws(input, pos, spec.wide_input) >= input.len()
                         } else if spec.conversion == b'c' {
@@ -1118,11 +1336,28 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                         } else {
                             pos >= input.len()
                         };
-                        let input_failure = exhausted_before_conversion && count == 0;
+                        let input_failure =
+                            exhausted_before_conversion && (wide_input || count == 0);
+                        if spec.alloc && !spec.suppress {
+                            let context = ScanWriteContext {
+                                directive_index,
+                                token_start: stopped_pos,
+                                token_end: stopped_pos,
+                            };
+                            if let Err(error) = writer(spec, None, context) {
+                                return ScanResult {
+                                    values,
+                                    count,
+                                    consumed: scan_write_error_offset(input, context, error),
+                                    input_failure: error.input_failure,
+                                    failed_alloc: true,
+                                };
+                            }
+                        }
                         return ScanResult {
                             values,
                             count,
-                            consumed: pos,
+                            consumed: stopped_pos,
                             input_failure,
                             failed_alloc: spec.alloc && !spec.suppress,
                         };
@@ -1139,11 +1374,42 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                             failed_alloc: false,
                         };
                     }
-                    Some((Some(v), new_pos)) => {
+                    Some((Some(mut v), new_pos)) => {
+                        let previous_pos = pos;
                         pos = new_pos;
                         if !spec.suppress {
+                            if wide_input && let ScanValue::CharsConsumed(ref mut n) = v {
+                                wide_char_count += input[count_prefix_end..pos]
+                                    .iter()
+                                    .filter(|&&b| b & 0xc0 != 0x80)
+                                    .count();
+                                count_prefix_end = pos;
+                                *n = wide_char_count;
+                            }
                             let counts_as_assignment = !matches!(v, ScanValue::CharsConsumed(_));
-                            values.push(v);
+                            let token_start = match &v {
+                                ScanValue::Char(bytes) | ScanValue::String(bytes) => {
+                                    new_pos - bytes.len()
+                                }
+                                _ => previous_pos,
+                            };
+                            let context = ScanWriteContext {
+                                directive_index,
+                                token_start,
+                                token_end: new_pos,
+                            };
+                            if let Err(error) = writer(spec, Some(&v), context) {
+                                return ScanResult {
+                                    values,
+                                    count,
+                                    consumed: scan_write_error_offset(input, context, error),
+                                    input_failure: error.input_failure,
+                                    failed_alloc: spec.alloc,
+                                };
+                            }
+                            if COLLECT {
+                                values.push(v);
+                            }
                             if counts_as_assignment {
                                 count += 1;
                             }
@@ -1175,6 +1441,18 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
         input_failure: false,
         failed_alloc: false,
     }
+}
+
+fn scan_write_error_offset(
+    input: &[u8],
+    context: ScanWriteContext,
+    error: ScanWriteError,
+) -> usize {
+    let mut pos = error.consumed.clamp(context.token_start, context.token_end);
+    while pos > context.token_start && input.get(pos).is_some_and(|b| b & 0xc0 == 0x80) {
+        pos -= 1;
+    }
+    pos
 }
 
 /// Byte length of a whitespace run starting at `pos`, or 0 if `pos` is not
@@ -2102,6 +2380,9 @@ mod scanset_bitmap_tests {
 
 /// Scan a scanset (%[...]). No whitespace skip.
 fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+    if spec.wide_input {
+        return scan_scanset_wide(input, pos, spec);
+    }
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     // Exactly one of the two representations is populated: a one-member set
     // inline, anything larger boxed. Neither means this is not a scanset spec.
@@ -2143,6 +2424,47 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
     Some((
         Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))),
         i,
+    ))
+}
+
+/// Wide scansets test scalar membership and charge one field-width unit per
+/// complete character. The narrow scanner above keeps its byte-only loop.
+fn scan_scanset_wide(
+    input: &[u8],
+    pos: usize,
+    spec: &ScanSpec,
+) -> Option<(Option<ScanValue>, usize)> {
+    let scanset = match spec.simple_set {
+        SimpleScanSet::None => Some(spec.scanset.as_ref()?),
+        _ => None,
+    };
+    let max_chars = effective_width(spec, usize::MAX);
+    let mut end = pos;
+    let mut chars_read = 0;
+    while chars_read < max_chars {
+        let Some((character, len)) = wide_character_at(input, end) else {
+            break;
+        };
+        let accept = match spec.simple_set {
+            SimpleScanSet::Byte(byte) => character == byte as u32,
+            SimpleScanSet::NegatedByte(byte) => character != byte as u32,
+            SimpleScanSet::None => {
+                let set = scanset.expect("a scanset spec has one representation");
+                set.contains_wide(character) != set.negated
+            }
+        };
+        if !accept {
+            break;
+        }
+        end += len;
+        chars_read += 1;
+    }
+    if end == pos {
+        return None;
+    }
+    Some((
+        Some(ScanValue::String(ScanBytes::from_slice(&input[pos..end]))),
+        end,
     ))
 }
 
@@ -3513,5 +3835,259 @@ mod tests {
         // input_failure is true when we couldn't read anything before first
         // conversion failed; this is a matching failure on first directive.
         // glibc returns 0 for this case, not EOF (-1).
+    }
+}
+
+#[cfg(test)]
+mod wide_scan_tests {
+    use super::*;
+
+    fn scan(format: &str, input: &str) -> ScanResult {
+        let directives = parse_scanf_format_wide(format.as_bytes());
+        scan_input_wide(input.as_bytes(), &directives)
+    }
+
+    #[test]
+    fn writer_error_preserves_prior_assignment_and_stops_before_later_directives() {
+        let input = "7 é€X 9";
+        let directives = parse_scanf_format_wide(b"%d %s %d%n");
+        let mut integer = -1;
+        let mut text = Vec::new();
+        let mut reached = Vec::new();
+        let result = scan_input_wide_with(input.as_bytes(), &directives, |spec, value, context| {
+            reached.push(context.directive_index);
+            match value.expect("both reached conversions matched input") {
+                ScanValue::SignedInt(n) => integer = *n,
+                ScanValue::String(bytes) => {
+                    assert_eq!(spec.conversion, b's');
+                    assert_eq!(context.token_start, 2);
+                    assert_eq!(context.token_end, "7 é€X".len());
+                    // A Latin-1 destination can accept é, but not the next €.
+                    // Its partial output survives; the failed character is
+                    // consumed and neither the later integer nor %n is reached.
+                    assert_eq!(bytes.as_slice(), "é€X".as_bytes());
+                    text.push(0xe9);
+                    return Err(ScanWriteError {
+                        consumed: "7 é€".len(),
+                        input_failure: false,
+                    });
+                }
+                other => panic!("a later conversion ran: {other:?}"),
+            }
+            Ok(())
+        });
+        assert_eq!(integer, 7);
+        assert_eq!(text, [0xe9]);
+        assert_eq!(reached, [0, 2]);
+        assert_eq!(result.count, 1);
+        assert_eq!(result.consumed, "7 é€".len());
+        assert!(!result.input_failure);
+        assert!(result.values.is_empty(), "a sink must not collect outputs");
+    }
+
+    #[test]
+    fn writer_error_distinguishes_character_input_failure_from_string_failure() {
+        for (format, input_failure) in [("%2c%n", true), ("%2s%n", false)] {
+            let directives = parse_scanf_format_wide(format.as_bytes());
+            let mut calls = 0;
+            let result =
+                scan_input_wide_with("é€X".as_bytes(), &directives, |_, value, context| {
+                    calls += 1;
+                    assert!(value.is_some());
+                    assert_eq!(context.token_end, "é€".len());
+                    Err(ScanWriteError {
+                        consumed: context.token_end,
+                        input_failure,
+                    })
+                });
+            assert_eq!(calls, 1, "trailing %n must remain untouched");
+            assert_eq!(result.count, 0);
+            assert_eq!(result.consumed, "é€".len());
+            assert_eq!(result.input_failure, input_failure);
+        }
+    }
+
+    #[test]
+    fn suppressed_wide_text_bypasses_writer_and_counts_characters() {
+        for format in ["%*s%n", "%*3c%n", "%*[^ ]%n", "%*ms%n", "%*m[^ ]%n"] {
+            let directives = parse_scanf_format_wide(format.as_bytes());
+            let mut calls = 0;
+            let result =
+                scan_input_wide_with("é€X".as_bytes(), &directives, |spec, value, _| {
+                    calls += 1;
+                    assert!(spec.stores_count(), "suppressed text reached the writer");
+                    assert!(matches!(value, Some(ScanValue::CharsConsumed(3))));
+                    Ok(())
+                });
+            assert_eq!(calls, 1, "{format}");
+            assert_eq!(result.count, 0);
+            assert_eq!(result.consumed, "é€X".len());
+            assert!(!result.input_failure);
+        }
+    }
+
+    #[test]
+    fn reached_failed_allocation_notifies_only_its_destination() {
+        for format in ["%n%ms%d", "%n%m[^ ]%d", "%n%mc%d"] {
+            let directives = parse_scanf_format_wide(format.as_bytes());
+            let mut reached = Vec::new();
+            let result = scan_input_wide_with(b"", &directives, |spec, value, context| {
+                reached.push(context.directive_index);
+                if context.directive_index == 0 {
+                    assert!(matches!(value, Some(ScanValue::CharsConsumed(0))));
+                } else {
+                    assert!(spec.alloc);
+                    assert!(value.is_none());
+                    assert_eq!((context.token_start, context.token_end), (0, 0));
+                }
+                Ok(())
+            });
+            assert_eq!(reached, [0, 1], "{format}");
+            assert_eq!(result.count, 0);
+            assert!(result.input_failure);
+            assert!(result.failed_alloc);
+        }
+        let directives = parse_scanf_format_wide(b"%d%ms");
+        let result = scan_input_wide_with(b"X", &directives, |_, _, _| {
+            panic!("an unreached allocation destination must not be touched")
+        });
+        assert!(!result.failed_alloc);
+    }
+
+    #[test]
+    fn writer_error_offset_is_bounded_and_never_splits_a_character() {
+        let directives = parse_scanf_format_wide(b"%s");
+        let input = " é€X";
+        for (requested, expected) in [(0, 1), (usize::MAX, input.len()), (2, 1), (4, 3)] {
+            let result = scan_input_wide_with(input.as_bytes(), &directives, |_, _, context| {
+                assert_eq!(context.token_start, 1);
+                Err(ScanWriteError {
+                    consumed: requested,
+                    input_failure: false,
+                })
+            });
+            assert_eq!(result.consumed, expected);
+            assert!(input.is_char_boundary(result.consumed));
+        }
+    }
+
+    #[test]
+    fn wide_n_counts_literals_suppression_whitespace_and_multibyte_scalars() {
+        let input = "é€😀\u{2003}X";
+        let result = scan("é%n%*2c%n\u{2003}%1[^ ]%n", input);
+        assert_eq!(result.count, 1);
+        assert_eq!(result.consumed, input.len());
+        assert!(matches!(result.values[0], ScanValue::CharsConsumed(1)));
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(3)));
+        assert!(matches!(&result.values[2], ScanValue::String(s) if s == b"X"));
+        assert!(matches!(result.values[3], ScanValue::CharsConsumed(5)));
+    }
+
+    #[test]
+    fn wide_scanset_width_and_ranges_consume_complete_scalars() {
+        for (format, input, matched) in [
+            ("%1[^ ]%n", "éX", "é"),
+            ("%1[é]%n", "éX", "é"),
+            ("%1[à-ÿ]%n", "éX", "é"),
+            ("%1[α-ω]%n", "βX", "β"),
+            ("%1[😀-🙏]%n", "😃X", "😃"),
+            ("%1[^😀]%n", "€😀", "€"),
+        ] {
+            let result = scan(format, input);
+            assert_eq!(result.count, 1, "{format}: {input}");
+            assert_eq!(result.consumed, matched.len());
+            assert!(
+                matches!(&result.values[0], ScanValue::String(s) if s.as_slice() == matched.as_bytes())
+            );
+            assert!(matches!(result.values[1], ScanValue::CharsConsumed(1)));
+        }
+    }
+
+    #[test]
+    fn wide_scanset_membership_does_not_match_a_shared_utf8_prefix() {
+        let result = scan("%[é]%n", "ê");
+        assert_eq!((result.count, result.consumed), (0, 0));
+        assert!(result.values.is_empty());
+        let result = scan("%[é]%n", "éê");
+        assert_eq!((result.count, result.consumed), (1, "é".len()));
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(1)));
+
+        let result = scan("%[ω-α]%n", "ω-αβ");
+        assert_eq!(result.consumed, "ω-α".len());
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(3)));
+        let result = scan("%[]α]%n", "]αX");
+        assert_eq!(result.consumed, "]α".len());
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(2)));
+    }
+
+    #[test]
+    fn wide_literal_mismatch_leaves_the_entire_character_unread() {
+        let result = scan("é%n", "ê");
+        assert_eq!((result.count, result.consumed), (0, 0));
+        assert!(result.values.is_empty());
+        assert!(!result.input_failure);
+        let result = scan("😀%n", "😃");
+        assert_eq!(result.consumed, 0);
+        let result = scan("\u{2003}é%n", " \t\u{3000}é");
+        assert!(matches!(result.values[0], ScanValue::CharsConsumed(4)));
+    }
+
+    #[test]
+    fn wide_positional_indices_are_distinct_from_field_widths() {
+        let directives = parse_scanf_format_wide(b"%2$3ls %1$d %3$n %4$*ms");
+        let specs: Vec<_> = directives
+            .iter()
+            .filter_map(|directive| match directive {
+                ScanDirective::Spec(spec) => Some(spec),
+                _ => None,
+            })
+            .collect();
+        let indices: Vec<_> = specs
+            .iter()
+            .map(|spec| spec.argument_index.unwrap().get())
+            .collect();
+        assert_eq!(indices, [2, 1, 3, 4]);
+        assert_eq!(specs[0].width, Some(3));
+        assert_eq!(specs[0].length, LengthMod::L);
+        assert!(specs.iter().all(|spec| spec.wide_input));
+        assert!(specs[3].suppress && specs[3].alloc);
+
+        let directives = parse_scanf_format_wide(b"%23s");
+        assert!(
+            matches!(&directives[0], ScanDirective::Spec(spec) if spec.width == Some(23) && spec.argument_index.is_none())
+        );
+        assert!(
+            parse_scanf_format(b"%2$s").is_empty(),
+            "narrow positional support is unchanged"
+        );
+        for malformed in [
+            b"%0$s".as_slice(),
+            b"%999999999999999999999999999999999999999$s",
+        ] {
+            let directives = parse_scanf_format_wide(malformed);
+            assert!(matches!(directives[0], ScanDirective::Malformed));
+        }
+    }
+
+    #[test]
+    fn wide_failed_conversion_consumes_skipped_whitespace() {
+        for (input, exhausted) in [("  X", false), ("  ", true), ("\u{2003}X", false)] {
+            let result = scan("%d", input);
+            assert_eq!(result.count, 0);
+            assert_eq!(result.consumed, input.trim_end_matches('X').len());
+            assert_eq!(result.input_failure, exhausted);
+        }
+        let result = scan("%s%n%d", "é X");
+        assert_eq!(result.count, 1);
+        assert_eq!(result.consumed, "é ".len());
+        assert!(matches!(result.values[1], ScanValue::CharsConsumed(1)));
+        assert!(!result.input_failure);
+        let result = scan("%d%d", "7 ");
+        assert_eq!(result.count, 1);
+        assert_eq!(result.consumed, 2);
+        assert!(
+            result.input_failure,
+            "the stream adapter needs the failed read after an assignment"
+        );
     }
 }
