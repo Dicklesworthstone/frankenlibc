@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare observed native poll cancellation and signal behavior with GNU libc."""
+"""Compare observed native poll/epoll cancellation and signal behavior with GNU libc."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sys
 import time
 
 
-CASES = tuple(
+POLL_CASES = tuple(
     f"{entry}-{case}"
     for entry in ("poll", "ppoll")
     for case in (
@@ -27,6 +27,23 @@ CASES = tuple(
     "ppoll-readonly-timeout",
     "ppoll-alias-blocked", "ppoll-alias-pending",
 )
+EPOLL_CASES = tuple(
+    f"{entry}-{case}"
+    for entry in ("epoll-wait", "epoll-pwait", "epoll-pwait2")
+    for case in (
+        "pending", "blocked", "disabled", "signal", "signal-restart", "ready",
+        "reuse", "empty-blocked", "timeout", "ready-late", "edge-ready", "errors",
+    )
+) + tuple(
+    f"{entry}-{case}"
+    for entry in ("epoll-pwait", "epoll-pwait2")
+    for case in ("mask-unblock", "mask-block", "mask-cancel", "mask-cancel-block")
+) + (
+    "epoll-pwait2-readonly-timeout",
+    "epoll-wait-alias-blocked", "epoll-wait-alias-pending",
+    "epoll-pwait-alias-blocked", "epoll-pwait-alias-pending",
+)
+CASES = POLL_CASES + EPOLL_CASES
 
 
 def digest(path: Path) -> str:
@@ -34,6 +51,8 @@ def digest(path: Path) -> str:
 
 
 def main() -> int:
+    if not __debug__:
+        raise RuntimeError("the cancellation runner requires Python assertions to be enabled")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--library", type=Path)
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -114,7 +133,9 @@ def main() -> int:
     for case in CASES:
         # GNU need not export our reserved alias. The candidate must provide
         # and pin the exact alias; its oracle exercises the public contract.
-        oracle = case.replace("ppoll-alias-", "ppoll-")
+        oracle = case.replace("ppoll-alias-", "ppoll-").replace(
+            "epoll-wait-alias-", "epoll-wait-"
+        ).replace("epoll-pwait-alias-", "epoll-pwait-")
         execute(f"host-{case}", oracle, host, env)
         if not args.host_only:
             assert library is not None
@@ -145,13 +166,14 @@ def main() -> int:
     assert len(rows) == expected_rows
     failures = [row["label"] for row in rows if row["status"] != "PASS"]
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
         "revision": revision.stdout.strip() if revision.returncode == 0 else None,
         "fixture_sha256": digest(source), "runner_sha256": digest(Path(__file__)),
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
         "gnu_provider": str(host), "gnu_provider_sha256": digest(host),
         "compiler_command": command, "case_count": len(CASES),
+        "poll_cases": len(POLL_CASES), "epoll_cases": len(EPOLL_CASES),
         "oracle_cases": len(CASES), "candidate_cases": 0 if args.host_only else 4 * len(CASES),
         "provider_negatives": 1, "backend_negatives": 1,
         "explicit_skips": [row["label"] for row in rows if row["status"] == "SKIP"],
@@ -159,10 +181,10 @@ def main() -> int:
     }
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
-        print("Required poll coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
+        print("Required poll/epoll coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
         return 1
     candidate = "no candidate validation" if args.host_only else f"{4 * len(CASES)} candidate cases"
-    print(f"Native poll: {len(CASES)} GNU oracle cases, {candidate}, 2 negative controls passed")
+    print(f"Native poll/epoll: {len(CASES)} GNU oracle cases, {candidate}, 2 negative controls passed")
     return 0
 
 

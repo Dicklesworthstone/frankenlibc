@@ -6765,6 +6765,155 @@ unsafe fn cancellation_poll_window(
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// Epoll cancellation point. Capture the caller before the out-of-line window
+/// so every public alias has the same native/hosted admission rules.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_epoll_pwait(
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: c_int,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_epoll_window(caller, epfd, events, maxevents, timeout, mask) }
+}
+
+/// Like the poll window, this frame owns no resources or cleanup state. A
+/// successful epoll wait has already consumed edge/one-shot notifications:
+/// publish those events before acting on a concurrent cancellation request.
+#[inline(never)]
+unsafe fn cancellation_epoll_window(
+    caller: usize,
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: c_int,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        // SAFETY: the original event buffer and mask remain live through the
+        // kernel wait. The descriptor belongs to this registered native thread.
+        let result = unsafe {
+            cancel_poll::wait_epoll(
+                epfd,
+                events,
+                maxevents,
+                timeout,
+                mask,
+                cancel,
+                pthread_testcancel,
+            )
+        };
+        if !matches!(result, Ok(ready) if ready > 0) && cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_epoll_pwait(
+                epfd,
+                events,
+                maxevents,
+                timeout,
+                mask,
+                std::mem::size_of::<u64>(),
+            )
+        })
+    }
+}
+
+/// Nanosecond epoll cancellation point. The raw caller timeout is imported
+/// only on the admitted native path; hosted and internal calls keep their
+/// original single-syscall behavior and kernel pointer validation.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_epoll_pwait2(
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_epoll2_window(caller, epfd, events, maxevents, timeout, mask) }
+}
+
+#[inline(never)]
+unsafe fn cancellation_epoll2_window(
+    caller: usize,
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        // Unlike ppoll's libc timeout copy, this API previously passed caller
+        // memory straight to the kernel. Preserve EFAULT for inaccessible
+        // sources and support unaligned ones without a Rust reference to either.
+        let mut owned = raw_syscall::Timespec::default();
+        let imported = if timeout.is_null() {
+            Ok(std::ptr::null())
+        } else {
+            // SAFETY: the destination is live, aligned, initialized storage.
+            // The shared copier validates the caller's source through Linux.
+            unsafe {
+                crate::io_abi::iov_snapshot::copy_user_bytes(
+                    timeout,
+                    std::ptr::from_mut(&mut owned).cast(),
+                    std::mem::size_of::<raw_syscall::Timespec>(),
+                )
+            }
+            .map(|()| std::ptr::from_mut(&mut owned).cast::<u8>().cast_const())
+        };
+        let result = match imported {
+            // SAFETY: the aligned timeout snapshot and original event/mask
+            // arguments remain in place until the adapter finishes or unwinds.
+            Ok(timeout) => unsafe {
+                cancel_poll::wait_epoll2(
+                    epfd,
+                    events,
+                    maxevents,
+                    timeout,
+                    mask,
+                    cancel,
+                    pthread_testcancel,
+                )
+            },
+            Err(error) => Err(error),
+        };
+        if !matches!(result, Ok(ready) if ready > 0) && cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_epoll_pwait2(
+                epfd,
+                events,
+                maxevents,
+                timeout,
+                mask,
+                std::mem::size_of::<u64>(),
+            )
+        })
+    }
+}
+
 /// A cancellation point that can wake an already-parked native thread. Keep
 /// every frame up to the exported entry inlined so admission uses its caller.
 #[inline(always)]
@@ -6861,7 +7010,7 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex and poll cancellation points use their dedicated windows to
+    // Native futex, poll and epoll points use their dedicated windows to
     // observe a request arriving while parked; other syscalls remain pending-
     // request cancellation points until they gain an interruptible native path.
     // With no native threads, current_thread_handle exits at its atomic flag

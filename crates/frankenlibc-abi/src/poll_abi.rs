@@ -562,16 +562,13 @@ pub(crate) unsafe fn epoll_wait_cp(
         return reject_efault();
     }
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_epoll_pwait(
-                epfd,
-                events as *mut u8,
-                maxevents,
-                timeout,
-                std::ptr::null(),
-                core::mem::size_of::<libc::c_ulong>(),
-            )
-        })
+        crate::pthread_abi::cancellation_point_epoll_pwait(
+            epfd,
+            events.cast(),
+            maxevents,
+            timeout,
+            std::ptr::null(),
+        )
     } {
         Ok(n) => n,
         Err(e) => {
@@ -623,16 +620,13 @@ pub(crate) unsafe fn epoll_pwait_cp(
         return reject_efault();
     }
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_epoll_pwait(
-                epfd,
-                events as *mut u8,
-                maxevents,
-                timeout,
-                sigmask as *const u8,
-                core::mem::size_of::<libc::c_ulong>(),
-            )
-        })
+        crate::pthread_abi::cancellation_point_epoll_pwait(
+            epfd,
+            events.cast(),
+            maxevents,
+            timeout,
+            sigmask.cast(),
+        )
     } {
         Ok(n) => n,
         Err(e) => {
