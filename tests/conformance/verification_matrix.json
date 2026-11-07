@@ -32437,7 +32437,7 @@
             "tests/integration/fixture_stdio.c"
           ],
           "source": {
-            "commit": "4edad10d545ca3a04109a5270b18b7ff69c2bb8d",
+            "commit": "fa456312065a49e5faf6c9b6533f1347c3b07515",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               ".github/workflows/native-caller-lookup.yml": "54808b8001b96de4f7cdc4d0337309330bdbc46281d7aac71f00c22f262d9863",
@@ -32445,7 +32445,7 @@
               "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
               "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
               "FEATURE_PARITY.md": "a16780b3565da1b894dfe631443a2f6df91dd31f10327a866d1983b6d332df82",
-              "README.md": "a0567d2d4e27d7d4d8dc63ec72174db9b4bfb866a042a451ec95637c1ca314c4",
+              "README.md": "31b689a127ceb95d61dd9c31cb3219f143715f52494556e5d0cde1a250f2ccba",
               "crates/frankenlibc-abi/Cargo.toml": "2334acc1f64083819b8b82720125cff4cee340bfe5f7e1ba75ff90586c886f8e",
               "crates/frankenlibc-abi/build.rs": "1f3706508dfe8c8a6d124cd60a66914f77ad11ebed368740a08eb03c1f3541c1",
               "crates/frankenlibc-abi/src/aio_completion.rs": "442076b3f9a02501de7fb5d8b5c825bd1b5c946897a3a7799cff6e7794af5751",
@@ -32506,7 +32506,7 @@
               "crates/frankenlibc-abi/src/iconv_abi.rs": "8183364cac237ff83f9df91d4650055a763092edf82a70e40d5fae8207100f9e",
               "crates/frankenlibc-abi/src/inet_abi.rs": "55d31a95d5b5eef848e63180a66f0b1b760adc6c7ed794672d8234b64bb242eb",
               "crates/frankenlibc-abi/src/io_abi.rs": "17de8a0a99c0bbf3e891f7fa9635652f43207706cc7763712d5f7ea33f229ed6",
-              "crates/frankenlibc-abi/src/io_internal_abi.rs": "9f481f7995d1d3c489dd86fc5f9664e0e0c11fcbc4444788a221469b47a83513",
+              "crates/frankenlibc-abi/src/io_internal_abi.rs": "e64249ba602f5c78d20e506db13dfa89ca62253ffe308349aa9cc9f7b92c8c92",
               "crates/frankenlibc-abi/src/iov_snapshot.rs": "6eca6451aa3af5bdc63a71f77ae29848a3b49304f0d75febb757936b650a6141",
               "crates/frankenlibc-abi/src/iov_snapshot_tests.rs": "be7826e1a2999666b5aa06634ff1d3194fa3512e31454da160c9a7981a4c7938",
               "crates/frankenlibc-abi/src/isoc_abi.rs": "d55dcf5fdbf1a7fc22230d82aaab5bd1996bd92c6dc80789e529d217e9fcb4c6",
@@ -32575,7 +32575,7 @@
               "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
               "crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs": "5e1af54856358e6851a68d8c53c9def6efea2f4ea03a406d2647356792deec63",
               "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "e5bc3f79a10798e7ec79bf754511205297c3c37a98644647d4175fe31669179a",
-              "crates/frankenlibc-abi/tests/conformance_diff_getline.rs": "cabee73724ab21ff4e9ca166c78d7ca3c5654de53a4d44c206ff017d10d9c355",
+              "crates/frankenlibc-abi/tests/conformance_diff_getline.rs": "d38837f4f59cdb4d745b634808f8c3f5f5e2746ab51d5c939ff132bbdac43b8f",
               "crates/frankenlibc-abi/tests/conformance_diff_getrandom.rs": "021429fb71f236784adf99a180975b132f18678583524ed07a5811b7e793e2c3",
               "crates/frankenlibc-abi/tests/conformance_diff_isoc_sscanf_alias.rs": "f77c39ab4d552e03f1b535b6d59e0d06769d49c26c2e998d19de3a7180e414f4",
               "crates/frankenlibc-abi/tests/conformance_diff_locale_l_variants.rs": "7073f807f009a6e1192f8a754e842c6001c289d3d14cd8f8b54ecd1f45cb2b87",
@@ -32924,7 +32924,7 @@
               "scripts/check_semantic_contract_drift.sh": "0401902eeedca53fcde2e1ef6a014336b9303c5bd2d0c4188372ea976994a16d",
               "scripts/check_semantic_contract_inventory.sh": "a749438fcbe544a3cb6a37bd924f7f3c26b01396573400f24afe641fe370df4b",
               "scripts/check_semantic_contract_symbol_join.sh": "889db9521b4f937cd75a1b7f8a1da4ab60463c4befdf0810114347b136fba62e",
-              "scripts/check_stdio_native.sh": "3f36d09a2d9fd4e3f590ad4ee0394bfb2a0ad0dd884fe59609cc8ea7f5cbc5f8",
+              "scripts/check_stdio_native.sh": "b1b8a443fe1ce40e72d695cdb0e2bb0bf4f6f8b63cb5deb1eabaf3b2e2658e13",
               "scripts/check_support_semantic_overlay_schema.sh": "14e7e5bda3475b0b0df1dcff1b67ca760effe5f191970bcc7b2c3fb2252dd1c8",
               "scripts/generate_host_delegation_census.py": "188e4577cb87022048e1377056359dc270e6d5d16aafd3ce2231bed5480f4c0d",
               "scripts/integrate_global_resolver.py": "2fea26ef681a0269011f8497d45c7ee3dafc088f2adc808d2330e1b97c610c8b",
@@ -32933,11 +32933,11 @@
               "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e",
               "tests/conformance/docs_semantic_claims.v1.json": "14cb0b5c2dffe8e0c8890fab139fa99fb34ca1063b9653b0d3c77bda1a9189f9",
               "tests/conformance/global_resolver_abi.c": "fe8c32237b5d110b2eb7b5b9bc524b08d84b875e8c07910df7d23ce6b745ea44",
-              "tests/conformance/host_delegation_census.v1.json": "ca48d8c67b5b624d58204bd7066ffe868f2672c8c41293a67c71efbcf77756e7",
+              "tests/conformance/host_delegation_census.v1.json": "6ceb49dd69d94917558197916e4efc5dbe36cbcbbb6727d42276ec2d66eb276f",
               "tests/conformance/oracle_precedence_divergence.v1.json": "8c1e222d25c46731f99c4b17dc2f69e8157f3e559c922fb1312040ea585a719a",
               "tests/conformance/replacement_levels.json": "3b1945b95bb940010dd696e230d1ae82de4dcfc58ca820f97733c7eeaeedb6f8",
               "tests/conformance/rresvport_abi.c": "fdfeec098a36660a4c49d8c3ee5d11dd1c248f294f571134ed7bcc2ac51248b1",
-              "tests/conformance/semantic_contract_inventory.v1.json": "e6801b61df08baca1e2e9ad4a21b6d00b345accd40a75b83b66c0c0c88b667d8",
+              "tests/conformance/semantic_contract_inventory.v1.json": "1de18c9e7a3e1f206265747e18b48eb87c27a89a0ea695877ee29cd15981b083",
               "tests/conformance/semantic_contract_symbol_join.v1.json": "23719a6dd3a355b31939c65f40411ea846d519a6d5abc949dd5d4018e5db8496",
               "tests/conformance/support_semantic_overlay.v1.json": "f74b4bf210968c2b56d3b7eab9474e282af36d1208aa7e52d552e4ba16b01ebf",
               "tests/conformance/symbol_universe_normalization.v1.json": "8684a78d23a328b36766bd556cd93ef5e484bfb2fdaf0409e106a6f7efd54448",
@@ -32947,7 +32947,7 @@
               "tests/integration/fixture_native_runtime_driver.c": "fe9545d2ed8c05879a720379eadf7b5d8dc1653f6e3f19cc14fa3845b2f2fb30",
               "tests/integration/fixture_random_multibyte.c": "53bcad31396a81fdde77288223bb0a7af9e40256bee41830ef255e6aa0352049",
               "tests/integration/fixture_spawn_concurrent_fork.c": "efd4cd2a97f4ceae19bb1240d8f98a67908c69978d11d384d5926f0382dd9f28",
-              "tests/integration/fixture_stdio.c": "b7254197fe53dac490ea35c133b0c8540a194a01ecc27712e14dedbb7b16dde2",
+              "tests/integration/fixture_stdio.c": "15bc1a367677d53edbcfd80e3ac5ffbfe533be706e38ce2835cd57dbd8068dab",
               "tools/stdio_synth/Cargo.lock": "3ee47be29c77dca7eaf0db4bbb46ef85ec703609a71b25e1df141ab744f7ebd0",
               "tools/stdio_synth/Cargo.toml": "a178438ba72e430465fa4ca49aaf1cb9b8261fa1a89e5720a848123f26dafbcc",
               "tools/stdio_synth/spec/printf_grammar.json": "06e50b79cb61c7f19e3f63d611d0bc1f1bd093f2f8ae96270dc55651856c0074",
@@ -32972,7 +32972,7 @@
               "default"
             ]
           },
-          "not_before": "2026-11-06T22:46:59.344450376Z",
+          "not_before": "2026-11-07T00:29:08.712628940Z",
           "gate": {
             "command": [
               "/data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-abi/c388430a978279a4/out/conformance_diff_getline-c388430a978279a4",
