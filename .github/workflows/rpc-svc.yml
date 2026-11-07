@@ -9,8 +9,10 @@ on:
       - 'crates/frankenlibc-core/src/rpc/**'
       - 'tests/integration/fixture_rpc_svc*'
       - 'tests/integration/fixture_rpc_auth_des_module.c'
+      - 'tests/integration/fixture_rpc_xdr_record.c'
       - 'scripts/check_rpc_svc*.py'
       - 'scripts/check_rpc_auth_des.py'
+      - 'scripts/check_rpc_xdr_record.py'
       - '.github/workflows/rpc-svc.yml'
   workflow_dispatch:
 permissions:
@@ -49,7 +51,7 @@ jobs:
           mkdir -p "$root/source"
           git rev-parse HEAD > "$root/revision.txt"
           rustc --version --verbose > "$root/rustc.txt"
-          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs scripts/check_rpc_svc*.py scripts/check_rpc_auth_des.py tests/integration/fixture_rpc_svc* tests/integration/fixture_rpc_auth_des_module.c
+          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs scripts/check_rpc_svc*.py scripts/check_rpc_auth_des.py scripts/check_rpc_xdr_record.py tests/integration/fixture_rpc_svc* tests/integration/fixture_rpc_auth_des_module.c tests/integration/fixture_rpc_xdr_record.c
           for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs rpc_svc_des.rs; do
             cp "crates/frankenlibc-abi/src/$file" "$root/source/"
             git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
@@ -65,6 +67,7 @@ jobs:
           cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
           cp Cargo.lock "$root/Cargo.lock"
           sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
+          python3 scripts/check_rpc_xdr_record.py "$PWD/$root/libfrankenlibc_abi.so" --output "$root/xdr-record"
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
           # Direct GNU authentication/identity oracles require no network.
@@ -97,7 +100,8 @@ jobs:
           subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--',
               'crates/frankenlibc-abi/src/rpc*.rs', 'scripts/check_rpc_svc*.py',
               'scripts/check_rpc_auth_des.py', 'tests/integration/fixture_rpc_svc*',
-              'tests/integration/fixture_rpc_auth_des_module.c'], check=True)
+              'tests/integration/fixture_rpc_auth_des_module.c',
+              'scripts/check_rpc_xdr_record.py', 'tests/integration/fixture_rpc_xdr_record.c'], check=True)
           assert pathlib.Path('Cargo.lock').read_bytes() == pathlib.Path('artifacts/rpc-svc/Cargo.lock').read_bytes()
           result = {}
           for name in ['rpc_svc.rs', 'rpc_abi.rs', 'rpc_svc_cache.rs', 'rpc_svc_des.rs']:

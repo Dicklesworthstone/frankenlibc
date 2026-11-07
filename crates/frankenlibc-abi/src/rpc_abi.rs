@@ -382,8 +382,9 @@ pub unsafe extern "C" fn xdrstdio_create(xdrs: *mut c_void, file: *mut c_void, o
 
 // ===================== Record stream backend (TCP) =====================
 
-/// Private state for record-marking XDR stream.
-#[allow(dead_code)]
+/// Bounded RFC 5531 record-marker state. Input callbacks may split any byte of
+/// a marker or payload. Completed records stay in the output buffer until a
+/// requested flush, buffer pressure, or an already-sent fragment requires it.
 struct RecStream {
     out_base: *mut u8,
     out_finger: *mut u8,
@@ -394,63 +395,122 @@ struct RecStream {
     in_boundry: *mut u8,
     fbtbc: i64,
     last_frag: bool,
-    sendsize: c_uint,
     recvsize: c_uint,
     tcp_handle: *mut c_void,
     readit: *mut c_void,  // fn(*mut c_void, *mut c_void, c_int) -> c_int
     writeit: *mut c_void, // fn(*mut c_void, *mut c_void, c_int) -> c_int
-    in_haveheader: bool,
+    fragment_sent: bool,
 }
 
 type RecIo = unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int;
 
 impl RecStream {
+    fn input_available(&self) -> usize {
+        self.in_boundry as usize - self.in_finger as usize
+    }
+
+    fn output_available(&self) -> usize {
+        self.out_boundry as usize - self.out_finger as usize
+    }
+
+    unsafe fn mark_output(&mut self, last: bool) {
+        let len = self.out_finger as usize - self.frag_header as usize - 4;
+        let marker = len as u32 | if last { 0x8000_0000 } else { 0 };
+        // SAFETY: each fragment reserves four bytes in the owned output buffer.
+        // Raw byte writes can leave a batched marker unaligned.
+        unsafe { std::ptr::write_unaligned(self.frag_header, marker.to_be()) };
+    }
+
     unsafe fn flush_out(&mut self, eor: bool) -> bool {
-        let len = self.out_finger as usize - (self.frag_header as *mut u8 as usize) - 4;
-        let hdr = if eor {
-            len as u32 | 0x80000000
-        } else {
-            len as u32
-        };
-        unsafe {
-            std::ptr::write_unaligned(self.frag_header, hdr.to_be());
-        }
+        // SAFETY: the output cursor and reserved header belong to this stream.
+        unsafe { self.mark_output(eor) };
         let total = self.out_finger as usize - self.out_base as usize;
+        // The legacy callback contract requires one complete write. A short
+        // write is failure, not permission to duplicate or retry a prefix.
+        // SAFETY: xdrrec_create's caller supplies a valid synchronous callback.
         let wfn: RecIo = unsafe { std::mem::transmute(self.writeit) };
         let n = unsafe { wfn(self.tcp_handle, self.out_base.cast(), total as c_int) };
-        if (n as usize) != total {
+        if n < 0 || n as usize != total {
             return false;
         }
         self.frag_header = self.out_base as *mut u32;
+        // SAFETY: normalized output buffers always have room for a marker.
         self.out_finger = unsafe { self.out_base.add(4) };
+        self.fragment_sent = !eor;
         true
     }
+
     unsafe fn fill_input(&mut self) -> bool {
+        debug_assert_eq!(self.input_available(), 0);
+        // Preserve the wire cursor's alignment across short callback reads so
+        // an aligned payload can still use XDR_INLINE after a split marker.
+        let offset = self.in_finger as usize & 3;
+        let want = self.recvsize as usize - offset;
+        // SAFETY: offset is at most three and normalized buffers are >=100.
+        let destination = unsafe { self.in_base.add(offset) };
+        // SAFETY: xdrrec_create's caller supplies a valid synchronous callback.
         let rfn: RecIo = unsafe { std::mem::transmute(self.readit) };
-        let want = self.recvsize as c_int;
-        let n = unsafe { rfn(self.tcp_handle, self.in_base.cast(), want) };
-        if n <= 0 {
+        let n = unsafe { rfn(self.tcp_handle, destination.cast(), want as c_int) };
+        if n <= 0 || n as usize > want {
             return false;
         }
-        self.in_finger = self.in_base;
-        self.in_boundry = unsafe { self.in_base.add(n as usize) };
+        self.in_finger = destination;
+        // SAFETY: the validated callback count fits the owned input buffer.
+        self.in_boundry = unsafe { destination.add(n as usize) };
         true
     }
+
     unsafe fn get_frag_header(&mut self) -> bool {
-        let avail = self.in_boundry as usize - self.in_finger as usize;
-        if avail < 4 && !unsafe { self.fill_input() } {
+        let mut marker = [0u8; 4];
+        let mut copied = 0;
+        while copied < marker.len() {
+            if self.input_available() == 0 && !unsafe { self.fill_input() } {
+                // Like GNU, a failed partial marker is not resumable: bytes
+                // already consumed are not replayed as a new wire message.
+                return false;
+            }
+            let take = self.input_available().min(marker.len() - copied);
+            // SAFETY: both ranges have `take` bytes and are disjoint; consume
+            // buffered bytes before refilling, including partial markers.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.in_finger,
+                    marker.as_mut_ptr().add(copied),
+                    take,
+                );
+                self.in_finger = self.in_finger.add(take);
+            }
+            copied += take;
+        }
+        let marker = u32::from_be_bytes(marker);
+        // GNU rejects an empty nonterminal fragment; an empty final record
+        // (0x8000_0000) remains valid and participates in normal navigation.
+        if marker == 0 {
             return false;
         }
-        let avail = self.in_boundry as usize - self.in_finger as usize;
-        if avail < 4 {
-            return false;
-        }
-        let hdr = u32::from_be(unsafe { std::ptr::read_unaligned(self.in_finger as *const u32) });
-        self.in_finger = unsafe { self.in_finger.add(4) };
-        self.last_frag = hdr & 0x80000000 != 0;
-        self.fbtbc = (hdr & 0x7FFFFFFF) as i64;
-        self.in_haveheader = true;
+        self.last_frag = marker & 0x8000_0000 != 0;
+        self.fbtbc = i64::from(marker & 0x7fff_ffff);
         true
+    }
+
+    unsafe fn skip_input_record(&mut self) -> bool {
+        loop {
+            while self.fbtbc > 0 {
+                if self.input_available() == 0 && !unsafe { self.fill_input() } {
+                    return false;
+                }
+                let take = self.input_available().min(self.fbtbc as usize);
+                // SAFETY: `take` stays inside the current buffered fragment.
+                self.in_finger = unsafe { self.in_finger.add(take) };
+                self.fbtbc -= take as i64;
+            }
+            if self.last_frag {
+                return true;
+            }
+            if !unsafe { self.get_frag_header() } {
+                return false;
+            }
+        }
     }
 }
 
@@ -467,8 +527,12 @@ unsafe extern "C" fn rec_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
                 return XDR_FALSE;
             }
         }
-        let avail =
-            ((rs.in_boundry as usize - rs.in_finger as usize) as i64).min(rs.fbtbc) as usize;
+        // An empty final record ends here without discarding buffered bytes
+        // belonging to the following record.
+        if rs.fbtbc == 0 {
+            continue;
+        }
+        let avail = rs.input_available().min(rs.fbtbc as usize);
         if avail == 0 {
             if !unsafe { rs.fill_input() } {
                 return XDR_FALSE;
@@ -490,7 +554,7 @@ unsafe extern "C" fn rec_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
 }
 unsafe extern "C" fn rec_pi32(x: *mut Xdr, ip: *const i32) -> c_int {
     let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
-    if (rs.out_boundry as usize - rs.out_finger as usize) < 4 && !unsafe { rs.flush_out(false) } {
+    if rs.output_available() < 4 && !unsafe { rs.flush_out(false) } {
         return XDR_FALSE;
     }
     let buf = unsafe { (*ip).to_be_bytes() };
@@ -527,8 +591,10 @@ unsafe extern "C" fn rec_gb(x: *mut Xdr, a: *mut c_char, n: c_uint) -> c_int {
                 return XDR_FALSE;
             }
         }
-        let avail =
-            ((rs.in_boundry as usize - rs.in_finger as usize) as i64).min(rs.fbtbc) as usize;
+        if rs.fbtbc == 0 {
+            continue;
+        }
+        let avail = rs.input_available().min(rs.fbtbc as usize);
         if avail == 0 {
             if !unsafe { rs.fill_input() } {
                 return XDR_FALSE;
@@ -551,7 +617,7 @@ unsafe extern "C" fn rec_pb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int {
     let mut src = a as *const u8;
     let mut rem = n as usize;
     while rem > 0 {
-        let avail = rs.out_boundry as usize - rs.out_finger as usize;
+        let avail = rs.output_available();
         if avail == 0 {
             if !unsafe { rs.flush_out(false) } {
                 return XDR_FALSE;
@@ -568,24 +634,90 @@ unsafe extern "C" fn rec_pb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int {
     }
     XDR_TRUE
 }
-unsafe extern "C" fn rec_pos(_x: *const Xdr) -> c_uint {
-    0
+unsafe extern "C" fn rec_pos(x: *const Xdr) -> c_uint {
+    // SAFETY: the operation table is only published with a live RecStream.
+    let rs = unsafe { &*((*x).x_private as *const RecStream) };
+    // GNU's seekable record-stream convention interprets the opaque handle as
+    // an fd. Other callback handles and sockets return the failure sentinel.
+    let offset = match raw_syscall::sys_lseek(rs.tcp_handle as usize as c_int, 0, libc::SEEK_CUR) {
+        Ok(offset) => offset,
+        Err(error) => {
+            // SAFETY: this ABI call reports its error in the current thread's errno.
+            unsafe { set_abi_errno(error) };
+            return c_uint::MAX;
+        }
+    };
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            offset.wrapping_add((rs.out_finger as usize - rs.out_base as usize) as i64) as c_uint
+        }
+        XDR_DECODE => offset.wrapping_sub(rs.input_available() as i64) as c_uint,
+        _ => c_uint::MAX,
+    }
 }
-unsafe extern "C" fn rec_setpos(_x: *mut Xdr, _pos: c_uint) -> c_int {
-    XDR_FALSE
+unsafe extern "C" fn rec_setpos(x: *mut Xdr, pos: c_uint) -> c_int {
+    // SAFETY: x is the caller's live record stream.
+    let current = unsafe { rec_pos(x) };
+    if current == c_uint::MAX {
+        return XDR_FALSE;
+    }
+    // GNU positions and their difference are 32-bit, including wraparound.
+    let delta = i64::from(current.wrapping_sub(pos) as i32);
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            let index = (rs.out_finger as usize - rs.out_base as usize) as i64 - delta;
+            let header = (rs.frag_header as usize - rs.out_base as usize) as i64;
+            let end = (rs.out_boundry as usize - rs.out_base as usize) as i64;
+            // Positions supplied to xdr_setpos must have come from getpos.
+            // No valid payload position can point inside its reserved marker.
+            if index < header + 4 || index >= end {
+                return XDR_FALSE;
+            }
+            // SAFETY: integer admission precedes pointer arithmetic, and keeps
+            // the new cursor in this fragment's owned output buffer.
+            rs.out_finger = unsafe { rs.out_base.add(index as usize) };
+        }
+        XDR_DECODE => {
+            let index = (rs.in_finger as usize - rs.in_base as usize) as i64 - delta;
+            let end = (rs.in_boundry as usize - rs.in_base as usize) as i64;
+            if delta >= rs.fbtbc || index < 0 || index > end {
+                return XDR_FALSE;
+            }
+            // Retain GNU's observable fragment-count adjustment, including its
+            // asymmetric rewind restriction; only buffered positions qualify.
+            rs.in_finger = unsafe { rs.in_base.add(index as usize) };
+            rs.fbtbc -= delta;
+        }
+        _ => return XDR_FALSE,
+    }
+    XDR_TRUE
 }
 unsafe extern "C" fn rec_inline(x: *mut Xdr, len: c_uint) -> *mut i32 {
     let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
-    if unsafe { (*x).x_op } == XDR_ENCODE {
-        let avail = rs.out_boundry as usize - rs.out_finger as usize;
-        if avail < len as usize {
-            return std::ptr::null_mut();
+    // XDR_INLINE may decline an optimization. Odd byte-oriented cursors use
+    // the copying operations instead of exposing an unaligned i32 pointer.
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE if rs.output_available() >= len as usize && rs.out_finger as usize & 3 == 0 => {
+            let p = rs.out_finger.cast::<i32>();
+            // SAFETY: the requested contiguous range fits the output buffer.
+            rs.out_finger = unsafe { rs.out_finger.add(len as usize) };
+            p
         }
-        let p = rs.out_finger as *mut i32;
-        rs.out_finger = unsafe { rs.out_finger.add(len as usize) };
-        return p;
+        XDR_DECODE
+            if rs.input_available() >= len as usize
+                && rs.fbtbc >= i64::from(len)
+                && rs.in_finger as usize & 3 == 0 =>
+        {
+            let p = rs.in_finger.cast::<i32>();
+            // SAFETY: both the input allocation and current fragment contain
+            // the requested range; no callback or refill invalidates it here.
+            rs.in_finger = unsafe { rs.in_finger.add(len as usize) };
+            rs.fbtbc -= i64::from(len);
+            p
+        }
+        _ => std::ptr::null_mut(),
     }
-    std::ptr::null_mut()
 }
 unsafe extern "C" fn rec_destroy(x: *mut Xdr) {
     let rs = unsafe { (*x).x_private as *mut RecStream };
@@ -620,6 +752,14 @@ static XDRREC_OPS: XdrOps = XdrOps {
     x_putint32: rec_pi32,
 };
 
+fn rec_buffer_size(requested: c_uint) -> Option<usize> {
+    let size = if requested < 100 { 4000 } else { requested };
+    let aligned = size.checked_add(3)? & !3;
+    // Callback lengths and record-fragment lengths must both remain positive
+    // signed ints. Reject overflow before allocating or publishing any state.
+    (aligned <= c_int::MAX as c_uint).then_some(aligned as usize)
+}
+
 /// Create a record-stream XDR (TCP record marking). Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdrrec_create(
@@ -630,10 +770,14 @@ pub unsafe extern "C" fn xdrrec_create(
     readit: *mut c_void,
     writeit: *mut c_void,
 ) {
-    let ss = if sendsize == 0 { 4096 } else { sendsize };
-    let rs_val = if recvsize == 0 { 4096 } else { recvsize };
-    let out_buf = unsafe { crate::malloc_abi::raw_alloc(ss as usize + 4) as *mut u8 };
-    let in_buf = unsafe { crate::malloc_abi::raw_alloc(rs_val as usize) as *mut u8 };
+    let (Some(ss), Some(rs_val)) = (rec_buffer_size(sendsize), rec_buffer_size(recvsize)) else {
+        // SAFETY: this ABI call reports its error in the current thread's errno.
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return;
+    };
+    // SAFETY: normalized lengths reserve space for markers and fit callbacks.
+    let out_buf = unsafe { crate::malloc_abi::raw_alloc(ss) as *mut u8 };
+    let in_buf = unsafe { crate::malloc_abi::raw_alloc(rs_val) as *mut u8 };
     if out_buf.is_null() || in_buf.is_null() {
         if !out_buf.is_null() {
             unsafe {
@@ -650,28 +794,27 @@ pub unsafe extern "C" fn xdrrec_create(
     let rs = Box::new(RecStream {
         out_base: out_buf,
         out_finger: unsafe { out_buf.add(4) },
-        out_boundry: unsafe { out_buf.add(ss as usize + 4) },
+        out_boundry: unsafe { out_buf.add(ss) },
         frag_header: out_buf as *mut u32,
         in_base: in_buf,
         in_finger: in_buf,
         in_boundry: in_buf,
         fbtbc: 0,
-        last_frag: false,
-        sendsize: ss,
-        recvsize: rs_val,
+        // The stream begins at a record boundary. The caller must first use
+        // xdrrec_skiprecord to enter the first record, as on GNU libc.
+        last_frag: true,
+        recvsize: rs_val as c_uint,
         tcp_handle: handle,
         readit,
         writeit,
-        in_haveheader: false,
+        fragment_sent: false,
     });
     let x = xdrs as *mut Xdr;
     unsafe {
-        (*x).x_op = 0;
+        // The operation, public data and unrelated user fields belong to the
+        // caller. Creation changes only the backend and its private storage.
         (*x).x_ops = &XDRREC_OPS;
         (*x).x_private = Box::into_raw(rs) as *mut c_void;
-        (*x).x_base = std::ptr::null_mut();
-        (*x).x_handy = 0;
-        (*x).x_public = std::ptr::null_mut();
     }
 }
 
@@ -680,31 +823,28 @@ pub unsafe extern "C" fn xdrrec_create(
 pub unsafe extern "C" fn xdrrec_endofrecord(xdrs: *mut c_void, sendnow: c_int) -> c_int {
     let x = xdrs as *mut Xdr;
     let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
-    if unsafe { rs.flush_out(true) } {
-        if sendnow == 0 {
-            return XDR_TRUE;
-        }
-        XDR_TRUE
-    } else {
-        XDR_FALSE
+    if sendnow != 0 || rs.fragment_sent || rs.output_available() <= 4 {
+        // SAFETY: the owned output region includes its current fragment marker.
+        return c_int::from(unsafe { rs.flush_out(true) });
     }
+    // SAFETY: the pending record's marker is reserved, and the condition above
+    // leaves room for the next record's marker without flushing the batch.
+    unsafe {
+        rs.mark_output(true);
+        rs.frag_header = rs.out_finger.cast();
+        rs.out_finger = rs.out_finger.add(4);
+    }
+    XDR_TRUE
 }
 
-/// Check if at end of current record in an XDR record stream. Native implementation.
+/// Consume this record and report whether the input buffer contains more data.
+/// No speculative read is issued at the next record boundary.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdrrec_eof(xdrs: *mut c_void) -> c_int {
     let x = xdrs as *mut Xdr;
     let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
-    // At EOF when we've consumed all fragment bytes and this is the last fragment
-    while rs.fbtbc == 0 {
-        if rs.last_frag {
-            return XDR_TRUE;
-        }
-        if !unsafe { rs.get_frag_header() } {
-            return XDR_TRUE;
-        }
-    }
-    XDR_FALSE
+    // SAFETY: only the live stream's buffered fragments are consumed.
+    c_int::from(!unsafe { rs.skip_input_record() } || rs.input_available() == 0)
 }
 
 /// Skip to end of current record in an XDR record stream. Native implementation.
@@ -712,30 +852,11 @@ pub unsafe extern "C" fn xdrrec_eof(xdrs: *mut c_void) -> c_int {
 pub unsafe extern "C" fn xdrrec_skiprecord(xdrs: *mut c_void) -> c_int {
     let x = xdrs as *mut Xdr;
     let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
-    loop {
-        // Skip remaining bytes in current fragment
-        while rs.fbtbc > 0 {
-            let avail = (rs.in_boundry as usize - rs.in_finger as usize) as i64;
-            if avail <= 0 {
-                if !unsafe { rs.fill_input() } {
-                    return XDR_FALSE;
-                }
-                continue;
-            }
-            let skip = avail.min(rs.fbtbc) as usize;
-            rs.in_finger = unsafe { rs.in_finger.add(skip) };
-            rs.fbtbc -= skip as i64;
-        }
-        if rs.last_frag {
-            break;
-        }
-        if !unsafe { rs.get_frag_header() } {
-            return XDR_FALSE;
-        }
+    // SAFETY: the record cursor and buffer ranges belong to this live stream.
+    if !unsafe { rs.skip_input_record() } {
+        return XDR_FALSE;
     }
     rs.last_frag = false;
-    rs.fbtbc = 0;
-    rs.in_haveheader = false;
     XDR_TRUE
 }
 
