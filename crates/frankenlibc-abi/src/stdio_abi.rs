@@ -4726,6 +4726,14 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
         let _ = s.set_orientation(-1);
     }
 
+    if !s.is_readable() {
+        s.set_error();
+        // SAFETY: only the calling thread's errno cell is modified.
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
     // Memory-backed streams: read directly from backing (no per-getc Vec).
     if s.is_mem_backed() {
         let mut b = [0u8; 1];
@@ -4750,8 +4758,9 @@ pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_i
         return b[0] as c_int;
     }
 
-    // Refill from fd.
-    if s.is_eof() || s.is_error() {
+    // EOF remains sticky until cleared or repositioned. An earlier error does
+    // not prevent retrying a character read; retain ferror while trying again.
+    if s.is_eof() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     }
@@ -5147,6 +5156,11 @@ unsafe fn read_cached_ascii_line_wide_inner(
 ) -> Option<(usize, bool)> {
     // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
     let s = unsafe { &mut *p };
+    // An EOF indication forbids a fresh refill, including when another writer
+    // has appended a complete line since the previous read reached EOF.
+    if s.is_eof() {
+        return Some((0, false));
+    }
     if s.wide_codec()
         .is_some_and(|codec| !codec.is_ascii_compatible())
     {

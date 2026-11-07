@@ -268,6 +268,7 @@ mod locale_scanning {
     }
 
     type OpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+    type FdopenFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void;
     type StreamFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
     type SeekFn = unsafe extern "C-unwind" fn(*mut c_void, libc::c_long, c_int) -> c_int;
     type TellFn = unsafe extern "C-unwind" fn(*mut c_void) -> libc::c_long;
@@ -284,6 +285,7 @@ mod locale_scanning {
         name: &'static str,
         errno: ErrnoFn,
         open: OpenFn,
+        fdopen: FdopenFn,
         close: StreamFn,
         orient: FwideFn,
         get: WideReadFn,
@@ -306,6 +308,7 @@ mod locale_scanning {
                 name: "host",
                 errno: host().errno,
                 open: host_fn(c"fopen", stdio_abi::fopen as *const ()),
+                fdopen: host_fn(c"fdopen", stdio_abi::fdopen as *const ()),
                 close: host_fn(c"fclose", stdio_abi::fclose as *const ()),
                 orient: host_fn(c"fwide", glibc_internal_abi::fwide as *const ()),
                 get: host_fn(c"fgetwc", fl::fgetwc as *const ()),
@@ -327,6 +330,7 @@ mod locale_scanning {
                 name: "native",
                 errno: errno_abi::__errno_location,
                 open: stdio_abi::fopen,
+                fdopen: stdio_abi::fdopen,
                 close: stdio_abi::fclose,
                 orient: glibc_internal_abi::fwide,
                 get: fl::fgetwc,
@@ -500,6 +504,196 @@ mod locale_scanning {
                     assert_eq!((engine.get)(stream), 0xe9, "{} update FILE", engine.name);
                     assert_eq!((engine.close)(stream), 0);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_character_read_checks_stream_mode() {
+        use std::os::fd::IntoRawFd;
+
+        if !isolated("wide_character_read_checks_stream_mode") {
+            return;
+        }
+        for (mode, readable) in [(c"w", false), (c"r+", true)] {
+            for engine in wide_io_engines() {
+                select(c"C.UTF-8");
+                let (backing, _) = wide_stream_path(engine.name, b"Z");
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(backing)
+                    .unwrap();
+                let fd = file.into_raw_fd();
+                // SAFETY: fd is live and transferred to a successful fdopen;
+                // mode is terminated, and the FILE remains live until close.
+                unsafe {
+                    let stream = (engine.fdopen)(fd, mode.as_ptr());
+                    assert!(!stream.is_null());
+                    assert!((engine.orient)(stream, 1) > 0);
+                    *(engine.errno)() = 0;
+                    let wc = (engine.get)(stream);
+                    assert_eq!(
+                        wc,
+                        if readable { u32::from(b'Z') } else { u32::MAX },
+                        "{} stream mode {mode:?}",
+                        engine.name
+                    );
+                    assert_eq!(*(engine.errno)(), if readable { 0 } else { libc::EBADF });
+                    assert_eq!((engine.error)(stream) != 0, !readable);
+                    assert_eq!((engine.eof)(stream), 0);
+                    assert_eq!(
+                        frankenlibc_core::syscall::sys_lseek(fd, 0, libc::SEEK_CUR),
+                        Ok(i64::from(readable)),
+                        "{} denied reads must not consume descriptor bytes",
+                        engine.name
+                    );
+                    assert_eq!((engine.close)(stream), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_line_after_error_reaches_clean_eof() {
+        if !isolated("wide_line_after_error_reaches_clean_eof") {
+            return;
+        }
+        for (input, prefix, recovery, expected) in [
+            (b"\xffZ".as_slice(), false, 1, Wc::from(b'Z')),
+            (b"A\xffZ".as_slice(), true, 2, Wc::from(b'Z')),
+            (b"\xc3XZ".as_slice(), false, 2, Wc::from(b'Z')),
+            (b"A\xc3XZ".as_slice(), true, 3, Wc::from(b'Z')),
+            (b"\xff\xc3\xa9".as_slice(), false, 1, 0xe9),
+        ] {
+            for capacity in [2, 4] {
+                for engine in wide_io_engines() {
+                    select(c"C.UTF-8");
+                    let (_, path) = wide_stream_path(engine.name, input);
+                    // SAFETY: path/mode are terminated; successful open owns a
+                    // live FILE through close, and output capacities fit line.
+                    unsafe {
+                        let stream = (engine.open)(path.as_ptr(), c"r".as_ptr());
+                        assert!(!stream.is_null(), "{} recovery FILE", engine.name);
+                        assert!((engine.orient)(stream, 1) > 0);
+                        if prefix {
+                            assert_eq!((engine.get)(stream), u32::from(b'A'));
+                        }
+                        *(engine.errno)() = 0;
+                        assert_eq!((engine.get)(stream), u32::MAX);
+                        assert_eq!(*(engine.errno)(), libc::EILSEQ);
+                        assert_ne!((engine.error)(stream), 0);
+                        assert_eq!((engine.eof)(stream), 0);
+                        assert_eq!((engine.tell)(stream), libc::c_long::from(prefix));
+                        assert_eq!((engine.seek)(stream, recovery, libc::SEEK_SET), 0);
+                        assert_ne!((engine.error)(stream), 0);
+
+                        let mut line = [SENTINEL as Wc; 5];
+                        assert_eq!(
+                            (engine.gets)(line.as_mut_ptr(), capacity, stream),
+                            line.as_mut_ptr(),
+                            "{} recovery capacity {capacity}",
+                            engine.name
+                        );
+                        assert_eq!(line, [expected, 0, SENTINEL, SENTINEL, SENTINEL]);
+                        assert_eq!((engine.tell)(stream), input.len() as libc::c_long);
+                        assert_eq!(
+                            (engine.eof)(stream) != 0,
+                            capacity > 2,
+                            "{} only an attempted read past the tail sets EOF",
+                            engine.name
+                        );
+                        assert_ne!((engine.error)(stream), 0);
+                        assert!((engine.gets)(line.as_mut_ptr(), capacity, stream).is_null());
+                        assert_ne!((engine.eof)(stream), 0);
+                        assert_ne!((engine.error)(stream), 0);
+                        assert_eq!((engine.close)(stream), 0);
+                    }
+                }
+            }
+        }
+
+        // A fresh decoding error still fails after a valid prefix. Only the
+        // guards beyond the supplied capacity are defined after that failure.
+        for input in [b"A\xffZ".as_slice(), b"A\xc3XZ".as_slice()] {
+            for engine in wide_io_engines() {
+                select(c"C.UTF-8");
+                let (_, path) = wide_stream_path(engine.name, input);
+                // SAFETY: live FILE, terminated path/mode and four writable
+                // wchar_t slots followed by two untouched guard slots.
+                unsafe {
+                    let stream = (engine.open)(path.as_ptr(), c"r".as_ptr());
+                    assert!(!stream.is_null());
+                    assert!((engine.orient)(stream, 1) > 0);
+                    let mut line = [SENTINEL as Wc; 6];
+                    *(engine.errno)() = 0;
+                    assert!((engine.gets)(line.as_mut_ptr(), 4, stream).is_null());
+                    assert_eq!(*(engine.errno)(), libc::EILSEQ);
+                    assert_ne!((engine.error)(stream), 0);
+                    assert_eq!((engine.eof)(stream), 0);
+                    assert_eq!((engine.tell)(stream), 1);
+                    assert_eq!(&line[4..], &[SENTINEL, SENTINEL]);
+                    assert_eq!((engine.close)(stream), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_line_eof_blocks_appended_data_until_seek() {
+        use std::io::Write;
+
+        if !isolated("wide_line_eof_blocks_appended_data_until_seek") {
+            return;
+        }
+        for engine in wide_io_engines() {
+            select(c"C.UTF-8");
+            let (backing, path) = wide_stream_path(engine.name, b"Z");
+            // SAFETY: successful open owns a live FILE until close; line has
+            // the four writable wchar_t slots passed to every line read.
+            unsafe {
+                let stream = (engine.open)(path.as_ptr(), c"r".as_ptr());
+                assert!(!stream.is_null());
+                assert!((engine.orient)(stream, 1) > 0);
+                let mut line = [SENTINEL as Wc; 4];
+                assert_eq!(
+                    (engine.gets)(line.as_mut_ptr(), 4, stream),
+                    line.as_mut_ptr()
+                );
+                assert_eq!(line, [Wc::from(b'Z'), 0, SENTINEL, SENTINEL]);
+                assert_ne!((engine.eof)(stream), 0);
+                assert_eq!((engine.error)(stream), 0);
+                let mut writer = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&backing)
+                    .unwrap();
+                writer.write_all(b"Q\n").unwrap();
+                drop(writer);
+
+                line.fill(SENTINEL);
+                assert!(
+                    (engine.gets)(line.as_mut_ptr(), 4, stream).is_null(),
+                    "{} EOF must block appended data",
+                    engine.name
+                );
+                assert_eq!(line, [SENTINEL; 4]);
+                assert_eq!((engine.tell)(stream), 1);
+                assert_ne!((engine.eof)(stream), 0);
+                assert_eq!((engine.error)(stream), 0);
+
+                assert_eq!((engine.seek)(stream, 1, libc::SEEK_SET), 0);
+                assert_eq!((engine.eof)(stream), 0);
+                assert_eq!(
+                    (engine.gets)(line.as_mut_ptr(), 4, stream),
+                    line.as_mut_ptr()
+                );
+                assert_eq!(line, [Wc::from(b'Q'), Wc::from(b'\n'), 0, SENTINEL]);
+                assert_eq!((engine.eof)(stream), 0);
+                assert_eq!((engine.error)(stream), 0);
+                assert_eq!((engine.tell)(stream), 3);
+                assert!((engine.gets)(line.as_mut_ptr(), 4, stream).is_null());
+                assert_ne!((engine.eof)(stream), 0);
+                assert_eq!((engine.close)(stream), 0);
             }
         }
     }

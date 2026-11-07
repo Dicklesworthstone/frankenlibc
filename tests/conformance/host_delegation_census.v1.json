@@ -2374,7 +2374,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 125,
-    "source_tree_sha256": "441163e349cea52783aaa9f3a3cfca5a3228ad5d5aa3141d20c12f7d63a1f2ba",
+    "source_tree_sha256": "18b43590c1a1e5640b91e459e45b2306753098f48b0ac0a28017eb223c39424d",
     "version": 16
   },
   "module_census": [
@@ -13264,7 +13264,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18321,
+      "resolved_call_edge_count": 18323,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1686,
@@ -19914,7 +19914,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 18112,
+      "resolved_call_edge_count": 18114,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 605,
@@ -21371,7 +21371,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
-      "sha256": "eea5356beb4620462ff39d1aaee37e8e3d6f799f1fd80dbdb9ce8333cab8f1c1"
+      "sha256": "107b6ada78be2d2fe545ca9d351ac302f6c64f488807e5616fd8b192f4dadf26"
     },
     {
       "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
