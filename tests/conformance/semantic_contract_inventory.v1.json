@@ -58,7 +58,7 @@
       ],
       "module": "frankenlibc-abi::pthread_abi",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 9784,
+      "source_line": 9850,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __pthread_register_cancel(",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -616,10 +616,10 @@
         }
       }
     },
-    "source_tree_sha256": "00ff7024a0e5bb64826eba72ce6532a2f53a5ee3deb3a6e0e6ed8e534619ed08",
+    "source_tree_sha256": "88187f4287e686930cc10cf76f5b3d70b34551f78953009f2505c27fb63f2469",
     "version_script_sha256": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
     "support_rows_sha256": "ad9ecafd85eabc37f2cdcb4a3a1cb492f52c79e4ee5870f234c774af4a90d87d",
-    "contract_rows_sha256": "788ad67cf75e71445ea452bc2d2a2582a197d63f87c0992d423ab6ff79ecab9d",
+    "contract_rows_sha256": "8238d2b2854227e21caa0ff31cdbed9471661a287d7be82646e91daf90b07b6f",
     "summary": {
       "declared_symbol_count": 4730,
       "raw_source_symbol_count": 4720,
