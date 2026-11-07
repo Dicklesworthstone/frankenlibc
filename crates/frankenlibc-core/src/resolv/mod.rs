@@ -1983,7 +1983,7 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
     #[test]
     fn addrconfig_netlink_rejects_partial_or_failed_dumps() {
         let address = addrconfig_nl_address(AF_INET as u8, &[(1, &[192, 0, 2, 1])]);
-        let data = addrconfig_nl_dump(&[address.clone()]);
+        let data = addrconfig_nl_dump(std::slice::from_ref(&address));
         for end in 0..data.len() {
             assert_eq!(
                 addrconfig_state_from_netlink(&data[..end]),

@@ -2374,7 +2374,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 122,
-    "source_tree_sha256": "833d734c23b1371fbde7a483b26108de6a82a0a1d1af8243a788b51fbc7a37a0",
+    "source_tree_sha256": "00ff7024a0e5bb64826eba72ce6532a2f53a5ee3deb3a6e0e6ed8e534619ed08",
     "version": 16
   },
   "module_census": [
@@ -13699,11 +13699,11 @@
         },
         {
           "delegation_kind": "libc_crate_extern_call",
-          "evidence": "crates/frankenlibc-abi/src/locale_abi.rs:3147",
+          "evidence": "crates/frankenlibc-abi/src/locale_abi.rs:3150",
           "expression": "let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;",
-          "function_id": "locale_abi::catopen@3134",
+          "function_id": "locale_abi::catopen@3137",
           "host_symbol": "getauxval",
-          "line": 3147,
+          "line": 3150,
           "path": "crates/frankenlibc-abi/src/locale_abi.rs"
         },
         {
@@ -20101,11 +20101,11 @@
         },
         {
           "delegation_kind": "libc_crate_extern_call",
-          "evidence": "crates/frankenlibc-abi/src/locale_abi.rs:3147",
+          "evidence": "crates/frankenlibc-abi/src/locale_abi.rs:3150",
           "expression": "let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;",
-          "function_id": "locale_abi::catopen@3134",
+          "function_id": "locale_abi::catopen@3137",
           "host_symbol": "getauxval",
-          "line": 3147,
+          "line": 3150,
           "path": "crates/frankenlibc-abi/src/locale_abi.rs"
         },
         {
@@ -21012,7 +21012,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/locale_abi.rs",
-      "sha256": "5f7e032d61c8d30e916a1e5242c7e924b26556be4a3cb2e3e7277d2ba69b8039"
+      "sha256": "846fd34e67f2612e81171b8c3c8568c130d91eaebb7e36ed8b564479fc0b7c49"
     },
     {
       "path": "crates/frankenlibc-abi/src/locale_catalog.rs",

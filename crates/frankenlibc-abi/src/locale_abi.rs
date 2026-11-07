@@ -160,7 +160,10 @@ pub(crate) fn active_charset() -> Charset {
 pub(crate) enum MultibyteCodec {
     Ascii,
     Utf8,
-    SingleByte(&'static frankenlibc_core::iconv::SingleByteCodec),
+    SingleByte(
+        #[cfg_attr(test, expect(dead_code, reason = "wchar_abi is excluded from lib tests"))]
+        &'static frankenlibc_core::iconv::SingleByteCodec,
+    ),
 }
 
 #[inline]
