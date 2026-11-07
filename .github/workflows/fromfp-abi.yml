@@ -6,6 +6,7 @@ on:
       - 'crates/frankenlibc-abi/**'
       - 'crates/frankenlibc-core/src/math/**'
       - 'tests/integration/fixture_fromfp_versions.c'
+      - 'tests/integration/fixture_libm_special_values.c'
       - 'scripts/check_fromfp_versions.sh'
       - '.github/workflows/fromfp-abi.yml'
       - 'Cargo.toml'
@@ -43,6 +44,73 @@ jobs:
           cargo build -p frankenlibc-abi --release -j2 2>&1 | tee artifacts/fromfp/build.log
       - name: Check both ABIs in strict and hardened modes
         run: bash scripts/check_fromfp_versions.sh 2>&1 | tee artifacts/fromfp/versions.log
+      - name: Check log-gamma aliases and reentrant errors on the deployed library
+        run: |
+          set -euo pipefail
+          out=artifacts/fromfp/gamma
+          mkdir -p "$out"
+          cc -O2 -Wall -Wextra -Werror -std=c11 -fno-builtin \
+            tests/integration/fixture_libm_special_values.c -o "$out/probe" -ldl -lm
+          host_math="$(cc -print-file-name=libm.so.6)"
+          host_errno="$(cc -print-file-name=libc.so.6)"
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$host_math"
+          test -f "$host_errno"
+          test -f "$library"
+          env -u LD_PRELOAD -u FRANKENLIBC_MODE "$out/probe" --gamma-contract \
+            "$host_math" "$host_errno" > "$out/host.log"
+          test "$(wc -l < "$out/host.log")" -eq 97
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+              "$out/probe" --gamma-contract "$library" "$library" > "$out/$mode.log"
+            test "$(wc -l < "$out/$mode.log")" -eq 97
+            diff -u "$out/host.log" "$out/$mode.log"
+          done
+          # A host fallback must not pass the candidate-provider check.
+          set +e
+          env -u LD_PRELOAD -u FRANKENLIBC_MODE "$out/probe" --gamma-contract \
+            "$library" "$host_errno" > "$out/wrong-provider.log" 2>&1
+          status=$?
+          set -e
+          test "$status" -eq 91
+      - name: Run log-gamma Rust regressions in both modes
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+          CARGO_PROFILE_TEST_DEBUG: 0
+        run: |
+          set -euo pipefail
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -j2 -p frankenlibc-abi \
+              --test conformance_diff_gamma_signgam -- --nocapture --test-threads=1 \
+              2>&1 | tee "artifacts/fromfp/gamma/rust-$mode.log"
+            grep -Eq '^test result: ok\. 4 passed; 0 failed;' \
+              "artifacts/fromfp/gamma/rust-$mode.log"
+          done
+      - name: Prove the alias regression rejects the previous numerical path
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+          CARGO_PROFILE_TEST_DEBUG: 0
+        run: |
+          set -euo pipefail
+          saved="$(mktemp -d)"
+          abi=crates/frankenlibc-abi/src/math_abi.rs
+          core=crates/frankenlibc-core/src/math/float32.rs
+          cp "$abi" "$saved/abi.rs"
+          cp "$core" "$saved/core.rs"
+          trap 'cp "$saved/abi.rs" "$abi"; cp "$saved/core.rs" "$core"' EXIT
+          git fetch --no-tags --depth=1 origin 80042e918fdff5e1d3327866f059894c555899b5
+          git show 80042e918fdff5e1d3327866f059894c555899b5:"$abi" > "$abi"
+          git show 80042e918fdff5e1d3327866f059894c555899b5:"$core" > "$core"
+          set +e
+          cargo test -j2 -p frankenlibc-abi --test conformance_diff_gamma_signgam \
+            gammaf_alias_matches_lgammaf_value_and_state -- --exact --nocapture \
+            2>&1 | tee artifacts/fromfp/gamma/previous-path.log
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 101
+          grep -F 'GNU gammaf alias contract' artifacts/fromfp/gamma/previous-path.log
+          grep -Eq '^test result: FAILED\. 0 passed; 1 failed;' \
+            artifacts/fromfp/gamma/previous-path.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

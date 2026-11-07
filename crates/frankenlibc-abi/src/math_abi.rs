@@ -1532,16 +1532,9 @@ pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
 /// gate that stayed red for the whole interval (bd-aykfv1).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gamma(x: f64) -> f64 {
-    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
-    unsafe {
-        signgam = sign;
-        __signgam = sign;
-    }
-    let out = unary_entry(x, 10, frankenlibc_core::math::gamma);
-    if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
-        set_range_errno();
-    }
-    out
+    // GNU gamma is an alias, including errno, exceptions and signgam.
+    // SAFETY: the scalar alias has the same argument and result contract.
+    unsafe { lgamma(x) }
 }
 
 /// Extract significand scaled to [1, 2).
@@ -2000,12 +1993,9 @@ pub unsafe extern "C" fn lgammaf_r(x: f32, signgamp: *mut c_int) -> f32 {
         // SAFETY: caller guarantees `signgamp` points to valid writable `int`.
         unsafe { *signgamp = sign };
     }
-    if x.is_finite() {
-        if x <= 0.0 && is_integral_f32(x) {
-            set_domain_errno();
-        } else if val.is_infinite() {
-            set_range_errno();
-        }
+    // Non-positive integers are poles (ERANGE), not domain errors (EDOM).
+    if x.is_finite() && ((x <= 0.0 && is_integral_f32(x)) || val.is_infinite()) {
+        set_range_errno();
     }
     val
 }
@@ -3478,19 +3468,9 @@ pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
-    // BSD gammaf aliases lgammaf: set the global signgam to sign of Γ(x).
-    // Same delete/restore history as `gamma` above (bd-aykfv1).
-    let (_, sign) = frankenlibc_core::math::lgammaf_r(x);
-    unsafe {
-        signgam = sign;
-        __signgam = sign;
-    }
-    let out = unary_entry_f32(x, 8, frankenlibc_core::math::gammaf);
-    // lgamma poles at non-positive integers
-    if x.is_finite() && x <= 0.0 && is_integral_f32(x) {
-        set_range_errno();
-    }
-    out
+    // Share lgammaf's numerical kernel, NaN handling and overflow contract.
+    // SAFETY: the scalar alias has the same argument and result contract.
+    unsafe { lgammaf(x) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

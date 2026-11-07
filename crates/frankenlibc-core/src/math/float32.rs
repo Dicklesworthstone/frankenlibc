@@ -1190,12 +1190,18 @@ pub fn dremf(x: f32, y: f32) -> f32 {
 /// BSD `gammaf()` — alias for `lgammaf()`.
 #[inline]
 pub fn gammaf(x: f32) -> f32 {
-    libm::lgammaf(x)
+    // Keep the compatibility alias on the same numerical kernel as lgammaf.
+    lgammaf(x)
 }
 
 /// Reentrant lgammaf: returns `(lgammaf(x), signgam)` (f32 variant).
 #[inline]
 pub fn lgammaf_r(x: f32) -> (f32, i32) {
+    // Handle NaNs before widening and entering the real-valued kernel. Preserve
+    // the payload and raise INVALID only for a signaling NaN.
+    if x.is_nan() {
+        return (core::hint::black_box(x) + 0.0, 1);
+    }
     // See `lgammaf`; the sign is CORE-MATH's too, so value and sign agree.
     let (v, sign) = crate::math::lgamma_r(f64::from(x));
     (v as f32, sign)

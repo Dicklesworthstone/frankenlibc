@@ -330,7 +330,103 @@ static int domain_errno128(const char *math_provider, const char *errno_provider
 #endif
 }
 
+
+/* GNU gammaf is a true lgammaf alias. Test alias value/state equivalence and
+ * independently compare pole, overflow, NaN and reentrant behavior with GNU.
+ * Finite rounding differences between glibc releases are not a golden oracle:
+ * the alias comparison is bit-exact within each provider. */
+static int gamma_contract(const char *math_provider, const char *errno_provider) {
+    if (!dlopen("libm.so.6", RTLD_NOW | RTLD_GLOBAL)) {
+        return 90;
+    }
+    float (*alias)(float) = (float (*)(float))dlsym(RTLD_DEFAULT, "gammaf");
+    float (*plain)(float) = (float (*)(float))dlsym(RTLD_DEFAULT, "lgammaf");
+    float (*reentrant)(float, int *) =
+        (float (*)(float, int *))dlsym(RTLD_DEFAULT, "lgammaf_r");
+    int *global = (int *)dlsym(RTLD_DEFAULT, "signgam");
+    if (!same_provider((void *)alias, math_provider) ||
+        !same_provider((void *)plain, math_provider) ||
+        !same_provider((void *)reentrant, math_provider) ||
+        !same_provider(global, math_provider) ||
+        !same_provider(dlsym(RTLD_DEFAULT, "__errno_location"), errno_provider)) {
+        return 91;
+    }
+
+    uint32_t state = 0x12345678u;
+    for (unsigned i = 0; i < 4096; ++i) {
+        state = state * 1664525u + 1013904223u;
+        float x, a, b;
+        uint32_t ab, bb;
+        memcpy(&x, &state, sizeof x);
+        feclearexcept(FE_ALL_EXCEPT);
+        *global = 123;
+        errno = E2BIG;
+        a = alias(x);
+        int ae = errno, as = *global, af = fetestexcept(FE_ALL_EXCEPT);
+        memcpy(&ab, &a, sizeof ab);
+        feclearexcept(FE_ALL_EXCEPT);
+        *global = 123;
+        errno = E2BIG;
+        b = plain(x);
+        int be = errno, bs = *global, bf = fetestexcept(FE_ALL_EXCEPT);
+        memcpy(&bb, &b, sizeof bb);
+        if (ab != bb || ae != be || as != bs || af != bf) {
+            fprintf(stderr, "gamma-alias mismatch: input=%08x values=%08x/%08x "
+                    "errno=%d/%d sign=%d/%d flags=%d/%d\n",
+                    state, ab, bb, ae, be, as, bs, af, bf);
+            return 93;
+        }
+    }
+    puts("gammaf alias: 4096 bit-exact value/state comparisons passed");
+
+    static const uint32_t inputs[] = {
+        0x00000000u, 0x80000000u, 0xbf800000u, 0xc0000000u, 0xcb800000u,
+        0x7f7fffffu, 0x7f800000u, 0xff800000u,
+        0x7fc00123u, 0xffc00123u, 0x7fa00123u, 0xffa00123u,
+        0x3f800000u, 0x40000000u, 0x3f000000u, 0xbf000000u
+    };
+    static const char *labels[] = {"gammaf", "lgammaf", "lgammaf_r"};
+    for (unsigned f = 0; f < 3; ++f) {
+        for (unsigned initial = 0; initial < 2; ++initial) {
+            for (unsigned i = 0; i < sizeof inputs / sizeof *inputs; ++i) {
+                float x, result;
+                uint32_t bits;
+                int sign = 123;
+                memcpy(&x, &inputs[i], sizeof x);
+                feclearexcept(FE_ALL_EXCEPT);
+                *global = 123;
+                errno = initial ? E2BIG : 0;
+                result = f == 0 ? alias(x) : f == 1 ? plain(x) : reentrant(x, &sign);
+                int error = errno;
+                int flags = fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW);
+                if (f != 2) {
+                    sign = *global;
+                } else if (*global != 123) {
+                    fprintf(stderr, "lgammaf_r changed global signgam\n");
+                    return 94;
+                }
+                memcpy(&bits, &result, sizeof bits);
+                uint32_t magnitude = bits & 0x7fffffffu;
+                /* Keep all special-value bits; ordinary finite accuracy is
+                   checked by the alias loop and the numerical test suite. */
+                if (magnitude != 0 && magnitude < 0x7f800000u) {
+                    bits = 0x3f800000u;
+                }
+                printf("gamma-contract %-9s %08x initial=%d result=%08x "
+                       "sign=%d errno=%d invalid=%d pole=%d overflow=%d\n",
+                       labels[f], inputs[i], initial ? E2BIG : 0, bits, sign, error,
+                       !!(flags & FE_INVALID), !!(flags & FE_DIVBYZERO),
+                       !!(flags & FE_OVERFLOW));
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--gamma-contract") == 0) {
+        return gamma_contract(argv[2], argv[3]);
+    }
     if (argc == 4 && strcmp(argv[1], "--domain-errno") == 0) {
         return domain_errno(argv[2], argv[3]);
     }
@@ -338,7 +434,7 @@ int main(int argc, char **argv) {
         return domain_errno128(argv[2], argv[3]);
     }
     if (argc != 1) {
-        fprintf(stderr, "usage: %s [--domain-errno[-128] MATH_PROVIDER ERRNO_PROVIDER]\n", argv[0]);
+        fprintf(stderr, "usage: %s [--domain-errno[-128]|--gamma-contract MATH_PROVIDER ERRNO_PROVIDER]\n", argv[0]);
         return 2;
     }
     doubles();
