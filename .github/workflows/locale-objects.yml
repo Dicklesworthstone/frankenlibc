@@ -9,6 +9,8 @@ on:
       - 'crates/frankenlibc-abi/src/string_abi*'
       - 'crates/frankenlibc-abi/src/time_abi*'
       - 'crates/frankenlibc-abi/src/wchar_abi*'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_c_locale_codec.rs'
+      - 'crates/frankenlibc-core/src/iconv/**'
       - 'crates/frankenlibc-core/src/locale/**'
       - 'tests/integration/fixture_locale_objects.c'
       - '.github/workflows/locale-objects.yml'
@@ -34,7 +36,7 @@ jobs:
       - name: Install named locale data
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y locales
+          sudo apt-get install -y locales locales-all
           sudo localedef -i de_DE -f UTF-8 de_DE.UTF-8
           sudo localedef -i fr_FR -f UTF-8 fr_FR.UTF-8
       - name: Preserve reproducible offline diagnosis inputs
@@ -70,6 +72,9 @@ jobs:
             done
           done
           exit "$failed"
+      - name: Check named single-byte conversion and locale selection
+        run: |
+          cargo test --release -p frankenlibc-abi --test conformance_diff_c_locale_codec -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/codec.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
