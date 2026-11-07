@@ -3806,20 +3806,57 @@ fn c_sqrt(re: f64, im: f64) -> (f64, f64) {
         return (math::fabs(math::sqrt(re)), f64::copysign(0.0, im));
     }
     if re == 0.0 {
-        let r = math::sqrt(0.5 * math::fabs(im));
+        let ai = math::fabs(im);
+        // Taking the square root first keeps the smallest subnormal from
+        // disappearing when ai/2 rounds to zero. Both scalings are exact.
+        let r = if ai < 2.0 * f64::MIN_POSITIVE {
+            0.5 * math::sqrt(2.0 * ai)
+        } else {
+            math::sqrt(0.5 * ai)
+        };
         return (r, f64::copysign(r, im));
     }
-    // Both parts nonzero and finite. Use the identity 2*Re*Im = Im(z) to avoid
-    // cancellation in `d -+ re`.
-    let d = math::hypot(re, im);
-    let (r, s) = if re > 0.0 {
-        let rr = math::sqrt(0.5 * (d + re));
-        (rr, 0.5 * (im / rr))
+
+    // sqrt(4*z) = 2*sqrt(z). Scale by an even power of two so neither
+    // hypot(re, im) nor hypot(re, im) + |re| overflows, and so subnormal
+    // components do not lose their significant bits before the square root.
+    // The larger root component is at most sqrt(2*MAX), hence remains finite
+    // for every finite input even when the unscaled hypot does not.
+    let ar = math::fabs(re);
+    let ai = math::fabs(im);
+    let (xr, xi, rescale) = if ar.max(ai) > f64::MAX / 4.0 {
+        // A component this small cannot affect the dominant root. Avoid
+        // raising a spurious underflow merely to construct the scaled input;
+        // the original im is retained below for the smaller root component.
+        let shrink = |v: f64| {
+            if math::fabs(v) < 4.0 * f64::MIN_POSITIVE {
+                f64::copysign(0.0, v)
+            } else {
+                0.25 * v
+            }
+        };
+        (shrink(re), shrink(im), 2.0)
+    } else if ar.max(ai) < 2.0 * f64::MIN_POSITIVE {
+        // 2^54 normalizes even the least subnormal; its square root is 2^27.
+        (
+            re * 18_014_398_509_481_984.0,
+            im * 18_014_398_509_481_984.0,
+            1.0 / 134_217_728.0,
+        )
     } else {
-        let ss = math::sqrt(0.5 * (d - re));
-        (math::fabs(0.5 * (im / ss)), ss)
+        (re, im, 1.0)
     };
-    (r, f64::copysign(s, im))
+    let d = math::hypot(xr, xi);
+    let dominant = math::sqrt(0.5 * (d + math::fabs(xr))) * rescale;
+    // Use the ORIGINAL imaginary component and a single division. Recovering
+    // this component from a scaled im, or halving the quotient afterwards,
+    // can lose a representable subnormal through intermediate rounding.
+    let other = im / (2.0 * dominant);
+    if re > 0.0 {
+        (dominant, other)
+    } else {
+        (math::fabs(other), f64::copysign(dominant, im))
+    }
 }
 
 /// glibc-faithful complex `ctanh` (used directly and, via the `-i*tanh(iz)`
@@ -3880,7 +3917,7 @@ fn c_tanh(rx: f64, ix: f64) -> (f64, f64) {
 #[inline]
 fn c_atanh(x: f64, y: f64) -> (f64, f64) {
     use frankenlibc_core::math;
-    use std::f64::consts::FRAC_PI_2;
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, LN_2};
 
     if x.is_nan() || y.is_nan() || x.is_infinite() || y.is_infinite() {
         if y.is_infinite() {
@@ -3909,9 +3946,13 @@ fn c_atanh(x: f64, y: f64) -> (f64, f64) {
     }
     // Large |z|: atanh(z) -> 1/z, so Re -> x/(x^2+y^2) (formed without overflow)
     // and Im -> sign(y)*pi/2.
-    const LARGE: f64 = 9.486_832_980_505_138e153; // ~ sqrt(DBL_MAX) / 2
-    if math::fabs(x) >= LARGE || math::fabs(y) >= LARGE {
-        let (ax, ay) = (math::fabs(x), math::fabs(y));
+    // Below 2^510, both squared components and their sum remain below 2^1021.
+    // At or above it, the omitted O(1/z^3) term and angular correction are far
+    // below binary64 precision. The exact power-of-two boundary also prevents
+    // an intermediate overflow from raising FE_OVERFLOW on a finite result.
+    const LARGE: f64 = 3.351_951_982_485_649_3e153; // 2^510
+    let (ax, ay) = (math::fabs(x), math::fabs(y));
+    if ax >= LARGE || ay >= LARGE {
         let re = if ax >= ay {
             let r = ay / ax;
             (1.0 / ax) / (1.0 + r * r)
@@ -3920,6 +3961,19 @@ fn c_atanh(x: f64, y: f64) -> (f64, f64) {
             (r / ay) / (1.0 + r * r)
         };
         return (f64::copysign(re, x), f64::copysign(FRAC_PI_2, y));
+    }
+    // At either pole, a nonzero tiny imaginary offset still gives a FINITE
+    // real part: |Re| = (log(hypot(2, y)) - log(|y|)) / 2. Squaring y first
+    // can underflow, or make 4/y^2 overflow, incorrectly turning that nearby
+    // value into the pole itself. Below 2^-510, hypot(2, y) rounds to 2 and
+    // the angular correction to pi/4 is far below one ULP. Outside this
+    // branch y^2 >= 4*MIN_POSITIVE, keeping the quotient representable. Only
+    // x == +/-1 needs it: adjacent binary64 x values are at least 2^-53 away.
+    // Leave y == +/-0 on the exact-pole path so its signed zero is retained.
+    const SMALL_POLE_OFFSET: f64 = 1.0 / LARGE; // 2^-510
+    if ax == 1.0 && ay != 0.0 && ay < SMALL_POLE_OFFSET {
+        let re = 0.5 * (LN_2 - math::log(ay));
+        return (f64::copysign(re, x), f64::copysign(FRAC_PI_4, y));
     }
     // Re = 0.25*log(((1+x)^2+y^2)/((1-x)^2+y^2)). `log1p(4x/den)` is accurate
     // everywhere except near the z=-1 branch point, where `4x/den -> -1` (the
@@ -3938,6 +3992,55 @@ fn c_atanh(x: f64, y: f64) -> (f64, f64) {
     (re, im)
 }
 
+/// Range reductions shared by the first-quadrant inverse sine/cosine kernels.
+/// `complement` selects acos's angle without subtracting it from pi/2, which
+/// would erase a small real result near the positive-real branch cut.
+#[inline]
+fn hft_range_edges(x: f64, y: f64, complement: bool) -> Option<(f64, f64)> {
+    use frankenlibc_core::math;
+    use std::f64::consts::{FRAC_PI_2, LN_2};
+
+    const LARGE: f64 = 3.273_390_607_896_142e150; // 2^500
+    const SMALL: f64 = 3.054_936_363_499_605e-151; // 2^-500
+    if x.max(y) > LARGE {
+        // asin(z) = arg(y + ix) + i*log(2*|z|) + O(1/|z|^2).
+        // The discarded relative correction is below 2^-1000 here. c_log
+        // forms log(|z|) without an overflowing hypot or squared magnitude.
+        let angle = if complement {
+            math::atan2(y, x)
+        } else {
+            math::atan2(x, y)
+        };
+        return Some((angle, c_log(x, y).0 + LN_2));
+    }
+    if y < SMALL {
+        // Away from x == 1, the nearest binary64 x is at least 2^-53 from
+        // the branch point. The first-order imaginary displacement therefore
+        // suffices here; forming y*y instead would destroy tiny results.
+        if x < 1.0 {
+            let angle = if complement {
+                math::acos(x)
+            } else {
+                math::asin(x)
+            };
+            return Some((angle, y / math::sqrt((1.0 - x) * (1.0 + x))));
+        }
+        if x == 1.0 {
+            // acos(1+iy) = sqrt(y)*(1-i) + O(y^(3/2)). The corresponding
+            // correction to asin's pi/2 angle is too small to represent.
+            let root = math::sqrt(y);
+            return Some((if complement { root } else { FRAC_PI_2 }, root));
+        }
+        let angle = if complement {
+            y / math::sqrt((x - 1.0) * (x + 1.0))
+        } else {
+            FRAC_PI_2
+        };
+        return Some((angle, math::acosh(x)));
+    }
+    None
+}
+
 /// Hull-Fairgrieve-Tang principal-branch complex arcsine for `x, y >= 0` finite.
 /// Returns `(Re, Im)` of `asin(x + iy)` with both >= 0; callers apply the
 /// odd-function signs (`Re` odd in x, `Im` odd in y). This is the algorithm glibc
@@ -3946,6 +4049,9 @@ fn c_atanh(x: f64, y: f64) -> (f64, f64) {
 #[inline]
 fn hft_asin(x: f64, y: f64) -> (f64, f64) {
     use frankenlibc_core::math;
+    if let Some(result) = hft_range_edges(x, y, false) {
+        return result;
+    }
     const A_CROSSOVER: f64 = 1.5;
     const B_CROSSOVER: f64 = 0.6417;
     let xp1 = x + 1.0;
@@ -4030,6 +4136,9 @@ fn c_asinh(x: f64, y: f64) -> (f64, f64) {
 #[inline]
 fn hft_acos(x: f64, y: f64) -> (f64, f64) {
     use frankenlibc_core::math;
+    if let Some(result) = hft_range_edges(x, y, true) {
+        return result;
+    }
     const A_CROSSOVER: f64 = 1.5;
     const B_CROSSOVER: f64 = 0.6417;
     let xp1 = x + 1.0;
