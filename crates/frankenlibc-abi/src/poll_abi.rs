@@ -123,42 +123,8 @@ pub(crate) unsafe fn poll_cp(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout
         return reject_efault();
     }
 
-    // SYS_poll doesn't exist on aarch64; use SYS_ppoll with timeout conversion.
-    #[cfg(target_arch = "x86_64")]
     let result = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_poll(fds as *mut u8, actual_nfds as usize, timeout)
-        })
-    };
-    #[cfg(not(target_arch = "x86_64"))]
-    let result = {
-        // Convert millisecond timeout to timespec for ppoll.
-        let (ts_ptr, ts_storage);
-        if timeout < 0 {
-            ts_storage = libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            };
-            let _ = &ts_storage; // suppress unused warning
-            ts_ptr = std::ptr::null::<libc::timespec>();
-        } else {
-            ts_storage = libc::timespec {
-                tv_sec: (timeout / 1000) as libc::time_t,
-                tv_nsec: ((timeout % 1000) as i64) * 1_000_000,
-            };
-            ts_ptr = &ts_storage as *const libc::timespec;
-        }
-        unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_ppoll(
-                    fds as *mut u8,
-                    actual_nfds as usize,
-                    ts_ptr as *const u8,
-                    std::ptr::null(),
-                    0,
-                )
-            })
-        }
+        crate::pthread_abi::cancellation_point_poll(fds.cast(), actual_nfds as usize, timeout)
     };
     let (rc, adverse) = match result {
         Ok(n) => (n, false),
@@ -253,17 +219,13 @@ pub(crate) unsafe fn ppoll_cp(
         }
     };
     let (ts_ptr, mask_ptr) = input.kernel_args();
-    let sigset_size = wait_snapshot::KERNEL_SIGSET_BYTES;
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_ppoll(
-                fds as *mut u8,
-                actual_nfds as usize,
-                ts_ptr,
-                mask_ptr,
-                sigset_size,
-            )
-        })
+        crate::pthread_abi::cancellation_point_ppoll(
+            fds.cast(),
+            actual_nfds as usize,
+            ts_ptr,
+            mask_ptr,
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {

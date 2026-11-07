@@ -76,6 +76,8 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::{ArtifactHashMap, ArtifactHashSet, artifact_hash_map, artifact_hash_set};
 
+#[path = "pthread_cancel_poll.rs"]
+mod cancel_poll;
 #[path = "pthread_cancel_wait.rs"]
 mod cancel_wait;
 
@@ -6689,6 +6691,80 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// Poll cancellation point, including requests arriving after a native thread
+/// has entered the kernel. Keep the caller capture in the exported ABI entry.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_poll(
+    fds: *mut u8,
+    nfds: usize,
+    timeout: c_int,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut duration = libc::timespec {
+        tv_sec: (timeout.max(0) / 1000) as libc::time_t,
+        tv_nsec: ((timeout.max(0) % 1000) as libc::c_long) * 1_000_000,
+    };
+    let timeout_ptr = if timeout < 0 {
+        std::ptr::null()
+    } else {
+        (&mut duration as *mut libc::timespec).cast_const().cast()
+    };
+    unsafe {
+        cancellation_poll_window(caller, fds, nfds, timeout_ptr, std::ptr::null(), || {
+            raw_syscall::sys_poll(fds, nfds, timeout)
+        })
+    }
+}
+
+/// Ppoll cancellation point. The caller owns a writable timeout snapshot;
+/// `mask` names only the eight bytes consumed by the Linux kernel.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_ppoll(
+    fds: *mut u8,
+    nfds: usize,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_poll_window(caller, fds, nfds, timeout, mask, || {
+            raw_syscall::sys_ppoll(fds, nfds, timeout, mask, std::mem::size_of::<u64>())
+        })
+    }
+}
+
+/// No resources are owned by this frame: hosted asynchronous cancellation
+/// must cross it without entering a Rust cleanup landing pad. The native
+/// adapter delivers cancellation during a wait under ppoll's temporary mask,
+/// then restores the original mask on every ordinary return.
+#[inline(never)]
+unsafe fn cancellation_poll_window(
+    caller: usize,
+    fds: *mut u8,
+    nfds: usize,
+    timeout: *const u8,
+    mask: *const u8,
+    blocking_syscall: impl FnOnce() -> Result<c_int, c_int>,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        // The descriptor observes requests without consuming them. Neither
+        // readiness nor timeout consumes application data or acquires a resource.
+        let result =
+            unsafe { cancel_poll::wait(fds, nfds, timeout, mask, cancel, pthread_testcancel) };
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
 /// A cancellation point that can wake an already-parked native thread. Keep
 /// every frame up to the exported entry inlined so admission uses its caller.
 #[inline(always)]
@@ -6785,8 +6861,8 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex cancellation points additionally use cancellation_futex_window
-    // to observe a request arriving while parked; other syscalls remain pending-
+    // Native futex and poll cancellation points use their dedicated windows to
+    // observe a request arriving while parked; other syscalls remain pending-
     // request cancellation points until they gain an interruptible native path.
     // With no native threads, current_thread_handle exits at its atomic flag
     // without a TID syscall, allocation or TLS initialization.
