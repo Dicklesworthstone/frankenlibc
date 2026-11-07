@@ -129,7 +129,7 @@ fn fuzz_parse_format(input: &ScanfFuzzInput) {
     let directives = parse_scanf_format(fmt);
 
     // Verify directive structure
-    for d in &directives {
+    for d in directives.iter() {
         match d {
             ScanDirective::Literal(b) => {
                 let _ = b;
@@ -187,7 +187,7 @@ fn fuzz_scan_input(input: &ScanfFuzzInput) {
     );
 
     // Verify value types
-    for val in &result.values {
+    for val in result.values.iter() {
         match val {
             ScanValue::Unset => panic!("scanner exposed an unused inline value"),
             ScanValue::SignedInt(_) => {}

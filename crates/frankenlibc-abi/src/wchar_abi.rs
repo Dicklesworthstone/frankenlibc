@@ -3778,11 +3778,7 @@ mod codec {
     /// Use one immutable codec across a conversion's sizing and writing passes.
     #[inline]
     pub(super) fn wctomb_with(codec: MultibyteCodec, wc: u32, dest: &mut [u8]) -> Option<usize> {
-        if matches!(codec, MultibyteCodec::Utf8) {
-            return wchar_core::wctomb(wc, dest);
-        }
-        *dest.first_mut()? = encode_byte(codec, wc)?;
-        Some(1)
+        codec.encode(wc, dest)
     }
 
     /// Convert a NUL-terminated multibyte string, as [`wchar_core::mbstowcs`].
@@ -6626,64 +6622,44 @@ pub(crate) unsafe fn fgetwc_for_caller(stream: *mut std::ffi::c_void, caller: us
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
+    let (codec, at_eof) = super::stdio_abi::stream_wide_read_context(stream);
+    if at_eof {
+        return WEOF_VALUE;
+    }
 
     super::stdio_abi::with_wide_io_active(|| {
-        // SAFETY: delegated to stdio ABI layer with validated stream handle.
-        let first = unsafe { super::stdio_abi::fgetc_for_caller(stream, caller) };
-        if first == libc::EOF {
-            return WEOF_VALUE;
-        }
-
         let mut bytes = [0u8; 6];
-        bytes[0] = first as u8;
-        let expected = if crate::locale_abi::mb_cur_max() == 1 || bytes[0] < 0x80 {
-            1
-        } else if bytes[0] & 0xE0 == 0xC0 {
-            2
-        } else if bytes[0] & 0xF0 == 0xE0 {
-            3
-        } else if bytes[0] & 0xF8 == 0xF0 {
-            4
-        } else if bytes[0] & 0xFC == 0xF8 {
-            // 5-byte obsolete RFC 2279 lead (0xF8..=0xFB). `wchar_core::mbtowc`
-            // decodes these for C.UTF-8 parity with glibc (and fl's own mbrtowc, see
-            // bd-kryp2k), so read the continuations and let it validate/decode.
-            5
-        } else if bytes[0] & 0xFE == 0xFC {
-            // 6-byte obsolete RFC 2279 lead (0xFC..=0xFD).
-            6
-        } else {
-            // 0xC0/0xC1 (overlong 2-byte), 0xFE/0xFF, and continuation bytes are
-            // never valid leads; reject at the lead.
-            // SAFETY: thread-local errno update.
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            return WEOF_VALUE;
-        };
-
-        for idx in 1..expected {
+        let mut length = 0usize;
+        loop {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
             let next = unsafe { super::stdio_abi::fgetc_for_caller(stream, caller) };
             if next == libc::EOF {
-                // Put back already consumed bytes to avoid partial-read corruption.
-                for rollback in (0..idx).rev() {
-                    // SAFETY: push-back into the same stream.
-                    unsafe { super::stdio_abi::ungetc(bytes[rollback] as c_int, stream) };
+                if length != 0
+                    && !super::stdio_abi::restore_wide_read(stream, &bytes[..length], true, false)
+                {
+                    for &byte in bytes[..length].iter().rev() {
+                        // SAFETY: restore consumed bytes to the same foreign stream.
+                        unsafe { super::stdio_abi::ungetc(byte as c_int, stream) };
+                    }
                 }
                 return WEOF_VALUE;
             }
-            bytes[idx] = next as u8;
-        }
-
-        match codec::mbtowc(&bytes[..expected]) {
-            Some((wc, _)) => wc,
-            None => {
-                for rollback in (0..expected).rev() {
-                    // SAFETY: push-back into the same stream.
-                    unsafe { super::stdio_abi::ungetc(bytes[rollback] as c_int, stream) };
+            bytes[length] = next as u8;
+            length += 1;
+            match codec.decode(&bytes[..length]) {
+                wchar_core::Utf8Step::Char { wc, .. } => return wc,
+                wchar_core::Utf8Step::Incomplete if length < bytes.len() => {}
+                wchar_core::Utf8Step::Invalid | wchar_core::Utf8Step::Incomplete => {
+                    if !super::stdio_abi::restore_wide_read(stream, &bytes[..length], false, true) {
+                        for &byte in bytes[..length].iter().rev() {
+                            // SAFETY: restore consumed bytes to the same foreign stream.
+                            unsafe { super::stdio_abi::ungetc(byte as c_int, stream) };
+                        }
+                    }
+                    // SAFETY: thread-local errno update.
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return WEOF_VALUE;
                 }
-                // SAFETY: thread-local errno update.
-                unsafe { set_abi_errno(libc::EILSEQ) };
-                WEOF_VALUE
             }
         }
     })
@@ -6708,30 +6684,25 @@ pub(crate) unsafe fn fputwc_for_caller(
         unsafe { set_abi_errno(libc::E2BIG) };
         return WEOF_VALUE;
     }
+    // Wide memory output uses private UTF-8 storage; external files retain
+    // the codec selected when they first became wide oriented.
+    let codec = if memory_output.is_some() {
+        crate::locale_abi::MultibyteCodec::Utf8
+    } else {
+        super::stdio_abi::stream_wide_codec(stream)
+    };
 
     super::stdio_abi::with_wide_io_active(|| {
         let mut bytes = [0u8; 6];
-        // A wide memory stream stores wchar_t values, not external text in
-        // the active locale. Its private UTF-8 backing must preserve Unicode
-        // even when the caller's external-file codec is the C locale's ASCII.
-        let encoded = if memory_output.is_some() {
-            wchar_core::wctomb(wc, &mut bytes)
-        } else {
-            codec::wctomb(wc, &mut bytes)
-        };
+        // Preserve wide-stdio's existing replacement policy, including the
+        // replacement character's encoding in non-ASCII single-byte locales.
+        let encoded = codec
+            .encode(wc, &mut bytes)
+            .or_else(|| codec.encode(u32::from(b'?'), &mut bytes));
         let Some(encoded_len) = encoded else {
-            // A wide char the C.UTF-8 encoder cannot represent (a surrogate, or a
-            // value above U+7FFFFFFF). glibc's wide-stdio gconv substitutes the
-            // single byte '?' and reports SUCCESS (returns `wc`, leaves errno) —
-            // NOT C99's EILSEQ/WEOF (which its own `wcrtomb` returns). frankenlibc
-            // is a glibc drop-in, so mirror that observable behaviour.
-            return if unsafe { super::stdio_abi::fputc_for_caller(b'?' as c_int, stream, caller) }
-                == libc::EOF
-            {
-                WEOF_VALUE
-            } else {
-                wc
-            };
+            // SAFETY: thread-local errno update if even replacement is unavailable.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return WEOF_VALUE;
         };
 
         for &byte in &bytes[..encoded_len] {
@@ -6751,15 +6722,19 @@ pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 
     if stream.is_null() || wc == WEOF_VALUE || !super::stdio_abi::orient_stream_ungetwc(stream) {
         return WEOF_VALUE;
     }
+    let codec = super::stdio_abi::stream_wide_codec(stream);
 
     super::stdio_abi::with_wide_io_active(|| {
         let mut bytes = [0u8; 6];
-        let Some(encoded_len) = codec::wctomb(wc, &mut bytes) else {
+        let Some(encoded_len) = codec.encode(wc, &mut bytes) else {
             // SAFETY: thread-local errno update.
             unsafe { set_abi_errno(libc::EILSEQ) };
             return WEOF_VALUE;
         };
 
+        if super::stdio_abi::restore_wide_read(stream, &bytes[..encoded_len], false, false) {
+            return wc;
+        }
         for &byte in bytes[..encoded_len].iter().rev() {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
             if unsafe { super::stdio_abi::ungetc(byte as c_int, stream) } == libc::EOF {
@@ -6813,6 +6788,17 @@ pub(crate) unsafe fn fgetws_for_caller(
             // SAFETY: delegated to this ABI implementation with validated stream.
             let wc = unsafe { fgetwc_for_caller(stream, caller) };
             if wc == WEOF_VALUE {
+                // A new read/encoding error fails even after a valid prefix.
+                // Clean EOF may coexist with a sticky error from an earlier
+                // call; GNU also returns a prefix when a nonblocking read
+                // encounters EAGAIN. Neither case is a new line failure.
+                // SAFETY: the same validated stream remains live for this read.
+                let at_eof = unsafe { super::stdio_abi::feof(stream) } != 0;
+                let failed = unsafe { super::stdio_abi::ferror(stream) } != 0;
+                let error = unsafe { *crate::errno_abi::__errno_location() };
+                if failed && !at_eof && error != libc::EAGAIN {
+                    return std::ptr::null_mut();
+                }
                 hit_eof = true;
                 break;
             }
@@ -6825,8 +6811,8 @@ pub(crate) unsafe fn fgetws_for_caller(
             }
         }
 
-        // C99: return NULL only when EOF/error is encountered before ANY wide char
-        // is read. A degenerate `n == 1` (cap-1 == 0, the loop never runs) is NOT an
+        // Clean EOF returns NULL when no wide character was read. A degenerate
+        // `n == 1` (cap-1 == 0, the loop never runs) is NOT an
         // EOF — glibc writes the terminating L'\0' and returns `ws` (an empty string).
         if written == 0 && hit_eof {
             return std::ptr::null_mut();
@@ -6916,6 +6902,12 @@ unsafe fn fputws_impl(
     if !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }
+    let memory_output = reserve_wide_output(stream, 0);
+    let codec = if memory_output.is_some() {
+        crate::locale_abi::MultibyteCodec::Utf8
+    } else {
+        super::stdio_abi::stream_wide_codec(stream)
+    };
 
     super::stdio_abi::with_wide_io_active(|| {
         // Worst-case 6 bytes/wchar (wctomb RFC-2279), so a wlen<=CAP/6 string always fits without
@@ -6934,12 +6926,12 @@ unsafe fn fputws_impl(
         // faster (the stack-buffer + wcstombs setup exceeds a handful of fast fputc calls; wn=8
         // was 7% slower). At wlen>=16 bulk wins decisively (wn=64: 9.4x). Strict improvement.
         if (16..=max_wchars).contains(&wlen)
-            && !reserve_wide_output(stream, 0).is_some_and(|(_, bounded)| bounded)
+            && !memory_output.is_some_and(|(_, bounded)| bounded)
         {
             let mut buf = [0u8; CAP];
             // SAFETY: `ws` is valid for `wlen` wide chars (NUL found at `wlen`).
             let src = unsafe { std::slice::from_raw_parts(ws as *const u32, wlen) };
-            if let Some(nbytes) = codec::wcstombs(&mut buf, src) {
+            if let Some(nbytes) = codec.encode_prefix(&mut buf, src) {
                 if nbytes == 0 {
                     return 0;
                 }

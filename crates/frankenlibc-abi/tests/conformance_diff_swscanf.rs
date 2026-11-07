@@ -121,7 +121,9 @@ fn diff_swscanf_wide_char() {
 
 mod locale_scanning {
     use super::{SwscanfFn, Wc, dlsym_oracle::host_fn, fl, host_swscanf, w};
-    use frankenlibc_abi::{errno_abi, isoc_abi, locale_abi, malloc_abi};
+    use frankenlibc_abi::{
+        errno_abi, glibc_internal_abi, isoc_abi, locale_abi, malloc_abi, stdio_abi,
+    };
     use std::ffi::{CStr, c_char, c_int, c_void};
     use std::sync::OnceLock;
 
@@ -261,6 +263,352 @@ mod locale_scanning {
             native("__isoc99_vswscanf", call_c99_vswscanf as SwscanfFn),
             native("__isoc23_vswscanf", call_c23_vswscanf as SwscanfFn),
         ]
+    }
+
+    type OpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+    type StreamFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+    type SeekFn = unsafe extern "C-unwind" fn(*mut c_void, libc::c_long, c_int) -> c_int;
+    type TellFn = unsafe extern "C-unwind" fn(*mut c_void) -> libc::c_long;
+    type FwideFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+    type WideReadFn = unsafe extern "C-unwind" fn(*mut c_void) -> u32;
+    type WideWriteFn = unsafe extern "C-unwind" fn(u32, *mut c_void) -> u32;
+    type WideUngetFn = unsafe extern "C" fn(u32, *mut c_void) -> u32;
+    type WideGetsFn = unsafe extern "C-unwind" fn(*mut Wc, c_int, *mut c_void) -> *mut Wc;
+    type WidePutsFn = unsafe extern "C-unwind" fn(*const Wc, *mut c_void) -> c_int;
+    type WctombFn = unsafe extern "C" fn(*mut u8, u32) -> c_int;
+
+    #[derive(Clone, Copy)]
+    struct WideIoEngine {
+        name: &'static str,
+        errno: ErrnoFn,
+        open: OpenFn,
+        close: StreamFn,
+        orient: FwideFn,
+        get: WideReadFn,
+        unget: WideUngetFn,
+        gets: WideGetsFn,
+        put: WideWriteFn,
+        puts: WidePutsFn,
+        flush: StreamFn,
+        seek: SeekFn,
+        tell: TellFn,
+        eof: StreamFn,
+        error: StreamFn,
+        convert: WctombFn,
+    }
+
+    fn wide_io_engines() -> [WideIoEngine; 2] {
+        static HOST: OnceLock<WideIoEngine> = OnceLock::new();
+        let host = *HOST.get_or_init(|| unsafe {
+            WideIoEngine {
+                name: "host",
+                errno: host().errno,
+                open: host_fn(c"fopen", stdio_abi::fopen as *const ()),
+                close: host_fn(c"fclose", stdio_abi::fclose as *const ()),
+                orient: host_fn(c"fwide", glibc_internal_abi::fwide as *const ()),
+                get: host_fn(c"fgetwc", fl::fgetwc as *const ()),
+                unget: host_fn(c"ungetwc", fl::ungetwc as *const ()),
+                gets: host_fn(c"fgetws", fl::fgetws as *const ()),
+                put: host_fn(c"fputwc", fl::fputwc as *const ()),
+                puts: host_fn(c"fputws", fl::fputws as *const ()),
+                flush: host_fn(c"fflush", stdio_abi::fflush as *const ()),
+                seek: host_fn(c"fseek", stdio_abi::fseek as *const ()),
+                tell: host_fn(c"ftell", stdio_abi::ftell as *const ()),
+                eof: host_fn(c"feof", stdio_abi::feof as *const ()),
+                error: host_fn(c"ferror", stdio_abi::ferror as *const ()),
+                convert: host_fn(c"wctomb", fl::wctomb as *const ()),
+            }
+        });
+        [
+            host,
+            WideIoEngine {
+                name: "native",
+                errno: errno_abi::__errno_location,
+                open: stdio_abi::fopen,
+                close: stdio_abi::fclose,
+                orient: glibc_internal_abi::fwide,
+                get: fl::fgetwc,
+                unget: fl::ungetwc,
+                gets: fl::fgetws,
+                put: fl::fputwc,
+                puts: fl::fputws,
+                flush: stdio_abi::fflush,
+                seek: stdio_abi::fseek,
+                tell: stdio_abi::ftell,
+                eof: stdio_abi::feof,
+                error: stdio_abi::ferror,
+                convert: fl::wctomb,
+            },
+        ]
+    }
+
+    fn wide_stream_path(label: &str, bytes: &[u8]) -> (std::path::PathBuf, std::ffi::CString) {
+        use std::io::Write;
+        use std::os::unix::ffi::OsStrExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "frankenlibc-wide-codec-{}-{stamp}-{}-{label}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(bytes).unwrap();
+        drop(file);
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // Retain the unique file as failure evidence; no shared path or cleanup
+        // can remove another concurrent child's input or output.
+        (path, c_path)
+    }
+
+    fn assert_current_multibyte_codec(engine: WideIoEngine, locale: &CStr) {
+        let mut bytes = [0xa5u8; 8];
+        let (rc, error) = unsafe {
+            *(engine.errno)() = 0;
+            let rc = (engine.convert)(bytes.as_mut_ptr(), 0xe9);
+            (rc, *(engine.errno)())
+        };
+        match locale.to_bytes() {
+            b"C" => assert_eq!(
+                (rc, error),
+                (-1, libc::EILSEQ),
+                "{} current C codec",
+                engine.name
+            ),
+            b"fr_FR" => {
+                assert_eq!((rc, error), (1, 0), "{} current Latin1", engine.name);
+                assert_eq!(bytes[0], 0xe9);
+                assert!(bytes[1..].iter().all(|&byte| byte == 0xa5));
+            }
+            b"C.UTF-8" => {
+                assert_eq!((rc, error), (2, 0), "{} current UTF8", engine.name);
+                assert_eq!(&bytes[..2], b"\xc3\xa9");
+                assert!(bytes[2..].iter().all(|&byte| byte == 0xa5));
+            }
+            _ => unreachable!("the binding matrix names its codecs explicitly"),
+        }
+    }
+
+    #[test]
+    fn wide_stream_codec_survives_locale_changes() {
+        if !isolated("wide_stream_codec_survives_locale_changes") {
+            return;
+        }
+        for (bound, active, input, encoded) in [
+            (c"C.UTF-8", c"fr_FR", "éAé\n".as_bytes(), b"\xc3\xa9".as_slice()),
+            (c"C.UTF-8", c"C", "éAé\n".as_bytes(), b"\xc3\xa9".as_slice()),
+            (c"fr_FR", c"C.UTF-8", b"\xe9A\xe9\n".as_slice(), b"\xe9".as_slice()),
+        ] {
+            for engine in wide_io_engines() {
+                select(bound);
+                let (_, path) = wide_stream_path(engine.name, input);
+                let stream = unsafe { (engine.open)(path.as_ptr(), c"r".as_ptr()) };
+                assert!(!stream.is_null(), "{} input FILE", engine.name);
+                assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                select(active);
+                assert_current_multibyte_codec(engine, active);
+
+                unsafe {
+                    assert_eq!((engine.get)(stream), 0xe9, "{} bound read", engine.name);
+                    assert_eq!((engine.tell)(stream), encoded.len() as libc::c_long);
+                    assert_eq!((engine.unget)(0xe9, stream), 0xe9);
+                    assert_eq!((engine.get)(stream), 0xe9, "{} bound pushback", engine.name);
+                    assert_eq!((engine.tell)(stream), encoded.len() as libc::c_long);
+
+                    let mut line = [SENTINEL as Wc; 8];
+                    assert_eq!(
+                        (engine.gets)(line.as_mut_ptr(), line.len() as c_int, stream),
+                        line.as_mut_ptr(),
+                        "{} bound line",
+                        engine.name
+                    );
+                    assert_eq!(&line[..4], &[0x41, 0xe9, 0x0a, 0]);
+                    assert!(line[4..].iter().all(|&wc| wc == SENTINEL));
+                    assert_eq!((engine.tell)(stream), input.len() as libc::c_long);
+                    assert_eq!((engine.error)(stream), 0);
+
+                    *(engine.errno)() = 23;
+                    assert_eq!((engine.get)(stream), u32::MAX);
+                    assert_ne!((engine.eof)(stream), 0);
+                    assert_eq!((engine.error)(stream), 0);
+                    assert_eq!(*(engine.errno)(), 23);
+                    assert_current_multibyte_codec(engine, active);
+
+                    assert_eq!((engine.seek)(stream, 0, libc::SEEK_SET), 0);
+                    assert_eq!((engine.eof)(stream), 0);
+                    assert!((engine.orient)(stream, 0) > 0);
+                    assert_eq!((engine.get)(stream), 0xe9, "{} binding after seek", engine.name);
+                    assert_eq!((engine.close)(stream), 0);
+                }
+
+                select(bound);
+                let (output_path, path) = wide_stream_path(engine.name, b"");
+                let stream = unsafe { (engine.open)(path.as_ptr(), c"r+".as_ptr()) };
+                assert!(!stream.is_null(), "{} output FILE", engine.name);
+                assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                select(active);
+                // At least sixteen wide characters exercise the bulk fputws
+                // conversion as well as the single-character output entrypoint.
+                let text = w("abcdefghijklmnopéééé\n");
+                unsafe {
+                    assert_eq!((engine.put)(0xe9, stream), 0xe9);
+                    assert!((engine.puts)(text.as_ptr(), stream) >= 0);
+                    assert_eq!((engine.flush)(stream), 0);
+                    assert_eq!((engine.error)(stream), 0);
+                }
+                let mut expected = encoded.to_vec();
+                expected.extend_from_slice(b"abcdefghijklmnop");
+                for _ in 0..4 {
+                    expected.extend_from_slice(encoded);
+                }
+                expected.push(b'\n');
+                assert_eq!(
+                    std::fs::read(&output_path).unwrap(),
+                    expected,
+                    "{bound:?} -> {active:?}/{} encoded output",
+                    engine.name
+                );
+                assert_current_multibyte_codec(engine, active);
+                unsafe {
+                    assert_eq!((engine.seek)(stream, 0, libc::SEEK_SET), 0);
+                    assert_eq!((engine.get)(stream), 0xe9, "{} update FILE", engine.name);
+                    assert_eq!((engine.close)(stream), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_stream_invalid_encoding_is_not_consumed() {
+        if !isolated("wide_stream_invalid_encoding_is_not_consumed") {
+            return;
+        }
+        for active in [c"C.UTF-8", c"fr_FR", c"C"] {
+            for (input, prefix) in [
+                (b"\xffZ".as_slice(), 0),
+                (b"\xc3XZ".as_slice(), 0),
+                (b"A\xffZ".as_slice(), 1),
+                (b"A\xc3XZ".as_slice(), 1),
+            ] {
+                for engine in wide_io_engines() {
+                    select(c"C.UTF-8");
+                    let (_, path) = wide_stream_path(engine.name, input);
+                    let stream = unsafe { (engine.open)(path.as_ptr(), c"r".as_ptr()) };
+                    assert!(!stream.is_null(), "{} invalid-input FILE", engine.name);
+                    assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                    select(active);
+                    unsafe {
+                        if prefix != 0 {
+                            assert_eq!((engine.get)(stream), u32::from(b'A'));
+                        }
+                        // Complete invalid sequences stay at the same logical
+                        // position and fail repeatedly, independent of LC_CTYPE
+                        // changes after orientation. Truncated EOF is separate.
+                        for attempt in 0..3 {
+                            *(engine.errno)() = 0;
+                            let wc = (engine.get)(stream);
+                            let error = *(engine.errno)();
+                            assert_eq!(
+                                (wc, error),
+                                (u32::MAX, libc::EILSEQ),
+                                "{active:?}/{} attempt {attempt}",
+                                engine.name
+                            );
+                            assert_ne!((engine.error)(stream), 0);
+                            assert_eq!((engine.eof)(stream), 0);
+                            assert_eq!((engine.tell)(stream), prefix as libc::c_long);
+                        }
+                        // Seeking clears EOF but retains the earlier error.
+                        // A new clean-EOF line must not become a false failure
+                        // merely because that error indicator is still set.
+                        assert_eq!(
+                            (engine.seek)(stream, (input.len() - 1) as libc::c_long, libc::SEEK_SET),
+                            0
+                        );
+                        assert_ne!((engine.error)(stream), 0);
+                        let mut recovered = [SENTINEL as Wc; 4];
+                        assert_eq!(
+                            (engine.gets)(recovered.as_mut_ptr(), 4, stream),
+                            recovered.as_mut_ptr(),
+                            "{} clean EOF after an earlier error",
+                            engine.name
+                        );
+                        assert_eq!(recovered, [Wc::from(b'Z'), 0, SENTINEL, SENTINEL]);
+                        assert_ne!((engine.eof)(stream), 0);
+                        assert_ne!((engine.error)(stream), 0);
+                        assert_eq!((engine.close)(stream), 0);
+                    }
+                }
+            }
+        }
+
+        // Read/encoding errors return NULL even after a valid prefix. The
+        // supplied array is then indeterminate (C23 7.31.3.2p3), so compare
+        // result/status/position and only guards outside its capacity.
+        // Nonempty clean EOF must still return a terminated prefix.
+        for active in [c"C.UTF-8", c"fr_FR", c"C"] {
+            for (input, read_error) in [
+                (b"A\xffZ".as_slice(), true),
+                (b"A\xc3XZ".as_slice(), true),
+                (b"A".as_slice(), false),
+            ] {
+                let mut oracle = None;
+                for engine in wide_io_engines() {
+                    select(c"C.UTF-8");
+                    let (_, path) = wide_stream_path(engine.name, input);
+                    let stream = unsafe { (engine.open)(path.as_ptr(), c"r".as_ptr()) };
+                    assert!(!stream.is_null(), "{} fgetws FILE", engine.name);
+                    assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                    select(active);
+                    let mut line = [SENTINEL as Wc; 10];
+                    let observed = unsafe {
+                        *(engine.errno)() = 0;
+                        let result = (engine.gets)(line.as_mut_ptr(), 8, stream);
+                        let error = *(engine.errno)();
+                        if !result.is_null() {
+                            assert_eq!(result, line.as_mut_ptr());
+                        }
+                        let observed = (
+                            result.is_null(),
+                            error,
+                            (engine.error)(stream) != 0,
+                            (engine.eof)(stream) != 0,
+                            (engine.tell)(stream),
+                        );
+                        assert_eq!((engine.close)(stream), 0);
+                        observed
+                    };
+                    assert_eq!(observed.0, read_error, "{} fgetws result", engine.name);
+                    assert_eq!(observed.1, if read_error { libc::EILSEQ } else { 0 });
+                    assert_eq!((observed.2, observed.3), (read_error, !read_error));
+                    assert!(line[8..].iter().all(|&wc| wc == SENTINEL));
+                    if !read_error {
+                        assert_eq!(observed.4, 1);
+                        assert_eq!(&line[..2], &[Wc::from(b'A'), 0]);
+                        assert!(line[2..].iter().all(|&wc| wc == SENTINEL));
+                    }
+                    if let Some(expected) = oracle.as_ref() {
+                        assert_eq!(
+                            &observed,
+                            expected,
+                            "{active:?}/{} fgetws result/status/position",
+                            engine.name
+                        );
+                    } else {
+                        oracle = Some(observed);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

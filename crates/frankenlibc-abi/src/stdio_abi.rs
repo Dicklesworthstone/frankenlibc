@@ -2888,6 +2888,9 @@ pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option
             sync_and_unregister_fast_fixed_mem_read(id, &mut s);
         }
         let next = s.set_orientation(mode);
+        if next > 0 && s.wide_codec().is_none() {
+            s.bind_wide_codec(crate::locale_abi::active_multibyte_codec());
+        }
         if prev <= 0 && next > 0 {
             REGISTRY_GEN.fetch_add(1, Ordering::Release);
         }
@@ -2922,6 +2925,9 @@ pub(crate) fn orient_stream_wide(stream: *mut c_void) -> bool {
         sync_and_unregister_fast_fixed_mem_read(id, &mut s);
     }
     let next = s.set_orientation(1);
+    if s.wide_codec().is_none() {
+        s.bind_wide_codec(crate::locale_abi::active_multibyte_codec());
+    }
     if prev <= 0 && next > 0 {
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
     }
@@ -2955,6 +2961,9 @@ pub(crate) fn orient_stream_ungetwc(stream: *mut c_void) -> bool {
         sync_and_unregister_fast_fixed_mem_read(id, &mut s);
     }
     let next = s.set_orientation(1);
+    if s.wide_codec().is_none() {
+        s.bind_wide_codec(crate::locale_abi::active_multibyte_codec());
+    }
     if prev <= 0 && next > 0 {
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
     }
@@ -2962,6 +2971,70 @@ pub(crate) fn orient_stream_ungetwc(stream: *mut c_void) -> bool {
         wide_cache_store(stream, &mut *s as *mut StdioStream);
     }
     next > 0
+}
+
+/// Immutable conversion state of a native wide stream. The cache uses the
+/// same lifetime/generation and single-thread proof as the wide read fast path.
+#[inline]
+pub(crate) fn stream_wide_read_context(
+    stream: *mut c_void,
+) -> (crate::locale_abi::MultibyteCodec, bool) {
+    if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        let stream = unsafe { &*pointer };
+        return (
+            stream
+                .wide_codec()
+                .unwrap_or_else(crate::locale_abi::active_multibyte_codec),
+            stream.is_eof(),
+        );
+    }
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let stream = cell.lock();
+        return (
+            stream
+                .wide_codec()
+                .unwrap_or_else(crate::locale_abi::active_multibyte_codec),
+            stream.is_eof(),
+        );
+    }
+    (crate::locale_abi::active_multibyte_codec(), false)
+}
+
+#[inline]
+pub(crate) fn stream_wide_codec(stream: *mut c_void) -> crate::locale_abi::MultibyteCodec {
+    stream_wide_read_context(stream).0
+}
+
+/// Restore external bytes consumed by one wide read, including characters
+/// straddling an fd refill and streams without an ordinary byte buffer.
+pub(crate) fn restore_wide_read(
+    stream: *mut c_void,
+    bytes: &[u8],
+    preserve_eof: bool,
+    encoding_error: bool,
+) -> bool {
+    let restore = |stream: &mut StdioStream| {
+        stream.unread_bytes(bytes, preserve_eof);
+        if encoding_error {
+            stream.set_error();
+        }
+    };
+    if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        restore(unsafe { &mut *pointer });
+        mirror_raw_cached(stream, pointer);
+        return true;
+    }
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let mut stream = cell.lock();
+        sync_and_unregister_fast_fixed_mem_read(id, &mut stream);
+        restore(&mut stream);
+        return true;
+    }
+    false
 }
 
 /// Orient stream `id` for a narrow/byte I/O operation when not inside an
@@ -5074,6 +5147,9 @@ unsafe fn read_cached_ascii_line_wide_inner(
 ) -> Option<(usize, bool)> {
     // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
     let s = unsafe { &mut *p };
+    if s.wide_codec().is_some_and(|codec| !codec.is_ascii_compatible()) {
+        return None;
+    }
     match s.read_ascii_line_into_wide(dst) {
         Some((n, ReadUntil::Found)) => Some((n, false)),
         Some((n, ReadUntil::NeedRefill)) if n == dst.len() => Some((n, false)),

@@ -15,6 +15,7 @@ on:
       - 'crates/frankenlibc-core/src/iconv/**'
       - 'crates/frankenlibc-core/src/locale/**'
       - 'crates/frankenlibc-core/src/stdio/scanf.rs'
+      - 'crates/frankenlibc-core/src/stdio/file.rs'
       - 'tests/integration/fixture_locale_objects.c'
       - '.github/workflows/locale-objects.yml'
   workflow_dispatch:
