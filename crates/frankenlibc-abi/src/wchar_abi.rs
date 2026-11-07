@@ -5754,9 +5754,9 @@ const WEOF_VALUE: u32 = u32::MAX;
 
 use frankenlibc_core::stdio::printf::LengthMod;
 use frankenlibc_core::stdio::scanf::{
-    InlineVec, ScanSpec, ScanValue, ScanWriteContext, ScanWriteError,
-    WideScanContext, WideScanEvent, WideScanInput, WideScanProgress, WideScanReadPurpose,
-    WideScanSession, WideScanWriteError,
+    InlineVec, ScanSpec, ScanValue, ScanWriteContext, ScanWriteError, WideScanContext,
+    WideScanEvent, WideScanInput, WideScanProgress, WideScanReadPurpose, WideScanSession,
+    WideScanWriteError,
 };
 
 /// Extract variadic args for wide printf — mirrors extract_va_args from stdio_abi.
@@ -6054,10 +6054,7 @@ impl WideScanWriter {
         Ok(())
     }
 
-    unsafe fn stream_allocation_failed(
-        &mut self,
-        destination: *mut c_void,
-    ) -> WideScanWriteError {
+    unsafe fn stream_allocation_failed(&mut self, destination: *mut c_void) -> WideScanWriteError {
         // Release the current unpublished allocation before earlier completed
         // %m fields. ENOMEM is fatal even after successful assignments.
         self.pending_text = None;
@@ -6110,9 +6107,8 @@ impl WideScanWriter {
             let capacity = needed.max(text.capacity.saturating_mul(2)).max(64);
             // SAFETY: output is NULL or an allocation owned by this field.
             // Failed realloc leaves the old allocation available for cleanup.
-            let output = unsafe {
-                crate::malloc_abi::realloc(text.output.cast(), capacity).cast::<u8>()
-            };
+            let output =
+                unsafe { crate::malloc_abi::realloc(text.output.cast(), capacity).cast::<u8>() };
             if output.is_null() {
                 let destination = text.destination;
                 // SAFETY: every allocation still belongs to its tracked owner.

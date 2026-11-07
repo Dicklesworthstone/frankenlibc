@@ -1017,106 +1017,106 @@
       "text": "&& let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6916",
-      "line": 6916,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7065",
+      "line": 7065,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "resolved_thread_setcanceltype_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6950",
-      "line": 6950,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7099",
+      "line": 7099,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(host_testcancel) = resolved_thread_testcancel_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8849",
-      "line": 8849,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8998",
+      "line": 8998,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8879",
-      "line": 8879,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9028",
+      "line": 9028,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8952",
-      "line": 8952,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9101",
+      "line": 9101,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9175",
-      "line": 9175,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9324",
+      "line": 9324,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(host_exit) = resolved_thread_exit_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9574",
-      "line": 9574,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9723",
+      "line": 9723,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "let push = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push\")?;"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9575",
-      "line": 9575,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9724",
+      "line": 9724,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "let pop = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop\")?;"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9577",
-      "line": 9577,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9726",
+      "line": 9726,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push_defer\")?;"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9579",
-      "line": 9579,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9728",
+      "line": 9728,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop_restore\")?;"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9944",
-      "line": 9944,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10093",
+      "line": 10093,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(register) = resolved_thread_register_cancel_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9957",
-      "line": 9957,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10106",
+      "line": 10106,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(unregister) = resolved_thread_unregister_cancel_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9969",
-      "line": 9969,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10118",
+      "line": 10118,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(register) = resolved_thread_register_cancel_defer_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9981",
-      "line": 9981,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10130",
+      "line": 10130,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10028",
-      "line": 10028,
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10177",
+      "line": 10177,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "text": "&& let Some(unwind_next) = resolved_thread_unwind_next_raw()"
@@ -1297,50 +1297,50 @@
       "text": "StartupCheckpoint::FallbackHost,"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:2551",
-      "line": 2551,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:2552",
+      "line": 2552,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "pub fn stdio_may_delegate_to_host_for_tests(stream: *mut c_void) -> bool {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3111",
-      "line": 3111,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3112",
+      "line": 3112,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_cached(slot, symbol)"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3844",
-      "line": 3844,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3845",
+      "line": 3845,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_raw(\"dlsym\").is_some_and(|address| {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3965",
-      "line": 3965,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3966",
+      "line": 3966,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3969",
-      "line": 3969,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3970",
+      "line": 3970,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3971",
-      "line": 3971,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3972",
+      "line": 3972,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3973",
-      "line": 3973,
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3974",
+      "line": 3974,
       "module": "stdio_abi",
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
       "text": "resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };"
@@ -1374,8 +1374,8 @@
       "text": "let resolved = unsafe { host_dlsym(handle, symbol) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:21730",
-      "line": 21730,
+      "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:21727",
+      "line": 21727,
       "module": "unistd_abi",
       "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_cached(slot, symbol)"
@@ -1715,86 +1715,86 @@
     },
     {
       "delegation_kind": "resolve_host_symbol_raw_literal",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9575",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9724",
       "exported_function_id": "glibc_internal_abi::_pthread_cleanup_pop@254",
       "exported_symbol": "_pthread_cleanup_pop",
       "expression": "let pop = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop\")?;",
       "helper_function": "host_legacy_cleanup",
-      "helper_function_id": "pthread_abi::host_legacy_cleanup@9564",
+      "helper_function_id": "pthread_abi::host_legacy_cleanup@9713",
       "host_symbol": "_pthread_cleanup_pop",
       "id": "glibc_internal_abi:_pthread_cleanup_pop:254:001",
-      "line": 9575,
+      "line": 9724,
       "module": "glibc_internal_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 3,
       "reachability_path": [
         "glibc_internal_abi::_pthread_cleanup_pop@254",
         "glibc_internal_abi::legacy_cleanup_pop@223",
-        "pthread_abi::host_legacy_cleanup_pop@9604",
-        "pthread_abi::host_legacy_cleanup@9564"
+        "pthread_abi::host_legacy_cleanup_pop@9753",
+        "pthread_abi::host_legacy_cleanup@9713"
       ]
     },
     {
       "delegation_kind": "resolve_host_symbol_raw_literal",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9579",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9728",
       "exported_function_id": "glibc_internal_abi::_pthread_cleanup_pop_restore@268",
       "exported_symbol": "_pthread_cleanup_pop_restore",
       "expression": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop_restore\")?;",
       "helper_function": "host_legacy_cleanup",
-      "helper_function_id": "pthread_abi::host_legacy_cleanup@9564",
+      "helper_function_id": "pthread_abi::host_legacy_cleanup@9713",
       "host_symbol": "_pthread_cleanup_pop_restore",
       "id": "glibc_internal_abi:_pthread_cleanup_pop_restore:268:001",
-      "line": 9579,
+      "line": 9728,
       "module": "glibc_internal_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 3,
       "reachability_path": [
         "glibc_internal_abi::_pthread_cleanup_pop_restore@268",
         "glibc_internal_abi::legacy_cleanup_pop@223",
-        "pthread_abi::host_legacy_cleanup_pop@9604",
-        "pthread_abi::host_legacy_cleanup@9564"
+        "pthread_abi::host_legacy_cleanup_pop@9753",
+        "pthread_abi::host_legacy_cleanup@9713"
       ]
     },
     {
       "delegation_kind": "resolve_host_symbol_raw_literal",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9574",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9723",
       "exported_function_id": "glibc_internal_abi::_pthread_cleanup_push@245",
       "exported_symbol": "_pthread_cleanup_push",
       "expression": "let push = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push\")?;",
       "helper_function": "host_legacy_cleanup",
-      "helper_function_id": "pthread_abi::host_legacy_cleanup@9564",
+      "helper_function_id": "pthread_abi::host_legacy_cleanup@9713",
       "host_symbol": "_pthread_cleanup_push",
       "id": "glibc_internal_abi:_pthread_cleanup_push:245:001",
-      "line": 9574,
+      "line": 9723,
       "module": "glibc_internal_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 3,
       "reachability_path": [
         "glibc_internal_abi::_pthread_cleanup_push@245",
         "glibc_internal_abi::legacy_cleanup_push@194",
-        "pthread_abi::host_legacy_cleanup_push@9595",
-        "pthread_abi::host_legacy_cleanup@9564"
+        "pthread_abi::host_legacy_cleanup_push@9744",
+        "pthread_abi::host_legacy_cleanup@9713"
       ]
     },
     {
       "delegation_kind": "resolve_host_symbol_raw_literal",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9577",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9726",
       "exported_function_id": "glibc_internal_abi::_pthread_cleanup_push_defer@259",
       "exported_symbol": "_pthread_cleanup_push_defer",
       "expression": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push_defer\")?;",
       "helper_function": "host_legacy_cleanup",
-      "helper_function_id": "pthread_abi::host_legacy_cleanup@9564",
+      "helper_function_id": "pthread_abi::host_legacy_cleanup@9713",
       "host_symbol": "_pthread_cleanup_push_defer",
       "id": "glibc_internal_abi:_pthread_cleanup_push_defer:259:001",
-      "line": 9577,
+      "line": 9726,
       "module": "glibc_internal_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 3,
       "reachability_path": [
         "glibc_internal_abi::_pthread_cleanup_push_defer@259",
         "glibc_internal_abi::legacy_cleanup_push@194",
-        "pthread_abi::host_legacy_cleanup_push@9595",
-        "pthread_abi::host_legacy_cleanup@9564"
+        "pthread_abi::host_legacy_cleanup_push@9744",
+        "pthread_abi::host_legacy_cleanup@9713"
       ]
     },
     {
@@ -1986,92 +1986,92 @@
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9944",
-      "exported_function_id": "pthread_abi::__pthread_register_cancel@9942",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10093",
+      "exported_function_id": "pthread_abi::__pthread_register_cancel@10091",
       "exported_symbol": "__pthread_register_cancel",
       "expression": "&& let Some(register) = resolved_thread_register_cancel_raw()",
       "helper_function": "__pthread_register_cancel",
-      "helper_function_id": "pthread_abi::__pthread_register_cancel@9942",
+      "helper_function_id": "pthread_abi::__pthread_register_cancel@10091",
       "host_symbol": "__pthread_register_cancel",
-      "id": "pthread_abi:__pthread_register_cancel:9942:001",
-      "line": 9944,
+      "id": "pthread_abi:__pthread_register_cancel:10091:001",
+      "line": 10093,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::__pthread_register_cancel@9942"
+        "pthread_abi::__pthread_register_cancel@10091"
       ]
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9969",
-      "exported_function_id": "pthread_abi::__pthread_register_cancel_defer@9967",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10118",
+      "exported_function_id": "pthread_abi::__pthread_register_cancel_defer@10116",
       "exported_symbol": "__pthread_register_cancel_defer",
       "expression": "&& let Some(register) = resolved_thread_register_cancel_defer_raw()",
       "helper_function": "__pthread_register_cancel_defer",
-      "helper_function_id": "pthread_abi::__pthread_register_cancel_defer@9967",
+      "helper_function_id": "pthread_abi::__pthread_register_cancel_defer@10116",
       "host_symbol": "__pthread_register_cancel_defer",
-      "id": "pthread_abi:__pthread_register_cancel_defer:9967:001",
-      "line": 9969,
+      "id": "pthread_abi:__pthread_register_cancel_defer:10116:001",
+      "line": 10118,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::__pthread_register_cancel_defer@9967"
+        "pthread_abi::__pthread_register_cancel_defer@10116"
       ]
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9957",
-      "exported_function_id": "pthread_abi::__pthread_unregister_cancel@9955",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10106",
+      "exported_function_id": "pthread_abi::__pthread_unregister_cancel@10104",
       "exported_symbol": "__pthread_unregister_cancel",
       "expression": "&& let Some(unregister) = resolved_thread_unregister_cancel_raw()",
       "helper_function": "__pthread_unregister_cancel",
-      "helper_function_id": "pthread_abi::__pthread_unregister_cancel@9955",
+      "helper_function_id": "pthread_abi::__pthread_unregister_cancel@10104",
       "host_symbol": "__pthread_unregister_cancel",
-      "id": "pthread_abi:__pthread_unregister_cancel:9955:001",
-      "line": 9957,
+      "id": "pthread_abi:__pthread_unregister_cancel:10104:001",
+      "line": 10106,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::__pthread_unregister_cancel@9955"
+        "pthread_abi::__pthread_unregister_cancel@10104"
       ]
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9981",
-      "exported_function_id": "pthread_abi::__pthread_unregister_cancel_restore@9979",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10130",
+      "exported_function_id": "pthread_abi::__pthread_unregister_cancel_restore@10128",
       "exported_symbol": "__pthread_unregister_cancel_restore",
       "expression": "&& let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()",
       "helper_function": "__pthread_unregister_cancel_restore",
-      "helper_function_id": "pthread_abi::__pthread_unregister_cancel_restore@9979",
+      "helper_function_id": "pthread_abi::__pthread_unregister_cancel_restore@10128",
       "host_symbol": "__pthread_unregister_cancel_restore",
-      "id": "pthread_abi:__pthread_unregister_cancel_restore:9979:001",
-      "line": 9981,
+      "id": "pthread_abi:__pthread_unregister_cancel_restore:10128:001",
+      "line": 10130,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::__pthread_unregister_cancel_restore@9979"
+        "pthread_abi::__pthread_unregister_cancel_restore@10128"
       ]
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10028",
-      "exported_function_id": "pthread_abi::__pthread_unwind_next@10026",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10177",
+      "exported_function_id": "pthread_abi::__pthread_unwind_next@10175",
       "exported_symbol": "__pthread_unwind_next",
       "expression": "&& let Some(unwind_next) = resolved_thread_unwind_next_raw()",
       "helper_function": "__pthread_unwind_next",
-      "helper_function_id": "pthread_abi::__pthread_unwind_next@10026",
+      "helper_function_id": "pthread_abi::__pthread_unwind_next@10175",
       "host_symbol": "__pthread_unwind_next",
-      "id": "pthread_abi:__pthread_unwind_next:10026:001",
-      "line": 10028,
+      "id": "pthread_abi:__pthread_unwind_next:10175:001",
+      "line": 10177,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::__pthread_unwind_next@10026"
+        "pthread_abi::__pthread_unwind_next@10175"
       ]
     },
     {
@@ -2094,20 +2094,20 @@
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8952",
-      "exported_function_id": "pthread_abi::pthread_clockjoin_np@8938",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9101",
+      "exported_function_id": "pthread_abi::pthread_clockjoin_np@9087",
       "exported_symbol": "pthread_clockjoin_np",
       "expression": "if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {",
       "helper_function": "pthread_clockjoin_np",
-      "helper_function_id": "pthread_abi::pthread_clockjoin_np@8938",
+      "helper_function_id": "pthread_abi::pthread_clockjoin_np@9087",
       "host_symbol": "pthread_clockjoin_np",
-      "id": "pthread_abi:pthread_clockjoin_np:8938:001",
-      "line": 8952,
+      "id": "pthread_abi:pthread_clockjoin_np:9087:001",
+      "line": 9101,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::pthread_clockjoin_np@8938"
+        "pthread_abi::pthread_clockjoin_np@9087"
       ]
     },
     {
@@ -2148,20 +2148,20 @@
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9175",
-      "exported_function_id": "pthread_abi::pthread_exit@9162",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9324",
+      "exported_function_id": "pthread_abi::pthread_exit@9311",
       "exported_symbol": "pthread_exit",
       "expression": "&& let Some(host_exit) = resolved_thread_exit_raw()",
       "helper_function": "pthread_exit",
-      "helper_function_id": "pthread_abi::pthread_exit@9162",
+      "helper_function_id": "pthread_abi::pthread_exit@9311",
       "host_symbol": "pthread_exit",
-      "id": "pthread_abi:pthread_exit:9162:001",
-      "line": 9175,
+      "id": "pthread_abi:pthread_exit:9311:001",
+      "line": 9324,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::pthread_exit@9162"
+        "pthread_abi::pthread_exit@9311"
       ]
     },
     {
@@ -2221,57 +2221,57 @@
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6950",
-      "exported_function_id": "pthread_abi::pthread_testcancel@6946",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7099",
+      "exported_function_id": "pthread_abi::pthread_testcancel@7095",
       "exported_symbol": "pthread_testcancel",
       "expression": "&& let Some(host_testcancel) = resolved_thread_testcancel_raw()",
       "helper_function": "pthread_testcancel",
-      "helper_function_id": "pthread_abi::pthread_testcancel@6946",
+      "helper_function_id": "pthread_abi::pthread_testcancel@7095",
       "host_symbol": "pthread_testcancel",
-      "id": "pthread_abi:pthread_testcancel:6946:001",
-      "line": 6950,
+      "id": "pthread_abi:pthread_testcancel:7095:001",
+      "line": 7099,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::pthread_testcancel@6946"
+        "pthread_abi::pthread_testcancel@7095"
       ]
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8849",
-      "exported_function_id": "pthread_abi::pthread_timedjoin_np@8828",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8998",
+      "exported_function_id": "pthread_abi::pthread_timedjoin_np@8977",
       "exported_symbol": "pthread_timedjoin_np",
       "expression": "if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {",
       "helper_function": "pthread_timedjoin_for_caller",
-      "helper_function_id": "pthread_abi::pthread_timedjoin_for_caller@8839",
+      "helper_function_id": "pthread_abi::pthread_timedjoin_for_caller@8988",
       "host_symbol": "pthread_timedjoin_np",
-      "id": "pthread_abi:pthread_timedjoin_np:8828:001",
-      "line": 8849,
+      "id": "pthread_abi:pthread_timedjoin_np:8977:001",
+      "line": 8998,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 1,
       "reachability_path": [
-        "pthread_abi::pthread_timedjoin_np@8828",
-        "pthread_abi::pthread_timedjoin_for_caller@8839"
+        "pthread_abi::pthread_timedjoin_np@8977",
+        "pthread_abi::pthread_timedjoin_for_caller@8988"
       ]
     },
     {
       "delegation_kind": "resolved_thread_raw_accessor",
-      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8879",
-      "exported_function_id": "pthread_abi::pthread_tryjoin_np@8873",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9028",
+      "exported_function_id": "pthread_abi::pthread_tryjoin_np@9022",
       "exported_symbol": "pthread_tryjoin_np",
       "expression": "&& let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()",
       "helper_function": "pthread_tryjoin_np",
-      "helper_function_id": "pthread_abi::pthread_tryjoin_np@8873",
+      "helper_function_id": "pthread_abi::pthread_tryjoin_np@9022",
       "host_symbol": "pthread_tryjoin_np",
-      "id": "pthread_abi:pthread_tryjoin_np:8873:001",
-      "line": 8879,
+      "id": "pthread_abi:pthread_tryjoin_np:9022:001",
+      "line": 9028,
       "module": "pthread_abi",
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
       "reachability_hops": 0,
       "reachability_path": [
-        "pthread_abi::pthread_tryjoin_np@8873"
+        "pthread_abi::pthread_tryjoin_np@9022"
       ]
     },
     {
@@ -2374,7 +2374,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 125,
-    "source_tree_sha256": "18b43590c1a1e5640b91e459e45b2306753098f48b0ac0a28017eb223c39424d",
+    "source_tree_sha256": "448317ebcb24798452ed09af4f70e589331e724487fe2366f58f2946e25b7963",
     "version": 16
   },
   "module_census": [
@@ -3279,7 +3279,7 @@
         "support_matrix_sha256": "d935fdf48175efd0e17220640c8d8a88d011f441bacb2d9a958928391f812eaf",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9234,
+      "function_count": 9257,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -13264,7 +13264,7 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18323,
+      "resolved_call_edge_count": 18354,
       "summary": {
         "exported_function_count": 4604,
         "exported_symbol_with_host_dependency_count": 1686,
@@ -13961,137 +13961,137 @@
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6916",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7065",
           "expression": "resolved_thread_setcanceltype_raw()",
-          "function_id": "pthread_abi::cancellation_window_hook@6904",
+          "function_id": "pthread_abi::cancellation_window_hook@7053",
           "host_symbol": "pthread_setcanceltype",
-          "line": 6916,
+          "line": 7065,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6950",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7099",
           "expression": "&& let Some(host_testcancel) = resolved_thread_testcancel_raw()",
-          "function_id": "pthread_abi::pthread_testcancel@6946",
+          "function_id": "pthread_abi::pthread_testcancel@7095",
           "host_symbol": "pthread_testcancel",
-          "line": 6950,
+          "line": 7099,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8849",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8998",
           "expression": "if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {",
-          "function_id": "pthread_abi::pthread_timedjoin_for_caller@8839",
+          "function_id": "pthread_abi::pthread_timedjoin_for_caller@8988",
           "host_symbol": "pthread_timedjoin_np",
-          "line": 8849,
+          "line": 8998,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8879",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9028",
           "expression": "&& let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()",
-          "function_id": "pthread_abi::pthread_tryjoin_np@8873",
+          "function_id": "pthread_abi::pthread_tryjoin_np@9022",
           "host_symbol": "pthread_tryjoin_np",
-          "line": 8879,
+          "line": 9028,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8952",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9101",
           "expression": "if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {",
-          "function_id": "pthread_abi::pthread_clockjoin_np@8938",
+          "function_id": "pthread_abi::pthread_clockjoin_np@9087",
           "host_symbol": "pthread_clockjoin_np",
-          "line": 8952,
+          "line": 9101,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9175",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9324",
           "expression": "&& let Some(host_exit) = resolved_thread_exit_raw()",
-          "function_id": "pthread_abi::pthread_exit@9162",
+          "function_id": "pthread_abi::pthread_exit@9311",
           "host_symbol": "pthread_exit",
-          "line": 9175,
+          "line": 9324,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9574",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9723",
           "expression": "let push = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_push",
-          "line": 9574,
+          "line": 9723,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9575",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9724",
           "expression": "let pop = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_pop",
-          "line": 9575,
+          "line": 9724,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9577",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9726",
           "expression": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push_defer\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_push_defer",
-          "line": 9577,
+          "line": 9726,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9579",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9728",
           "expression": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop_restore\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_pop_restore",
-          "line": 9579,
+          "line": 9728,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9944",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10093",
           "expression": "&& let Some(register) = resolved_thread_register_cancel_raw()",
-          "function_id": "pthread_abi::__pthread_register_cancel@9942",
+          "function_id": "pthread_abi::__pthread_register_cancel@10091",
           "host_symbol": "__pthread_register_cancel",
-          "line": 9944,
+          "line": 10093,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9957",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10106",
           "expression": "&& let Some(unregister) = resolved_thread_unregister_cancel_raw()",
-          "function_id": "pthread_abi::__pthread_unregister_cancel@9955",
+          "function_id": "pthread_abi::__pthread_unregister_cancel@10104",
           "host_symbol": "__pthread_unregister_cancel",
-          "line": 9957,
+          "line": 10106,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9969",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10118",
           "expression": "&& let Some(register) = resolved_thread_register_cancel_defer_raw()",
-          "function_id": "pthread_abi::__pthread_register_cancel_defer@9967",
+          "function_id": "pthread_abi::__pthread_register_cancel_defer@10116",
           "host_symbol": "__pthread_register_cancel_defer",
-          "line": 9969,
+          "line": 10118,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9981",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10130",
           "expression": "&& let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()",
-          "function_id": "pthread_abi::__pthread_unregister_cancel_restore@9979",
+          "function_id": "pthread_abi::__pthread_unregister_cancel_restore@10128",
           "host_symbol": "__pthread_unregister_cancel_restore",
-          "line": 9981,
+          "line": 10130,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10028",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10177",
           "expression": "&& let Some(unwind_next) = resolved_thread_unwind_next_raw()",
-          "function_id": "pthread_abi::__pthread_unwind_next@10026",
+          "function_id": "pthread_abi::__pthread_unwind_next@10175",
           "host_symbol": "__pthread_unwind_next",
-          "line": 10028,
+          "line": 10177,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
@@ -14168,38 +14168,38 @@
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3844",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3845",
           "expression": "crate::host_resolve::resolve_host_symbol_raw(\"dlsym\").is_some_and(|address| {",
-          "function_id": "stdio_abi::stdio_symbols_are_interposed@3822",
+          "function_id": "stdio_abi::stdio_symbols_are_interposed@3823",
           "host_symbol": "dlsym",
-          "line": 3844,
+          "line": 3845,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3965",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3966",
           "expression": "let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {",
-          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3955",
+          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3956",
           "host_symbol": "dlsym",
-          "line": 3965,
+          "line": 3966,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
           "delegation_kind": "host_dlsym_helper",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3971",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3972",
           "expression": "let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };",
-          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3955",
+          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3956",
           "host_symbol": "dlsym",
-          "line": 3971,
+          "line": 3972,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
           "delegation_kind": "host_dlsym_helper",
-          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3973",
+          "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:3974",
           "expression": "resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };",
-          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3955",
+          "function_id": "stdio_abi::sync_copy_relocated_stdio_symbol@3956",
           "host_symbol": "dlsym",
-          "line": 3973,
+          "line": 3974,
           "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
         },
         {
@@ -14303,7 +14303,7 @@
           "caller_function_id": "rpc_auth_des::create@303",
           "candidate_function_ids": [
             "nss_module::getpublickey@888",
-            "rpc_abi::getpublickey@3640"
+            "rpc_abi::getpublickey@3761"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:313",
           "id": "interpose-release-linux-x86_64:rpc_auth_des:create:303:unknown:001",
@@ -14317,7 +14317,7 @@
         {
           "caller_function_id": "rpc_auth_des::make@194",
           "candidate_function_ids": [
-            "rpc_abi::key_gendes@2962"
+            "rpc_abi::key_gendes@3083"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:220",
           "id": "interpose-release-linux-x86_64:rpc_auth_des:make:194:unknown:002",
@@ -14332,7 +14332,7 @@
         {
           "caller_function_id": "rpc_auth_des::renew@156",
           "candidate_function_ids": [
-            "rpc_abi::key_encryptsession_pk@2948"
+            "rpc_abi::key_encryptsession_pk@3069"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:165",
           "id": "interpose-release-linux-x86_64:rpc_auth_des:renew:156:unknown:001",
@@ -14619,16 +14619,16 @@
           "candidate_function_ids": [
             "unistd_abi::new@13995",
             "unistd_abi::new@16327",
-            "unistd_abi::new@20534",
-            "unistd_abi::new@20732",
-            "unistd_abi::new@20952",
-            "unistd_abi::new@21168",
-            "unistd_abi::new@22048",
-            "unistd_abi::new@24425",
-            "unistd_abi::new@24881",
-            "unistd_abi::new@25100",
-            "unistd_abi::new@28750",
-            "unistd_abi::new@29036",
+            "unistd_abi::new@20531",
+            "unistd_abi::new@20729",
+            "unistd_abi::new@20949",
+            "unistd_abi::new@21165",
+            "unistd_abi::new@22045",
+            "unistd_abi::new@24422",
+            "unistd_abi::new@24878",
+            "unistd_abi::new@25097",
+            "unistd_abi::new@28747",
+            "unistd_abi::new@29033",
             "unistd_abi::new@6250"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16618",
@@ -14665,24 +14665,24 @@
           "target_expression": "crate::process_abi::ForkSignalMaskGuard::block_all"
         },
         {
-          "caller_function_id": "unistd_abi::fts_build_children_list@22242",
+          "caller_function_id": "unistd_abi::fts_build_children_list@22239",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
             "unistd_abi::new@16327",
-            "unistd_abi::new@20534",
-            "unistd_abi::new@20732",
-            "unistd_abi::new@20952",
-            "unistd_abi::new@21168",
-            "unistd_abi::new@22048",
-            "unistd_abi::new@24425",
-            "unistd_abi::new@24881",
-            "unistd_abi::new@25100",
-            "unistd_abi::new@28750",
-            "unistd_abi::new@29036",
+            "unistd_abi::new@20531",
+            "unistd_abi::new@20729",
+            "unistd_abi::new@20949",
+            "unistd_abi::new@21165",
+            "unistd_abi::new@22045",
+            "unistd_abi::new@24422",
+            "unistd_abi::new@24878",
+            "unistd_abi::new@25097",
+            "unistd_abi::new@28747",
+            "unistd_abi::new@29033",
             "unistd_abi::new@6250"
           ],
-          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22250",
-          "id": "interpose-release-linux-x86_64:unistd_abi:fts_build_children_list:22242:unknown:001",
+          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22247",
+          "id": "interpose-release-linux-x86_64:unistd_abi:fts_build_children_list:22239:unknown:001",
           "reachable_export_count": 2,
           "reachable_export_sample": [
             "fts64_children",
@@ -14692,24 +14692,24 @@
           "target_expression": "FtsEntryOwned::new"
         },
         {
-          "caller_function_id": "unistd_abi::fts_read@22349",
+          "caller_function_id": "unistd_abi::fts_read@22346",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
             "unistd_abi::new@16327",
-            "unistd_abi::new@20534",
-            "unistd_abi::new@20732",
-            "unistd_abi::new@20952",
-            "unistd_abi::new@21168",
-            "unistd_abi::new@22048",
-            "unistd_abi::new@24425",
-            "unistd_abi::new@24881",
-            "unistd_abi::new@25100",
-            "unistd_abi::new@28750",
-            "unistd_abi::new@29036",
+            "unistd_abi::new@20531",
+            "unistd_abi::new@20729",
+            "unistd_abi::new@20949",
+            "unistd_abi::new@21165",
+            "unistd_abi::new@22045",
+            "unistd_abi::new@24422",
+            "unistd_abi::new@24878",
+            "unistd_abi::new@25097",
+            "unistd_abi::new@28747",
+            "unistd_abi::new@29033",
             "unistd_abi::new@6250"
           ],
-          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22384",
-          "id": "interpose-release-linux-x86_64:unistd_abi:fts_read:22349:unknown:001",
+          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22381",
+          "id": "interpose-release-linux-x86_64:unistd_abi:fts_read:22346:unknown:001",
           "reachable_export_count": 2,
           "reachable_export_sample": [
             "fts64_read",
@@ -14723,16 +14723,16 @@
           "candidate_function_ids": [
             "unistd_abi::new@13995",
             "unistd_abi::new@16327",
-            "unistd_abi::new@20534",
-            "unistd_abi::new@20732",
-            "unistd_abi::new@20952",
-            "unistd_abi::new@21168",
-            "unistd_abi::new@22048",
-            "unistd_abi::new@24425",
-            "unistd_abi::new@24881",
-            "unistd_abi::new@25100",
-            "unistd_abi::new@28750",
-            "unistd_abi::new@29036",
+            "unistd_abi::new@20531",
+            "unistd_abi::new@20729",
+            "unistd_abi::new@20949",
+            "unistd_abi::new@21165",
+            "unistd_abi::new@22045",
+            "unistd_abi::new@24422",
+            "unistd_abi::new@24878",
+            "unistd_abi::new@25097",
+            "unistd_abi::new@28747",
+            "unistd_abi::new@29033",
             "unistd_abi::new@6250"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16515",
@@ -14751,16 +14751,16 @@
           "candidate_function_ids": [
             "unistd_abi::new@13995",
             "unistd_abi::new@16327",
-            "unistd_abi::new@20534",
-            "unistd_abi::new@20732",
-            "unistd_abi::new@20952",
-            "unistd_abi::new@21168",
-            "unistd_abi::new@22048",
-            "unistd_abi::new@24425",
-            "unistd_abi::new@24881",
-            "unistd_abi::new@25100",
-            "unistd_abi::new@28750",
-            "unistd_abi::new@29036",
+            "unistd_abi::new@20531",
+            "unistd_abi::new@20729",
+            "unistd_abi::new@20949",
+            "unistd_abi::new@21165",
+            "unistd_abi::new@22045",
+            "unistd_abi::new@24422",
+            "unistd_abi::new@24878",
+            "unistd_abi::new@25097",
+            "unistd_abi::new@28747",
+            "unistd_abi::new@29033",
             "unistd_abi::new@6250"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:6349",
@@ -15699,7 +15699,7 @@
         "support_matrix_sha256": "d935fdf48175efd0e17220640c8d8a88d011f441bacb2d9a958928391f812eaf",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9224,
+      "function_count": 9247,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -19914,7 +19914,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 18114,
+      "resolved_call_edge_count": 18145,
       "summary": {
         "exported_function_count": 4605,
         "exported_symbol_with_host_dependency_count": 605,
@@ -20413,137 +20413,137 @@
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6916",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7065",
           "expression": "resolved_thread_setcanceltype_raw()",
-          "function_id": "pthread_abi::cancellation_window_hook@6904",
+          "function_id": "pthread_abi::cancellation_window_hook@7053",
           "host_symbol": "pthread_setcanceltype",
-          "line": 6916,
+          "line": 7065,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6950",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:7099",
           "expression": "&& let Some(host_testcancel) = resolved_thread_testcancel_raw()",
-          "function_id": "pthread_abi::pthread_testcancel@6946",
+          "function_id": "pthread_abi::pthread_testcancel@7095",
           "host_symbol": "pthread_testcancel",
-          "line": 6950,
+          "line": 7099,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8849",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8998",
           "expression": "if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {",
-          "function_id": "pthread_abi::pthread_timedjoin_for_caller@8839",
+          "function_id": "pthread_abi::pthread_timedjoin_for_caller@8988",
           "host_symbol": "pthread_timedjoin_np",
-          "line": 8849,
+          "line": 8998,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8879",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9028",
           "expression": "&& let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()",
-          "function_id": "pthread_abi::pthread_tryjoin_np@8873",
+          "function_id": "pthread_abi::pthread_tryjoin_np@9022",
           "host_symbol": "pthread_tryjoin_np",
-          "line": 8879,
+          "line": 9028,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:8952",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9101",
           "expression": "if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {",
-          "function_id": "pthread_abi::pthread_clockjoin_np@8938",
+          "function_id": "pthread_abi::pthread_clockjoin_np@9087",
           "host_symbol": "pthread_clockjoin_np",
-          "line": 8952,
+          "line": 9101,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9175",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9324",
           "expression": "&& let Some(host_exit) = resolved_thread_exit_raw()",
-          "function_id": "pthread_abi::pthread_exit@9162",
+          "function_id": "pthread_abi::pthread_exit@9311",
           "host_symbol": "pthread_exit",
-          "line": 9175,
+          "line": 9324,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9574",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9723",
           "expression": "let push = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_push",
-          "line": 9574,
+          "line": 9723,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9575",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9724",
           "expression": "let pop = crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_pop",
-          "line": 9575,
+          "line": 9724,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9577",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9726",
           "expression": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_push_defer\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_push_defer",
-          "line": 9577,
+          "line": 9726,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9579",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9728",
           "expression": "crate::host_resolve::resolve_host_symbol_raw(\"_pthread_cleanup_pop_restore\")?;",
-          "function_id": "pthread_abi::host_legacy_cleanup@9564",
+          "function_id": "pthread_abi::host_legacy_cleanup@9713",
           "host_symbol": "_pthread_cleanup_pop_restore",
-          "line": 9579,
+          "line": 9728,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9944",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10093",
           "expression": "&& let Some(register) = resolved_thread_register_cancel_raw()",
-          "function_id": "pthread_abi::__pthread_register_cancel@9942",
+          "function_id": "pthread_abi::__pthread_register_cancel@10091",
           "host_symbol": "__pthread_register_cancel",
-          "line": 9944,
+          "line": 10093,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9957",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10106",
           "expression": "&& let Some(unregister) = resolved_thread_unregister_cancel_raw()",
-          "function_id": "pthread_abi::__pthread_unregister_cancel@9955",
+          "function_id": "pthread_abi::__pthread_unregister_cancel@10104",
           "host_symbol": "__pthread_unregister_cancel",
-          "line": 9957,
+          "line": 10106,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9969",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10118",
           "expression": "&& let Some(register) = resolved_thread_register_cancel_defer_raw()",
-          "function_id": "pthread_abi::__pthread_register_cancel_defer@9967",
+          "function_id": "pthread_abi::__pthread_register_cancel_defer@10116",
           "host_symbol": "__pthread_register_cancel_defer",
-          "line": 9969,
+          "line": 10118,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:9981",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10130",
           "expression": "&& let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()",
-          "function_id": "pthread_abi::__pthread_unregister_cancel_restore@9979",
+          "function_id": "pthread_abi::__pthread_unregister_cancel_restore@10128",
           "host_symbol": "__pthread_unregister_cancel_restore",
-          "line": 9981,
+          "line": 10130,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
           "delegation_kind": "resolved_thread_raw_accessor",
-          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10028",
+          "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:10177",
           "expression": "&& let Some(unwind_next) = resolved_thread_unwind_next_raw()",
-          "function_id": "pthread_abi::__pthread_unwind_next@10026",
+          "function_id": "pthread_abi::__pthread_unwind_next@10175",
           "host_symbol": "__pthread_unwind_next",
-          "line": 10028,
+          "line": 10177,
           "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
         },
         {
@@ -20669,7 +20669,7 @@
           "caller_function_id": "rpc_auth_des::create@303",
           "candidate_function_ids": [
             "nss_module::getpublickey@888",
-            "rpc_abi::getpublickey@3640"
+            "rpc_abi::getpublickey@3761"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:313",
           "id": "standalone-release-linux-x86_64:rpc_auth_des:create:303:unknown:001",
@@ -21223,7 +21223,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/poll_abi.rs",
-      "sha256": "ccbe0877d4189ec26c50aced838f76863c1871ec9c24c7984c8bedc4cda73fa6"
+      "sha256": "3e4c039f61df9ba72fa9a919b2e9db140591f6c803798b35a46ac4d2b1566d53"
     },
     {
       "path": "crates/frankenlibc-abi/src/posix_timer.rs",
@@ -21235,11 +21235,11 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "sha256": "9b8a1d978988ea6c669df6d11ddb433c7648da542bc827068a896c47776f0e32"
+      "sha256": "f1fc82ac3017f3d7ebd4fede295eba11868e61b1b15d7e4f350cd28817ba9827"
     },
     {
       "path": "crates/frankenlibc-abi/src/pthread_cancel_poll.rs",
-      "sha256": "f21834f555abbf79464204f21f173dc5f65276dcff0f4107d81e0179f80e0954"
+      "sha256": "b1ddda4a268ea8eb136839e302163256402c20fc4c472779703a0788841fcc3b"
     },
     {
       "path": "crates/frankenlibc-abi/src/pthread_cancel_wait.rs",
@@ -21267,7 +21267,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
-      "sha256": "02b28c84e96eaf792a77734c219cc3294196cef6cd9d2c39c58cacfbaa6098b7"
+      "sha256": "c370707af0c5e186514e5a1d5f755cc726e182170aa91b9af849c669bcd61d8c"
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_auth_des.rs",
@@ -21371,7 +21371,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
-      "sha256": "107b6ada78be2d2fe545ca9d351ac302f6c64f488807e5616fd8b192f4dadf26"
+      "sha256": "6c6424ed095a61a92a61bb13a06e9265e1b40d3a2dfc7372228a9ff23d44530b"
     },
     {
       "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
@@ -21395,7 +21395,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "sha256": "a1514c6ca89987694c4ce5a673bcfa9bdb2507162ea692df58872fe3b042894c"
+      "sha256": "361963ee94c702b1221a562f57828c576f4df2f1320b2e12df415c36d97ebaed"
     },
     {
       "path": "crates/frankenlibc-abi/src/util.rs",
@@ -21407,7 +21407,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "52c1a597e5df5b7b23150e26f5d6732e831a47071362311cbe6b51d32a2babd6"
+      "sha256": "87381a9b3632ed6032a4574e7a351898fcd4d0992a48349a1e24637b45f6ab1b"
     }
   ],
   "summary": {
@@ -21759,81 +21759,81 @@
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:__pthread_register_cancel:9942:001"
+        "pthread_abi:__pthread_register_cancel:10091:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::__pthread_register_cancel@9942",
+      "function_id": "pthread_abi::__pthread_register_cancel@10091",
       "host_symbols": [
         "__pthread_register_cancel"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9942",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10091",
       "symbol": "__pthread_register_cancel"
     },
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:__pthread_register_cancel_defer:9967:001"
+        "pthread_abi:__pthread_register_cancel_defer:10116:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::__pthread_register_cancel_defer@9967",
+      "function_id": "pthread_abi::__pthread_register_cancel_defer@10116",
       "host_symbols": [
         "__pthread_register_cancel_defer"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9967",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10116",
       "symbol": "__pthread_register_cancel_defer"
     },
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:__pthread_unregister_cancel:9955:001"
+        "pthread_abi:__pthread_unregister_cancel:10104:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::__pthread_unregister_cancel@9955",
+      "function_id": "pthread_abi::__pthread_unregister_cancel@10104",
       "host_symbols": [
         "__pthread_unregister_cancel"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9955",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10104",
       "symbol": "__pthread_unregister_cancel"
     },
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:__pthread_unregister_cancel_restore:9979:001"
+        "pthread_abi:__pthread_unregister_cancel_restore:10128:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::__pthread_unregister_cancel_restore@9979",
+      "function_id": "pthread_abi::__pthread_unregister_cancel_restore@10128",
       "host_symbols": [
         "__pthread_unregister_cancel_restore"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9979",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10128",
       "symbol": "__pthread_unregister_cancel_restore"
     },
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:__pthread_unwind_next:10026:001"
+        "pthread_abi:__pthread_unwind_next:10175:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::__pthread_unwind_next@10026",
+      "function_id": "pthread_abi::__pthread_unwind_next@10175",
       "host_symbols": [
         "__pthread_unwind_next"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10026",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10175",
       "symbol": "__pthread_unwind_next"
     },
     {
@@ -21855,17 +21855,17 @@
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:pthread_clockjoin_np:8938:001"
+        "pthread_abi:pthread_clockjoin_np:9087:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::pthread_clockjoin_np@8938",
+      "function_id": "pthread_abi::pthread_clockjoin_np@9087",
       "host_symbols": [
         "pthread_clockjoin_np"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8938",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9087",
       "symbol": "pthread_clockjoin_np"
     },
     {
@@ -21903,17 +21903,17 @@
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:pthread_exit:9162:001"
+        "pthread_abi:pthread_exit:9311:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::pthread_exit@9162",
+      "function_id": "pthread_abi::pthread_exit@9311",
       "host_symbols": [
         "pthread_exit"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9162",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9311",
       "symbol": "pthread_exit"
     },
     {
@@ -21967,49 +21967,49 @@
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:pthread_testcancel:6946:001"
+        "pthread_abi:pthread_testcancel:7095:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::pthread_testcancel@6946",
+      "function_id": "pthread_abi::pthread_testcancel@7095",
       "host_symbols": [
         "pthread_testcancel"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6946",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7095",
       "symbol": "pthread_testcancel"
     },
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:pthread_timedjoin_np:8828:001"
+        "pthread_abi:pthread_timedjoin_np:8977:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::pthread_timedjoin_np@8828",
+      "function_id": "pthread_abi::pthread_timedjoin_np@8977",
       "host_symbols": [
         "pthread_timedjoin_np"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8828",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8977",
       "symbol": "pthread_timedjoin_np"
     },
     {
       "callsite_count": 1,
       "callsite_ids": [
-        "pthread_abi:pthread_tryjoin_np:8873:001"
+        "pthread_abi:pthread_tryjoin_np:9022:001"
       ],
       "delegation_kinds": [
         "resolved_thread_raw_accessor"
       ],
-      "function_id": "pthread_abi::pthread_tryjoin_np@8873",
+      "function_id": "pthread_abi::pthread_tryjoin_np@9022",
       "host_symbols": [
         "pthread_tryjoin_np"
       ],
       "module": "pthread_abi",
-      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8873",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:9022",
       "symbol": "pthread_tryjoin_np"
     },
     {

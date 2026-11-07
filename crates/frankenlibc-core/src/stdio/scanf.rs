@@ -615,10 +615,7 @@ where
     parse_scanf_format_impl::<true, S>(fmt, is_space)
 }
 
-fn parse_scanf_format_impl<const WIDE_INPUT: bool, S>(
-    fmt: &[u8],
-    is_space: &S,
-) -> ScanDirectives
+fn parse_scanf_format_impl<const WIDE_INPUT: bool, S>(fmt: &[u8], is_space: &S) -> ScanDirectives
 where
     S: Fn(u32) -> bool,
 {
@@ -1286,7 +1283,10 @@ pub struct WideScanWriteError {
 enum WideScanPhase {
     Directive,
     Leading(ScanOperationKind),
-    Text { kind: ScanOperationKind, matched: usize },
+    Text {
+        kind: ScanOperationKind,
+        matched: usize,
+    },
     Number(WideScanNumber),
 }
 
@@ -1377,9 +1377,9 @@ impl<'a> WideScanSession<'a> {
 
     fn start_operation(kind: ScanOperationKind) -> WideScanPhase {
         match kind {
-            ScanOperationKind::Character | ScanOperationKind::String | ScanOperationKind::Scanset => {
-                WideScanPhase::Text { kind, matched: 0 }
-            }
+            ScanOperationKind::Character
+            | ScanOperationKind::String
+            | ScanOperationKind::Scanset => WideScanPhase::Text { kind, matched: 0 },
             _ => WideScanPhase::Number(WideScanNumber::new(kind)),
         }
     }
@@ -1446,7 +1446,10 @@ impl<'a> WideScanSession<'a> {
         self.consumed -= token.len() - end;
         let Some(value) = value else {
             let exhausted = token.is_empty()
-                && matches!(self.available(), Some(WideScanInput::Eof | WideScanInput::Error));
+                && matches!(
+                    self.available(),
+                    Some(WideScanInput::Eof | WideScanInput::Error)
+                );
             return Some(self.finish(exhausted));
         };
         if !spec.suppress {
@@ -1514,7 +1517,9 @@ impl<'a> WideScanSession<'a> {
                                 self.directive_index += 1;
                             }
                             Some(WideScanInput::Character(_)) => return self.finish(false),
-                            Some(WideScanInput::Eof | WideScanInput::Error) => return self.finish(true),
+                            Some(WideScanInput::Eof | WideScanInput::Error) => {
+                                return self.finish(true);
+                            }
                         }
                     }
                     ScanDirective::Spec(spec) => {
@@ -1534,9 +1539,14 @@ impl<'a> WideScanSession<'a> {
                             self.directive_index += 1;
                             continue;
                         }
-                        if matches!(kind, ScanOperationKind::Character | ScanOperationKind::String | ScanOperationKind::Scanset)
-                            && !spec.suppress
-                            && let Err(error) = writer(spec, WideScanEvent::BeginText, self.context(0))
+                        if matches!(
+                            kind,
+                            ScanOperationKind::Character
+                                | ScanOperationKind::String
+                                | ScanOperationKind::Scanset
+                        ) && !spec.suppress
+                            && let Err(error) =
+                                writer(spec, WideScanEvent::BeginText, self.context(0))
                         {
                             return self.finish(error.input_failure);
                         }
@@ -1560,10 +1570,16 @@ impl<'a> WideScanSession<'a> {
                             self.consume();
                             self.phase = WideScanPhase::Leading(kind);
                         }
-                        Some(WideScanInput::Character(_)) => self.phase = Self::start_operation(kind),
+                        Some(WideScanInput::Character(_)) => {
+                            self.phase = Self::start_operation(kind)
+                        }
                         Some(WideScanInput::Eof | WideScanInput::Error) => {
-                            if matches!(kind, ScanOperationKind::Character | ScanOperationKind::String | ScanOperationKind::Scanset)
-                                && let Some(result) = self.end_text(spec, 0, false, true, writer)
+                            if matches!(
+                                kind,
+                                ScanOperationKind::Character
+                                    | ScanOperationKind::String
+                                    | ScanOperationKind::Scanset
+                            ) && let Some(result) = self.end_text(spec, 0, false, true, writer)
                             {
                                 return result;
                             }
@@ -1575,9 +1591,22 @@ impl<'a> WideScanSession<'a> {
                     let ScanDirective::Spec(spec) = directive else {
                         unreachable!("a text conversion owns its character cursor")
                     };
-                    let width = effective_width(spec, if kind == ScanOperationKind::Character { 1 } else { usize::MAX });
+                    let width = effective_width(
+                        spec,
+                        if kind == ScanOperationKind::Character {
+                            1
+                        } else {
+                            usize::MAX
+                        },
+                    );
                     if matched == width {
-                        if let Some(result) = self.end_text(spec, matched, matched != 0 || kind == ScanOperationKind::Character, false, writer) {
+                        if let Some(result) = self.end_text(
+                            spec,
+                            matched,
+                            matched != 0 || kind == ScanOperationKind::Character,
+                            false,
+                            writer,
+                        ) {
                             return result;
                         }
                         continue;
@@ -1595,7 +1624,9 @@ impl<'a> WideScanSession<'a> {
                                 _ => unreachable!(),
                             };
                             if !accepted {
-                                if let Some(result) = self.end_text(spec, matched, matched != 0, false, writer) {
+                                if let Some(result) =
+                                    self.end_text(spec, matched, matched != 0, false, writer)
+                                {
                                     return result;
                                 }
                                 continue;
@@ -1604,7 +1635,11 @@ impl<'a> WideScanSession<'a> {
                             let matched = matched + 1;
                             self.phase = WideScanPhase::Text { kind, matched };
                             if !spec.suppress
-                                && let Err(error) = writer(spec, WideScanEvent::Character(character), self.context(matched))
+                                && let Err(error) = writer(
+                                    spec,
+                                    WideScanEvent::Character(character),
+                                    self.context(matched),
+                                )
                             {
                                 return self.finish(error.input_failure);
                             }
@@ -1613,7 +1648,9 @@ impl<'a> WideScanSession<'a> {
                             // FILE scanf completes a nonempty short %c too.
                             // A source error may finish a prefix; a destination
                             // writer error above always stops immediately.
-                            if let Some(result) = self.end_text(spec, matched, matched != 0, true, writer) {
+                            if let Some(result) =
+                                self.end_text(spec, matched, matched != 0, true, writer)
+                            {
                                 return result;
                             }
                         }
@@ -1638,7 +1675,9 @@ impl<'a> WideScanSession<'a> {
                             self.phase = WideScanPhase::Number(number);
                             return self.need_input(WideScanReadPurpose::Conversion);
                         }
-                        Some(WideScanInput::Character(character)) if !at_width && number.accept(character, spec, self.radix) => {
+                        Some(WideScanInput::Character(character))
+                            if !at_width && number.accept(character, spec, self.radix) =>
+                        {
                             self.consume();
                             self.phase = WideScanPhase::Number(number);
                         }
@@ -1658,7 +1697,10 @@ fn wide_scanset_accepts(spec: &ScanSpec, character: u32) -> bool {
     match spec.simple_set {
         SimpleScanSet::Byte(byte) => character == u32::from(byte),
         SimpleScanSet::NegatedByte(byte) => character != u32::from(byte),
-        SimpleScanSet::None => spec.scanset.as_ref().is_some_and(|set| set.contains_wide(character) != set.negated),
+        SimpleScanSet::None => spec
+            .scanset
+            .as_ref()
+            .is_some_and(|set| set.contains_wide(character) != set.negated),
     }
 }
 
@@ -1687,7 +1729,11 @@ struct WideScanNumber {
 
 impl WideScanNumber {
     fn new(kind: ScanOperationKind) -> Self {
-        Self { kind, state: WideNumberState::Start, bytes: InlineVec::default() }
+        Self {
+            kind,
+            state: WideNumberState::Start,
+            bytes: InlineVec::default(),
+        }
     }
 
     fn complete(&self) -> bool {
@@ -1696,7 +1742,12 @@ impl WideScanNumber {
 
     fn accept(&mut self, character: u32, spec: &ScanSpec, radix: u32) -> bool {
         let radix_position = self.kind == ScanOperationKind::Float
-            && matches!(self.state, WideNumberState::Start | WideNumberState::FloatZero | WideNumberState::Mantissa { .. });
+            && matches!(
+                self.state,
+                WideNumberState::Start
+                    | WideNumberState::FloatZero
+                    | WideNumberState::Mantissa { .. }
+            );
         let byte = if radix_position && character == radix {
             b'.'
         } else if character < 0x80 && !(radix_position && character == u32::from(b'.')) {
@@ -1721,23 +1772,47 @@ impl WideScanNumber {
                 if self.kind == ScanOperationKind::Float {
                     self.state = match byte {
                         b'0' => WideNumberState::FloatZero,
-                        b'1'..=b'9' => WideNumberState::Mantissa { hex: false, dot: false, digits: true },
-                        b'.' => WideNumberState::Mantissa { hex: false, dot: true, digits: false },
-                        b'i' | b'I' => WideNumberState::Word { word: b"inf", matched: 1 },
-                        b'n' | b'N' => WideNumberState::Word { word: b"nan", matched: 1 },
+                        b'1'..=b'9' => WideNumberState::Mantissa {
+                            hex: false,
+                            dot: false,
+                            digits: true,
+                        },
+                        b'.' => WideNumberState::Mantissa {
+                            hex: false,
+                            dot: true,
+                            digits: false,
+                        },
+                        b'i' | b'I' => WideNumberState::Word {
+                            word: b"inf",
+                            matched: 1,
+                        },
+                        b'n' | b'N' => WideNumberState::Word {
+                            word: b"nan",
+                            matched: 1,
+                        },
                         _ => return false,
                     };
                     return true;
                 }
-                if self.kind == ScanOperationKind::Pointer && self.bytes.is_empty() && byte == b'(' && effective_width(spec, usize::MAX) >= 5 {
-                    self.state = WideNumberState::Word { word: b"(nil)", matched: 1 };
+                if self.kind == ScanOperationKind::Pointer
+                    && self.bytes.is_empty()
+                    && byte == b'('
+                    && effective_width(spec, usize::MAX) >= 5
+                {
+                    self.state = WideNumberState::Word {
+                        word: b"(nil)",
+                        matched: 1,
+                    };
                     return true;
                 }
                 let (base, auto) = match self.kind {
-                    ScanOperationKind::Int(IntScanKind::SignedAutoBase) => (if byte == b'0' { 8 } else { 10 }, true),
+                    ScanOperationKind::Int(IntScanKind::SignedAutoBase) => {
+                        (if byte == b'0' { 8 } else { 10 }, true)
+                    }
                     ScanOperationKind::Int(IntScanKind::UnsignedOctal) => (8, false),
                     ScanOperationKind::Int(IntScanKind::UnsignedBinary) => (2, false),
-                    ScanOperationKind::Int(IntScanKind::UnsignedHex) | ScanOperationKind::Pointer => (16, false),
+                    ScanOperationKind::Int(IntScanKind::UnsignedHex)
+                    | ScanOperationKind::Pointer => (16, false),
                     _ => (10, false),
                 };
                 if digit_value(byte, base).is_none() {
@@ -1753,9 +1828,13 @@ impl WideScanNumber {
             WideNumberState::IntegerZero { base, auto } => {
                 let prefix_base = if byte.eq_ignore_ascii_case(&b'x') && (auto || base == 16) {
                     Some(16)
-                } else if byte.eq_ignore_ascii_case(&b'b') && (base == 2 || (auto && spec.binary_prefix)) {
+                } else if byte.eq_ignore_ascii_case(&b'b')
+                    && (base == 2 || (auto && spec.binary_prefix))
+                {
                     Some(2)
-                } else { None };
+                } else {
+                    None
+                };
                 if let Some(base) = prefix_base {
                     self.state = WideNumberState::IntegerDigits(base);
                     true
@@ -1767,37 +1846,60 @@ impl WideScanNumber {
             WideNumberState::IntegerDigits(base) => digit_value(byte, base).is_some(),
             WideNumberState::FloatZero => {
                 if byte.eq_ignore_ascii_case(&b'x') {
-                    self.state = WideNumberState::Mantissa { hex: true, dot: false, digits: false };
+                    self.state = WideNumberState::Mantissa {
+                        hex: true,
+                        dot: false,
+                        digits: false,
+                    };
                     true
                 } else {
-                    self.state = WideNumberState::Mantissa { hex: false, dot: false, digits: true };
+                    self.state = WideNumberState::Mantissa {
+                        hex: false,
+                        dot: false,
+                        digits: true,
+                    };
                     self.accept_byte(byte, spec)
                 }
             }
             WideNumberState::Mantissa { hex, dot, digits } => {
                 if digit_value(byte, if hex { 16 } else { 10 }).is_some() {
-                    self.state = WideNumberState::Mantissa { hex, dot, digits: true };
+                    self.state = WideNumberState::Mantissa {
+                        hex,
+                        dot,
+                        digits: true,
+                    };
                     true
                 } else if byte == b'.' && !dot {
-                    self.state = WideNumberState::Mantissa { hex, dot: true, digits };
+                    self.state = WideNumberState::Mantissa {
+                        hex,
+                        dot: true,
+                        digits,
+                    };
                     true
                 } else if digits && byte.eq_ignore_ascii_case(&if hex { b'p' } else { b'e' }) {
                     self.state = WideNumberState::Exponent { sign: true };
                     true
-                } else { false }
+                } else {
+                    false
+                }
             }
             WideNumberState::Exponent { sign } => {
                 if byte.is_ascii_digit() || (sign && matches!(byte, b'+' | b'-')) {
                     self.state = WideNumberState::Exponent { sign: false };
                     true
-                } else { false }
+                } else {
+                    false
+                }
             }
             WideNumberState::Word { word, matched } => {
                 if !byte.eq_ignore_ascii_case(&word[matched]) {
                     return false;
                 }
                 self.state = if matched + 1 < word.len() {
-                    WideNumberState::Word { word, matched: matched + 1 }
+                    WideNumberState::Word {
+                        word,
+                        matched: matched + 1,
+                    }
                 } else if word == b"inf" {
                     WideNumberState::Infinity(0)
                 } else if word == b"nan" {
@@ -1811,14 +1913,20 @@ impl WideScanNumber {
                 if !byte.eq_ignore_ascii_case(&b"inity"[matched]) {
                     return false;
                 }
-                self.state = if matched == 4 { WideNumberState::Complete } else { WideNumberState::Infinity(matched + 1) };
+                self.state = if matched == 4 {
+                    WideNumberState::Complete
+                } else {
+                    WideNumberState::Infinity(matched + 1)
+                };
                 true
             }
             WideNumberState::Nan => {
                 if byte == b'(' {
                     self.state = WideNumberState::NanPayload;
                     true
-                } else { false }
+                } else {
+                    false
+                }
             }
             WideNumberState::NanPayload => {
                 if byte == b')' {
@@ -4793,18 +4901,37 @@ mod wide_stream_scan_tests {
     }
 
     fn run(format: &str, input: &str, terminal: Option<WideScanInput>) -> Trace {
-        run_locale(format, input, terminal, u32::from(b'.'), &crate::string::wchar::iswspace)
+        run_locale(
+            format,
+            input,
+            terminal,
+            u32::from(b'.'),
+            &crate::string::wchar::iswspace,
+        )
     }
 
     #[test]
     fn unbounded_text_and_allocated_scanset_cross_the_old_input_limit() {
         let input = format!("{} {}!", "é".repeat(20_000), "a".repeat(6_000));
         let trace = run("%s%n %m[a-z]%n", &input, None);
-        assert_eq!(trace.summary, WideScanSummary { count: 2, consumed: 26_001, input_failure: false });
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 2,
+                consumed: 26_001,
+                input_failure: false
+            }
+        );
         assert_eq!(trace.texts[0], vec![0xe9; 20_000]);
         assert_eq!(trace.texts[1], vec![u32::from(b'a'); 6_000]);
         assert_eq!((trace.ends, trace.aborts), (2, 0));
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(20_000), ScanValue::CharsConsumed(26_001)]));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [
+                ScanValue::CharsConsumed(20_000),
+                ScanValue::CharsConsumed(26_001)
+            ]
+        ));
         assert_eq!(trace.unread, [u32::from(b'!')]);
         assert_eq!(trace.requests.len(), 26_002);
     }
@@ -4813,18 +4940,35 @@ mod wide_stream_scan_tests {
     fn bounded_text_literals_and_counts_never_request_a_suffix() {
         for format in ["%1c%n", "%1lc%n", "%1s%n", "%1[é]%n", "%1m[^X]%n"] {
             let trace = run(format, "é", None);
-            assert_eq!(trace.summary, WideScanSummary { count: 1, consumed: 1, input_failure: false }, "{format}");
+            assert_eq!(
+                trace.summary,
+                WideScanSummary {
+                    count: 1,
+                    consumed: 1,
+                    input_failure: false
+                },
+                "{format}"
+            );
             assert_eq!(trace.requests.len(), 1);
             assert_eq!(trace.texts, [vec![0xe9]]);
-            assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(1)]));
+            assert!(matches!(
+                trace.values.as_slice(),
+                [ScanValue::CharsConsumed(1)]
+            ));
         }
         let trace = run("%n€%n", "€", None);
         assert_eq!(trace.requests.len(), 1);
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(0), ScanValue::CharsConsumed(1)]));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(0), ScanValue::CharsConsumed(1)]
+        ));
         assert_eq!(trace.summary.count, 0);
         let trace = run("%n", "", None);
         assert!(trace.requests.is_empty());
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(0)]));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(0)]
+        ));
     }
 
     #[test]
@@ -4838,13 +4982,21 @@ mod wide_stream_scan_tests {
         let mut writer = |_: &ScanSpec, event, context: WideScanContext| {
             match event {
                 WideScanEvent::Value(ScanValue::SignedInt(value)) => {
-                    assert!(integer.replace(value).is_none(), "an assignment was replayed");
+                    assert!(
+                        integer.replace(value).is_none(),
+                        "an assignment was replayed"
+                    );
                 }
                 WideScanEvent::BeginText => begins += 1,
                 WideScanEvent::Character(0xe9) => partial.push(0xe9u8),
                 WideScanEvent::Character(0x20ac) => {
-                    assert_eq!((context.directive_index, context.consumed, context.matched), (2, 4, 2));
-                    return Err(WideScanWriteError { input_failure: false });
+                    assert_eq!(
+                        (context.directive_index, context.consumed, context.matched),
+                        (2, 4, 2)
+                    );
+                    return Err(WideScanWriteError {
+                        input_failure: false,
+                    });
                 }
                 event => panic!("an event ran after the destination error: {event:?}"),
             }
@@ -4855,11 +5007,23 @@ mod wide_stream_scan_tests {
             match session.resume(supplied, &mut writer, &crate::string::wchar::iswspace) {
                 WideScanProgress::Complete(summary) => break summary,
                 WideScanProgress::NeedInput(_) => {
-                    supplied = Some(WideScanInput::Character(input.next().expect("encoding failure must return before another read") as u32));
+                    supplied = Some(WideScanInput::Character(
+                        input
+                            .next()
+                            .expect("encoding failure must return before another read")
+                            as u32,
+                    ));
                 }
             }
         };
-        assert_eq!(summary, WideScanSummary { count: 1, consumed: 4, input_failure: false });
+        assert_eq!(
+            summary,
+            WideScanSummary {
+                count: 1,
+                consumed: 4,
+                input_failure: false
+            }
+        );
         assert_eq!((integer, begins, partial), (Some(7), 1, vec![0xe9]));
         assert!(session.unread().next().is_none());
     }
@@ -4873,13 +5037,32 @@ mod wide_stream_scan_tests {
             calls += 1;
             match event {
                 WideScanEvent::BeginText | WideScanEvent::Character(0xe9) => Ok(()),
-                WideScanEvent::Character(0x20ac) => Err(WideScanWriteError { input_failure: true }),
+                WideScanEvent::Character(0x20ac) => Err(WideScanWriteError {
+                    input_failure: true,
+                }),
                 _ => panic!("failure must not emit EndText, AbortText, or %n"),
             }
         };
-        assert!(matches!(session.resume(None, &mut writer, &|_| false), WideScanProgress::NeedInput(_)));
-        assert!(matches!(session.resume(Some(WideScanInput::Character(0xe9)), &mut writer, &|_| false), WideScanProgress::NeedInput(_)));
-        assert_eq!(session.resume(Some(WideScanInput::Character(0x20ac)), &mut writer, &|_| false), WideScanProgress::Complete(WideScanSummary { count: 0, consumed: 2, input_failure: true }));
+        assert!(matches!(
+            session.resume(None, &mut writer, &|_| false),
+            WideScanProgress::NeedInput(_)
+        ));
+        assert!(matches!(
+            session.resume(Some(WideScanInput::Character(0xe9)), &mut writer, &|_| {
+                false
+            }),
+            WideScanProgress::NeedInput(_)
+        ));
+        assert_eq!(
+            session.resume(Some(WideScanInput::Character(0x20ac)), &mut writer, &|_| {
+                false
+            }),
+            WideScanProgress::Complete(WideScanSummary {
+                count: 0,
+                consumed: 2,
+                input_failure: true
+            })
+        );
         assert_eq!(calls, 3);
     }
 
@@ -4889,16 +5072,29 @@ mod wide_stream_scan_tests {
             for format in ["%3c%n", "%3lc%n", "%3mc%n", "%3mlc%n", "%s%n", "%[A-Z]%n"] {
                 for input in ["A", "AB"] {
                     let trace = run(format, input, Some(terminal));
-                    assert_eq!(trace.summary, WideScanSummary { count: 1, consumed: input.len(), input_failure: false }, "{format}/{input}/{terminal:?}");
+                    assert_eq!(
+                        trace.summary,
+                        WideScanSummary {
+                            count: 1,
+                            consumed: input.len(),
+                            input_failure: false
+                        },
+                        "{format}/{input}/{terminal:?}"
+                    );
                     assert_eq!((trace.ends, trace.aborts), (1, 0));
-                    assert!(matches!(trace.values[0], ScanValue::CharsConsumed(n) if n == input.len()));
+                    assert!(
+                        matches!(trace.values[0], ScanValue::CharsConsumed(n) if n == input.len())
+                    );
                 }
             }
             let trace = run("%*3c%n", "A", Some(terminal));
             assert_eq!(trace.summary.count, 0);
             assert!(!trace.summary.input_failure);
             assert!(trace.texts.is_empty());
-            assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(1)]));
+            assert!(matches!(
+                trace.values.as_slice(),
+                [ScanValue::CharsConsumed(1)]
+            ));
         }
     }
 
@@ -4907,7 +5103,14 @@ mod wide_stream_scan_tests {
         for terminal in [WideScanInput::Eof, WideScanInput::Error] {
             for format in ["%ms%n", "%mc%n", "%m[A-Z]%n"] {
                 let trace = run(format, "", Some(terminal));
-                assert_eq!(trace.summary, WideScanSummary { count: 0, consumed: 0, input_failure: true });
+                assert_eq!(
+                    trace.summary,
+                    WideScanSummary {
+                        count: 0,
+                        consumed: 0,
+                        input_failure: true
+                    }
+                );
                 assert_eq!((trace.texts.len(), trace.ends, trace.aborts), (1, 0, 1));
                 assert!(trace.values.is_empty());
             }
@@ -4921,22 +5124,59 @@ mod wide_stream_scan_tests {
     #[test]
     fn suppressed_long_text_emits_no_destination_events() {
         let trace = run("%*20000c%n", &"€".repeat(20_000), None);
-        assert_eq!(trace.summary, WideScanSummary { count: 0, consumed: 20_000, input_failure: false });
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 0,
+                consumed: 20_000,
+                input_failure: false
+            }
+        );
         assert!(trace.texts.is_empty());
         assert_eq!((trace.ends, trace.aborts), (0, 0));
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(20_000)]));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(20_000)]
+        ));
         assert_eq!(trace.requests.len(), 20_000);
     }
 
     #[test]
     fn format_whitespace_read_errors_still_reach_counts() {
         let trace = run("%n %n", " \t", Some(WideScanInput::Error));
-        assert_eq!(trace.summary, WideScanSummary { count: 0, consumed: 2, input_failure: false });
-        assert!(trace.requests.iter().all(|purpose| *purpose == WideScanReadPurpose::FormatWhitespace));
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(0), ScanValue::CharsConsumed(2)]));
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 0,
+                consumed: 2,
+                input_failure: false
+            }
+        );
+        assert!(
+            trace
+                .requests
+                .iter()
+                .all(|purpose| *purpose == WideScanReadPurpose::FormatWhitespace)
+        );
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(0), ScanValue::CharsConsumed(2)]
+        ));
         let trace = run("%d", " \t", Some(WideScanInput::Error));
-        assert_eq!(trace.summary, WideScanSummary { count: 0, consumed: 2, input_failure: true });
-        assert!(trace.requests.iter().all(|purpose| *purpose == WideScanReadPurpose::Conversion));
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 0,
+                consumed: 2,
+                input_failure: true
+            }
+        );
+        assert!(
+            trace
+                .requests
+                .iter()
+                .all(|purpose| *purpose == WideScanReadPurpose::Conversion)
+        );
     }
 
     #[test]
@@ -4946,20 +5186,36 @@ mod wide_stream_scan_tests {
         assert_eq!(trace.summary.consumed, 0);
         assert_eq!(trace.unread, [u32::from(b' ')]);
         let trace = run("\u{2003}%n%1c", " \tX", None);
-        assert_eq!(trace.summary, WideScanSummary { count: 1, consumed: 3, input_failure: false });
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(2)]));
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 1,
+                consumed: 3,
+                input_failure: false
+            }
+        );
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(2)]
+        ));
         let trace = run_locale("%1s%n", "\u{2003}", None, u32::from(b'.'), &c_space);
         assert_eq!(trace.texts, [vec![0x2003]]);
         let trace = run("%1s%n", "\u{2003}X", None);
         assert_eq!(trace.texts, [vec![u32::from(b'X')]]);
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(2)]));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(2)]
+        ));
     }
 
     #[test]
     fn scalar_scansets_and_literal_mismatches_keep_whole_characters() {
         let trace = run("%2[α-ω]%n", "βω", None);
         assert_eq!(trace.texts, [vec![0x3b2, 0x3c9]]);
-        assert!(matches!(trace.values.as_slice(), [ScanValue::CharsConsumed(2)]));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(2)]
+        ));
         let trace = run("%[é]%n", "ê", None);
         assert_eq!(trace.summary.consumed, 0);
         assert_eq!(trace.unread, [0xea]);
@@ -4971,27 +5227,64 @@ mod wide_stream_scan_tests {
 
     #[test]
     fn numeric_fields_have_their_own_lookahead_rules() {
-        for (format, input) in [("%1lf%n", "1"), ("%2lf%n", "1."), ("%3lf%n", "1e+"), ("%3lf%n", "inf"), ("%3lf%n", "nan"), ("%lf%n", "infinity"), ("%lf%n", "nan()"), ("%p%n", "(nil)")] {
+        for (format, input) in [
+            ("%1lf%n", "1"),
+            ("%2lf%n", "1."),
+            ("%3lf%n", "1e+"),
+            ("%3lf%n", "inf"),
+            ("%3lf%n", "nan"),
+            ("%lf%n", "infinity"),
+            ("%lf%n", "nan()"),
+            ("%p%n", "(nil)"),
+        ] {
             let trace = run(format, input, None);
             assert_eq!(trace.summary.count, 1, "{format}/{input}");
             assert_eq!(trace.requests.len(), input.len());
-            assert!(matches!(trace.values.last(), Some(ScanValue::CharsConsumed(n)) if *n == input.len()));
+            assert!(
+                matches!(trace.values.last(), Some(ScanValue::CharsConsumed(n)) if *n == input.len())
+            );
         }
         for input in ["1X", "1"] {
             let trace = run("%1d%n", input, Some(WideScanInput::Eof));
             assert_eq!(trace.requests.len(), 2, "integer width requires lookahead");
-            assert!(matches!(trace.values.as_slice(), [ScanValue::SignedInt(1), ScanValue::CharsConsumed(1)]));
+            assert!(matches!(
+                trace.values.as_slice(),
+                [ScanValue::SignedInt(1), ScanValue::CharsConsumed(1)]
+            ));
         }
     }
 
     #[test]
     fn locale_radix_counts_scalars_and_rewinds_its_original_character() {
-        let trace = run_locale("%3lf%n%1c", "1٫5X", None, 0x66b, &crate::string::wchar::iswspace);
-        assert_eq!(trace.summary, WideScanSummary { count: 2, consumed: 4, input_failure: false });
-        assert!(matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(3)] if *value == 1.5));
+        let trace = run_locale(
+            "%3lf%n%1c",
+            "1٫5X",
+            None,
+            0x66b,
+            &crate::string::wchar::iswspace,
+        );
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 2,
+                consumed: 4,
+                input_failure: false
+            }
+        );
+        assert!(
+            matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(3)] if *value == 1.5)
+        );
         assert_eq!(trace.texts, [vec![u32::from(b'X')]]);
-        let trace = run_locale("%lf%n%1c", "1.5", None, u32::from(b','), &crate::string::wchar::iswspace);
-        assert!(matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(1)] if *value == 1.0));
+        let trace = run_locale(
+            "%lf%n%1c",
+            "1.5",
+            None,
+            u32::from(b','),
+            &crate::string::wchar::iswspace,
+        );
+        assert!(
+            matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(1)] if *value == 1.0)
+        );
         assert_eq!(trace.texts, [vec![u32::from(b'.')]]);
         assert_eq!(trace.requests.len(), 2);
         let trace = run_locale("%lf", "٫X", None, 0x66b, &crate::string::wchar::iswspace);
@@ -5002,13 +5295,29 @@ mod wide_stream_scan_tests {
     #[test]
     fn numerical_rollback_is_replayed_before_existing_lookahead() {
         let trace = run("%lf%2c%n", "infiX", None);
-        assert_eq!(trace.summary, WideScanSummary { count: 2, consumed: 5, input_failure: false });
-        assert!(matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(5)] if value.is_infinite() && value.is_sign_positive()));
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 2,
+                consumed: 5,
+                input_failure: false
+            }
+        );
+        assert!(
+            matches!(trace.values.as_slice(), [ScanValue::Float(value), ScanValue::CharsConsumed(5)] if value.is_infinite() && value.is_sign_positive())
+        );
         assert_eq!(trace.texts, [vec![u32::from(b'i'), u32::from(b'X')]]);
         assert_eq!(trace.requests.len(), 5);
         assert!(trace.unread.is_empty());
         let trace = run("%i%n", "0xZ", None);
-        assert_eq!(trace.summary, WideScanSummary { count: 0, consumed: 2, input_failure: false });
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 0,
+                consumed: 2,
+                input_failure: false
+            }
+        );
         assert!(trace.values.is_empty());
         assert_eq!(trace.unread, [u32::from(b'Z')]);
     }
@@ -5017,8 +5326,21 @@ mod wide_stream_scan_tests {
     fn long_numeric_tokens_keep_the_existing_saturation_and_count() {
         let input = format!("{}Z", "9".repeat(7_000));
         let trace = run("%llu%n", &input, None);
-        assert_eq!(trace.summary, WideScanSummary { count: 1, consumed: 7_000, input_failure: false });
-        assert!(matches!(trace.values.as_slice(), [ScanValue::UnsignedInt(u64::MAX), ScanValue::CharsConsumed(7_000)]));
+        assert_eq!(
+            trace.summary,
+            WideScanSummary {
+                count: 1,
+                consumed: 7_000,
+                input_failure: false
+            }
+        );
+        assert!(matches!(
+            trace.values.as_slice(),
+            [
+                ScanValue::UnsignedInt(u64::MAX),
+                ScanValue::CharsConsumed(7_000)
+            ]
+        ));
         assert_eq!(trace.unread, [u32::from(b'Z')]);
     }
 
@@ -5032,13 +5354,27 @@ mod wide_stream_scan_tests {
             match event {
                 WideScanEvent::Character(wc) => characters.push(wc),
                 WideScanEvent::Value(ScanValue::CharsConsumed(n)) => counts.push(n),
-                WideScanEvent::BeginText | WideScanEvent::EndText => {},
+                WideScanEvent::BeginText | WideScanEvent::EndText => {}
                 _ => panic!("unexpected extended-character event"),
             }
             Ok(())
         };
-        assert!(matches!(session.resume(None, &mut writer, &|_| false), WideScanProgress::NeedInput(_)));
-        assert_eq!(session.resume(Some(WideScanInput::Character(0x20_0000)), &mut writer, &|_| false), WideScanProgress::Complete(WideScanSummary { count: 1, consumed: 1, input_failure: false }));
+        assert!(matches!(
+            session.resume(None, &mut writer, &|_| false),
+            WideScanProgress::NeedInput(_)
+        ));
+        assert_eq!(
+            session.resume(
+                Some(WideScanInput::Character(0x20_0000)),
+                &mut writer,
+                &|_| false
+            ),
+            WideScanProgress::Complete(WideScanSummary {
+                count: 1,
+                consumed: 1,
+                input_failure: false
+            })
+        );
         assert_eq!(characters, [0x20_0000]);
         assert_eq!(counts, [1]);
     }
@@ -5062,9 +5398,14 @@ mod wide_stream_scan_tests {
                 WideScanEvent::EndText => completed_text += 1,
                 WideScanEvent::BeginText => {
                     assert!(spec.alloc && spec.writes_char_buffer());
-                    assert_eq!((context.directive_index, context.consumed, context.matched), (2, 2, 0));
+                    assert_eq!(
+                        (context.directive_index, context.consumed, context.matched),
+                        (2, 2, 0)
+                    );
                     allocation_attempts += 1;
-                    return Err(WideScanWriteError { input_failure: true });
+                    return Err(WideScanWriteError {
+                        input_failure: true,
+                    });
                 }
                 event => panic!("an event followed the initial allocation failure: {event:?}"),
             }
@@ -5075,11 +5416,23 @@ mod wide_stream_scan_tests {
             match session.resume(supplied, &mut writer, &crate::string::wchar::iswspace) {
                 WideScanProgress::Complete(summary) => break summary,
                 WideScanProgress::NeedInput(_) => {
-                    supplied = Some(WideScanInput::Character(input.next().expect("initial allocation failure must precede another read") as u32));
+                    supplied = Some(WideScanInput::Character(
+                        input
+                            .next()
+                            .expect("initial allocation failure must precede another read")
+                            as u32,
+                    ));
                 }
             }
         };
-        assert_eq!(summary, WideScanSummary { count: 2, consumed: 2, input_failure: true });
+        assert_eq!(
+            summary,
+            WideScanSummary {
+                count: 2,
+                consumed: 2,
+                input_failure: true
+            }
+        );
         assert_eq!(integer, Some(7));
         assert_eq!(text, [u32::from(b'A')]);
         assert_eq!((completed_text, allocation_attempts), (1, 1));

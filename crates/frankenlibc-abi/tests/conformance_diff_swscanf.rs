@@ -393,11 +393,7 @@ mod locale_scanning {
         mut args: ...
     ) -> c_int {
         unsafe {
-            isoc_abi::__isoc99_vfwscanf(
-                stream,
-                format.cast(),
-                std::ptr::addr_of_mut!(args).cast(),
-            )
+            isoc_abi::__isoc99_vfwscanf(stream, format.cast(), std::ptr::addr_of_mut!(args).cast())
         }
     }
 
@@ -407,11 +403,7 @@ mod locale_scanning {
         mut args: ...
     ) -> c_int {
         unsafe {
-            isoc_abi::__isoc23_vfwscanf(
-                stream,
-                format.cast(),
-                std::ptr::addr_of_mut!(args).cast(),
-            )
+            isoc_abi::__isoc23_vfwscanf(stream, format.cast(), std::ptr::addr_of_mut!(args).cast())
         }
     }
 
@@ -421,9 +413,7 @@ mod locale_scanning {
         mut args: ...
     ) -> c_int {
         static HOST: OnceLock<VfwscanfFn> = OnceLock::new();
-        let scan = *HOST.get_or_init(|| unsafe {
-            host_fn(c"vfwscanf", fl::vfwscanf as *const ())
-        });
+        let scan = *HOST.get_or_init(|| unsafe { host_fn(c"vfwscanf", fl::vfwscanf as *const ()) });
         unsafe { scan(stream, format, std::ptr::addr_of_mut!(args).cast()) }
     }
 
@@ -542,11 +532,7 @@ mod locale_scanning {
             return;
         }
         for engine in stream_scan_engines() {
-            for (format, expected) in [
-                ("%s%n%d", 0),
-                ("%3c%n%d", libc::EOF),
-                ("%[^X]%n%d", 0),
-            ] {
+            for (format, expected) in [("%s%n%d", 0), ("%3c%n%d", libc::EOF), ("%[^X]%n%d", 0)] {
                 let stream = scan_stream(engine, "é€X 23".as_bytes(), c"C.UTF-8", c"fr_FR");
                 let mut output = [0xa5u8; 16];
                 let (mut count, mut number) = (SENTINEL, SENTINEL);
@@ -570,8 +556,17 @@ mod locale_scanning {
                 assert_eq!(output[0], 0xe9, "{} completed prefix", engine.name);
                 assert!(output[1..].iter().all(|&byte| byte == 0xa5));
                 unsafe {
-                    assert_eq!((engine.io.tell)(stream), 5, "{} failing scalar consumed", engine.name);
-                    assert_eq!((engine.io.error)(stream), 0, "destination error is not FILE error");
+                    assert_eq!(
+                        (engine.io.tell)(stream),
+                        5,
+                        "{} failing scalar consumed",
+                        engine.name
+                    );
+                    assert_eq!(
+                        (engine.io.error)(stream),
+                        0,
+                        "destination error is not FILE error"
+                    );
                     assert_eq!((engine.io.eof)(stream), 0);
                     assert_eq!((engine.io.get)(stream), b'X' as u32);
                     assert_eq!((engine.io.close)(stream), 0);
@@ -593,7 +588,12 @@ mod locale_scanning {
                 );
                 (rc, *(engine.io.errno)())
             };
-            assert_eq!((rc, error, count), (1, libc::EILSEQ, SENTINEL), "{} %m failure", engine.name);
+            assert_eq!(
+                (rc, error, count),
+                (1, libc::EILSEQ, SENTINEL),
+                "{} %m failure",
+                engine.name
+            );
             assert!(!first.is_null());
             assert!(second.is_null());
             unsafe {
@@ -661,12 +661,7 @@ mod locale_scanning {
                     let (rc, error) = unsafe {
                         *(engine.io.errno)() = 23;
                         let rc = if wide {
-                            (engine.scan)(
-                                stream,
-                                w(format).as_ptr(),
-                                &mut wide_pointer,
-                                &mut count,
-                            )
+                            (engine.scan)(stream, w(format).as_ptr(), &mut wide_pointer, &mut count)
                         } else {
                             (engine.scan)(
                                 stream,
@@ -696,7 +691,10 @@ mod locale_scanning {
                                 &w(if prefix == 1 { "A" } else { "AB" })[..prefix]
                             );
                         } else {
-                            assert_eq!(std::slice::from_raw_parts(pointer, prefix), &input[..prefix]);
+                            assert_eq!(
+                                std::slice::from_raw_parts(pointer, prefix),
+                                &input[..prefix]
+                            );
                             if terminated {
                                 assert_eq!(*pointer.add(prefix), 0);
                             }
@@ -722,7 +720,12 @@ mod locale_scanning {
                     let rc = (engine.scan)(stream, w(format).as_ptr(), &mut count);
                     (rc, *(engine.io.errno)())
                 };
-                assert_eq!((rc, error, count), (0, expected_error, expected_count), "{} {format}", engine.name);
+                assert_eq!(
+                    (rc, error, count),
+                    (0, expected_error, expected_count),
+                    "{} {format}",
+                    engine.name
+                );
                 unsafe {
                     assert_eq!((engine.io.error)(stream) != 0, expected_flag);
                     assert_eq!((engine.io.eof)(stream), 0);
@@ -739,7 +742,12 @@ mod locale_scanning {
                 let rc = (engine.scan)(stream, w("%ms%n").as_ptr(), &mut pointer, &mut count);
                 (rc, *(engine.io.errno)())
             };
-            assert_eq!((rc, error, count), (libc::EOF, libc::EILSEQ, SENTINEL), "{} empty %m", engine.name);
+            assert_eq!(
+                (rc, error, count),
+                (libc::EOF, libc::EILSEQ, SENTINEL),
+                "{} empty %m",
+                engine.name
+            );
             assert!(pointer.is_null());
             unsafe {
                 assert_eq!((engine.io.tell)(stream), 0);
@@ -792,11 +800,29 @@ mod locale_scanning {
                         let rc = if format == "%n" || format == "é%n" {
                             (engine.scan)(stream, w(format).as_ptr(), &mut count)
                         } else if wide {
-                            (engine.scan)(stream, w(format).as_ptr(), wide_output.as_mut_ptr(), &mut count)
+                            (engine.scan)(
+                                stream,
+                                w(format).as_ptr(),
+                                wide_output.as_mut_ptr(),
+                                &mut count,
+                            )
                         } else {
-                            (engine.scan)(stream, w(format).as_ptr(), narrow.as_mut_ptr(), &mut count)
+                            (engine.scan)(
+                                stream,
+                                w(format).as_ptr(),
+                                narrow.as_mut_ptr(),
+                                &mut count,
+                            )
                         };
-                        (rc, *(engine.io.errno)(), count, (engine.io.error)(stream), (engine.io.eof)(stream), narrow, wide_output)
+                        (
+                            rc,
+                            *(engine.io.errno)(),
+                            count,
+                            (engine.io.error)(stream),
+                            (engine.io.eof)(stream),
+                            narrow,
+                            wide_output,
+                        )
                     };
                     sender.send(observed).unwrap();
                     unsafe { assert_eq!((engine.io.close)(stream), 0) };
@@ -804,9 +830,10 @@ mod locale_scanning {
                 let observed = receiver.recv_timeout(Duration::from_secs(3));
                 drop(write);
                 worker.join().unwrap();
-                let (rc, error, count, file_error, eof, narrow, wide_output) = observed.unwrap_or_else(|error| {
-                    panic!("{} {format} waited for pipe EOF: {error}", engine.name)
-                });
+                let (rc, error, count, file_error, eof, narrow, wide_output) = observed
+                    .unwrap_or_else(|error| {
+                        panic!("{} {format} waited for pipe EOF: {error}", engine.name)
+                    });
                 assert_eq!(
                     (rc, error, count, file_error, eof),
                     (expected_rc, expected_error, expected_count, 0, 0),
@@ -850,7 +877,12 @@ mod locale_scanning {
                 );
                 (rc, *(engine.io.errno)())
             };
-            assert_eq!((rc, error, value, count, integer), (2, 23, 1.5, 3, 8), "{} numeric locale", engine.name);
+            assert_eq!(
+                (rc, error, value, count, integer),
+                (2, 23, 1.5, 3, 8),
+                "{} numeric locale",
+                engine.name
+            );
             unsafe {
                 assert_eq!((engine.io.tell)(stream), 5);
                 assert_eq!((engine.io.get)(stream), b'X' as u32);
@@ -864,11 +896,20 @@ mod locale_scanning {
                 let stream = scan_stream(engine, b"A", c"C.UTF-8", active);
                 let (mut character, mut count) = (SENTINEL, SENTINEL);
                 let rc = unsafe {
-                    (engine.scan)(stream, w("\u{2003}%lc%n").as_ptr(), &mut character, &mut count)
+                    (engine.scan)(
+                        stream,
+                        w("\u{2003}%lc%n").as_ptr(),
+                        &mut character,
+                        &mut count,
+                    )
                 };
                 assert_eq!(
                     (rc, character, count),
-                    if unicode_space { (1, b'A' as Wc, 1) } else { (0, SENTINEL, SENTINEL) },
+                    if unicode_space {
+                        (1, b'A' as Wc, 1)
+                    } else {
+                        (0, SENTINEL, SENTINEL)
+                    },
                     "{} {active:?} format whitespace",
                     engine.name
                 );
@@ -883,8 +924,17 @@ mod locale_scanning {
                 let rc = unsafe {
                     (engine.scan)(stream, w("%ls%n").as_ptr(), output.as_mut_ptr(), &mut count)
                 };
-                assert_eq!((rc, count), (1, 2), "{} {active:?} input whitespace", engine.name);
-                let expected = if unicode_space { w("A") } else { w("\u{2003}A") };
+                assert_eq!(
+                    (rc, count),
+                    (1, 2),
+                    "{} {active:?} input whitespace",
+                    engine.name
+                );
+                let expected = if unicode_space {
+                    w("A")
+                } else {
+                    w("\u{2003}A")
+                };
                 assert_eq!(&output[..expected.len()], expected);
                 assert!(output[expected.len()..].iter().all(|&wc| wc == SENTINEL));
                 unsafe {
@@ -917,8 +967,7 @@ mod locale_scanning {
                 let mut first: *mut c_char = std::ptr::null_mut();
                 let mut failed_narrow = std::ptr::without_provenance_mut::<c_char>(1);
                 let mut failed_wide = std::ptr::without_provenance_mut::<Wc>(1);
-                let (mut integer, mut prefix_count, mut count) =
-                    (SENTINEL, SENTINEL, SENTINEL);
+                let (mut integer, mut prefix_count, mut count) = (SENTINEL, SENTINEL, SENTINEL);
 
                 // A limit relative to the live process accommodates the Rust
                 // harness and libc metadata. Large native user blocks obtain
@@ -939,7 +988,10 @@ mod locale_scanning {
                     rlim_cur: 0,
                     rlim_max: 0,
                 };
-                assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) }, 0);
+                assert_eq!(
+                    unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) },
+                    0
+                );
                 let constrained = libc::rlimit {
                     rlim_cur: ceiling.min(previous.rlim_cur),
                     rlim_max: previous.rlim_max,
@@ -985,7 +1037,11 @@ mod locale_scanning {
                 );
                 assert!(first.is_null(), "{} prior allocation released", engine.name);
                 assert!(
-                    if wide { failed_wide.is_null() } else { failed_narrow.is_null() },
+                    if wide {
+                        failed_wide.is_null()
+                    } else {
+                        failed_narrow.is_null()
+                    },
                     "{} failed destination cleared",
                     engine.name
                 );
