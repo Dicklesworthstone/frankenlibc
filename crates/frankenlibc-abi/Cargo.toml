@@ -9,6 +9,10 @@ build = "build_elf.rs"
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
+[[test]]
+name = "build_policy"
+path = "build_elf.rs"
+
 [lints.rust]
 unsafe_code = "allow"
 

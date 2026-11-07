@@ -431,16 +431,26 @@ fn file_sha256(path: &Path) -> Result<String, String> {
 }
 
 fn abi_source_tree_sha256(root: &Path) -> Result<(usize, String), String> {
-    let source_dir = root.join("crates/frankenlibc-abi/src");
-    let entries = fs::read_dir(&source_dir)
-        .map_err(|err| format!("failed to read {}: {err}", source_dir.display()))?;
+    let mut source_dirs = vec![root.join("crates/frankenlibc-abi/src")];
     let mut source_files = Vec::new();
-    for entry in entries {
-        let entry =
-            entry.map_err(|err| format!("failed to enumerate {}: {err}", source_dir.display()))?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            source_files.push(path);
+    while let Some(source_dir) = source_dirs.pop() {
+        let entries = fs::read_dir(&source_dir)
+            .map_err(|err| format!("failed to read {}: {err}", source_dir.display()))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|err| format!("failed to enumerate {}: {err}", source_dir.display()))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("failed to inspect {}: {err}", path.display()))?;
+            // Match Path.rglob in the census generator: descend into real
+            // directories, without following directory symlinks or cycles.
+            if file_type.is_dir() {
+                source_dirs.push(path.clone());
+            }
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                source_files.push(path);
+            }
         }
     }
     source_files.sort();
@@ -462,6 +472,118 @@ fn abi_source_tree_sha256(root: &Path) -> Result<(usize, String), String> {
     }
 
     Ok((source_files.len(), hex_digest(&hasher.finalize())))
+}
+
+#[cfg(test)]
+mod source_fingerprint_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture_root() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "frankenlibc-build-policy-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        // Retain fixtures for diagnosis; repository policy forbids file deletion.
+        root
+    }
+
+    #[test]
+    fn canonical_census_includes_nested_abi_sources() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let census = load_json(&root.join(HOST_DELEGATION_CENSUS_REL));
+        let (count, digest) = abi_source_tree_sha256(&root).unwrap();
+        assert_eq!(
+            count as u64,
+            census["detector"]["source_file_count"].as_u64().unwrap()
+        );
+        assert_eq!(
+            digest,
+            census["detector"]["source_tree_sha256"].as_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn nested_sources_are_fingerprinted_and_non_rust_files_are_ignored() {
+        let root = fixture_root();
+        let source = root.join("crates/frankenlibc-abi/src");
+        fs::create_dir_all(source.join("resolv_state/deeper")).unwrap();
+        fs::write(source.join("lib.rs"), "pub fn root() {}\n").unwrap();
+        fs::write(
+            source.join("resolv_state/global.rs"),
+            "pub fn global() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("resolv_state/deeper/leaf.rs"),
+            "pub fn leaf() {}\n",
+        )
+        .unwrap();
+        fs::write(source.join("resolv_state/notes.txt"), "not Rust\n").unwrap();
+        let initial = abi_source_tree_sha256(&root).unwrap();
+        assert_eq!(initial.0, 3);
+        // Independent SHA-256 over sorted relative path + NUL + bytes + NUL.
+        assert_eq!(
+            initial.1,
+            "e94a3a48ae68c79d07b51e009f321bb11efa81cc6b11330de268ce7d0a960c2f"
+        );
+        fs::write(source.join("resolv_state/notes.txt"), "changed non-Rust\n").unwrap();
+        assert_eq!(abi_source_tree_sha256(&root).unwrap(), initial);
+
+        fs::write(
+            source.join("resolv_state/deeper/leaf.rs"),
+            "changed nested Rust\n",
+        )
+        .unwrap();
+        let nested_change = abi_source_tree_sha256(&root).unwrap();
+        assert_eq!(nested_change.0, 3);
+        assert_ne!(nested_change.1, initial.1);
+        fs::write(source.join("lib.rs"), "changed root Rust\n").unwrap();
+        let root_change = abi_source_tree_sha256(&root).unwrap();
+        assert_ne!(root_change.1, nested_change.1);
+        fs::write(source.join("resolv_state/deeper/added.rs"), "new Rust\n").unwrap();
+        let added = abi_source_tree_sha256(&root).unwrap();
+        assert_eq!(added.0, 4);
+        assert_ne!(added.1, root_change.1);
+    }
+
+    #[test]
+    fn source_tree_errors_are_reported_and_empty_trees_hash_consistently() {
+        let root = fixture_root();
+        assert!(
+            abi_source_tree_sha256(&root)
+                .unwrap_err()
+                .contains("failed to read")
+        );
+        let source = root.join("crates/frankenlibc-abi/src");
+        fs::create_dir_all(&source).unwrap();
+        assert_eq!(
+            abi_source_tree_sha256(&root).unwrap(),
+            (
+                0,
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into()
+            )
+        );
+        // A directory ending in .rs cannot be read as a Rust source file.
+        // The Python census generator rejects this shape too.
+        fs::create_dir(source.join("broken.rs")).unwrap();
+        assert!(
+            abi_source_tree_sha256(&root)
+                .unwrap_err()
+                .contains("failed to read")
+        );
+    }
 }
 
 fn required_u64(value: &Value, pointer: &str, diagnostics: &mut Vec<String>) -> Option<u64> {
@@ -1049,16 +1171,13 @@ fn emit_rerun_directives(repo_root: &Path, manifest_dir: &str) {
     );
 
     let abi_src = repo_root.join("crates/frankenlibc-abi/src");
-    let mut abi_files = fs::read_dir(&abi_src)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display())) // ubs:ignore — build.rs must hard-fail on missing ABI sources
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
-        .collect::<Vec<_>>();
-    abi_files.sort();
-    for path in abi_files {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
+    drop(
+        fs::read_dir(&abi_src)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display())),
+    );
+    // Cargo scans watched directories recursively. Watch additions as well as
+    // nested edits so the fingerprint guard is rerun for the same source set.
+    println!("cargo:rerun-if-changed={}", abi_src.display());
 }
 
 fn main() {
