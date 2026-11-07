@@ -45,7 +45,7 @@ fn gamma_signgam_matches_glibc() {
         }
         // Value must agree (lgamma is transcendental; allow a few ULP).
         let tol = 1e-12 * hv.abs().max(1.0);
-        if (fv - hv).abs() > tol && !(fv.is_infinite() && hv.is_infinite()) {
+        if !fv.is_finite() || !hv.is_finite() || (fv - hv).abs() > tol {
             div.push(format!("gamma({x}) value: fl={fv:.17e}, glibc={hv:.17e}"));
         }
     }
@@ -67,7 +67,7 @@ fn gamma_signgam_matches_glibc() {
             div.push(format!("gammaf({xf}): fl signgam={fs}, glibc signgam={hs}"));
         }
         let tol = 1e-5 * hv.abs().max(1.0);
-        if (fv - hv).abs() > tol && !(fv.is_infinite() && hv.is_infinite()) {
+        if !fv.is_finite() || !hv.is_finite() || (fv - hv).abs() > tol {
             div.push(format!("gammaf({xf}) value: fl={fv:.9e}, glibc={hv:.9e}"));
         }
     }
@@ -79,7 +79,6 @@ fn gamma_signgam_matches_glibc() {
         div.join("\n  ")
     );
 }
-
 
 // The non-reentrant API writes process-global signgam; tests in this binary
 // must not race one another while observing that side effect.

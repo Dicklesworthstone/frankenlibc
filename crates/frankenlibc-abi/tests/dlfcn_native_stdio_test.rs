@@ -938,27 +938,23 @@ fn stream_extended_frontends_bind_native_providers() {
 
 #[test]
 fn stream_extended_streams_share_file_state() {
-    isolated(
-        "stream_extended_streams_share_file_state",
-        false,
-        |api| {
-            let fixture = Fixture::new(&["-DEXTENDED_STREAMS", "-fno-plt"]);
-            let handle = api.open(&fixture.library, 0);
-            // SAFETY: fixture functions keep their FILE/cookie objects alive through
-            // each operation and close all streams before the DSO is unloaded.
-            let temporary: unsafe extern "C" fn(c_int) -> c_int =
-                unsafe { std::mem::transmute(api.symbol(handle, c"stream_temporary_unlocked")) };
-            for large in [0, 1] {
-                assert_eq!(unsafe { temporary(large) }, 0, "tmpfile variant {large}");
-            }
-            for name in [c"stream_cookie_unlocked", c"stream_process_unlocked"] {
-                let call: unsafe extern "C" fn() -> c_int =
-                    unsafe { std::mem::transmute(api.symbol(handle, name)) };
-                assert_eq!(unsafe { call() }, 0, "{name:?}");
-            }
-            api.close(handle);
-        },
-    );
+    isolated("stream_extended_streams_share_file_state", false, |api| {
+        let fixture = Fixture::new(&["-DEXTENDED_STREAMS", "-fno-plt"]);
+        let handle = api.open(&fixture.library, 0);
+        // SAFETY: fixture functions keep their FILE/cookie objects alive through
+        // each operation and close all streams before the DSO is unloaded.
+        let temporary: unsafe extern "C" fn(c_int) -> c_int =
+            unsafe { std::mem::transmute(api.symbol(handle, c"stream_temporary_unlocked")) };
+        for large in [0, 1] {
+            assert_eq!(unsafe { temporary(large) }, 0, "tmpfile variant {large}");
+        }
+        for name in [c"stream_cookie_unlocked", c"stream_process_unlocked"] {
+            let call: unsafe extern "C" fn() -> c_int =
+                unsafe { std::mem::transmute(api.symbol(handle, name)) };
+            assert_eq!(unsafe { call() }, 0, "{name:?}");
+        }
+        api.close(handle);
+    });
 }
 
 fn one_path(api: Api, symbol: &CStr, expected: Option<&[u8]>) {

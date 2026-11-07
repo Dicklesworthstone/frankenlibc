@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'crates/frankenlibc-abi/tests/dlfcn_abi_test.rs'
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_abi.rs'
@@ -31,6 +32,7 @@ on:
       - '.github/workflows/native-caller-lookup.yml'
   pull_request:
     paths:
+      - 'crates/frankenlibc-abi/tests/dlfcn_abi_test.rs'
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_abi.rs'
@@ -106,6 +108,40 @@ jobs:
         with:
           name: native-caller-${{ matrix.mode }}
           path: artifacts/native-caller/
+
+  standalone-exports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
+    env:
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute public lookup with the standalone feature
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/standalone-exports
+          log="artifacts/standalone-exports/${FRANKENLIBC_MODE}.log"
+          cargo test -p frankenlibc-abi --features standalone --test dlfcn_abi_test \
+            standalone_public_exports:: -- --nocapture --test-threads=1 \
+            2>&1 | tee "$log"
+          grep -E 'test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: standalone-exports-${{ matrix.mode }}
+          path: artifacts/standalone-exports/
 
   spawn-launch:
     runs-on: ubuntu-latest

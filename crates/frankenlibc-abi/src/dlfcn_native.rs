@@ -54,6 +54,13 @@ mod binding;
 #[path = "dlfcn_lookup.rs"]
 mod lookup;
 
+// Public standalone lookup needs the same provider/version policy without
+// using the private bridges that preserve a native DSO caller's return PC.
+#[cfg(feature = "standalone")]
+pub(super) fn runtime_export(name: &str, version: Option<&str>) -> Option<Option<u64>> {
+    lookup::runtime_export(name, version)
+}
+
 #[path = "dlfcn_open.rs"]
 mod open;
 
