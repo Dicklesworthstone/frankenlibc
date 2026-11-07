@@ -82,6 +82,11 @@ struct CookedCredential {
     groups: [u32; 16],
 }
 
+/// Public dispatch reserves the complete cooked-credential ABI area for either
+/// AUTH_SYS or AUTH_DES, with alignment sufficient for both layouts.
+#[repr(C, align(8))]
+struct CookedStorage([u8; 400]);
+
 const _: () = {
     assert!(size_of::<SvcXprt>() == 336);
     assert!(std::mem::offset_of!(SvcXprt, verifier) == 40);
@@ -93,17 +98,18 @@ const _: () = {
     assert!(size_of::<UnixCredential>() == 40);
 };
 
-/// Authenticate the asserted AUTH_NONE/AUTH_SYS identity without host RPC.
-/// AUTH_SYS provides no cryptographic authentication. Unsupported flavors are
-/// rejected rather than reported as authenticated.
+/// Authenticate AUTH_NONE/AUTH_SYS identities and legacy AUTH_DES proofs with
+/// native RPC backends. AUTH_SYS provides no cryptographic authentication.
+/// Unsupported flavors are rejected rather than reported as authenticated.
 ///
 /// # Safety
 /// Non-null rqst/msg must point to live, aligned glibc LP64 svc_req/rpc_msg
-/// objects. rq_xprt must be writable. For AUTH_SYS, rq_clntcred must provide
-/// aligned writable storage of at least 400 bytes, valid through dispatch.
+/// objects. rq_xprt must be writable. For AUTH_SYS and AUTH_DES, rq_clntcred
+/// must provide aligned writable storage of at least 400 bytes, valid through
+/// the request and its reply. AUTH_DES keyserver hooks may unwind.
 /// Credential/verifier buffers must remain alive while used by the request.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn _authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int {
     if rqst.is_null() || msg.is_null() {
         return 7; // AUTH_FAILED: invalid local API arguments
     }
@@ -191,7 +197,17 @@ unsafe fn authenticate_request(
             }
             0
         }
-        _ => 2, // AUTH_REJECTEDCRED, including unsupported AUTH_SHORT/DES
+        3 => unsafe {
+            // Copy only initialized descriptor fields; the public C record
+            // itself does not implement Rust's Copy trait.
+            let credential = OpaqueAuth {
+                oa_flavor: request.credential.oa_flavor,
+                oa_base: request.credential.oa_base,
+                oa_length: request.credential.oa_length,
+            };
+            super::rpc_svc_des::authenticate(credential, verifier, request.cooked, outgoing)
+        },
+        _ => 2, // AUTH_REJECTEDCRED, including unsupported AUTH_SHORT
     }
 }
 
@@ -242,6 +258,9 @@ struct StreamIo {
 struct Io {
     input: Vec<u8>,
     output: Vec<u8>,
+    // AUTH_DES replies retain their verifier until the next request, including
+    // after dispatch's cooked credential stack frame has returned.
+    auth_des_verifier: [u8; 12],
     call: Option<Call>,
     cursor: usize,
     peer: libc::sockaddr_in,
@@ -369,6 +388,7 @@ pub(super) fn create_raw() -> *mut c_void {
             io: UnsafeCell::new(Io {
                 input,
                 output,
+                auth_des_verifier: [0; 12],
                 call: None,
                 cursor: 0,
                 // SAFETY: raw transport has no kernel peer.
@@ -615,6 +635,7 @@ pub(super) unsafe fn create(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut
             io: UnsafeCell::new(Io {
                 input,
                 output,
+                auth_des_verifier: [0; 12],
                 call: None,
                 cursor: 0,
                 peer: unsafe { zeroed() },
@@ -872,6 +893,7 @@ unsafe fn create_stream(
             io: UnsafeCell::new(Io {
                 input,
                 output,
+                auth_des_verifier: [0; 12],
                 call: None,
                 cursor: 0,
                 peer: raddr,
@@ -1522,13 +1544,16 @@ unsafe extern "C-unwind" fn recv(x: *mut SvcXprt, message: *mut c_void) -> c_int
             super::XDR_DECODE,
         )
     };
-    // Unix replaces the wire verifier with kernel credentials. Decode its wire
-    // body into scratch so a null caller pointer cannot allocate a lost buffer.
+    // Unix supplies kernel credentials for the local NONE/SYS convention.
+    // AUTH_DES instead needs its encrypted wire proof on every transport.
+    // Decode a replaced body into scratch so a null caller pointer cannot
+    // allocate a lost buffer.
     let mut wire_verifier = [0u8; 400];
     let local = io
         .stream
         .as_ref()
-        .and_then(|stream| stream.credential.as_ref());
+        .and_then(|stream| stream.credential.as_ref())
+        .filter(|_| io.call.as_ref().unwrap().credential.flavor != 3);
     let original = if local.is_some() {
         // SAFETY: the caller supplies a live rpc_msg; scratch survives decoding.
         unsafe {
@@ -2447,9 +2472,9 @@ unsafe fn dispatch_transport(t: Arc<Transport>) {
             }
         }
         let x = t.public.get();
-        // SAFETY: every field in the cooked ABI layout admits the zero value.
-        // This area stays in place until the callback finishes or unwinds.
-        let mut cooked: CookedCredential = unsafe { zeroed() };
+        // This aligned ABI area stays in place until the callback finishes or
+        // unwinds. Authentication initializes the selected cooked layout.
+        let mut cooked = CookedStorage([0; 400]);
         let (mut request, auth_error) = {
             // SAFETY: the operation gate owns the transport input buffer, and
             // the dispatch guard retains it until the callback returns.
@@ -2465,7 +2490,7 @@ unsafe fn dispatch_transport(t: Arc<Transport>) {
                     oa_base: ptr::null_mut(),
                     oa_length: 0,
                 },
-                cooked: (&mut cooked as *mut CookedCredential).cast(),
+                cooked: cooked.0.as_mut_ptr().cast(),
                 transport: x,
             };
             let credential = OpaqueAuth {
@@ -2483,12 +2508,27 @@ unsafe fn dispatch_transport(t: Arc<Transport>) {
                 .stream
                 .as_ref()
                 .and_then(|stream| stream.credential.as_ref())
+                .filter(|_| call.credential.flavor != 3)
                 .map_or(verifier, UnixCredential::verifier);
             // SAFETY: decoded ranges are bounded by the retained input, the
             // operation gate owns x, and cooked remains alive through dispatch.
             let status = unsafe { authenticate_request(&mut request, credential, verifier) };
             (request, status)
         };
+        if auth_error == 0 && request.credential.oa_flavor == 3 {
+            // SAFETY: the operation gate exclusively owns Io and x. The DES
+            // authenticator just produced twelve bytes in the live cooked area;
+            // retain an independent transport-owned copy before dispatch.
+            unsafe {
+                let io = &mut *t.io.get();
+                ptr::copy_nonoverlapping(
+                    (*x).verifier.oa_base.cast::<u8>(),
+                    io.auth_des_verifier.as_mut_ptr(),
+                    io.auth_des_verifier.len(),
+                );
+                (*x).verifier.oa_base = io.auth_des_verifier.as_mut_ptr().cast();
+            }
+        }
         drop(op);
         if auth_error != 0 {
             // SAFETY: the dispatch guard retains this live transport.

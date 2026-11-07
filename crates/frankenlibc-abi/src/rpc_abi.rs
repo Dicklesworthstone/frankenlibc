@@ -4,9 +4,9 @@
 //! `<rpc/svc.h>`, `<rpc/clnt.h>`, `<rpc/auth.h>`, `<rpc/pmap_clnt.h>`, and
 //! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
 //! pure Rust. Native clients/services cover IPv4 UDP/TCP, Unix streams and
-//! synchronous memory RPC with AUTH_NONE/AUTH_SYS. Legacy authentication
-//! AUTH_DES clients use native DES and keyserver operations. Server-side DES
-//! authentication and credential mapping retain their explicitly limited scope.
+//! synchronous memory RPC with AUTH_NONE/AUTH_SYS and legacy AUTH_DES. DES
+//! clients and services use native cryptography/keyserver operations, bounded
+//! replay caches, and native NSS mapping for authenticated UNIX credentials.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
@@ -27,6 +27,8 @@ mod rpc_client_create;
 mod rpc_svc;
 #[path = "rpc_svc_cache.rs"]
 mod rpc_svc_cache;
+#[path = "rpc_svc_des.rs"]
+mod rpc_svc_des;
 #[path = "rpc_udp.rs"]
 mod rpc_udp;
 pub use rpc_client_create::{callrpc, clnt_create};
@@ -2277,19 +2279,22 @@ pub unsafe extern "C-unwind" fn authdes_pk_create(
     unsafe { rpc_udp::authdes_pk_create(servername, pkey, window, syncaddr, ckey) }
 }
 
-/// Extract UNIX credentials from a DES auth handle. Returns 0 (failure) — DES is broken.
+/// Map an authenticated server-side DES credential through the native publickey
+/// NSS database, caching the result for its authenticated conversation.
 ///
 /// # Safety
-/// ABI boundary function.
+/// adc is the cooked authdes_cred from a successful server authentication. The
+/// scalar outputs are writable, and groups has the public NGROUPS capacity or
+/// a tracked extent sufficient for the returned group list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn authdes_getucred(
-    _adc: *mut c_void,
-    _uid: *mut u32,
-    _gid: *mut u32,
-    _grouplen: *mut i16,
-    _groups: *mut c_int,
+    adc: *mut c_void,
+    uid: *mut u32,
+    gid: *mut u32,
+    grouplen: *mut i16,
+    groups: *mut c_int,
 ) -> c_int {
-    0
+    unsafe { rpc_svc_des::getucred(adc, uid, gid, grouplen, groups.cast()) }
 }
 
 // ===========================================================================
@@ -3921,6 +3926,32 @@ pub unsafe extern "C" fn netname2host(
     1
 }
 
+/// Owned native identity lookup shared by netname2user and authenticated DES
+/// sessions. Callers retain the result; no server cache lock covers NSS work.
+fn rpc_lookup_netid_user(name: &[u8]) -> Option<frankenlibc_core::rpc::NetidUser> {
+    use frankenlibc_core::nss::{Answer, Database};
+    if name.is_empty() || name.len() > 255 || name.contains(&0) {
+        return None;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    match frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_user(image, name)
+                })
+            } else {
+                crate::nss_module::netname2user(service.name(), name)
+            }
+        },
+        None,
+    ) {
+        Answer::Found(user) => Some(user),
+        _ => None,
+    }
+}
+
 /// Resolve an exact network name through the publickey NSS database to an
 /// authoritative uid, primary gid and supplementary group list. The files
 /// source reads `/etc/netid`; other sources use nss_netname2user modules.
@@ -3939,7 +3970,6 @@ pub unsafe extern "C" fn netname2user(
     gidlenp: *mut c_int,
     gidlist: *mut libc::gid_t,
 ) -> c_int {
-    use frankenlibc_core::nss::{Answer, Database};
     if uidp.is_null()
         || gidp.is_null()
         || gidlenp.is_null()
@@ -3955,24 +3985,7 @@ pub unsafe extern "C" fn netname2user(
     let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
         return 0;
     };
-    if name.is_empty() || name.len() > 255 {
-        return 0;
-    }
-    let services = crate::nss_module::services(Database::Publickey);
-    let answer = frankenlibc_core::nss::lookup(
-        &services,
-        |service| {
-            if service.name() == b"files" {
-                rpc_identity_file(c"/etc/netid", |image| {
-                    frankenlibc_core::rpc::lookup_netid_user(image, &name)
-                })
-            } else {
-                crate::nss_module::netname2user(service.name(), &name)
-            }
-        },
-        None,
-    );
-    let Answer::Found(user) = answer else {
+    let Some(user) = rpc_lookup_netid_user(&name) else {
         return 0;
     };
     let group_bytes = user.groups.len() * size_of::<libc::gid_t>();
