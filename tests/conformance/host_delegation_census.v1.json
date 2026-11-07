@@ -2373,8 +2373,8 @@
   "detector": {
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
-    "source_file_count": 124,
-    "source_tree_sha256": "e16008e5581ad739694c97f9d2aba31f0983587e19692dc423a63b84e74b1215",
+    "source_file_count": 125,
+    "source_tree_sha256": "65264c88ad1552bd0cad30e4f5c6b7d85cd9964a0b2e138fc1cb6198ce4ba65a",
     "version": 16
   },
   "module_census": [
@@ -2436,7 +2436,7 @@
   },
   "profile_census": {
     "interpose-release-linux-x86_64": {
-      "active_source_file_count": 119,
+      "active_source_file_count": 120,
       "active_source_files": [
         "crates/frankenlibc-abi/src/aio_completion.rs",
         "crates/frankenlibc-abi/src/aio_queue.rs",
@@ -2532,6 +2532,7 @@
         "crates/frankenlibc-abi/src/rpc_portmap.rs",
         "crates/frankenlibc-abi/src/rpc_svc.rs",
         "crates/frankenlibc-abi/src/rpc_svc_cache.rs",
+        "crates/frankenlibc-abi/src/rpc_svc_des.rs",
         "crates/frankenlibc-abi/src/rpc_tcp.rs",
         "crates/frankenlibc-abi/src/rpc_udp.rs",
         "crates/frankenlibc-abi/src/runtime_policy.rs",
@@ -2561,11 +2562,11 @@
       "admission_blockers": [
         {
           "code": "reachable_host_dependencies",
-          "count": 1684
+          "count": 1686
         },
         {
           "code": "unknown_reachable_call_edges",
-          "count": 30
+          "count": 33
         },
         {
           "code": "support_matrix_coverage_incomplete",
@@ -3278,7 +3279,7 @@
         "support_matrix_sha256": "d935fdf48175efd0e17220640c8d8a88d011f441bacb2d9a958928391f812eaf",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9216,
+      "function_count": 9234,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -5943,6 +5944,10 @@
         "__xstat64": [
           "<dynamic>"
         ],
+        "_authenticate": [
+          "<dynamic>",
+          "dlsym"
+        ],
         "_dl_find_object": [
           "_dl_find_object"
         ],
@@ -6430,6 +6435,9 @@
         ],
         "atoll": [
           "<dynamic>"
+        ],
+        "authdes_getucred": [
+          "dlsym"
         ],
         "b64_ntop": [
           "<dynamic>"
@@ -10637,22 +10645,27 @@
           "<dynamic>"
         ],
         "svc_getreq": [
-          "<dynamic>"
+          "<dynamic>",
+          "dlsym"
         ],
         "svc_getreq_common": [
-          "<dynamic>"
+          "<dynamic>",
+          "dlsym"
         ],
         "svc_getreq_poll": [
-          "<dynamic>"
+          "<dynamic>",
+          "dlsym"
         ],
         "svc_getreqset": [
-          "<dynamic>"
+          "<dynamic>",
+          "dlsym"
         ],
         "svc_register": [
           "<dynamic>"
         ],
         "svc_run": [
           "<dynamic>",
+          "dlsym",
           "pthread_exit",
           "pthread_setcanceltype",
           "pthread_testcancel"
@@ -12013,6 +12026,7 @@
         "__xpg_sigpause": 5,
         "__xstat": 1,
         "__xstat64": 1,
+        "_authenticate": 3,
         "_dl_find_object": 1,
         "_exit": 1,
         "_flushlbf": 13,
@@ -12117,6 +12131,7 @@
         "atoi": 1,
         "atol": 1,
         "atoll": 1,
+        "authdes_getucred": 2,
         "b64_ntop": 1,
         "b64_pton": 1,
         "backtrace": 1,
@@ -13043,12 +13058,12 @@
         "strtouq": 1,
         "strxfrm": 1,
         "strxfrm_l": 1,
-        "svc_getreq": 1,
-        "svc_getreq_common": 1,
-        "svc_getreq_poll": 1,
-        "svc_getreqset": 1,
+        "svc_getreq": 3,
+        "svc_getreq_common": 3,
+        "svc_getreq_poll": 3,
+        "svc_getreqset": 3,
         "svc_register": 1,
-        "svc_run": 5,
+        "svc_run": 7,
         "svc_sendreply": 1,
         "svc_unregister": 1,
         "svcerr_auth": 1,
@@ -13249,15 +13264,15 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 18297,
+      "resolved_call_edge_count": 18321,
       "summary": {
         "exported_function_count": 4604,
-        "exported_symbol_with_host_dependency_count": 1684,
-        "exported_symbol_with_unknown_call_edge_count": 83,
-        "host_dependency_callsite_count": 6170,
+        "exported_symbol_with_host_dependency_count": 1686,
+        "exported_symbol_with_unknown_call_edge_count": 89,
+        "host_dependency_callsite_count": 6185,
         "standalone_admission_ready": false,
         "unique_terminal_host_callsite_count": 107,
-        "unknown_reachable_call_edge_count": 30
+        "unknown_reachable_call_edge_count": 33
       },
       "terminal_host_callsites": [
         {
@@ -14226,7 +14241,7 @@
       ],
       "unknown_reachable_call_edge_counts_by_reason": {
         "ambiguous_qualified_target": 5,
-        "unresolved_qualified_target": 23,
+        "unresolved_qualified_target": 26,
         "unresolved_unqualified_nonlocal_target": 2
       },
       "unknown_reachable_call_edge_samples": [
@@ -14288,7 +14303,7 @@
           "caller_function_id": "rpc_auth_des::create@303",
           "candidate_function_ids": [
             "nss_module::getpublickey@888",
-            "rpc_abi::getpublickey@3635"
+            "rpc_abi::getpublickey@3640"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:313",
           "id": "interpose-release-linux-x86_64:rpc_auth_des:create:303:unknown:001",
@@ -14302,7 +14317,7 @@
         {
           "caller_function_id": "rpc_auth_des::make@194",
           "candidate_function_ids": [
-            "rpc_abi::key_gendes@2957"
+            "rpc_abi::key_gendes@2962"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:220",
           "id": "interpose-release-linux-x86_64:rpc_auth_des:make:194:unknown:002",
@@ -14317,7 +14332,7 @@
         {
           "caller_function_id": "rpc_auth_des::renew@156",
           "candidate_function_ids": [
-            "rpc_abi::key_encryptsession_pk@2943"
+            "rpc_abi::key_encryptsession_pk@2948"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:165",
           "id": "interpose-release-linux-x86_64:rpc_auth_des:renew:156:unknown:001",
@@ -14332,12 +14347,13 @@
         {
           "caller_function_id": "rpc_call::invoke@14",
           "candidate_function_ids": [
-            "rpc_abi::xdrmem_create@246"
+            "rpc_abi::xdrmem_create@248"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_call.rs:83",
           "id": "interpose-release-linux-x86_64:rpc_call:invoke:14:unknown:001",
-          "reachable_export_count": 12,
+          "reachable_export_count": 18,
           "reachable_export_sample": [
+            "_authenticate",
             "callrpc",
             "key_decryptsession",
             "key_decryptsession_pk",
@@ -14349,7 +14365,12 @@
             "key_setnet",
             "key_setsecret",
             "pmap_getmaps",
-            "pmap_rmtcall"
+            "pmap_rmtcall",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
           ],
           "reason": "unresolved_qualified_target",
           "target_expression": "super::super::xdrmem_create"
@@ -14357,12 +14378,13 @@
         {
           "caller_function_id": "rpc_call::invoke@14",
           "candidate_function_ids": [
-            "rpc_svc::raw_exchange@400"
+            "rpc_svc::raw_exchange@420"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_call.rs:113",
           "id": "interpose-release-linux-x86_64:rpc_call:invoke:14:unknown:003",
-          "reachable_export_count": 12,
+          "reachable_export_count": 18,
           "reachable_export_sample": [
+            "_authenticate",
             "callrpc",
             "key_decryptsession",
             "key_decryptsession_pk",
@@ -14374,7 +14396,12 @@
             "key_setnet",
             "key_setsecret",
             "pmap_getmaps",
-            "pmap_rmtcall"
+            "pmap_rmtcall",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
           ],
           "reason": "unresolved_qualified_target",
           "target_expression": "super::super::rpc_svc::raw_exchange"
@@ -14382,12 +14409,13 @@
         {
           "caller_function_id": "rpc_call::invoke@14",
           "candidate_function_ids": [
-            "rpc_abi::xdrmem_create@246"
+            "rpc_abi::xdrmem_create@248"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_call.rs:191",
           "id": "interpose-release-linux-x86_64:rpc_call:invoke:14:unknown:004",
-          "reachable_export_count": 12,
+          "reachable_export_count": 18,
           "reachable_export_sample": [
+            "_authenticate",
             "callrpc",
             "key_decryptsession",
             "key_decryptsession_pk",
@@ -14399,7 +14427,12 @@
             "key_setnet",
             "key_setsecret",
             "pmap_getmaps",
-            "pmap_rmtcall"
+            "pmap_rmtcall",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
           ],
           "reason": "unresolved_qualified_target",
           "target_expression": "super::super::xdrmem_create"
@@ -14421,7 +14454,7 @@
         {
           "caller_function_id": "rpc_portmap::broadcast@462",
           "candidate_function_ids": [
-            "rpc_abi::xdrmem_create@246"
+            "rpc_abi::xdrmem_create@248"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_portmap.rs:517",
           "id": "interpose-release-linux-x86_64:rpc_portmap:broadcast:462:unknown:002",
@@ -14435,7 +14468,7 @@
         {
           "caller_function_id": "rpc_portmap::broadcast@462",
           "candidate_function_ids": [
-            "rpc_abi::xdrmem_create@246"
+            "rpc_abi::xdrmem_create@248"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_portmap.rs:640",
           "id": "interpose-release-linux-x86_64:rpc_portmap:broadcast:462:unknown:004",
@@ -14529,6 +14562,57 @@
           ],
           "reason": "unresolved_qualified_target",
           "target_expression": "super::super::runtime_policy::observe"
+        },
+        {
+          "caller_function_id": "rpc_svc_des::authenticate@301",
+          "candidate_function_ids": [],
+          "evidence": "crates/frankenlibc-abi/src/rpc_svc_des.rs:342",
+          "id": "interpose-release-linux-x86_64:rpc_svc_des:authenticate:301:unknown:001",
+          "reachable_export_count": 6,
+          "reachable_export_sample": [
+            "_authenticate",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "auth_des::decode_request"
+        },
+        {
+          "caller_function_id": "rpc_svc_des::authenticate@301",
+          "candidate_function_ids": [],
+          "evidence": "crates/frankenlibc-abi/src/rpc_svc_des.rs:376",
+          "id": "interpose-release-linux-x86_64:rpc_svc_des:authenticate:301:unknown:003",
+          "reachable_export_count": 6,
+          "reachable_export_sample": [
+            "_authenticate",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "auth_des::decrypt_fullname"
+        },
+        {
+          "caller_function_id": "rpc_svc_des::authenticate@301",
+          "candidate_function_ids": [],
+          "evidence": "crates/frankenlibc-abi/src/rpc_svc_des.rs:382",
+          "id": "interpose-release-linux-x86_64:rpc_svc_des:authenticate:301:unknown:004",
+          "reachable_export_count": 6,
+          "reachable_export_sample": [
+            "_authenticate",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "auth_des::decrypt_nickname"
         },
         {
           "caller_function_id": "unistd_abi::addmntent@16570",
@@ -14772,7 +14856,7 @@
       ]
     },
     "standalone-release-linux-x86_64": {
-      "active_source_file_count": 118,
+      "active_source_file_count": 119,
       "active_source_files": [
         "crates/frankenlibc-abi/src/aio_completion.rs",
         "crates/frankenlibc-abi/src/aio_queue.rs",
@@ -14867,6 +14951,7 @@
         "crates/frankenlibc-abi/src/rpc_portmap.rs",
         "crates/frankenlibc-abi/src/rpc_svc.rs",
         "crates/frankenlibc-abi/src/rpc_svc_cache.rs",
+        "crates/frankenlibc-abi/src/rpc_svc_des.rs",
         "crates/frankenlibc-abi/src/rpc_tcp.rs",
         "crates/frankenlibc-abi/src/rpc_udp.rs",
         "crates/frankenlibc-abi/src/runtime_policy.rs",
@@ -14896,11 +14981,11 @@
       "admission_blockers": [
         {
           "code": "reachable_host_dependencies",
-          "count": 599
+          "count": 605
         },
         {
           "code": "unknown_reachable_call_edges",
-          "count": 9
+          "count": 13
         },
         {
           "code": "support_matrix_coverage_incomplete",
@@ -15614,7 +15699,7 @@
         "support_matrix_sha256": "d935fdf48175efd0e17220640c8d8a88d011f441bacb2d9a958928391f812eaf",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 9206,
+      "function_count": 9224,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -17012,6 +17097,9 @@
           "pthread_setcanceltype",
           "pthread_testcancel"
         ],
+        "_authenticate": [
+          "dlsym"
+        ],
         "_flushlbf": [
           "<dynamic>",
           "__errno_location",
@@ -17197,6 +17285,9 @@
           "pthread_exit",
           "pthread_setcanceltype",
           "pthread_testcancel"
+        ],
+        "authdes_getucred": [
+          "dlsym"
         ],
         "backtrace": [
           "<dynamic>"
@@ -18904,8 +18995,21 @@
           "__errno_location",
           "sprofil"
         ],
+        "svc_getreq": [
+          "dlsym"
+        ],
+        "svc_getreq_common": [
+          "dlsym"
+        ],
+        "svc_getreq_poll": [
+          "dlsym"
+        ],
+        "svc_getreqset": [
+          "dlsym"
+        ],
         "svc_run": [
           "<dynamic>",
+          "dlsym",
           "pthread_exit",
           "pthread_setcanceltype",
           "pthread_testcancel"
@@ -19428,6 +19532,7 @@
         "__wuflow": 6,
         "__wunderflow": 6,
         "__xpg_sigpause": 4,
+        "_authenticate": 1,
         "_flushlbf": 6,
         "_nss_files_gethostbyaddr2_r": 1,
         "_nss_files_gethostbyaddr_r": 1,
@@ -19457,6 +19562,7 @@
         "argp_state_help": 9,
         "argp_usage": 9,
         "asprintf": 6,
+        "authdes_getucred": 1,
         "backtrace": 1,
         "backtrace_symbols": 1,
         "backtrace_symbols_fd": 1,
@@ -19758,7 +19864,11 @@
         "splice": 4,
         "sprintf": 6,
         "sprofil": 4,
-        "svc_run": 4,
+        "svc_getreq": 1,
+        "svc_getreq_common": 1,
+        "svc_getreq_poll": 1,
+        "svc_getreqset": 1,
+        "svc_run": 5,
         "swprintf": 6,
         "sync_file_range": 4,
         "sysconf": 1,
@@ -19804,15 +19914,15 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 18088,
+      "resolved_call_edge_count": 18112,
       "summary": {
         "exported_function_count": 4605,
-        "exported_symbol_with_host_dependency_count": 599,
-        "exported_symbol_with_unknown_call_edge_count": 57,
-        "host_dependency_callsite_count": 2797,
+        "exported_symbol_with_host_dependency_count": 605,
+        "exported_symbol_with_unknown_call_edge_count": 75,
+        "host_dependency_callsite_count": 2804,
         "standalone_admission_ready": false,
         "unique_terminal_host_callsite_count": 79,
-        "unknown_reachable_call_edge_count": 9
+        "unknown_reachable_call_edge_count": 13
       },
       "terminal_host_callsites": [
         {
@@ -20528,7 +20638,7 @@
         }
       ],
       "unknown_reachable_call_edge_counts_by_reason": {
-        "unresolved_qualified_target": 9
+        "unresolved_qualified_target": 13
       },
       "unknown_reachable_call_edge_samples": [
         {
@@ -20559,7 +20669,7 @@
           "caller_function_id": "rpc_auth_des::create@303",
           "candidate_function_ids": [
             "nss_module::getpublickey@888",
-            "rpc_abi::getpublickey@3635"
+            "rpc_abi::getpublickey@3640"
           ],
           "evidence": "crates/frankenlibc-abi/src/rpc_auth_des.rs:313",
           "id": "standalone-release-linux-x86_64:rpc_auth_des:create:303:unknown:001",
@@ -20569,6 +20679,88 @@
           ],
           "reason": "unresolved_qualified_target",
           "target_expression": "super::super::getpublickey"
+        },
+        {
+          "caller_function_id": "rpc_call::invoke@14",
+          "candidate_function_ids": [
+            "rpc_svc::raw_exchange@420"
+          ],
+          "evidence": "crates/frankenlibc-abi/src/rpc_call.rs:113",
+          "id": "standalone-release-linux-x86_64:rpc_call:invoke:14:unknown:003",
+          "reachable_export_count": 18,
+          "reachable_export_sample": [
+            "_authenticate",
+            "callrpc",
+            "key_decryptsession",
+            "key_decryptsession_pk",
+            "key_encryptsession",
+            "key_encryptsession_pk",
+            "key_gendes",
+            "key_get_conv",
+            "key_secretkey_is_set",
+            "key_setnet",
+            "key_setsecret",
+            "pmap_getmaps",
+            "pmap_rmtcall",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "super::super::rpc_svc::raw_exchange"
+        },
+        {
+          "caller_function_id": "rpc_svc_des::authenticate@301",
+          "candidate_function_ids": [],
+          "evidence": "crates/frankenlibc-abi/src/rpc_svc_des.rs:342",
+          "id": "standalone-release-linux-x86_64:rpc_svc_des:authenticate:301:unknown:001",
+          "reachable_export_count": 6,
+          "reachable_export_sample": [
+            "_authenticate",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "auth_des::decode_request"
+        },
+        {
+          "caller_function_id": "rpc_svc_des::authenticate@301",
+          "candidate_function_ids": [],
+          "evidence": "crates/frankenlibc-abi/src/rpc_svc_des.rs:376",
+          "id": "standalone-release-linux-x86_64:rpc_svc_des:authenticate:301:unknown:003",
+          "reachable_export_count": 6,
+          "reachable_export_sample": [
+            "_authenticate",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "auth_des::decrypt_fullname"
+        },
+        {
+          "caller_function_id": "rpc_svc_des::authenticate@301",
+          "candidate_function_ids": [],
+          "evidence": "crates/frankenlibc-abi/src/rpc_svc_des.rs:382",
+          "id": "standalone-release-linux-x86_64:rpc_svc_des:authenticate:301:unknown:004",
+          "reachable_export_count": 6,
+          "reachable_export_sample": [
+            "_authenticate",
+            "svc_getreq",
+            "svc_getreq_common",
+            "svc_getreq_poll",
+            "svc_getreqset",
+            "svc_run"
+          ],
+          "reason": "unresolved_qualified_target",
+          "target_expression": "auth_des::decrypt_nickname"
         },
         {
           "caller_function_id": "unistd_abi::daemon@5459",
@@ -21075,7 +21267,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
-      "sha256": "cfdb0c002ceed4d393e8cf0a4f38d53928a9d01d83c627f6da5c6e4ba46a5325"
+      "sha256": "02b28c84e96eaf792a77734c219cc3294196cef6cd9d2c39c58cacfbaa6098b7"
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_auth_des.rs",
@@ -21107,11 +21299,15 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_svc.rs",
-      "sha256": "189a809303f794d887aa72f3c669cfdb441c1c2075ec8eb2262b4ba0d77eda7e"
+      "sha256": "786caa1667970ae19a5bfe68b8e5d76b205da3b6e37624cfda92fde8db2b2948"
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_svc_cache.rs",
       "sha256": "81a61a34993b72753a609921453072bbc2311ccaa39a3aaf7ab60f1b7a5dfe2e"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/rpc_svc_des.rs",
+      "sha256": "9f74e5afa68a15bd3efc37f7d41546f6646877265558345ce57f6ead58acef03"
     },
     {
       "path": "crates/frankenlibc-abi/src/rpc_tcp.rs",
