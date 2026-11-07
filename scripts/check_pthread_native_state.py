@@ -15,11 +15,17 @@ CASES = (
     "cancel-pending-reuse",
     "cleanup-exit", "cleanup-cancel", "cleanup-reentry", "cleanup-siblings",
     "cleanup-defer", "cleanup-cancel-reentry", "cleanup-initial", "cleanup-return-reentry",
+    "legacy-exit", "legacy-cancel", "legacy-reentry", "legacy-cancel-reentry",
+    "legacy-siblings", "legacy-defer",
 )
-CLEANUP_CASES = tuple(case for case in CASES if case.startswith("cleanup-"))
+CLEANUP_CASES = tuple(case for case in CASES if case.startswith(("cleanup-", "legacy-")))
 CPP_CASES = (
     "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
     "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
+    "native-legacy-exit", "native-legacy-cancel", "native-legacy-cancel-siblings",
+    "native-legacy-base-exit", "native-legacy-base-cancel",
+    "native-legacy-mixed-exit", "native-legacy-mixed-cancel",
+    "native-mixed-legacy-exit", "native-mixed-legacy-cancel",
     "native-cancel-read", "native-cancel-write", "native-cancel-nanosleep",
     "native-cancel-sem", "native-cancel-sem-timed", "native-mixed-cancel-read",
     "native-cancel-read-disabled", "native-cancel-write-disabled",

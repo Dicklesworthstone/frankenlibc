@@ -183,50 +183,13 @@ fn native_ldexp(x: f64, exp: c_int) -> f64 {
 // Pthread cleanup push/pop (4 symbols)
 // The `buf` parameter is a __pthread_cleanup_buffer struct that the caller allocates on its stack.
 // Layout (glibc): { void (*routine)(void*); void *arg; int canceltype; __pthread_cleanup_buffer *prev; }
-// Host threads must use the host's chain so pthread_exit/cancel see the handlers.
-// The fallback below supports explicit push/pop and cancel-type preservation;
-// legacy callback buffers are not yet integrated into native forced unwinding.
-// Modern native __pthread_register_cancel buffers use their separate owned chain.
-#[cfg(feature = "owned-tls-cache")]
-static PTHREAD_CLEANUP_HEAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
-    crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
+// Host threads use the host chain. Native legacy and modern C cleanup buffers
+// share one tagged chain in the native thread's owned cancellation state.
 
 #[cfg(feature = "owned-tls-cache")]
 fn zero_usize() -> usize {
     0
 }
-
-#[cfg(not(feature = "owned-tls-cache"))]
-std::thread_local! {
-    static PTHREAD_CLEANUP_HEAD: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-}
-
-#[inline]
-fn with_pthread_cleanup_head<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        PTHREAD_CLEANUP_HEAD_OWNED_TLS.with(callback)
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        PTHREAD_CLEANUP_HEAD.with(|head| {
-            let mut value = head.get() as usize;
-            let result = callback(&mut value);
-            head.set(value as *mut c_void);
-            result
-        })
-    }
-}
-
-// __pthread_cleanup_buffer layout offsets (x86_64 and aarch64):
-// 0: routine (fn pointer, 8 bytes)
-// 8: arg (void*, 8 bytes)
-// 16: canceltype (int, 4 bytes)
-// 24: prev (__pthread_cleanup_buffer*, 8 bytes)
-const CLEANUP_OFF_ROUTINE: usize = 0;
-const CLEANUP_OFF_ARG: usize = 8;
-const CLEANUP_OFF_CANCELTYPE: usize = 16;
-const CLEANUP_OFF_PREV: usize = 24;
 
 unsafe fn legacy_cleanup_push(
     buf: *mut c_void,
@@ -251,24 +214,8 @@ unsafe fn legacy_cleanup_push(
         // Linking only our private TLS list would lose the handler on host exit.
         unsafe { push(buf, routine, arg) };
     } else {
-        let buf_ptr = buf as *mut u8;
         // SAFETY: the caller owns an aligned, writable GNU cleanup buffer.
-        unsafe {
-            (buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).write(routine);
-            (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).write(arg);
-            with_pthread_cleanup_head(|head| {
-                (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).write(*head as *mut c_void);
-                *head = buf as usize;
-            });
-            if deferred {
-                // Setting DEFERRED cannot deliver a pending asynchronous
-                // request. Save the previous type in the ABI's private field.
-                crate::pthread_abi::pthread_setcanceltype(
-                    0,
-                    buf_ptr.add(CLEANUP_OFF_CANCELTYPE).cast(),
-                );
-            }
-        }
+        unsafe { crate::pthread_abi::native_legacy_cleanup_push(buf, routine, arg, deferred) };
     }
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
@@ -288,24 +235,8 @@ unsafe fn legacy_cleanup_pop(buf: *mut c_void, execute: c_int, restore: bool) {
         // SAFETY: this matches a live buffer registered with the host family.
         unsafe { pop(buf, execute) };
     } else {
-        let buf_ptr = buf as *mut u8;
-        // SAFETY: this is the matching live buffer supplied to push.
-        unsafe {
-            let prev = (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).read();
-            with_pthread_cleanup_head(|head| *head = prev as usize);
-            if restore {
-                // Unlink before restoring ASYNCHRONOUS: a pending request can
-                // unwind from setcanceltype and must see only enclosing frames.
-                let saved = buf_ptr.add(CLEANUP_OFF_CANCELTYPE).cast::<c_int>().read();
-                crate::pthread_abi::pthread_setcanceltype(saved, std::ptr::null_mut());
-            }
-            if execute != 0 {
-                let routine: unsafe extern "C-unwind" fn(*mut c_void) =
-                    std::mem::transmute((buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).read());
-                let arg = (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).read();
-                routine(arg);
-            }
-        }
+        // SAFETY: this is the matching live buffer supplied to native push.
+        unsafe { crate::pthread_abi::native_legacy_cleanup_pop(buf, execute, restore) };
     }
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
