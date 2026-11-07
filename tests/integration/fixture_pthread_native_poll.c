@@ -1,4 +1,4 @@
-/* Real blocked poll/ppoll cancellation and signal behavior, with a GNU oracle.
+/* Real blocked poll/epoll cancellation and signal behavior, with a GNU oracle.
  * Successful blocked cases require a sleeping syscall and a kernel snapshot of
  * its pollfd array. Missing procfs evidence is an explicit, non-passing SKIP.
  */
@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -30,6 +31,16 @@ static _Atomic int signals_delivered;
 typedef int (*ppoll_function)(struct pollfd *, nfds_t, const struct timespec *,
                               const sigset_t *);
 static ppoll_function selected_ppoll;
+typedef int (*epoll_wait_function)(int, struct epoll_event *, int, int);
+typedef int (*epoll_pwait_function)(int, struct epoll_event *, int, int, const sigset_t *);
+typedef int (*epoll_pwait2_function)(int, struct epoll_event *, int,
+                                   const struct timespec *, const sigset_t *);
+static epoll_wait_function selected_epoll_wait;
+static epoll_pwait_function selected_epoll_pwait;
+static epoll_pwait2_function selected_epoll_pwait2;
+static const sigset_t *guarded_mask;
+enum event_api { EVENT_NONE, EVENT_WAIT, EVENT_PWAIT, EVENT_PWAIT2 };
+static const uint64_t event_tokens[] = {UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210)};
 
 static void fail(const char *message) {
     fprintf(stderr, "pthread-native-poll:%s:FAIL:%s\n", case_name, message);
@@ -62,13 +73,19 @@ static void user_signal(int signal_number) {
 }
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "signal observer needs lock-free atomics");
 
-static int pin_providers(const char *expected, int alias) {
+static int pin_providers(const char *expected, int alias, enum event_api event_api) {
     const char *names[] = {
         "pthread_create", "pthread_join", "pthread_tryjoin_np", "pthread_cancel",
         "pthread_self", "pthread_setcancelstate", "pthread_setcanceltype",
         "pthread_testcancel", "pthread_kill", "pthread_sigmask", "sigaction",
         "poll", "ppoll", "__errno_location", "__pthread_register_cancel",
-        "__pthread_unregister_cancel", "__pthread_unwind_next", alias ? "__ppoll" : "ppoll"
+        "__pthread_unregister_cancel", "__pthread_unwind_next",
+        alias && event_api == EVENT_NONE ? "__ppoll" : "ppoll",
+        event_api == EVENT_NONE ? "poll" : "epoll_create1",
+        event_api == EVENT_NONE ? "poll" : "epoll_ctl",
+        event_api == EVENT_WAIT ? (alias ? "__epoll_wait" : "epoll_wait") :
+        event_api == EVENT_PWAIT ? (alias ? "__epoll_pwait" : "epoll_pwait") :
+        event_api == EVENT_PWAIT2 ? "epoll_pwait2" : "poll"
     };
     struct stat wanted;
     if (stat(expected, &wanted) != 0) return 86;
@@ -83,13 +100,23 @@ static int pin_providers(const char *expected, int alias) {
             return 86;
         }
     }
-    selected_ppoll = (ppoll_function)dlsym(RTLD_DEFAULT, alias ? "__ppoll" : "ppoll");
+    selected_ppoll = (ppoll_function)dlsym(RTLD_DEFAULT,
+                                        alias && event_api == EVENT_NONE ? "__ppoll" : "ppoll");
+    if (event_api == EVENT_WAIT)
+        selected_epoll_wait = (epoll_wait_function)dlsym(RTLD_DEFAULT,
+                                                        alias ? "__epoll_wait" : "epoll_wait");
+    if (event_api == EVENT_PWAIT)
+        selected_epoll_pwait = (epoll_pwait_function)dlsym(RTLD_DEFAULT,
+                                                          alias ? "__epoll_pwait" : "epoll_pwait");
+    if (event_api == EVENT_PWAIT2)
+        selected_epoll_pwait2 = (epoll_pwait2_function)dlsym(RTLD_DEFAULT, "epoll_pwait2");
     return 0;
 }
 
 enum kind {
     BLOCKED, PENDING, DISABLED, SIGNAL, SIGNAL_RESTART, READY, REUSE,
-    MASK_UNBLOCK, MASK_BLOCK, READONLY_TIMEOUT, EMPTY_BLOCKED, MASK_CANCEL, MASK_CANCEL_BLOCK
+    MASK_UNBLOCK, MASK_BLOCK, READONLY_TIMEOUT, EMPTY_BLOCKED, MASK_CANCEL, MASK_CANCEL_BLOCK,
+    FINITE_TIMEOUT, READY_LATE, EDGE_READY, EVENT_ERRORS
 };
 
 struct state {
@@ -104,7 +131,107 @@ struct state {
     _Atomic int ready, release, returned, cleaned;
     char proc_path[128];
     int result, error, restored_usr1;
+    enum event_api event_api;
+    int epfd, duplicate_fd, maxevents, timeout_ms;
+    struct epoll_event events[4];
+    int64_t elapsed_ns;
 };
+
+static int epoll_call(const struct state *state, int epfd, struct epoll_event *events,
+                      int maxevents, int timeout_ms, const struct timespec *timeout,
+                      const sigset_t *mask) {
+    if (state->event_api == EVENT_WAIT)
+        return selected_epoll_wait(epfd, events, maxevents, timeout_ms);
+    if (state->event_api == EVENT_PWAIT)
+        return selected_epoll_pwait(epfd, events, maxevents, timeout_ms, mask);
+    return selected_epoll_pwait2(epfd, events, maxevents, timeout, mask);
+}
+
+static unsigned event_token(uint64_t token) {
+    for (unsigned i = 0; i < 2; ++i)
+        if (token == event_tokens[i]) return 1U << i;
+    fail("epoll changed the application's event data");
+    return 0;
+}
+
+static void epoll_edges(struct state *state) {
+    const struct timespec zero = {0, 0};
+    struct epoll_event events[2];
+    REQUIRE(state->result == 1 && state->events[0].events == EPOLLIN,
+            "maxevents one returns exactly one application event");
+    unsigned tokens = event_token(state->events[0].data.u64);
+    REQUIRE(epoll_call(state, state->epfd, events, 1, 0, &zero, NULL) == 1,
+            "second ready registration survives the first bounded result");
+    REQUIRE(events[0].events == EPOLLIN, "second application readiness flags");
+    unsigned second = event_token(events[0].data.u64);
+    REQUIRE((tokens & second) == 0, "distinct ready registrations retain distinct data");
+    REQUIRE(epoll_call(state, state->epfd, events, 2, 0, &zero, NULL) == 0,
+            "EPOLLONESHOT must not be silently rearmed by a wait");
+    const int fds[] = {state->pipefd[0], state->duplicate_fd};
+    for (unsigned i = 0; i < 2; ++i) {
+        struct epoll_event event = {.events = EPOLLIN | EPOLLET | EPOLLONESHOT};
+        event.data.u64 = event_tokens[i];
+        REQUIRE(epoll_ctl(state->epfd, EPOLL_CTL_MOD, fds[i], &event) == 0,
+                "application explicitly rearms its one-shot registrations");
+    }
+    REQUIRE(epoll_call(state, state->epfd, events, 2, 0, &zero, NULL) == 2,
+            "explicit rearm publishes both still-ready application entries");
+    tokens = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        REQUIRE(events[i].events == EPOLLIN, "rearmed readiness flags");
+        tokens |= event_token(events[i].data.u64);
+    }
+    REQUIRE(tokens == 3, "rearmed data payloads survive native wait routing");
+    REQUIRE(epoll_call(state, state->epfd, events, 2, 0, &zero, NULL) == 0,
+            "one-shot registrations remain disabled after their second delivery");
+}
+
+static void epoll_errors(struct state *state) {
+    const struct timespec zero = {0, 0};
+    sigset_t temporary, after;
+    sigemptyset(&temporary);
+    sigaddset(&temporary, SIGUSR1);
+    const int fds[] = {-1, state->pipefd[0], state->epfd};
+    const int maximum[] = {4, 4, 0};
+    const int errors[] = {EBADF, EINVAL, EINVAL};
+    for (unsigned i = 0; i < 3; ++i) {
+        errno = EDOM;
+        REQUIRE(epoll_call(state, fds[i], state->events, maximum[i], 0, &zero, &temporary) == -1 &&
+                errno == errors[i], "epoll preserves kernel error selection");
+        REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &after) == 0 &&
+                sigismember(&after, SIGUSR1) == 0, "epoll error restores the original signal mask");
+    }
+    if (state->event_api == EVENT_PWAIT2) {
+        const struct timespec invalid[] = {{-1, 0}, {0, 1000000000}};
+        for (unsigned i = 0; i < 2; ++i) {
+            errno = EDOM;
+            REQUIRE(epoll_call(state, state->epfd, state->events, 4, 0, &invalid[i],
+                               (const sigset_t *)(uintptr_t)1) == -1 && errno == EINVAL,
+                    "invalid epoll_pwait2 timeout is rejected before reading the signal mask");
+        }
+        errno = EDOM;
+        REQUIRE(epoll_call(state, state->epfd, state->events, 4, 0,
+                           (const struct timespec *)(uintptr_t)1, NULL) == -1 && errno == EFAULT,
+                "epoll_pwait2 rejects an unreadable timeout without a process fault");
+        _Alignas(struct timespec) unsigned char unaligned[sizeof(struct timespec) + 1];
+        memcpy(unaligned + 1, &zero, sizeof(zero));
+        REQUIRE(epoll_call(state, state->epfd, state->events, 4, 0,
+                           (const struct timespec *)(unaligned + 1), NULL) == 0,
+                "epoll_pwait2 accepts an unaligned kernel-readable timeout");
+    }
+    if (state->event_api != EVENT_WAIT) {
+        errno = EDOM;
+        REQUIRE(epoll_call(state, state->epfd, state->events, 4, 0, &zero,
+                           (const sigset_t *)(uintptr_t)1) == -1 && errno == EFAULT,
+                "epoll rejects an inaccessible temporary signal mask");
+        REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &after) == 0 &&
+                sigismember(&after, SIGUSR1) == 0, "bad-mask error preserves the original signal mask");
+        REQUIRE(epoll_call(state, state->epfd, state->events, 4, 0, &zero, guarded_mask) == 0,
+                "epoll reads only the eight-byte kernel signal mask at a guard-page boundary");
+    }
+    for (size_t i = 0; i < sizeof(state->events); ++i)
+        REQUIRE(((unsigned char *)state->events)[i] == 0xa5, "epoll errors preserve event output");
+}
 
 static void capture_identity(struct state *state) {
     pid_t tid = (pid_t)syscall(SYS_gettid);
@@ -155,15 +282,26 @@ static void *worker(void *argument) {
         (void)syscall(SYS_sched_yield);
     errno = EDOM;
     struct pollfd *fds = state->count == 0 ? NULL : state->fds;
-    if (state->use_ppoll) {
-        const sigset_t *temporary = state->kind == MASK_UNBLOCK || state->kind == MASK_BLOCK ||
-                                    state->kind == MASK_CANCEL || state->kind == MASK_CANCEL_BLOCK
-                                      ? &state->temporary_mask : NULL;
+    const sigset_t *temporary = state->kind == MASK_UNBLOCK || state->kind == MASK_BLOCK ||
+                                state->kind == MASK_CANCEL || state->kind == MASK_CANCEL_BLOCK
+                                  ? &state->temporary_mask : NULL;
+    int64_t started = monotonic_ns();
+    if (state->event_api != EVENT_NONE) {
+        if (state->kind == EVENT_ERRORS) {
+            epoll_errors(state);
+            state->result = 0;
+        } else {
+            state->result = epoll_call(state, state->epfd, state->events, state->maxevents,
+                                       state->timeout_ms, state->timeout, temporary);
+            if (state->kind == EDGE_READY) epoll_edges(state);
+        }
+    } else if (state->use_ppoll) {
         state->result = selected_ppoll(fds, state->count, state->timeout, temporary);
     } else {
         state->result = poll(fds, state->count, -1);
     }
     state->error = errno;
+    state->elapsed_ns = monotonic_ns() - started;
     REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0, "query restored mask");
     state->restored_usr1 = sigismember(&mask, SIGUSR1);
     atomic_store_explicit(&state->returned, 1, memory_order_release);
@@ -220,6 +358,38 @@ static void observe_parked(struct state *state, int memory) {
             sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
                    &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 3)
             goto retry;
+        if (state->event_api != EVENT_NONE) {
+            int is_epoll_wait = 0;
+#ifdef SYS_epoll_wait
+            is_epoll_wait = number == SYS_epoll_wait;
+#endif
+            if ((!is_epoll_wait && number != SYS_epoll_pwait && number != SYS_epoll_pwait2) ||
+                args[0] != (unsigned)state->epfd || args[2] != (unsigned)state->maxevents)
+                goto retry;
+            if (sliced && number != (state->event_api == EVENT_PWAIT2 ? SYS_epoll_pwait2 : SYS_epoll_pwait))
+                goto retry;
+            if (!read_proc(state, "stat", status, sizeof(status))) goto retry;
+            char *end = strrchr(status, ')');
+            if (end == NULL || end[1] != ' ' || end[2] != 'S') goto retry;
+            if (sliced) {
+                uint64_t mask;
+                if (args[4] == 0 || !snapshot(memory, args[4], &mask, sizeof(mask))) goto retry;
+                REQUIRE(args[5] == sizeof(mask), "native epoll uses the kernel signal-mask width");
+                REQUIRE(((mask >> (SIGUSR1 - 1)) & 1) ==
+                            (uint64_t)(state->kind == MASK_BLOCK || state->kind == MASK_CANCEL_BLOCK),
+                        "native epoll submits the intended user signal mask");
+                if (state->event_api == EVENT_PWAIT2) {
+                    struct timespec quantum;
+                    if (args[3] == 0 || !snapshot(memory, args[3], &quantum, sizeof(quantum))) goto retry;
+                    REQUIRE(quantum.tv_sec == 0 && quantum.tv_nsec > 0 && quantum.tv_nsec <= 50000000,
+                            "native epoll_pwait2 has a bounded nonzero wait quantum");
+                } else {
+                    REQUIRE(args[3] > 0 && args[3] <= 50,
+                            "native epoll_pwait has a bounded nonzero wait quantum");
+                }
+            }
+            return;
+        }
         int is_poll = 0;
 #ifdef SYS_poll
         is_poll = number == SYS_poll;
@@ -251,7 +421,7 @@ static void observe_parked(struct state *state, int memory) {
 retry:
         pause_briefly();
     }
-    fail("no sleeping syscall with the exact application pollfd entries");
+    fail("no sleeping syscall with the intended application wait arguments");
 }
 
 static void *join_bounded(struct state *state) {
@@ -267,7 +437,8 @@ static void *join_bounded(struct state *state) {
 }
 
 static void initialize(struct state *state, enum kind kind, int use_ppoll,
-                       const int pipefd[2], const struct timespec *timeout) {
+                       const int pipefd[2], const struct timespec *timeout,
+                       enum event_api event_api, int epfd, int duplicate_fd) {
     memset(state, 0, sizeof(*state));
     state->kind = kind;
     state->use_ppoll = use_ppoll;
@@ -279,6 +450,14 @@ static void initialize(struct state *state, enum kind kind, int use_ppoll,
     state->fds[3] = (struct pollfd){-pipefd[0] - 1, 0, 0x4000};
     memcpy(state->expected, state->fds, sizeof(state->fds));
     state->timeout = timeout;
+    if (event_api == EVENT_PWAIT2 && (kind == BLOCKED || kind == EMPTY_BLOCKED))
+        state->timeout = NULL;
+    state->event_api = event_api;
+    state->epfd = epfd;
+    state->duplicate_fd = duplicate_fd;
+    state->maxevents = kind == EDGE_READY ? 1 : 4;
+    state->timeout_ms = kind == FINITE_TIMEOUT ? 250 : kind == READY_LATE ? 1000 : -7;
+    memset(state->events, 0xa5, sizeof(state->events));
     sigemptyset(&state->temporary_mask);
     if (kind == MASK_BLOCK || kind == MASK_CANCEL_BLOCK) sigaddset(&state->temporary_mask, SIGUSR1);
     atomic_init(&state->ready, 0);
@@ -303,7 +482,7 @@ static void verify_pipe(const struct state *state, int seeded) {
 
 static void run_case(struct state *state, int memory) {
     enum kind kind = state->kind;
-    int seeded = kind == PENDING || kind == READY;
+    int seeded = kind == PENDING || kind == READY || kind == EDGE_READY;
     if (seeded) seed_pipe(state);
     REQUIRE(pthread_create(&state->thread, NULL, worker, state) == 0, "create worker");
     wait_ready(state);
@@ -312,7 +491,8 @@ static void run_case(struct state *state, int memory) {
     if (kind == MASK_UNBLOCK)
         REQUIRE(pthread_kill(state->thread, SIGUSR1) == 0, "queue masked user signal");
     atomic_store_explicit(&state->release, 1, memory_order_release);
-    if (kind != PENDING && kind != READY && kind != MASK_UNBLOCK)
+    if (kind != PENDING && kind != READY && kind != MASK_UNBLOCK &&
+        kind != EDGE_READY && kind != EVENT_ERRORS)
         observe_parked(state, memory);
     if (kind == BLOCKED || kind == EMPTY_BLOCKED || kind == MASK_CANCEL ||
         kind == MASK_CANCEL_BLOCK || kind == DISABLED) {
@@ -345,6 +525,14 @@ static void run_case(struct state *state, int memory) {
             seed_pipe(state);
             seeded = 1;
         }
+    } else if (kind == READY_LATE) {
+        int64_t held_until = monotonic_ns() + 170000000;
+        do {
+            observe_parked(state, memory);
+            pause_briefly();
+        } while (monotonic_ns() < held_until);
+        seed_pipe(state);
+        seeded = 1;
     }
     void *result = join_bounded(state);
     int canceled = kind == BLOCKED || kind == EMPTY_BLOCKED || kind == MASK_CANCEL ||
@@ -356,21 +544,52 @@ static void run_case(struct state *state, int memory) {
     for (nfds_t i = 0; i < state->count; ++i)
         REQUIRE(state->fds[i].fd == state->expected[i].fd &&
                 state->fds[i].events == state->expected[i].events, "poll inputs unchanged");
-    if (kind == PENDING)
+    if (kind == PENDING && state->event_api == EVENT_NONE)
         REQUIRE(state->fds[0].revents == 0x4000, "pending cancellation precedes output publication");
+    if (kind == PENDING && state->event_api != EVENT_NONE) {
+        for (size_t i = 0; i < sizeof(state->events); ++i)
+            REQUIRE(((unsigned char *)state->events)[i] == 0xa5,
+                    "pending epoll cancellation precedes event output publication");
+        struct epoll_event remaining[2];
+        const struct timespec zero = {0, 0};
+        REQUIRE(epoll_call(state, state->epfd, remaining, 2, 0, &zero, NULL) == 2,
+                "pending cancellation leaves application readiness in the epoll instance");
+    }
     if (kind == SIGNAL || kind == SIGNAL_RESTART || kind == MASK_UNBLOCK) {
         REQUIRE(state->result == -1 && state->error == EINTR, "user signal returns EINTR without restart");
         REQUIRE(atomic_load_explicit(&signals_delivered, memory_order_relaxed) == 1, "one user signal delivered");
-    } else if (kind == READY) {
+    } else if (kind == READY && state->event_api == EVENT_NONE) {
         REQUIRE(state->result == 2, "duplicate pollfd entries retain multiplicity");
         REQUIRE(state->fds[0].revents == POLLIN && state->fds[2].revents == POLLIN &&
                 state->fds[1].revents == 0 && state->fds[3].revents == 0,
                 "ready and ignored pollfd outputs");
+    } else if (state->event_api != EVENT_NONE &&
+               (kind == READY || kind == READY_LATE || kind == DISABLED || kind == MASK_BLOCK)) {
+        REQUIRE(state->result == 2, "epoll returns both application registrations");
+        unsigned tokens = 0;
+        for (int i = 0; i < state->result; ++i) {
+            REQUIRE(state->events[i].events == EPOLLIN, "epoll returns the application readiness flags");
+            tokens |= event_token(state->events[i].data.u64);
+        }
+        REQUIRE(tokens == 3, "epoll retains both distinct application data payloads");
+        for (size_t i = 2 * sizeof(state->events[0]); i < sizeof(state->events); ++i)
+            REQUIRE(((unsigned char *)state->events)[i] == 0xa5,
+                    "epoll preserves unused output entries");
     } else if (kind == DISABLED || kind == MASK_BLOCK) {
         REQUIRE(state->result == 1 && state->fds[0].revents == POLLIN, "controlled readiness result");
-    } else if (kind == READONLY_TIMEOUT) {
+    } else if (kind == READONLY_TIMEOUT && state->event_api == EVENT_NONE) {
         REQUIRE(state->result == 0 && state->fds[0].revents == 0, "read-only timeout expires normally");
+    } else if (kind == FINITE_TIMEOUT || kind == READONLY_TIMEOUT) {
+        REQUIRE(state->result == 0, "finite epoll timeout expires normally");
+        REQUIRE(state->elapsed_ns >= (kind == FINITE_TIMEOUT ? 220000000 : 450000000) &&
+                state->elapsed_ns < 2000000000,
+                "epoll finite deadline spans slices without restarting or rounding early");
+        for (size_t i = 0; i < sizeof(state->events); ++i)
+            REQUIRE(((unsigned char *)state->events)[i] == 0xa5, "epoll timeout preserves event output");
     }
+    if (kind == READY_LATE)
+        REQUIRE(state->elapsed_ns >= 160000000 && state->elapsed_ns < 2000000000,
+                "epoll returns real readiness after several empty native slices");
     if (!canceled || kind == DISABLED)
         REQUIRE(state->restored_usr1 == (kind == MASK_UNBLOCK), "caller signal mask restored");
     if (kind == MASK_BLOCK)
@@ -394,16 +613,17 @@ static size_t descriptor_count(void) {
 }
 
 static void reuse_case(int use_ppoll, const int pipefd[2],
-                       const struct timespec *timeout, int memory) {
+                       const struct timespec *timeout, int memory,
+                       enum event_api event_api, int epfd, int duplicate_fd) {
     struct state state;
-    initialize(&state, READY, use_ppoll, pipefd, timeout);
+    initialize(&state, READY, use_ppoll, pipefd, timeout, event_api, epfd, duplicate_fd);
     run_case(&state, memory); /* Resolve runtime state before measuring lifetime. */
     size_t before = descriptor_count();
     for (int round = 0; round < 8; ++round) {
-        initialize(&state, BLOCKED, use_ppoll, pipefd, timeout);
+        initialize(&state, BLOCKED, use_ppoll, pipefd, timeout, event_api, epfd, duplicate_fd);
         run_case(&state, memory);
         REQUIRE(descriptor_count() == before, "retired poll thread leaked a descriptor");
-        initialize(&state, READY, use_ppoll, pipefd, timeout);
+        initialize(&state, READY, use_ppoll, pipefd, timeout, event_api, epfd, duplicate_fd);
         run_case(&state, memory);
         REQUIRE(descriptor_count() == before, "replacement thread leaked or inherited cancellation");
     }
@@ -414,18 +634,42 @@ int main(int argc, char **argv) {
     case_name = argv[1];
     int use_ppoll = strncmp(case_name, "ppoll-", 6) == 0;
     int alias = strncmp(case_name, "ppoll-alias-", 12) == 0;
-    if (!use_ppoll && strncmp(case_name, "poll-", 5) != 0) return 2;
-    const char *suffix = case_name + (alias ? 12 : use_ppoll ? 6 : 5);
+    enum event_api event_api = EVENT_NONE;
+    const char *suffix;
+    if (strncmp(case_name, "epoll-wait-", 11) == 0) {
+        event_api = EVENT_WAIT;
+        suffix = case_name + 11;
+    } else if (strncmp(case_name, "epoll-pwait-", 12) == 0) {
+        event_api = EVENT_PWAIT;
+        suffix = case_name + 12;
+    } else if (strncmp(case_name, "epoll-pwait2-", 13) == 0) {
+        event_api = EVENT_PWAIT2;
+        suffix = case_name + 13;
+    } else {
+        if (!use_ppoll && strncmp(case_name, "poll-", 5) != 0) return 2;
+        suffix = case_name + (alias ? 12 : use_ppoll ? 6 : 5);
+    }
+    if (event_api != EVENT_NONE && strncmp(suffix, "alias-", 6) == 0) {
+        if (event_api == EVENT_PWAIT2) return 2;
+        alias = 1;
+        suffix += 6;
+    }
     const char *names[] = {"blocked", "pending", "disabled", "signal", "signal-restart", "ready",
                           "reuse", "mask-unblock", "mask-block", "readonly-timeout", "empty-blocked",
-                          "mask-cancel", "mask-cancel-block"};
+                          "mask-cancel", "mask-cancel-block", "timeout", "ready-late",
+                          "edge-ready", "errors"};
     int index = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) index = (int)i;
-    if (index < 0 || (!use_ppoll && ((index >= MASK_UNBLOCK && index <= READONLY_TIMEOUT) ||
-                                    index == MASK_CANCEL || index == MASK_CANCEL_BLOCK))) return 2;
+    if (index < 0) return 2;
+    if (event_api == EVENT_NONE && (index >= FINITE_TIMEOUT ||
+        (!use_ppoll && ((index >= MASK_UNBLOCK && index <= READONLY_TIMEOUT) ||
+                       index == MASK_CANCEL || index == MASK_CANCEL_BLOCK)))) return 2;
+    if (event_api == EVENT_WAIT && ((index >= MASK_UNBLOCK && index <= READONLY_TIMEOUT) ||
+                                   index == MASK_CANCEL || index == MASK_CANCEL_BLOCK)) return 2;
+    if (event_api == EVENT_PWAIT && index == READONLY_TIMEOUT) return 2;
     enum kind kind = (enum kind)index;
-    int pin = pin_providers(argv[2], alias);
+    int pin = pin_providers(argv[2], alias, event_api);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
                     strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
@@ -444,26 +688,50 @@ int main(int argc, char **argv) {
     alarm(15);
     int pipefd[2];
     REQUIRE(pipe2(pipefd, O_CLOEXEC | O_NONBLOCK) == 0, "create application pipe");
+    int epfd = -1, duplicate_fd = -1;
+    if (event_api != EVENT_NONE) {
+        epfd = epoll_create1(EPOLL_CLOEXEC);
+        REQUIRE(epfd >= 0, "create application epoll instance");
+        duplicate_fd = fcntl(pipefd[0], F_DUPFD_CLOEXEC, 0);
+        REQUIRE(duplicate_fd >= 0, "duplicate application pipe descriptor");
+        if (kind != EMPTY_BLOCKED) {
+            const int fds[] = {pipefd[0], duplicate_fd};
+            for (unsigned i = 0; i < 2; ++i) {
+                struct epoll_event event = {.events = EPOLLIN};
+                if (kind == EDGE_READY || kind == PENDING) event.events |= EPOLLET | EPOLLONESHOT;
+                event.data.u64 = event_tokens[i];
+                REQUIRE(epoll_ctl(epfd, EPOLL_CTL_ADD, fds[i], &event) == 0,
+                        "register application epoll interest with opaque data");
+            }
+        }
+    }
     int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
     if (memory < 0) skip("kernel-poll-array-snapshot-unavailable");
     long page = sysconf(_SC_PAGESIZE);
     REQUIRE(page > 0, "page size");
-    struct timespec *timeout = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE,
+    struct timespec *timeout = mmap(NULL, 2 * (size_t)page, PROT_READ | PROT_WRITE,
                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     REQUIRE(timeout != MAP_FAILED, "map timeout storage");
-    *timeout = kind == READONLY_TIMEOUT ? (struct timespec){0, 500000000} : (struct timespec){60, 0};
+    *timeout = kind == READONLY_TIMEOUT ? (struct timespec){0, 500000000} :
+               kind == FINITE_TIMEOUT ? (struct timespec){0, 250000000} :
+               kind == READY_LATE ? (struct timespec){1, 0} : (struct timespec){60, 0};
     struct timespec expected = *timeout;
     REQUIRE(mprotect(timeout, (size_t)page, PROT_READ) == 0, "protect timeout storage");
+    REQUIRE(mprotect((char *)timeout + page, (size_t)page, PROT_NONE) == 0,
+            "protect inaccessible page after kernel-width signal mask");
+    guarded_mask = (const sigset_t *)((const char *)timeout + page - sizeof(uint64_t));
     if (kind == REUSE) {
-        reuse_case(use_ppoll, pipefd, timeout, memory);
+        reuse_case(use_ppoll, pipefd, timeout, memory, event_api, epfd, duplicate_fd);
     } else {
         struct state state;
-        initialize(&state, kind, use_ppoll, pipefd, timeout);
+        initialize(&state, kind, use_ppoll, pipefd, timeout, event_api, epfd, duplicate_fd);
         run_case(&state, memory);
     }
     REQUIRE(timeout->tv_sec == expected.tv_sec && timeout->tv_nsec == expected.tv_nsec,
-            "ppoll must not change the caller timeout");
-    REQUIRE(munmap(timeout, (size_t)page) == 0, "release timeout storage");
+            "poll family must not change the caller's const timeout");
+    REQUIRE(munmap(timeout, 2 * (size_t)page) == 0, "release timeout storage");
+    if (event_api != EVENT_NONE)
+        REQUIRE(close(epfd) == 0 && close(duplicate_fd) == 0, "release application epoll descriptors");
     REQUIRE(close(memory) == 0 && close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "release fixture descriptors");
     printf("pthread-native-poll:%s:PASS\n", case_name);
     return 0;

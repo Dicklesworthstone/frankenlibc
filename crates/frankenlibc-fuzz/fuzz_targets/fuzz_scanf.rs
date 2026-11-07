@@ -17,7 +17,10 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
-use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue, parse_scanf_format, scan_input};
+use frankenlibc_core::stdio::scanf::{
+    ScanDirective, ScanValue, WideScanEvent, WideScanInput, WideScanProgress, WideScanSession,
+    WideScanWriteError, parse_scanf_format, parse_scanf_format_wide, scan_input,
+};
 
 /// Maximum format string length to bound parsing.
 const MAX_FORMAT: usize = 1024;
@@ -58,11 +61,12 @@ fn fuzz_scanf(input: ScanfFuzzInput) {
         return;
     }
 
-    match input.op % 4 {
+    match input.op % 5 {
         0 => fuzz_parse_format(&input),
         1 => fuzz_scan_input(&input),
         2 => fuzz_known_formats(&input),
-        _ => fuzz_scanset_edge_cases(&input),
+        3 => fuzz_scanset_edge_cases(&input),
+        _ => fuzz_wide_stream(&input),
     }
 }
 
@@ -75,7 +79,7 @@ fn fuzz_scanf(input: ScanfFuzzInput) {
 /// <input>
 /// ```
 ///
-/// The op is one of `parse`, `scan`, `known`, or `scanset`.
+/// The op is one of `parse`, `scan`, `known`, `scanset`, or `wide`.
 fn directed_input(data: &[u8]) -> Option<ScanfFuzzInput> {
     let rest = data.strip_prefix(DIRECTED_PREFIX)?;
     let (op_name, payload) = split_once_byte(rest, b'\n')?;
@@ -95,6 +99,7 @@ fn directed_op(op_name: &[u8]) -> Option<u8> {
         b"scan" => Some(1),
         b"known" => Some(2),
         b"scanset" => Some(3),
+        b"wide" => Some(4),
         _ => None,
     }
 }
@@ -336,6 +341,96 @@ fn fuzz_scanset_edge_cases(input: &ScanfFuzzInput) {
         if !directives.is_empty() {
             let result = scan_input(data, &directives);
             let _ = result.count;
+        }
+    }
+}
+
+
+/// Exercise scalar demand, incremental destination failure, and exact rollback.
+fn fuzz_wide_stream(input: &ScanfFuzzInput) {
+    let format = String::from_utf8_lossy(&input.format_bytes);
+    let characters: Vec<u32> = String::from_utf8_lossy(&input.input_bytes)
+        .chars()
+        .map(u32::from)
+        .collect();
+    let directives = parse_scanf_format_wide(format.as_bytes());
+    let mut session = WideScanSession::new(directives.as_slice(), u32::from(b'.'));
+    let mut supplied = 0usize;
+    let mut next = None;
+    let mut terminal = false;
+    let mut pending_text = false;
+    let mut assignments = 0i32;
+    let mut failed_writer = false;
+    loop {
+        let progress = session.resume(
+            next.take(),
+            &mut |spec, event, context| {
+                assert!(!spec.suppress, "suppressed fields must not reach a writer");
+                assert!(!failed_writer, "a failed writer must stop later events");
+                assert!(context.consumed <= supplied);
+                match event {
+                    WideScanEvent::BeginText => {
+                        assert!(!pending_text, "text fields cannot overlap");
+                        pending_text = true;
+                    }
+                    WideScanEvent::Character(wc) => {
+                        assert!(pending_text);
+                        if input.op & 8 != 0 && wc >= 0x80 {
+                            pending_text = false;
+                            failed_writer = true;
+                            return Err(WideScanWriteError {
+                                input_failure: spec.writes_char_buffer(),
+                            });
+                        }
+                    }
+                    WideScanEvent::EndText => {
+                        assert!(pending_text);
+                        pending_text = false;
+                        assignments += 1;
+                    }
+                    WideScanEvent::AbortText => {
+                        assert!(pending_text);
+                        pending_text = false;
+                    }
+                    WideScanEvent::Value(value) => {
+                        assert!(!pending_text);
+                        assert!(!matches!(value, ScanValue::Unset));
+                        if !matches!(value, ScanValue::CharsConsumed(_)) {
+                            assignments += 1;
+                        }
+                    }
+                }
+                Ok(())
+            },
+            &frankenlibc_core::string::wchar::iswspace,
+        );
+        match progress {
+            WideScanProgress::NeedInput(_) => {
+                assert!(!failed_writer);
+                assert!(!terminal, "a terminal source cannot be read again");
+                if let Some(&wc) = characters.get(supplied) {
+                    supplied += 1;
+                    next = Some(WideScanInput::Character(wc));
+                } else {
+                    terminal = true;
+                    next = Some(if input.op & 16 == 0 {
+                        WideScanInput::Eof
+                    } else {
+                        WideScanInput::Error
+                    });
+                }
+            }
+            WideScanProgress::Complete(summary) => {
+                assert!(!pending_text, "completion must finish or abandon text");
+                assert_eq!(summary.count, assignments);
+                assert!(summary.consumed <= supplied);
+                assert_eq!(
+                    session.unread().collect::<Vec<_>>(),
+                    characters[summary.consumed..supplied],
+                    "lookahead must preserve the exact remaining scalar suffix"
+                );
+                return;
+            }
         }
     }
 }

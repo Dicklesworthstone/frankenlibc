@@ -18635,16 +18635,13 @@ pub unsafe extern "C-unwind" fn epoll_pwait2(
     sigmask: *const libc::sigset_t,
 ) -> c_int {
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_epoll_pwait2(
-                epfd,
-                events as *mut u8,
-                maxevents,
-                timeout as *const u8,
-                sigmask as *const u8,
-                std::mem::size_of::<libc::c_ulong>(),
-            )
-        })
+        crate::pthread_abi::cancellation_point_epoll_pwait2(
+            epfd,
+            events.cast(),
+            maxevents,
+            timeout.cast(),
+            sigmask.cast(),
+        )
     } {
         Ok(n) => n,
         Err(e) => {

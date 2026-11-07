@@ -1,8 +1,8 @@
-//! Bounded native cancellation for poll-family waits.
+//! Bounded native cancellation for poll and epoll waits.
 //!
 //! A native request does not send a signal. Recheck its stable cancellation
 //! word between at most 50 ms of kernel waiting. Block signals between slices
-//! and atomically install the requested mask inside each ppoll, so a handler
+//! and atomically install the requested mask inside each kernel wait, so a handler
 //! cannot run in an internal gap and lose the public wait's EINTR result.
 
 use frankenlibc_core::pthread::thread::CancellationWait;
@@ -11,7 +11,84 @@ use std::ffi::c_int;
 
 const KERNEL_SIGSET_BYTES: usize = core::mem::size_of::<u64>();
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
+const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SLICE_NS: i64 = 50_000_000;
+
+#[derive(Clone, Copy)]
+enum Operation {
+    Poll {
+        fds: *mut u8,
+        nfds: usize,
+    },
+    Epoll {
+        epfd: c_int,
+        events: *mut u8,
+        maxevents: c_int,
+    },
+    Epoll2 {
+        epfd: c_int,
+        events: *mut u8,
+        maxevents: c_int,
+    },
+}
+
+impl Operation {
+    fn consumes_notification(self) -> bool {
+        matches!(self, Self::Epoll { .. } | Self::Epoll2 { .. })
+    }
+
+    /// Execute one bounded wait on the original application descriptors.
+    /// No probe drains edge-triggered events or disables a one-shot before the
+    /// result is published, and no synthetic descriptor consumes an event slot.
+    unsafe fn wait(self, slice: &mut Timespec, mask: *const u8) -> Result<c_int, c_int> {
+        // SAFETY: each entry point retains its original kernel arguments. The
+        // timeout is owned and bounded, except an invalid epoll_pwait2 timeout
+        // passed through solely to preserve EINVAL-versus-ENOSYS precedence.
+        unsafe {
+            match self {
+                Self::Poll { fds, nfds } => syscall::sys_ppoll(
+                    fds,
+                    nfds,
+                    core::ptr::from_mut(slice).cast::<u8>().cast_const(),
+                    mask,
+                    KERNEL_SIGSET_BYTES,
+                ),
+                Self::Epoll {
+                    epfd,
+                    events,
+                    maxevents,
+                } => syscall::sys_epoll_pwait(
+                    epfd,
+                    events,
+                    maxevents,
+                    milliseconds_rounded_up(slice),
+                    mask,
+                    KERNEL_SIGSET_BYTES,
+                ),
+                Self::Epoll2 {
+                    epfd,
+                    events,
+                    maxevents,
+                } => syscall::sys_epoll_pwait2(
+                    epfd,
+                    events,
+                    maxevents,
+                    core::ptr::from_mut(slice).cast::<u8>().cast_const(),
+                    mask,
+                    KERNEL_SIGSET_BYTES,
+                ),
+            }
+        }
+    }
+}
+
+/// The millisecond syscall must not expire a fractional final slice early.
+/// Its input is always zero or at most SLICE_NS, so rounding cannot overflow.
+fn milliseconds_rounded_up(slice: &Timespec) -> c_int {
+    debug_assert_eq!(slice.tv_sec, 0);
+    debug_assert!((0..=SLICE_NS).contains(&slice.tv_nsec));
+    ((slice.tv_nsec + NANOS_PER_MILLISECOND - 1) / NANOS_PER_MILLISECOND) as c_int
+}
 
 /// Wait with the original pollfd array and temporary signal mask.
 ///
@@ -33,17 +110,116 @@ pub(super) unsafe fn wait(
     cancel: CancellationWait,
     on_cancel: unsafe extern "C-unwind" fn(),
 ) -> Result<c_int, c_int> {
+    // SAFETY: the caller retains the owned timeout and all poll arguments.
+    unsafe {
+        wait_operation(
+            Operation::Poll { fds, nfds },
+            timeout,
+            mask,
+            cancel,
+            on_cancel,
+        )
+    }
+}
+
+/// Wait for epoll events with the millisecond epoll_wait/epoll_pwait contract.
+///
+/// The integer family keeps using epoll_pwait, so cancellation does not require
+/// the newer epoll_pwait2 syscall. Every negative timeout denotes infinity.
+///
+/// # Safety
+/// `events` must satisfy the kernel contract for `maxevents`. The mask and
+/// cancellation callback have the same requirements as [`wait`].
+pub(super) unsafe fn wait_epoll(
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: c_int,
+    mask: *const u8,
+    cancel: CancellationWait,
+    on_cancel: unsafe extern "C-unwind" fn(),
+) -> Result<c_int, c_int> {
+    let duration = Timespec {
+        tv_sec: i64::from(timeout.max(0) / 1000),
+        tv_nsec: i64::from(timeout.max(0) % 1000) * NANOS_PER_MILLISECOND,
+    };
+    let timeout = if timeout < 0 {
+        core::ptr::null()
+    } else {
+        core::ptr::from_ref(&duration).cast()
+    };
+    // SAFETY: duration remains stationary until the shared wait returns.
+    unsafe {
+        wait_operation(
+            Operation::Epoll {
+                epfd,
+                events,
+                maxevents,
+            },
+            timeout,
+            mask,
+            cancel,
+            on_cancel,
+        )
+    }
+}
+
+/// Wait for epoll events with the nanosecond epoll_pwait2 contract.
+///
+/// An unavailable epoll_pwait2 still reports ENOSYS; substituting the integer
+/// syscall would silently weaken the caller's timeout precision and error ABI.
+///
+/// # Safety
+/// `events` must satisfy the kernel contract for `maxevents`. The timeout,
+/// mask and cancellation callback have the same requirements as [`wait`].
+pub(super) unsafe fn wait_epoll2(
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: *const u8,
+    mask: *const u8,
+    cancel: CancellationWait,
+    on_cancel: unsafe extern "C-unwind" fn(),
+) -> Result<c_int, c_int> {
+    // SAFETY: the caller retains the owned timeout and all epoll arguments.
+    unsafe {
+        wait_operation(
+            Operation::Epoll2 {
+                epfd,
+                events,
+                maxevents,
+            },
+            timeout,
+            mask,
+            cancel,
+            on_cancel,
+        )
+    }
+}
+
+unsafe fn wait_operation(
+    operation: Operation,
+    timeout: *const u8,
+    mask: *const u8,
+    cancel: CancellationWait,
+    on_cancel: unsafe extern "C-unwind" fn(),
+) -> Result<c_int, c_int> {
     let mut duration = if timeout.is_null() {
         None
     } else {
         // SAFETY: the ABI retained its owned, aligned timeout through this call.
         Some(unsafe { *timeout.cast::<Timespec>() })
     };
-    if let Some(time) = duration.as_ref()
+    if let Some(time) = duration.as_mut()
         && (time.tv_sec < 0 || !(0..1_000_000_000).contains(&time.tv_nsec))
     {
         // Linux rejects the timeout before reading the mask. Do not introduce
         // a mask access, signal-mask change or clock read on this error path.
+        // epoll_pwait2 is newer than the other waits: an unavailable syscall
+        // must still report ENOSYS even when its timespec would be invalid.
+        if matches!(operation, Operation::Epoll2 { .. }) {
+            return unsafe { operation.wait(time, mask) };
+        }
         return Err(libc::EINVAL);
     }
     if let Some(time) = duration.as_mut()
@@ -52,15 +228,7 @@ pub(super) unsafe fn wait(
     {
         // Immediate polls need no slicing or outer mask change. Keep mutable
         // owned storage: raw ppoll may write through its const timeout pointer.
-        return unsafe {
-            syscall::sys_ppoll(
-                fds,
-                nfds,
-                core::ptr::from_mut(time).cast::<u8>().cast_const(),
-                mask,
-                KERNEL_SIGSET_BYTES,
-            )
-        };
+        return unsafe { operation.wait(time, mask) };
     }
     if cancel.pending() {
         return Err(libc::EINTR);
@@ -73,7 +241,7 @@ pub(super) unsafe fn wait(
         mask
     };
     // SAFETY: every borrowed control remains live and unmoved through the loop.
-    let result = match unsafe { wait_slices(fds, nfds, duration, wait_mask, cancel) } {
+    let result = match unsafe { wait_slices(operation, duration, wait_mask, cancel) } {
         Ok(WaitResult::Completed(ready)) => Ok(ready),
         Ok(WaitResult::Cancel) => {
             // The guard has not moved while wait_mask could point into it.
@@ -86,7 +254,7 @@ pub(super) unsafe fn wait(
     };
     // Restore once before publishing an ordinary result, including when the
     // cancellation callback returned because cancellation became disabled.
-    // A restoration error must not be hidden behind a successful poll result.
+    // A restoration error must not be hidden behind a successful wait result.
     guard.restore().and(result)
 }
 
@@ -208,8 +376,7 @@ enum WaitResult {
 // plain values, and never invokes cancellation or retries a handler's EINTR.
 #[inline(never)]
 unsafe fn wait_slices(
-    fds: *mut u8,
-    nfds: usize,
+    operation: Operation,
     duration: Option<Timespec>,
     mask: *const u8,
     cancel: CancellationWait,
@@ -239,18 +406,16 @@ unsafe fn wait_slices(
             0
         };
         let (mut slice, final_slice) = next_slice(deadline, now);
-        // SAFETY: the original array and mask outlive this call. ppoll may
-        // update only our mutable timeout, never the caller's const input.
-        let result = unsafe {
-            syscall::sys_ppoll(
-                fds,
-                nfds,
-                core::ptr::from_mut(&mut slice).cast::<u8>().cast_const(),
-                mask,
-                KERNEL_SIGSET_BYTES,
-            )
-        };
-        if cancel.pending() && matches!(result, Ok(_) | Err(libc::EINTR)) {
+        // SAFETY: the original output array and mask outlive this call. The
+        // kernel may update only our timeout, never the caller's const input.
+        let result = unsafe { operation.wait(&mut slice, mask) };
+        // epoll can consume an edge-triggered notification or disable a
+        // one-shot even though it does not consume the associated I/O. Once
+        // it produces events, publish them and leave a racing request pending
+        // for the next cancellation point. poll has no such ownership transfer.
+        let acquired =
+            operation.consumes_notification() && matches!(result, Ok(ready) if ready > 0);
+        if !acquired && cancel.pending() && matches!(result, Ok(_) | Err(libc::EINTR)) {
             return Ok(WaitResult::Cancel);
         }
         match result {
@@ -277,6 +442,19 @@ mod tests {
         assert_eq!(next_slice(end, 130_000_000).0.tv_nsec, 0);
         assert!(next_slice(end, 130_000_000).1);
         assert!(!next_slice(None, i128::from(i64::MAX)).1);
+        for (nanoseconds, milliseconds) in [
+            (0, 0),
+            (1, 1),
+            (999_999, 1),
+            (1_000_000, 1),
+            (1_000_001, 2),
+            (49_999_999, 50),
+            (50_000_000, 50),
+        ] {
+            let (slice, final_slice) = next_slice(Some(nanoseconds), 0);
+            assert!(final_slice);
+            assert_eq!(milliseconds_rounded_up(&slice), milliseconds);
+        }
     }
 
     #[test]

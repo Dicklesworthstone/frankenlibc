@@ -5755,6 +5755,8 @@ const WEOF_VALUE: u32 = u32::MAX;
 use frankenlibc_core::stdio::printf::LengthMod;
 use frankenlibc_core::stdio::scanf::{
     InlineVec, ScanSpec, ScanValue, ScanWriteContext, ScanWriteError,
+    WideScanContext, WideScanEvent, WideScanInput, WideScanProgress, WideScanReadPurpose,
+    WideScanSession, WideScanWriteError,
 };
 
 /// Extract variadic args for wide printf — mirrors extract_va_args from stdio_abi.
@@ -5881,6 +5883,28 @@ struct WideScanAllocation {
     buffer: *mut u8,
 }
 
+/// A text field stays private until it is complete. Dropping a partial `%m`
+/// field on mismatch, encoding failure, or cancellation releases its storage.
+struct WideScanPendingText {
+    destination: *mut c_void,
+    output: *mut u8,
+    written: usize,
+    capacity: usize,
+    alloc: bool,
+    wide: bool,
+    terminator_bytes: usize,
+}
+
+impl Drop for WideScanPendingText {
+    fn drop(&mut self) {
+        if self.alloc && !self.output.is_null() {
+            // SAFETY: an unfinished field owns this unpublished allocation.
+            // Successful completion transfers it by clearing `output` first.
+            unsafe { crate::malloc_abi::free(self.output.cast()) };
+        }
+    }
+}
+
 /// One assignment path for plain, va_list, and ISO-dialect wide scanf calls.
 /// Values are written as the scanner reaches them; an encoding error must not
 /// assign a later field or leave a stream past the failing wide character.
@@ -5890,6 +5914,7 @@ struct WideScanWriter {
     arguments: InlineVec<*mut c_void, 4>,
     sequential: usize,
     allocations: InlineVec<WideScanAllocation, 4>,
+    pending_text: Option<WideScanPendingText>,
     error: Option<c_int>,
     allocation_failure: bool,
 }
@@ -5902,6 +5927,7 @@ impl WideScanWriter {
             arguments: InlineVec::default(),
             sequential: 0,
             allocations: InlineVec::default(),
+            pending_text: None,
             error: None,
             allocation_failure: false,
         }
@@ -5946,6 +5972,15 @@ impl WideScanWriter {
         destination: *mut c_void,
         context: ScanWriteContext,
     ) -> ScanWriteError {
+        // SAFETY: previous allocations and the receiving pointer remain live.
+        unsafe { self.release_failed_allocations(destination) };
+        ScanWriteError {
+            consumed: context.token_start,
+            input_failure: true,
+        }
+    }
+
+    unsafe fn release_failed_allocations(&mut self, destination: *mut c_void) {
         self.error = Some(libc::ENOMEM);
         self.allocation_failure = true;
         // GNU releases earlier allocations from this call on ENOMEM and
@@ -5961,9 +5996,214 @@ impl WideScanWriter {
         // SAFETY: the failed assignment-allocation argument is a char ** or
         // wchar_t **; both store an object pointer of the supported ABI size.
         unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
-        ScanWriteError {
-            consumed: context.token_start,
+    }
+
+    unsafe fn begin_stream_text(&mut self, spec: &ScanSpec) -> Result<(), WideScanWriteError> {
+        // SAFETY: the core begins each reached, nonsuppressed field once.
+        let destination = unsafe { self.destination(spec) };
+        let wide = spec.length == LengthMod::L;
+        let terminator_bytes = if !spec.writes_string_buffer() {
+            0
+        } else if wide {
+            size_of::<libc::wchar_t>()
+        } else {
+            1
+        };
+        if spec.alloc {
+            // SAFETY: a reached %m clears its receiving pointer even when it
+            // cannot match; a later unreached field is never touched.
+            unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
+        }
+        let mut text = WideScanPendingText {
+            destination,
+            output: if spec.alloc {
+                std::ptr::null_mut()
+            } else {
+                destination.cast()
+            },
+            written: 0,
+            capacity: 0,
+            alloc: spec.alloc,
+            wide,
+            terminator_bytes,
+        };
+        if spec.alloc && spec.writes_char_buffer() {
+            // Character fields have a known requested extent. Reserve it
+            // before reading so an impossible large width reports ENOMEM
+            // even when the available input is only a short prefix. Narrow
+            // fields may grow later if actual encoded characters need more
+            // than one byte; strings and scansets remain incremental.
+            let unit = if wide { size_of::<libc::wchar_t>() } else { 1 };
+            let Some(capacity) = spec.width.unwrap_or(1).checked_mul(unit) else {
+                // SAFETY: this field has no allocation yet; its receiving
+                // pointer and all completed earlier allocations remain live.
+                return Err(unsafe { self.stream_allocation_failed(destination) });
+            };
+            let capacity = capacity.max(1);
+            // SAFETY: the checked size reserves correctly aligned storage for
+            // char or wchar_t and stays private until EndText publishes it.
+            text.output = unsafe { crate::malloc_abi::malloc(capacity).cast() };
+            if text.output.is_null() {
+                // SAFETY: failed malloc owns no storage; fatal cleanup also
+                // clears and releases the earlier completed %m assignments.
+                return Err(unsafe { self.stream_allocation_failed(destination) });
+            }
+            text.capacity = capacity;
+        }
+        self.pending_text = Some(text);
+        Ok(())
+    }
+
+    unsafe fn stream_allocation_failed(
+        &mut self,
+        destination: *mut c_void,
+    ) -> WideScanWriteError {
+        // Release the current unpublished allocation before earlier completed
+        // %m fields. ENOMEM is fatal even after successful assignments.
+        self.pending_text = None;
+        // SAFETY: completed allocations and all receiving pointers are live.
+        unsafe { self.release_failed_allocations(destination) };
+        WideScanWriteError {
             input_failure: true,
+        }
+    }
+
+    unsafe fn write_stream_character(
+        &mut self,
+        spec: &ScanSpec,
+        wc: u32,
+    ) -> Result<(), WideScanWriteError> {
+        let Some(text) = self.pending_text.as_mut() else {
+            return Ok(());
+        };
+        let mut encoded = [0u8; 6];
+        let width = if text.wide {
+            size_of::<libc::wchar_t>()
+        } else if let Some(width) = self.codec.encode(wc, &mut encoded) {
+            width
+        } else {
+            // The scalar was consumed, but no later input may be requested.
+            // Fixed destinations keep their prefix; an unfinished %m is freed.
+            self.pending_text = None;
+            self.error = Some(libc::EILSEQ);
+            return Err(WideScanWriteError {
+                input_failure: spec.writes_char_buffer(),
+            });
+        };
+        let needed = text
+            .written
+            .checked_add(width)
+            .and_then(|bytes| bytes.checked_add(text.terminator_bytes));
+        let Some(needed) = needed else {
+            if text.alloc {
+                let destination = text.destination;
+                // SAFETY: the active field owns its receiving pointer.
+                return Err(unsafe { self.stream_allocation_failed(destination) });
+            }
+            self.pending_text = None;
+            self.error = Some(libc::EOVERFLOW);
+            return Err(WideScanWriteError {
+                input_failure: true,
+            });
+        };
+        if text.alloc && needed > text.capacity {
+            let capacity = needed.max(text.capacity.saturating_mul(2)).max(64);
+            // SAFETY: output is NULL or an allocation owned by this field.
+            // Failed realloc leaves the old allocation available for cleanup.
+            let output = unsafe {
+                crate::malloc_abi::realloc(text.output.cast(), capacity).cast::<u8>()
+            };
+            if output.is_null() {
+                let destination = text.destination;
+                // SAFETY: every allocation still belongs to its tracked owner.
+                return Err(unsafe { self.stream_allocation_failed(destination) });
+            }
+            text.output = output;
+            text.capacity = capacity;
+        }
+        // SAFETY: fixed destinations have the capacity required by the format;
+        // %m fields reserved this full character and their one terminator.
+        unsafe {
+            if text.wide {
+                text.output
+                    .add(text.written)
+                    .cast::<libc::wchar_t>()
+                    .write(wc as libc::wchar_t);
+            } else {
+                std::ptr::copy_nonoverlapping(
+                    encoded.as_ptr(),
+                    text.output.add(text.written),
+                    width,
+                );
+            }
+        }
+        text.written += width;
+        Ok(())
+    }
+
+    unsafe fn finish_stream_text(&mut self) -> Result<(), WideScanWriteError> {
+        let Some(mut text) = self.pending_text.take() else {
+            return Ok(());
+        };
+        if text.alloc && text.output.is_null() {
+            let size = text.terminator_bytes.max(1);
+            // SAFETY: malloc supplies alignment for either destination type.
+            text.output = unsafe { crate::malloc_abi::malloc(size).cast() };
+            if text.output.is_null() {
+                // SAFETY: this field owns no buffer; completed %m fields and
+                // this receiving pointer remain live.
+                return Err(unsafe { self.stream_allocation_failed(text.destination) });
+            }
+        }
+        if text.terminator_bytes != 0 {
+            // SAFETY: every append reserved this single string terminator.
+            unsafe {
+                std::ptr::write_bytes(text.output.add(text.written), 0, text.terminator_bytes);
+            }
+        }
+        if text.alloc {
+            let output = std::mem::replace(&mut text.output, std::ptr::null_mut());
+            // SAFETY: publish a complete allocation only after conversion and
+            // termination; it now belongs to the caller.
+            unsafe { *text.destination.cast::<*mut u8>() = output };
+            self.allocations.push(WideScanAllocation {
+                destination: text.destination.cast(),
+                buffer: output,
+            });
+        }
+        Ok(())
+    }
+
+    unsafe fn write_stream_event(
+        &mut self,
+        spec: &ScanSpec,
+        event: WideScanEvent,
+        _context: WideScanContext,
+    ) -> Result<(), WideScanWriteError> {
+        match event {
+            WideScanEvent::BeginText => {
+                // SAFETY: the caller supplied the reached field's argument.
+                unsafe { self.begin_stream_text(spec) }
+            }
+            WideScanEvent::Character(wc) => {
+                // SAFETY: BeginText established a live destination.
+                unsafe { self.write_stream_character(spec, wc) }
+            }
+            WideScanEvent::EndText => {
+                // SAFETY: the active field has matched its input.
+                unsafe { self.finish_stream_text() }
+            }
+            WideScanEvent::AbortText => {
+                self.pending_text = None;
+                Ok(())
+            }
+            WideScanEvent::Value(value) => {
+                // SAFETY: numeric and %n events each consume one destination
+                // and use the existing type-specific native store.
+                let destination = unsafe { self.destination(spec) };
+                unsafe { super::stdio_abi::vscanf_write_one(&value, spec, destination) };
+                Ok(())
+            }
         }
     }
 
@@ -7105,9 +7345,9 @@ pub unsafe extern "C-unwind" fn swprintf(
     finish_swprintf(&rendered, s, n)
 }
 
-struct WideFormattedOutputLock(*mut std::ffi::c_void);
+struct WideStreamLock(*mut std::ffi::c_void);
 
-impl Drop for WideFormattedOutputLock {
+impl Drop for WideStreamLock {
     fn drop(&mut self) {
         // SAFETY: this guard follows one flockfile on the same stream.
         unsafe { super::stdio_abi::funlockfile(self.0) };
@@ -7162,7 +7402,7 @@ unsafe fn write_wprintf_rendered(
         // Keep all chunks under one recursive FILE lock, as the extension
         // writer does. The guard also releases it during cancellation unwind.
         unsafe { super::stdio_abi::flockfile(stream) };
-        let _lock = WideFormattedOutputLock(stream);
+        let _lock = WideStreamLock(stream);
 
         // The remaining codecs encode each scalar in exactly one byte.
         // Keep staging bounded, including for arbitrarily long renderings.
@@ -7470,7 +7710,6 @@ unsafe fn wide_scanf_format_cstr(format: *const libc::wchar_t) -> Option<std::ff
 
 struct WideScanOutcome {
     count: c_int,
-    consumed: usize,
     input_failure: bool,
     allocation_failure: bool,
     error: Option<c_int>,
@@ -7499,7 +7738,8 @@ unsafe fn scan_wide_buffer(
     ap: *mut c_void,
     dialect: ScanfDialect,
 ) -> Option<WideScanOutcome> {
-    let directives = super::stdio_abi::scanf_wide_directives(format, dialect)?;
+    let locale = NumericLocale::current();
+    let directives = super::stdio_abi::scanf_wide_directives(format, dialect, locale)?;
     let mut writer = WideScanWriter::new(ap);
     let result = frankenlibc_core::stdio::scanf::scan_input_wide_with(
         input,
@@ -7512,11 +7752,80 @@ unsafe fn scan_wide_buffer(
     );
     let outcome = WideScanOutcome {
         count: result.count,
-        consumed: result.consumed,
         input_failure: result.input_failure,
         allocation_failure: writer.allocation_failure,
         error: writer.error,
     };
+    Some(outcome)
+}
+
+/// Pull one decoded character only when the current directive demands it.
+/// This keeps finite fields usable on live pipes and lets a destination
+/// encoding failure stop before any following input is read.
+unsafe fn scan_wide_stream(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> Option<WideScanOutcome> {
+    let locale = NumericLocale::current();
+    let directives = super::stdio_abi::scanf_wide_directives(format, dialect, locale)?;
+    let mut session = WideScanSession::new(directives.as_slice(), locale.wide_radix);
+    let mut writer = WideScanWriter::new(ap);
+    let mut input = None;
+    // Keep errno outside temporary allocation and pushback cleanup. Explicit
+    // format whitespace preserves the value immediately before its read.
+    let mut scan_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let summary = loop {
+        let progress = session.resume(
+            input.take(),
+            &mut |spec, event, context| {
+                // SAFETY: the live va_list matches this parsed format; each
+                // event belongs to a reached nonsuppressed conversion.
+                unsafe { writer.write_stream_event(spec, event, context) }
+            },
+            &|wc| locale.wide_is_space(wc),
+        );
+        match progress {
+            WideScanProgress::Complete(summary) => break summary,
+            WideScanProgress::NeedInput(purpose) => {
+                let before_read = unsafe { *crate::errno_abi::__errno_location() };
+                // SAFETY: the caller holds the FILE lock for the whole scan;
+                // this read retains its original cancellation caller.
+                let wc = unsafe { fgetwc_for_caller(stream, caller) };
+                input = Some(if wc != WEOF_VALUE {
+                    WideScanInput::Character(wc)
+                } else if unsafe { super::stdio_abi::feof(stream) } != 0 {
+                    // A sticky error from an earlier operation does not turn
+                    // a clean EOF encountered now into a new read error.
+                    WideScanInput::Eof
+                } else {
+                    WideScanInput::Error
+                });
+                if matches!(purpose, WideScanReadPurpose::FormatWhitespace) {
+                    unsafe { set_abi_errno(before_read) };
+                }
+                scan_errno = unsafe { *crate::errno_abi::__errno_location() };
+            }
+        }
+    };
+    let mut outcome = WideScanOutcome {
+        count: summary.count,
+        input_failure: summary.input_failure,
+        allocation_failure: writer.allocation_failure,
+        error: Some(writer.error.unwrap_or(scan_errno)),
+    };
+    for wc in session.unread().rev() {
+        // SAFETY: these complete characters were read from this same stream.
+        // Ordinary pushback clears EOF so a restored numeric suffix remains
+        // readable; incomplete external-byte rollback belongs to fgetwc.
+        if unsafe { ungetwc(wc, stream) } == WEOF_VALUE {
+            outcome.input_failure = true;
+            outcome.error = Some(unsafe { *crate::errno_abi::__errno_location() });
+            break;
+        }
+    }
     Some(outcome)
 }
 
@@ -7691,6 +8000,10 @@ pub(crate) unsafe fn vfwscanf_with_dialect(
     {
         return result;
     }
+    // A formatted scan is one FILE operation, including parsing, reads,
+    // assignments, and pushback. Release the recursive lock on cancellation.
+    unsafe { super::stdio_abi::flockfile(stream) };
+    let _lock = WideStreamLock(stream);
     if !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }
@@ -7702,18 +8015,9 @@ pub(crate) unsafe fn vfwscanf_with_dialect(
         let destination = unsafe { super::stdio_abi::va_next_pointer(ap) }.cast();
         return unsafe { scan_one_wide_char(stream, destination, caller) };
     }
-    let id = super::stdio_abi::stream_id_from_handle(stream);
-    let Some(outcome) = super::stdio_abi::with_wide_io_active(|| {
-        let (input, scanf_seek_base) =
-            unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
-        let Some(outcome) = (unsafe { scan_wide_buffer(&input, fmt_cstr.as_ptr(), ap, dialect) })
-        else {
-            super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
-            return None;
-        };
-        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, outcome.consumed);
-        Some(outcome)
-    }) else {
+    let Some(outcome) =
+        (unsafe { scan_wide_stream(stream, fmt_cstr.as_ptr(), ap, caller, dialect) })
+    else {
         return libc::EOF;
     };
     outcome.return_value()
