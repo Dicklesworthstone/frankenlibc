@@ -32330,7 +32330,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.40",
       "title": "Preserve GNU internal line-input status and zero-length orientation",
       "priority": 1,
-      "status": "closed",
+      "status": "in_progress",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
@@ -32343,7 +32343,7 @@
         },
         "e2e_scripts": {
           "required": true,
-          "scope": "162 internal-line live GNU cases with native/foreign FILEs, both modes; original112/88/22 preserved; original-library and omitted-preload controls"
+          "scope": "216 internal-line live GNU cases including NULL zero-length destinations with native/foreign FILEs, both modes; original162 and112/88/22 preserved; original-library and omitted-preload controls"
         },
         "structured_logs": {
           "required": false,
@@ -32364,25 +32364,25 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "complete",
-          "artifacts": "Source4edad: actual build/link0;9line+8cookie+23locale tests per strict/hardened mode0. Fresh H5 rebuild0 and9passed/0failed/0filtered with all9 names required; receipt9bbea238, executable3dfca68d (initial unit image26a6ccfa differs and is separately retained). Full workspace check0/1365.028s andClippy0/1161.116s at source683a; all3178 compiler inputs and523 final4edad files verified equal after both runs. Root/tool Cargo formatting0 and5 source-only metadata gates0."
+          "status": "partial",
+          "artifacts": "HISTORICAL before2026-11-07 reopening; repaired216-case source is not yet qualified. Source4edad: actual build/link0;9line+8cookie+23locale tests per strict/hardened mode0. Fresh H5 rebuild0 and9passed/0failed/0filtered with all9 names required; receipt9bbea238, executable3dfca68d (initial unit image26a6ccfa differs and is separately retained). Full workspace check0/1365.028s andClippy0/1161.116s at source683a; all3178 compiler inputs and523 final4edad files verified equal after both runs. Root/tool Cargo formatting0 and5 source-only metadata gates0."
         },
         "e2e_scripts": {
-          "status": "complete",
-          "artifacts": "Actual release3de1e16e634385a51615c8d2091e35b96265b6c47696c295ee62b884c38876c8; same final probe86412c67 gives live GNU/new162internal+112descriptor+88cookie+22memory-host passes per provider; native strict/hardened;4omitted-preload controls2. Original795fails54/162per mode; original4f07fails32/112+4/22per mode in SAME invocation/probe. Original wrong probe3565ca31 rejects6GNU/new cases and only48old cases; corrected probe rejects54old and0GNU/new. No case removed; exact six legitimate/illegitimate admission split measured."
+          "status": "partial",
+          "artifacts": "REOPENED2026-11-07: expanded216-case probe passes GNU and fails36cases in EACH mode against published3de; missing preload2. Prior qualification below is historical and omitted54NULL zero-length cases. Actual release3de1e16e634385a51615c8d2091e35b96265b6c47696c295ee62b884c38876c8; same final probe86412c67 gives live GNU/new162internal+112descriptor+88cookie+22memory-host passes per provider; native strict/hardened;4omitted-preload controls2. Original795fails54/162per mode; original4f07fails32/112+4/22per mode in SAME invocation/probe. Original wrong probe3565ca31 rejects6GNU/new cases and only48old cases; corrected probe rejects54old and0GNU/new. No case removed; exact six legitimate/illegitimate admission split measured."
         }
       },
       "coverage_summary": {
-        "overall": "complete",
+        "overall": "partial",
         "required": 2,
-        "complete": 2,
-        "partial": 0,
+        "complete": 0,
+        "partial": 2,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-reality-202609-lx578q.7.40",
         "stream": "e2e",
-        "status": "complete",
+        "status": "partial",
         "unit_cmds": [
           "cargo test -Zchecksum-freshness -j1 --locked --config 'build.fingerprint=\"content\"' -p frankenlibc-abi --lib --test conformance_diff_getline --test conformance_diff_fopencookie --no-run --message-format=json"
         ],
@@ -32395,7 +32395,7 @@
         "expected_assertions": [
           "Exact GNU EOF=-1/read-error status; size0 byte-orients without touching input/output or EOF/error flags",
           "Negative extract leaves delimiter unread, zero consumes without storing, positive stores it; bounded output has no NUL",
-          "162 live differential combinations include native and genuine foreign streams, partial EOF/EAGAIN, optional status and alias",
+          "216 live differential combinations include native and genuine foreign streams, partial EOF/EAGAIN, optional status and alias, retaining all162 original cases and adding54 NULL zero-length cases",
           "All original seven line parents,112descriptor/88cookie/22memory-host controls retained; two added parents and nine host orientation comparisons",
           "Actual compile/link/run in strict and hardened; same final probe rejects preserved old library and four omitted-preload negatives; full quality checks and publication precede closure"
         ],
@@ -32415,7 +32415,9 @@
           "/data/tmp/frankenlibc-io-line-closed-admit-readonly-1.stderr"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [],
+        "close_blockers": [
+          "Reopened2026-11-07: published3de library skips status/orientation for valid NULL destination with n0. Original evidence below remains historical; qualify the repaired source and all216 cases, quality checks and fresh closure receipt before reclosing."
+        ],
         "notes": "CLOSED after complete code/evidence1ce4f5586028e991ca918048910e6cb272ae2aae was observed on both required refs00:09:56.116676UTC; actualclosed_at2026-11-07T00:10:16.811409482Z. Actual closed-record snapshots admitted with explicit --admit40: POST_TOTAL1/PASS1/DEFERRED0/FAIL0. RCH admission job refused120 before execution; exact READ-ONLY receipt/hash validator then ran viaSSH0, no compilation/test invocation or worktree/artifact write by the gate, no guard/resource/cache/worker changes. All compilation and FrankenLibC executable tests remain strict-RCH evidence. Source683a runtime and metadata-only4edad have identical3178 compiler inputs; all523 final frozen files match during/after complete quality and probes. Check0/1365.028s, Clippy0/1161.116s, alltargets/keepgoing/-Dwarnings; root/tool fmt0;5source-only gates0. Actual9line+8cookie+23locale per mode0; H5 fresh build0 and9/0/0 with all9names required. Receipt9bbea23833be1662b4af82d908aa2f165b3c63cb5ca58cd8ff69383a788f88a2, H5exe3dfca68dbc99b7dcb240b3f9bfe644721df1a231d663845a2def32d716066895; initial26a6 separately executed/retained, no assumed binary identity. Release3de/probe86412 live GNU/new162/112/88/22 per provider both modes0,4provider negatives2. Same probe old79554/162fail/mode; original4f07 32/112+4/22fail/mode. Original wrong C probe3565 actually GNU/new6fail,old48fail; corrected GNU/new0,old54. Two expectations corrected from GNU, six legitimate admits/six broken rejects measured, no case/flag/timeout weakened. All typed refusals/logging error/UBS32critical (new valid Dl_info POD) and metadata unsupported3 retained; no suppression/clean scan claim. No-SMT/nix future warnings unchanged. fwide taxonomy down1,4730unknown/full0,1085 prior reconciliation findings and standalone host sets unchanged. All154 prior matrix rows retained. Solo review and fresh reexecution, not independent verification, formal proof, all-features/architecture/concurrency/performance/universal-safety/standalone completion. No unrelated work reverted or files deleted; broader parents open. Full corrections/dispositions and retired-scope TODO linked in artifact paths.",
         "result_receipts": [
           "/data/tmp/frankenlibc-io-line-review-20261106/closure-record-1/receipt.json"

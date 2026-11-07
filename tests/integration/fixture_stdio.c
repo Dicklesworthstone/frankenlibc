@@ -1649,7 +1649,8 @@ static int test_internal_line_reads(void) {
         }
     }
     const char *inputs[] = {"", "abc", "ab\ncd", "", "abc", "abc"};
-    const size_t limits[] = {0, 2, 8};
+    /* A zero-length request accepts either a real destination or NULL. */
+    const size_t limits[] = {0, 0, 2, 8};
     int cases = 0, failed = 0;
     for (int kind = 0; kind < 6; ++kind) {
         for (size_t limit = 0; limit < sizeof(limits) / sizeof(limits[0]); ++limit) {
@@ -1681,9 +1682,11 @@ static int test_internal_line_reads(void) {
                     memset(output, 0xA5, sizeof(output));
                     int status = 0x5EED;
                     size_t n = limits[limit];
+                    int null_buffer = limit == 1;
+                    char *destination = null_buffer ? NULL : (char *)output;
                     size_t count = api == 2
-                        ? read_line(stream, (char *)output, n, '\n', extract)
-                        : read_info(stream, (char *)output, n, '\n', extract,
+                        ? read_line(stream, destination, n, '\n', extract)
+                        : read_info(stream, destination, n, '\n', extract,
                                     api == 0 ? &status : NULL);
                     int orientation = kind == 5 ? host_fwide(stream, 0) : fwide(stream, 0);
                     orientation = (orientation > 0) - (orientation < 0);
@@ -1727,11 +1730,11 @@ static int test_internal_line_reads(void) {
                     bad |= (kind == 5 ? host_fclose(stream) : fclose(stream)) != 0;
                     if (fds[1] >= 0) bad |= close(fds[1]) != 0;
                     if (bad) fprintf(stderr,
-                        "FAIL internal-line kind=%d n=%zu extract=%d api=%d count=%zu status=%d orientation=%d eof=%d error=%d next=%d,%d\n",
-                        kind, n, extract, api, count, status, orientation,
+                        "FAIL internal-line kind=%d n=%zu null=%d extract=%d api=%d count=%zu status=%d orientation=%d eof=%d error=%d next=%d,%d\n",
+                        kind, n, null_buffer, extract, api, count, status, orientation,
                         at_eof, error, next[0], next[1]);
-                    printf("internal-line kind=%d n=%zu extract=%d api=%d count=%zu status=%d orientation=%d eof=%d error=%d next=%d,%d\n",
-                           kind, n, extract, api, count, status, orientation,
+                    printf("internal-line kind=%d n=%zu null=%d extract=%d api=%d count=%zu status=%d orientation=%d eof=%d error=%d next=%d,%d\n",
+                           kind, n, null_buffer, extract, api, count, status, orientation,
                            at_eof, error, next[0], next[1]);
                     failed += bad != 0;
                     ++cases;

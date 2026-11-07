@@ -108,7 +108,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${INTERNAL_LINES_ONLY}" -eq 1 ]]; then
     error_kind=internal-lines
     error_mode=internal-lines
-    error_cases=162
+    error_cases=216
     error_option=--internal-lines
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"

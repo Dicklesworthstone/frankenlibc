@@ -388,7 +388,14 @@ fn internal_line_input_matches_gnu_status_and_orientation() {
         next: [c_int; 2],
     }
 
-    fn observe(native: bool, kind: usize, size: usize, extract: c_int, api: usize) -> Observation {
+    fn observe(
+        native: bool,
+        kind: usize,
+        size: usize,
+        null_buffer: bool,
+        extract: c_int,
+        api: usize,
+    ) -> Observation {
         let inputs: [&[u8]; 6] = [b"", b"abc", b"ab\ncd", b"", b"abc", b"abc"];
         // The last arm passes a genuine host FILE to our internal reader.
         let native_stream = native && kind != 5;
@@ -412,7 +419,8 @@ fn internal_line_input_matches_gnu_status_and_orientation() {
         }
         // SAFETY: backing stays live until this provider closes its stream;
         // each fdopen consumes a valid read descriptor exactly once. Both
-        // providers receive a writable 32-byte output and a size at most 8.
+        // providers receive a writable 32-byte output and a size at most 8,
+        // or a NULL output only when the requested size is zero.
         unsafe {
             let stream = match (native_stream, kind >= 3) {
                 (true, true) => fl::fdopen(fds[0], c"r".as_ptr()),
@@ -439,6 +447,12 @@ fn internal_line_input_matches_gnu_status_and_orientation() {
             };
             assert_eq!(orientation(0).signum(), if kind >= 3 { 0 } else { -1 });
             let mut output = [0xA5u8; 32];
+            assert!(!null_buffer || size == 0);
+            let output_ptr = if null_buffer {
+                std::ptr::null_mut()
+            } else {
+                output.as_mut_ptr().cast()
+            };
             let mut status = 0x5EED;
             let status_ptr = if api == 0 {
                 &mut status
@@ -448,34 +462,24 @@ fn internal_line_input_matches_gnu_status_and_orientation() {
             let count = match (native, api == 2) {
                 (true, false) => io::_IO_getline_info(
                     stream,
-                    output.as_mut_ptr().cast(),
+                    output_ptr,
                     size,
                     b'\n' as c_int,
                     extract,
                     status_ptr,
                 ),
-                (true, true) => io::_IO_getline(
-                    stream,
-                    output.as_mut_ptr().cast(),
-                    size,
-                    b'\n' as c_int,
-                    extract,
-                ),
+                (true, true) => io::_IO_getline(stream, output_ptr, size, b'\n' as c_int, extract),
                 (false, false) => host_io_getline_info(
                     stream.cast(),
-                    output.as_mut_ptr().cast(),
+                    output_ptr,
                     size,
                     b'\n' as c_int,
                     extract,
                     status_ptr,
                 ),
-                (false, true) => host_io_getline(
-                    stream.cast(),
-                    output.as_mut_ptr().cast(),
-                    size,
-                    b'\n' as c_int,
-                    extract,
-                ),
+                (false, true) => {
+                    host_io_getline(stream.cast(), output_ptr, size, b'\n' as c_int, extract)
+                }
             };
             assert!(count <= size);
             assert!(output[count..].iter().all(|&byte| byte == 0xA5));
@@ -537,10 +541,10 @@ fn internal_line_input_matches_gnu_status_and_orientation() {
     }
     let mut comparisons = 0;
     for kind in 0..6 {
-        for size in [0, 2, 8] {
+        for (size, null_buffer) in [(0, false), (0, true), (2, false), (8, false)] {
             for extract in [-1, 0, 1] {
                 for api in 0..3 {
-                    let host = observe(false, kind, size, extract, api);
+                    let host = observe(false, kind, size, null_buffer, extract, api);
                     assert_eq!(host.orientation, -1);
                     if api == 0
                         && size > 0
@@ -549,16 +553,16 @@ fn internal_line_input_matches_gnu_status_and_orientation() {
                         assert_eq!(host.status, Some(libc::EOF));
                     }
                     assert_eq!(
-                        observe(true, kind, size, extract, api),
+                        observe(true, kind, size, null_buffer, extract, api),
                         host,
-                        "kind={kind}, size={size}, extract={extract}, api={api}"
+                        "kind={kind}, size={size}, null_buffer={null_buffer}, extract={extract}, api={api}"
                     );
                     comparisons += 1;
                 }
             }
         }
     }
-    assert_eq!(comparisons, 162);
+    assert_eq!(comparisons, 216);
 }
 
 #[test]

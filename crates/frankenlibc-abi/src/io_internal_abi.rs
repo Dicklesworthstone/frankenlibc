@@ -3425,14 +3425,15 @@ pub unsafe extern "C" fn _IO_getline_info(
     extract_delim: c_int,
     eof: *mut c_int,
 ) -> usize {
-    if buf.is_null() {
+    if buf.is_null() && n != 0 {
         return 0;
     }
     if !eof.is_null() {
         unsafe { *eof = 0 };
     }
     if n == 0 {
-        // GNU orients even an empty request, without reading or setting EOF.
+        // GNU orients even an empty request with a NULL destination, without
+        // reading or setting EOF.
         // SAFETY: the caller supplies the live FILE used by this operation.
         let _ = unsafe { crate::glibc_internal_abi::fwide(fp, -1) };
         return 0;
