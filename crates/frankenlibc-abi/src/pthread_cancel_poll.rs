@@ -1,4 +1,4 @@
-//! Bounded native cancellation for poll and epoll waits.
+//! Bounded native cancellation for poll, epoll and monotonic sleep waits.
 //!
 //! A native request does not send a signal. Recheck its stable cancellation
 //! word between at most 50 ms of kernel waiting. Block signals between slices
@@ -13,6 +13,143 @@ const KERNEL_SIGSET_BYTES: usize = core::mem::size_of::<u64>();
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SLICE_NS: i64 = 50_000_000;
+const STICKY_TIMEOUTS: usize = 0x0400_0000;
+
+/// The sleep boundary publishes a remainder only for an interrupted relative
+/// wait. Unsupported forms retain their original raw syscall, including its
+/// argument validation and zero-duration behavior.
+pub(super) enum SleepResult {
+    Complete,
+    Interrupted(Timespec),
+    Unsupported,
+}
+
+/// Sleep against one monotonic deadline, checking native cancellation between
+/// bounded kernel waits. This supports relative nanosleep and the relative
+/// CLOCK_REALTIME/CLOCK_MONOTONIC clock_nanosleep forms, plus absolute
+/// CLOCK_MONOTONIC. The ABI must leave other clocks and flags on their original
+/// path: CPU clocks and clocks that advance through suspend are not equivalent.
+///
+/// ppoll atomically installs the entry mask for each slice. Signals remain
+/// blocked between slices, so a handler cannot run in an internal gap and lose
+/// the sleep's EINTR. Its kernel-written remainder precedes handler execution;
+/// adding the unscheduled portion preserves nanosleep's remainder even when the
+/// handler takes longer than the requested sleep. A deadline read after the
+/// handler would incorrectly deduct that time.
+///
+/// STICKY_TIMEOUTS suppresses ppoll's remainder update. When a relative caller
+/// needs a remainder, query the current personality while signals are blocked,
+/// then retain the original syscall if the flag is set or the query is denied.
+/// Never change the thread's personality or manufacture an estimated remainder.
+/// Such fallback calls keep the existing pending-only cancellation behavior.
+///
+/// # Safety
+/// The ABI supplies a valid owned timespec and selects one of the clock forms
+/// above. `cancel` belongs to the calling registered native thread. This helper
+/// restores the original mask before returning; the boundary must then test
+/// cancellation before publishing an Interrupted remainder to caller memory.
+pub(super) unsafe fn wait_sleep(
+    request: &Timespec,
+    absolute: bool,
+    need_remainder: bool,
+    cancel: CancellationWait,
+) -> Result<SleepResult, c_int> {
+    if request.tv_sec < 0
+        || !(0..1_000_000_000).contains(&request.tv_nsec)
+        || (request.tv_sec == 0 && request.tv_nsec == 0)
+    {
+        return Ok(SleepResult::Unsupported);
+    }
+
+    let mut guard = SignalMaskGuard::block_all()?;
+    if !absolute && need_remainder {
+        // SAFETY: this is a read-only personality query, with no pointers. It
+        // changes neither the persona nor errno. Blocking handlers keeps this
+        // per-task setting stable until ppoll has written the interruption
+        // remainder; a handler can change it only after that kernel copy.
+        let persona =
+            unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+        if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
+            return guard.restore().map(|()| SleepResult::Unsupported);
+        }
+    }
+    // SAFETY: the original mask and request are owned, stationary values. The
+    // wait uses no application descriptors or pointers and owns no resources.
+    let result = unsafe { sleep_slices(request, absolute, need_remainder, &mut guard, cancel) };
+    guard.restore().and(result)
+}
+
+/// Convert a nonnegative remaining duration, bounded by the caller's valid
+/// timespec, without narrowing nanoseconds through a 64-bit total.
+fn sleep_remainder(nanoseconds: i128) -> Timespec {
+    let maximum = i128::from(i64::MAX) * NANOS_PER_SECOND + NANOS_PER_SECOND - 1;
+    let nanoseconds = nanoseconds.clamp(0, maximum);
+    Timespec {
+        tv_sec: (nanoseconds / NANOS_PER_SECOND) as i64,
+        tv_nsec: (nanoseconds % NANOS_PER_SECOND) as i64,
+    }
+}
+
+// Like wait_slices, this frame owns no Drop state. Application signal handlers
+// may unwind across the raw kernel wait; cancellation is delivered by the ABI
+// only after the original signal mask has been restored by wait_sleep.
+#[inline(never)]
+unsafe fn sleep_slices(
+    request: &Timespec,
+    absolute: bool,
+    need_remainder: bool,
+    guard: &mut SignalMaskGuard,
+    cancel: CancellationWait,
+) -> Result<SleepResult, c_int> {
+    let requested = i128::from(request.tv_sec) * NANOS_PER_SECOND + i128::from(request.tv_nsec);
+    let deadline = if absolute {
+        requested
+    } else {
+        monotonic_nanoseconds()? + requested
+    };
+    loop {
+        let now = monotonic_nanoseconds()?;
+        let remaining = (deadline - now).max(0);
+        if cancel.pending() {
+            return Ok(SleepResult::Interrupted(sleep_remainder(remaining)));
+        }
+        let (mut slice, final_slice) = next_slice(Some(deadline), now);
+        let unscheduled = remaining - i128::from(slice.tv_nsec);
+        let mask = core::ptr::from_ref(&guard.original).cast();
+        // A user handler can exit the thread or unwind while ppoll has its
+        // temporary mask installed. Its cleanup must retain that handler mask,
+        // not restore the pre-sleep mask from a Drop during the unwind. Between
+        // syscalls all signals are blocked; rearm immediately on normal return.
+        guard.armed = false;
+        // SAFETY: nfds is zero; the kernel sees only the owned mutable timeout
+        // and the stable eight-byte copy of the calling thread's original mask.
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::null_mut(),
+                0,
+                core::ptr::from_mut(&mut slice).cast::<u8>().cast_const(),
+                mask,
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        guard.armed = true;
+        match result {
+            Ok(0) if !final_slice => {}
+            Ok(_) => return Ok(SleepResult::Complete),
+            Err(libc::EINTR) => {
+                let remainder = if !absolute && need_remainder {
+                    let in_kernel =
+                        i128::from(slice.tv_sec) * NANOS_PER_SECOND + i128::from(slice.tv_nsec);
+                    sleep_remainder(unscheduled + in_kernel)
+                } else {
+                    Timespec::default()
+                };
+                return Ok(SleepResult::Interrupted(remainder));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 enum Operation {
@@ -429,6 +566,24 @@ unsafe fn wait_slices(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sleep_remainders_keep_subsecond_precision_and_full_time_t_range() {
+        let maximum = i128::from(i64::MAX) * NANOS_PER_SECOND + 999_999_999;
+        for (nanoseconds, seconds, fraction) in [
+            (-1, 0, 0),
+            (0, 0, 0),
+            (1, 0, 1),
+            (999_999_999, 0, 999_999_999),
+            (1_000_000_001, 1, 1),
+            (maximum, i64::MAX, 999_999_999),
+            (i128::MAX, i64::MAX, 999_999_999),
+        ] {
+            let remainder = sleep_remainder(nanoseconds);
+            assert_eq!(remainder.tv_sec, seconds);
+            assert_eq!(remainder.tv_nsec, fraction);
+        }
+    }
 
     #[test]
     fn repeated_slices_keep_one_deadline_and_the_final_fraction() {

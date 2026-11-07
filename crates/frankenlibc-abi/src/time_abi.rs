@@ -1554,9 +1554,7 @@ pub(crate) unsafe fn nanosleep_cp(req: *const libc::timespec, rem: *mut libc::ti
     }
 
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_nanosleep(req as *const u8, rem as *mut u8)
-        })
+        crate::pthread_abi::cancellation_point_nanosleep(req as *const u8, rem as *mut u8)
     } {
         Ok(()) => 0,
         Err(e) => {
@@ -1619,9 +1617,12 @@ pub(crate) unsafe fn clock_nanosleep_cp(
 
     // clock_nanosleep returns the error number directly (not via errno).
     let result = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_clock_nanosleep(clock_id, flags, req as *const u8, rem as *mut u8)
-        })
+        crate::pthread_abi::cancellation_point_clock_nanosleep(
+            clock_id,
+            flags,
+            req as *const u8,
+            rem as *mut u8,
+        )
     } {
         Ok(()) => 0,
         Err(e) => e, // Return error code directly, not via errno

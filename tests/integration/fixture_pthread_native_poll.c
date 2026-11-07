@@ -1,4 +1,4 @@
-/* Real blocked poll/epoll cancellation and signal behavior, with a GNU oracle.
+/* Real blocked poll/epoll/sleep cancellation and signal behavior, with a GNU oracle.
  * Successful blocked cases require a sleeping syscall and a kernel snapshot of
  * its pollfd array. Missing procfs evidence is an explicit, non-passing SKIP.
  */
@@ -28,6 +28,8 @@ static uintptr_t creator_tp;
 static pid_t creator_tid;
 static pthread_t creator_thread;
 static _Atomic int signals_delivered;
+static int sleep_handler_delay;
+static _Atomic int64_t sleep_signal_started, sleep_signal_finished;
 typedef int (*ppoll_function)(struct pollfd *, nfds_t, const struct timespec *,
                               const sigset_t *);
 static ppoll_function selected_ppoll;
@@ -69,9 +71,22 @@ static void pause_briefly(void) {
 
 static void user_signal(int signal_number) {
     (void)signal_number;
+    if (sleep_handler_delay) {
+        struct timespec now;
+        if (syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &now) != 0) _Exit(90);
+        int64_t started = (int64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+        atomic_store_explicit(&sleep_signal_started, started, memory_order_relaxed);
+        do {
+            if (syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &now) != 0) _Exit(90);
+        } while ((int64_t)now.tv_sec * 1000000000 + now.tv_nsec - started < 300000000);
+        atomic_store_explicit(&sleep_signal_finished,
+                              (int64_t)now.tv_sec * 1000000000 + now.tv_nsec,
+                              memory_order_relaxed);
+    }
     atomic_fetch_add_explicit(&signals_delivered, 1, memory_order_relaxed);
 }
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "signal observer needs lock-free atomics");
+_Static_assert(ATOMIC_LONG_LOCK_FREE == 2, "signal timestamps need lock-free atomics");
 
 static int pin_providers(const char *expected, int alias, enum event_api event_api) {
     const char *names[] = {
@@ -629,9 +644,346 @@ static void reuse_case(int use_ppoll, const int pipefd[2],
     }
 }
 
+enum sleep_api { SLEEP_NANO, SLEEP_CLOCK, SLEEP_ABSOLUTE, SLEEP_SECONDS, SLEEP_MICRO, SLEEP_C11 };
+enum sleep_kind {
+    SLEEP_BLOCKED, SLEEP_PENDING, SLEEP_DISABLED, SLEEP_SIGNAL, SLEEP_SIGNAL_RESTART,
+    SLEEP_TIMEOUT, SLEEP_MASK_BLOCK, SLEEP_ZERO, SLEEP_READONLY, SLEEP_UNALIGNED,
+    SLEEP_REMAINDER, SLEEP_ALIAS_REMAINDER, SLEEP_READONLY_REMAINDER, SLEEP_ERRORS
+};
+typedef int (*nanosleep_function)(const struct timespec *, struct timespec *);
+typedef int (*clock_sleep_function)(clockid_t, int, const struct timespec *, struct timespec *);
+static nanosleep_function selected_nanosleep, selected_thrd_sleep;
+static clock_sleep_function selected_clock_sleep;
+static unsigned (*selected_sleep)(unsigned);
+static int (*selected_usleep)(useconds_t);
+
+struct sleep_probe {
+    struct state observed;
+    enum sleep_api api;
+    enum sleep_kind kind;
+    const struct timespec *request;
+    struct timespec *output;
+    struct timespec remaining;
+    int64_t started;
+};
+
+static int pin_sleep_provider(const char *expected, enum sleep_api api, int alias) {
+    int rc = pin_providers(expected, 0, EVENT_NONE);
+    if (rc != 0) return rc;
+    const char *name = api == SLEEP_NANO ? (alias ? "__nanosleep" : "nanosleep") :
+        api == SLEEP_CLOCK || api == SLEEP_ABSOLUTE ? (alias ? "__clock_nanosleep" : "clock_nanosleep") :
+        api == SLEEP_SECONDS ? "sleep" : api == SLEEP_MICRO ? "usleep" : "thrd_sleep";
+    struct stat wanted, actual;
+    Dl_info info = {0};
+    void *address = dlsym(RTLD_DEFAULT, name);
+    if (stat(expected, &wanted) != 0 || address == NULL || !dladdr(address, &info) ||
+        info.dli_fname == NULL || stat(info.dli_fname, &actual) != 0 ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
+        return 86;
+    }
+    if (api == SLEEP_NANO) selected_nanosleep = (nanosleep_function)address;
+    else if (api == SLEEP_CLOCK || api == SLEEP_ABSOLUTE)
+        selected_clock_sleep = (clock_sleep_function)address;
+    else if (api == SLEEP_SECONDS) selected_sleep = (unsigned (*)(unsigned))address;
+    else if (api == SLEEP_MICRO) selected_usleep = (int (*)(useconds_t))address;
+    else selected_thrd_sleep = (nanosleep_function)address;
+    return 0;
+}
+
+static int invoke_sleep(const struct sleep_probe *probe, const struct timespec *request,
+                        struct timespec *remaining) {
+    switch (probe->api) {
+    case SLEEP_NANO: return selected_nanosleep(request, remaining);
+    case SLEEP_CLOCK: return selected_clock_sleep(CLOCK_REALTIME, 0, request, remaining);
+    case SLEEP_ABSOLUTE:
+        return selected_clock_sleep(CLOCK_MONOTONIC, TIMER_ABSTIME, request, remaining);
+    case SLEEP_SECONDS: return (int)selected_sleep((unsigned)request->tv_sec);
+    case SLEEP_MICRO:
+        return selected_usleep((useconds_t)(request->tv_sec * 1000000 + request->tv_nsec / 1000));
+    case SLEEP_C11: return selected_thrd_sleep(request, remaining);
+    }
+    fail("sleep API selection");
+    return -1;
+}
+
+static void verify_sleep_error(const struct sleep_probe *probe, int result, int error,
+                              int expected) {
+    if (probe->api == SLEEP_CLOCK || probe->api == SLEEP_ABSOLUTE)
+        REQUIRE(result == expected && error == EDOM, "clock_nanosleep returns errors without changing errno");
+    else if (probe->api == SLEEP_C11)
+        REQUIRE(result == (expected == EINTR ? -1 : -2) && error == EDOM,
+                "thrd_sleep preserves errno and its distinct error convention");
+    else
+        REQUIRE(result == -1 && error == expected, "nanosleep/usleep errno convention");
+}
+
+static void sleep_errors(struct sleep_probe *probe) {
+    const struct timespec invalid[] = {{-1, 0}, {0, 1000000000}};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        errno = EDOM;
+        int result = invoke_sleep(probe, &invalid[i], &probe->remaining);
+        verify_sleep_error(probe, result, errno, EINVAL);
+    }
+    errno = EDOM;
+    int result = invoke_sleep(probe, (const struct timespec *)(uintptr_t)1, &probe->remaining);
+    verify_sleep_error(probe, result, errno, EFAULT);
+    struct timespec zero = {0, 0};
+    errno = EDOM;
+    REQUIRE(invoke_sleep(probe, &zero, (struct timespec *)(uintptr_t)1) == 0 && errno == EDOM,
+            "successful zero/past sleep does not access remainder output");
+    REQUIRE(probe->remaining.tv_sec == 71 && probe->remaining.tv_nsec == 72,
+            "invalid sleep requests do not publish a remainder");
+    if (probe->api == SLEEP_CLOCK || probe->api == SLEEP_ABSOLUTE) {
+        errno = EDOM;
+        REQUIRE(selected_clock_sleep(CLOCK_THREAD_CPUTIME_ID, 0, &zero, NULL) == EINVAL && errno == EDOM,
+                "unsupported sleep clock retains original error convention");
+    }
+}
+
+static void sleep_cleanup(void *argument) {
+    struct sleep_probe *probe = argument;
+    sigset_t mask;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0 && sigismember(&mask, SIGUSR2) == 1,
+            "sleep cleanup retains the original blocked signal");
+    cleanup(&probe->observed);
+}
+
+static void *sleep_worker(void *argument) {
+    struct sleep_probe *probe = argument;
+    struct state *state = &probe->observed;
+    capture_identity(state);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0, "sleep deferred cancellation");
+    if (probe->kind == SLEEP_DISABLED)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0, "sleep disable cancellation");
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    if (probe->kind == SLEEP_MASK_BLOCK) sigaddset(&mask, SIGUSR1);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "sleep worker signal mask");
+    pthread_cleanup_push(sleep_cleanup, probe);
+    atomic_store_explicit(&state->ready, 1, memory_order_release);
+    while (!atomic_load_explicit(&state->release, memory_order_acquire))
+        (void)syscall(SYS_sched_yield);
+    errno = EDOM;
+    probe->started = monotonic_ns();
+    if (probe->kind == SLEEP_ERRORS) {
+        sleep_errors(probe);
+        state->result = 0;
+    } else {
+        state->result = invoke_sleep(probe, probe->request, probe->output);
+    }
+    state->error = errno;
+    state->elapsed_ns = monotonic_ns() - probe->started;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0 && sigismember(&mask, SIGUSR2) == 1 &&
+                sigismember(&mask, SIGUSR1) == (probe->kind == SLEEP_MASK_BLOCK),
+            "sleep ordinary return restores the complete original signal mask");
+    atomic_store_explicit(&state->returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (probe->kind == SLEEP_DISABLED) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0, "reenable sleep cancellation");
+        pthread_testcancel();
+        fail("disabled sleep lost its pending cancellation");
+    }
+    return state;
+}
+
+static void observe_sleep_parked(struct sleep_probe *probe, int memory) {
+    struct state *state = &probe->observed;
+    const int sliced = expect_native && probe->kind != SLEEP_DISABLED;
+    int64_t deadline = monotonic_ns() + 2000000000;
+    while (monotonic_ns() < deadline) {
+        REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
+                "sleep returned before observation of its blocking syscall");
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long args[6] = {0};
+        if (!read_proc(state, "syscall", call, sizeof(call)) ||
+            sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
+                   &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 5)
+            goto retry_sleep;
+        struct timespec duration;
+        if (sliced) {
+            uint64_t mask;
+            if (number != SYS_ppoll || args[0] != 0 || args[1] != 0 || args[2] == 0 || args[3] == 0 ||
+                !snapshot(memory, args[2], &duration, sizeof(duration)) ||
+                !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_sleep;
+            REQUIRE(args[4] == sizeof(mask), "native sleep uses the kernel signal-mask width");
+            REQUIRE(duration.tv_sec == 0 && duration.tv_nsec > 0 && duration.tv_nsec <= 50000000,
+                    "native sleep blocks for a bounded nonzero quantum");
+            REQUIRE(((mask >> (SIGUSR1 - 1)) & 1) == (uint64_t)(probe->kind == SLEEP_MASK_BLOCK) &&
+                    ((mask >> (SIGUSR2 - 1)) & 1) == 1,
+                    "native sleep submits the original signal mask atomically");
+        } else {
+            unsigned long long request = 0;
+#ifdef SYS_nanosleep
+            if (number == SYS_nanosleep) request = args[0];
+#endif
+            if (number == SYS_clock_nanosleep) request = args[2];
+            if (request == 0 || !snapshot(memory, request, &duration, sizeof(duration))) goto retry_sleep;
+            REQUIRE(duration.tv_sec > 0 || duration.tv_nsec > 0, "original sleep has a positive duration");
+        }
+        if (!read_proc(state, "stat", status, sizeof(status))) goto retry_sleep;
+        char *end = strrchr(status, ')');
+        if (end != NULL && end[1] == ' ' && end[2] == 'S') return;
+retry_sleep:
+        pause_briefly();
+    }
+    fail("no observed kernel sleep with the expected native/hosted arguments");
+}
+
+static int sleep_contract_main(char **argv) {
+    const char *entry = case_name + 6;
+    const char *prefixes[] = {"nano-", "clock-", "absolute-", "seconds-", "micro-", "c11-"};
+    int api = -1;
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+        if (strncmp(entry, prefixes[i], strlen(prefixes[i])) == 0) { api = (int)i; entry += strlen(prefixes[i]); break; }
+    if (api < 0) return 2;
+    int alias = strncmp(entry, "alias-", 6) == 0;
+    /* alias-remainder is a pointer-aliasing case, not an exported symbol. */
+    if (strcmp(entry, "alias-remainder") == 0) alias = 0;
+    if (alias) entry += 6;
+    if (alias && api != SLEEP_NANO && api != SLEEP_CLOCK) return 2;
+    const char *names[] = {"blocked", "pending", "disabled", "signal", "signal-restart", "timeout",
+                          "mask-block", "zero", "readonly-request", "unaligned-request", "remainder",
+                          "alias-remainder", "readonly-remainder", "errors"};
+    int kind = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(entry, names[i]) == 0) kind = (int)i;
+    if (kind < 0 || ((api == SLEEP_SECONDS || api == SLEEP_MICRO) && kind >= SLEEP_READONLY)) return 2;
+    int pin = pin_sleep_provider(argv[2], (enum sleep_api)api, alias);
+    if (pin != 0) return pin;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    struct sigaction action = {0};
+    action.sa_handler = user_signal;
+    action.sa_flags = kind == SLEEP_SIGNAL_RESTART ? SA_RESTART : 0;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "install sleep signal handler");
+    sleep_handler_delay = kind == SLEEP_REMAINDER;
+    sigset_t unblocked;
+    sigemptyset(&unblocked);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &unblocked, NULL) == 0, "sleep creator signal mask");
+    alarm(12);
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("sleep-kernel-snapshot-unavailable");
+    long page = sysconf(_SC_PAGESIZE);
+    REQUIRE(page > 0, "sleep page size");
+    unsigned char *storage = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(storage != MAP_FAILED, "sleep timeout mapping");
+    int interrupted = kind == SLEEP_SIGNAL || kind == SLEEP_SIGNAL_RESTART || kind == SLEEP_REMAINDER ||
+                      kind == SLEEP_ALIAS_REMAINDER || kind == SLEEP_READONLY_REMAINDER;
+    struct timespec duration = {0, 250000000};
+    if (kind == SLEEP_BLOCKED || kind == SLEEP_PENDING) duration = (struct timespec){60, 0};
+    else if (interrupted) duration = (struct timespec){2, 0};
+    else if (kind == SLEEP_ZERO || kind == SLEEP_ERRORS) duration = (struct timespec){0, 0};
+    else if (api == SLEEP_SECONDS) duration = (struct timespec){1, 0};
+    struct timespec request = duration;
+    if (api == SLEEP_ABSOLUTE && kind != SLEEP_ZERO && kind != SLEEP_ERRORS) {
+        int64_t end = monotonic_ns() + duration.tv_sec * 1000000000 + duration.tv_nsec;
+        request = (struct timespec){end / 1000000000, end % 1000000000};
+    }
+    const size_t offset = kind == SLEEP_UNALIGNED ? 1 : 0;
+    memcpy(storage + offset, &request, sizeof(request));
+    const struct timespec sentinel = {71, 72};
+    memcpy(storage + 64, &sentinel, sizeof(sentinel));
+    REQUIRE(mprotect(storage, (size_t)page, PROT_READ) == 0, "protect sleep request and remainder controls");
+    struct sleep_probe probe = {0};
+    probe.api = (enum sleep_api)api;
+    probe.kind = (enum sleep_kind)kind;
+    probe.request = (const struct timespec *)(storage + offset);
+    probe.remaining = sentinel;
+    probe.output = &probe.remaining;
+    probe.observed.kind = kind == SLEEP_MASK_BLOCK ? MASK_UNBLOCK : BLOCKED;
+    if (kind == SLEEP_ALIAS_REMAINDER) {
+        probe.remaining = request;
+        probe.request = &probe.remaining;
+    }
+    if (kind == SLEEP_READONLY_REMAINDER) probe.output = (struct timespec *)(storage + 64);
+    struct state *state = &probe.observed;
+    REQUIRE(pthread_create(&state->thread, NULL, sleep_worker, &probe) == 0, "create sleep worker");
+    wait_ready(state);
+    if (kind == SLEEP_PENDING) REQUIRE(pthread_cancel(state->thread) == 0, "queue pending sleep cancellation");
+    atomic_store_explicit(&state->release, 1, memory_order_release);
+    if (kind != SLEEP_PENDING && kind != SLEEP_ZERO && kind != SLEEP_ERRORS)
+        observe_sleep_parked(&probe, memory);
+    if (kind == SLEEP_BLOCKED || kind == SLEEP_DISABLED) {
+        REQUIRE(pthread_cancel(state->thread) == 0, "cancel observed kernel sleep");
+        if (kind == SLEEP_DISABLED) {
+            observe_sleep_parked(&probe, memory);
+            REQUIRE(atomic_load_explicit(&state->cleaned, memory_order_acquire) == 0,
+                    "disabled sleep cancellation cannot run cleanup early");
+        }
+    } else if (interrupted || kind == SLEEP_MASK_BLOCK) {
+        REQUIRE(pthread_kill(state->thread, SIGUSR1) == 0, "send sleep user signal");
+    }
+    void *result = join_bounded(state);
+    int canceled = kind == SLEEP_BLOCKED || kind == SLEEP_PENDING || kind == SLEEP_DISABLED;
+    REQUIRE(result == (canceled ? PTHREAD_CANCELED : (void *)state), "sleep thread result");
+    REQUIRE(atomic_load_explicit(&state->cleaned, memory_order_acquire) == 1, "sleep cleanup exactly once");
+    REQUIRE(atomic_load_explicit(&state->returned, memory_order_acquire) == (!canceled || kind == SLEEP_DISABLED),
+            "sleep return versus cancellation");
+    if (interrupted) {
+        int expected = kind == SLEEP_READONLY_REMAINDER && api != SLEEP_ABSOLUTE ? EFAULT : EINTR;
+        if (api == SLEEP_SECONDS)
+            REQUIRE(state->result == 1 && state->error == EINTR,
+                    "sleep truncates fractional unslept seconds as GNU does");
+        else verify_sleep_error(&probe, state->result, state->error, expected);
+        REQUIRE(atomic_load_explicit(&signals_delivered, memory_order_relaxed) == 1,
+                "sleep interruption invokes one signal handler without SA_RESTART retry");
+        if (api == SLEEP_ABSOLUTE)
+            REQUIRE(probe.remaining.tv_sec == (kind == SLEEP_ALIAS_REMAINDER ? request.tv_sec : 71) &&
+                        probe.remaining.tv_nsec == (kind == SLEEP_ALIAS_REMAINDER ? request.tv_nsec : 72),
+                    "absolute sleep leaves the remainder unused");
+        else if (api != SLEEP_SECONDS && api != SLEEP_MICRO && kind != SLEEP_READONLY_REMAINDER) {
+            int64_t left = probe.remaining.tv_sec * 1000000000 + probe.remaining.tv_nsec;
+            REQUIRE(probe.remaining.tv_sec >= 0 && probe.remaining.tv_nsec >= 0 &&
+                        probe.remaining.tv_nsec < 1000000000 && left > 0 && left < 2000000000,
+                    "interrupted relative sleep publishes a normalized unslept duration");
+        }
+        if (kind == SLEEP_REMAINDER && api != SLEEP_ABSOLUTE) {
+            int64_t onset = atomic_load_explicit(&sleep_signal_started, memory_order_relaxed);
+            int64_t ended = atomic_load_explicit(&sleep_signal_finished, memory_order_relaxed);
+            int64_t expected_left = 2000000000 - (onset - probe.started);
+            int64_t left = probe.remaining.tv_sec * 1000000000 + probe.remaining.tv_nsec;
+            REQUIRE(ended - onset >= 300000000, "long handler actually consumed wall time");
+            REQUIRE(llabs(left - expected_left) < 100000000,
+                    "remaining duration excludes signal handler time rather than recomputing after it");
+        }
+    } else if (!canceled || kind == SLEEP_DISABLED) {
+        REQUIRE(state->result == 0, "sleep reaches its finite deadline");
+        if (kind != SLEEP_ZERO && kind != SLEEP_ERRORS)
+            REQUIRE(state->elapsed_ns >= (api == SLEEP_SECONDS ? 900000000 : 200000000) &&
+                        state->elapsed_ns < 2000000000,
+                    "sleep finite deadline spans quanta without early return or repeated-duration drift");
+    }
+    if (!interrupted) {
+        /* GNU's cancellation signal can make the kernel write a remainder
+         * before forced unwind begins. Only successful sleeps and requests
+         * canceled before entering the syscall promise this untouched output. */
+        if (!canceled || kind == SLEEP_DISABLED || kind == SLEEP_PENDING)
+            REQUIRE(probe.remaining.tv_sec == 71 && probe.remaining.tv_nsec == 72,
+                    "successful and pending-canceled sleeps leave remainder output untouched");
+        REQUIRE(atomic_load_explicit(&signals_delivered, memory_order_relaxed) == 0,
+                "blocked sleep signals remain blocked across quanta and thread exit");
+    }
+    REQUIRE(memcmp(storage + offset, &request, sizeof(request)) == 0,
+            "sleep never changes the caller's const request");
+    REQUIRE(memcmp(storage + 64, &sentinel, sizeof(sentinel)) == 0,
+            "read-only sleep remainder control remains untouched");
+    REQUIRE(munmap(storage, (size_t)page) == 0 && close(memory) == 0, "release sleep fixture resources");
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
+    if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);
     int use_ppoll = strncmp(case_name, "ppoll-", 6) == 0;
     int alias = strncmp(case_name, "ppoll-alias-", 12) == 0;
     enum event_api event_api = EVENT_NONE;

@@ -6691,6 +6691,110 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// Sleep cancellation point. Capture the exported entry's caller before the
+/// shared window, including aliases and C11's different result convention.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_nanosleep(
+    request: *const u8,
+    remaining: *mut u8,
+) -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    // Linux measures nanosleep against MONOTONIC, independently of wall-clock
+    // adjustments. Keep the original syscall for hosted and unsupported paths.
+    unsafe {
+        cancellation_sleep_window(caller, libc::CLOCK_MONOTONIC, 0, request, remaining, || {
+            raw_syscall::sys_nanosleep(request, remaining)
+        })
+    }
+}
+
+/// Clock-selected sleep with native cancellation for the relative monotonic
+/// clocks and absolute CLOCK_MONOTONIC deadlines. Other clock/flag contracts
+/// retain the original syscall, including CPU clocks and settable deadlines.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_clock_nanosleep(
+    clock: c_int,
+    flags: c_int,
+    request: *const u8,
+    remaining: *mut u8,
+) -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_sleep_window(caller, clock, flags, request, remaining, || {
+            raw_syscall::sys_clock_nanosleep(clock, flags, request, remaining)
+        })
+    }
+}
+
+/// This frame owns no drop state. Hosted asynchronous cancellation must cross
+/// only the unchanged raw-syscall window; the native helper restores its signal
+/// mask before the cooperative cancellation check and remainder publication.
+#[inline(never)]
+unsafe fn cancellation_sleep_window(
+    caller: usize,
+    clock: c_int,
+    flags: c_int,
+    request: *const u8,
+    remaining: *mut u8,
+    blocking_syscall: impl FnOnce() -> Result<(), c_int>,
+) -> Result<(), c_int> {
+    let absolute = flags == libc::TIMER_ABSTIME;
+    let supported = (flags == 0 && matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC))
+        || (absolute && clock == libc::CLOCK_MONOTONIC);
+    if supported
+        && caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        let mut owned = raw_syscall::Timespec::default();
+        // SAFETY: import caller memory through fault-checked kernel copies.
+        // No reference is formed to a potentially unaligned or unreadable
+        // timespec; request and remaining may denote the same caller storage.
+        let imported = unsafe {
+            crate::io_abi::iov_snapshot::copy_user_bytes(
+                request,
+                std::ptr::from_mut(&mut owned).cast(),
+                std::mem::size_of::<raw_syscall::Timespec>(),
+            )
+        };
+        let result = imported.and_then(|()| {
+            // SAFETY: owned is initialized and aligned, and cancel belongs to
+            // this live native thread for the entire bounded sleep.
+            unsafe { cancel_poll::wait_sleep(&owned, absolute, !remaining.is_null(), cancel) }
+        });
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        match result {
+            Ok(cancel_poll::SleepResult::Complete) => return Ok(()),
+            Ok(cancel_poll::SleepResult::Interrupted(left)) => {
+                if !absolute && !remaining.is_null() {
+                    // SAFETY: left is owned initialized storage. The copier
+                    // checks the caller destination through the kernel and
+                    // reports EFAULT only when an interruption needs output.
+                    unsafe {
+                        crate::io_abi::iov_snapshot::copy_user_bytes(
+                            std::ptr::from_ref(&left).cast(),
+                            remaining,
+                            std::mem::size_of::<raw_syscall::Timespec>(),
+                        )?;
+                    }
+                }
+                return Err(libc::EINTR);
+            }
+            Ok(cancel_poll::SleepResult::Unsupported) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    // In particular, STICKY_TIMEOUTS prevents ppoll remainder writeback. The
+    // helper explicitly declines those relative sleeps instead of inventing a
+    // remainder after the signal handler has consumed additional wall time.
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
 /// Poll cancellation point, including requests arriving after a native thread
 /// has entered the kernel. Keep the caller capture in the exported ABI entry.
 #[inline(always)]
@@ -7010,7 +7114,7 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex, poll and epoll points use their dedicated windows to
+    // Native futex, poll, epoll and supported sleep points use their windows to
     // observe a request arriving while parked; other syscalls remain pending-
     // request cancellation points until they gain an interruptible native path.
     // With no native threads, current_thread_handle exits at its atomic flag

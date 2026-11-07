@@ -2738,22 +2738,18 @@ pub unsafe extern "C-unwind" fn sleep(seconds: u32) -> u32 {
     };
     // sleep is a cancellation point.
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_nanosleep(
-                (&req) as *const _ as *const u8,
-                (&mut rem) as *mut _ as *mut u8,
-            )
-        })
+        crate::pthread_abi::cancellation_point_nanosleep(
+            (&req) as *const _ as *const u8,
+            (&mut rem) as *mut _ as *mut u8,
+        )
     } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
             if e == errno::EINTR {
-                let mut remaining = rem.tv_sec.max(0) as u32;
-                if rem.tv_nsec > 0 {
-                    remaining = remaining.saturating_add(1);
-                }
-                remaining
+                // GNU sleep returns the whole unslept seconds, discarding
+                // the fractional remainder supplied by nanosleep.
+                rem.tv_sec.max(0) as u32
             } else {
                 seconds
             }
@@ -2769,9 +2765,10 @@ pub unsafe extern "C-unwind" fn usleep(usec: u32) -> c_int {
     };
     // usleep is a cancellation point.
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_nanosleep((&req) as *const _ as *const u8, std::ptr::null_mut())
-        })
+        crate::pthread_abi::cancellation_point_nanosleep(
+            (&req) as *const _ as *const u8,
+            std::ptr::null_mut(),
+        )
     } {
         Ok(()) => 0,
         Err(e) => {

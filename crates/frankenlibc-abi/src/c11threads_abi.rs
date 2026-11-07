@@ -245,12 +245,13 @@ pub unsafe extern "C-unwind" fn thrd_sleep(
     }
     // Keep the window in this exported frame: delegating to the exported
     // nanosleep would look like internal libc I/O to the caller-origin guard
-    // and suppress cancellation. Only the raw syscall is asynchronously
-    // cancellable; validation and result conversion hold no open window.
+    // and suppress cancellation. The shared window also handles cancellation
+    // arriving during an owned native thread's sleep.
     let result = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8)
-        })
+        crate::pthread_abi::cancellation_point_nanosleep(
+            duration as *const u8,
+            remaining as *mut u8,
+        )
     };
     match result {
         Ok(()) => 0,

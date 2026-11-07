@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare observed native poll/epoll cancellation and signal behavior with GNU libc."""
+"""Compare observed native poll/epoll/sleep cancellation and signal behavior with GNU libc."""
 
 from __future__ import annotations
 
@@ -43,7 +43,26 @@ EPOLL_CASES = tuple(
     "epoll-wait-alias-blocked", "epoll-wait-alias-pending",
     "epoll-pwait-alias-blocked", "epoll-pwait-alias-pending",
 )
-CASES = POLL_CASES + EPOLL_CASES
+SLEEP_CASES = tuple(
+    f"sleep-{entry}-{case}"
+    for entry in ("nano", "clock", "absolute", "seconds", "micro", "c11")
+    for case in (
+        "pending", "blocked", "disabled", "signal", "signal-restart", "timeout",
+        "mask-block", "zero",
+    )
+) + tuple(
+    f"sleep-{entry}-{case}"
+    for entry in ("nano", "clock", "absolute", "c11")
+    for case in (
+        "readonly-request", "unaligned-request", "remainder", "alias-remainder",
+        "readonly-remainder", "errors",
+    )
+) + tuple(
+    f"sleep-{entry}-alias-{case}"
+    for entry in ("nano", "clock")
+    for case in ("pending", "blocked")
+)
+CASES = POLL_CASES + EPOLL_CASES + SLEEP_CASES
 
 
 def digest(path: Path) -> str:
@@ -136,6 +155,10 @@ def main() -> int:
         oracle = case.replace("ppoll-alias-", "ppoll-").replace(
             "epoll-wait-alias-", "epoll-wait-"
         ).replace("epoll-pwait-alias-", "epoll-pwait-")
+        if "-alias-" in case and not case.endswith("-alias-remainder"):
+            oracle = oracle.replace("sleep-nano-alias-", "sleep-nano-").replace(
+                "sleep-clock-alias-", "sleep-clock-"
+            )
         execute(f"host-{case}", oracle, host, env)
         if not args.host_only:
             assert library is not None
@@ -173,7 +196,7 @@ def main() -> int:
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
         "gnu_provider": str(host), "gnu_provider_sha256": digest(host),
         "compiler_command": command, "case_count": len(CASES),
-        "poll_cases": len(POLL_CASES), "epoll_cases": len(EPOLL_CASES),
+        "poll_cases": len(POLL_CASES), "epoll_cases": len(EPOLL_CASES), "sleep_cases": len(SLEEP_CASES),
         "oracle_cases": len(CASES), "candidate_cases": 0 if args.host_only else 4 * len(CASES),
         "provider_negatives": 1, "backend_negatives": 1,
         "explicit_skips": [row["label"] for row in rows if row["status"] == "SKIP"],
@@ -181,10 +204,10 @@ def main() -> int:
     }
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
-        print("Required poll/epoll coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
+        print("Required poll/epoll/sleep coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
         return 1
     candidate = "no candidate validation" if args.host_only else f"{4 * len(CASES)} candidate cases"
-    print(f"Native poll/epoll: {len(CASES)} GNU oracle cases, {candidate}, 2 negative controls passed")
+    print(f"Native poll/epoll/sleep: {len(CASES)} GNU oracle cases, {candidate}, 2 negative controls passed")
     return 0
 
 

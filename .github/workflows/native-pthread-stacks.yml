@@ -8,6 +8,10 @@ on:
       - 'crates/frankenlibc-abi/src/pthread_cancel_wait.rs'
       - 'crates/frankenlibc-abi/src/pthread_cancel_poll.rs'
       - 'crates/frankenlibc-abi/src/poll_abi.rs'
+      - 'crates/frankenlibc-abi/src/time_abi.rs'
+      - 'crates/frankenlibc-abi/src/c11threads_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot.rs'
       - 'crates/frankenlibc-abi/src/semaphore_wait.rs'
       - 'crates/frankenlibc-abi/src/runtime_policy.rs'
       - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
@@ -84,6 +88,9 @@ jobs:
             cargo test -p frankenlibc-abi --lib --features owned-tls-cache \
               owned_tls_cache::tests:: -- --test-threads=1 2>&1 | tee "$root/cache-owner.log"
             grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/cache-owner.log"
+            python3 scripts/check_pthread_native_poll.py \
+              --library "$PWD/target/release/libfrankenlibc_abi.so" \
+              --out-dir "$root/native-waits"
           fi
       - uses: actions/upload-artifact@v4
         if: always()
@@ -123,7 +130,7 @@ jobs:
                    ('cancel-wait', ['cargo', 'test', '-p', 'frankenlibc-abi',
                     '--test', 'pthread_cancel_wait_test', 'cancel_wait::tests::'], 'strict', 4),
                    ('cancel-poll', ['cargo', 'test', '-p', 'frankenlibc-abi',
-                    '--test', 'pthread_cancel_wait_test', 'cancel_poll::tests::'], 'strict', 2)]
+                    '--test', 'pthread_cancel_wait_test', 'cancel_poll::tests::'], 'strict', 3)]
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
                   *features, 'pthread::tls::tests::'], 'strict', 50))
@@ -179,7 +186,7 @@ jobs:
           mkdir -p target/conformance/pthread_startup
           cargo build --release -p frankenlibc-abi --lib 2>&1 \
             | tee target/conformance/pthread_startup/build.log
-      - name: Compare blocked poll and epoll cancellation, readiness, and signal masks against GNU libc
+      - name: Compare blocked poll, epoll and sleep cancellation, readiness, remainders and signal masks against GNU libc
         shell: bash
         run: |
           python3 scripts/check_pthread_native_poll.py \
