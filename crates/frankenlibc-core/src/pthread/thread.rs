@@ -34,6 +34,8 @@ use crate::syscall;
 
 use core::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
+pub use super::tls::CancellationWait;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -1284,6 +1286,25 @@ pub fn request_cancellation(handle_address: usize) -> bool {
     super::tls::request_thread_cancellation(values_address)
 }
 
+/// Wait descriptor for the calling native thread while cancellation is enabled.
+///
+/// The native handle, rather than inherited compiler TLS, owns these settings.
+/// Exit cleanup must finish without starting another cancellation unwind. A
+/// descriptor only observes requests; the ABI decides when it can safely unwind.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+pub fn current_cancellation_wait() -> Option<CancellationWait> {
+    let handle = current_thread_handle()?;
+    // SAFETY: the calling native thread owns its live handle until final exit.
+    let handle = unsafe { &*handle };
+    if handle.cancel_state.load(Ordering::Acquire) != 0
+        || handle.exit_started.load(Ordering::Acquire) != 0
+    {
+        return None;
+    }
+    super::tls::thread_cancellation_wait(handle.self_tid.load(Ordering::Acquire))
+}
+
 /// Consume a cooperative request for the calling native thread only.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn take_current_cancellation() -> bool {
@@ -1846,6 +1867,55 @@ mod tests {
             sentinel,
             "thread should return its argument"
         );
+    }
+
+    unsafe extern "C" fn cancellation_wait_state_start(_: usize) -> usize {
+        let Some(handle_ptr) = current_thread_handle() else {
+            return 0;
+        };
+        let Some(wait) = current_cancellation_wait() else {
+            return 0;
+        };
+        // SAFETY: this probe only changes the calling native thread's state.
+        let handle = unsafe { &*handle_ptr };
+        let mut checks = 1;
+        if !wait.pending() {
+            checks |= 2;
+        }
+        if request_cancellation(handle_ptr as usize) && wait.pending() {
+            checks |= 4;
+        }
+        handle.cancel_state.store(1, Ordering::Release);
+        if current_cancellation_wait().is_none() && wait.pending() {
+            checks |= 8;
+        }
+        handle.cancel_state.store(0, Ordering::Release);
+        if current_cancellation_wait().is_some_and(|wait| wait.pending()) {
+            checks |= 16;
+        }
+        handle.exit_started.store(1, Ordering::Release);
+        if current_cancellation_wait().is_none() && wait.pending() {
+            checks |= 32;
+        }
+        handle.exit_started.store(0, Ordering::Release);
+        if take_current_cancellation() && !wait.pending() && !take_current_cancellation() {
+            checks |= 64;
+        }
+        checks
+    }
+
+    #[test]
+    fn native_cancellation_wait_respects_owned_state_and_exit() {
+        let _guard = crate::rcu::rcu_test_global_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(current_cancellation_wait().is_none());
+        // No allocation, assertion or host TLS access runs in the native probe.
+        let handle =
+            unsafe { create_thread(cancellation_wait_state_start as *const () as usize, 0, 0) }
+                .expect("native cancellation-state probe must start");
+        assert_eq!(unsafe { join_thread(handle) }, Ok(127));
+        assert!(current_cancellation_wait().is_none());
     }
 
     #[test]

@@ -179,9 +179,13 @@ unsafe fn wait_common(
         // SAFETY: the kernel compares the low token word. Registration holds
         // the semaphore alive through the wait; C-unwind runs its cleanup.
         let result = unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                syscall::sys_futex(semaphore.cast(), operation, 0, timeout, 0, bitset)
-            })
+            crate::pthread_abi::cancellation_point_futex_wait(
+                semaphore.cast(),
+                operation,
+                0,
+                timeout,
+                bitset,
+            )
         };
         match result {
             Ok(_) | Err(libc::EAGAIN) => {}

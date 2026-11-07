@@ -21,6 +21,7 @@ use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
 use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
 use frankenlibc_core::pthread::thread::{
     ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
+    current_cancellation_wait as core_current_cancellation_wait,
     current_thread_handle as core_current_thread_handle,
     request_cancellation as core_request_cancellation,
     take_current_cancellation as core_take_current_cancellation,
@@ -74,6 +75,9 @@ use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::{ArtifactHashMap, ArtifactHashSet, artifact_hash_map, artifact_hash_set};
+
+#[path = "pthread_cancel_wait.rs"]
+mod cancel_wait;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
 type UnwindStartRoutine = unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void;
@@ -4537,22 +4541,18 @@ fn cond_futex_wait(
     };
     loop {
         // SAFETY: futex on the condvar sequence word with a live deadline.
-        let r = unsafe {
-            cancellation_point_syscall_raw(
-                libc::SYS_futex,
-                [
-                    seq_addr,
-                    futex_op,
-                    expected_seq as usize,
-                    deadline,
-                    0,
-                    bitset,
-                ],
+        let result = unsafe {
+            cancellation_point_futex_wait(
+                seq_addr as *mut u32,
+                futex_op as c_int,
+                expected_seq,
+                deadline,
+                bitset as u32,
             )
         };
-        match -r as c_int {
-            libc::EINTR if r < 0 => continue,
-            libc::ETIMEDOUT if r < 0 => break libc::ETIMEDOUT,
+        match result {
+            Err(libc::EINTR) => continue,
+            Err(libc::ETIMEDOUT) => break libc::ETIMEDOUT,
             // Woken, sequence already moved (EAGAIN), or another error: the
             // caller re-checks its predicate either way.
             _ => break 0,
@@ -6603,6 +6603,67 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// A cancellation point that can wake an already-parked native thread. Keep
+/// every frame up to the exported entry inlined so admission uses its caller.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_futex_wait(
+    word: *mut u32,
+    operation: c_int,
+    expected: u32,
+    timeout: usize,
+    bitset: u32,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_futex_window(caller, word, operation, expected, timeout, bitset) }
+}
+
+/// Like cancellation_window, this frame owns no resources or drop state.
+/// Synchronization guards live in the exported caller and run during unwind.
+#[inline(never)]
+unsafe fn cancellation_futex_window(
+    caller: usize,
+    word: *mut u32,
+    operation: c_int,
+    expected: u32,
+    timeout: usize,
+    bitset: u32,
+) -> Result<isize, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+        && cancel_wait::supported(operation, timeout, bitset)
+    {
+        // SAFETY: all operation arguments and the owned cancellation descriptor
+        // remain valid through the wait. Cancellation is delivered afterwards.
+        let result = unsafe { cancel_wait::wait(word, operation, expected, timeout, cancel) };
+        if cancel.pending() {
+            // A post/signal may have selected us concurrently with cancellation.
+            // Give a peer a replacement wake before unwinding, so a semaphore
+            // token or condition signal is not stranded behind a sleeping peer.
+            // Extra wakes are harmless: both callers re-check their predicates.
+            let _ = unsafe {
+                raw_syscall::sys_futex(
+                    word,
+                    libc::FUTEX_WAKE | (operation & libc::FUTEX_PRIVATE_FLAG),
+                    1,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    // Hosted, disabled, internal, or unsupported waits retain their existing
+    // syscall semantics. Only the hosted path opens an asynchronous window.
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_futex(word, operation, expected, timeout, 0, bitset)
+        })
+    }
+}
+
 /// The asynchronous-cancel window around one blocking syscall.
 ///
 /// Async-cancel safety: between switching to ASYNCHRONOUS and back, this
@@ -6633,16 +6694,21 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // This does not interrupt a native thread already blocked in the kernel.
+    // Native futex cancellation points additionally use cancellation_futex_window
+    // to observe a request arriving while parked; other syscalls remain pending-
+    // request cancellation points until they gain an interruptible native path.
     // With no native threads, current_thread_handle exits at its atomic flag
     // without a TID syscall, allocation or TLS initialization.
-    if caller != 0
-        && core_current_thread_handle().is_some()
-        && !address_is_inside_this_object(caller)
-    {
-        // SAFETY: the registered calling thread owns its cancellation state;
-        // this C-unwind frame holds no resources or partially applied syscall.
-        unsafe { pthread_testcancel() };
+    if core_current_thread_handle().is_some() {
+        if caller != 0 && !address_is_inside_this_object(caller) {
+            // SAFETY: the registered calling thread owns its cancellation state;
+            // this C-unwind frame holds no resources or partially applied syscall.
+            unsafe { pthread_testcancel() };
+        }
+        // An owned clone may inherit a cached HOST backend in host TLS. Its
+        // kernel-TID registration is authoritative: never mutate a host TCB's
+        // cancellation type on behalf of the native thread, even when disabled.
+        return blocking_syscall();
     }
     let set_type = cancellation_window_hook(caller);
     let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;

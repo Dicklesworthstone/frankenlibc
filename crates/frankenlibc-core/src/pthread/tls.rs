@@ -128,6 +128,51 @@ static TLS_CANCEL_WORDS: [AtomicU64; TLS_TABLE_SLOTS] =
 static NEXT_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(2);
 const CANCEL_PENDING: u64 = 1;
 
+/// One native thread's cancellation word for a wait on multiple futexes.
+///
+/// The word has static storage, even after the registration or handle retires.
+/// Only the owning thread obtains a descriptor, and it must obtain a fresh one
+/// after changing cancellation state. The marker keeps copies on that thread.
+/// Rust accesses the complete atomic word; the kernel alone reads its low half.
+#[derive(Clone, Copy)]
+pub struct CancellationWait {
+    word: &'static AtomicU64,
+    generation: u64,
+    owner: core::marker::PhantomData<*const ()>,
+}
+
+impl CancellationWait {
+    /// Aligned address of the pending bit's 32-bit word for a private futex.
+    #[inline]
+    pub fn address(&self) -> *const u32 {
+        cancellation_word_address(self.word)
+    }
+
+    /// Value to compare before parking. A pending request always differs.
+    #[inline]
+    pub fn expected(&self) -> u32 {
+        self.generation as u32
+    }
+
+    /// Inspect this registration's request without consuming it.
+    ///
+    /// Comparing the complete generation prevents an old descriptor from
+    /// reporting a replacement occupant's request, including low-word wrap.
+    #[inline]
+    pub fn pending(&self) -> bool {
+        self.word.load(Ordering::Acquire) == (self.generation | CANCEL_PENDING)
+    }
+}
+
+#[inline]
+fn cancellation_word_address(word: &AtomicU64) -> *const u32 {
+    let address = word.as_ptr().cast::<u32>();
+    #[cfg(target_endian = "big")]
+    // SAFETY: the low half is the second aligned u32 within this u64.
+    let address = unsafe { address.add(1) };
+    address
+}
+
 fn publish_tls_slot(index: usize, values_ptr: *mut TlsEntry, generation: u64) {
     TLS_CANCEL_WORDS[index].store(0, Ordering::Release);
     TLS_PTRS[index].store(values_ptr as usize, Ordering::Release);
@@ -487,7 +532,24 @@ fn request_cancel_generation(index: usize, mut observed: u64) -> bool {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => return true,
+            Ok(_) => {
+                // Publish before waking. A waiter that has not parked sees the
+                // changed expected value; one already parked receives the wake.
+                // The address is static, so retirement/reuse can at worst cause
+                // a harmless spurious wake of the replacement registration.
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                unsafe {
+                    let _ = syscall::sys_futex(
+                        cancellation_word_address(&TLS_CANCEL_WORDS[index]),
+                        0x81, // FUTEX_WAKE_PRIVATE
+                        1,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+                return true;
+            }
             Err(current) if current & !CANCEL_PENDING == generation => observed = current,
             Err(_) => return false,
         }
@@ -510,6 +572,32 @@ pub(crate) fn request_thread_cancellation(values_address: usize) -> bool {
         }
     }
     false
+}
+
+/// Obtain the calling native thread's wait word without borrowing its handle.
+/// The caller has checked its owned cancellation state and exit protocol.
+pub(crate) fn thread_cancellation_wait(tid: i32) -> Option<CancellationWait> {
+    if tid <= 0 {
+        return None;
+    }
+    let start = tid as u32 as usize % TLS_TABLE_SLOTS;
+    for offset in 0..TLS_TABLE_SLOTS {
+        let index = (start + offset) % TLS_TABLE_SLOTS;
+        let stored_tid = TLS_TIDS[index].load(Ordering::Acquire);
+        if stored_tid == tid {
+            let word = &TLS_CANCEL_WORDS[index];
+            let generation = word.load(Ordering::Acquire) & !CANCEL_PENDING;
+            return (generation != 0).then_some(CancellationWait {
+                word,
+                generation,
+                owner: core::marker::PhantomData,
+            });
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            break;
+        }
+    }
+    None
 }
 
 /// Consume the calling native thread's request. Its registration cannot be
@@ -1969,6 +2057,182 @@ mod tests {
         assert!(request_thread_cancellation(address));
         assert!(take_thread_cancellation(next_tid));
         table_remove(next_tid);
+    }
+
+    #[test]
+    fn cancellation_wait_tracks_pending_without_consuming_it() {
+        let _g = lock_and_reset();
+        let tid = 1001;
+        let mut block = TestTlsBlock::new();
+        let address = block.as_mut_ptr() as usize;
+        assert!(thread_cancellation_wait(tid).is_none());
+        assert!(table_register(tid, block.as_mut_ptr()));
+        let wait = thread_cancellation_wait(tid).unwrap();
+        assert_eq!(wait.address() as usize % core::mem::align_of::<u32>(), 0);
+        assert_eq!(wait.expected() & CANCEL_PENDING as u32, 0);
+        assert!(!wait.pending());
+
+        assert!(request_thread_cancellation(address));
+        assert!(wait.pending());
+        assert!(wait.pending(), "inspection must not consume the request");
+        let pending_wait = thread_cancellation_wait(tid).unwrap();
+        assert_eq!(pending_wait.expected(), wait.expected());
+        assert!(pending_wait.pending());
+        assert!(take_thread_cancellation(tid));
+        assert!(!wait.pending());
+        assert!(!take_thread_cancellation(tid));
+        table_remove(tid);
+        assert!(!wait.pending());
+        assert!(thread_cancellation_wait(tid).is_none());
+    }
+
+    #[test]
+    fn cancellation_wait_rejects_reused_generation_with_same_low_word() {
+        let _g = lock_and_reset();
+        let tid = 1001;
+        let next_tid = tid + TLS_TABLE_SLOTS as i32;
+        let index = tid as usize % TLS_TABLE_SLOTS;
+        let mut block = TestTlsBlock::new();
+        let address = block.as_mut_ptr() as usize;
+        assert!(table_register(tid, block.as_mut_ptr()));
+        let old = thread_cancellation_wait(tid).unwrap();
+        assert!(request_thread_cancellation(address));
+        assert!(old.pending());
+        table_remove(tid);
+
+        assert!(table_register(next_tid, block.as_mut_ptr()));
+        // Model the low 32-bit generation wrapping while the complete lifetime
+        // remains distinct. Neither descriptor dereferences the retired handle.
+        TLS_CANCEL_WORDS[index].store(old.generation + (1u64 << 32), Ordering::Release);
+        let next = thread_cancellation_wait(next_tid).unwrap();
+        assert_eq!(old.address(), next.address());
+        assert_eq!(old.expected(), next.expected());
+        assert!(!request_cancel_generation(index, old.generation));
+        assert!(request_thread_cancellation(address));
+        assert!(!old.pending());
+        assert!(next.pending());
+        assert!(take_thread_cancellation(next_tid));
+        table_remove(next_tid);
+    }
+
+    #[test]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn cancellation_wait_pending_request_cannot_park() {
+        let _g = lock_and_reset();
+        let tid = 1001;
+        let mut block = TestTlsBlock::new();
+        assert!(table_register(tid, block.as_mut_ptr()));
+        let wait = thread_cancellation_wait(tid).unwrap();
+        assert!(request_thread_cancellation(block.as_mut_ptr() as usize));
+        let timeout = syscall::Timespec {
+            tv_sec: 0,
+            tv_nsec: 10_000_000,
+        };
+        // The request preceded the wait, so correctness depends on the changed
+        // word, not on the already-completed wake. The deadline bounds a broken
+        // address/endianness implementation instead of hanging the test.
+        let result = unsafe {
+            syscall::sys_futex(
+                wait.address(),
+                0x80, // FUTEX_WAIT_PRIVATE
+                wait.expected(),
+                core::ptr::from_ref(&timeout) as usize,
+                0,
+                0,
+            )
+        };
+        table_remove(tid);
+        assert_eq!(result, Err(EAGAIN));
+    }
+
+    #[test]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn cancellation_request_wakes_an_already_parked_waiter() {
+        let _g = lock_and_reset();
+        let mut block = TestTlsBlock::new();
+        let values_address = block.as_mut_ptr() as usize;
+        let waiter_tid = AtomicI32::new(0);
+        let waiter_address = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| {
+                let tid = current_tid();
+                // A container can mount procfs from a parent PID namespace.
+                // Resolve this task's proc-visible ID instead of assuming that
+                // the kernel TID returned in our namespace names its proc path.
+                let task = std::fs::read_link("/proc/thread-self").unwrap();
+                let proc_tid = task.file_name().unwrap().to_str().unwrap().parse().unwrap();
+                assert!(table_register(tid, values_address as *mut TlsEntry));
+                let wait = thread_cancellation_wait(tid).unwrap();
+                waiter_address.store(wait.address() as usize, Ordering::Release);
+                waiter_tid.store(proc_tid, Ordering::Release);
+                let timeout = syscall::Timespec {
+                    tv_sec: 3,
+                    tv_nsec: 0,
+                };
+                let result = unsafe {
+                    syscall::sys_futex(
+                        wait.address(),
+                        0x80, // FUTEX_WAIT_PRIVATE
+                        wait.expected(),
+                        core::ptr::from_ref(&timeout) as usize,
+                        0,
+                        0,
+                    )
+                };
+                let pending = wait.pending();
+                table_remove(tid);
+                (result, pending)
+            });
+
+            // Observe the actual syscall, rather than treating publication of
+            // a readiness flag as proof that the kernel has parked the waiter.
+            let limit = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut parked = false;
+            while std::time::Instant::now() < limit {
+                let tid = waiter_tid.load(Ordering::Acquire);
+                if tid > 0
+                    && let Ok(snapshot) =
+                        std::fs::read_to_string(format!("/proc/self/task/{tid}/syscall"))
+                {
+                    let mut fields = snapshot.split_whitespace();
+                    let number = fields.next().and_then(|field| field.parse::<usize>().ok());
+                    let address = fields
+                        .next()
+                        .and_then(|field| field.strip_prefix("0x"))
+                        .and_then(|field| usize::from_str_radix(field, 16).ok());
+                    if number == Some(syscall::SYS_FUTEX)
+                        && address == Some(waiter_address.load(Ordering::Acquire))
+                    {
+                        // /proc reports "running" for an active task. Require
+                        // the sleeping state as well, so a request cannot race
+                        // mere syscall entry before the kernel has parked it.
+                        if let Ok(state) =
+                            std::fs::read_to_string(format!("/proc/self/task/{tid}/stat"))
+                            && state
+                                .rsplit_once(") ")
+                                .is_some_and(|(_, rest)| rest.as_bytes().first() == Some(&b'S'))
+                        {
+                            parked = true;
+                            break;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            let requested = request_thread_cancellation(values_address);
+            let (result, pending) = waiter.join().unwrap();
+            assert!(
+                parked,
+                "the cancellation target never reached its futex wait"
+            );
+            assert!(requested, "the live registration must accept cancellation");
+            assert_eq!(
+                result,
+                Ok(0),
+                "the cancellation request must wake the futex"
+            );
+            assert!(pending, "waking must leave delivery to the owner");
+        });
     }
 
     #[test]

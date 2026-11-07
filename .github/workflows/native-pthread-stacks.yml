@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_cancel_wait.rs'
+      - 'crates/frankenlibc-abi/src/semaphore_wait.rs'
       - 'crates/frankenlibc-abi/src/runtime_policy.rs'
       - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
@@ -111,10 +113,12 @@ jobs:
           root = pathlib.Path('artifacts/pthread-stacks')
           root.mkdir(parents=True, exist_ok=True)
           cases = [('core', ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                    'pthread::thread::tests::'], 'strict', 23)]
+                    'pthread::thread::tests::'], 'strict', 24),
+                   ('cancel-wait', ['cargo', 'test', '-p', 'frankenlibc-abi', '--lib',
+                    'pthread_abi::cancel_wait::tests::'], 'strict', 4)]
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                  *features, 'pthread::tls::tests::'], 'strict', 46))
+                  *features, 'pthread::tls::tests::'], 'strict', 50))
           for mode in ['strict', 'hardened']:
               cases.append((mode, ['cargo', 'test', '-p', 'frankenlibc-abi',
                   '--test', 'pthread_stack_abi_test'], mode, 8))
