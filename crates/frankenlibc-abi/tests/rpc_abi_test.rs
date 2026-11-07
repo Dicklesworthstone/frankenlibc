@@ -431,22 +431,19 @@ fn key_functions_reject_null_storage_before_contacting_daemon() {
 // ===========================================================================
 
 #[test]
-fn get_myaddress_fills_loopback() {
-    #[repr(C)]
-    struct SockaddrIn {
-        sin_family: u16,
-        sin_port: u16,
-        sin_addr: u32,
-        sin_zero: [u8; 8],
-    }
-
-    let mut addr: SockaddrIn = unsafe { std::mem::zeroed() };
-    unsafe { get_myaddress((&mut addr as *mut SockaddrIn).cast()) };
-
-    assert_eq!(addr.sin_family, 2, "AF_INET = 2");
-    assert_eq!(addr.sin_port, 0, "port should be 0");
-    // 127.0.0.1 in network byte order = 0x0100007f on little-endian
-    assert_eq!(addr.sin_addr, u32::from_be(0x7f000001));
+fn get_myaddress_null_output_is_a_noop_without_discovery() {
+    // Successful interface selection, empty snapshots, fatal discovery errors,
+    // and descriptor cleanup run in the provider-pinned C integration fixture.
+    let observed = unsafe {
+        let errno = frankenlibc_abi::errno_abi::__errno_location();
+        let saved = *errno;
+        *errno = libc::E2BIG;
+        get_myaddress(std::ptr::null_mut());
+        let observed = *errno;
+        *errno = saved;
+        observed
+    };
+    assert_eq!(observed, libc::E2BIG);
 }
 
 // ===========================================================================

@@ -3334,27 +3334,178 @@ pub unsafe extern "C" fn passwd2des(passwd: *mut c_char, key: *mut c_char) {
 // RPC network identity and utility functions (18 symbols)
 // ===========================================================================
 
-/// Get the machine's IP address into a `struct sockaddr_in`.
-/// Fills with INADDR_LOOPBACK (127.0.0.1) as a safe default.
-/// In glibc this queries network interfaces; we use the loopback
-/// address since RPC programs typically bind to it anyway.
+/// Choose an UP IPv4 address in interface order. Loopback is a fallback,
+/// determined by interface flags rather than by the spelling of its address.
+/// Missing/non-IPv4 addresses do not participate in selection.
+fn rpc_local_ipv4_address(
+    interfaces: impl IntoIterator<Item = (c_uint, Option<u32>)>,
+) -> Option<u32> {
+    let mut loopback = None;
+    for (flags, address) in interfaces {
+        if flags & libc::IFF_UP as c_uint == 0 {
+            continue;
+        }
+        let Some(address) = address else {
+            continue;
+        };
+        if flags & libc::IFF_LOOPBACK as c_uint == 0 {
+            return Some(address);
+        }
+        if loopback.is_none() {
+            loopback = Some(address);
+        }
+    }
+    loopback
+}
+
+struct RpcInterfaceList(*mut c_void);
+
+impl Drop for RpcInterfaceList {
+    fn drop(&mut self) {
+        // SAFETY: this guard owns the complete list returned by the native
+        // allocator. Releasing it must not replace the caller's errno.
+        unsafe {
+            let error = *crate::errno_abi::__errno_location();
+            crate::unistd_abi::freeifaddrs(self.0);
+            set_abi_errno(error);
+        }
+    }
+}
+
+/// The legacy void API reports enumeration failure and terminates through
+/// normal exit processing. Format the diagnostic without allocating, including
+/// an unknown errno number, so an allocation failure cannot recurse here.
+fn rpc_interface_failure(error: c_int) -> ! {
+    write_rpc_diagnostic(b"get_myaddress: getifaddrs: ");
+    if let Some(description) = rpc_errno_description(error) {
+        write_rpc_diagnostic(description);
+    } else {
+        write_rpc_diagnostic(b"Unknown error ");
+        let mut digits = [0u8; 11];
+        let mut position = digits.len();
+        let mut magnitude = error.unsigned_abs();
+        loop {
+            position -= 1;
+            digits[position] = b'0' + (magnitude % 10) as u8;
+            magnitude /= 10;
+            if magnitude == 0 {
+                break;
+            }
+        }
+        if error < 0 {
+            position -= 1;
+            digits[position] = b'-';
+        }
+        write_rpc_diagnostic(&digits[position..]);
+    }
+    write_rpc_diagnostic(b"\n");
+    // SAFETY: restore the discovery error before ordinary atexit processing.
+    unsafe {
+        set_abi_errno(error);
+        crate::stdlib_abi::exit(1)
+    }
+}
+
+/// Discover a local IPv4 portmapper endpoint without consulting NSS or DNS.
+/// An UP non-loopback interface takes precedence over an UP loopback. The
+/// selected endpoint uses port 111. If no interface qualifies, leave addr
+/// unchanged; enumeration failure prints a diagnostic and exits with status 1.
 ///
 /// # Safety
-/// ABI boundary function. `addr` must point to a valid `struct sockaddr_in`.
+/// A non-null addr must point to writable sockaddr_in storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn get_myaddress(addr: *mut c_void) {
     if addr.is_null() {
         return;
     }
-    // struct sockaddr_in layout: sin_family(u16) + sin_port(u16) + sin_addr(u32) + sin_zero(8)
-    let sa: *mut libc::sockaddr_in = addr.cast();
-    unsafe {
-        (*sa).sin_family = libc::AF_INET as u16;
-        (*sa).sin_port = 0;
-        (*sa).sin_addr = libc::in_addr {
-            s_addr: u32::to_be(0x7f000001), // 127.0.0.1 in network byte order
+    let mut head = std::ptr::null_mut();
+    // SAFETY: head is a writable result slot. The native interface API owns
+    // all list/address storage until its matching freeifaddrs call.
+    if unsafe { crate::unistd_abi::getifaddrs(&mut head) } != 0 {
+        let error = unsafe { *crate::errno_abi::__errno_location() };
+        rpc_interface_failure(error);
+    }
+    let list = RpcInterfaceList(head);
+    let mut current = list.0.cast::<libc::ifaddrs>();
+    let interfaces = std::iter::from_fn(|| {
+        if current.is_null() {
+            return None;
+        }
+        // SAFETY: the still-owned native list supplies live nodes and address
+        // fields. Read only initialized IPv4 bytes, not sockaddr padding.
+        let entry = unsafe { &*current };
+        current = entry.ifa_next;
+        let address = if !entry.ifa_addr.is_null()
+            && unsafe { (*entry.ifa_addr).sa_family } as c_int == libc::AF_INET
+        {
+            let ipv4 = entry.ifa_addr.cast::<libc::sockaddr_in>();
+            Some(unsafe { std::ptr::addr_of!((*ipv4).sin_addr.s_addr).read_unaligned() })
+        } else {
+            None
         };
-        std::ptr::write_bytes((*sa).sin_zero.as_mut_ptr(), 0, 8);
+        Some((entry.ifa_flags, address))
+    });
+    if let Some(address) = rpc_local_ipv4_address(interfaces) {
+        let endpoint = libc::sockaddr_in {
+            sin_family: libc::AF_INET as libc::sa_family_t,
+            sin_port: 111u16.to_be(),
+            sin_addr: libc::in_addr { s_addr: address },
+            sin_zero: [0; 8],
+        };
+        // SAFETY: the caller provides the complete writable sockaddr. Publish
+        // only after selection, keeping an empty successful lookup untouched.
+        unsafe { addr.cast::<libc::sockaddr_in>().write_unaligned(endpoint) };
+    }
+}
+
+#[cfg(test)]
+mod myaddress_tests {
+    use super::rpc_local_ipv4_address;
+
+    #[test]
+    fn first_up_non_loopback_precedes_loopback_and_ignores_other_entries() {
+        let up = libc::IFF_UP as u32;
+        let local = libc::IFF_LOOPBACK as u32;
+        let first = u32::from_ne_bytes([192, 0, 2, 7]);
+        let second = u32::from_ne_bytes([198, 51, 100, 8]);
+        assert_eq!(
+            rpc_local_ipv4_address([
+                (up | local, Some(u32::from_ne_bytes([127, 0, 0, 1]))),
+                (0, Some(second)),
+                (up, None),
+                (up, Some(first)),
+                (up, Some(second)),
+            ]),
+            Some(first)
+        );
+    }
+
+    #[test]
+    fn first_up_loopback_is_retained_when_no_other_ipv4_qualifies() {
+        let up = libc::IFF_UP as u32;
+        let local = libc::IFF_LOOPBACK as u32;
+        let first = u32::from_ne_bytes([127, 0, 0, 1]);
+        assert_eq!(
+            rpc_local_ipv4_address([
+                (local, Some(u32::from_ne_bytes([127, 0, 0, 9]))),
+                (up, None),
+                (up | local, Some(first)),
+                (up | local, Some(u32::from_ne_bytes([127, 0, 0, 2]))),
+            ]),
+            Some(first)
+        );
+    }
+
+    #[test]
+    fn empty_or_ineligible_interface_lists_have_no_fabricated_address() {
+        assert_eq!(rpc_local_ipv4_address([]), None);
+        assert_eq!(
+            rpc_local_ipv4_address([
+                (0, Some(u32::from_ne_bytes([192, 0, 2, 7]))),
+                (libc::IFF_UP as u32, None),
+            ]),
+            None
+        );
     }
 }
 

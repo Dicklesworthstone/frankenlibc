@@ -92,6 +92,8 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/rpc-core.log"
           cargo test --locked -p frankenlibc-core --lib nss::tests -- --test-threads=1 2>&1 | tee "$root/nss-core.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/nss-core.log"
+          cargo test --locked -p frankenlibc-abi --lib rpc_abi::myaddress_tests "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/myaddress-selector.log"
+          grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$root/myaddress-selector.log"
           for target in rpc_abi_test rpc_udp_transport_test rpc_tcp_frontend_test rpc_auth_recovery_test rpc_svc_cache_test; do
             cargo test --locked -p frankenlibc-abi --test "$target" "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/$target.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/$target.log"

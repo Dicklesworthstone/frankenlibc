@@ -1668,6 +1668,14 @@ fn execute_rpc_legacy_network_case(
         "symbol={symbol};mode={mode};expected_class={expected_class};actual={actual};failure_signature=none"
     );
 
+    if function == "get_myaddress" {
+        let mut execution = non_host_execution(impl_output);
+        execution.note = Some(String::from(
+            "Native local interface structure only; provider-pinned GNU comparison, empty interfaces and discovery failures run in the RPC integration fixture",
+        ));
+        return Ok(execution);
+    }
+
     Ok(DifferentialExecution {
         host_output: impl_output.clone(),
         impl_output,
@@ -2525,8 +2533,8 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                 );
             }
             Ok(format!(
-                "SOCKADDR_LOOPBACK_DEFAULT={}",
-                bool01(rpc_legacy_network_is_loopback_sockaddr(&addr))
+                "SOCKADDR_LOCAL_PORTMAPPER={}",
+                bool01(rpc_legacy_network_is_local_portmapper_sockaddr(&addr))
             ))
         }
         "getnetname" => {
@@ -2584,10 +2592,9 @@ fn rpc_legacy_network_loopback_sockaddr() -> libc::sockaddr_in {
     }
 }
 
-fn rpc_legacy_network_is_loopback_sockaddr(addr: &libc::sockaddr_in) -> bool {
+fn rpc_legacy_network_is_local_portmapper_sockaddr(addr: &libc::sockaddr_in) -> bool {
     addr.sin_family == libc::AF_INET as u16
-        && addr.sin_port == 0
-        && addr.sin_addr.s_addr == u32::to_be(0x7f000001)
+        && addr.sin_port == 111u16.to_be()
         && addr.sin_zero.iter().all(|byte| *byte == 0)
 }
 

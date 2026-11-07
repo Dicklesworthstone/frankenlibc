@@ -7,13 +7,18 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -583,6 +588,88 @@ static void broadcast_case(const char *name) {
     CHECK(broadcast_frees>=broadcast_decodes);
     CHECK(broadcast_output.text==NULL && descriptor_count()==before);
 }
+typedef void (*GetMyAddress)(struct sockaddr_in *);
+typedef int (*RegisterExit)(void (*)(void *),void *,void *);
+typedef struct MyAddressOutput {
+    unsigned char before[16];
+    struct sockaddr_in address;
+    unsigned char after[16];
+} MyAddressOutput;
+
+static void myaddress_failure_exit(void *argument) {
+    const unsigned char *bytes=(const unsigned char *)argument;
+    for(size_t i=0;i<sizeof(MyAddressOutput);i++) if(bytes[i]!=0xa5) _Exit(115);
+    static const char message[]="MYADDRESS_ATEXIT\n";
+    if(write(STDOUT_FILENO,message,sizeof(message)-1)!=(ssize_t)(sizeof(message)-1)) _Exit(116);
+}
+
+static void myaddress_case(const char *name) {
+    GetMyAddress query=(GetMyAddress)symbol("get_myaddress");
+    if(!strcmp(name,"myaddress-failure")) {
+        RegisterExit register_exit=(RegisterExit)symbol("__cxa_atexit");
+        MyAddressOutput output;memset(&output,0xa5,sizeof(output));
+        CHECK(!register_exit(myaddress_failure_exit,&output,NULL));
+        /* Deny new sockets only in this bounded child process. Verify that
+           the filter is active before testing the legacy fatal-error contract. */
+        struct sock_filter filters[]={
+            BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
+            BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socket,0,1),
+            BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EMFILE),
+            BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
+        };
+        struct sock_fprog filter={(unsigned short)(sizeof(filters)/sizeof(filters[0])),filters};
+        CHECK(!prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0));
+        CHECK(!prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&filter));
+        errno=0;CHECK(syscall(SYS_socket,AF_INET,SOCK_DGRAM,0)==-1 && errno==EMFILE);
+        query(&output.address);
+        _Exit(117); /* Neither returning nor bypassing atexit is success. */
+    }
+    void *host=dlopen("libc.so.6",RTLD_NOW|RTLD_LOCAL);CHECK(host);
+    GetMyAddress oracle=(GetMyAddress)dlvsym(host,"get_myaddress","GLIBC_2.2.5");CHECK(oracle);
+    /* Local interface discovery must not depend on a DNS/RPC socket. Keep
+       NETLINK_ROUTE available, but prove both Internet families are denied. */
+    struct sock_filter filters[]={
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socket,0,4),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,AF_INET,1,0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,AF_INET6,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog filter={(unsigned short)(sizeof(filters)/sizeof(filters[0])),filters};
+    CHECK(!prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0));
+    CHECK(!prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&filter));
+    errno=0;CHECK(syscall(SYS_socket,AF_INET,SOCK_DGRAM,0)==-1 && errno==EPERM);
+    errno=0;CHECK(syscall(SYS_socket,AF_INET6,SOCK_DGRAM,0)==-1 && errno==EPERM);
+    int before=descriptor_count();
+    for(int i=0;i<(!strcmp(name,"myaddress-repeat")?32:1);i++) {
+        MyAddressOutput expected,actual;
+        memset(&expected,0xa5,sizeof(expected));memset(&actual,0xa5,sizeof(actual));
+        oracle(&expected.address);
+        query(&actual.address);
+        CHECK(!memcmp(&actual,&expected,sizeof(actual)));
+        for(size_t j=0;j<sizeof(actual.before);j++) {
+            CHECK(actual.before[j]==0xa5 && actual.after[j]==0xa5);
+        }
+        if(!strcmp(name,"myaddress-empty")) {
+            const unsigned char *bytes=(const unsigned char *)&actual.address;
+            for(size_t j=0;j<sizeof(actual.address);j++) CHECK(bytes[j]==0xa5);
+        } else {
+            CHECK(actual.address.sin_family==AF_INET && ntohs(actual.address.sin_port)==111);
+            for(size_t j=0;j<sizeof(actual.address.sin_zero);j++) CHECK(actual.address.sin_zero[j]==0);
+            if(!strcmp(name,"myaddress-loopback")) {
+                const unsigned char address[]={127,0,0,1};
+                CHECK(!memcmp(&actual.address.sin_addr,address,sizeof(address)));
+            } else if(!strcmp(name,"myaddress-nonloopback")) {
+                const unsigned char address[]={192,0,2,1};
+                CHECK(!memcmp(&actual.address.sin_addr,address,sizeof(address)));
+            }
+        }
+    }
+    CHECK(descriptor_count()==before);
+}
+
 /* Resolve the entry point itself from the selected provider. The independent
    peer supplies the expected service port, so a constant-zero stub cannot pass. */
 static void getrpcport_case(const char *name) {
@@ -637,6 +724,9 @@ int main(int argc,char **argv) {
     }
     if(!strncmp(argv[1],"broadcast-",10)) {
         broadcast_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
+    }
+    if(!strncmp(argv[1],"myaddress-",10)) {
+        myaddress_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
     }
     if(!strncmp(argv[1],"getrpcport-",11)) {
         getrpcport_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;

@@ -24,6 +24,7 @@ HOST = ('unknown-protocol', 'unregistered', 'portmapper-error', 'udp', 'tcp',
         'callrpc-encode-error', 'callrpc-decode-error', 'callrpc-procedure-error',
         'callrpc-high-ids', 'callrpc-high-wire-ids', 'callrpc-version-overflow',
         'callrpc-procedure-overflow')
+MYADDRESS = ('myaddress-system', 'myaddress-repeat', 'myaddress-failure')
 GETRPCPORT = ('getrpcport-udp', 'getrpcport-tcp', 'getrpcport-udp-name',
               'getrpcport-tcp-name', 'getrpcport-unregistered',
               'getrpcport-portmapper-error', 'getrpcport-decode-error',
@@ -189,7 +190,9 @@ def broadcast_main(library, output, child):
         acknowledgement = os.pipe() if case == 'broadcast-cancel' else None
         if acknowledgement:
             env['RPC_BROADCAST_ACK_FD'] = str(acknowledgement[0])
-        peer = None if negative else BroadcastPeer(case, acknowledgement[1] if acknowledgement else None)
+        address_case = case.startswith('myaddress-')
+        peer = None if negative or address_case else BroadcastPeer(
+            case, acknowledgement[1] if acknowledgement else None)
         started = time.monotonic()
         try:
             process = subprocess.run([str(binaries[cpp]), case], env=env, capture_output=True,
@@ -207,6 +210,9 @@ def broadcast_main(library, output, child):
         duration = time.monotonic() - started
         if negative:
             passed = code == 113 and stderr == b'WRONG RPC PROVIDER\n'
+            packets, errors = [], []
+        elif address_case:
+            passed = (code, stdout, stderr) == (0, f'PASS {case}\n'.encode(), b'')
             packets, errors = [], []
         else:
             packets, errors = peer.packets, peer.errors
@@ -229,6 +235,26 @@ def broadcast_main(library, output, child):
                             packets=packets, peer_errors=errors))
         print(f'{"PASS" if passed else "FAIL"} {stem}: rc={code} packets={len(packets)}', flush=True)
 
+    # These mutations occur only after the fresh-namespace and interface checks
+    # above. No configured host interface is touched. Restore the broadcast
+    # fixture even if a discovery case or a link-state command raises.
+    for mode in ('host', 'strict', 'hardened'):
+        execute(mode, 'myaddress-nonloopback')
+    execute('wrong-provider', 'myaddress-nonloopback', negative=True)
+    try:
+        subprocess.run(['ip', 'link', 'set', 'rpcprobe0', 'down'], check=True)
+        for mode in ('host', 'strict', 'hardened'):
+            execute(mode, 'myaddress-loopback')
+        subprocess.run(['ip', 'link', 'set', 'lo', 'down'], check=True)
+        for mode in ('host', 'strict', 'hardened'):
+            execute(mode, 'myaddress-empty')
+    finally:
+        restored = [subprocess.run(command) for command in (
+            ['ip', 'link', 'set', 'lo', 'up'],
+            ['ip', 'link', 'set', 'rpcprobe0', 'up'])]
+        if any(result.returncode != 0 for result in restored):
+            raise RuntimeError('failed to restore the private broadcast interfaces')
+
     for case in BROADCAST:
         execute('host', case)
     execute('wrong-provider', 'broadcast-udp', negative=True)
@@ -247,7 +273,8 @@ def broadcast_main(library, output, child):
         records=records), indent=2) + '\n')
     passed = all(row['passed'] for row in records) and library_hash == final_hash
     print(f'RPC broadcast: {"PASS" if passed else "FAIL"} ({len(BROADCAST)} live GNU cases, '
-          f'{2 * (len(BROADCAST) + len(BROADCAST_UNWIND) + len(BROADCAST_OWNED))} candidate cases, 1 provider negative)', flush=True)
+          f'{2 * (len(BROADCAST) + len(BROADCAST_UNWIND) + len(BROADCAST_OWNED))} candidate cases, '
+          '9 interface discovery cases, 2 provider negatives)', flush=True)
     return int(not passed)
 
 
@@ -459,6 +486,10 @@ def main():
         executed_rows = 0
         if negative:
             passed = (code, stdout, stderr) == (113, b'', b'WRONG RPC PROVIDER\n')
+        elif case == 'myaddress-failure':
+            passed = (code, stdout, stderr) == (
+                1, b'MYADDRESS_ATEXIT\n',
+                b'get_myaddress: getifaddrs: Too many open files\n')
         elif case in NETNAME_ROWS:
             executed_rows = netname_transcript_rows(case, stdout)
             passed = code == 0 and stderr == b'' and executed_rows == NETNAME_ROWS[case]
@@ -474,7 +505,7 @@ def main():
             passed = passed and wire['portmap_tcp'] > 0 and wire['tcp'] > 0
         if not negative and case in ('callrpc-high-ids', 'callrpc-version-overflow'):
             passed = passed and wire['portmap'] == 0
-        if not negative and case in NETNAME_ROWS:
+        if not negative and (case in NETNAME_ROWS or case in MYADDRESS):
             passed = passed and all(count == 0 for count in wire.values())
         if not negative and case.startswith('getrpcport-'):
             no_query = case in ('getrpcport-wrong-family', 'getrpcport-mapped-host',
@@ -498,11 +529,11 @@ def main():
         print(f'{"PASS" if passed else "FAIL"} {provider}/{case}: rc={code}', flush=True)
 
     try:
-        for case in HOST + GETRPCPORT + DIAGNOSTICS + tuple(NETNAME_ROWS):
+        for case in HOST + GETRPCPORT + MYADDRESS + DIAGNOSTICS + tuple(NETNAME_ROWS):
             run('host', case, clean)
         for case in DIAGNOSTIC_UNWIND:
             run('host', case, clean, cpp=True)
-        for case in ('unknown-protocol', 'getrpcport-udp') + tuple(NETNAME_ROWS):
+        for case in ('unknown-protocol', 'getrpcport-udp', 'myaddress-system', 'myaddress-failure') + tuple(NETNAME_ROWS):
             run('wrong-provider-host', case,
                 dict(clean, FRANKENLIBC_TEST_LIBRARY=str(library)), True)
             run('wrong-provider-forced', case,
@@ -511,7 +542,7 @@ def main():
         for mode in ('strict', 'hardened'):
             env = dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
                        FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE='0')
-            for case in HOST + GETRPCPORT + DIAGNOSTICS + tuple(NETNAME_ROWS) + OWNED:
+            for case in HOST + GETRPCPORT + MYADDRESS + DIAGNOSTICS + tuple(NETNAME_ROWS) + OWNED:
                 run(mode, case, env)
             for case in UNWIND + DIAGNOSTIC_UNWIND:
                 run(mode, case, env, cpp=True)
