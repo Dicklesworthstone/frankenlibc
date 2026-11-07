@@ -75,6 +75,192 @@ fn responder(socket: UdpSocket, code: u8, marker: u8) -> thread::JoinHandle<()> 
 }
 
 #[test]
+fn hostaliases_search_queries_one_target_and_honors_each_states_options() {
+    use frankenlibc_abi::resolv_state::RES_NOALIASES;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_SEARCH_TEST_CHILD";
+    const ENDPOINT: &str = "FRANKENLIBC_HOSTALIASES_SEARCH_TEST_ENDPOINT";
+    if std::env::var_os(CHILD).is_some() {
+        let endpoint: SocketAddr = std::env::var(ENDPOINT).unwrap().parse().unwrap();
+        let configured = || {
+            let mut state = v4_state(endpoint);
+            state.ndots_nsort = if cfg!(target_endian = "little") {
+                4
+            } else {
+                4 << 28
+            };
+            state.dnsrch[0] = c"suffix.test".as_ptr().cast_mut();
+            state
+        };
+        let mut local = configured();
+        let options = local.options;
+        let mut output = [0u8; 512];
+        for (name, flags, success, host_error) in [
+            (c"sHoRt", options, true, 1),
+            (c"short", options & !(RES_DEFNAMES | RES_DNSRCH), true, 1),
+            (c"negative", options, false, 1),
+            (c"chain", options, false, 1),
+            (c"dotted.alias", options, false, 1),
+            (c"short.", options, false, 1),
+            (c"invalid", options, false, 3),
+            (c"short", options | RES_NOALIASES, false, 1),
+        ] {
+            local.options = flags;
+            let result = unsafe {
+                state::search(
+                    pointer(&mut local),
+                    name.as_ptr(),
+                    1,
+                    1,
+                    output.as_mut_ptr().cast(),
+                    output.len() as _,
+                )
+            };
+            assert_eq!(result > 0, success, "{name:?} options={flags:#x}");
+            assert_eq!(local.res_h_errno, host_error, "{name:?}");
+            if success {
+                assert_eq!(output[result as usize - 1], 81);
+            }
+        }
+
+        // Plain query has no alias/search preprocessing, even with aliases
+        // enabled in the same state.
+        local.options = options;
+        assert_eq!(
+            unsafe {
+                state::query(
+                    pointer(&mut local),
+                    c"short".as_ptr(),
+                    1,
+                    1,
+                    output.as_mut_ptr().cast(),
+                    output.len() as _,
+                )
+            },
+            -1
+        );
+        assert_eq!(local.res_h_errno, 1);
+
+        // The legacy global entry shares the same search implementation and
+        // observes its own public option bit on each call.
+        let global = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() };
+        unsafe {
+            state::close(global);
+            *global.cast::<State>() = configured();
+        }
+        for disabled in [false, true] {
+            if disabled {
+                unsafe { (*global.cast::<State>()).options |= RES_NOALIASES };
+            }
+            let result = unsafe {
+                frankenlibc_abi::unistd_abi::res_search(
+                    c"short".as_ptr(),
+                    1,
+                    1,
+                    output.as_mut_ptr().cast(),
+                    output.len() as _,
+                )
+            };
+            assert_eq!(result > 0, !disabled);
+            assert_eq!(unsafe { (*global.cast::<State>()).res_h_errno }, 1);
+        }
+        unsafe { state::close(global) };
+        return;
+    }
+
+    let aliases = std::env::temp_dir().join(format!(
+        "frankenlibc-state-hostaliases-{}.txt",
+        std::process::id()
+    ));
+    std::fs::write(
+        &aliases,
+        b"broken\nSHORT target.test\nnegative missing.test\nchain next\nnext target.test\ndotted.alias target.test\ninvalid invalid..name\n",
+    )
+    .unwrap();
+    let socket = udp();
+    let endpoint = socket.local_addr().unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let worker = thread::spawn(move || {
+        let mut observed = Vec::new();
+        let mut buffer = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            let (n, peer) = match socket.recv_from(&mut buffer) {
+                Ok(received) => received,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => panic!("DNS fixture: {error}"),
+            };
+            let message = DnsMessage::decode(&buffer[..n]).unwrap();
+            let question = &message.questions[0];
+            assert_eq!((question.qtype, question.qclass), (1, 1));
+            let found = question.qname == b"target.test";
+            observed.push(question.qname.clone());
+            socket
+                .send_to(
+                    &answer(
+                        &buffer[..n],
+                        if found { 0 } else { 3 },
+                        if found { 81 } else { 0 },
+                    ),
+                    peer,
+                )
+                .unwrap();
+        }
+        observed
+    });
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_search_queries_one_target_and_honors_each_states_options",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env(ENDPOINT, endpoint.to_string())
+        .env("HOSTALIASES", &aliases)
+        .env("FRANKENLIBC_MODE", "strict")
+        .output()
+        .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    let observed = worker.join().unwrap();
+    let _ = std::fs::remove_file(aliases);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = [
+        "target.test",
+        "target.test",
+        "missing.test",
+        "next",
+        "dotted.alias.suffix.test",
+        "dotted.alias",
+        "short",
+        "short.suffix.test",
+        "short",
+        "short",
+        "target.test",
+        "short.suffix.test",
+        "short",
+    ]
+    .map(|name| name.as_bytes().to_vec());
+    assert_eq!(observed, expected);
+}
+
+#[test]
 fn public_state_layout_matches_linux_64_bit_header() {
     if cfg!(target_pointer_width = "64") {
         assert_eq!(std::mem::size_of::<State>(), 568);

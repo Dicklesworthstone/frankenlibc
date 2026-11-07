@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
-use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
+use std::ffi::{CStr, OsStr, c_char, c_int, c_ulong, c_void};
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::ffi::OsStrExt;
@@ -2798,7 +2798,19 @@ fn native_dns_resolve(
 > {
     use frankenlibc_core::dns_transport::ResolveError;
 
-    let config = native_dns_config();
+    // HOSTALIASES belongs to the DNS source, after any preceding NSS source.
+    // A replacement is queried directly, without suffixes or alias recursion.
+    let alias = if hostname.contains(&b'.') {
+        None
+    } else {
+        global_hostalias(hostname)
+    };
+    let mut config = native_dns_config();
+    if alias.is_some() {
+        config.search.clear();
+        config.ndots = 0;
+    }
+    let hostname = alias.as_deref().unwrap_or(hostname);
     let mut canonical_name = None;
     policy
         .resolve_dns_with(|want_v4, want_v6| {
@@ -8197,43 +8209,63 @@ fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R
     }
 }
 
-fn hostalias_lookup(name: &[u8], hosts_file: &str) -> Option<Vec<u8>> {
-    let contents = std::fs::read_to_string(hosts_file).ok()?;
-    for line in contents.lines() {
-        // Skip comments and blank lines.
-        let line = line.trim_start();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // Split on first whitespace run: alias, then dns name.
-        let mut it = line.split_whitespace();
-        let alias = it.next()?;
-        let dns = it.next()?;
-        if alias.as_bytes().eq_ignore_ascii_case(name) {
-            return Some(dns.as_bytes().to_vec());
-        }
+/// Snapshot the secure environment and alias file only when this resolver
+/// permits aliases. File/parser misses leave normal DNS search policy intact.
+pub(crate) fn hostalias_lookup(name: &[u8], options: c_ulong) -> Option<Vec<u8>> {
+    if options & crate::resolv_state::RES_NOALIASES != 0 {
+        return None;
     }
-    None
+    // SAFETY: errno is owned by the calling thread.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let path = crate::stdlib_abi::with_environ_locked(|_| {
+        // SAFETY: the name is a static C string. secure_getenv suppresses the
+        // variable for AT_SECURE or an unknown security state. The reentrant
+        // environment lock covers both lookup and the owned path copy.
+        let path = unsafe { crate::stdlib_abi::secure_getenv(c"HOSTALIASES".as_ptr()) };
+        if path.is_null() {
+            return None;
+        }
+        let path = unsafe { CStr::from_ptr(path) };
+        Some(OsStr::from_bytes(path.to_bytes()).to_owned())
+    });
+    let Some(path) = path else {
+        unsafe { set_abi_errno(saved_errno) };
+        return None;
+    };
+    // No environment pointers or locks survive filesystem access. Publish
+    // failures to the native errno cell as well as interpose-thread errno.
+    let contents = match std::fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
+            return None;
+        }
+    };
+    let target = frankenlibc_core::resolv::lookup_hostalias(&contents, name).map(ToOwned::to_owned);
+    unsafe { set_abi_errno(saved_errno) };
+    target
+}
+
+fn global_hostalias(name: &[u8]) -> Option<Vec<u8>> {
+    // SAFETY: __res_state returns aligned, live storage for the calling
+    // thread. Only its option snapshot is borrowed, before any file access.
+    unsafe { crate::resolv_state::hostalias(crate::glibc_internal_abi::__res_state(), name) }
 }
 
 unsafe fn hostalias_name_bytes<'a>(name: *const c_char) -> Option<&'a [u8]> {
     let Ok(Some(name_cstr)) = (unsafe { opt_cstr(name) }) else {
         return None;
     };
-    let name_bytes = name_cstr.to_bytes();
-    if name_bytes.is_empty() {
-        None
-    } else {
-        Some(name_bytes)
-    }
+    Some(name_cstr.to_bytes())
 }
 
 /// `__hostalias(*name) -> *const c_char` — lookup HOSTALIASES alias.
 /// Reads `$HOSTALIASES` (a path to a file with `alias dnsname` lines),
 /// case-insensitively matches `name` against the first column, and
 /// returns a pointer to a thread-local static buffer holding the DNS
-/// name. Returns NULL if `$HOSTALIASES` is unset, the file is missing,
-/// or no alias matches.
+/// name. Returns NULL if aliases are disabled in the thread's resolver state,
+/// secure execution suppresses `$HOSTALIASES`, the file is missing, or no
+/// alias matches.
 ///
 /// # Safety
 /// `name` may be NULL; we return NULL in that case. Otherwise it must
@@ -8244,10 +8276,7 @@ pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
     let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
         return core::ptr::null();
     };
-    let Ok(file) = std::env::var("HOSTALIASES") else {
-        return core::ptr::null();
-    };
-    let Some(dns) = hostalias_lookup(name_bytes, &file) else {
+    let Some(dns) = global_hostalias(name_bytes) else {
         return core::ptr::null();
     };
     // Cap to buffer size minus the NUL terminator.
@@ -8266,15 +8295,15 @@ pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
 /// reentrant variant of `__hostalias`. Writes the resolved DNS name
 /// into the caller-supplied `buf` (NUL-terminated, capped at `buflen`)
 /// and returns `buf` on success. Returns NULL on miss, missing
-/// `$HOSTALIASES`, or invalid arguments. The `statp` resolver state
-/// is unused — the lookup is identical to `__hostalias`'s.
+/// `$HOSTALIASES`, invalid arguments, or `RES_NOALIASES` in `statp`.
 ///
 /// # Safety
-/// `name` must be NULL or NUL-terminated. `buf`, when non-NULL, must
-/// point to at least `buflen` writable bytes.
+/// `statp` must point to a live resolver state. `name` must be NULL or
+/// NUL-terminated. `buf`, when non-NULL, must point to at least `buflen`
+/// writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_hostalias(
-    _statp: *mut c_void,
+    statp: *mut c_void,
     name: *const c_char,
     buf: *mut c_char,
     buflen: usize,
@@ -8285,10 +8314,9 @@ pub unsafe extern "C" fn __res_hostalias(
     let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
         return core::ptr::null();
     };
-    let Ok(file) = std::env::var("HOSTALIASES") else {
-        return core::ptr::null();
-    };
-    let Some(dns) = hostalias_lookup(name_bytes, &file) else {
+    // SAFETY: the caller supplies a live state; the delegate checks null,
+    // alignment and known extent before reading its options.
+    let Some(dns) = (unsafe { crate::resolv_state::hostalias(statp, name_bytes) }) else {
         return core::ptr::null();
     };
     let effective_buflen =

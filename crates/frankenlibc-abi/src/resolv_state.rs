@@ -30,6 +30,7 @@ pub const RES_IGNTC: c_ulong = 0x20;
 pub const RES_RECURSE: c_ulong = 0x40;
 pub const RES_DEFNAMES: c_ulong = 0x80;
 pub const RES_DNSRCH: c_ulong = 0x200;
+pub const RES_NOALIASES: c_ulong = 0x1000;
 pub const RES_ROTATE: c_ulong = 0x4000;
 pub const RES_USE_EDNS0: c_ulong = 0x0010_0000;
 pub const RES_USE_DNSSEC: c_ulong = 0x0080_0000;
@@ -145,6 +146,14 @@ unsafe fn text(pointer: *const c_char) -> Result<Vec<u8>, c_int> {
     }
     // SAFETY: the scan established this readable span before the terminator.
     Ok(unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), length) }.to_vec())
+}
+
+/// Resolve an explicit alias using only the caller's option snapshot. This
+/// does not initialize or mutate state, nor borrow it across filesystem I/O.
+pub(crate) unsafe fn hostalias(pointer: *mut c_void, name: &[u8]) -> Option<Vec<u8>> {
+    // SAFETY: caller-owned state is checked before its flags are copied.
+    let options = unsafe { checked_state(pointer).ok()? }.options;
+    crate::resolv_abi::hostalias_lookup(name, options)
 }
 
 fn fail(error: c_int) -> c_int {
@@ -870,11 +879,22 @@ pub unsafe fn search(
     let inputs = (|| {
         // SAFETY: bounded name/search copies; no caller memory is borrowed during I/O.
         let name = unsafe { text(name)? };
-        let domains = unsafe { search_domains(pointer)? };
+        let alias = if name.contains(&b'.') {
+            None
+        } else {
+            crate::resolv_abi::hostalias_lookup(&name, options)
+        };
+        // An alias is a direct query: even caller-installed search pointers
+        // are irrelevant and must not be read on this path.
+        let domains = if alias.is_some() {
+            Vec::new()
+        } else {
+            unsafe { search_domains(pointer)? }
+        };
         let ndots = unsafe { checked_state(pointer)? }.ndots();
-        Ok::<_, c_int>((name, domains, ndots))
+        Ok::<_, c_int>((name, alias, domains, ndots))
     })();
-    let (name, domains, ndots) = match inputs {
+    let (name, alias, domains, ndots) = match inputs {
         Ok(inputs) => inputs,
         Err(os) => {
             return unsafe {
@@ -891,6 +911,18 @@ pub unsafe fn search(
             };
         }
     };
+    if let Some(alias) = alias {
+        // The first alias target is authoritative, including negative and
+        // temporary replies. Do not search the original name on failure.
+        return unsafe {
+            finish_lookup(
+                pointer,
+                lookup(pointer, &alias, class, kind, options, &config, capacity),
+                answer,
+                capacity,
+            )
+        };
+    }
     // Use wire labels to distinguish a final root dot from an escaped literal
     // dot. A decimal escaped dot is data, never a search-label separator.
     let mut escaped = false;

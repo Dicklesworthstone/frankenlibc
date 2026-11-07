@@ -79,6 +79,59 @@ fn is_resolver_field_separator(b: u8) -> bool {
     b.is_ascii_whitespace()
 }
 
+/// Find a HOSTALIASES target without decoding the byte-oriented file as UTF-8.
+///
+/// GNU compares aliases case-insensitively and ignores unescaped trailing
+/// dots. Leading whitespace does not introduce an alias. Unrelated malformed
+/// rows are skipped, but the first matching row is authoritative, including
+/// when its target is missing. The returned target is borrowed and is neither
+/// expanded through the search list nor looked up as another alias.
+pub fn lookup_hostalias<'a>(contents: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    fn separator(byte: u8) -> bool {
+        // C isspace includes vertical tab, unlike u8::is_ascii_whitespace.
+        byte.is_ascii_whitespace() || byte == b'\x0b'
+    }
+
+    fn without_root_dots(mut name: &[u8]) -> &[u8] {
+        while name.last() == Some(&b'.') {
+            let escapes = name[..name.len() - 1]
+                .iter()
+                .rev()
+                .take_while(|&&byte| byte == b'\\')
+                .count();
+            if escapes % 2 != 0 {
+                break;
+            }
+            name = &name[..name.len() - 1];
+        }
+        name
+    }
+
+    let name = without_root_dots(name);
+    for line in contents.split_inclusive(|&byte| byte == b'\n') {
+        // The GNU file reader uses an 8192-byte line buffer, including NUL.
+        // Preserve its bounded records even when a physical line is longer.
+        for part in line.chunks(8191) {
+            let end = part
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(part.len());
+            let part = &part[..end];
+            let alias_end = part
+                .iter()
+                .position(|&byte| separator(byte))
+                .unwrap_or(part.len());
+            if !without_root_dots(&part[..alias_end]).eq_ignore_ascii_case(name) {
+                continue;
+            }
+            return part[alias_end..]
+                .split(|&byte| separator(byte))
+                .find(|field| !field.is_empty());
+        }
+    }
+    None
+}
+
 /// Parse a single line from /etc/hosts.
 ///
 /// Format: `<address> <hostname> [<alias>...]`
@@ -1225,6 +1278,63 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
+
+    #[test]
+    fn hostaliases_skip_unrelated_bad_rows_and_preserve_target_bytes() {
+        let file = b"\n# comment\nbroken\nother \xff\n alias wrong.test\nALIAS\x0bTarget.\xff\r\n";
+        assert_eq!(
+            lookup_hostalias(file, b"alias"),
+            Some(b"Target.\xff".as_slice())
+        );
+        assert_eq!(lookup_hostalias(file, b"missing"), None);
+        assert_eq!(
+            lookup_hostalias(b"alias first\0ignored\nalias second\n", b"alias"),
+            Some(b"first".as_slice())
+        );
+    }
+
+    #[test]
+    fn hostaliases_first_matching_row_is_authoritative() {
+        for file in [
+            b"alias\nalias later.test\n".as_slice(),
+            b"alias \nalias later.test\n".as_slice(),
+            b"alias\0 ignored\nalias later.test\n".as_slice(),
+        ] {
+            assert_eq!(lookup_hostalias(file, b"alias"), None);
+        }
+        assert_eq!(
+            lookup_hostalias(b"alias first.test extra\nalias second.test\n", b"alias"),
+            Some(b"first.test".as_slice())
+        );
+    }
+
+    #[test]
+    fn hostaliases_name_comparison_preserves_escapes() {
+        assert_eq!(
+            lookup_hostalias(b"ALIAS.. target.test\n", b"alias."),
+            Some(b"target.test".as_slice())
+        );
+        assert_eq!(lookup_hostalias(br"alias\. target.test", br"alias\"), None);
+        assert_eq!(lookup_hostalias(br"a\046b target.test", br"a\.b"), None);
+        assert_eq!(
+            lookup_hostalias(br"a\.b target.test", br"A\.B"),
+            Some(b"target.test".as_slice())
+        );
+    }
+
+    #[test]
+    fn hostaliases_long_lines_observe_bounded_records() {
+        let mut file = b"alias ".to_vec();
+        file.extend(std::iter::repeat_n(b'x', 9000));
+        file.push(b'\n');
+        let target = lookup_hostalias(&file, b"alias").unwrap();
+        assert_eq!(target.len(), 8191 - b"alias ".len());
+        assert!(target.iter().all(|&byte| byte == b'x'));
+        assert!(std::ptr::eq(
+            target.as_ptr(),
+            file[b"alias ".len()..].as_ptr()
+        ));
+    }
 
     #[test]
     fn reverse_hosts_accepts_equivalent_ipv6_spellings_in_file_order() {

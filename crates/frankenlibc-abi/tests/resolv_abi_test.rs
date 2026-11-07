@@ -5173,6 +5173,219 @@ fn bd_dcfj5_hostalias_helpers_return_null() {
 }
 
 #[test]
+fn hostaliases_helpers_match_host_parser_buffers_and_resolver_options() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::resolv_state::{RES_NOALIASES, State};
+    use std::os::unix::ffi::OsStringExt;
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_HELPER_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        type Hostalias =
+            unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_char, usize) -> *const c_char;
+        let oracle: Hostalias = unsafe {
+            dlsym_oracle::host_fn(c"__res_hostalias", resolv_abi::__res_hostalias as *const ())
+        };
+        let host_errno: unsafe extern "C" fn() -> *mut c_int =
+            unsafe { dlsym_oracle::host_fn(c"__errno_location", __errno_location as *const ()) };
+        let path = std::path::PathBuf::from(std::env::var_os("HOSTALIASES").unwrap());
+        let mut cases = vec![
+            (Vec::new(), b"alias".to_vec()),
+            (b"ALIAS Target.Test\n".to_vec(), b"alias".to_vec()),
+            (b"alias.. target.test\n".to_vec(), b"ALIAS.".to_vec()),
+            (
+                b"\nbroken\nother \xff\nalias target.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (
+                b" alias wrong.test\nalias target.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (b"alias\nalias later.test\n".to_vec(), b"alias".to_vec()),
+            (b"alias \nalias later.test\n".to_vec(), b"alias".to_vec()),
+            (
+                b"alias\0 ignored\nalias later.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (
+                b"alias one\0two\nalias later.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (b"alias\x0b\xff.test\r\n".to_vec(), b"alias".to_vec()),
+            (
+                b"alias first.test extra\nalias second.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (br"a\.b target.test".to_vec(), br"A\.B".to_vec()),
+            (br"a\046b target.test".to_vec(), br"a\.b".to_vec()),
+            (b". root.test\n".to_vec(), Vec::new()),
+            (b"other target.test\n".to_vec(), b"missing".to_vec()),
+        ];
+        let mut long = b"alias ".to_vec();
+        long.extend(std::iter::repeat_n(b'x', 9000));
+        long.push(b'\n');
+        cases.push((long, b"alias".to_vec()));
+        for (file, name) in cases {
+            std::fs::write(&path, &file).unwrap();
+            let name = CString::new(name).unwrap();
+            for options in [0, RES_NOALIASES] {
+                for capacity in [1usize, 5, 32, 1025, 10000] {
+                    let mut native = State::zeroed();
+                    let mut host = State::zeroed();
+                    native.options = options;
+                    host.options = options;
+                    let mut actual = vec![0xa5u8; capacity + 2];
+                    let mut expected = actual.clone();
+                    // SAFETY: both live states match the public Linux layout;
+                    // caller-owned spans include a canary on each side.
+                    let (actual_result, actual_errno, expected_result, expected_errno) = unsafe {
+                        *__errno_location() = 77;
+                        let actual_result = resolv_abi::__res_hostalias(
+                            (&mut native as *mut State).cast(),
+                            name.as_ptr(),
+                            actual.as_mut_ptr().add(1).cast(),
+                            capacity,
+                        );
+                        let actual_errno = *__errno_location();
+                        *host_errno() = 77;
+                        let expected_result = oracle(
+                            (&mut host as *mut State).cast(),
+                            name.as_ptr(),
+                            expected.as_mut_ptr().add(1).cast(),
+                            capacity,
+                        );
+                        (actual_result, actual_errno, expected_result, *host_errno())
+                    };
+                    assert_eq!(
+                        actual_result.is_null(),
+                        expected_result.is_null(),
+                        "name={name:?} options={options:#x} capacity={capacity}"
+                    );
+                    if !actual_result.is_null() {
+                        assert_eq!(actual_result.cast::<u8>(), unsafe {
+                            actual.as_ptr().add(1)
+                        });
+                    }
+                    assert_eq!(actual, expected, "name={name:?} capacity={capacity}");
+                    assert_eq!(actual_errno, expected_errno, "name={name:?}");
+                    assert_eq!((native.options, host.options), (options, options));
+                }
+            }
+        }
+
+        std::fs::write(&path, b"alias target.test\n").unwrap();
+        let mut local = State::zeroed();
+        let mut buffer = [0 as c_char; 32];
+        // SAFETY: this isolated subprocess exclusively owns its resolver TLS.
+        let global = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() }.cast::<State>();
+        let saved = unsafe { (*global).options };
+        unsafe { (*global).options = RES_NOALIASES };
+        assert!(unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) }.is_null());
+        // Caller-owned state does not inherit the thread's NOALIASES flag.
+        assert!(
+            !unsafe {
+                resolv_abi::__res_hostalias(
+                    (&mut local as *mut State).cast(),
+                    c"alias".as_ptr(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            }
+            .is_null()
+        );
+        unsafe { (*global).options = 0 };
+        let found = unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) };
+        assert!(!found.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(found) }.to_bytes(), b"target.test");
+
+        #[cfg(feature = "conformance-testing")]
+        {
+            use frankenlibc_abi::stdlib_abi::{getauxval, set_secure_auxv_for_conformance};
+            let secure = unsafe { getauxval(libc::AT_SECURE as _) } as usize;
+            for mode in [Some(1), None] {
+                // SAFETY: this exact-test child has no concurrent auxv readers.
+                unsafe { set_secure_auxv_for_conformance(mode) };
+                assert!(unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) }.is_null());
+                assert!(
+                    unsafe {
+                        resolv_abi::__res_hostalias(
+                            (&mut local as *mut State).cast(),
+                            c"alias".as_ptr(),
+                            buffer.as_mut_ptr(),
+                            buffer.len(),
+                        )
+                    }
+                    .is_null()
+                );
+            }
+            unsafe { set_secure_auxv_for_conformance(Some(secure)) };
+        }
+        unsafe { (*global).options = saved };
+
+        std::fs::remove_file(&path).unwrap();
+        for options in [0, RES_NOALIASES] {
+            local.options = options;
+            let mut host = State::zeroed();
+            host.options = options;
+            buffer.fill(0x55);
+            unsafe { *__errno_location() = 77 };
+            assert!(
+                unsafe {
+                    resolv_abi::__res_hostalias(
+                        (&mut local as *mut State).cast(),
+                        c"alias".as_ptr(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                    )
+                }
+                .is_null()
+            );
+            let actual_errno = unsafe { *__errno_location() };
+            unsafe { *host_errno() = 77 };
+            assert!(
+                unsafe {
+                    oracle(
+                        (&mut host as *mut State).cast(),
+                        c"alias".as_ptr(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                    )
+                }
+                .is_null()
+            );
+            let expected_errno = unsafe { *host_errno() };
+            assert_eq!(actual_errno, expected_errno);
+            assert_eq!(actual_errno, if options == 0 { libc::ENOENT } else { 77 });
+            assert!(buffer.iter().all(|&byte| byte == 0x55));
+        }
+        return;
+    }
+
+    // The path itself is not required to be UTF-8 either.
+    let mut path = temp_resolver_path("hostaliases-oracle")
+        .into_os_string()
+        .into_vec();
+    path.push(0xff);
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_helpers_match_host_parser_buffers_and_resolver_options",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("HOSTALIASES", &path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn bd_dcfj5_loc_helpers_round_trip_rfc1876() {
     use frankenlibc_abi::resolv_abi::*;
     let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
@@ -6964,6 +7177,221 @@ fn native_dns_environment_controls_search_order_and_transport() {
     }
     let _ = std::fs::remove_file(resolv_path);
     let _ = std::fs::remove_file(nsswitch_path);
+}
+
+#[test]
+fn hostaliases_native_dns_preserves_nss_order_and_direct_target_semantics() {
+    use frankenlibc_abi::resolv_state::{RES_NOALIASES, State};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_DNS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let lookup = |name: &CStr, family, flags| {
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = family;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = flags;
+            let mut result = ptr::null_mut();
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(name.as_ptr(), ptr::null(), &hints, &mut result) };
+            let (families, canonical) = if result.is_null() {
+                (Vec::new(), None)
+            } else {
+                let families = unsafe { collect_addrinfo_families(result) };
+                let canonical = unsafe { collect_addrinfo_canonname(result) }
+                    .into_iter()
+                    .flatten()
+                    .next();
+                unsafe { resolv_abi::freeaddrinfo(result) };
+                (families, canonical)
+            };
+            (rc, families, canonical)
+        };
+        let (rc, mut families, canonical) = lookup(c"sHoRt", libc::AF_UNSPEC, libc::AI_CANONNAME);
+        assert_eq!(rc, 0);
+        families.sort_unstable();
+        assert_eq!(families, [libc::AF_INET, libc::AF_INET6]);
+        assert_eq!(canonical.as_deref(), Some(b"dual.hermetic.test".as_slice()));
+
+        let legacy =
+            unsafe { resolv_abi::gethostbyname(c"short".as_ptr()) }.cast::<libc::hostent>();
+        assert!(!legacy.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr((*legacy).h_name) }.to_bytes(),
+            b"dual.hermetic.test"
+        );
+        assert_eq!(
+            unsafe { hostent_addr_octets(&*legacy) },
+            [[198, 51, 100, 42]]
+        );
+        let mut entry: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0 as c_char; 1024];
+        let mut result: *mut libc::hostent = ptr::null_mut();
+        let mut host_error = 0;
+        assert_eq!(
+            unsafe {
+                unistd_abi::gethostbyname2_r(
+                    c"short".as_ptr(),
+                    libc::AF_INET6,
+                    (&mut entry as *mut libc::hostent).cast(),
+                    scratch.as_mut_ptr(),
+                    scratch.len(),
+                    (&mut result as *mut *mut libc::hostent).cast(),
+                    &mut host_error,
+                )
+            },
+            0
+        );
+        assert!(!result.is_null());
+        assert_eq!(entry.h_addrtype, libc::AF_INET6);
+        assert_eq!(
+            unsafe { CStr::from_ptr(entry.h_name) }.to_bytes(),
+            b"dual.hermetic.test"
+        );
+
+        // The files source wins before DNS even when an alias of the same
+        // spelling points elsewhere. Numeric-only requests never reach DNS.
+        let (rc, _, canonical) = lookup(c"shadow", libc::AF_INET, libc::AI_CANONNAME);
+        assert_eq!(rc, 0);
+        assert_eq!(canonical.as_deref(), Some(b"shadow".as_slice()));
+        let shadow =
+            unsafe { resolv_abi::gethostbyname(c"shadow".as_ptr()) }.cast::<libc::hostent>();
+        assert!(!shadow.is_null());
+        assert_eq!(
+            unsafe { hostent_addr_octets(&*shadow) },
+            [[203, 0, 113, 11]]
+        );
+        assert_eq!(
+            lookup(c"short", libc::AF_INET, libc::AI_NUMERICHOST).0,
+            libc::EAI_NONAME
+        );
+
+        for (name, expected) in [
+            (c"negative", libc::EAI_NONAME),
+            (c"temporary", libc::EAI_AGAIN),
+            (c"chain", libc::EAI_NONAME),
+            (c"dotted.alias", libc::EAI_NONAME),
+            (c"short.", libc::EAI_NONAME),
+            (c"invalid", libc::EAI_FAIL),
+        ] {
+            assert_eq!(lookup(name, libc::AF_INET, 0).0, expected, "{name:?}");
+        }
+        for (name, expected) in [(c"negative", 1), (c"temporary", 2), (c"invalid", 3)] {
+            assert!(unsafe { resolv_abi::gethostbyname(name.as_ptr()) }.is_null());
+            assert_eq!(unsafe { *resolv_abi::__h_errno_location() }, expected);
+        }
+
+        // The native address API observes the public per-thread switch too.
+        let state = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() }.cast::<State>();
+        let options = unsafe { (*state).options };
+        unsafe { (*state).options |= RES_NOALIASES };
+        assert_eq!(lookup(c"short", libc::AF_INET, 0).0, libc::EAI_NONAME);
+        assert!(unsafe { resolv_abi::gethostbyname(c"short".as_ptr()) }.is_null());
+        unsafe { (*state).options = options };
+        assert_eq!(lookup(c"short", libc::AF_INET, 0).0, 0);
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("hostaliases-resolv");
+    let nsswitch_path = temp_resolver_path("hostaliases-nsswitch");
+    let hosts_path = temp_resolver_path("hostaliases-hosts");
+    let aliases_path = temp_resolver_path("hostaliases-dns");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\nsearch ignored.hermetic.test\noptions ndots:4 timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: files dns\n").unwrap();
+    std::fs::write(&hosts_path, b"203.0.113.11 shadow\n").unwrap();
+    std::fs::write(
+        &aliases_path,
+        b"broken\nother \xff\nSHORT dual.hermetic.test\nshadow dual.hermetic.test\nnegative missing.hermetic.test\ntemporary temporary.hermetic.test\nchain next\nnext dual.hermetic.test\ndotted.alias dual.hermetic.test\ninvalid invalid..name\n",
+    )
+    .unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let worker = std::thread::spawn(move || {
+        let mut observed = Vec::new();
+        let mut query = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            let (n, peer) = match socket.recv_from(&mut query) {
+                Ok(received) => received,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => panic!("DNS fixture: {error}"),
+            };
+            let (name, kind, _) = parse_dns_question(&query[..n]).unwrap();
+            let mut reply = build_hermetic_dns_reply(&query[..n], false).unwrap();
+            if name == "temporary.hermetic.test" {
+                reply[3] = (reply[3] & !15) | 2;
+            }
+            observed.push((name, kind));
+            socket.send_to(&reply, peer).unwrap();
+        }
+        observed
+    });
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_native_dns_preserves_nss_order_and_direct_target_semantics",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("FRANKENLIBC_MODE", "strict")
+        .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+        .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+        .env(HOSTS_PATH_ENV, &hosts_path)
+        .env("FRANKENLIBC_DNS_PORT", port.to_string())
+        .env("HOSTALIASES", &aliases_path)
+        .env("LOCALDOMAIN", "ignored.hermetic.test")
+        .env("RES_OPTIONS", "ndots:4 timeout:1 attempts:1")
+        .output()
+        .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    let observed = worker.join().unwrap();
+    for path in [resolv_path, nsswitch_path, hosts_path, aliases_path] {
+        let _ = std::fs::remove_file(path);
+    }
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = [
+        ("dual.hermetic.test", 1),
+        ("dual.hermetic.test", 28),
+        ("dual.hermetic.test", 1),
+        ("dual.hermetic.test", 28),
+        ("missing.hermetic.test", 1),
+        ("temporary.hermetic.test", 1),
+        ("next", 1),
+        ("dotted.alias.ignored.hermetic.test", 1),
+        ("dotted.alias", 1),
+        ("short", 1),
+        ("missing.hermetic.test", 1),
+        ("temporary.hermetic.test", 1),
+        ("short.ignored.hermetic.test", 1),
+        ("short", 1),
+        ("short.ignored.hermetic.test", 1),
+        ("short", 1),
+        ("dual.hermetic.test", 1),
+    ]
+    .map(|(name, kind)| (name.to_owned(), kind));
+    assert_eq!(observed, expected);
 }
 
 /// Live ABI differential test against host glibc (`dlsym_oracle::host_fn`)
