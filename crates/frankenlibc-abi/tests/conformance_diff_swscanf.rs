@@ -265,6 +265,7 @@ mod locale_scanning {
     }
 
     type OpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+    type FdopenFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void;
     type StreamFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
     type SeekFn = unsafe extern "C-unwind" fn(*mut c_void, libc::c_long, c_int) -> c_int;
     type TellFn = unsafe extern "C-unwind" fn(*mut c_void) -> libc::c_long;
@@ -281,6 +282,7 @@ mod locale_scanning {
         name: &'static str,
         errno: ErrnoFn,
         open: OpenFn,
+        fdopen: FdopenFn,
         close: StreamFn,
         orient: FwideFn,
         get: WideReadFn,
@@ -303,6 +305,7 @@ mod locale_scanning {
                 name: "host",
                 errno: host().errno,
                 open: host_fn(c"fopen", stdio_abi::fopen as *const ()),
+                fdopen: host_fn(c"fdopen", stdio_abi::fdopen as *const ()),
                 close: host_fn(c"fclose", stdio_abi::fclose as *const ()),
                 orient: host_fn(c"fwide", glibc_internal_abi::fwide as *const ()),
                 get: host_fn(c"fgetwc", fl::fgetwc as *const ()),
@@ -324,6 +327,7 @@ mod locale_scanning {
                 name: "native",
                 errno: errno_abi::__errno_location,
                 open: stdio_abi::fopen,
+                fdopen: stdio_abi::fdopen,
                 close: stdio_abi::fclose,
                 orient: glibc_internal_abi::fwide,
                 get: fl::fgetwc,
@@ -367,6 +371,526 @@ mod locale_scanning {
         // Retain the unique file as failure evidence; no shared path or cleanup
         // can remove another concurrent child's input or output.
         (path, c_path)
+    }
+
+    type FwscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const Wc, ...) -> c_int;
+    type VfwscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const Wc, *mut c_void) -> c_int;
+
+    unsafe extern "C-unwind" fn call_vfwscanf(
+        stream: *mut c_void,
+        format: *const Wc,
+        mut args: ...
+    ) -> c_int {
+        unsafe { fl::vfwscanf(stream, format, std::ptr::addr_of_mut!(args).cast()) }
+    }
+
+    unsafe extern "C-unwind" fn call_c99_vfwscanf(
+        stream: *mut c_void,
+        format: *const Wc,
+        mut args: ...
+    ) -> c_int {
+        unsafe {
+            isoc_abi::__isoc99_vfwscanf(
+                stream,
+                format.cast(),
+                std::ptr::addr_of_mut!(args).cast(),
+            )
+        }
+    }
+
+    unsafe extern "C-unwind" fn call_c23_vfwscanf(
+        stream: *mut c_void,
+        format: *const Wc,
+        mut args: ...
+    ) -> c_int {
+        unsafe {
+            isoc_abi::__isoc23_vfwscanf(
+                stream,
+                format.cast(),
+                std::ptr::addr_of_mut!(args).cast(),
+            )
+        }
+    }
+
+    unsafe extern "C-unwind" fn call_host_vfwscanf(
+        stream: *mut c_void,
+        format: *const Wc,
+        mut args: ...
+    ) -> c_int {
+        static HOST: OnceLock<VfwscanfFn> = OnceLock::new();
+        let scan = *HOST.get_or_init(|| unsafe {
+            host_fn(c"vfwscanf", fl::vfwscanf as *const ())
+        });
+        unsafe { scan(stream, format, std::ptr::addr_of_mut!(args).cast()) }
+    }
+
+    #[derive(Clone, Copy)]
+    struct StreamScanEngine {
+        name: &'static str,
+        io: WideIoEngine,
+        scan: FwscanfFn,
+        free: FreeFn,
+    }
+
+    fn stream_scan_engines() -> [StreamScanEngine; 8] {
+        let [host_io, native_io] = wide_io_engines();
+        let native = |name, scan| StreamScanEngine {
+            name,
+            io: native_io,
+            scan,
+            free: malloc_abi::free,
+        };
+        [
+            StreamScanEngine {
+                name: "host_fwscanf",
+                io: host_io,
+                scan: unsafe { host_fn(c"fwscanf", fl::fwscanf as *const ()) },
+                free: host().free,
+            },
+            StreamScanEngine {
+                name: "host_vfwscanf",
+                io: host_io,
+                scan: call_host_vfwscanf,
+                free: host().free,
+            },
+            native("fwscanf", fl::fwscanf as FwscanfFn),
+            native("__isoc99_fwscanf", isoc_abi::__isoc99_fwscanf as FwscanfFn),
+            native("__isoc23_fwscanf", isoc_abi::__isoc23_fwscanf as FwscanfFn),
+            native("vfwscanf", call_vfwscanf as FwscanfFn),
+            native("__isoc99_vfwscanf", call_c99_vfwscanf as FwscanfFn),
+            native("__isoc23_vfwscanf", call_c23_vfwscanf as FwscanfFn),
+        ]
+    }
+
+    fn scan_stream(
+        engine: StreamScanEngine,
+        bytes: &[u8],
+        bound: &CStr,
+        active: &CStr,
+    ) -> *mut c_void {
+        select(bound);
+        let (_, path) = wide_stream_path(engine.name, bytes);
+        let stream = unsafe { (engine.io.open)(path.as_ptr(), c"r".as_ptr()) };
+        assert!(!stream.is_null(), "{} input FILE", engine.name);
+        assert!(unsafe { (engine.io.orient)(stream, 1) } > 0);
+        select(active);
+        stream
+    }
+
+    #[test]
+    fn wide_file_scanning_crosses_refills_and_preserves_positional_allocations() {
+        if !isolated("wide_file_scanning_crosses_refills_and_preserves_positional_allocations") {
+            return;
+        }
+        const LENGTH: usize = 10_007;
+        for engine in stream_scan_engines() {
+            for (bound, active, external, expected) in [
+                (c"C.UTF-8", c"fr_FR", &b"\xc3\xa9"[..], &b"\xe9"[..]),
+                (c"fr_FR", c"C.UTF-8", &b"\xe9"[..], &b"\xc3\xa9"[..]),
+            ] {
+                let mut input = external.repeat(LENGTH);
+                input.extend_from_slice(b" 27#Z");
+                let stream = scan_stream(engine, &input, bound, active);
+                let mut text: *mut c_char = std::ptr::null_mut();
+                let (mut count, mut number, mut tail) = (SENTINEL, SENTINEL, SENTINEL);
+                let mut skipped = [SENTINEL; 4];
+                let args = skipped.as_mut_ptr();
+                let format = w("%8$ms%1$n %2$d%3$lc");
+                let (rc, error) = unsafe {
+                    *(engine.io.errno)() = 23;
+                    let rc = (engine.scan)(
+                        stream,
+                        format.as_ptr(),
+                        &mut count,
+                        &mut number,
+                        &mut tail,
+                        args,
+                        args.add(1),
+                        args.add(2),
+                        args.add(3),
+                        &mut text,
+                    );
+                    (rc, *(engine.io.errno)())
+                };
+                assert_eq!(
+                    (rc, error, count, number, tail),
+                    (3, 23, LENGTH as c_int, 27, b'#' as Wc),
+                    "{} {bound:?}->{active:?}",
+                    engine.name
+                );
+                assert_eq!(skipped, [SENTINEL; 4], "{} unused arguments", engine.name);
+                assert!(!text.is_null(), "{} allocated field", engine.name);
+                unsafe {
+                    assert_eq!(CStr::from_ptr(text).to_bytes(), expected.repeat(LENGTH));
+                    (engine.free)(text.cast());
+                    assert_eq!((engine.io.tell)(stream), (input.len() - 1) as libc::c_long);
+                    assert_eq!((engine.io.error)(stream), 0);
+                    assert_eq!((engine.io.eof)(stream), 0);
+                    assert_eq!((engine.io.get)(stream), b'Z' as u32);
+                    assert_eq!((engine.io.close)(stream), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_file_destination_errors_stop_before_later_reads_and_assignments() {
+        if !isolated("wide_file_destination_errors_stop_before_later_reads_and_assignments") {
+            return;
+        }
+        for engine in stream_scan_engines() {
+            for (format, expected) in [
+                ("%s%n%d", 0),
+                ("%3c%n%d", libc::EOF),
+                ("%[^X]%n%d", 0),
+            ] {
+                let stream = scan_stream(engine, "é€X 23".as_bytes(), c"C.UTF-8", c"fr_FR");
+                let mut output = [0xa5u8; 16];
+                let (mut count, mut number) = (SENTINEL, SENTINEL);
+                let (rc, error) = unsafe {
+                    *(engine.io.errno)() = 23;
+                    let rc = (engine.scan)(
+                        stream,
+                        w(format).as_ptr(),
+                        output.as_mut_ptr(),
+                        &mut count,
+                        &mut number,
+                    );
+                    (rc, *(engine.io.errno)())
+                };
+                assert_eq!(
+                    (rc, error, count, number),
+                    (expected, libc::EILSEQ, SENTINEL, SENTINEL),
+                    "{} {format}",
+                    engine.name
+                );
+                assert_eq!(output[0], 0xe9, "{} completed prefix", engine.name);
+                assert!(output[1..].iter().all(|&byte| byte == 0xa5));
+                unsafe {
+                    assert_eq!((engine.io.tell)(stream), 5, "{} failing scalar consumed", engine.name);
+                    assert_eq!((engine.io.error)(stream), 0, "destination error is not FILE error");
+                    assert_eq!((engine.io.eof)(stream), 0);
+                    assert_eq!((engine.io.get)(stream), b'X' as u32);
+                    assert_eq!((engine.io.close)(stream), 0);
+                }
+            }
+
+            let stream = scan_stream(engine, "é é€X".as_bytes(), c"C.UTF-8", c"fr_FR");
+            let mut first: *mut c_char = std::ptr::null_mut();
+            let mut second = std::ptr::without_provenance_mut::<c_char>(1);
+            let mut count = SENTINEL;
+            let (rc, error) = unsafe {
+                *(engine.io.errno)() = 23;
+                let rc = (engine.scan)(
+                    stream,
+                    w("%ms %ms%n").as_ptr(),
+                    &mut first,
+                    &mut second,
+                    &mut count,
+                );
+                (rc, *(engine.io.errno)())
+            };
+            assert_eq!((rc, error, count), (1, libc::EILSEQ, SENTINEL), "{} %m failure", engine.name);
+            assert!(!first.is_null());
+            assert!(second.is_null());
+            unsafe {
+                assert_eq!(CStr::from_ptr(first).to_bytes(), b"\xe9");
+                (engine.free)(first.cast());
+                assert_eq!((engine.io.tell)(stream), 8);
+                assert_eq!((engine.io.get)(stream), b'X' as u32);
+                assert_eq!((engine.io.close)(stream), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn wide_file_source_failures_keep_completed_fields() {
+        if !isolated("wide_file_source_failures_keep_completed_fields") {
+            return;
+        }
+        for engine in stream_scan_engines() {
+            for input in [&b"A\xffX"[..], &b"A\xc3X"[..], &b"A"[..], &b"AB"[..]] {
+                let invalid = input.iter().any(|&byte| byte >= 0x80);
+                let prefix = if input == b"AB" { 2 } else { 1 };
+                for format in ["%s%n", "%[AB]%n", "%3c%n"] {
+                    let stream = scan_stream(engine, input, c"C.UTF-8", c"C.UTF-8");
+                    let mut output = [0xa5u8; 16];
+                    let mut count = SENTINEL;
+                    let (rc, error) = unsafe {
+                        *(engine.io.errno)() = 23;
+                        let rc = (engine.scan)(
+                            stream,
+                            w(format).as_ptr(),
+                            output.as_mut_ptr(),
+                            &mut count,
+                        );
+                        (rc, *(engine.io.errno)())
+                    };
+                    assert_eq!(
+                        (rc, error, count),
+                        (1, if invalid { libc::EILSEQ } else { 23 }, prefix as c_int),
+                        "{} {input:?} {format}",
+                        engine.name
+                    );
+                    assert_eq!(&output[..prefix], &input[..prefix]);
+                    if format == "%3c%n" {
+                        assert!(output[prefix..].iter().all(|&byte| byte == 0xa5));
+                    } else {
+                        assert_eq!(output[prefix], 0);
+                    }
+                    unsafe {
+                        assert_eq!((engine.io.tell)(stream), prefix as libc::c_long);
+                        assert_eq!((engine.io.error)(stream) != 0, invalid);
+                        assert_eq!((engine.io.eof)(stream) != 0, !invalid);
+                        assert_eq!((engine.io.close)(stream), 0);
+                    }
+                }
+
+                for (format, wide, terminated) in [
+                    ("%3mc%n", false, false),
+                    ("%3mlc%n", true, false),
+                    ("%ms%n", false, true),
+                ] {
+                    let stream = scan_stream(engine, input, c"C.UTF-8", c"C.UTF-8");
+                    let mut narrow_pointer = std::ptr::without_provenance_mut::<c_char>(1);
+                    let mut wide_pointer = std::ptr::without_provenance_mut::<Wc>(1);
+                    let mut count = SENTINEL;
+                    let (rc, error) = unsafe {
+                        *(engine.io.errno)() = 23;
+                        let rc = if wide {
+                            (engine.scan)(
+                                stream,
+                                w(format).as_ptr(),
+                                &mut wide_pointer,
+                                &mut count,
+                            )
+                        } else {
+                            (engine.scan)(
+                                stream,
+                                w(format).as_ptr(),
+                                &mut narrow_pointer,
+                                &mut count,
+                            )
+                        };
+                        (rc, *(engine.io.errno)())
+                    };
+                    let pointer = if wide {
+                        wide_pointer.cast::<u8>()
+                    } else {
+                        narrow_pointer.cast::<u8>()
+                    };
+                    assert_eq!(
+                        (rc, error, count),
+                        (1, if invalid { libc::EILSEQ } else { 23 }, prefix as c_int),
+                        "{} {input:?} {format}",
+                        engine.name
+                    );
+                    assert!(!pointer.is_null());
+                    unsafe {
+                        if wide {
+                            assert_eq!(
+                                std::slice::from_raw_parts(pointer.cast::<Wc>(), prefix),
+                                &w(if prefix == 1 { "A" } else { "AB" })[..prefix]
+                            );
+                        } else {
+                            assert_eq!(std::slice::from_raw_parts(pointer, prefix), &input[..prefix]);
+                            if terminated {
+                                assert_eq!(*pointer.add(prefix), 0);
+                            }
+                        }
+                        (engine.free)(pointer.cast());
+                        assert_eq!((engine.io.tell)(stream), prefix as libc::c_long);
+                        assert_eq!((engine.io.error)(stream) != 0, invalid);
+                        assert_eq!((engine.io.eof)(stream) != 0, !invalid);
+                        assert_eq!((engine.io.close)(stream), 0);
+                    }
+                }
+            }
+
+            for (format, expected_count, expected_error, expected_flag) in [
+                ("%n", 0, 23, false),
+                ("A %n", 1, 23, true),
+                ("%*3c%n", 1, libc::EILSEQ, true),
+            ] {
+                let stream = scan_stream(engine, b"A\xffX", c"C.UTF-8", c"C.UTF-8");
+                let mut count = SENTINEL;
+                let (rc, error) = unsafe {
+                    *(engine.io.errno)() = 23;
+                    let rc = (engine.scan)(stream, w(format).as_ptr(), &mut count);
+                    (rc, *(engine.io.errno)())
+                };
+                assert_eq!((rc, error, count), (0, expected_error, expected_count), "{} {format}", engine.name);
+                unsafe {
+                    assert_eq!((engine.io.error)(stream) != 0, expected_flag);
+                    assert_eq!((engine.io.eof)(stream), 0);
+                    assert_eq!((engine.io.tell)(stream), expected_count as libc::c_long);
+                    assert_eq!((engine.io.close)(stream), 0);
+                }
+            }
+
+            let stream = scan_stream(engine, b"\xffX", c"C.UTF-8", c"C.UTF-8");
+            let mut pointer = std::ptr::without_provenance_mut::<c_char>(1);
+            let mut count = SENTINEL;
+            let (rc, error) = unsafe {
+                *(engine.io.errno)() = 23;
+                let rc = (engine.scan)(stream, w("%ms%n").as_ptr(), &mut pointer, &mut count);
+                (rc, *(engine.io.errno)())
+            };
+            assert_eq!((rc, error, count), (libc::EOF, libc::EILSEQ, SENTINEL), "{} empty %m", engine.name);
+            assert!(pointer.is_null());
+            unsafe {
+                assert_eq!((engine.io.tell)(stream), 0);
+                assert_ne!((engine.io.error)(stream), 0);
+                assert_eq!((engine.io.close)(stream), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn wide_file_finite_fields_do_not_wait_for_pipe_eof() {
+        if !isolated("wide_file_finite_fields_do_not_wait_for_pipe_eof") {
+            return;
+        }
+        use std::io::Write;
+        use std::os::fd::FromRawFd;
+        use std::time::Duration;
+
+        for engine in stream_scan_engines() {
+            for (format, input, wide, expected_count, expected_rc, expected_error) in [
+                ("%1s%n", "é", false, 1, 1, 23),
+                ("%1[é]%n", "é", false, 1, 1, 23),
+                ("%1lc%n", "é", true, 1, 1, 23),
+                ("é%n", "é", false, 1, 0, 23),
+                ("%n", "", false, 0, 0, 23),
+                ("%s%n", "é€", false, SENTINEL, 0, libc::EILSEQ),
+                ("%3c%n", "é€", false, SENTINEL, libc::EOF, libc::EILSEQ),
+            ] {
+                select(c"C.UTF-8");
+                let mut descriptors = [-1; 2];
+                assert_eq!(unsafe { libc::pipe(descriptors.as_mut_ptr()) }, 0);
+                // The write end stays open until the scanner reports its
+                // result. Closing it after timeout releases a defective read
+                // before the assertion, so a failure cannot hang the suite.
+                let mut write = unsafe { std::fs::File::from_raw_fd(descriptors[1]) };
+                write.write_all(input.as_bytes()).unwrap();
+                let stream = unsafe { (engine.io.fdopen)(descriptors[0], c"r".as_ptr()) };
+                assert!(!stream.is_null());
+                assert!(unsafe { (engine.io.orient)(stream, 1) } > 0);
+                select(c"fr_FR");
+                let stream_address = stream as usize;
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let stream = stream_address as *mut c_void;
+                    let mut narrow = [0xa5u8; 16];
+                    let mut wide_output = [SENTINEL; 4];
+                    let mut count = SENTINEL;
+                    let observed = unsafe {
+                        *(engine.io.errno)() = 23;
+                        let rc = if format == "%n" || format == "é%n" {
+                            (engine.scan)(stream, w(format).as_ptr(), &mut count)
+                        } else if wide {
+                            (engine.scan)(stream, w(format).as_ptr(), wide_output.as_mut_ptr(), &mut count)
+                        } else {
+                            (engine.scan)(stream, w(format).as_ptr(), narrow.as_mut_ptr(), &mut count)
+                        };
+                        (rc, *(engine.io.errno)(), count, (engine.io.error)(stream), (engine.io.eof)(stream), narrow, wide_output)
+                    };
+                    sender.send(observed).unwrap();
+                    unsafe { assert_eq!((engine.io.close)(stream), 0) };
+                });
+                let observed = receiver.recv_timeout(Duration::from_secs(3));
+                drop(write);
+                worker.join().unwrap();
+                let (rc, error, count, file_error, eof, narrow, wide_output) = observed.unwrap_or_else(|error| {
+                    panic!("{} {format} waited for pipe EOF: {error}", engine.name)
+                });
+                assert_eq!(
+                    (rc, error, count, file_error, eof),
+                    (expected_rc, expected_error, expected_count, 0, 0),
+                    "{} live pipe {format}",
+                    engine.name
+                );
+                if wide {
+                    assert_eq!(wide_output, [0xe9, SENTINEL, SENTINEL, SENTINEL]);
+                } else if format.starts_with('%') && format != "%n" {
+                    assert_eq!(narrow[0], 0xe9);
+                    if expected_error == libc::EILSEQ {
+                        assert!(narrow[1..].iter().all(|&byte| byte == 0xa5));
+                    } else {
+                        assert_eq!(narrow[1], 0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_file_scanning_uses_active_numeric_and_space_categories() {
+        if !isolated("wide_file_scanning_uses_active_numeric_and_space_categories") {
+            return;
+        }
+        for engine in stream_scan_engines() {
+            unsafe {
+                assert!(!(host().setlocale)(libc::LC_NUMERIC, c"fr_FR".as_ptr()).is_null());
+                assert!(!locale_abi::setlocale(libc::LC_NUMERIC, c"fr_FR".as_ptr()).is_null());
+            }
+            let stream = scan_stream(engine, b"1,5 8X", c"C.UTF-8", c"C.UTF-8");
+            let (mut value, mut count, mut integer) = (-1.0f64, SENTINEL, SENTINEL);
+            let (rc, error) = unsafe {
+                *(engine.io.errno)() = 23;
+                let rc = (engine.scan)(
+                    stream,
+                    w("%lf%n %d").as_ptr(),
+                    &mut value,
+                    &mut count,
+                    &mut integer,
+                );
+                (rc, *(engine.io.errno)())
+            };
+            assert_eq!((rc, error, value, count, integer), (2, 23, 1.5, 3, 8), "{} numeric locale", engine.name);
+            unsafe {
+                assert_eq!((engine.io.tell)(stream), 5);
+                assert_eq!((engine.io.get)(stream), b'X' as u32);
+                assert_eq!((engine.io.close)(stream), 0);
+                assert!(!(host().setlocale)(libc::LC_NUMERIC, c"C".as_ptr()).is_null());
+                assert!(!locale_abi::setlocale(libc::LC_NUMERIC, c"C".as_ptr()).is_null());
+            }
+
+            for active in [c"C", c"C.UTF-8"] {
+                let unicode_space = active == c"C.UTF-8";
+                let stream = scan_stream(engine, b"A", c"C.UTF-8", active);
+                let (mut character, mut count) = (SENTINEL, SENTINEL);
+                let rc = unsafe {
+                    (engine.scan)(stream, w("\u{2003}%lc%n").as_ptr(), &mut character, &mut count)
+                };
+                assert_eq!(
+                    (rc, character, count),
+                    if unicode_space { (1, b'A' as Wc, 1) } else { (0, SENTINEL, SENTINEL) },
+                    "{} {active:?} format whitespace",
+                    engine.name
+                );
+                unsafe {
+                    assert_eq!((engine.io.tell)(stream), if unicode_space { 1 } else { 0 });
+                    assert_eq!((engine.io.close)(stream), 0);
+                }
+
+                let stream = scan_stream(engine, "\u{2003}A ".as_bytes(), c"C.UTF-8", active);
+                let mut output = [SENTINEL; 8];
+                let mut count = SENTINEL;
+                let rc = unsafe {
+                    (engine.scan)(stream, w("%ls%n").as_ptr(), output.as_mut_ptr(), &mut count)
+                };
+                assert_eq!((rc, count), (1, 2), "{} {active:?} input whitespace", engine.name);
+                let expected = if unicode_space { w("A") } else { w("\u{2003}A") };
+                assert_eq!(&output[..expected.len()], expected);
+                assert!(output[expected.len()..].iter().all(|&wc| wc == SENTINEL));
+                unsafe {
+                    assert_eq!((engine.io.tell)(stream), 4);
+                    assert_eq!((engine.io.get)(stream), b' ' as u32);
+                    assert_eq!((engine.io.close)(stream), 0);
+                }
+            }
+        }
     }
 
     fn assert_current_multibyte_codec(engine: WideIoEngine, locale: &CStr) {

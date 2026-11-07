@@ -28,6 +28,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, RuntimeDecis
 
 use crate::errno_abi::set_abi_errno;
 use crate::io_internal_abi::{self, NativeFileBufMode};
+use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::sys_write_fd;
@@ -14135,7 +14136,7 @@ pub(crate) fn scanf_core(
     format: *const c_char,
     dialect: ScanfDialect,
 ) -> Option<(ScanResult, ScanDirectives)> {
-    let directives = scanf_directives(format, false, dialect)?;
+    let directives = scanf_directives(format, None, dialect)?;
     let result = scan_input(input, directives.as_slice());
     Some((result, directives))
 }
@@ -14146,13 +14147,14 @@ pub(crate) fn scanf_core(
 pub(crate) fn scanf_wide_directives(
     format: *const c_char,
     dialect: ScanfDialect,
+    locale: NumericLocale,
 ) -> Option<ScanDirectives> {
-    scanf_directives(format, true, dialect)
+    scanf_directives(format, Some(locale), dialect)
 }
 
 fn scanf_directives(
     format: *const c_char,
-    wide_input: bool,
+    wide_locale: Option<NumericLocale>,
     dialect: ScanfDialect,
 ) -> Option<ScanDirectives> {
     // PERF (bd-2g7oyh, same lever family as the sscanf input scan):
@@ -14164,8 +14166,11 @@ fn scanf_directives(
         return None;
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
-    let mut directives = if wide_input {
-        frankenlibc_core::stdio::scanf::parse_scanf_format_wide(fmt_bytes)
+    let wide_input = wide_locale.is_some();
+    let mut directives = if let Some(locale) = wide_locale {
+        frankenlibc_core::stdio::scanf::parse_scanf_format_wide_with_space(fmt_bytes, &|wc| {
+            locale.wide_is_space(wc)
+        })
     } else {
         parse_scanf_format(fmt_bytes)
     };
