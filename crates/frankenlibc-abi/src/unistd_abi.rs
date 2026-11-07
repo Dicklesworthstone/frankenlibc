@@ -15036,8 +15036,10 @@ const RTM_GETADDR: u16 = 22;
 const RTM_NEWADDR: u16 = 20;
 const NLM_F_REQUEST: u16 = 1;
 const NLM_F_DUMP: u16 = 0x300;
+const NLM_F_DUMP_INTR: u16 = 0x10;
 const NLMSG_DONE: u16 = 3;
 const NLMSG_ERROR: u16 = 2;
+const NLMSG_OVERRUN: u16 = 4;
 const IFLA_IFNAME: u16 = 3;
 const IFA_ADDRESS: u16 = 1;
 const IFA_LOCAL: u16 = 2;
@@ -15051,95 +15053,127 @@ fn rta_align(len: usize) -> usize {
     (len + RTA_ALIGNTO - 1) & !(RTA_ALIGNTO - 1)
 }
 
-/// Send a netlink dump request and collect all response data.
+/// Send a netlink dump request and collect only a complete response.
 fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
-    // Create netlink socket
-    let fd = match syscall::sys_socket(
+    let fd = syscall::sys_socket(
         libc::AF_NETLINK,
         libc::SOCK_RAW | libc::SOCK_CLOEXEC,
         libc::NETLINK_ROUTE,
-    ) {
-        Ok(fd) => fd,
-        Err(_) => return Err(errno::ENOBUFS),
-    };
+    )?;
 
-    // Build request
-    let hdr_size = std::mem::size_of::<NlMsgHdr>();
-    let payload_size = if msg_type == RTM_GETLINK {
-        std::mem::size_of::<IfInfoMsg>()
-    } else {
-        std::mem::size_of::<IfAddrMsg>()
-    };
-    let msg_len = nlmsg_align(hdr_size + payload_size);
-    let mut buf = vec![0u8; msg_len];
+    // Close the descriptor on every error, including a failure after some
+    // messages have arrived. A partial dump is not an empty address family.
+    let outcome = (|| {
+        let hdr_size = std::mem::size_of::<NlMsgHdr>();
+        let payload_size = if msg_type == RTM_GETLINK {
+            std::mem::size_of::<IfInfoMsg>()
+        } else {
+            std::mem::size_of::<IfAddrMsg>()
+        };
+        let msg_len = nlmsg_align(hdr_size + payload_size);
+        let mut buf = vec![0u8; msg_len];
+        let hdr = NlMsgHdr {
+            nlmsg_len: msg_len as u32,
+            nlmsg_type: msg_type,
+            nlmsg_flags: NLM_F_REQUEST | NLM_F_DUMP,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        };
+        // SAFETY: buf contains a complete header; byte storage need not have
+        // NlMsgHdr alignment. Both request payloads start with the family byte.
+        unsafe { buf.as_mut_ptr().cast::<NlMsgHdr>().write_unaligned(hdr) };
+        buf[hdr_size] = family;
 
-    let hdr = unsafe { &mut *(buf.as_mut_ptr() as *mut NlMsgHdr) };
-    hdr.nlmsg_len = msg_len as u32;
-    hdr.nlmsg_type = msg_type;
-    hdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-    hdr.nlmsg_seq = 1;
-    hdr.nlmsg_pid = 0;
-
-    if msg_type == RTM_GETLINK {
-        let info = unsafe { &mut *((buf.as_mut_ptr().add(hdr_size)) as *mut IfInfoMsg) };
-        info.ifi_family = family;
-    } else {
-        let info = unsafe { &mut *((buf.as_mut_ptr().add(hdr_size)) as *mut IfAddrMsg) };
-        info.ifa_family = family;
-    }
-
-    // Send
-    if unsafe { syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0) }.is_err() {
-        let _ = syscall::sys_close(fd);
-        return Err(errno::EIO);
-    }
-
-    // Receive all responses
-    let mut result = Vec::with_capacity(8192);
-    let mut recv_buf = vec![0u8; 16384];
-    while let Ok(n) = unsafe {
-        syscall::sys_recvfrom(
-            fd,
-            recv_buf.as_mut_ptr(),
-            recv_buf.len(),
-            libc::MSG_TRUNC,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    } {
-        if n <= 0 {
-            break;
+        // SAFETY: buf is readable for msg_len bytes; a null destination selects
+        // the kernel peer of this netlink socket.
+        let sent = unsafe {
+            syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0)
+        }?;
+        if sent as usize != msg_len {
+            return Err(errno::EIO);
         }
-        // MSG_TRUNC reports the full datagram length. Losing an address
-        // message must not turn a partial dump into an absent-family result.
-        if n as usize > recv_buf.len() {
-            let _ = syscall::sys_close(fd);
-            return Err(errno::ENOBUFS);
-        }
-        let data = &recv_buf[..n as usize];
-        // Check for NLMSG_DONE
-        let mut done = false;
-        let mut off = 0;
-        while off + std::mem::size_of::<NlMsgHdr>() <= data.len() {
-            let h = unsafe { &*(data.as_ptr().add(off) as *const NlMsgHdr) };
-            if h.nlmsg_type == NLMSG_DONE || h.nlmsg_type == NLMSG_ERROR {
-                done = true;
-                break;
+
+        let mut result = Vec::with_capacity(8192);
+        let mut recv_buf = vec![0u8; 16384];
+        loop {
+            // MSG_TRUNC reports the full datagram length, so an oversized
+            // response cannot silently become a successful partial snapshot.
+            // SAFETY: recv_buf is writable for its length; source address
+            // output is not requested.
+            let n = match unsafe {
+                syscall::sys_recvfrom(
+                    fd,
+                    recv_buf.as_mut_ptr(),
+                    recv_buf.len(),
+                    libc::MSG_TRUNC,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            } {
+                Ok(n) => n as usize,
+                Err(errno::EINTR) => continue,
+                Err(e) => return Err(e),
+            };
+            if n == 0 {
+                return Err(errno::EIO);
             }
-            if (h.nlmsg_len as usize) < std::mem::size_of::<NlMsgHdr>() {
-                done = true;
-                break;
+            if n > recv_buf.len() {
+                return Err(errno::ENOBUFS);
             }
-            off += nlmsg_align(h.nlmsg_len as usize);
+            let data = &recv_buf[..n];
+            let mut done = false;
+            let mut off = 0;
+            while off < data.len() {
+                if data.len() - off < hdr_size {
+                    return Err(errno::EIO);
+                }
+                // SAFETY: a complete header is in bounds; datagrams have only
+                // byte alignment, so do not form an aligned header reference.
+                let h = unsafe {
+                    data.as_ptr().add(off).cast::<NlMsgHdr>().read_unaligned()
+                };
+                let msg_len = h.nlmsg_len as usize;
+                if msg_len < hdr_size || msg_len > data.len() - off {
+                    return Err(errno::EIO);
+                }
+                if h.nlmsg_flags & NLM_F_DUMP_INTR != 0 {
+                    return Err(errno::EAGAIN);
+                }
+                if h.nlmsg_type == NLMSG_OVERRUN {
+                    return Err(errno::ENOBUFS);
+                }
+                if h.nlmsg_type == NLMSG_ERROR || h.nlmsg_type == NLMSG_DONE {
+                    let payload = &data[off + hdr_size..off + msg_len];
+                    let error = if payload.is_empty() && h.nlmsg_type == NLMSG_DONE {
+                        0
+                    } else if payload.len() >= std::mem::size_of::<c_int>() {
+                        c_int::from_ne_bytes([payload[0], payload[1], payload[2], payload[3]])
+                    } else {
+                        return Err(errno::EIO);
+                    };
+                    if error != 0 {
+                        return Err(error
+                            .checked_neg()
+                            .filter(|value| *value > 0)
+                            .unwrap_or(errno::EIO));
+                    }
+                    if h.nlmsg_type == NLMSG_DONE {
+                        done = true;
+                        break;
+                    }
+                    // NLMSG_ERROR with error == 0 is an acknowledgement, not
+                    // the terminator of a multipart dump.
+                }
+                off += nlmsg_align(msg_len);
+            }
+            result.extend_from_slice(data);
+            if done {
+                return Ok(result);
+            }
         }
-        result.extend_from_slice(data);
-        if done {
-            break;
-        }
-    }
-
+    })();
     let _ = syscall::sys_close(fd);
-    Ok(result)
+    outcome
 }
 
 /// A complete address dump for resolver AI_ADDRCONFIG selection. Do not
@@ -15274,7 +15308,15 @@ pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut c_void) -> c_int {
     for family in [libc::AF_INET as u8, libc::AF_INET6 as u8] {
         let addr_data = match netlink_dump(RTM_GETADDR, family) {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(e) => {
+                // SAFETY: head is the owned partial list built above and has
+                // not been published to the caller; ifap still contains null.
+                unsafe {
+                    freeifaddrs(head.cast::<c_void>());
+                    set_abi_errno(e);
+                }
+                return -1;
+            }
         };
         parse_netlink_addrs(&addr_data, &if_names, &mut head, &mut tail);
     }
@@ -15318,7 +15360,7 @@ fn parse_netlink_links(data: &[u8], if_names: &mut ArtifactHashMap<i32, (String,
                 attr_off += rta_align(rta_len);
             }
         }
-        if h.nlmsg_type == NLMSG_DONE || h.nlmsg_type == NLMSG_ERROR {
+        if h.nlmsg_type == NLMSG_DONE {
             break;
         }
         off += nlmsg_align(msg_len);
@@ -15428,7 +15470,7 @@ fn parse_netlink_addrs(
                 }
             }
         }
-        if h.nlmsg_type == NLMSG_DONE || h.nlmsg_type == NLMSG_ERROR {
+        if h.nlmsg_type == NLMSG_DONE {
             break;
         }
         off += nlmsg_align(msg_len);

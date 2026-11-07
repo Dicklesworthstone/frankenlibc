@@ -164,7 +164,7 @@ fn diff_swprintf_mixed_arguments_after_32() {
                         2,
                         3.25f64,
                         c"tail".as_ptr(),
-                        -4294967297 as libc::c_long,
+                        -4294967297i64 as libc::c_long,
                         &mut $count as *mut c_int,
                     )
                 }
