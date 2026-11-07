@@ -700,16 +700,21 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             return std::ptr::null_mut();
         }
         let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
-        // Builtins retain their existing precedence. An explicit main handle
-        // additionally sees live GLOBAL plugins, but never LOCAL-only objects.
+        // Builtins retain their existing precedence. Public standalone main
+        // and DEFAULT lookups then search GLOBAL plugins. DEFAULT retains its
+        // successful provider for the program; explicit handles do not.
+        // Native import bridges keep their caller-relative scope and lifetime.
         if is_main_program_handle(handle) || is_rtld_default(handle) {
             if let Some(address) = resolve_standalone_export(symbol_name, None) {
                 clear_dlerror();
                 return address;
             }
-            if is_main_program_handle(handle)
-                && let Some(Some(address)) = resolve_native_dso_symbol(handle, symbol_name, None)
-            {
+            let global = if is_rtld_default(handle) {
+                native::resolve_program_default_symbol(symbol_name, None)
+            } else {
+                resolve_native_dso_symbol(handle, symbol_name, None)
+            };
+            if let Some(Some(address)) = global {
                 // A resolved IFUNC is allowed to return NULL without an error.
                 clear_dlerror();
                 return address;
@@ -941,10 +946,12 @@ pub unsafe extern "C" fn dlvsym(
             }
             // Plugin versions are defined by the object's own version table,
             // not the GLIBC allowlist used for the builtin export surface.
-            if is_main_program_handle(handle)
-                && let Some(Some(address)) =
-                    resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
-            {
+            let global = if is_rtld_default(handle) {
+                native::resolve_program_default_symbol(symbol_name, Some(version_name))
+            } else {
+                resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
+            };
+            if let Some(Some(address)) = global {
                 clear_dlerror();
                 return address;
             }
