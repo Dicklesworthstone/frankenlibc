@@ -18,6 +18,9 @@ use std::ffi::CStr;
 /// Bounded native ONC RPC message envelopes.
 pub mod wire;
 
+/// Legacy AUTH_DES server wire proofs and timestamp validation.
+pub mod auth_des;
+
 /// Classic Secure RPC secret-key records and password verification.
 pub mod secret;
 
