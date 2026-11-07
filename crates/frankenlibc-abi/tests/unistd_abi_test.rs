@@ -17308,7 +17308,6 @@ fn futex_requeue_null_waiters_returns_minus_one_with_errno() {
     assert!(unsafe { *libc::__errno_location() } != 0);
 }
 
-
 // A netlink failure means interface configuration is unknown. In particular,
 // getaddrinfo(AI_ADDRCONFIG) must not receive a successful empty snapshot when
 // socket creation, request transmission, or response reception was denied.
@@ -17332,7 +17331,10 @@ fn getifaddrs_syscall_errors_are_not_successful_snapshots() {
                     libc::NETLINK_ROUTE,
                 )
             };
-            assert!(probe >= 0, "netlink must be available before fault injection");
+            assert!(
+                probe >= 0,
+                "netlink must be available before fault injection"
+            );
             // SAFETY: probe is the descriptor opened immediately above.
             assert_eq!(unsafe { libc::close(probe) }, 0);
         }
@@ -17393,7 +17395,10 @@ fn getifaddrs_syscall_errors_are_not_successful_snapshots() {
         };
         assert_eq!(rc, -1, "{mode:?} failure must not become an empty success");
         assert_eq!(error, libc::EACCES, "{mode:?} must preserve syscall errno");
-        assert!(result.is_null(), "failed enumeration must not publish a list");
+        assert!(
+            result.is_null(),
+            "failed enumeration must not publish a list"
+        );
         return;
     }
 

@@ -6939,8 +6939,8 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 
 use frankenlibc_core::stdio::{
     FormatSegment, LengthMod, Precision, ValueArgKind, Width,
-    count_printf_args_of as core_count_printf_args_of,
-    format_str, parse_format_string, positional_printf_arg_plan as core_positional_printf_arg_plan,
+    count_printf_args_of as core_count_printf_args_of, format_str, parse_format_string,
+    positional_printf_arg_plan as core_positional_printf_arg_plan,
 };
 
 /// Inline argument capacity; larger printf calls spill to checked heap storage.

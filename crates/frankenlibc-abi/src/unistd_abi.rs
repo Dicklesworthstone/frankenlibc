@@ -15086,9 +15086,8 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
 
         // SAFETY: buf is readable for msg_len bytes; a null destination selects
         // the kernel peer of this netlink socket.
-        let sent = unsafe {
-            syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0)
-        }?;
+        let sent =
+            unsafe { syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0) }?;
         if sent as usize != msg_len {
             return Err(errno::EIO);
         }
@@ -15129,9 +15128,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
                 }
                 // SAFETY: a complete header is in bounds; datagrams have only
                 // byte alignment, so do not form an aligned header reference.
-                let h = unsafe {
-                    data.as_ptr().add(off).cast::<NlMsgHdr>().read_unaligned()
-                };
+                let h = unsafe { data.as_ptr().add(off).cast::<NlMsgHdr>().read_unaligned() };
                 let msg_len = h.nlmsg_len as usize;
                 if msg_len < hdr_size || msg_len > data.len() - off {
                     return Err(errno::EIO);

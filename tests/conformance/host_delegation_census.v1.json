@@ -1374,8 +1374,8 @@
       "text": "let resolved = unsafe { host_dlsym(handle, symbol) };"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:21733",
-      "line": 21733,
+      "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:21730",
+      "line": 21730,
       "module": "unistd_abi",
       "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "text": "crate::host_resolve::resolve_host_symbol_cached(slot, symbol)"
@@ -2374,7 +2374,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 122,
-    "source_tree_sha256": "078d4f9d2114d5ddcf9c0314bceb90be3adde25f53438b717df158f802b8c9f9",
+    "source_tree_sha256": "833d734c23b1371fbde7a483b26108de6a82a0a1d1af8243a788b51fbc7a37a0",
     "version": 16
   },
   "module_census": [
@@ -14581,24 +14581,24 @@
           "target_expression": "super::super::runtime_policy::observe"
         },
         {
-          "caller_function_id": "unistd_abi::addmntent@16573",
+          "caller_function_id": "unistd_abi::addmntent@16570",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
-            "unistd_abi::new@16330",
-            "unistd_abi::new@20537",
-            "unistd_abi::new@20735",
-            "unistd_abi::new@20955",
-            "unistd_abi::new@21171",
-            "unistd_abi::new@22051",
-            "unistd_abi::new@24428",
-            "unistd_abi::new@24884",
-            "unistd_abi::new@25103",
-            "unistd_abi::new@28753",
-            "unistd_abi::new@29039",
+            "unistd_abi::new@16327",
+            "unistd_abi::new@20534",
+            "unistd_abi::new@20732",
+            "unistd_abi::new@20952",
+            "unistd_abi::new@21168",
+            "unistd_abi::new@22048",
+            "unistd_abi::new@24425",
+            "unistd_abi::new@24881",
+            "unistd_abi::new@25100",
+            "unistd_abi::new@28750",
+            "unistd_abi::new@29036",
             "unistd_abi::new@6250"
           ],
-          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16621",
-          "id": "interpose-release-linux-x86_64:unistd_abi:addmntent:16573:unknown:001",
+          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16618",
+          "id": "interpose-release-linux-x86_64:unistd_abi:addmntent:16570:unknown:001",
           "reachable_export_count": 1,
           "reachable_export_sample": [
             "addmntent"
@@ -14631,24 +14631,24 @@
           "target_expression": "crate::process_abi::ForkSignalMaskGuard::block_all"
         },
         {
-          "caller_function_id": "unistd_abi::fts_build_children_list@22245",
+          "caller_function_id": "unistd_abi::fts_build_children_list@22242",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
-            "unistd_abi::new@16330",
-            "unistd_abi::new@20537",
-            "unistd_abi::new@20735",
-            "unistd_abi::new@20955",
-            "unistd_abi::new@21171",
-            "unistd_abi::new@22051",
-            "unistd_abi::new@24428",
-            "unistd_abi::new@24884",
-            "unistd_abi::new@25103",
-            "unistd_abi::new@28753",
-            "unistd_abi::new@29039",
+            "unistd_abi::new@16327",
+            "unistd_abi::new@20534",
+            "unistd_abi::new@20732",
+            "unistd_abi::new@20952",
+            "unistd_abi::new@21168",
+            "unistd_abi::new@22048",
+            "unistd_abi::new@24425",
+            "unistd_abi::new@24881",
+            "unistd_abi::new@25100",
+            "unistd_abi::new@28750",
+            "unistd_abi::new@29036",
             "unistd_abi::new@6250"
           ],
-          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22253",
-          "id": "interpose-release-linux-x86_64:unistd_abi:fts_build_children_list:22245:unknown:001",
+          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22250",
+          "id": "interpose-release-linux-x86_64:unistd_abi:fts_build_children_list:22242:unknown:001",
           "reachable_export_count": 2,
           "reachable_export_sample": [
             "fts64_children",
@@ -14658,24 +14658,24 @@
           "target_expression": "FtsEntryOwned::new"
         },
         {
-          "caller_function_id": "unistd_abi::fts_read@22352",
+          "caller_function_id": "unistd_abi::fts_read@22349",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
-            "unistd_abi::new@16330",
-            "unistd_abi::new@20537",
-            "unistd_abi::new@20735",
-            "unistd_abi::new@20955",
-            "unistd_abi::new@21171",
-            "unistd_abi::new@22051",
-            "unistd_abi::new@24428",
-            "unistd_abi::new@24884",
-            "unistd_abi::new@25103",
-            "unistd_abi::new@28753",
-            "unistd_abi::new@29039",
+            "unistd_abi::new@16327",
+            "unistd_abi::new@20534",
+            "unistd_abi::new@20732",
+            "unistd_abi::new@20952",
+            "unistd_abi::new@21168",
+            "unistd_abi::new@22048",
+            "unistd_abi::new@24425",
+            "unistd_abi::new@24881",
+            "unistd_abi::new@25100",
+            "unistd_abi::new@28750",
+            "unistd_abi::new@29036",
             "unistd_abi::new@6250"
           ],
-          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22387",
-          "id": "interpose-release-linux-x86_64:unistd_abi:fts_read:22352:unknown:001",
+          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:22384",
+          "id": "interpose-release-linux-x86_64:unistd_abi:fts_read:22349:unknown:001",
           "reachable_export_count": 2,
           "reachable_export_sample": [
             "fts64_read",
@@ -14685,24 +14685,24 @@
           "target_expression": "FtsEntryOwned::new"
         },
         {
-          "caller_function_id": "unistd_abi::getmntent_r_for_caller@16508",
+          "caller_function_id": "unistd_abi::getmntent_r_for_caller@16505",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
-            "unistd_abi::new@16330",
-            "unistd_abi::new@20537",
-            "unistd_abi::new@20735",
-            "unistd_abi::new@20955",
-            "unistd_abi::new@21171",
-            "unistd_abi::new@22051",
-            "unistd_abi::new@24428",
-            "unistd_abi::new@24884",
-            "unistd_abi::new@25103",
-            "unistd_abi::new@28753",
-            "unistd_abi::new@29039",
+            "unistd_abi::new@16327",
+            "unistd_abi::new@20534",
+            "unistd_abi::new@20732",
+            "unistd_abi::new@20952",
+            "unistd_abi::new@21168",
+            "unistd_abi::new@22048",
+            "unistd_abi::new@24425",
+            "unistd_abi::new@24881",
+            "unistd_abi::new@25100",
+            "unistd_abi::new@28750",
+            "unistd_abi::new@29036",
             "unistd_abi::new@6250"
           ],
-          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16518",
-          "id": "interpose-release-linux-x86_64:unistd_abi:getmntent_r_for_caller:16508:unknown:001",
+          "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:16515",
+          "id": "interpose-release-linux-x86_64:unistd_abi:getmntent_r_for_caller:16505:unknown:001",
           "reachable_export_count": 3,
           "reachable_export_sample": [
             "__getmntent_r",
@@ -14716,17 +14716,17 @@
           "caller_function_id": "unistd_abi::nftw@6325",
           "candidate_function_ids": [
             "unistd_abi::new@13995",
-            "unistd_abi::new@16330",
-            "unistd_abi::new@20537",
-            "unistd_abi::new@20735",
-            "unistd_abi::new@20955",
-            "unistd_abi::new@21171",
-            "unistd_abi::new@22051",
-            "unistd_abi::new@24428",
-            "unistd_abi::new@24884",
-            "unistd_abi::new@25103",
-            "unistd_abi::new@28753",
-            "unistd_abi::new@29039",
+            "unistd_abi::new@16327",
+            "unistd_abi::new@20534",
+            "unistd_abi::new@20732",
+            "unistd_abi::new@20952",
+            "unistd_abi::new@21168",
+            "unistd_abi::new@22048",
+            "unistd_abi::new@24425",
+            "unistd_abi::new@24881",
+            "unistd_abi::new@25100",
+            "unistd_abi::new@28750",
+            "unistd_abi::new@29036",
             "unistd_abi::new@6250"
           ],
           "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:6349",
@@ -21208,7 +21208,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
-      "sha256": "df46d4dd3984fde7fe365f051265e6922b442f8de07b0cb2c5fe497a3e57c9cc"
+      "sha256": "7e6c0b963b3a45bffcad78e989a333a07fcf899c071fbfbf119c2e5a2f27d860"
     },
     {
       "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
@@ -21232,7 +21232,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "sha256": "5c8a900c292d62ee279868cd4486f8ce33985bc638496935398c7499be10eaad"
+      "sha256": "a1514c6ca89987694c4ce5a673bcfa9bdb2507162ea692df58872fe3b042894c"
     },
     {
       "path": "crates/frankenlibc-abi/src/util.rs",
