@@ -7,12 +7,16 @@ on:
       - 'crates/frankenlibc-core/src/addrinfo/**'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/resolv/**'
+      - 'crates/frankenlibc-core/src/nss/**'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/inet_abi.rs'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'tests/integration/fixture_nss_module_lib.c'
+      - 'tests/integration/fixture_nss_modules.c'
+      - 'scripts/check_nss_services.py'
       - '.github/workflows/addrinfo.yml'
   workflow_dispatch:
 permissions:
@@ -88,3 +92,46 @@ jobs:
         with:
           name: addrinfo-results
           path: artifacts/addrinfo/**
+  services:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Build the deployed services candidate and exercise NSS policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nss-services
+          cargo test -p frankenlibc-core --lib nss:: -- --nocapture \
+            2>&1 | tee artifacts/nss-services/core.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/nss-services/core.log
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
+            2>&1 | tee artifacts/nss-services/build.log
+          cp target/release/libfrankenlibc_abi.so artifacts/nss-services/libfrankenlibc_abi.so
+      - name: Compare installed services modules through the deployed ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_nss_services.py \
+            --candidate "$PWD/artifacts/nss-services/libfrankenlibc_abi.so" \
+            --output "$PWD/artifacts/nss-services/cases" \
+            2>&1 | tee artifacts/nss-services/differential.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nss-services-${{ matrix.feature }}
+          path: artifacts/nss-services/**

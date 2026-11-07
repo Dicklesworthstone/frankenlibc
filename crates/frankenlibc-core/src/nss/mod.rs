@@ -1,5 +1,5 @@
 //! Name Service Switch dispatch policy for passwd, group, shadow, initgroups
-//! and Secure RPC publickey databases.
+//! services and Secure RPC publickey databases.
 //!
 //! Clean-room from the GNU libc manual ("The NSS Configuration File",
 //! "Actions in the NSS configuration") and behaviour measured against glibc
@@ -145,6 +145,7 @@ pub enum Database {
     Shadow,
     Initgroups,
     Publickey,
+    Services,
 }
 
 impl Database {
@@ -155,6 +156,7 @@ impl Database {
             Self::Shadow => b"shadow",
             Self::Initgroups => b"initgroups",
             Self::Publickey => b"publickey",
+            Self::Services => b"services",
         }
     }
 
@@ -182,7 +184,7 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
     let fallback = match database {
         Database::Initgroups => Some(Database::Group),
         Database::Shadow => Some(Database::Passwd),
-        Database::Passwd | Database::Group | Database::Publickey => None,
+        Database::Passwd | Database::Group | Database::Publickey | Database::Services => None,
     };
     if let Some(fallback) = fallback
         && let Some(services) = parse_database(config, fallback.key())
@@ -436,6 +438,7 @@ mod tests {
                 "group" => Database::Group,
                 "shadow" => Database::Shadow,
                 "publickey" => Database::Publickey,
+                "services" => Database::Services,
                 _ => Database::Initgroups,
             },
         )
@@ -452,6 +455,35 @@ mod tests {
             names(&services_for(Some(b"hosts: dns\n"), Database::Group)),
             [b"files"]
         );
+    }
+
+    #[test]
+    fn network_services_have_independent_sources_and_range_errors_stop() {
+        assert_eq!(names(&services_for(None, Database::Services)), [b"files"]);
+        assert_eq!(
+            names(&services_for(Some(b"passwd: sss\n"), Database::Services)),
+            [b"files"]
+        );
+        assert!(line("services", "").is_empty());
+        let sources = line("services", "remote [TRYAGAIN=continue] files");
+        let mut calls = 0;
+        let answer: Answer<()> = lookup(
+            &sources,
+            |_| {
+                calls += 1;
+                Answer::BufferTooSmall
+            },
+            None,
+        );
+        assert_eq!(answer, Answer::BufferTooSmall);
+        assert_eq!(calls, 1);
+        let sources = line("services", "remote [SUCCESS=continue] files");
+        let answer = lookup(
+            &sources,
+            |source| Answer::Found(source.name().to_vec()),
+            None,
+        );
+        assert_eq!(answer, Answer::Found(b"files".to_vec()));
     }
 
     #[test]

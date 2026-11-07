@@ -989,10 +989,84 @@ pub unsafe extern "C" fn if_freenameindex(ptr: *mut c_void) {
 }
 
 // ---------------------------------------------------------------------------
-// getservbyname_r / getservbyport_r — native /etc/services parsing
+// getservbyname_r / getservbyport_r — native files and NSS modules
 // ---------------------------------------------------------------------------
 
-/// Reentrant `getservbyname_r` — look up service by name in /etc/services.
+/// Pack the native files result into caller storage. Module sources instead
+/// receive that storage directly and retain their own layout/ERANGE contract.
+///
+/// # Safety
+/// `out` is writable and `buf` covers `buflen` writable bytes.
+pub(crate) unsafe fn pack_service_entry(
+    entry: &frankenlibc_core::resolv::ServiceEntry,
+    out: *mut libc::servent,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    let Some(name_len) = entry.name.len().checked_add(1) else {
+        return libc::ERANGE;
+    };
+    let Some(string_end) = name_len
+        .checked_add(entry.protocol.len())
+        .and_then(|n| n.checked_add(1))
+    else {
+        return libc::ERANGE;
+    };
+    if string_end > buflen {
+        return libc::ERANGE;
+    }
+    // SAFETY: both strings plus terminators fit the caller's region.
+    unsafe {
+        std::ptr::copy_nonoverlapping(entry.name.as_ptr().cast(), buf, entry.name.len());
+        *buf.add(entry.name.len()) = 0;
+        std::ptr::copy_nonoverlapping(
+            entry.protocol.as_ptr().cast(),
+            buf.add(name_len),
+            entry.protocol.len(),
+        );
+        *buf.add(string_end - 1) = 0;
+    }
+    // SAFETY: the alias packer bounds each write and aligns its pointer table.
+    let Some(aliases) = (unsafe { pack_caller_aliases(buf, buflen, string_end, &entry.aliases) })
+    else {
+        return libc::ERANGE;
+    };
+    // SAFETY: out is live; every result pointer belongs to the caller buffer.
+    unsafe {
+        out.write(libc::servent {
+            s_name: buf,
+            s_aliases: aliases,
+            s_port: c_int::from(entry.port.to_be()),
+            s_proto: buf.add(name_len),
+        });
+    }
+    0
+}
+
+unsafe fn finish_service_lookup_r(
+    answer: frankenlibc_core::nss::Answer<()>,
+    result_buf: *mut c_void,
+    result: *mut *mut c_void,
+) -> c_int {
+    use frankenlibc_core::nss::Answer;
+    let error = match answer {
+        Answer::Found(()) => {
+            // SAFETY: the caller validated the result slot and the backend
+            // completed the output before publishing the caller's pointer.
+            unsafe { *result = result_buf };
+            return 0;
+        }
+        Answer::NotFound => 0,
+        Answer::Unavailable(error) | Answer::TryAgain(error) => error,
+        Answer::BufferTooSmall => libc::ERANGE,
+    };
+    // SAFETY: GNU returns the error and updates this thread's errno together;
+    // a definitive miss is a zero return with a null result and zero errno.
+    unsafe { crate::errno_abi::set_abi_errno(error) };
+    error
+}
+
+/// Reentrant `getservbyname_r` — look up a service through nsswitch.conf.
 ///
 /// Writes the result into the caller-provided buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1039,73 +1113,21 @@ pub unsafe extern "C" fn getservbyname_r(
         Some(proto_bytes)
     };
 
-    // Shared generation-stamped parsed index (resolv_abi), the same one `getservbyname`
-    // uses. Replaces a per-call `std::fs::read("/etc/services")` + line-by-line
-    // `parse_services_line` scan: this entry point re-read and re-parsed the whole file on
-    // EVERY call, so it did not even reach `BackendFileCache`. Lookup semantics are
-    // unchanged (canonical name or alias, optional ASCII-case-insensitive protocol filter,
-    // first match in file order); the caller-buffer packing below is untouched. The backend
-    // now honors `FRANKENLIBC_SERVICES_PATH` exactly as the non-reentrant path does.
-    // Pack straight out of the BORROWED cache entry. The `.cloned()` this replaces allocated a
-    // name `Vec`, a protocol `Vec`, and a `Vec<Vec<u8>>` of aliases on every call; a frame
-    // table of this row put ~91% of self time in the interposed allocator's bookkeeping
-    // (bd-xmng5n / bd-qds9jk). Packing semantics below are byte-for-byte unchanged.
-    let packed = crate::resolv_abi::with_service_entry_by_name(name_bytes, proto_filter, |entry| {
-        let (svc_name, port, svc_proto) = (&entry.name, entry.port, &entry.protocol);
-
-        // Layout in caller buffer: name\0 proto\0 alias strings\0 <align> ptr[].
-        let name_len = svc_name.len() + 1; // +NUL
-        let proto_len = svc_proto.len() + 1;
-        let effective_buflen = effective_c_buffer_len(buf, buflen);
-        if name_len + proto_len > effective_buflen {
-            return libc::ERANGE;
-        }
-
-        let name_ptr = buf;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                svc_name.as_ptr() as *const c_char,
-                name_ptr,
-                svc_name.len(),
-            );
-            *name_ptr.add(svc_name.len()) = 0;
-        }
-
-        let proto_ptr = unsafe { buf.add(name_len) };
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                svc_proto.as_ptr() as *const c_char,
-                proto_ptr,
-                svc_proto.len(),
-            );
-            *proto_ptr.add(svc_proto.len()) = 0;
-        }
-
-        let aliases_ptr = match unsafe {
-            pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
-        } {
-            Some(p) => p,
-            None => return libc::ERANGE,
-        };
-
-        let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
-        servent.s_name = name_ptr;
-        servent.s_aliases = aliases_ptr;
-        servent.s_port = port.to_be() as c_int;
-        servent.s_proto = proto_ptr;
-
-        unsafe { *result = result_buf };
-        0
-    });
-
-    match packed {
-        Ok(Some(rc)) => rc,
-        Ok(None) => 0,
-        Err(_) => libc::ENOENT,
+    // SAFETY: validated C objects and the bounded caller buffer survive every
+    // source call. The switch never holds files/cache locks across callbacks.
+    unsafe {
+        let answer = crate::resolv_abi::service_lookup_r(
+            crate::nss_module::ServiceKey::Name(name_bytes),
+            proto_filter,
+            result_buf.cast(),
+            buf,
+            effective_c_buffer_len(buf, buflen),
+        );
+        finish_service_lookup_r(answer, result_buf, result)
     }
 }
 
-/// Reentrant `getservbyport_r` — look up service by port in /etc/services.
+/// Reentrant `getservbyport_r` — look up a network-order port through NSS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyport_r(
     port: c_int,
@@ -1130,7 +1152,6 @@ pub unsafe extern "C" fn getservbyport_r(
         return libc::EINVAL;
     }
 
-    let port_host = u16::from_be(port as u16);
     // Borrowed, allocation-free protocol read; see `getservbyname_r` above.
     let proto_filter = if proto.is_null() {
         None
@@ -1143,62 +1164,16 @@ pub unsafe extern "C" fn getservbyport_r(
         Some(proto_bytes)
     };
 
-    // Shared generation-stamped parsed port index (resolv_abi), the same one
-    // `getservbyport` uses; see `getservbyname_r` above. Replaces a per-call
-    // `std::fs::read("/etc/services")` + line-by-line scan. Match semantics unchanged
-    // (port plus optional case-insensitive protocol filter, first match in file order).
-    // Pack from the BORROWED entry; see `getservbyname_r` above.
-    let packed = crate::resolv_abi::with_service_entry_by_port(port_host, proto_filter, |entry| {
-        let (svc_name, svc_proto) = (&entry.name, &entry.protocol);
-
-        let name_len = svc_name.len() + 1;
-        let proto_len = svc_proto.len() + 1;
-        let effective_buflen = effective_c_buffer_len(buf, buflen);
-        if name_len + proto_len > effective_buflen {
-            return libc::ERANGE;
-        }
-
-        let name_ptr = buf;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                svc_name.as_ptr() as *const c_char,
-                name_ptr,
-                svc_name.len(),
-            );
-            *name_ptr.add(svc_name.len()) = 0;
-        }
-
-        let proto_ptr = unsafe { buf.add(name_len) };
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                svc_proto.as_ptr() as *const c_char,
-                proto_ptr,
-                svc_proto.len(),
-            );
-            *proto_ptr.add(svc_proto.len()) = 0;
-        }
-
-        let aliases_ptr = match unsafe {
-            pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
-        } {
-            Some(p) => p,
-            None => return libc::ERANGE,
-        };
-
-        let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
-        servent.s_name = name_ptr;
-        servent.s_aliases = aliases_ptr;
-        servent.s_port = port;
-        servent.s_proto = proto_ptr;
-
-        unsafe { *result = result_buf };
-        0
-    });
-
-    match packed {
-        Ok(Some(rc)) => rc,
-        Ok(None) => 0,
-        Err(_) => libc::ENOENT,
+    // SAFETY: same validated output contract as the by-name entry point.
+    unsafe {
+        let answer = crate::resolv_abi::service_lookup_r(
+            crate::nss_module::ServiceKey::Port(port),
+            proto_filter,
+            result_buf.cast(),
+            buf,
+            effective_c_buffer_len(buf, buflen),
+        );
+        finish_service_lookup_r(answer, result_buf, result)
     }
 }
 

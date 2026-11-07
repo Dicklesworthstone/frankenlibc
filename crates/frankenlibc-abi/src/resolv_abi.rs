@@ -911,40 +911,139 @@ fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -
     }
 }
 
-/// Shared `/etc/services` lookup by canonical name or alias, through the cached backend
-/// bytes and the generation-stamped parsed index. `proto_filter` is matched
-/// ASCII-case-insensitively. `Ok(None)` means "no such service"; `Err` means the backend
-/// could not be read.
-///
-/// Exposed to the crate so the reentrant `getservbyname_r` (which lives in `inet_abi`) can
-/// share this cache instead of re-reading and re-parsing the file on every call.
+/// The files source retains its borrowed, generation-stamped name/port index.
+/// No NSS callback executes while either files-cache borrow is held.
+fn with_files_service_entry<R>(
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    use crate::nss_module::ServiceKey;
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            let found = match key {
+                ServiceKey::Name(name) => {
+                    cache.lookup_by_name(generation, content, name, proto_filter)
+                }
+                ServiceKey::Port(port) => u16::try_from(port).ok().and_then(|port| {
+                    cache.lookup_by_port(generation, content, u16::from_be(port), proto_filter)
+                }),
+            };
+            // A successful files scan clears an earlier source's errno,
+            // including a definitive miss. Let `f` report its own failures.
+            unsafe { set_abi_errno(0) };
+            found.map(f)
+        })
+    })
+}
+
+fn service_lookup(
+    sources: &[frankenlibc_core::nss::Service],
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+) -> frankenlibc_core::nss::Answer<frankenlibc_core::resolv::ServiceEntry> {
+    use frankenlibc_core::nss::Answer;
+    frankenlibc_core::nss::lookup(
+        sources,
+        |source| match source.name() {
+            b"files" => match with_files_service_entry(key, proto_filter, Clone::clone) {
+                Ok(Some(entry)) => Answer::Found(entry),
+                Ok(None) => Answer::NotFound,
+                Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
+            },
+            _ => crate::nss_module::service_entry(source.name(), key, proto_filter),
+        },
+        None,
+    )
+}
+
+fn service_sources_are_files(sources: &[frankenlibc_core::nss::Service]) -> bool {
+    // `compat` is an account-database convention, not a services files alias.
+    matches!(sources, [only] if only.name() == b"files")
+}
+
+/// All named service consumers share NSS order/actions. The usual files-only
+/// configuration still invokes `f` on a borrowed entry without cloning it.
+fn with_service_entry<R>(
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    use frankenlibc_core::nss::{Answer, Database};
+    let sources = crate::nss_module::services(Database::Services);
+    if service_sources_are_files(&sources) {
+        return with_files_service_entry(key, proto_filter, f);
+    }
+    match service_lookup(&sources, key, proto_filter) {
+        Answer::Found(entry) => Ok(Some(f(&entry))),
+        Answer::NotFound => {
+            // SAFETY: GNU's service wrappers clear errno for a definitive miss.
+            unsafe { set_abi_errno(0) };
+            Ok(None)
+        }
+        Answer::Unavailable(error) | Answer::TryAgain(error) => {
+            Err(std::io::Error::from_raw_os_error(error))
+        }
+        Answer::BufferTooSmall => Err(std::io::Error::from_raw_os_error(libc::ERANGE)),
+    }
+}
+
 pub(crate) fn with_service_entry_by_name<R>(
     name: &[u8],
     proto_filter: Option<&[u8]>,
     f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
 ) -> std::io::Result<Option<R>> {
-    with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| {
-            cache
-                .lookup_by_name(generation, content, name, proto_filter)
-                .map(f)
-        })
-    })
+    with_service_entry(crate::nss_module::ServiceKey::Name(name), proto_filter, f)
 }
 
-/// Borrowing sibling of [`with_service_entry_by_name`], keyed by HOST-order port.
+/// Internal reverse lookups take a host-order port, unlike the public C ABI.
 pub(crate) fn with_service_entry_by_port<R>(
     port: u16,
     proto_filter: Option<&[u8]>,
     f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
 ) -> std::io::Result<Option<R>> {
-    with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| {
-            cache
-                .lookup_by_port(generation, content, port, proto_filter)
-                .map(f)
-        })
-    })
+    with_service_entry(
+        crate::nss_module::ServiceKey::Port(c_int::from(port.to_be())),
+        proto_filter,
+        f,
+    )
+}
+
+/// # Safety
+/// The ABI caller validated `out` and the writable `buf[..len]`. A module
+/// writes directly into that buffer, retaining its exact ERANGE/alignment
+/// contract; the files source packs its borrowed entry without extra copies.
+pub(crate) unsafe fn service_lookup_r(
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+    out: *mut libc::servent,
+    buf: *mut c_char,
+    len: usize,
+) -> frankenlibc_core::nss::Answer<()> {
+    use frankenlibc_core::nss::{Answer, Database};
+    let sources = crate::nss_module::services(Database::Services);
+    frankenlibc_core::nss::lookup(
+        &sources,
+        |source| match source.name() {
+            b"files" => {
+                match with_files_service_entry(key, proto_filter, |entry| {
+                    // SAFETY: the ABI caller owns the supplied output region.
+                    unsafe { crate::inet_abi::pack_service_entry(entry, out, buf, len) }
+                }) {
+                    Ok(Some(0)) => Answer::Found(()),
+                    Ok(Some(_)) => Answer::BufferTooSmall,
+                    Ok(None) => Answer::NotFound,
+                    Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
+                }
+            }
+            // SAFETY: as above; no cache borrow or configuration lock survives
+            // into user module code, so module callbacks can reenter NSS.
+            _ => unsafe {
+                crate::nss_module::service_entry_r(source.name(), key, proto_filter, out, buf, len)
+            },
+        },
+        None,
+    )
 }
 
 /// Visit every parsed `/etc/services` record matching `name`, borrowed from the
@@ -1572,6 +1671,34 @@ fn lookup_service_profiles(
     service: &[u8],
     hints: Option<&libc::addrinfo>,
 ) -> Result<Option<Profiles>, c_int> {
+    use frankenlibc_core::nss::{Answer, Database};
+    // Invalid transport combinations fail even when no service record exists.
+    let candidates = profiles_for_port(0, hints, true)?;
+    let sources = crate::nss_module::services(Database::Services);
+    if !service_sources_are_files(&sources) {
+        // GNU resolves each transport separately: TCP can come from an early
+        // source while UDP falls through to a later one. Numeric services and
+        // AI_NUMERICSERV have already returned before entering this function.
+        let mut profiles = Profiles::new();
+        for candidate in &*candidates {
+            let protocol: &[u8] = match candidate.protocol {
+                libc::IPPROTO_TCP => b"tcp",
+                libc::IPPROTO_UDP => b"udp",
+                _ => continue,
+            };
+            if let Answer::Found(entry) = service_lookup(
+                &sources,
+                crate::nss_module::ServiceKey::Name(service),
+                Some(protocol),
+            ) {
+                profiles.push(AddrinfoProfile {
+                    port: entry.port,
+                    ..*candidate
+                });
+            }
+        }
+        return Ok((!profiles.is_empty()).then_some(profiles));
+    }
     // Narrow the generation-stamped name index before visiting records. This preserves the
     // old file-order profile collection while reducing the hot per-call walk from O(records)
     // to O(log indexed names + matching records).
@@ -4391,7 +4518,16 @@ struct ServentTlsStorage {
     proto: [c_char; 32],
     alias_buf: [c_char; NETDB_ALIAS_BYTES],
     aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
+    overflow: Option<ServentOverflow>,
     servent: libc::servent,
+}
+
+/// Reusable storage for service records that exceed the common inline case.
+/// Its two allocations grow only as needed, and no result is silently cut to
+/// the inline name, protocol, alias-count or alias-byte limits.
+struct ServentOverflow {
+    bytes: Vec<u8>,
+    aliases: Vec<*mut c_char>,
 }
 
 impl ServentTlsStorage {
@@ -4401,6 +4537,7 @@ impl ServentTlsStorage {
             proto: [0; 32],
             alias_buf: [0; NETDB_ALIAS_BYTES],
             aliases: [ptr::null_mut(); NETDB_MAX_ALIASES + 1],
+            overflow: None,
             servent: libc::servent {
                 s_name: ptr::null_mut(),
                 s_aliases: ptr::null_mut(),
@@ -4450,6 +4587,64 @@ fn fill_servent_storage(
     entry: &frankenlibc_core::resolv::ServiceEntry,
     port_net: c_int,
 ) -> *mut c_void {
+    let alias_bytes = entry.aliases.iter().try_fold(0usize, |size, alias| {
+        size.checked_add(alias.len())?.checked_add(1)
+    });
+    if entry.name.len() >= storage.name.len()
+        || entry.protocol.len() >= storage.proto.len()
+        || entry.aliases.len() >= storage.aliases.len()
+        || alias_bytes.is_none_or(|size| size > storage.alias_buf.len())
+    {
+        let Some(size) = alias_bytes
+            .and_then(|size| size.checked_add(entry.name.len()))
+            .and_then(|size| size.checked_add(entry.protocol.len()))
+            .and_then(|size| size.checked_add(2))
+        else {
+            // SAFETY: the only observable effect is the caller's errno.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        };
+        let overflow = storage.overflow.get_or_insert_with(|| ServentOverflow {
+            bytes: Vec::new(),
+            aliases: Vec::new(),
+        });
+        overflow.bytes.clear();
+        overflow.aliases.clear();
+        if overflow.bytes.try_reserve(size).is_err()
+            || overflow
+                .aliases
+                .try_reserve(entry.aliases.len() + 1)
+                .is_err()
+        {
+            // SAFETY: allocation failure publishes no truncated result.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        }
+        overflow.bytes.extend_from_slice(&entry.name);
+        overflow.bytes.push(0);
+        let protocol_offset = overflow.bytes.len();
+        overflow.bytes.extend_from_slice(&entry.protocol);
+        overflow.bytes.push(0);
+        let base = overflow.bytes.as_mut_ptr();
+        for alias in &entry.aliases {
+            // SAFETY: the full byte capacity was reserved before taking base;
+            // none of these bounded appends can reallocate it.
+            overflow
+                .aliases
+                .push(unsafe { base.add(overflow.bytes.len()).cast() });
+            overflow.bytes.extend_from_slice(alias);
+            overflow.bytes.push(0);
+        }
+        overflow.aliases.push(ptr::null_mut());
+        storage.servent = libc::servent {
+            s_name: base.cast(),
+            s_aliases: overflow.aliases.as_mut_ptr(),
+            s_port: port_net,
+            // SAFETY: protocol_offset was captured within the reserved bytes.
+            s_proto: unsafe { base.add(protocol_offset).cast() },
+        };
+        return (&mut storage.servent as *mut libc::servent).cast();
+    }
     copy_to_cchar_buf(&mut storage.name, &entry.name);
     copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
     fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
@@ -5139,7 +5334,9 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             ptr::null_mut()
         }
-        Err(_) => {
+        Err(error) => {
+            // SAFETY: preserve the selected NSS source's failure for callers.
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
             ptr::null_mut()
         }
@@ -5229,8 +5426,6 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         return ptr::null_mut();
     }
 
-    let port_host = u16::from_be(port as u16);
-
     // SAFETY: proto is optional; opt_cstr returns None for null and rejects
     // known unterminated storage before any bytes are borrowed.
     let proto_filter = match unsafe { opt_cstr(proto) } {
@@ -5247,9 +5442,15 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
     // `BackendFileCache` still owns file/env-path freshness; the index rebuilds only when
     // its generation changes, so `FRANKENLIBC_SERVICES_PATH` rewrites are still observed.
     // Fill from the BORROWED entry; see `getservbyname` above.
-    let filled = with_service_entry_by_port(port_host, proto_filter, |entry| {
-        with_tls_servent(|storage| fill_servent_storage(storage, entry, port))
-    });
+    let filled = with_service_entry(
+        crate::nss_module::ServiceKey::Port(port),
+        proto_filter,
+        |entry| {
+            with_tls_servent(|storage| {
+                fill_servent_storage(storage, entry, c_int::from(entry.port.to_be()))
+            })
+        },
+    );
 
     match filled {
         Ok(Some(servent)) => {
@@ -5261,7 +5462,9 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             ptr::null_mut()
         }
-        Err(_) => {
+        Err(error) => {
+            // SAFETY: preserve the selected NSS source's failure for callers.
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
             ptr::null_mut()
         }

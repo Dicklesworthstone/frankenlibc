@@ -51,7 +51,7 @@ struct ConfigCache {
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 5],
+    parsed: [Option<Arc<Vec<Service>>>; 6],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
 }
@@ -60,7 +60,7 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None, None],
+    parsed: [None, None, None, None, None, None],
     initgroups_explicit: None,
 });
 
@@ -71,6 +71,7 @@ fn database_slot(database: Database) -> usize {
         Database::Shadow => 2,
         Database::Initgroups => 3,
         Database::Publickey => 4,
+        Database::Services => 5,
     }
 }
 
@@ -153,7 +154,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None];
         cache.initgroups_explicit = None;
     }
     fn read(cache: &ConfigCache) -> Option<Vec<u8>> {
@@ -358,6 +359,200 @@ unsafe fn owned(ptr: *const c_char) -> Vec<u8> {
         // SAFETY: per the module ABI, result strings are NUL-terminated.
         unsafe { CStr::from_ptr(ptr) }.to_bytes().to_vec()
     }
+}
+
+/// The port variant retains the complete C int in network byte order.
+/// Narrowing it before a module call would make invalid high bits alias a
+/// valid service and would change a module's own matching contract.
+#[derive(Clone, Copy)]
+pub(crate) enum ServiceKey<'a> {
+    Name(&'a [u8]),
+    Port(c_int),
+}
+
+type ServiceNameFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *mut libc::servent,
+    *mut c_char,
+    usize,
+    *mut c_int,
+) -> c_int;
+type ServicePortFn = unsafe extern "C" fn(
+    c_int,
+    *const c_char,
+    *mut libc::servent,
+    *mut c_char,
+    usize,
+    *mut c_int,
+) -> c_int;
+
+struct ServiceQuery<'a> {
+    address: usize,
+    key: ServiceKey<'a>,
+    name: Vec<u8>,
+    protocol: Option<Vec<u8>>,
+}
+
+impl<'a> ServiceQuery<'a> {
+    fn new(service: &[u8], key: ServiceKey<'a>, protocol: Option<&[u8]>) -> Option<Self> {
+        let function = match key {
+            ServiceKey::Name(_) => "getservbyname_r",
+            ServiceKey::Port(_) => "getservbyport_r",
+        };
+        let address = module_function(service, function)?;
+        let terminated = |bytes: &[u8]| {
+            let mut value = Vec::with_capacity(bytes.len() + 1);
+            value.extend_from_slice(bytes);
+            value.push(0);
+            value
+        };
+        Some(Self {
+            address,
+            key,
+            name: match key {
+                ServiceKey::Name(name) => terminated(name),
+                ServiceKey::Port(_) => Vec::new(),
+            },
+            protocol: protocol.map(terminated),
+        })
+    }
+
+    /// # Safety
+    /// `out`, `buf[..len]`, and `error` are writable for the NSS callback.
+    unsafe fn call(
+        &self,
+        out: *mut libc::servent,
+        buf: *mut c_char,
+        len: usize,
+        error: *mut c_int,
+    ) -> c_int {
+        let protocol = self
+            .protocol
+            .as_ref()
+            .map_or(std::ptr::null(), |value| value.as_ptr().cast());
+        match self.key {
+            ServiceKey::Name(_) => {
+                // SAFETY: this address was resolved with the by-name NSS ABI;
+                // argument strings are terminated and the caller owns outputs.
+                let call: ServiceNameFn = unsafe { core::mem::transmute(self.address) };
+                unsafe { call(self.name.as_ptr().cast(), protocol, out, buf, len, error) }
+            }
+            ServiceKey::Port(port) => {
+                // SAFETY: the by-port ABI takes an int, not a host-order u16.
+                let call: ServicePortFn = unsafe { core::mem::transmute(self.address) };
+                unsafe { call(port, protocol, out, buf, len, error) }
+            }
+        }
+    }
+
+    /// # Safety
+    /// `out` and `buf[..len]` are writable for the installed NSS callback.
+    unsafe fn answer(&self, out: *mut libc::servent, buf: *mut c_char, len: usize) -> Answer<()> {
+        // GNU passes the calling thread's errno address to service modules.
+        // A provider that leaves errnop untouched on failure preserves the
+        // incoming errno; a successful lookup or definitive miss clears it.
+        // Keep a raw pointer so reentrant callbacks do not alias a Rust borrow.
+        let error = unsafe { crate::errno_abi::__errno_location() };
+        let status = unsafe { self.call(out, buf, len, error) };
+        match classify(status, unsafe { *error }) {
+            Raw::Range => Answer::BufferTooSmall,
+            Raw::Status(Status::Success, _) => {
+                unsafe { *error = 0 };
+                Answer::Found(())
+            }
+            Raw::Status(Status::NotFound, _) => {
+                unsafe { *error = 0 };
+                Answer::NotFound
+            }
+            Raw::Status(Status::TryAgain, error) => Answer::TryAgain(error),
+            Raw::Status(Status::Unavailable, error) => Answer::Unavailable(error),
+        }
+    }
+}
+
+/// # Safety
+/// A successful installed module supplies terminated strings and alias table
+/// that remain readable until its caller buffer is released.
+unsafe fn service_from_c(entry: &libc::servent) -> Option<frankenlibc_core::resolv::ServiceEntry> {
+    if entry.s_name.is_null() || entry.s_proto.is_null() {
+        return None;
+    }
+    let mut aliases = Vec::new();
+    if !entry.s_aliases.is_null() {
+        for index in 0..MAX_SCRATCH / size_of::<usize>() {
+            // SAFETY: the successful module result supplies a terminated table.
+            let alias = unsafe { *entry.s_aliases.add(index) };
+            if alias.is_null() {
+                break;
+            }
+            // SAFETY: each non-null table entry is a terminated string.
+            aliases.push(unsafe { owned(alias) });
+            if index + 1 == MAX_SCRATCH / size_of::<usize>() {
+                return None;
+            }
+        }
+    }
+    Some(frankenlibc_core::resolv::ServiceEntry {
+        // SAFETY: name/protocol satisfy the successful module result contract.
+        name: unsafe { owned(entry.s_name) },
+        protocol: unsafe { owned(entry.s_proto) },
+        port: u16::from_be(entry.s_port as u16),
+        aliases,
+    })
+}
+
+/// Own every result field before growing/releasing the module scratch buffer.
+pub(crate) fn service_entry(
+    service: &[u8],
+    key: ServiceKey<'_>,
+    protocol: Option<&[u8]>,
+) -> Answer<frankenlibc_core::resolv::ServiceEntry> {
+    let Some(query) = ServiceQuery::new(service, key, protocol) else {
+        return Answer::Unavailable(missing_source());
+    };
+    let mut out = MaybeUninit::<libc::servent>::zeroed();
+    let out = out.as_mut_ptr();
+    let mut size = INITIAL_SCRATCH;
+    loop {
+        let mut scratch = vec![0u8; size];
+        // SAFETY: out and this iteration's scratch buffer are live.
+        match unsafe { query.answer(out, scratch.as_mut_ptr().cast(), scratch.len()) } {
+            Answer::BufferTooSmall if size < MAX_SCRATCH => size *= 2,
+            Answer::Found(()) => {
+                // SAFETY: copy every field before this scratch buffer drops.
+                return unsafe { service_from_c(&*out) }
+                    .map_or(Answer::Unavailable(libc::EINVAL), Answer::Found);
+            }
+            Answer::NotFound => return Answer::NotFound,
+            Answer::Unavailable(error) => return Answer::Unavailable(error),
+            Answer::TryAgain(error) => return Answer::TryAgain(error),
+            // An exhausted scratch budget is still ERANGE, not UNAVAIL:
+            // source actions must not turn it into a later source's answer.
+            Answer::BufferTooSmall => return Answer::BufferTooSmall,
+        }
+    }
+}
+
+/// The reentrant APIs pass the actual caller buffer to the module. In
+/// particular, ERANGE must stop source traversal even when TRYAGAIN=continue;
+/// silently growing an internal buffer would execute later sources wrongly.
+///
+/// # Safety
+/// `out` is writable and `buf` covers `len` writable bytes for the callback.
+pub(crate) unsafe fn service_entry_r(
+    service: &[u8],
+    key: ServiceKey<'_>,
+    protocol: Option<&[u8]>,
+    out: *mut libc::servent,
+    buf: *mut c_char,
+    len: usize,
+) -> Answer<()> {
+    let Some(query) = ServiceQuery::new(service, key, protocol) else {
+        return Answer::Unavailable(missing_source());
+    };
+    // SAFETY: the caller validated its result and buffer before dispatch.
+    unsafe { query.answer(out, buf, len) }
 }
 
 /// Every pointer returned by a hosts module is copied before its scratch

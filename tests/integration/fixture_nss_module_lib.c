@@ -36,6 +36,124 @@ static void trace(const char *what, const char *arg);
 static int forced(enum nss_status *st, int *errnop);
 static char *put(char **cur, char *end, const char *s);
 
+/* Service lookups deliberately overlap /etc/services at http, return
+ * different TCP/UDP ports, and require more than the usual 1 KiB scratch for
+ * fltest-large-service. A libc must query the selected NSS source for each
+ * protocol; scanning /etc/services cannot satisfy these cases. */
+static unsigned service_calls;
+static int (*service_reentry)(void);
+
+unsigned FN(service_calls)(void) { return service_calls; }
+void FN(set_service_reentry)(int (*callback)(void)) { service_reentry = callback; }
+
+static enum nss_status fill_service(const char *name, const char *proto,
+                                   unsigned port, int large,
+                                   struct servent *out, char *buf, size_t len,
+                                   int *errnop) {
+  size_t pad = (sizeof(char *) - (uintptr_t)buf % sizeof(char *)) % sizeof(char *);
+  size_t count = large ? 3 : 2;
+  size_t need = pad + (count + 1) * sizeof(char *) + strlen(name) + 1 +
+                strlen(proto) + 1 + sizeof "fltest-svc" + sizeof "shared-service" +
+                (large ? 3073 : 0);
+  if (len < need) {
+    *errnop = ERANGE;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  char **aliases = (char **)(buf + pad);
+  char *cur = (char *)(aliases + count + 1), *end = buf + len;
+  out->s_name = put(&cur, end, name);
+  out->s_proto = put(&cur, end, proto);
+  out->s_port = htons((uint16_t)port);
+  out->s_aliases = aliases;
+  aliases[0] = put(&cur, end, "fltest-svc");
+  aliases[1] = put(&cur, end, "shared-service");
+  if (large) {
+    aliases[2] = cur;
+    memset(cur, 's', 3072);
+    cur[3072] = '\0';
+  }
+  aliases[count] = NULL;
+  *errnop = 0;
+  return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status FN(getservbyname_r)(const char *name, const char *proto,
+                                   struct servent *out, char *buf, size_t len,
+                                   int *errnop) {
+  ++service_calls;
+  trace("getservbyname_r", name);
+  enum nss_status status;
+  if (forced(&status, errnop)) return status;
+  /* These modules intentionally leave errnop untouched, as successful NSS
+   * providers are allowed to do. Keep misses and transient failures separate. */
+  if (!strcmp(name, "fltest-errno-none")) return NSS_STATUS_NOTFOUND;
+  if (!strcmp(name, "fltest-errno-again")) return NSS_STATUS_TRYAGAIN;
+  if (!strcmp(name, "fltest-errno-unavail")) return NSS_STATUS_UNAVAIL;
+  if (!strcmp(name, "fltest-errno-success") || !strcmp(name, "fltest-errno-written")) {
+    int saved = *errnop;
+    status = fill_service("errno-unchanged", "tcp", 4346, 0, out, buf, len, errnop);
+    if (status == NSS_STATUS_SUCCESS)
+      *errnop = !strcmp(name, "fltest-errno-written") ? EIO : saved;
+    return status;
+  }
+  if (!strcmp(name, "fltest-reentry")) {
+    if (!service_reentry || service_reentry() != 0) {
+      *errnop = EIO;
+      return NSS_STATUS_UNAVAIL;
+    }
+    return fill_service("fltest-reentry", "tcp", 4347, 1, out, buf, len, errnop);
+  }
+  if (!strcmp(name, "fltest-again")) {
+    *errnop = EAGAIN;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  if (!strcmp(name, "fltest-unavail")) {
+    *errnop = ENOSYS;
+    return NSS_STATUS_UNAVAIL;
+  }
+  int large = !strcmp(name, "fltest-large-service");
+  int http = !strcmp(name, "http");
+  if ((!large && !http && strcmp(name, "fltest-service") &&
+       strcmp(name, "fltest-svc") && strcmp(name, "shared-service")) ||
+      (proto && strcmp(proto, "tcp") && strcmp(proto, "udp"))) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  if (!proto) proto = "tcp";
+  if (http && !strcmp(proto, "udp")) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  if (getenv("FLTEST_SERVICE_REENTER")) {
+    struct passwd scratch, *found;
+    char storage[1024];
+    if (getpwnam_r("root", &scratch, storage, sizeof storage, &found) != 0 || !found) {
+      *errnop = EIO;
+      return NSS_STATUS_UNAVAIL;
+    }
+  }
+  return fill_service(http ? "module-http" : "fltest-service", proto,
+                      http ? 42480 : large ? 4345 : !strcmp(proto, "tcp") ? 4343 : 4344,
+                      large, out, buf, len, errnop);
+}
+
+enum nss_status FN(getservbyport_r)(int port, const char *proto,
+                                   struct servent *out, char *buf, size_t len,
+                                   int *errnop) {
+  ++service_calls;
+  trace("getservbyport_r", proto);
+  enum nss_status status;
+  if (forced(&status, errnop)) return status;
+  const char *selected = port == htons(4344) ? "udp" : "tcp";
+  if ((port != htons(4343) && port != htons(4344) && port != htons(4345) &&
+       port != htons(80)) || (proto && strcmp(proto, selected))) {
+    *errnop = ENOENT;
+    return NSS_STATUS_NOTFOUND;
+  }
+  return fill_service(port == htons(80) ? "module-http" : "fltest-service", selected,
+                      ntohs((uint16_t)port), port == htons(4345), out, buf, len, errnop);
+}
+
 static const unsigned char host_v4[2][4] = {
     {192, 0, 2, 41}, {192, 0, 2, 42},
 };
