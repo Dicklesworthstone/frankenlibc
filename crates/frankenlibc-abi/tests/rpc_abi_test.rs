@@ -534,10 +534,60 @@ fn clnt_spcreateerror_ignores_tracked_unterminated_prefix() {
 // ===========================================================================
 
 #[test]
-fn getrpcport_returns_zero() {
-    let host = CString::new("localhost").unwrap();
-    let rc = unsafe { getrpcport(host.as_ptr(), 100000, 2, 17) };
-    assert_eq!(rc, 0, "getrpcport should return 0 (not found)");
+fn getrpcport_null_host_preserves_existing_rpc_error_details() {
+    // Null-host handling needs no resolver or transport. Seed every error
+    // byte to expose an accidental reset of a previous nested RPC failure.
+    let (result, observed, observed_errno) = unsafe {
+        let slot = __rpc_thread_createerr().cast::<[u8; 32]>();
+        let saved = slot.read();
+        let errno = frankenlibc_abi::errno_abi::__errno_location();
+        let saved_errno = *errno;
+        slot.write([0xa5; 32]);
+        *errno = libc::E2BIG;
+        let result = getrpcport(std::ptr::null(), 100000, 2, libc::IPPROTO_UDP as u32);
+        let observed = slot.read();
+        let observed_errno = *errno;
+        slot.write(saved);
+        *errno = saved_errno;
+        (result, observed, observed_errno)
+    };
+    assert_eq!(result, 0);
+    assert_eq!(
+        c_int::from_ne_bytes(observed[..4].try_into().unwrap()),
+        13,
+        "RPC_UNKNOWNHOST"
+    );
+    assert_eq!(&observed[4..], &[0xa5; 28]);
+    assert_eq!(observed_errno, libc::E2BIG);
+}
+
+#[test]
+fn getrpcport_rejects_unrepresentable_identifiers_before_transport() {
+    for (program, version) in [(1u64 << 32, 1), (100000, 1u64 << 32)] {
+        // The numeric address needs no DNS and these identifiers cannot be
+        // encoded on the portmapper wire. No ambient rpcbind is required.
+        let (result, status, nested) = unsafe {
+            let slot = __rpc_thread_createerr().cast::<[u8; 32]>();
+            let saved = slot.read();
+            slot.write([0xa5; 32]);
+            let result = getrpcport(
+                c"127.0.0.1".as_ptr(),
+                program,
+                version,
+                libc::IPPROTO_UDP as u32,
+            );
+            let observed = slot.read();
+            slot.write(saved);
+            (
+                result,
+                c_int::from_ne_bytes(observed[..4].try_into().unwrap()),
+                c_int::from_ne_bytes(observed[8..12].try_into().unwrap()),
+            )
+        };
+        assert_eq!(result, 0);
+        assert_eq!(status, 14, "RPC_PMAPFAILURE");
+        assert_eq!(nested, 1, "RPC_CANTENCODEARGS");
+    }
 }
 
 // ===========================================================================

@@ -114,6 +114,18 @@ pub(super) fn creation_status(status: c_int, error: c_int) {
     creation_error(status, RpcError::system(status, error));
 }
 
+/// Host lookup and a successful GETPORT reply containing zero only replace
+/// the applicable creation-error fields. Preserve an earlier nested RPC error
+/// until an actual failed RPC call supplies a replacement; do not set errno.
+pub(super) fn creation_status_preserving_details(status: c_int, error: Option<c_int>) {
+    // SAFETY: this thread owns the accessor's aligned, initialized error slot.
+    let value = unsafe { &mut *super::__rpc_thread_createerr().cast::<CreateError>() };
+    value.status = status;
+    if let Some(error) = error {
+        value.error.detail[..4].copy_from_slice(&error.to_ne_bytes());
+    }
+}
+
 pub(super) fn creation_error_details() -> (c_int, c_int, [u64; 2]) {
     // SAFETY: the public TLS accessor provides initialized, aligned storage
     // for this exact all-integer LP64 layout for the current thread.
@@ -1314,7 +1326,11 @@ pub(super) unsafe fn getport(
     match result {
         Ok(port) => port,
         Err(error) => {
-            creation_error(if error.status == 15 { 15 } else { 14 }, error);
+            if error.status == 15 {
+                creation_status_preserving_details(15, None);
+            } else {
+                creation_error(14, error);
+            }
             0
         }
     }

@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "rpc/legacy-network",
   "captured_at": "2026-05-14T02:05:00Z",
-  "description": "Deterministic third-wave fixtures for legacy Sun RPC compatibility symbols. The cases bind FrankenLibC's safe-default client constructor, diagnostic string, DES-unavailable, loopback address, netname classification, publickey failure, and unsupported portmapper behavior without network access, privileged port binding, host resolver state, filesystem sockets, ambient UID logging, or raw stderr text in structured logs.",
+  "description": "Deterministic third-wave fixtures for legacy Sun RPC compatibility symbols. The cases bind FrankenLibC's safe-default client constructor, diagnostic string, DES-unavailable, loopback address, netname classification, publickey failure, and invalid portmapper request behavior without network access, privileged port binding, host resolver state, filesystem sockets, ambient UID logging, or raw stderr text in structured logs.",
   "spec_reference": "glibc Sun RPC compatibility surface; FrankenLibC rpc_abi deterministic safe-default contract for clnt_sperror, client constructor handles, DES helpers, get_myaddress, getnetname, getpublickey, and getrpcport",
   "campaign": {
     "bead": "bd-gmbqy.11",
@@ -434,11 +434,11 @@
       "inputs": {
         "symbol": "getrpcport",
         "expected_class": "unsupported-portmapper-lookup",
-        "strict_behavior": "returns 0 because native portmapper lookups are unsupported",
-        "hardened_behavior": "same deterministic not-found result; no repair path",
-        "safe_default_rationale": "portmapper lookups would otherwise perform ambient network RPC",
+        "strict_behavior": "numeric IPv4 host with a program above UINT32_MAX returns 0 before transport",
+        "hardened_behavior": "same unrepresentable-program rejection; no repair path",
+        "safe_default_rationale": "the wire format cannot encode this program, so no portmapper request is sent",
         "oracle_kind": "native_safe_default",
-        "divergence_policy": "intentional local contract; portmapper and host resolver state are not consulted",
+        "divergence_policy": "legacy fixture ID and output label retained; successful UDP/TCP discovery is tested by the provider-pinned RPC integration runner",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
       "expected_output": "symbol=getrpcport;mode=strict;expected_class=unsupported-portmapper-lookup;actual=RETURN=0;failure_signature=none",
@@ -452,11 +452,11 @@
       "inputs": {
         "symbol": "getrpcport",
         "expected_class": "unsupported-portmapper-lookup",
-        "strict_behavior": "returns 0 because native portmapper lookups are unsupported",
-        "hardened_behavior": "same deterministic not-found result; no repair path",
-        "safe_default_rationale": "portmapper lookups would otherwise perform ambient network RPC",
+        "strict_behavior": "numeric IPv4 host with a program above UINT32_MAX returns 0 before transport",
+        "hardened_behavior": "same unrepresentable-program rejection; no repair path",
+        "safe_default_rationale": "the wire format cannot encode this program, so no portmapper request is sent",
         "oracle_kind": "native_safe_default",
-        "divergence_policy": "intentional local contract; portmapper and host resolver state are not consulted",
+        "divergence_policy": "legacy fixture ID and output label retained; successful UDP/TCP discovery is tested by the provider-pinned RPC integration runner",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
       "expected_output": "symbol=getrpcport;mode=hardened;expected_class=unsupported-portmapper-lookup;actual=RETURN=0;failure_signature=none",
