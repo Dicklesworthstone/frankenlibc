@@ -12,6 +12,7 @@ on:
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'tests/integration/fixture_nss.c'
+      - 'tests/integration/fixture_addrconfig.c'
       - 'tests/integration/fixture_native_dns_transport.c'
       - 'tests/integration/native_dns_fixture.py'
       - '.github/workflows/native-resolver.yml'
@@ -74,6 +75,18 @@ jobs:
               2>&1 | tee "artifacts/resolver/interface-errors-$mode.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "artifacts/resolver/interface-errors-$mode.log"
           done
+      - name: Verify address-family selection before numeric and DNS lookup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolv_abi_test \
+              getaddrinfo_ai_addrconfig -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/addrconfig-$mode.log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "artifacts/resolver/addrconfig-$mode.log"
+          done
       - name: Build release C exports and public caller
         shell: bash
         run: |
@@ -87,6 +100,33 @@ jobs:
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+      - name: Compare deployed address configuration with GNU in isolated namespaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror tests/integration/fixture_addrconfig.c -ldl -o target/addrconfig-abi
+          host_libc="$(ldd target/addrconfig-abi | awk '/libc.so.6/ {print $3; exit}')"
+          test -n "$host_libc"
+          for state in none ipv4 ipv6 dual; do
+            sudo -n unshare --net -- bash -eu -c '
+              ip link set lo up
+              case "$1" in ipv4|dual) ip address add 192.0.2.1/32 dev lo ;; esac
+              case "$1" in ipv6|dual) ip -6 address add 2001:db8::1/128 dev lo nodad ;; esac
+              unset FRANKENLIBC_PROC_NET_ROUTE_PATH FRANKENLIBC_PROC_NET_IF_INET6_PATH
+              env -u LD_PRELOAD -u FRANKENLIBC_MODE timeout 30 "$2" "$3" > "$5/addrconfig-$1-host.log"
+              for mode in strict hardened; do
+                timeout 30 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$4" "$2" "$4" > "$5/addrconfig-$1-$mode.log"
+              done
+            ' bash "$state" "$PWD/target/addrconfig-abi" "$host_libc" \
+              "$PWD/target/release/libfrankenlibc_abi.so" "$PWD/artifacts/resolver"
+            for mode in host strict hardened; do
+              grep -qx 'addrconfig: 91 cases' "artifacts/resolver/addrconfig-$state-$mode.log"
+              LC_ALL=C sort "artifacts/resolver/addrconfig-$state-$mode.log" > "artifacts/resolver/addrconfig-$state-$mode.sorted"
+            done
+            for mode in strict hardened; do
+              diff -u "artifacts/resolver/addrconfig-$state-host.sorted" "artifacts/resolver/addrconfig-$state-$mode.sorted"
+            done
+          done
       - name: Exercise default hints through the deployed C ABI
         shell: bash
         run: |

@@ -3078,6 +3078,64 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_BADFLAGS;
     }
 
+    let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
+    let mut family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family, NumericError};
+    if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_BADFLAGS;
+    }
+    if !matches!(family, libc::AF_UNSPEC | libc::AF_INET | libc::AF_INET6) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_FAMILY;
+    }
+
+    // GNU applies AI_ADDRCONFIG before numeric parsing, service lookup and
+    // NSS dispatch. Selecting the effective family here both rejects numeric
+    // addresses of unavailable families and avoids querying them through DNS
+    // or modules. Filtering completed results loses those semantics and can
+    // turn an unavailable family into a needless network timeout.
+    if flags & libc::AI_ADDRCONFIG != 0
+        && let Some(state) = read_addrconfig_state_snapshot()
+    {
+        if family == libc::AF_UNSPEC && state.has_ipv4 != state.has_ipv6 {
+            family = if state.has_ipv4 {
+                libc::AF_INET
+            } else {
+                libc::AF_INET6
+            };
+        } else if (family == libc::AF_INET && !state.has_ipv4)
+            || (family == libc::AF_INET6 && !state.has_ipv6)
+        {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_NONAME;
+        }
+        // With neither family configured, keep AF_UNSPEC usable for local
+        // lookups, matching GNU. An unknown snapshot also leaves it unchanged.
+    }
+    let address_family = match family {
+        libc::AF_INET => Family::Inet,
+        libc::AF_INET6 => Family::Inet6,
+        _ => Family::Unspecified,
+    };
     let profiles = match resolve_addrinfo_profiles(service_cstr, hints_ref) {
         Ok(profiles) => profiles,
         Err(err) => {
@@ -3091,40 +3149,11 @@ pub unsafe extern "C" fn getaddrinfo(
             return err;
         }
     };
-
-    let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
-    let family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
-    use frankenlibc_core::addrinfo::{AddressPolicy, Family, NumericError};
-    let address_family = match family {
-        libc::AF_UNSPEC => Family::Unspecified,
-        libc::AF_INET => Family::Inet,
-        libc::AF_INET6 => Family::Inet6,
-        _ => {
-            record_resolver_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Bounds)),
-            );
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-            return libc::EAI_FAMILY;
-        }
-    };
     let address_policy = AddressPolicy::new(
         address_family,
         flags & libc::AI_V4MAPPED != 0,
         flags & libc::AI_ALL != 0,
     );
-    if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
-        record_resolver_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Bounds)),
-        );
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-        return libc::EAI_BADFLAGS;
-    }
     let host_text = match node_cstr.map(CStr::to_str).transpose() {
         Ok(text) => text,
         Err(_) => {
@@ -3147,7 +3176,6 @@ pub unsafe extern "C" fn getaddrinfo(
     };
 
     let mut nodes = Vec::new();
-    let mut addrconfig_filter_eligible = host_text.is_none();
 
     match host_text {
         Some(text) => {
@@ -3415,8 +3443,6 @@ pub unsafe extern "C" fn getaddrinfo(
                 runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
                 return libc::EAI_NONAME;
             }
-
-            addrconfig_filter_eligible = numeric.is_none();
         }
         None => match family {
             libc::AF_INET6 => {
@@ -3466,41 +3492,6 @@ pub unsafe extern "C" fn getaddrinfo(
                 return libc::EAI_FAMILY;
             }
         },
-    }
-
-    // Keep unspecified-family lookups usable on loopback-only systems. A
-    // specifically requested, unconfigured family must still be rejected.
-    if (flags & libc::AI_ADDRCONFIG) != 0
-        && addrconfig_filter_eligible
-        && let Some(state) = read_addrconfig_state_snapshot()
-        && (state.has_ipv4 || state.has_ipv6 || family != libc::AF_UNSPEC)
-    {
-        let unfiltered = nodes.len();
-        let mut filtered = Vec::with_capacity(nodes.len());
-        for node in nodes {
-            if node.is_null() {
-                filtered.push(node);
-                continue;
-            }
-            // SAFETY: non-null nodes were allocated as libc::addrinfo-compatible records.
-            if state.supports_family(unsafe { (*node).ai_family }) {
-                filtered.push(node);
-            } else {
-                // SAFETY: filtered-out node is not returned to the caller.
-                unsafe { free_addrinfo_node(node) };
-            }
-        }
-        nodes = filtered;
-        if nodes.is_empty() && unfiltered != 0 {
-            record_resolver_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Bounds)),
-            );
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-            return libc::EAI_NONAME;
-        }
     }
 
     if nodes.iter().any(|node| node.is_null()) {

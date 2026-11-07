@@ -2141,36 +2141,197 @@ fn getaddrinfo_ai_addrconfig_ignores_malformed_ipv6_addrconfig_rows() {
 }
 
 #[test]
-fn getaddrinfo_ai_addrconfig_numeric_ipv6_bypasses_filter() {
+fn getaddrinfo_ai_addrconfig_selects_numeric_family_before_lookup() {
+    // Expected GNU results are explicit: numeric hosts obey AI_ADDRCONFIG,
+    // NULL hints carry AI_V4MAPPED, and a zeroed hints value stays unfiltered.
+    const V4: &[u8] = b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n";
+    const NO_V4: &[u8] = b"Iface Destination Gateway Flags\n";
+    const V6: &[u8] = b"20010db8000000000000000000000001 02 80 00 20 eth0\n";
+    type Case = (&'static CStr, Option<c_int>, c_int, c_int, c_int);
+    let v4_only: &[Case] = &[
+        (c"::1", None, 0, EAI_ADDRFAMILY, 0),
+        (
+            c"::1",
+            Some(libc::AF_UNSPEC),
+            libc::AI_ADDRCONFIG,
+            EAI_ADDRFAMILY,
+            0,
+        ),
+        (
+            c"::1",
+            Some(libc::AF_INET6),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (c"::1", Some(libc::AF_UNSPEC), 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET),
+        (c"::ffff:192.0.2.9", None, 0, 0, libc::AF_INET),
+    ];
+    let v6_only: &[Case] = &[
+        (c"::1", None, 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET6),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_UNSPEC),
+            libc::AI_ADDRCONFIG,
+            EAI_ADDRFAMILY,
+            0,
+        ),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_INET),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (c"192.0.2.9", Some(libc::AF_UNSPEC), 0, 0, libc::AF_INET),
+        (c"::ffff:192.0.2.9", None, 0, 0, libc::AF_INET6),
+    ];
+    let neither: &[Case] = &[
+        (c"::1", None, 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET),
+        (
+            c"::1",
+            Some(libc::AF_INET6),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_INET),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+    ];
+    for (route, inet6, cases) in [
+        (V4, &b""[..], v4_only),
+        (NO_V4, V6, v6_only),
+        (NO_V4, &b""[..], neither),
+    ] {
+        with_resolver_backends_and_addrconfig(None, None, Some(route), Some(inet6), |_| {
+            for &(node, family, flags, expected_rc, expected_family) in cases {
+                // SAFETY: zero is a valid initial addrinfo hints value.
+                let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+                hints.ai_family = family.unwrap_or(libc::AF_UNSPEC);
+                hints.ai_flags = flags;
+                let hints_ptr = if family.is_some() {
+                    &hints
+                } else {
+                    ptr::null()
+                };
+                let mut result = ptr::null_mut();
+                // SAFETY: strings and optional hints are live; result is writable.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(node.as_ptr(), c"8080".as_ptr(), hints_ptr, &mut result)
+                };
+                assert_eq!(
+                    rc, expected_rc,
+                    "node={node:?}, family={family:?}, flags={flags}"
+                );
+                if rc != 0 {
+                    assert!(result.is_null());
+                    continue;
+                }
+                // SAFETY: successful getaddrinfo returned this owned chain.
+                assert_eq!(
+                    unsafe { collect_addrinfo_families(result) },
+                    [expected_family]
+                );
+                let mut profiles = unsafe { collect_addrinfo_profiles(result) };
+                profiles.sort_unstable();
+                let mut expected = vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 8080),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 8080),
+                    (libc::SOCK_RAW, 0, 8080),
+                ];
+                expected.sort_unstable();
+                assert_eq!(profiles, expected);
+                let mut current = result;
+                while !current.is_null() {
+                    let entry = unsafe { &*current };
+                    assert_eq!(
+                        entry.ai_flags,
+                        if family.is_none() {
+                            libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                        } else {
+                            flags
+                        }
+                    );
+                    if node == c"192.0.2.9" && expected_family == libc::AF_INET6 {
+                        let address = unsafe { &*entry.ai_addr.cast::<libc::sockaddr_in6>() };
+                        assert_eq!(
+                            address.sin6_addr.s6_addr,
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 192, 0, 2, 9]
+                        );
+                    }
+                    current = entry.ai_next;
+                }
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        });
+    }
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_rejects_unavailable_family_before_service() {
     with_resolver_backends_and_addrconfig(
         None,
-        None,
-        Some(
-            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-        ),
-        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        Some(b""),
+        Some(b"Iface Destination Gateway Flags\n"),
+        Some(b""),
         |_| {
-            let node = CString::new("::1").unwrap();
-            let service = CString::new("8080").unwrap();
             let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET6;
             hints.ai_flags = libc::AI_ADDRCONFIG;
-            let mut res: *mut libc::addrinfo = ptr::null_mut();
-
+            let mut result = ptr::null_mut();
             let rc = unsafe {
-                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+                resolv_abi::getaddrinfo(
+                    c"::1".as_ptr(),
+                    c"not-a-number".as_ptr(),
+                    &hints,
+                    &mut result,
+                )
             };
-            assert_eq!(rc, 0);
-            assert!(!res.is_null());
-            let families = unsafe { collect_addrinfo_families(res) };
-            assert_eq!(families, vec![libc::AF_INET6]);
-
-            unsafe { resolv_abi::freeaddrinfo(res) };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(result.is_null());
         },
     );
 }
 
 #[test]
-fn getaddrinfo_ai_addrconfig_returns_noname_when_all_families_filtered() {
+fn getaddrinfo_ai_addrconfig_selects_family_specific_hosts_view() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"::1 loopback-files\n"),
+        None,
+        Some(b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n"),
+        Some(b""),
+        |_| {
+            let mut result = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    c"loopback-files".as_ptr(),
+                    c"80".as_ptr(),
+                    ptr::null(),
+                    &mut result,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert_eq!(
+                unsafe { collect_addrinfo_families(result) },
+                [libc::AF_INET]
+            );
+            let address = unsafe { &*(*result).ai_addr.cast::<libc::sockaddr_in>() };
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 1]);
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_returns_noname_when_selected_hosts_family_is_absent() {
     with_resolver_backends_and_addrconfig(
         Some(b"2001:db8::10 v6-only\n"),
         None,
@@ -2179,6 +2340,26 @@ fn getaddrinfo_ai_addrconfig_returns_noname_when_all_families_filtered() {
         ),
         Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
         |_| {
+            // Narrowing the family now happens before NSS dispatch. Keep
+            // this files-only failure independent of the runner's DNS.
+            struct RestoreNsswitch(Option<std::ffi::OsString>);
+            impl Drop for RestoreNsswitch {
+                fn drop(&mut self) {
+                    // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+                    unsafe {
+                        if let Some(value) = &self.0 {
+                            std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", value);
+                        } else {
+                            std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                        }
+                    }
+                }
+            }
+            let nsswitch = temp_resolver_path("addrconfig-files-only");
+            std::fs::write(&nsswitch, b"hosts: files\n").unwrap();
+            let _restore = RestoreNsswitch(std::env::var_os("FRANKENLIBC_NSSWITCH_CONF"));
+            // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+            unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
             let node = CString::new("v6-only").unwrap();
             let service = CString::new("8080").unwrap();
             let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
@@ -6430,6 +6611,139 @@ fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
     out.extend_from_slice(question);
     out.extend_from_slice(&answers);
     Some(out)
+}
+
+/// Address-family selection must constrain DNS requests, not just discard
+/// answers after performing work for an unavailable family.
+#[test]
+fn getaddrinfo_ai_addrconfig_limits_dns_queries() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_ADDRCONFIG_DNS_TEST_CHILD";
+    if let Ok(case) = std::env::var(CHILD) {
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET6;
+        hints.ai_flags = libc::AI_ADDRCONFIG;
+        let hints_ptr = if case == "unavailable" {
+            &hints
+        } else {
+            ptr::null()
+        };
+        let mut result = ptr::null_mut();
+        // SAFETY: all inputs and the output pointer remain live for the call.
+        let rc = unsafe {
+            resolv_abi::getaddrinfo(
+                c"dual.hermetic.test".as_ptr(),
+                c"80".as_ptr(),
+                hints_ptr,
+                &mut result,
+            )
+        };
+        if case == "unavailable" {
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(result.is_null());
+        } else {
+            assert_eq!(rc, 0);
+            let expected = if case == "ipv4" {
+                libc::AF_INET
+            } else {
+                libc::AF_INET6
+            };
+            assert_eq!(unsafe { collect_addrinfo_families(result) }, [expected]);
+            assert_eq!(unsafe { collect_addrinfo_profiles(result) }.len(), 3);
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        }
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("addrconfig-dns-resolv");
+    let nsswitch_path = temp_resolver_path("addrconfig-dns-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+    for (case, route, inet6, expected_types) in [
+        (
+            "ipv4",
+            "Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n",
+            "",
+            vec![1u16],
+        ),
+        (
+            "ipv6",
+            "Iface Destination Gateway Flags\n",
+            "20010db8000000000000000000000001 02 80 00 20 eth0\n",
+            vec![28],
+        ),
+        (
+            "unavailable",
+            "Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n",
+            "",
+            vec![],
+        ),
+    ] {
+        let route_path = temp_resolver_path("addrconfig-dns-route");
+        let inet6_path = temp_resolver_path("addrconfig-dns-inet6");
+        std::fs::write(&route_path, route).unwrap();
+        std::fs::write(&inet6_path, inet6).unwrap();
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = udp.local_addr().unwrap().port();
+        udp.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            let mut buffer = [0u8; 512];
+            while !stop_server.load(Ordering::Relaxed) {
+                if let Ok((len, peer)) = udp.recv_from(&mut buffer) {
+                    let query = &buffer[..len];
+                    let (name, kind, _) = parse_dns_question(query).unwrap();
+                    observed.push((name, kind));
+                    udp.send_to(&build_hermetic_dns_reply(query, false).unwrap(), peer)
+                        .unwrap();
+                }
+            }
+            observed
+        });
+        // Only the child receives overrides; other parallel resolver tests
+        // cannot race this fixture's configuration or DNS wire observations.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "getaddrinfo_ai_addrconfig_limits_dns_queries",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, case)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env(PROC_NET_ROUTE_PATH_ENV, &route_path)
+            .env(PROC_NET_IF_INET6_PATH_ENV, &inet6_path)
+            .env("LOCALDOMAIN", "")
+            .env("RES_OPTIONS", "")
+            .output();
+        stop.store(true, Ordering::Relaxed);
+        let observed = worker.join().unwrap();
+        let output = output.unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+        let expected = expected_types
+            .into_iter()
+            .map(|kind| ("dual.hermetic.test".to_owned(), kind))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "wire queries for {case}");
+    }
 }
 
 /// Inspect real wire queries in subprocesses: changing resolver environment
