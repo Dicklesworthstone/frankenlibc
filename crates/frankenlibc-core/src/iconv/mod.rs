@@ -51158,7 +51158,10 @@ mod tests {
         assert_eq!(latin1.decode(&[0xe9]), Utf8Step::Char { wc: 0xe9, len: 1 });
         assert_eq!(MultibyteCodec::Ascii.decode(&[0xe9]), Utf8Step::Invalid);
         assert_eq!(MultibyteCodec::Utf8.decode(&[0xc3]), Utf8Step::Incomplete);
-        assert_eq!(MultibyteCodec::Utf8.decode(&[0xc3, b'X']), Utf8Step::Invalid);
+        assert_eq!(
+            MultibyteCodec::Utf8.decode(&[0xc3, b'X']),
+            Utf8Step::Invalid
+        );
         assert_eq!(
             MultibyteCodec::Utf8.decode("é".as_bytes()),
             Utf8Step::Char { wc: 0xe9, len: 2 }
@@ -51169,7 +51172,10 @@ mod tests {
         assert_eq!(latin1.encode(0x20ac, &mut bytes), None);
         assert_eq!(MultibyteCodec::Utf8.encode(0x20ac, &mut bytes), Some(3));
         assert_eq!(&bytes[..3], "€".as_bytes());
-        assert_eq!(latin1.encode_prefix(&mut bytes[..1], &[0xe9, 0x20ac]), Some(1));
+        assert_eq!(
+            latin1.encode_prefix(&mut bytes[..1], &[0xe9, 0x20ac]),
+            Some(1)
+        );
         assert_eq!(latin1.encode_prefix(&mut bytes, &[0xe9, 0x20ac]), None);
         assert_eq!(latin1.decode(&[0]), Utf8Step::Char { wc: 0, len: 1 });
         assert_eq!(latin1.encode(0, &mut bytes), Some(1));
@@ -51192,7 +51198,10 @@ mod tests {
         assert!(!codec.is_ascii_compatible());
         assert_eq!(codec.decode(&[0xc1]), Utf8Step::Char { wc: 0x41, len: 1 });
         let mut bytes = [0; 3];
-        assert_eq!(codec.encode_prefix(&mut bytes, &[0x41, 0x42, 0x43]), Some(3));
+        assert_eq!(
+            codec.encode_prefix(&mut bytes, &[0x41, 0x42, 0x43]),
+            Some(3)
+        );
         assert_eq!(bytes, [0xc1, 0xc2, 0xc3]);
     }
 

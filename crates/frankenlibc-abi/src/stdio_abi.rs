@@ -5147,7 +5147,9 @@ unsafe fn read_cached_ascii_line_wide_inner(
 ) -> Option<(usize, bool)> {
     // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
     let s = unsafe { &mut *p };
-    if s.wide_codec().is_some_and(|codec| !codec.is_ascii_compatible()) {
+    if s.wide_codec()
+        .is_some_and(|codec| !codec.is_ascii_compatible())
+    {
         return None;
     }
     match s.read_ascii_line_into_wide(dst) {

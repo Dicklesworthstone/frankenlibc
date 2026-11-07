@@ -1293,9 +1293,7 @@ impl StdioStream {
     /// an explicit unget operation, which must clear EOF.
     pub fn unread_bytes(&mut self, bytes: &[u8], preserve_eof: bool) {
         let was_eof = self.flags.eof;
-        if !bytes.is_empty()
-            && (self.ungetc_byte.is_some() || !self.read_pushback.is_empty())
-        {
+        if !bytes.is_empty() && (self.ungetc_byte.is_some() || !self.read_pushback.is_empty()) {
             if let Some(byte) = self.ungetc_byte.take() {
                 self.read_pushback.push_front(byte);
             }
@@ -1932,7 +1930,11 @@ mod tests {
         stream.unread_bytes(b"XY", false);
         assert_eq!(stream.mem_seek(i64::MAX, 1), -1);
         assert_eq!(stream.offset(), 4);
-        assert_eq!(stream.mem_read(2), b"XY", "a failed seek preserves pushback");
+        assert_eq!(
+            stream.mem_read(2),
+            b"XY",
+            "a failed seek preserves pushback"
+        );
         assert_eq!(stream.offset(), 6);
     }
 
@@ -1945,7 +1947,10 @@ mod tests {
         stream.bind_wide_codec(crate::iconv::MultibyteCodec::Ascii);
         let _ = stream.prepare_seek();
         assert_eq!(stream.effective_orientation(), 1);
-        assert!(matches!(stream.wide_codec(), Some(crate::iconv::MultibyteCodec::Utf8)));
+        assert!(matches!(
+            stream.wide_codec(),
+            Some(crate::iconv::MultibyteCodec::Utf8)
+        ));
     }
 
     #[test]
@@ -1977,8 +1982,7 @@ mod tests {
 
     #[test]
     fn incomplete_character_rollback_retains_eof_but_explicit_unget_clears_it() {
-        let mut stream =
-            StdioStream::new_mem_fixed(vec![0xe2, 0x82], 2, parse_mode(b"r").unwrap());
+        let mut stream = StdioStream::new_mem_fixed(vec![0xe2, 0x82], 2, parse_mode(b"r").unwrap());
         assert_eq!(stream.mem_read(3), [0xe2, 0x82]);
         assert!(stream.is_eof());
         stream.unread_bytes(&[0xe2, 0x82], true);

@@ -141,7 +141,10 @@ mod locale_scanning {
         static HOST: OnceLock<Host> = OnceLock::new();
         HOST.get_or_init(|| unsafe {
             Host {
-                errno: host_fn(c"__errno_location", errno_abi::__errno_location as *const ()),
+                errno: host_fn(
+                    c"__errno_location",
+                    errno_abi::__errno_location as *const (),
+                ),
                 free: host_fn(c"free", malloc_abi::free as *const ()),
                 setlocale: host_fn(c"setlocale", locale_abi::setlocale as *const ()),
             }
@@ -403,9 +406,19 @@ mod locale_scanning {
             return;
         }
         for (bound, active, input, encoded) in [
-            (c"C.UTF-8", c"fr_FR", "éAé\n".as_bytes(), b"\xc3\xa9".as_slice()),
+            (
+                c"C.UTF-8",
+                c"fr_FR",
+                "éAé\n".as_bytes(),
+                b"\xc3\xa9".as_slice(),
+            ),
             (c"C.UTF-8", c"C", "éAé\n".as_bytes(), b"\xc3\xa9".as_slice()),
-            (c"fr_FR", c"C.UTF-8", b"\xe9A\xe9\n".as_slice(), b"\xe9".as_slice()),
+            (
+                c"fr_FR",
+                c"C.UTF-8",
+                b"\xe9A\xe9\n".as_slice(),
+                b"\xe9".as_slice(),
+            ),
         ] {
             for engine in wide_io_engines() {
                 select(bound);
@@ -445,7 +458,12 @@ mod locale_scanning {
                     assert_eq!((engine.seek)(stream, 0, libc::SEEK_SET), 0);
                     assert_eq!((engine.eof)(stream), 0);
                     assert!((engine.orient)(stream, 0) > 0);
-                    assert_eq!((engine.get)(stream), 0xe9, "{} binding after seek", engine.name);
+                    assert_eq!(
+                        (engine.get)(stream),
+                        0xe9,
+                        "{} binding after seek",
+                        engine.name
+                    );
                     assert_eq!((engine.close)(stream), 0);
                 }
 
@@ -530,7 +548,11 @@ mod locale_scanning {
                         // A new clean-EOF line must not become a false failure
                         // merely because that error indicator is still set.
                         assert_eq!(
-                            (engine.seek)(stream, (input.len() - 1) as libc::c_long, libc::SEEK_SET),
+                            (engine.seek)(
+                                stream,
+                                (input.len() - 1) as libc::c_long,
+                                libc::SEEK_SET
+                            ),
                             0
                         );
                         assert_ne!((engine.error)(stream), 0);
@@ -597,8 +619,7 @@ mod locale_scanning {
                     }
                     if let Some(expected) = oracle.as_ref() {
                         assert_eq!(
-                            &observed,
-                            expected,
+                            &observed, expected,
                             "{active:?}/{} fgetws result/status/position",
                             engine.name
                         );
@@ -611,8 +632,7 @@ mod locale_scanning {
     }
 
     type FwprintfFn = unsafe extern "C-unwind" fn(*mut c_void, *const Wc, ...) -> c_int;
-    type VfwprintfFn =
-        unsafe extern "C-unwind" fn(*mut c_void, *const Wc, *mut c_void) -> c_int;
+    type VfwprintfFn = unsafe extern "C-unwind" fn(*mut c_void, *const Wc, *mut c_void) -> c_int;
 
     fn host_fwprintf() -> FwprintfFn {
         static HOST: OnceLock<FwprintfFn> = OnceLock::new();
@@ -656,12 +676,7 @@ mod locale_scanning {
                 b"\xc3\xa9".as_slice(),
                 b"\xe9".as_slice(),
             ),
-            (
-                c"C.UTF-8",
-                c"C",
-                b"\xc3\xa9".as_slice(),
-                b"A".as_slice(),
-            ),
+            (c"C.UTF-8", c"C", b"\xc3\xa9".as_slice(), b"A".as_slice()),
             (
                 c"fr_FR",
                 c"C.UTF-8",
@@ -672,7 +687,10 @@ mod locale_scanning {
             let narrow = std::ffi::CString::new(narrow).unwrap();
             for engine in wide_io_engines() {
                 let entries: [(&str, FwprintfFn); 2] = if engine.name == "host" {
-                    [("fwprintf", host_fwprintf()), ("vfwprintf", call_host_vfwprintf)]
+                    [
+                        ("fwprintf", host_fwprintf()),
+                        ("vfwprintf", call_host_vfwprintf),
+                    ]
                 } else {
                     [("fwprintf", fl::fwprintf), ("vfwprintf", call_vfwprintf)]
                 };
@@ -741,11 +759,7 @@ mod locale_scanning {
             (c"fr_FR", "ééX", b"\xe9\xe9".as_slice(), 1),
         ] {
             select(locale);
-            for (format, terminated) in [
-                ("%2s%n", true),
-                ("%2c%n", false),
-                ("%2[^X]%n", true),
-            ] {
+            for (format, terminated) in [("%2s%n", true), ("%2c%n", false), ("%2[^X]%n", true)] {
                 for engine in engines() {
                     let input = w(input);
                     let format = w(format);
@@ -808,12 +822,7 @@ mod locale_scanning {
                         (engine.scan)(input.as_ptr(), format.as_ptr(), out.as_mut_ptr(), &mut n)
                     };
                     assert_eq!((rc, n), (1, count), "{locale:?}/{}", engine.name);
-                    assert_eq!(
-                        &out[..len],
-                        &expected[..len],
-                        "{} wide output",
-                        engine.name
-                    );
+                    assert_eq!(&out[..len], &expected[..len], "{} wide output", engine.name);
                     if terminated {
                         assert_eq!(out[len], 0);
                     }
@@ -828,15 +837,8 @@ mod locale_scanning {
             // match a literal or make a later %n count internal bytes.
             for engine in engines() {
                 let mut n = SENTINEL;
-                let rc = unsafe {
-                    (engine.scan)(w("êX").as_ptr(), w("é%n").as_ptr(), &mut n)
-                };
-                assert_eq!(
-                    (rc, n),
-                    (0, SENTINEL),
-                    "{} scalar literal",
-                    engine.name
-                );
+                let rc = unsafe { (engine.scan)(w("êX").as_ptr(), w("é%n").as_ptr(), &mut n) };
+                assert_eq!((rc, n), (0, SENTINEL), "{} scalar literal", engine.name);
             }
         }
     }
@@ -850,10 +852,7 @@ mod locale_scanning {
             select(locale);
             for (conversion, failure) in [("3s", 0), ("3c", libc::EOF), ("3[^ ]", 0)] {
                 for prior in [false, true] {
-                    let input = w(&format!(
-                        "{}{token} 9",
-                        if prior { "7 " } else { "" }
-                    ));
+                    let input = w(&format!("{}{token} 9", if prior { "7 " } else { "" }));
                     let format = w(&format!(
                         "{}%{conversion}%n%d",
                         if prior { "%d " } else { "" }
@@ -917,12 +916,7 @@ mod locale_scanning {
                         &mut n,
                     )
                 };
-                assert_eq!(
-                    (rc, value, n),
-                    (1, 9, 5),
-                    "{} suppression",
-                    engine.name
-                );
+                assert_eq!((rc, value, n), (1, 9, 5), "{} suppression", engine.name);
             }
         }
     }
@@ -989,12 +983,7 @@ mod locale_scanning {
                     &mut n,
                 )
             };
-            assert_eq!(
-                (rc, number, n),
-                (2, 8, 3),
-                "{} repeated index",
-                engine.name
-            );
+            assert_eq!((rc, number, n), (2, 8, 3), "{} repeated index", engine.name);
 
             // Index seven crosses the register/stack boundary and the
             // inline pointer-cache capacity without assigning skipped slots.
@@ -1023,14 +1012,8 @@ mod locale_scanning {
 
             let mut pointer = std::ptr::without_provenance_mut::<c_char>(1);
             n = SENTINEL;
-            let rc = unsafe {
-                (engine.scan)(
-                    w("").as_ptr(),
-                    w("%n%mc").as_ptr(),
-                    &mut n,
-                    &mut pointer,
-                )
-            };
+            let rc =
+                unsafe { (engine.scan)(w("").as_ptr(), w("%n%mc").as_ptr(), &mut n, &mut pointer) };
             assert_eq!((rc, n), (libc::EOF, 0), "{} prefix %n", engine.name);
             assert!(pointer.is_null(), "{} reached empty %mc", engine.name);
 
@@ -1076,12 +1059,8 @@ mod locale_scanning {
                 n = SENTINEL;
                 let (rc, observed_error) = unsafe {
                     *(engine.errno)() = 0;
-                    let rc = (engine.scan)(
-                        w(input).as_ptr(),
-                        w(format).as_ptr(),
-                        &mut pointer,
-                        &mut n,
-                    );
+                    let rc =
+                        (engine.scan)(w(input).as_ptr(), w(format).as_ptr(), &mut pointer, &mut n);
                     (rc, *(engine.errno)())
                 };
                 assert_eq!(

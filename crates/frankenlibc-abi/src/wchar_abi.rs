@@ -6925,9 +6925,7 @@ unsafe fn fputws_impl(
         // Gate the bulk path on wlen >= 16: below the measured crossover the per-char loop is
         // faster (the stack-buffer + wcstombs setup exceeds a handful of fast fputc calls; wn=8
         // was 7% slower). At wlen>=16 bulk wins decisively (wn=64: 9.4x). Strict improvement.
-        if (16..=max_wchars).contains(&wlen)
-            && !memory_output.is_some_and(|(_, bounded)| bounded)
-        {
+        if (16..=max_wchars).contains(&wlen) && !memory_output.is_some_and(|(_, bounded)| bounded) {
             let mut buf = [0u8; CAP];
             // SAFETY: `ws` is valid for `wlen` wide chars (NUL found at `wlen`).
             let src = unsafe { std::slice::from_raw_parts(ws as *const u32, wlen) };
@@ -7196,13 +7194,7 @@ unsafe fn write_wprintf_rendered(
             // SAFETY: chunk[..used] contains only complete encoded characters
             // and stays live outside the narrow write's cancellation window.
             if unsafe {
-                super::stdio_abi::fwrite_for_caller(
-                    chunk.as_ptr().cast(),
-                    1,
-                    used,
-                    stream,
-                    caller,
-                )
+                super::stdio_abi::fwrite_for_caller(chunk.as_ptr().cast(), 1, used, stream, caller)
             } != used
             {
                 return -1;

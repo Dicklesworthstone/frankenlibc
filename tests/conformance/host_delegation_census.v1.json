@@ -2374,7 +2374,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 125,
-    "source_tree_sha256": "65264c88ad1552bd0cad30e4f5c6b7d85cd9964a0b2e138fc1cb6198ce4ba65a",
+    "source_tree_sha256": "441163e349cea52783aaa9f3a3cfca5a3228ad5d5aa3141d20c12f7d63a1f2ba",
     "version": 16
   },
   "module_census": [
@@ -21371,7 +21371,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
-      "sha256": "79648a433e85bb130157fd1b9c5133159e3b1b7b2e67ea5a1134165af587e141"
+      "sha256": "eea5356beb4620462ff39d1aaee37e8e3d6f799f1fd80dbdb9ce8333cab8f1c1"
     },
     {
       "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
@@ -21407,7 +21407,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "sha256": "fb2a0edef9bd4c5be4ad41c4ae5ac8831c1b7c8ba949cf88ce94e78549cf1e8f"
+      "sha256": "52c1a597e5df5b7b23150e26f5d6732e831a47071362311cbe6b51d32a2babd6"
     }
   ],
   "summary": {
