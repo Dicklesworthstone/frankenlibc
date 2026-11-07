@@ -156,15 +156,7 @@ pub(crate) fn active_charset() -> Charset {
 
 /// The actual conversion engine selected by LC_CTYPE. Named locale codecs
 /// are built once, then borrowed without allocation or locks while converting.
-#[derive(Clone, Copy)]
-pub(crate) enum MultibyteCodec {
-    Ascii,
-    Utf8,
-    SingleByte(
-        #[cfg_attr(test, expect(dead_code, reason = "wchar_abi is excluded from lib tests"))]
-        &'static frankenlibc_core::iconv::SingleByteCodec,
-    ),
-}
+pub(crate) use frankenlibc_core::iconv::MultibyteCodec;
 
 #[inline]
 pub(crate) fn active_multibyte_codec() -> MultibyteCodec {

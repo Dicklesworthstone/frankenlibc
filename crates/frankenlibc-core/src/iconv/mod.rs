@@ -2923,6 +2923,82 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
 /// every former member (last was ISO-2022-CN-EXT) is implemented and byte-exact.
 pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 0] = [];
 
+/// An immutable locale conversion engine that can outlive a locale selection.
+///
+/// A wide-oriented stream binds one of these when its orientation is fixed.
+/// The category cache owns named codecs for the process lifetime, so retaining
+/// a codec neither borrows a mutable locale object nor repeats name lookup.
+#[derive(Debug, Clone, Copy)]
+pub enum MultibyteCodec {
+    Ascii,
+    Utf8,
+    SingleByte(&'static SingleByteCodec),
+}
+
+impl MultibyteCodec {
+    /// Decode one external character, distinguishing an incomplete prefix
+    /// from invalid input. NUL is a character consuming one external byte.
+    #[inline]
+    #[must_use]
+    pub fn decode(self, bytes: &[u8]) -> crate::string::wchar::Utf8Step {
+        use crate::string::wchar::{Utf8Step, utf8_decode_step};
+        if matches!(self, Self::Utf8) {
+            return utf8_decode_step(bytes);
+        }
+        let Some(&byte) = bytes.first() else {
+            return Utf8Step::Incomplete;
+        };
+        let character = match self {
+            Self::Ascii => (byte < 0x80).then_some(u32::from(byte)),
+            Self::SingleByte(codec) => codec.decode(byte),
+            Self::Utf8 => unreachable!(),
+        };
+        match character {
+            Some(wc) => Utf8Step::Char { wc, len: 1 },
+            None => Utf8Step::Invalid,
+        }
+    }
+
+    /// Encode one character without replacement or transliteration.
+    #[inline]
+    #[must_use]
+    pub fn encode(self, wc: u32, destination: &mut [u8]) -> Option<usize> {
+        let byte = match self {
+            Self::Utf8 => return crate::string::wchar::wctomb(wc, destination),
+            Self::Ascii => (wc < 0x80).then_some(wc as u8)?,
+            Self::SingleByte(codec) => codec.encode(wc)?,
+        };
+        *destination.first_mut()? = byte;
+        Some(1)
+    }
+
+    /// Convert a fitting prefix of a wide string, stopping before its NUL.
+    /// The UTF-8 arm retains the existing vectorized conversion kernel.
+    #[must_use]
+    pub fn encode_prefix(self, destination: &mut [u8], source: &[u32]) -> Option<usize> {
+        if matches!(self, Self::Utf8) {
+            return crate::string::wchar::wcstombs(destination, source);
+        }
+        let mut written = 0;
+        for &wc in source.iter().take(destination.len()) {
+            if wc == 0 {
+                break;
+            }
+            written += self.encode(wc, &mut destination[written..])?;
+        }
+        Some(written)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_ascii_compatible(self) -> bool {
+        match self {
+            Self::Ascii | Self::Utf8 => true,
+            Self::SingleByte(codec) => codec.is_ascii_compatible(),
+        }
+    }
+}
+
 /// An immutable, stateless single-byte character codec for locale conversions.
 ///
 /// The mappings and canonical output bytes come from the same native codecs as
@@ -51072,6 +51148,44 @@ pub fn iconv_close(_cd: IconvDescriptor) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_locale_codecs_decode_and_encode_independently() {
+        use crate::string::wchar::Utf8Step;
+        let latin1 = Box::leak(Box::new(SingleByteCodec::from_name(b"ISO-8859-1").unwrap()));
+        let latin1 = MultibyteCodec::SingleByte(latin1);
+        assert_eq!(latin1.decode(&[0xe9]), Utf8Step::Char { wc: 0xe9, len: 1 });
+        assert_eq!(MultibyteCodec::Ascii.decode(&[0xe9]), Utf8Step::Invalid);
+        assert_eq!(MultibyteCodec::Utf8.decode(&[0xc3]), Utf8Step::Incomplete);
+        assert_eq!(MultibyteCodec::Utf8.decode(&[0xc3, b'X']), Utf8Step::Invalid);
+        assert_eq!(
+            MultibyteCodec::Utf8.decode("é".as_bytes()),
+            Utf8Step::Char { wc: 0xe9, len: 2 }
+        );
+        let mut bytes = [0xa5; 8];
+        assert_eq!(latin1.encode(0xe9, &mut bytes), Some(1));
+        assert_eq!(&bytes[..2], &[0xe9, 0xa5]);
+        assert_eq!(latin1.encode(0x20ac, &mut bytes), None);
+        assert_eq!(MultibyteCodec::Utf8.encode(0x20ac, &mut bytes), Some(3));
+        assert_eq!(&bytes[..3], "€".as_bytes());
+        assert_eq!(latin1.encode_prefix(&mut bytes[..1], &[0xe9, 0x20ac]), Some(1));
+        assert_eq!(latin1.encode_prefix(&mut bytes, &[0xe9, 0x20ac]), None);
+        assert_eq!(latin1.decode(&[0]), Utf8Step::Char { wc: 0, len: 1 });
+        assert_eq!(latin1.encode(0, &mut bytes), Some(1));
+        assert_eq!(bytes[0], 0);
+    }
+
+    #[test]
+    fn retained_non_ascii_codec_cannot_use_ascii_shortcuts() {
+        use crate::string::wchar::Utf8Step;
+        let codec = Box::leak(Box::new(SingleByteCodec::from_name(b"IBM037").unwrap()));
+        let codec = MultibyteCodec::SingleByte(codec);
+        assert!(!codec.is_ascii_compatible());
+        assert_eq!(codec.decode(&[0xc1]), Utf8Step::Char { wc: 0x41, len: 1 });
+        let mut bytes = [0; 3];
+        assert_eq!(codec.encode_prefix(&mut bytes, &[0x41, 0x42, 0x43]), Some(3));
+        assert_eq!(bytes, [0xc1, 0xc2, 0xc3]);
+    }
 
     #[test]
     fn single_byte_codec_latin1_and_aliases() {

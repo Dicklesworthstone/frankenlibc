@@ -503,6 +503,8 @@ pub struct StdioStream {
     open_flags: OpenFlags,
     /// Runtime state (eof, error).
     flags: StreamFlags,
+    /// Conversion engine fixed when the ABI first orients this stream wide.
+    wide_codec: Option<crate::iconv::MultibyteCodec>,
     /// Logical file position (for seekable streams).
     offset: i64,
     /// One-byte pushback for ungetc (layered on top of buffer).
@@ -557,6 +559,7 @@ impl StdioStream {
             buffer: StreamBuffer::new(buf_mode, BUFSIZ),
             open_flags,
             flags: StreamFlags::default(),
+            wide_codec: None,
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -574,6 +577,7 @@ impl StdioStream {
             buffer: StreamBuffer::new(buf_mode, BUFSIZ),
             open_flags,
             flags: StreamFlags::default(),
+            wide_codec: None,
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -598,6 +602,7 @@ impl StdioStream {
             buffer: StreamBuffer::new(BufMode::None, 0),
             open_flags,
             flags: StreamFlags::default(),
+            wide_codec: None,
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -630,6 +635,7 @@ impl StdioStream {
             buffer: StreamBuffer::new(BufMode::None, 0),
             open_flags,
             flags: StreamFlags::default(),
+            wide_codec: None,
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -652,6 +658,17 @@ impl StdioStream {
         } else {
             self.flags.orientation
         }
+
+    /// Bind an immutable conversion engine once. Later locale selections,
+    /// seeks, and buffering changes cannot replace a wide stream's encoding.
+    pub fn bind_wide_codec(&mut self, codec: crate::iconv::MultibyteCodec) {
+        self.wide_codec.get_or_insert(codec);
+    }
+
+    #[must_use]
+    pub fn wide_codec(&self) -> Option<crate::iconv::MultibyteCodec> {
+        self.wide_codec
+    }
     }
 
     /// Give a [`Self::new_mem_fixed_readonly`] stream its bytes.
@@ -685,6 +702,7 @@ impl StdioStream {
                 ..Default::default()
             },
             flags: StreamFlags::default(),
+            wide_codec: None,
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -706,6 +724,7 @@ impl StdioStream {
             buffer: StreamBuffer::new(BufMode::None, 0),
             open_flags,
             flags: StreamFlags::default(),
+            wide_codec: None,
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
@@ -1265,6 +1284,47 @@ impl StdioStream {
         self.flags.eof = false;
     }
 
+    /// Return a previously consumed byte sequence in its original order.
+    ///
+    /// Buffered fd reads normally rewind in place without allocation. A
+    /// character crossing a refill, or a memory stream without an I/O buffer,
+    /// uses the pushback queue when the single-byte path has no more room.
+    /// `preserve_eof` distinguishes an incomplete decoded prefix at EOF from
+    /// an explicit unget operation, which must clear EOF.
+    pub fn unread_bytes(&mut self, bytes: &[u8], preserve_eof: bool) {
+        let was_eof = self.flags.eof;
+        if !bytes.is_empty()
+            && (self.ungetc_byte.is_some() || !self.read_pushback.is_empty())
+        {
+            if let Some(byte) = self.ungetc_byte.take() {
+                self.read_pushback.push_front(byte);
+            }
+            self.pushback_read_bytes(bytes);
+            self.offset = self
+                .offset
+                .saturating_sub(i64::try_from(bytes.len()).unwrap_or(i64::MAX));
+            if preserve_eof && was_eof {
+                self.flags.eof = true;
+            }
+            return;
+        }
+        for index in (0..bytes.len()).rev() {
+            if !self.ungetc(bytes[index]) {
+                if let Some(byte) = self.ungetc_byte.take() {
+                    self.read_pushback.push_front(byte);
+                }
+                self.pushback_read_bytes(&bytes[..=index]);
+                self.offset = self
+                    .offset
+                    .saturating_sub(i64::try_from(index + 1).unwrap_or(i64::MAX));
+                break;
+            }
+        }
+        if preserve_eof && was_eof {
+            self.flags.eof = true;
+        }
+    }
+
     /// Rewind a memory-backed stream by `unconsumed` bytes after a bulk scanf
     /// read over-read the backing.
     ///
@@ -1714,13 +1774,21 @@ impl StdioStream {
             result.push(b);
             remaining -= 1;
             if remaining == 0 {
-                if let Some(ref backing) = self.mem_backing {
-                    self.offset = backing.position() as i64;
-                } else {
-                    self.advance_offset(result.len());
-                }
+                self.advance_offset(result.len());
                 return result;
             }
+        }
+
+        while remaining > 0 {
+            let Some(byte) = self.read_pushback.pop_front() else {
+                break;
+            };
+            result.push(byte);
+            remaining -= 1;
+        }
+        if remaining == 0 {
+            self.advance_offset(result.len());
+            return result;
         }
 
         if let Some(ref mut backing) = self.mem_backing {
@@ -1755,13 +1823,21 @@ impl StdioStream {
             dst[w] = b;
             w += 1;
             if w == dst.len() {
-                if let Some(ref backing) = self.mem_backing {
-                    self.offset = backing.position() as i64;
-                } else {
-                    self.advance_offset(w);
-                }
+                self.advance_offset(w);
                 return w;
             }
+        }
+
+        while w < dst.len() {
+            let Some(byte) = self.read_pushback.pop_front() else {
+                break;
+            };
+            dst[w] = byte;
+            w += 1;
+        }
+        if w == dst.len() {
+            self.advance_offset(w);
+            return w;
         }
 
         let mut hit_eof = false;
@@ -1789,6 +1865,16 @@ impl StdioStream {
         if !self.mem_flush() {
             return -1;
         }
+        // Queued pushback precedes the backing's physical position. A relative
+        // seek starts at the logical position, then discards that pushback.
+        let (offset, whence) = if whence == 1 {
+            let Some(absolute) = self.offset.checked_add(offset) else {
+                return -1;
+            };
+            (absolute, 0)
+        } else {
+            (offset, whence)
+        };
         if let Some(ref mut backing) = self.mem_backing {
             if let Some(new_pos) = backing.seek(offset, whence) {
                 self.ungetc_byte = None;
@@ -1822,6 +1908,100 @@ impl StdioStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_seek_cur_accounts_for_pending_pushback() {
+        let flags = parse_mode(b"r").unwrap();
+        for (relative, position, suffix) in [
+            (-1, 3, b"def".as_slice()),
+            (0, 4, b"ef".as_slice()),
+            (1, 5, b"f".as_slice()),
+        ] {
+            let mut stream = StdioStream::new_mem_fixed(b"abcdef".to_vec(), 6, flags);
+            assert_eq!(stream.mem_read(6), b"abcdef");
+            stream.unread_bytes(b"XY", false);
+            assert_eq!(stream.offset(), 4);
+            assert_eq!(stream.mem_seek(relative, 1), position);
+            assert_eq!(stream.offset(), position);
+            assert_eq!(stream.mem_read(suffix.len()), suffix);
+            assert_eq!(stream.offset(), 6);
+        }
+
+        let mut stream = StdioStream::new_mem_fixed(b"abcdef".to_vec(), 6, flags);
+        assert_eq!(stream.mem_read(6), b"abcdef");
+        stream.unread_bytes(b"XY", false);
+        assert_eq!(stream.mem_seek(i64::MAX, 1), -1);
+        assert_eq!(stream.offset(), 4);
+        assert_eq!(stream.mem_read(2), b"XY", "a failed seek preserves pushback");
+        assert_eq!(stream.offset(), 6);
+    }
+
+    #[test]
+    fn wide_codec_is_bound_once_and_survives_seek() {
+        let mut stream = StdioStream::new(7, parse_mode(b"r").unwrap());
+        assert!(stream.wide_codec().is_none());
+        stream.set_orientation(1);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Utf8);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Ascii);
+        let _ = stream.prepare_seek();
+        assert_eq!(stream.effective_orientation(), 1);
+        assert!(matches!(stream.wide_codec(), Some(crate::iconv::MultibyteCodec::Utf8)));
+    }
+
+    #[test]
+    fn memory_wide_pushback_preserves_multiple_characters_and_offsets() {
+        let bytes = "é€X".as_bytes();
+        for bulk in [false, true] {
+            let mut stream =
+                StdioStream::new_mem_fixed(bytes.to_vec(), bytes.len(), parse_mode(b"r").unwrap());
+            assert_eq!(stream.mem_read(bytes.len()), bytes);
+            assert_eq!(stream.offset(), bytes.len() as i64);
+            stream.unread_bytes(b"X", false);
+            stream.unread_bytes("€".as_bytes(), false);
+            stream.unread_bytes("é".as_bytes(), false);
+            assert_eq!(stream.offset(), 0);
+            let mut actual = [0; 6];
+            for (index, byte) in actual.iter_mut().enumerate() {
+                if bulk {
+                    assert_eq!(stream.mem_read_into(std::slice::from_mut(byte)), 1);
+                } else {
+                    *byte = stream.mem_read(1)[0];
+                }
+                assert_eq!(stream.offset(), (index + 1) as i64);
+            }
+            assert_eq!(&actual, bytes);
+            assert!(stream.mem_read(1).is_empty());
+            assert!(stream.is_eof());
+        }
+    }
+
+    #[test]
+    fn incomplete_character_rollback_retains_eof_but_explicit_unget_clears_it() {
+        let mut stream =
+            StdioStream::new_mem_fixed(vec![0xe2, 0x82], 2, parse_mode(b"r").unwrap());
+        assert_eq!(stream.mem_read(3), [0xe2, 0x82]);
+        assert!(stream.is_eof());
+        stream.unread_bytes(&[0xe2, 0x82], true);
+        assert_eq!(stream.offset(), 0);
+        assert!(stream.is_eof());
+        stream.unread_bytes(b"A", false);
+        assert!(!stream.is_eof());
+        assert_eq!(stream.mem_read(3), [b'A', 0xe2, 0x82]);
+        assert_eq!(stream.offset(), 2);
+    }
+
+    #[test]
+    fn wide_pushback_survives_a_read_buffer_refill() {
+        let mut stream = StdioStream::with_mode(7, parse_mode(b"r").unwrap(), BufMode::Full);
+        stream.fill_read_buffer(b"ab");
+        assert_eq!(stream.buffered_read(2), b"ab");
+        stream.fill_read_buffer(b"cd");
+        assert_eq!(stream.buffered_read(2), b"cd");
+        stream.unread_bytes(b"abcd", false);
+        assert_eq!(stream.offset(), 0);
+        assert_eq!(stream.buffered_read(4), b"abcd");
+        assert_eq!(stream.offset(), 4);
+    }
 
     #[test]
     fn fixed_cursor_refills_and_preserves_only_prefetched_input() {
