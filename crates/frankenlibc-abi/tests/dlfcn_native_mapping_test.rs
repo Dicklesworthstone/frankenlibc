@@ -419,6 +419,132 @@ fn mapping_relro_subpage_interval_does_not_protect_the_whole_page() {
     );
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ExecutableRelro {
+    Subpage,
+    FullPage,
+    NonExecutable,
+    Overflow,
+}
+
+fn executable_relro_fixture(ifunc: bool, variant: ExecutableRelro) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-executable-relro-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let source = dir.join("execution.c");
+    let library = dir.join("libexecution.so");
+    std::fs::write(&source, include_str!("fixtures/native_relro_execution.c")).unwrap();
+    let mut command = Command::new("gcc");
+    command.args([
+        "-shared",
+        "-fPIC",
+        "-nostdlib",
+        "-O2",
+        "-fno-stack-protector",
+        "-fno-builtin",
+        "-Wl,--hash-style=both,-z,relro,-z,now,-z,separate-code",
+    ]);
+    if ifunc {
+        command.arg("-DTEST_IFUNC");
+    }
+    compile(command.arg(&source).arg("-o").arg(&library));
+    let mut bytes = std::fs::read(&library).unwrap();
+    let object = ElfLoader::new(0).parse(&bytes).unwrap();
+    assert!(object.needed_libraries.is_empty());
+    assert!(
+        object
+            .undefined_symbols()
+            .all(|(_, symbol)| symbol.is_weak())
+    );
+    let (text_index, text) = object
+        .program_headers
+        .iter()
+        .enumerate()
+        .find(|(_, header)| header.is_load() && header.p_flags.0 & 1 != 0)
+        .unwrap();
+    assert_eq!(text.p_vaddr % 4096, 0);
+    assert!(text.p_memsz > 0 && text.p_memsz <= 4096);
+    let relro_index = object
+        .program_headers
+        .iter()
+        .position(|header| header.p_type == ProgramType::GnuRelro)
+        .unwrap();
+    let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+    let entry_size = u16::from_le_bytes(bytes[54..56].try_into().unwrap()) as usize;
+    assert_eq!(entry_size, 56);
+    let relro = phoff + relro_index * entry_size;
+    // A subpage RELRO interval protects no pages. Its RX PT_LOAD page must
+    // remain executable for constructors and IFUNC resolvers/implementations.
+    // Full-page, non-executable and overflowing variants are native negatives;
+    // never execute their unsafe callbacks through the host oracle.
+    let (start, length) = match variant {
+        ExecutableRelro::FullPage => (text.p_vaddr, 4096u64),
+        ExecutableRelro::Overflow => (u64::MAX - 7, 16),
+        _ => (text.p_vaddr, 1),
+    };
+    bytes[relro + 8..relro + 16].copy_from_slice(&text.p_offset.to_le_bytes());
+    bytes[relro + 16..relro + 24].copy_from_slice(&start.to_le_bytes());
+    bytes[relro + 24..relro + 32].copy_from_slice(&start.to_le_bytes());
+    bytes[relro + 32..relro + 40].copy_from_slice(&length.to_le_bytes());
+    bytes[relro + 40..relro + 48].copy_from_slice(&length.to_le_bytes());
+    if matches!(variant, ExecutableRelro::NonExecutable) {
+        let flags = phoff + text_index * entry_size + 4;
+        bytes[flags..flags + 4].copy_from_slice(&(text.p_flags.0 & !1).to_le_bytes());
+    }
+    std::fs::write(&library, bytes).unwrap();
+    library
+}
+
+fn executable_relro_contract(api: Api, ifunc: bool) {
+    let library = executable_relro_fixture(ifunc, ExecutableRelro::Subpage);
+    let handle = api.open(&library);
+    let probe = api.symbol(handle, c"relro_execution_probe");
+    assert!(permissions(probe).starts_with("r-x"));
+    let call: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(probe) };
+    assert_eq!(
+        unsafe { call() },
+        1,
+        "callback did not execute: ifunc={ifunc}"
+    );
+    api.close(handle);
+    if api.native {
+        for variant in [
+            ExecutableRelro::FullPage,
+            ExecutableRelro::NonExecutable,
+            ExecutableRelro::Overflow,
+        ] {
+            let library = executable_relro_fixture(ifunc, variant);
+            assert!(
+                api.try_open(&library, 0).is_null(),
+                "unsafe callback was admitted: ifunc={ifunc}, {variant:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn mapping_constructor_executes_on_partial_relro_page() {
+    isolated(
+        "mapping_constructor_executes_on_partial_relro_page",
+        |api| {
+            executable_relro_contract(api, false);
+        },
+    );
+}
+
+#[test]
+fn mapping_ifunc_executes_on_partial_relro_page() {
+    isolated("mapping_ifunc_executes_on_partial_relro_page", |api| {
+        executable_relro_contract(api, true);
+    });
+}
+
 #[test]
 fn reservation_partitions_every_page_offset_without_overlapping_live_memory() {
     for alignment in [4096usize, 8192, 65536, 2097152] {

@@ -349,6 +349,226 @@ fn complex_math_characterize_vs_glibc() {
     }
 }
 
+/// Finite inverse-sine/cosine inputs span the entire binary64 exponent range.
+/// Tiny off-axis values and branch-cut neighborhoods must retain both result
+/// components even when squared intermediates would underflow or overflow.
+#[test]
+fn inverse_sine_cosine_finite_exponent_range_vs_glibc() {
+    type Unary = unsafe extern "C" fn(C) -> C;
+    let functions: [(&str, Unary, Unary); 4] = [
+        ("casin", fl::casin, casin),
+        ("cacos", fl::cacos, cacos),
+        ("casinh", fl::casinh, casinh),
+        ("cacosh", fl::cacosh, cacosh),
+    ];
+    let magnitudes = [
+        0.0,
+        f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        1e-200,
+        1e-154,
+        3.054_936_363_499_605e-151,
+        1e-100,
+        1e-20,
+        0.5,
+        f64::from_bits(1.0f64.to_bits() - 1),
+        1.0,
+        f64::from_bits(1.0f64.to_bits() + 1),
+        2.0,
+        1e100,
+        3.273_390_607_896_142e150,
+        1e154,
+        1e200,
+        f64::MAX / 2.0,
+        f64::MAX,
+    ];
+    let check = |z: C| {
+        for (name, implementation, reference) in functions {
+            let actual = unsafe { implementation(z) };
+            let expected = unsafe { reference(z) };
+            for (part, got, want) in [
+                ("re", actual.re, expected.re),
+                ("im", actual.im, expected.im),
+            ] {
+                assert!(
+                    got.is_finite() && ulp(got, want) <= 4,
+                    "{name}({:e},{:e}) {part}: got {got:e}, expected {want:e} ({} ULP)",
+                    z.re,
+                    z.im,
+                    ulp(got, want),
+                );
+                if want == 0.0 {
+                    assert_eq!(got.to_bits(), want.to_bits(), "{name} {part} zero sign");
+                }
+            }
+        }
+    };
+    for re in magnitudes {
+        for im in magnitudes {
+            for re_sign in [1.0, -1.0] {
+                for im_sign in [1.0, -1.0] {
+                    check(C {
+                        re: re * re_sign,
+                        im: im * im_sign,
+                    });
+                }
+            }
+        }
+    }
+    let mut rng = Lcg(0x696e_7665_7273_6573);
+    let mut checked = 0;
+    for _ in 0..5_000 {
+        let re = f64::from_bits(rng.next());
+        let im = f64::from_bits(rng.next());
+        if re.is_finite() && im.is_finite() {
+            check(C { re, im });
+            checked += 1;
+        }
+    }
+    assert!(checked > 4_900);
+}
+
+/// Square roots of finite complex inputs are finite across the full exponent
+/// range. Include subnormal pairs, unbalanced components, and values for which
+/// an unscaled hypot or the following addition would overflow.
+#[test]
+fn csqrt_finite_exponent_range_vs_glibc() {
+    let magnitudes = [
+        0.0,
+        f64::from_bits(1),
+        f64::from_bits(2),
+        f64::from_bits(3),
+        f64::MIN_POSITIVE / 2.0,
+        f64::MIN_POSITIVE,
+        2.0 * f64::MIN_POSITIVE,
+        1e-200,
+        1e-154,
+        0.5,
+        1.0,
+        2.0,
+        1e154,
+        1e200,
+        f64::MAX / 4.0,
+        f64::MAX / 2.0,
+        f64::MAX,
+    ];
+    let mut checked = 0;
+    let check = |z: C| {
+        let actual = unsafe { fl::csqrt(z) };
+        let expected = unsafe { csqrt(z) };
+        assert!(
+            actual.re.is_finite() && actual.im.is_finite(),
+            "csqrt({:e},{:e}) must be finite, got ({:e},{:e})",
+            z.re,
+            z.im,
+            actual.re,
+            actual.im,
+        );
+        for (part, got, want) in [
+            ("re", actual.re, expected.re),
+            ("im", actual.im, expected.im),
+        ] {
+            assert!(
+                ulp(got, want) <= 4,
+                "csqrt({:e},{:e}) {part}: got {got:e}, expected {want:e} ({} ULP)",
+                z.re,
+                z.im,
+                ulp(got, want),
+            );
+            if want == 0.0 {
+                if z.im == 0.0 {
+                    // An exact branch-axis zero must preserve every bit.
+                    assert_eq!(
+                        got.to_bits(),
+                        want.to_bits(),
+                        "csqrt({:e},{:e}) {part} zero sign: got {got:e}, expected {want:e}",
+                        z.re,
+                        z.im,
+                    );
+                } else {
+                    // Both exact components are nonzero when im != 0. A host
+                    // zero is therefore underflow, and glibc can lose a correctly
+                    // rounded least subnormal through intermediate rounding.
+                    // Permit only that one-ULP distinction, with the same sign;
+                    // the independent regression below requires the correct
+                    // nonzero result for analytically bounded inputs.
+                    assert_eq!(
+                        got.is_sign_negative(),
+                        want.is_sign_negative(),
+                        "csqrt({:e},{:e}) {part} underflow sign",
+                        z.re,
+                        z.im,
+                    );
+                    assert!(
+                        ulp(got, want) <= 1,
+                        "csqrt({:e},{:e}) {part} underflow: got {got:e}, expected {want:e}",
+                        z.re,
+                        z.im,
+                    );
+                }
+            }
+        }
+    };
+    for re in magnitudes {
+        for im in magnitudes {
+            for re_sign in [1.0, -1.0] {
+                for im_sign in [1.0, -1.0] {
+                    check(C {
+                        re: re * re_sign,
+                        im: im * im_sign,
+                    });
+                    checked += 1;
+                }
+            }
+        }
+    }
+    let mut rng = Lcg(0x7371_7274_7261_6e67);
+    for _ in 0..20_000 {
+        let re = f64::from_bits(rng.next());
+        let im = f64::from_bits(rng.next());
+        if re.is_finite() && im.is_finite() {
+            check(C { re, im });
+            checked += 1;
+        }
+    }
+    assert!(checked > 20_000);
+}
+
+/// The smaller component is |y|/(2*d), where the dominant component d is
+/// arbitrarily close to sqrt(|x|). For eta = 2^-1074, both (|x|, |y|) =
+/// (0.5, eta) and (2, 2*eta) therefore approach eta/sqrt(2). More precisely,
+/// sqrt(|x|) < d < sqrt(2*|x|), so eta/2 < |y|/(2*d) < eta/sqrt(2).
+/// Nearest rounding must produce eta. This analytic expectation is independent
+/// of host glibc, which can prematurely underflow these components to zero.
+#[test]
+fn csqrt_preserves_correctly_rounded_least_subnormal_components() {
+    let least = f64::from_bits(1);
+    for (re, im) in [(0.5, least), (2.0, f64::from_bits(2))] {
+        for re_sign in [1.0, -1.0] {
+            for im_sign in [1.0, -1.0] {
+                let z = C {
+                    re: re * re_sign,
+                    im: im * im_sign,
+                };
+                // SAFETY: csqrt accepts every finite complex input by value.
+                let actual = unsafe { fl::csqrt(z) };
+                let (part, got, expected) = if z.re > 0.0 {
+                    ("im", actual.im, least.copysign(z.im))
+                } else {
+                    ("re", actual.re, least)
+                };
+                assert_eq!(
+                    got.to_bits(),
+                    expected.to_bits(),
+                    "csqrt({:e},{:e}) {part} must round to the signed least subnormal",
+                    z.re,
+                    z.im,
+                );
+            }
+        }
+    }
+}
+
 /// Deterministic C99 Annex G special-value contract for csqrt, checked
 /// bit-exactly against the host glibc (bd-2g7oyh.239). These mandate exact
 /// results, so any divergence is a real conformance bug.
@@ -548,4 +768,170 @@ fn csinh_ccosh_special_values_vs_glibc() {
         "csinh/ccosh special-value mismatches:\n{}",
         mism.join("\n")
     );
+}
+
+/// Nonzero offsets from the inverse-tangent branch points must not collapse
+/// into the poles when their squares underflow or the logarithm's quotient
+/// overflows. Include the adjacent representable real values, all quadrants,
+/// exact signed-zero poles, and the overflow boundary of the sum of squares.
+#[test]
+fn catanh_catan_finite_branch_neighborhoods_vs_glibc() {
+    let small_pole_offset = 2.983_336_292_480_083e-154_f64; // 2^-510
+    let large = 3.351_951_982_485_649_3e153_f64; // 2^510
+    let old_large = 9.486_832_980_505_138e153_f64;
+    let real_parts = [
+        0.0,
+        0.5,
+        f64::from_bits(1.0_f64.to_bits() - 1),
+        1.0,
+        f64::from_bits(1.0_f64.to_bits() + 1),
+        2.0,
+        f64::from_bits(large.to_bits() - 1),
+        large,
+        f64::from_bits(old_large.to_bits() - 1),
+        old_large,
+        f64::MAX,
+    ];
+    let imaginary_parts = [
+        0.0,
+        f64::from_bits(1),
+        f64::from_bits(2),
+        f64::from_bits(f64::MIN_POSITIVE.to_bits() - 1),
+        f64::MIN_POSITIVE,
+        1.0e-200,
+        1.0e-160,
+        1.0e-154,
+        f64::from_bits(small_pole_offset.to_bits() - 1),
+        small_pole_offset,
+        f64::from_bits(small_pole_offset.to_bits() + 1),
+        1.0e-150,
+        f64::EPSILON,
+        1.0,
+        f64::from_bits(large.to_bits() - 1),
+        large,
+        f64::from_bits(old_large.to_bits() - 1),
+        old_large,
+        f64::MAX,
+    ];
+    let mut checked = 0;
+    for x in real_parts {
+        for y in imaginary_parts {
+            for xsign in [-1.0, 1.0] {
+                for ysign in [-1.0, 1.0] {
+                    let z = C {
+                        re: x * xsign,
+                        im: y * ysign,
+                    };
+                    // Rotate the same neighborhoods onto catan's +/-i cuts.
+                    let rotated = C {
+                        re: -z.im,
+                        im: z.re,
+                    };
+                    let cases = unsafe {
+                        [
+                            ("catanh", z, fl::catanh(z), catanh(z)),
+                            ("catan", rotated, fl::catan(rotated), catan(rotated)),
+                        ]
+                    };
+                    for (name, input, actual, expected) in cases {
+                        for (component, got, want) in [
+                            ("real", actual.re, expected.re),
+                            ("imaginary", actual.im, expected.im),
+                        ] {
+                            let matches = if want == 0.0 || want.is_infinite() {
+                                got.to_bits() == want.to_bits()
+                            } else {
+                                got.is_finite() && got != 0.0 && ulp(got, want) <= 4
+                            };
+                            assert!(
+                                matches,
+                                "{name}({:e}{:+e}i) {component}: fl={got:e} glibc={want:e}",
+                                input.re, input.im,
+                            );
+                        }
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 11 * 19 * 4 * 2);
+}
+
+/// A finite branch-neighborhood value must not produce a pole exception, and
+/// finite large inputs must not overflow an internal sum of squares. Observe
+/// the processor flags through the host API and restore the caller's complete
+/// floating-point environment even if a regression causes an assertion panic.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn catanh_catan_finite_branch_exception_flags_vs_glibc() {
+    use std::ffi::{c_int, c_void};
+
+    unsafe extern "C" {
+        fn feholdexcept(envp: *mut c_void) -> c_int;
+        fn fesetenv(envp: *const c_void) -> c_int;
+        fn feclearexcept(excepts: c_int) -> c_int;
+        fn fetestexcept(excepts: c_int) -> c_int;
+    }
+
+    struct SavedEnvironment([u64; 16]);
+    impl Drop for SavedEnvironment {
+        fn drop(&mut self) {
+            // SAFETY: feholdexcept initialized the sufficiently sized and
+            // aligned buffer with this thread's original fenv_t.
+            unsafe { fesetenv(self.0.as_ptr().cast()) };
+        }
+    }
+
+    let mut saved = SavedEnvironment([0; 16]);
+    // SAFETY: x86_64 fenv_t fits within the aligned 128-byte buffer.
+    assert_eq!(unsafe { feholdexcept(saved.0.as_mut_ptr().cast()) }, 0);
+    const FE_ALL_EXCEPT: c_int = 0x3d;
+    const UNEXPECTED_EXCEPTIONS: c_int = 0x0d; // INVALID | DIVBYZERO | OVERFLOW
+    let old_large = 9.486_832_980_505_138e153_f64;
+    let old_large_below = f64::from_bits(old_large.to_bits() - 1);
+    let inputs = [
+        (old_large_below, old_large_below),
+        (4.0e153, 4.0e153),
+        (1.0, f64::from_bits(1)),
+        (1.0, f64::MIN_POSITIVE),
+        (1.0, 1.0e-154),
+        (1.0, 3.0e-154),
+        (0.5, 0.25),
+    ];
+    type Unary = unsafe extern "C" fn(C) -> C;
+    let mut checked = 0;
+    for (x, y) in inputs {
+        for xsign in [-1.0, 1.0] {
+            for ysign in [-1.0, 1.0] {
+                let z = C {
+                    re: x * xsign,
+                    im: y * ysign,
+                };
+                let rotated = C {
+                    re: -z.im,
+                    im: z.re,
+                };
+                let cases: [(&str, C, Unary, Unary); 2] = [
+                    ("catanh", z, fl::catanh, catanh),
+                    ("catan", rotated, fl::catan, catan),
+                ];
+                for (name, input, candidate, host) in cases {
+                    for (provider, function) in [("frankenlibc", candidate), ("glibc", host)] {
+                        assert_eq!(unsafe { feclearexcept(FE_ALL_EXCEPT) }, 0);
+                        let result = unsafe { function(std::hint::black_box(input)) };
+                        std::hint::black_box(result);
+                        let flags = unsafe { fetestexcept(UNEXPECTED_EXCEPTIONS) };
+                        assert_eq!(
+                            flags, 0,
+                            "{provider} {name}({:e}{:+e}i) raised invalid/pole/overflow flags: {flags:#x}",
+                            input.re, input.im,
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 7 * 4 * 2 * 2);
 }

@@ -9,6 +9,8 @@ on:
       - 'crates/frankenlibc-abi/src/fortify_abi.rs'
       - 'crates/frankenlibc-abi/src/wchar_abi.rs'
       - 'crates/frankenlibc-abi/src/isoc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
@@ -150,6 +152,42 @@ jobs:
                 2> "artifacts/stdio-layout/lifetime-$model-$mode-preload.err"
             done
           done
+      - name: Preserve every narrow and wide printf argument
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          for mode in strict hardened; do
+            for target in conformance_diff_stdio_printf conformance_diff_swprintf; do
+              FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+                --test "$target" -- --test-threads=1 --nocapture \
+                2>&1 | tee "artifacts/stdio-layout/$target-$mode.log"
+              grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' \
+                "artifacts/stdio-layout/$target-$mode.log"
+            done
+          done
+      - name: Exercise more than 32 arguments through all 18 C frontends
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          cc -std=c11 -O2 -fno-builtin -Wno-format tests/integration/fixture_stdio_printf.c \
+            -ldl -lm -pthread -o target/stdio-many-arguments
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          host="$(env -u LD_PRELOAD ldd target/stdio-many-arguments | awk '$1 == "libc.so.6" {print $3}')"
+          test -f "$host"
+          test -f "$library"
+          prefix=artifacts/stdio-layout/many-printf-args
+          env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$host" \
+            timeout 30 target/stdio-many-arguments --many-printf-args > "$prefix-host.out" 2> "$prefix-host.err"
+          grep -qx 'many-printf-args: PASS (18 frontends)' "$prefix-host.out"
+          test ! -s "$prefix-host.err"
+          for mode in strict hardened; do
+            timeout 30 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$library" \
+              target/stdio-many-arguments --many-printf-args > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+            cmp "$prefix-host.out" "$prefix-$mode.out"
+            cmp "$prefix-host.err" "$prefix-$mode.err"
+          done
       - name: Exercise registration and callback dispatch through the Rust ABI
         if: always()
         shell: bash
@@ -163,6 +201,44 @@ jobs:
             grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
               "artifacts/stdio-layout/registration-$mode.log"
           done
+      - name: Preserve legacy cleanup cancellation types through the Rust ABI
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test glibc_internal_abi_test pthread_cleanup -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/stdio-layout/legacy-cleanup-$mode.log"
+            grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+              "artifacts/stdio-layout/legacy-cleanup-$mode.log"
+          done
+      - name: Run legacy cleanup handlers on cancellation and thread exit
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          c++ -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_callback_unwind.cpp -ldl -o target/stdio-callback-unwind
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          host="$(env -u LD_PRELOAD ldd target/stdio-callback-unwind | awk '$1 == "libc.so.6" {print $3}')"
+          test -f "$host"
+          test -f "$library"
+          count=0
+          for case in pop pop-restore exit cancel restore-cancel pop-exit; do
+            prefix="artifacts/stdio-layout/legacy-cleanup-$case"
+            env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$host" \
+              timeout 20 target/stdio-callback-unwind --legacy-cleanup "$case" > "$prefix-host.out" 2> "$prefix-host.err"
+            grep -qx "legacy-cleanup:$case:PASS" "$prefix-host.out"
+            test ! -s "$prefix-host.err"
+            for mode in strict hardened; do
+              timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$library" \
+                target/stdio-callback-unwind --legacy-cleanup "$case" > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+              cmp "$prefix-host.out" "$prefix-$mode.out"
+              cmp "$prefix-host.err" "$prefix-$mode.err"
+            done
+            count=$((count + 1))
+          done
+          test "$count" -eq 6
       - name: Propagate registered C++ callback exceptions through every printf boundary
         if: always()
         shell: bash

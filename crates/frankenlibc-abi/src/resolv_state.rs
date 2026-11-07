@@ -30,6 +30,7 @@ pub const RES_IGNTC: c_ulong = 0x20;
 pub const RES_RECURSE: c_ulong = 0x40;
 pub const RES_DEFNAMES: c_ulong = 0x80;
 pub const RES_DNSRCH: c_ulong = 0x200;
+pub const RES_NOALIASES: c_ulong = 0x1000;
 pub const RES_ROTATE: c_ulong = 0x4000;
 pub const RES_USE_EDNS0: c_ulong = 0x0010_0000;
 pub const RES_USE_DNSSEC: c_ulong = 0x0080_0000;
@@ -147,6 +148,14 @@ unsafe fn text(pointer: *const c_char) -> Result<Vec<u8>, c_int> {
     Ok(unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), length) }.to_vec())
 }
 
+/// Resolve an explicit alias using only the caller's option snapshot. This
+/// does not initialize or mutate state, nor borrow it across filesystem I/O.
+pub(crate) unsafe fn hostalias(pointer: *mut c_void, name: &[u8]) -> Option<Vec<u8>> {
+    // SAFETY: caller-owned state is checked before its flags are copied.
+    let options = unsafe { checked_state(pointer).ok()? }.options;
+    crate::resolv_abi::hostalias_lookup(name, options)
+}
+
 fn fail(error: c_int) -> c_int {
     // SAFETY: errno is local to the calling thread.
     unsafe { set_abi_errno(error) };
@@ -200,17 +209,45 @@ fn random_id() -> Result<u16, c_int> {
 }
 
 fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
-    let mut content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
-    if let Some(options) = std::env::var_os("RES_OPTIONS") {
-        content.extend_from_slice(b"\noptions ");
-        content.extend_from_slice(options.as_bytes());
-        content.push(b'\n');
-    }
+    let content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
+    let localdomain = std::env::var_os("LOCALDOMAIN");
+    let options = std::env::var_os("RES_OPTIONS");
+    let mut config = ResolverConfig::parse(&content);
+    config.apply_overrides(
+        localdomain.as_ref().map(|value| value.as_bytes()),
+        options.as_ref().map(|value| value.as_bytes()),
+    );
     // EDNS is a public res_state option, not part of the address-only
     // ResolverConfig. Read it from the same fresh file/environment snapshot.
     // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
     let mut edns0 = false;
     let mut explicit_timing = [false; 2];
+    let mut observe_option = |word: &[u8]| {
+        edns0 |= word.starts_with(b"edns0");
+        for (index, prefix) in [b"timeout:".as_slice(), b"attempts:".as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(value) = word.strip_prefix(prefix) {
+                // Match the core config parser: a leading '+' is valid,
+                // while empty, negative, nondecimal and overflowing values
+                // do not override the legacy caller's nonzero timing.
+                let digits = value.strip_prefix(b"+").unwrap_or(value);
+                let valid = !digits.is_empty()
+                    && digits
+                        .iter()
+                        .try_fold(0u32, |number, &byte| {
+                            if byte.is_ascii_digit() {
+                                number.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some();
+                explicit_timing[index] |= valid;
+            }
+        }
+    };
     for line in content.split(|&byte| byte == b'\n') {
         let mut words = line
             .split(u8::is_ascii_whitespace)
@@ -219,41 +256,17 @@ fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
             continue;
         }
         for word in words {
-            edns0 |= word.starts_with(b"edns0");
-            for (index, prefix) in [b"timeout:".as_slice(), b"attempts:".as_slice()]
-                .into_iter()
-                .enumerate()
-            {
-                if let Some(value) = word.strip_prefix(prefix) {
-                    // Match the core config parser: a leading '+' is valid,
-                    // while empty, negative, nondecimal and overflowing values
-                    // do not override the legacy caller's nonzero timing.
-                    let digits = value.strip_prefix(b"+").unwrap_or(value);
-                    let valid = !digits.is_empty()
-                        && digits
-                            .iter()
-                            .try_fold(0u32, |number, &byte| {
-                                if byte.is_ascii_digit() {
-                                    number.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
-                                } else {
-                                    None
-                                }
-                            })
-                            .is_some();
-                    explicit_timing[index] |= valid;
-                }
-            }
+            observe_option(word);
         }
     }
-    let mut config = ResolverConfig::parse(&content);
-    if let Some(domain) = std::env::var_os("LOCALDOMAIN") {
-        config.search = domain
+    if let Some(options) = options {
+        for word in options
             .as_bytes()
             .split(u8::is_ascii_whitespace)
             .filter(|part| !part.is_empty())
-            .filter_map(|part| std::str::from_utf8(part).ok().map(str::to_owned))
-            .collect();
-        config.domain = config.search.first().cloned();
+        {
+            observe_option(word);
+        }
     }
     (
         config,
@@ -866,11 +879,22 @@ pub unsafe fn search(
     let inputs = (|| {
         // SAFETY: bounded name/search copies; no caller memory is borrowed during I/O.
         let name = unsafe { text(name)? };
-        let domains = unsafe { search_domains(pointer)? };
+        let alias = if name.contains(&b'.') {
+            None
+        } else {
+            crate::resolv_abi::hostalias_lookup(&name, options)
+        };
+        // An alias is a direct query: even caller-installed search pointers
+        // are irrelevant and must not be read on this path.
+        let domains = if alias.is_some() {
+            Vec::new()
+        } else {
+            unsafe { search_domains(pointer)? }
+        };
         let ndots = unsafe { checked_state(pointer)? }.ndots();
-        Ok::<_, c_int>((name, domains, ndots))
+        Ok::<_, c_int>((name, alias, domains, ndots))
     })();
-    let (name, domains, ndots) = match inputs {
+    let (name, alias, domains, ndots) = match inputs {
         Ok(inputs) => inputs,
         Err(os) => {
             return unsafe {
@@ -887,6 +911,18 @@ pub unsafe fn search(
             };
         }
     };
+    if let Some(alias) = alias {
+        // The first alias target is authoritative, including negative and
+        // temporary replies. Do not search the original name on failure.
+        return unsafe {
+            finish_lookup(
+                pointer,
+                lookup(pointer, &alias, class, kind, options, &config, capacity),
+                answer,
+                capacity,
+            )
+        };
+    }
     // Use wire labels to distinguish a final root dot from an escaped literal
     // dot. A decimal escaped dot is data, never a search-label separator.
     let mut escaped = false;

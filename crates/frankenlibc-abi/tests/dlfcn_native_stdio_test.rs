@@ -146,6 +146,117 @@ int stream_large_offsets(const char *path) {
     return 0;
 }
 
+#ifdef EXTENDED_STREAMS
+#define EXTENDED_FRONTENDS(X) \
+ X(fopencookie) X(tmpfile) X(tmpfile64) X(popen) X(pclose) \
+ X(getc) X(putc) X(getchar) X(putchar) \
+ X(getc_unlocked) X(putc_unlocked) X(fgetc_unlocked) X(fputc_unlocked) \
+ X(getchar_unlocked) X(putchar_unlocked) X(fread_unlocked) X(fwrite_unlocked) \
+ X(fgets_unlocked) X(fputs_unlocked) X(fflush_unlocked) X(feof_unlocked) \
+ X(ferror_unlocked) X(clearerr_unlocked) X(fileno_unlocked)
+static const char *const extended_names[] = { EXTENDED_FRONTENDS(NAME) };
+static void *const extended_addresses[] = { EXTENDED_FRONTENDS(ADDRESS) };
+size_t extended_frontend_count(void) {
+    return sizeof extended_addresses / sizeof extended_addresses[0];
+}
+void *extended_frontend(size_t index, int dynamic, const char *version) {
+    if (index >= extended_frontend_count()) return 0;
+    if (!dynamic) return extended_addresses[index];
+    void *result = version ? dlvsym(RTLD_DEFAULT, extended_names[index], version)
+                           : dlsym(RTLD_DEFAULT, extended_names[index]);
+    __asm__ __volatile__("" : "+r"(result));
+    return result;
+}
+
+/* Call exported functions even when glibc headers offer FILE-field inlines. */
+extern int exported_getc_unlocked(FILE *) __asm__("getc_unlocked");
+extern int exported_fputc_unlocked(int, FILE *) __asm__("fputc_unlocked");
+extern size_t exported_fread_unlocked(void *, size_t, size_t, FILE *)
+    __asm__("fread_unlocked");
+extern size_t exported_fwrite_unlocked(const void *, size_t, size_t, FILE *)
+    __asm__("fwrite_unlocked");
+extern int exported_fflush_unlocked(FILE *) __asm__("fflush_unlocked");
+extern int exported_feof_unlocked(FILE *) __asm__("feof_unlocked");
+extern int exported_ferror_unlocked(FILE *) __asm__("ferror_unlocked");
+extern void exported_clearerr_unlocked(FILE *) __asm__("clearerr_unlocked");
+extern int exported_fileno_unlocked(FILE *) __asm__("fileno_unlocked");
+
+int stream_temporary_unlocked(int large) {
+    FILE *s = large ? tmpfile64() : tmpfile(); EXPECT(s, 1);
+    int fd = exported_fileno_unlocked(s); EXPECT(fd >= 0 && fileno(s) == fd, 2);
+    flockfile(s);
+    EXPECT(exported_fwrite_unlocked("ab\0cd\n", 2, 3, s) == 3, 3);
+    EXPECT(exported_fputc_unlocked('!', s) == '!', 4);
+    EXPECT(exported_fflush_unlocked(s) == 0 && ftell(s) == 7, 5);
+    EXPECT(fseek(s, 0, SEEK_SET) == 0 && exported_getc_unlocked(s) == 'a', 6);
+    char bytes[8] = {0};
+    EXPECT(exported_fread_unlocked(bytes, 2, 4, s) == 3, 7);
+    EXPECT(bytes[0] == 'b' && bytes[1] == 0 && bytes[2] == 'c' &&
+           bytes[3] == 'd' && bytes[4] == '\n' && bytes[5] == '!', 8);
+    EXPECT(exported_feof_unlocked(s) && feof(s) && !exported_ferror_unlocked(s), 9);
+    exported_clearerr_unlocked(s);
+    EXPECT(!feof(s) && !ferror(s), 10);
+    funlockfile(s);
+    EXPECT(fclose(s) == 0, 11);
+    errno = 0; EXPECT(fcntl(fd, F_GETFD) == -1 && errno == EBADF, 12);
+    return 0;
+}
+
+struct StreamCookie { size_t position; unsigned reads, closes; int fail; };
+static ssize_t stream_cookie_read(void *opaque, char *buffer, size_t length) {
+    struct StreamCookie *cookie = opaque;
+    static const char bytes[] = "cookie\n";
+    ++cookie->reads;
+    if (cookie->fail) { errno = EIO; return -1; }
+    size_t remaining = sizeof bytes - 1 - cookie->position;
+    if (length > remaining) length = remaining;
+    if (length > 2) length = 2;
+    for (size_t i = 0; i < length; ++i) buffer[i] = bytes[cookie->position + i];
+    cookie->position += length;
+    return (ssize_t)length;
+}
+static int stream_cookie_close(void *opaque) {
+    struct StreamCookie *cookie = opaque;
+    ++cookie->closes;
+    return 0;
+}
+int stream_cookie_unlocked(void) {
+    struct StreamCookie cookie = {0};
+    cookie_io_functions_t functions = {
+        .read = stream_cookie_read, .close = stream_cookie_close
+    };
+    FILE *s = fopencookie(&cookie, "r", functions); EXPECT(s, 1);
+    EXPECT(exported_getc_unlocked(s) == 'c', 2);
+    char bytes[6]; EXPECT(exported_fread_unlocked(bytes, 1, sizeof bytes, s) == 6, 3);
+    EXPECT(bytes[0] == 'o' && bytes[1] == 'o' && bytes[2] == 'k' &&
+           bytes[3] == 'i' && bytes[4] == 'e' && bytes[5] == '\n', 4);
+    EXPECT(fgetc(s) == EOF && exported_feof_unlocked(s), 5);
+    exported_clearerr_unlocked(s);
+    cookie.fail = 1; errno = 0;
+    EXPECT(exported_getc_unlocked(s) == EOF && errno == EIO, 6);
+    EXPECT(exported_ferror_unlocked(s) && ferror(s) && !feof(s), 7);
+    exported_clearerr_unlocked(s); EXPECT(!ferror(s) && !feof(s), 8);
+    errno = 0; EXPECT(exported_fileno_unlocked(s) == -1 && errno == EBADF, 9);
+    EXPECT(fclose(s) == 0 && cookie.closes == 1 && cookie.reads >= 5, 10);
+    return 0;
+}
+
+int stream_process_unlocked(void) {
+    FILE *s = popen("printf 'pipe-data'; exit 7", "re"); EXPECT(s, 1);
+    int fd = exported_fileno_unlocked(s); EXPECT(fd >= 0, 2);
+    int flags = fcntl(fd, F_GETFD); EXPECT(flags >= 0 && (flags & FD_CLOEXEC), 3);
+    char bytes[16] = {0};
+    EXPECT(exported_fread_unlocked(bytes, 1, sizeof bytes, s) == 9, 4);
+    static const char expected[] = "pipe-data";
+    for (size_t i = 0; i < sizeof expected - 1; ++i) EXPECT(bytes[i] == expected[i], 5);
+    EXPECT(exported_feof_unlocked(s) && !exported_ferror_unlocked(s), 6);
+    EXPECT(pclose(s) == (7 << 8), 7);
+    errno = 0; EXPECT(fcntl(fd, F_GETFD) == -1 && errno == EBADF, 8);
+    errno = 0; EXPECT(popen("exit 0", "r+") == 0 && errno == EINVAL, 9);
+    return 0;
+}
+#endif
+
 #ifdef SCAN_INPUT
 #include <stdarg.h>
 #include <stdlib.h>
@@ -443,6 +554,35 @@ fn frontends() -> Vec<(&'static str, *const ())> {
     ]
 }
 
+fn extended_frontends() -> Vec<(&'static CStr, *const ())> {
+    vec![
+        (c"fopencookie", stdio::fopencookie as *const ()),
+        (c"tmpfile", stdio::tmpfile as *const ()),
+        (c"tmpfile64", stdio::tmpfile64 as *const ()),
+        (c"popen", stdio::popen as *const ()),
+        (c"pclose", stdio::pclose as *const ()),
+        (c"getc", stdio::getc as *const ()),
+        (c"putc", stdio::putc as *const ()),
+        (c"getchar", stdio::getchar as *const ()),
+        (c"putchar", stdio::putchar as *const ()),
+        (c"getc_unlocked", stdio::getc_unlocked as *const ()),
+        (c"putc_unlocked", stdio::putc_unlocked as *const ()),
+        (c"fgetc_unlocked", stdio::fgetc_unlocked as *const ()),
+        (c"fputc_unlocked", stdio::fputc_unlocked as *const ()),
+        (c"getchar_unlocked", stdio::getchar_unlocked as *const ()),
+        (c"putchar_unlocked", stdio::putchar_unlocked as *const ()),
+        (c"fread_unlocked", stdio::fread_unlocked as *const ()),
+        (c"fwrite_unlocked", stdio::fwrite_unlocked as *const ()),
+        (c"fgets_unlocked", stdio::fgets_unlocked as *const ()),
+        (c"fputs_unlocked", stdio::fputs_unlocked as *const ()),
+        (c"fflush_unlocked", stdio::fflush_unlocked as *const ()),
+        (c"feof_unlocked", stdio::feof_unlocked as *const ()),
+        (c"ferror_unlocked", stdio::ferror_unlocked as *const ()),
+        (c"clearerr_unlocked", stdio::clearerr_unlocked as *const ()),
+        (c"fileno_unlocked", stdio::fileno_unlocked as *const ()),
+    ]
+}
+
 fn scan_frontends() -> Vec<(&'static CStr, *const (), &'static CStr)> {
     let base = c"GLIBC_2.2.5";
     let c99 = c"GLIBC_2.7";
@@ -616,6 +756,17 @@ impl Fixture {
                 "compiler elided import {name}"
             );
         }
+        if extra.contains(&"-DEXTENDED_STREAMS") {
+            for (name, _) in extended_frontends() {
+                let name = name.to_str().unwrap();
+                assert!(
+                    object
+                        .undefined_symbols()
+                        .any(|(_, symbol)| object.symbol_name(symbol) == Some(name)),
+                    "compiler elided extended stream import {name}"
+                );
+            }
+        }
         if extra.contains(&"-DSCAN_INPUT") {
             for (name, _, _) in scan_frontends() {
                 let name = name.to_str().unwrap();
@@ -756,6 +907,54 @@ fn stream_imports_and_dynamic_lookup_share_all_frontends() {
             }
         },
     );
+}
+
+#[test]
+fn stream_extended_frontends_bind_native_providers() {
+    isolated(
+        "stream_extended_frontends_bind_native_providers",
+        false,
+        |api| {
+            for options in [
+                &["-DEXTENDED_STREAMS"][..],
+                &["-DEXTENDED_STREAMS", "-fno-plt"][..],
+            ] {
+                let fixture = Fixture::new(options);
+                let handle = api.open(&fixture.library, 0);
+                // SAFETY: these fixture exports have the exact C declarations above.
+                let count: unsafe extern "C" fn() -> usize =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"extended_frontend_count")) };
+                let query: Frontend =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"extended_frontend")) };
+                assert_eq!(unsafe { count() }, extended_frontends().len());
+                for (index, (name, expected)) in extended_frontends().into_iter().enumerate() {
+                    check_frontend(api, query, index, name, expected, c"GLIBC_2.2.5");
+                }
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn stream_extended_streams_share_file_state() {
+    isolated("stream_extended_streams_share_file_state", false, |api| {
+        let fixture = Fixture::new(&["-DEXTENDED_STREAMS", "-fno-plt"]);
+        let handle = api.open(&fixture.library, 0);
+        // SAFETY: fixture functions keep their FILE/cookie objects alive through
+        // each operation and close all streams before the DSO is unloaded.
+        let temporary: unsafe extern "C" fn(c_int) -> c_int =
+            unsafe { std::mem::transmute(api.symbol(handle, c"stream_temporary_unlocked")) };
+        for large in [0, 1] {
+            assert_eq!(unsafe { temporary(large) }, 0, "tmpfile variant {large}");
+        }
+        for name in [c"stream_cookie_unlocked", c"stream_process_unlocked"] {
+            let call: unsafe extern "C" fn() -> c_int =
+                unsafe { std::mem::transmute(api.symbol(handle, name)) };
+            assert_eq!(unsafe { call() }, 0, "{name:?}");
+        }
+        api.close(handle);
+    });
 }
 
 fn one_path(api: Api, symbol: &CStr, expected: Option<&[u8]>) {

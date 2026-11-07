@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use frankenlibc_core::float128::{BinaryFormat, BinaryParse, RoundingMode};
 use frankenlibc_core::stdio::StdioStream;
 use frankenlibc_core::stdio::printf::{FormatSegment, parse_format_string};
-use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
+use frankenlibc_core::stdio::ValueArgKind;
 use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -19,6 +19,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::stdio_abi::PrintfArgumentBuffer;
 use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
 
 #[inline]
@@ -5748,7 +5749,7 @@ macro_rules! extract_wprintf_args {
             // printed "0.000000" for 1.0L — the x87 significand reinterpreted.
             let _ap = core::ptr::from_mut($args).cast::<core::ffi::c_void>();
             // SAFETY: `_ap` addresses this frame's va_list for the call.
-            unsafe { crate::stdio_abi::vprintf_extract_args($segments, _ap, $buf, $extract_count) }
+            unsafe { ($buf).extract($segments, _ap) }
         } else {
             extract_wprintf_args_registers!($segments, $args, $buf, $extract_count)
         }
@@ -5758,18 +5759,19 @@ macro_rules! extract_wprintf_args {
 macro_rules! extract_wprintf_args_registers {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
-        if let Some(_plan) = positional_printf_arg_plan($segments) {
+        let (_values, _plan) = ($buf).parts_mut();
+        if let Some(_plan) = _plan {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
                     ValueArgKind::Gp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _values[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                     }
                     ValueArgKind::Fp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _values[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
@@ -5795,7 +5797,7 @@ macro_rules! extract_wprintf_args_registers {
                         // exactly as before and only the stored value changes.
                         let _ = unsafe { $args.next_arg::<f64>() };
                         if _idx < $extract_count {
-                            $buf[_idx] = 0;
+                            _values[_idx] = 0;
                             _idx += 1;
                         }
                     }
@@ -5805,11 +5807,11 @@ macro_rules! extract_wprintf_args_registers {
             for seg in $segments {
                 if let FormatSegment::Spec(spec) = seg {
                     if spec.width.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                        _values[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                        _values[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     // Share the parser's value classification with the narrow
@@ -5820,13 +5822,13 @@ macro_rules! extract_wprintf_args_registers {
                         Some(ValueArgKind::Fp) if _idx < $extract_count => {
                             // SAFETY: the parsed directive requires a promoted
                             // double in this caller's live va_list.
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _values[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                         Some(ValueArgKind::Gp) if _idx < $extract_count => {
                             // SAFETY: GP arguments occupy an eight-byte slot
                             // in the supported variadic ABIs.
-                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _values[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                         Some(ValueArgKind::X87) => {
@@ -6976,8 +6978,14 @@ pub unsafe extern "C-unwind" fn swprintf(
             )
         };
     }
-    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered = unsafe {
@@ -7060,8 +7068,14 @@ pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: 
         };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
-    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered = unsafe {
@@ -7099,8 +7113,14 @@ pub unsafe extern "C-unwind" fn fwprintf(
         };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
-    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered = unsafe {
@@ -7138,9 +7158,15 @@ pub unsafe extern "C-unwind" fn vswprintf(
         // even when no GNU conversion has been registered in this process.
         return unsafe { super::stdio_abi::registered_swprintf(s, n, fmt_narrow.as_bytes(), ap) };
     }
-    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
-    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     let rendered = unsafe {
         super::stdio_abi::render_wprintf("vswprintf", &segments, arg_buf.as_ptr(), extract_count)
@@ -7189,9 +7215,15 @@ pub(crate) unsafe fn vwprintf_for_caller(
         };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
-    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
-    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     let rendered = unsafe {
         super::stdio_abi::render_wprintf("vwprintf", &segments, arg_buf.as_ptr(), extract_count)
@@ -7243,9 +7275,15 @@ pub(crate) unsafe fn vfwprintf_for_caller(
         };
     }
     let segments = parse_format_string(fmt_narrow.as_bytes());
-    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
-    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     let rendered = unsafe {
         super::stdio_abi::render_wprintf("vfwprintf", &segments, arg_buf.as_ptr(), extract_count)

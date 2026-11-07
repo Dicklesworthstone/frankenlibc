@@ -1572,7 +1572,127 @@ static int gnu_registration_wide(void) {
 #undef REG_WARGS
 }
 
+/* More than 32 arguments must keep their values and ABI classes across every
+ * frontend. The late long double also checks stack alignment after GP and FP
+ * register exhaustion; the late %n must still be reached after truncation. */
+static int many_printf_arguments(void) {
+    static const char *providers[] = {
+        "snprintf", "vsnprintf", "sprintf", "vsprintf", "asprintf", "vasprintf",
+        "fprintf", "vfprintf", "printf", "vprintf", "dprintf", "vdprintf",
+        "swprintf", "vswprintf", "fwprintf", "vfwprintf", "wprintf", "vwprintf"
+    };
+    for (size_t i = 0; i < sizeof providers / sizeof providers[0]; ++i)
+        if (check_gnu_provider(providers[i])) return 1;
+#define MANY_TEN "%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:"
+#define MANY_WTEN L"%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:%02d:"
+#define MANY_ARGS \
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, \
+    11, 12, 13, 14, 15, 16, 17, 18, 19, 20, \
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, \
+    -7, 2, 3.25, "tail", -4294967297L, 1.125L, &count
+    const char *format = MANY_TEN MANY_TEN MANY_TEN "%*.*f|%s|%ld|%.3Lf%n";
+    /* No %n in the wide case: count stores use an incremental sink, whereas
+     * this case must also reach the ordinary wide argument extraction path. */
+    const wchar_t *wide_format = MANY_WTEN MANY_WTEN MANY_WTEN L"%*.*f|%s|%ld|%.3Lf";
+    const char *expected =
+        "01:02:03:04:05:06:07:08:09:10:11:12:13:14:15:16:17:18:19:20:"
+        "21:22:23:24:25:26:27:28:29:30:3.25   |tail|-4294967297|1.125";
+    const size_t expected_length = strlen(expected);
+    for (unsigned api = 0; api < 12; ++api) {
+        char buffer[512] = {0}, *allocated = NULL;
+        size_t size = 0;
+        int count = -1, rc = -1;
+        FILE *stream = NULL;
+        if (api >= 6 && api < 10) {
+            stream = open_memstream(&allocated, &size);
+            REG_CHECK(stream != NULL);
+        }
+        switch (api) {
+        case 0: rc = snprintf(buffer, sizeof buffer, format, MANY_ARGS); break;
+        case 1: rc = call_vsnprintf(buffer, sizeof buffer, format, MANY_ARGS); break;
+        case 2: rc = sprintf(buffer, format, MANY_ARGS); break;
+        case 3: rc = call_vsprintf(buffer, format, MANY_ARGS); break;
+        case 4: rc = asprintf(&allocated, format, MANY_ARGS); break;
+        case 5: rc = call_vasprintf(&allocated, format, MANY_ARGS); break;
+        case 6: rc = fprintf(stream, format, MANY_ARGS); break;
+        case 7: rc = call_vfprintf(stream, format, MANY_ARGS); break;
+        case 8: case 9: {
+            REG_CHECK(fflush(stdout) == 0);
+            FILE *saved = stdout;
+            stdout = stream;
+            rc = api == 8 ? printf(format, MANY_ARGS) : reg_vprintf(format, MANY_ARGS);
+            stdout = saved;
+            break;
+        }
+        case 10: case 11: {
+            int descriptors[2];
+            REG_CHECK(pipe(descriptors) == 0);
+            rc = api == 10 ? dprintf(descriptors[1], format, MANY_ARGS)
+                           : call_vdprintf(descriptors[1], format, MANY_ARGS);
+            REG_CHECK(close(descriptors[1]) == 0);
+            ssize_t received = read(descriptors[0], buffer, sizeof buffer - 1);
+            REG_CHECK(close(descriptors[0]) == 0 && received == (ssize_t)expected_length);
+            buffer[received] = 0;
+            break;
+        }
+        }
+        if (stream != NULL) REG_CHECK(fclose(stream) == 0 && size == expected_length);
+        const char *output = allocated ? allocated : buffer;
+        REG_CHECK(rc == (int)expected_length && count == rc && strcmp(output, expected) == 0);
+        free(allocated);
+    }
+    for (unsigned api = 0; api < 6; ++api) {
+        wchar_t buffer[512] = {0}, *allocated = NULL;
+        size_t size = 0;
+        int count = -1, rc = -1;
+        FILE *stream = NULL;
+        if (api >= 2) {
+            stream = open_wmemstream(&allocated, &size);
+            REG_CHECK(stream != NULL);
+        }
+        switch (api) {
+        case 0: rc = swprintf(buffer, 512, wide_format, MANY_ARGS); break;
+        case 1: rc = call_vswprintf(buffer, 512, wide_format, MANY_ARGS); break;
+        case 2: rc = fwprintf(stream, wide_format, MANY_ARGS); break;
+        case 3: rc = reg_vfwprintf(stream, wide_format, MANY_ARGS); break;
+        case 4: case 5: {
+            REG_CHECK(fflush(stdout) == 0);
+            FILE *saved = stdout;
+            stdout = stream;
+            rc = api == 4 ? wprintf(wide_format, MANY_ARGS) : reg_vwprintf(wide_format, MANY_ARGS);
+            stdout = saved;
+            break;
+        }
+        }
+        if (stream != NULL) REG_CHECK(fclose(stream) == 0 && size == expected_length);
+        const wchar_t *output = allocated ? allocated : buffer;
+        REG_CHECK(rc == (int)expected_length && wcslen(output) == expected_length);
+        for (size_t i = 0; i <= expected_length; ++i)
+            REG_CHECK(output[i] == (unsigned char)expected[i]);
+        free(allocated);
+    }
+    for (size_t capacity = 0; capacity <= 1; ++capacity) {
+        char buffer[8];
+        memset(buffer, 0xa5, sizeof buffer);
+        int count = -1;
+        int rc = snprintf(buffer, capacity, format, MANY_ARGS);
+        REG_CHECK(rc == (int)expected_length && count == rc);
+        if (capacity) REG_CHECK(buffer[0] == 0);
+        for (size_t i = capacity; i < sizeof buffer; ++i)
+            REG_CHECK((unsigned char)buffer[i] == 0xa5);
+    }
+#undef MANY_ARGS
+#undef MANY_WTEN
+#undef MANY_TEN
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--many-printf-args") == 0) {
+        int rc = many_printf_arguments();
+        if (!rc) puts("many-printf-args: PASS (18 frontends)");
+        return rc;
+    }
     if (argc == 2 && strcmp(argv[1], "--gnu-precision-spans") == 0) return gnu_precision_spans();
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-locale") == 0) return gnu_wide_locale();
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-bounds") == 0) return gnu_wide_bounds();
@@ -1610,11 +1730,12 @@ int main(int argc, char **argv) {
     fails += test_vdprintf_contracts();
     fails += test_asprintf_contracts();
     fails += test_vasprintf_contracts();
+    fails += many_printf_arguments();
 
     if (fails) {
         fprintf(stderr, "fixture_stdio_printf: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_stdio_printf: PASS (10 tests)\n");
+    printf("fixture_stdio_printf: PASS (11 tests)\n");
     return 0;
 }

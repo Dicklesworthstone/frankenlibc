@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'crates/frankenlibc-abi/tests/dlfcn_abi_test.rs'
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_abi.rs'
@@ -31,6 +32,7 @@ on:
       - '.github/workflows/native-caller-lookup.yml'
   pull_request:
     paths:
+      - 'crates/frankenlibc-abi/tests/dlfcn_abi_test.rs'
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_abi.rs'
@@ -101,11 +103,97 @@ jobs:
             fi
           done
           exit "$status"
+      - name: Diagnose native admission failures without changing the gate
+        if: failure()
+        run: |
+          set -euo pipefail
+          out="$PWD/artifacts/native-caller/admission-${FRANKENLIBC_MODE}"
+          mkdir -p "$out/fixtures"
+          {
+            gcc --version
+            ld --version
+            rustc --version
+            uname -a
+          } > "$out/toolchain.log" 2>&1
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+          sha = "6eb5f3529bfac513725adf25ebd053e37b0a3fa7"
+          url = "https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs/" + sha
+          with urllib.request.urlopen(url, timeout=60) as response:
+              blob = json.load(response)
+          patch = base64.b64decode(blob["content"])
+          assert hashlib.sha256(patch).hexdigest() == "8f20ae5fad13a9d9b35b0be123577f78500e3d1691865cc43602794393b21e0a"
+          out = pathlib.Path("artifacts/native-caller/admission-" + os.environ["FRANKENLIBC_MODE"])
+          (out / "admission.patch").write_bytes(patch)
+          PY
+          patch="$out/admission.patch"
+          git apply --check "$patch"
+          git apply "$patch"
+          trap 'git apply -R "$patch"' EXIT
+          status=0
+          for testcase in stream_extended_frontends_bind_native_providers stream_extended_streams_share_file_state; do
+            log="$out/$testcase.log"
+            if cargo test -p frankenlibc-abi --test dlfcn_native_stdio_test "$testcase" \
+              -- --exact --nocapture --test-threads=1 2>&1 | tee "$log"; then
+              grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "$log" || status=1
+            else
+              status=1
+            fi
+          done
+          # Preserve the actual compiler inputs and outputs without changing
+          # TMPDIR or the paths embedded in the original fixture objects.
+          for fixture in "${TMPDIR:-/tmp}"/frankenlibc-stream-*; do
+            [[ -f "$fixture/libstream.so" && -f "$fixture/stream.c" ]] || continue
+            destination="$out/fixtures/$(basename "$fixture")"
+            mkdir -p "$destination"
+            cp "$fixture/stream.c" "$fixture/libstream.so" "$destination/"
+            readelf -hW -lW -dW -rW -sW "$destination/libstream.so" > "$destination/elf.log" 2>&1 || status=1
+            readelf --debug-dump=frames --wide "$destination/libstream.so" > "$destination/unwind.log" 2>&1 || status=1
+            readelf -x .eh_frame_hdr -x .eh_frame "$destination/libstream.so" > "$destination/unwind-bytes.log" 2>&1 || status=1
+          done
+          git apply -R --check "$patch"
+          git apply -R "$patch"
+          trap - EXIT
+          exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-caller-${{ matrix.mode }}
           path: artifacts/native-caller/
+
+  standalone-exports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
+    env:
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute public lookup with the standalone feature
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/standalone-exports
+          log="artifacts/standalone-exports/${FRANKENLIBC_MODE}.log"
+          cargo test -p frankenlibc-abi --features standalone --test dlfcn_abi_test \
+            standalone_public_exports:: -- --nocapture --test-threads=1 \
+            2>&1 | tee "$log"
+          grep -E 'test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: standalone-exports-${{ matrix.mode }}
+          path: artifacts/standalone-exports/
 
   spawn-launch:
     runs-on: ubuntu-latest

@@ -126,6 +126,39 @@ static int test_getaddrinfo_localhost(void) {
     return 0;
 }
 
+static int test_getaddrinfo_default_hints(void) {
+    struct addrinfo *res = NULL;
+    int rc = getaddrinfo("127.0.0.1", "80", NULL, &res);
+    if (rc != 0 || res == NULL) {
+        fprintf(stderr, "FAIL: getaddrinfo default hints rc=%d\n", rc);
+        return 1;
+    }
+    int count = 0;
+    int transports = 0;
+    for (const struct addrinfo *entry = res; entry; entry = entry->ai_next) {
+        if (entry->ai_flags != (AI_V4MAPPED | AI_ADDRCONFIG) ||
+            entry->ai_family != AF_INET) {
+            fprintf(stderr, "FAIL: default hints flags=%d family=%d\n",
+                    entry->ai_flags, entry->ai_family);
+            freeaddrinfo(res);
+            return 1;
+        }
+        if (entry->ai_socktype == SOCK_STREAM && entry->ai_protocol == IPPROTO_TCP)
+            transports |= 1;
+        if (entry->ai_socktype == SOCK_DGRAM && entry->ai_protocol == IPPROTO_UDP)
+            transports |= 2;
+        if (entry->ai_socktype == SOCK_RAW && entry->ai_protocol == 0)
+            transports |= 4;
+        ++count;
+    }
+    freeaddrinfo(res);
+    if (count != 3 || transports != 7) {
+        fprintf(stderr, "FAIL: default hints count=%d transports=%d\n", count, transports);
+        return 1;
+    }
+    return 0;
+}
+
 int main(void) {
     int fails = 0;
 
@@ -137,12 +170,13 @@ int main(void) {
     fails += test_getgrnam_missing();
     fails += test_passwd_group_enumeration_controls();
     fails += test_getaddrinfo_localhost();
+    fails += test_getaddrinfo_default_hints();
 
     if (fails) {
         fprintf(stderr, "fixture_nss: %d FAILED\n", fails);
         return 1;
     }
 
-    printf("fixture_nss: PASS (8 tests)\n");
+    printf("fixture_nss: PASS (9 tests)\n");
     return 0;
 }

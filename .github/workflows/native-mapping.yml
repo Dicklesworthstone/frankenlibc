@@ -7,6 +7,7 @@ on:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_mapping_test.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/native_mapping.c'
+      - 'crates/frankenlibc-abi/tests/fixtures/native_relro_execution.c'
       - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-mapping.yml'
@@ -45,7 +46,7 @@ jobs:
           cargo test --no-fail-fast -p frankenlibc-abi --test dlfcn_native_mapping_test -- --nocapture \
             2>&1 | tee "$log"
           # Require the full parent suite, not a filtered child or zero-test pass.
-          grep -E 'test result: ok\. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' "$log"
+          grep -E 'test result: ok\. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' "$log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

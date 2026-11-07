@@ -6,6 +6,7 @@ on:
       - 'crates/frankenlibc-core/src/addrinfo.rs'
       - 'crates/frankenlibc-core/src/addrinfo/**'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
@@ -36,8 +37,37 @@ jobs:
           mkdir -p artifacts/addrinfo
           cargo test -p frankenlibc-core --lib addrinfo:: -- --nocapture 2>&1 | tee artifacts/addrinfo/core.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/core.log
-          cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/addrinfo/abi.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/abi.log
+          cargo test -p frankenlibc-core --lib resolv::tests::addrconfig_netlink -- --nocapture 2>&1 | tee artifacts/addrinfo/addrconfig.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/addrconfig.log
+          for mode in strict hardened; do
+            log="artifacts/addrinfo/abi-${mode}.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee "$log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "$log"
+          done
+      - name: Compare GNU default hints in a loopback-only network namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --test resolv_abi_test --no-run --message-format=json > artifacts/addrinfo/test-build.json
+          test_binary="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          candidates = set()
+          for line in Path("artifacts/addrinfo/test-build.json").read_text().splitlines():
+              entry = json.loads(line)
+              if entry.get("reason") == "compiler-artifact" and entry.get("target", {}).get("name") == "resolv_abi_test" and entry.get("executable"):
+                  candidates.add(entry["executable"])
+          assert len(candidates) == 1, candidates
+          print(candidates.pop())
+          PY
+          )"
+          for mode in strict hardened; do
+            log="artifacts/addrinfo/loopback-${mode}.log"
+            sudo env FRANKENLIBC_MODE="$mode" unshare --net -- "$test_binary" \
+              --exact getaddrinfo_default_hints_match_host_glibc --nocapture --test-threads=1 \
+              2>&1 | tee "$log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$log"
+          done
       - name: Exercise installed NSS hosts modules in strict and hardened modes
         if: always()
         shell: bash

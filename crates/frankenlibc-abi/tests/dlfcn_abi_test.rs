@@ -1252,3 +1252,227 @@ fn libc_dlclose_returns_zero_on_valid_handle() {
     let rc = unsafe { __libc_dlclose(h) };
     assert_eq!(rc, 0);
 }
+
+#[cfg(feature = "standalone")]
+mod standalone_public_exports {
+    use super::*;
+    use std::ffi::c_char;
+
+    use frankenlibc_abi::{
+        isoc_abi as isoc, locale_abi as locale, malloc_abi as allocation, stdio_abi as stdio,
+        stdlib_abi as stdlib, string_abi as strings,
+    };
+
+    fn baseline() -> &'static CStr {
+        if cfg!(target_arch = "aarch64") {
+            c"GLIBC_2.17"
+        } else {
+            c"GLIBC_2.2.5"
+        }
+    }
+
+    fn checked_symbol(scope: *mut c_void, name: &CStr) -> *mut c_void {
+        // SAFETY: callers supply a live main handle or RTLD_DEFAULT and a C string.
+        let address = unsafe { dlsym(scope, name.as_ptr()) };
+        assert!(!address.is_null(), "standalone lookup failed: {name:?}");
+        assert!(unsafe { dlerror() }.is_null(), "stale error for {name:?}");
+        address
+    }
+
+    #[test]
+    fn providers_and_versions_match_native_imports() {
+        let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let main = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
+        assert!(!main.is_null());
+        // NOLOAD names the already resident standalone libc rather than loading
+        // a second libc and admitting a foreign allocator or FILE registry.
+        let alias = unsafe { dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+        assert_eq!(alias, main);
+        let locale_version = if cfg!(target_arch = "aarch64") {
+            baseline()
+        } else {
+            c"GLIBC_2.3"
+        };
+        let exports = [
+            (c"malloc", allocation::malloc as *const (), baseline()),
+            (c"calloc", allocation::calloc as *const (), baseline()),
+            (c"realloc", allocation::realloc as *const (), baseline()),
+            (c"free", allocation::free as *const (), baseline()),
+            (c"strdup", strings::strdup as *const (), baseline()),
+            (c"fread", stdio::fread as *const (), baseline()),
+            (c"fwrite", stdio::fwrite as *const (), baseline()),
+            (c"fclose", stdio::fclose as *const (), baseline()),
+            (c"tmpfile", stdio::tmpfile as *const (), baseline()),
+            (c"fmemopen", stdio::fmemopen as *const (), c"GLIBC_2.22"),
+            (c"newlocale", locale::newlocale as *const (), locale_version),
+            (c"duplocale", locale::duplocale as *const (), locale_version),
+            (
+                c"freelocale",
+                locale::freelocale as *const (),
+                locale_version,
+            ),
+            (
+                c"nl_langinfo_l",
+                locale::nl_langinfo_l as *const (),
+                locale_version,
+            ),
+            (c"strtol_l", stdlib::strtol_l as *const (), locale_version),
+            (
+                c"__isoc23_strtol",
+                isoc::__isoc23_strtol as *const (),
+                c"GLIBC_2.38",
+            ),
+        ];
+        for scope in [main, libc::RTLD_DEFAULT, alias] {
+            for (name, expected, version) in exports {
+                let expected = expected.cast_mut().cast::<c_void>();
+                assert_eq!(checked_symbol(scope, name), expected, "{name:?}");
+                // SAFETY: static symbol/version strings and a valid lookup scope.
+                assert_eq!(
+                    unsafe { dlvsym(scope, name.as_ptr(), version.as_ptr()) },
+                    expected,
+                    "{name:?}@{version:?}"
+                );
+                assert!(unsafe { dlerror() }.is_null());
+                for wrong in [c"GLIBC_2.34", c"GLIBC_PRIVATE", c"GLIBC_9.99"] {
+                    assert!(
+                        unsafe { dlvsym(scope, name.as_ptr(), wrong.as_ptr()) }.is_null(),
+                        "{name:?} incorrectly accepted {wrong:?}"
+                    );
+                    assert!(!unsafe { dlerror() }.is_null());
+                    assert!(unsafe { dlerror() }.is_null(), "dlerror was not consumed");
+                    assert_eq!(checked_symbol(scope, name), expected);
+                }
+            }
+            assert!(
+                unsafe { dlsym(scope, c"franken_standalone_missing_export".as_ptr()) }.is_null()
+            );
+            assert!(!unsafe { dlerror() }.is_null());
+            assert!(unsafe { dlerror() }.is_null());
+        }
+        assert_eq!(unsafe { dlclose(alias) }, 0);
+        assert_eq!(unsafe { dlclose(main) }, 0);
+    }
+
+    #[test]
+    fn resolved_memory_stream_and_locale_functions_share_ownership() {
+        let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let main = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
+        assert!(!main.is_null());
+        // SAFETY: every symbol below has the declared public ABI. Allocations,
+        // streams and locale snapshots remain live until their matching release.
+        unsafe {
+            let allocate: unsafe extern "C" fn(usize, usize) -> *mut c_void =
+                std::mem::transmute(checked_symbol(main, c"calloc"));
+            let resize: unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void =
+                std::mem::transmute(checked_symbol(libc::RTLD_DEFAULT, c"realloc"));
+            let release: unsafe extern "C" fn(*mut c_void) =
+                std::mem::transmute(checked_symbol(main, c"free"));
+            let memory = allocate(8, 4);
+            assert!(!memory.is_null());
+            assert_eq!(
+                std::slice::from_raw_parts(memory.cast::<u8>(), 32),
+                &[0; 32]
+            );
+            memory.cast::<u8>().write_bytes(0xa5, 32);
+            let memory = resize(memory, 64);
+            assert!(!memory.is_null());
+            assert_eq!(
+                std::slice::from_raw_parts(memory.cast::<u8>(), 32),
+                &[0xa5; 32]
+            );
+            release(memory);
+
+            let temporary: unsafe extern "C" fn() -> *mut c_void =
+                std::mem::transmute(checked_symbol(main, c"tmpfile"));
+            let write: unsafe extern "C-unwind" fn(
+                *const c_void,
+                usize,
+                usize,
+                *mut c_void,
+            ) -> usize = std::mem::transmute(checked_symbol(libc::RTLD_DEFAULT, c"fwrite"));
+            let seek: unsafe extern "C-unwind" fn(*mut c_void, libc::c_long, c_int) -> c_int =
+                std::mem::transmute(checked_symbol(main, c"fseek"));
+            let read: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize =
+                std::mem::transmute(checked_symbol(libc::RTLD_DEFAULT, c"fread"));
+            let close: unsafe extern "C-unwind" fn(*mut c_void) -> c_int =
+                std::mem::transmute(checked_symbol(main, c"fclose"));
+            let stream = temporary();
+            assert!(!stream.is_null());
+            let bytes = b"native\0stream";
+            assert_eq!(
+                write(bytes.as_ptr().cast(), 1, bytes.len(), stream),
+                bytes.len()
+            );
+            assert_eq!(seek(stream, 0, libc::SEEK_SET), 0);
+            let mut copied = [0u8; 13];
+            assert_eq!(
+                read(copied.as_mut_ptr().cast(), 1, copied.len(), stream),
+                copied.len()
+            );
+            assert_eq!(&copied, bytes);
+            assert_eq!(close(stream), 0);
+
+            let create: unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void =
+                std::mem::transmute(checked_symbol(main, c"newlocale"));
+            let duplicate: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                std::mem::transmute(checked_symbol(libc::RTLD_DEFAULT, c"duplocale"));
+            let langinfo: unsafe extern "C" fn(c_int, *mut c_void) -> *mut c_char =
+                std::mem::transmute(checked_symbol(libc::RTLD_DEFAULT, c"nl_langinfo_l"));
+            let destroy: unsafe extern "C" fn(*mut c_void) =
+                std::mem::transmute(checked_symbol(main, c"freelocale"));
+            let original = create(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut());
+            assert!(!original.is_null());
+            let snapshot = duplicate(original);
+            assert!(!snapshot.is_null());
+            destroy(original);
+            let radix = langinfo(libc::RADIXCHAR, snapshot);
+            assert!(!radix.is_null());
+            assert_eq!(CStr::from_ptr(radix), c".");
+            destroy(snapshot);
+            assert_eq!(dlclose(main), 0);
+        }
+    }
+
+    #[test]
+    fn public_loader_wrappers_and_global_plugin_fallback_are_preserved() {
+        let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let main = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
+        assert!(!main.is_null());
+        for (name, expected) in [
+            (c"dlopen", dlopen as *const ()),
+            (c"dlsym", dlsym as *const ()),
+            (c"dlvsym", dlvsym as *const ()),
+        ] {
+            let expected = expected.cast_mut().cast::<c_void>();
+            assert_eq!(checked_symbol(main, name), expected);
+            for version in [baseline(), c"GLIBC_2.34"] {
+                assert_eq!(
+                    unsafe { dlvsym(main, name.as_ptr(), version.as_ptr()) },
+                    expected
+                );
+                assert!(unsafe { dlerror() }.is_null());
+            }
+        }
+        let path = compile_native_test_dso("int standalone_global_export(void) { return 73; }\n");
+        let local = open_native_fixture(&path, libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(
+            unsafe { dlsym(main, c"standalone_global_export".as_ptr()) }.is_null(),
+            "LOCAL-only definitions must remain outside the main scope"
+        );
+        assert!(!unsafe { dlerror() }.is_null());
+        let global = open_native_fixture(&path, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+        let address = checked_symbol(main, c"standalone_global_export");
+        // SAFETY: this live native fixture defines exactly int function(void).
+        let call: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(address) };
+        assert_eq!(unsafe { call() }, 73);
+        assert_eq!(unsafe { dlclose(local) }, 0);
+        assert_eq!(unsafe { dlclose(global) }, 0);
+        assert!(
+            unsafe { dlsym(main, c"standalone_global_export".as_ptr()) }.is_null(),
+            "the explicit main lookup must not retain an unloaded plugin"
+        );
+        assert!(!unsafe { dlerror() }.is_null());
+        assert_eq!(unsafe { dlclose(main) }, 0);
+    }
+}

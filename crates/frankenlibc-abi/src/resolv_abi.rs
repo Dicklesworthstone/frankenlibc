@@ -14,9 +14,10 @@
 use std::borrow::Cow;
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
-use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
+use std::ffi::{CStr, OsStr, c_char, c_int, c_ulong, c_void};
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -1080,6 +1081,17 @@ fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache)
 }
 
 fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
+    // Keep the explicit procfs fixture inputs, but query configured addresses
+    // on real systems: IPv4 does not require a route, and procfs can be absent
+    // or describe a different network namespace. An unavailable/partial
+    // netlink snapshot leaves results unfiltered, as glibc does.
+    let procfs_override = [PROC_NET_ROUTE_PATH_ENV, PROC_NET_IF_INET6_PATH_ENV]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+    if !procfs_override {
+        return crate::unistd_abi::addrconfig_state_snapshot();
+    }
+
     #[cfg(feature = "owned-tls-cache")]
     let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
@@ -2757,10 +2769,20 @@ fn hosts_lookup_error_code(
 /// is selected, following the hosts/services backend convention.
 fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
     let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
-    match std::fs::read(path) {
+    let mut config = match std::fs::read(path) {
         Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
         Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
-    }
+    };
+    // Address and reverse lookups honor the same process overrides as
+    // res_ninit, including an explicitly empty LOCALDOMAIN. Snapshot each
+    // value once so search order and transport options share one config.
+    let localdomain = std::env::var_os("LOCALDOMAIN");
+    let options = std::env::var_os("RES_OPTIONS");
+    config.apply_overrides(
+        localdomain.as_ref().map(|value| value.as_bytes()),
+        options.as_ref().map(|value| value.as_bytes()),
+    );
+    config
 }
 
 /// Preserve the difference between a missing name and a temporary DNS failure.
@@ -2776,7 +2798,19 @@ fn native_dns_resolve(
 > {
     use frankenlibc_core::dns_transport::ResolveError;
 
-    let config = native_dns_config();
+    // HOSTALIASES belongs to the DNS source, after any preceding NSS source.
+    // A replacement is queried directly, without suffixes or alias recursion.
+    let alias = if hostname.contains(&b'.') {
+        None
+    } else {
+        global_hostalias(hostname)
+    };
+    let mut config = native_dns_config();
+    if alias.is_some() {
+        config.search.clear();
+        config.ndots = 0;
+    }
+    let hostname = alias.as_deref().unwrap_or(hostname);
     let mut canonical_name = None;
     policy
         .resolve_dns_with(|want_v4, want_v6| {
@@ -3000,7 +3034,18 @@ pub unsafe extern "C" fn getaddrinfo(
         }
     };
     let hints_value = if hints.is_null() {
-        None
+        // GNU defaults differ from an explicitly zeroed hints structure.
+        // The effective flags also belong in every returned addrinfo record.
+        Some(libc::addrinfo {
+            ai_flags: libc::AI_V4MAPPED | libc::AI_ADDRCONFIG,
+            ai_family: libc::AF_UNSPEC,
+            ai_socktype: 0,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_addr: ptr::null_mut(),
+            ai_canonname: ptr::null_mut(),
+            ai_next: ptr::null_mut(),
+        })
     } else {
         if !tracked_addr_region_fits(hints as usize, size_of::<libc::addrinfo>()) {
             record_resolver_stage_outcome(
@@ -3045,6 +3090,64 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_BADFLAGS;
     }
 
+    let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
+    let mut family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family, NumericError};
+    if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_BADFLAGS;
+    }
+    if !matches!(family, libc::AF_UNSPEC | libc::AF_INET | libc::AF_INET6) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_FAMILY;
+    }
+
+    // GNU applies AI_ADDRCONFIG before numeric parsing, service lookup and
+    // NSS dispatch. Selecting the effective family here both rejects numeric
+    // addresses of unavailable families and avoids querying them through DNS
+    // or modules. Filtering completed results loses those semantics and can
+    // turn an unavailable family into a needless network timeout.
+    if flags & libc::AI_ADDRCONFIG != 0
+        && let Some(state) = read_addrconfig_state_snapshot()
+    {
+        if family == libc::AF_UNSPEC && state.has_ipv4 != state.has_ipv6 {
+            family = if state.has_ipv4 {
+                libc::AF_INET
+            } else {
+                libc::AF_INET6
+            };
+        } else if (family == libc::AF_INET && !state.has_ipv4)
+            || (family == libc::AF_INET6 && !state.has_ipv6)
+        {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_NONAME;
+        }
+        // With neither family configured, keep AF_UNSPEC usable for local
+        // lookups, matching GNU. An unknown snapshot also leaves it unchanged.
+    }
+    let address_family = match family {
+        libc::AF_INET => Family::Inet,
+        libc::AF_INET6 => Family::Inet6,
+        _ => Family::Unspecified,
+    };
     let profiles = match resolve_addrinfo_profiles(service_cstr, hints_ref) {
         Ok(profiles) => profiles,
         Err(err) => {
@@ -3058,40 +3161,11 @@ pub unsafe extern "C" fn getaddrinfo(
             return err;
         }
     };
-
-    let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
-    let family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
-    use frankenlibc_core::addrinfo::{AddressPolicy, Family, NumericError};
-    let address_family = match family {
-        libc::AF_UNSPEC => Family::Unspecified,
-        libc::AF_INET => Family::Inet,
-        libc::AF_INET6 => Family::Inet6,
-        _ => {
-            record_resolver_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Bounds)),
-            );
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-            return libc::EAI_FAMILY;
-        }
-    };
     let address_policy = AddressPolicy::new(
         address_family,
         flags & libc::AI_V4MAPPED != 0,
         flags & libc::AI_ALL != 0,
     );
-    if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
-        record_resolver_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Bounds)),
-        );
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-        return libc::EAI_BADFLAGS;
-    }
     let host_text = match node_cstr.map(CStr::to_str).transpose() {
         Ok(text) => text,
         Err(_) => {
@@ -3114,7 +3188,6 @@ pub unsafe extern "C" fn getaddrinfo(
     };
 
     let mut nodes = Vec::new();
-    let mut addrconfig_filter_eligible = host_text.is_none();
 
     match host_text {
         Some(text) => {
@@ -3382,8 +3455,6 @@ pub unsafe extern "C" fn getaddrinfo(
                 runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
                 return libc::EAI_NONAME;
             }
-
-            addrconfig_filter_eligible = numeric.is_none();
         }
         None => match family {
             libc::AF_INET6 => {
@@ -3433,38 +3504,6 @@ pub unsafe extern "C" fn getaddrinfo(
                 return libc::EAI_FAMILY;
             }
         },
-    }
-
-    if (flags & libc::AI_ADDRCONFIG) != 0
-        && addrconfig_filter_eligible
-        && let Some(state) = read_addrconfig_state_snapshot()
-    {
-        let unfiltered = nodes.len();
-        let mut filtered = Vec::with_capacity(nodes.len());
-        for node in nodes {
-            if node.is_null() {
-                filtered.push(node);
-                continue;
-            }
-            // SAFETY: non-null nodes were allocated as libc::addrinfo-compatible records.
-            if state.supports_family(unsafe { (*node).ai_family }) {
-                filtered.push(node);
-            } else {
-                // SAFETY: filtered-out node is not returned to the caller.
-                unsafe { free_addrinfo_node(node) };
-            }
-        }
-        nodes = filtered;
-        if nodes.is_empty() && unfiltered != 0 {
-            record_resolver_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Bounds)),
-            );
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-            return libc::EAI_NONAME;
-        }
     }
 
     if nodes.iter().any(|node| node.is_null()) {
@@ -8170,43 +8209,63 @@ fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R
     }
 }
 
-fn hostalias_lookup(name: &[u8], hosts_file: &str) -> Option<Vec<u8>> {
-    let contents = std::fs::read_to_string(hosts_file).ok()?;
-    for line in contents.lines() {
-        // Skip comments and blank lines.
-        let line = line.trim_start();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // Split on first whitespace run: alias, then dns name.
-        let mut it = line.split_whitespace();
-        let alias = it.next()?;
-        let dns = it.next()?;
-        if alias.as_bytes().eq_ignore_ascii_case(name) {
-            return Some(dns.as_bytes().to_vec());
-        }
+/// Snapshot the secure environment and alias file only when this resolver
+/// permits aliases. File/parser misses leave normal DNS search policy intact.
+pub(crate) fn hostalias_lookup(name: &[u8], options: c_ulong) -> Option<Vec<u8>> {
+    if options & crate::resolv_state::RES_NOALIASES != 0 {
+        return None;
     }
-    None
+    // SAFETY: errno is owned by the calling thread.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let path = crate::stdlib_abi::with_environ_locked(|_| {
+        // SAFETY: the name is a static C string. secure_getenv suppresses the
+        // variable for AT_SECURE or an unknown security state. The reentrant
+        // environment lock covers both lookup and the owned path copy.
+        let path = unsafe { crate::stdlib_abi::secure_getenv(c"HOSTALIASES".as_ptr()) };
+        if path.is_null() {
+            return None;
+        }
+        let path = unsafe { CStr::from_ptr(path) };
+        Some(OsStr::from_bytes(path.to_bytes()).to_owned())
+    });
+    let Some(path) = path else {
+        unsafe { set_abi_errno(saved_errno) };
+        return None;
+    };
+    // No environment pointers or locks survive filesystem access. Publish
+    // failures to the native errno cell as well as interpose-thread errno.
+    let contents = match std::fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
+            return None;
+        }
+    };
+    let target = frankenlibc_core::resolv::lookup_hostalias(&contents, name).map(ToOwned::to_owned);
+    unsafe { set_abi_errno(saved_errno) };
+    target
+}
+
+fn global_hostalias(name: &[u8]) -> Option<Vec<u8>> {
+    // SAFETY: __res_state returns aligned, live storage for the calling
+    // thread. Only its option snapshot is borrowed, before any file access.
+    unsafe { crate::resolv_state::hostalias(crate::glibc_internal_abi::__res_state(), name) }
 }
 
 unsafe fn hostalias_name_bytes<'a>(name: *const c_char) -> Option<&'a [u8]> {
     let Ok(Some(name_cstr)) = (unsafe { opt_cstr(name) }) else {
         return None;
     };
-    let name_bytes = name_cstr.to_bytes();
-    if name_bytes.is_empty() {
-        None
-    } else {
-        Some(name_bytes)
-    }
+    Some(name_cstr.to_bytes())
 }
 
 /// `__hostalias(*name) -> *const c_char` — lookup HOSTALIASES alias.
 /// Reads `$HOSTALIASES` (a path to a file with `alias dnsname` lines),
 /// case-insensitively matches `name` against the first column, and
 /// returns a pointer to a thread-local static buffer holding the DNS
-/// name. Returns NULL if `$HOSTALIASES` is unset, the file is missing,
-/// or no alias matches.
+/// name. Returns NULL if aliases are disabled in the thread's resolver state,
+/// secure execution suppresses `$HOSTALIASES`, the file is missing, or no
+/// alias matches.
 ///
 /// # Safety
 /// `name` may be NULL; we return NULL in that case. Otherwise it must
@@ -8217,10 +8276,7 @@ pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
     let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
         return core::ptr::null();
     };
-    let Ok(file) = std::env::var("HOSTALIASES") else {
-        return core::ptr::null();
-    };
-    let Some(dns) = hostalias_lookup(name_bytes, &file) else {
+    let Some(dns) = global_hostalias(name_bytes) else {
         return core::ptr::null();
     };
     // Cap to buffer size minus the NUL terminator.
@@ -8239,15 +8295,15 @@ pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
 /// reentrant variant of `__hostalias`. Writes the resolved DNS name
 /// into the caller-supplied `buf` (NUL-terminated, capped at `buflen`)
 /// and returns `buf` on success. Returns NULL on miss, missing
-/// `$HOSTALIASES`, or invalid arguments. The `statp` resolver state
-/// is unused — the lookup is identical to `__hostalias`'s.
+/// `$HOSTALIASES`, invalid arguments, or `RES_NOALIASES` in `statp`.
 ///
 /// # Safety
-/// `name` must be NULL or NUL-terminated. `buf`, when non-NULL, must
-/// point to at least `buflen` writable bytes.
+/// `statp` must point to a live resolver state. `name` must be NULL or
+/// NUL-terminated. `buf`, when non-NULL, must point to at least `buflen`
+/// writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_hostalias(
-    _statp: *mut c_void,
+    statp: *mut c_void,
     name: *const c_char,
     buf: *mut c_char,
     buflen: usize,
@@ -8258,10 +8314,9 @@ pub unsafe extern "C" fn __res_hostalias(
     let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
         return core::ptr::null();
     };
-    let Ok(file) = std::env::var("HOSTALIASES") else {
-        return core::ptr::null();
-    };
-    let Some(dns) = hostalias_lookup(name_bytes, &file) else {
+    // SAFETY: the caller supplies a live state; the delegate checks null,
+    // alignment and known extent before reading its options.
+    let Some(dns) = (unsafe { crate::resolv_state::hostalias(statp, name_bytes) }) else {
         return core::ptr::null();
     };
     let effective_buflen =

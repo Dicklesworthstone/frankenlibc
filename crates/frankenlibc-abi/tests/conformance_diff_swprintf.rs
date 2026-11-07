@@ -34,6 +34,176 @@ fn used(buf: &[Wc], n: c_int) -> Vec<Wc> {
     buf[..(n as usize).min(buf.len())].to_vec()
 }
 
+#[test]
+fn diff_swprintf_more_than_32_integer_arguments() {
+    let sequential = std::iter::repeat_n("%02d", 40)
+        .collect::<Vec<_>>()
+        .join(":");
+    let positional = (1..=40)
+        .rev()
+        .map(|position| format!("%{position}$02d"))
+        .collect::<Vec<_>>()
+        .join(":");
+    for format in [sequential, positional] {
+        let format = wfmt(&format);
+        for capacity in [1, 17, 119, 120, 256] {
+            let mut native = [0x5a5a; 256];
+            let mut host = [0x5a5a; 256];
+            macro_rules! render {
+                ($function:path, $buffer:expr) => {
+                    // SAFETY: the forty directives match promoted integer
+                    // arguments and capacity fits each wchar_t buffer.
+                    unsafe {
+                        $function(
+                            $buffer.as_mut_ptr(),
+                            capacity,
+                            format.as_ptr(),
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6,
+                            7,
+                            8,
+                            9,
+                            10,
+                            11,
+                            12,
+                            13,
+                            14,
+                            15,
+                            16,
+                            17,
+                            18,
+                            19,
+                            20,
+                            21,
+                            22,
+                            23,
+                            24,
+                            25,
+                            26,
+                            27,
+                            28,
+                            29,
+                            30,
+                            31,
+                            32,
+                            33,
+                            34,
+                            35,
+                            36,
+                            37,
+                            38,
+                            39,
+                            40,
+                        )
+                    }
+                };
+            }
+            assert_eq!(render!(fl::swprintf, native), render!(swprintf, host));
+            assert_eq!(native, host, "capacity={capacity}");
+        }
+    }
+}
+
+#[test]
+fn diff_swprintf_mixed_arguments_after_32() {
+    for count_store in [false, true] {
+        let mut text = "%02d:".repeat(30);
+        text.push_str("%*.*f|%s|%ld");
+        if count_store {
+            text.push_str("%n");
+        }
+        let format = wfmt(&text);
+        let mut native = [0x5a5a; 256];
+        let mut host = [0x5a5a; 256];
+        let mut native_count = -1;
+        let mut host_count = -1;
+        macro_rules! render {
+            ($function:path, $buffer:expr, $count:expr) => {
+                // SAFETY: the format matches the promoted integers, double,
+                // narrow C string, LP64 long and optional writable count.
+                unsafe {
+                    $function(
+                        $buffer.as_mut_ptr(),
+                        $buffer.len(),
+                        format.as_ptr(),
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12,
+                        13,
+                        14,
+                        15,
+                        16,
+                        17,
+                        18,
+                        19,
+                        20,
+                        21,
+                        22,
+                        23,
+                        24,
+                        25,
+                        26,
+                        27,
+                        28,
+                        29,
+                        30,
+                        -7,
+                        2,
+                        3.25f64,
+                        c"tail".as_ptr(),
+                        -4294967297i64 as libc::c_long,
+                        &mut $count as *mut c_int,
+                    )
+                }
+            };
+        }
+        let actual = render!(fl::swprintf, native, native_count);
+        let expected = render!(swprintf, host, host_count);
+        assert!(expected > 100);
+        assert_eq!(actual, expected);
+        assert_eq!(native, host);
+        assert_eq!(native_count, host_count);
+        assert_eq!(native_count, if count_store { expected } else { -1 });
+    }
+}
+
+#[test]
+fn swprintf_rejects_unrepresentable_argument_positions_before_allocation() {
+    for text in [
+        "%2147483648$d",
+        "%18446744073709551616$d",
+        "%1$*2147483648$d",
+    ] {
+        let format = wfmt(text);
+        let mut output = [0x5a5a; 16];
+        // SAFETY: the invalid index must be rejected before argument access.
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = 0;
+            assert_eq!(
+                fl::swprintf(output.as_mut_ptr(), output.len(), format.as_ptr()),
+                -1
+            );
+            assert_eq!(
+                *frankenlibc_abi::errno_abi::__errno_location(),
+                libc::EOVERFLOW
+            );
+        }
+    }
+}
+
 /// Compare swprintf(fmt, wide_string_arg) between frankenlibc and glibc.
 fn check_ls(fmt: &str, arg: &str, divs: &mut Vec<String>) {
     let f = wfmt(fmt);

@@ -6939,12 +6939,150 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 
 use frankenlibc_core::stdio::{
     FormatSegment, LengthMod, Precision, ValueArgKind, Width,
-    count_printf_args as core_count_printf_args, count_printf_args_of as core_count_printf_args_of,
+    count_printf_args_of as core_count_printf_args_of,
     format_str, parse_format_string, positional_printf_arg_plan as core_positional_printf_arg_plan,
 };
 
-/// Maximum variadic arguments we extract per printf call.
+/// Inline argument capacity; larger printf calls spill to checked heap storage.
 pub(crate) const MAX_VA_ARGS: usize = 32;
+
+/// Own every argument until rendering finishes, without allocating for the
+/// usual small, sequential format. A fixed extraction ceiling silently turns
+/// valid later arguments into zero (and loses later `%n` stores).
+pub(crate) struct PrintfArgumentBuffer {
+    inline: [u64; MAX_VA_ARGS],
+    heap: Vec<u64>,
+    count: usize,
+    positional: Option<Vec<ValueArgKind>>,
+}
+
+impl PrintfArgumentBuffer {
+    pub(crate) fn new(segments: &FormatSegments<'_>) -> Result<Self, c_int> {
+        let mut positional_count = 0usize;
+        if segments.any_positional() {
+            for segment in segments {
+                let FormatSegment::Spec(spec) = segment else {
+                    continue;
+                };
+                // The parser saturates an oversized decimal index at usize::MAX.
+                // Reject it before asking either the argument buffer or its
+                // positional plan to allocate. GNU argument positions are ints.
+                for position in [
+                    spec.value_position,
+                    spec.width.position(),
+                    spec.precision.position(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if position > c_int::MAX as usize {
+                        return Err(errno::EOVERFLOW);
+                    }
+                }
+                for (position, _) in [
+                    spec.positional_width_arg_kind(),
+                    spec.positional_precision_arg_kind(),
+                    spec.positional_value_arg_kind(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    positional_count = positional_count.max(position);
+                }
+            }
+        }
+        // With no consuming positional directive the core count follows its
+        // sequential path and never allocates a positional plan.
+        let count = if positional_count != 0 {
+            positional_count
+        } else {
+            core_count_printf_args_of(segments)
+        };
+        if count
+            .checked_mul(std::mem::size_of::<u64>())
+            .is_none_or(|bytes| bytes > isize::MAX as usize)
+        {
+            return Err(errno::EOVERFLOW);
+        }
+        let mut buffer = Self {
+            inline: [0; MAX_VA_ARGS],
+            heap: Vec::new(),
+            count,
+            positional: None,
+        };
+        if count > MAX_VA_ARGS {
+            buffer
+                .heap
+                .try_reserve_exact(count)
+                .map_err(|_| errno::ENOMEM)?;
+            buffer.heap.resize(count, 0);
+        }
+        if positional_count != 0 {
+            let mut plan = Vec::new();
+            plan.try_reserve_exact(count).map_err(|_| errno::ENOMEM)?;
+            plan.resize(count, ValueArgKind::Gp);
+            // The existing planner gives the first declaration of a slot
+            // precedence. Assigning in reverse preserves that rule without a
+            // second allocation for an Option-valued intermediate plan.
+            for segment in segments.iter().rev() {
+                let FormatSegment::Spec(spec) = segment else {
+                    continue;
+                };
+                for (position, kind) in [
+                    spec.positional_value_arg_kind(),
+                    spec.positional_precision_arg_kind(),
+                    spec.positional_width_arg_kind(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if position != 0 {
+                        plan[position - 1] = kind;
+                    }
+                }
+            }
+            buffer.positional = Some(plan);
+        }
+        Ok(buffer)
+    }
+
+    pub(crate) fn parts_mut(&mut self) -> (&mut [u64], Option<&[ValueArgKind]>) {
+        let values = if self.count <= MAX_VA_ARGS {
+            &mut self.inline[..self.count]
+        } else {
+            self.heap.as_mut_slice()
+        };
+        (values, self.positional.as_deref())
+    }
+
+    /// # Safety
+    /// `ap` is a live C va_list whose arguments agree with `segments`, the same
+    /// parsed format used to construct this buffer. Long-double argument slots
+    /// remain live until the caller finishes rendering from the buffer.
+    pub(crate) unsafe fn extract(
+        &mut self,
+        segments: &[FormatSegment<'_>],
+        ap: *mut c_void,
+    ) -> usize {
+        let count = self.count;
+        let (values, plan) = self.parts_mut();
+        // SAFETY: the caller supplies the matching va_list; the checked buffer
+        // and its positional plan both contain exactly count initialized slots.
+        unsafe { vprintf_extract_args_with_plan(segments, ap, values, count, plan) }
+    }
+}
+
+impl std::ops::Deref for PrintfArgumentBuffer {
+    type Target = [u64];
+
+    fn deref(&self) -> &Self::Target {
+        if self.count <= MAX_VA_ARGS {
+            &self.inline[..self.count]
+        } else {
+            self.heap.as_slice()
+        }
+    }
+}
 
 // GNU printf extensions are an opt-in path. A process which never registers
 // anything only loads this flag once at the public formatting boundary; its
@@ -8345,7 +8483,7 @@ macro_rules! extract_va_args {
             // is not one. `from_mut` also avoids naming the unstable type.
             let _ap = core::ptr::from_mut($args).cast::<core::ffi::c_void>();
             // SAFETY: `_ap` addresses this frame's va_list for the call.
-            unsafe { crate::stdio_abi::vprintf_extract_args($segments, _ap, $buf, $extract_count) }
+            unsafe { ($buf).extract($segments, _ap) }
         } else {
             extract_va_args_registers!($segments, $args, $buf, $extract_count)
         }
@@ -8355,34 +8493,22 @@ macro_rules! extract_va_args {
 macro_rules! extract_va_args_registers {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
-        // FIELD READ, NOT A WALK. `positional_printf_arg_plan` opens with
-        // `any_positional_spec(segments)`, which iterates every segment testing
-        // three `Option`s each -- and `FormatSegments` ALREADY recorded exactly
-        // that predicate as a field during `push`. Passing the slice threw the
-        // field away and made the callee re-derive it. Counted on the deployed
-        // `snprintf("%d %s %.3f")` against live glibc: 75 Ir per call, entirely
-        // to return `None`, because a non-positional format is the common case
-        // and the plan is never built.
-        //
-        // `$segments` is the `&FormatSegments` itself here (it coerces to a slice
-        // for the callee), so the inherent method resolves before the deref and
-        // the guard costs one load and one branch.
-        if let Some(_plan) = if $segments.any_positional() {
-            core_positional_printf_arg_plan($segments)
-        } else {
-            None
-        } {
+        // Reuse the checked plan prepared with the argument storage. Ordinary
+        // sequential formats still need neither a plan allocation nor a walk
+        // to discover that no positional arguments exist.
+        let (_values, _plan) = ($buf).parts_mut();
+        if let Some(_plan) = _plan {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
                     ValueArgKind::Gp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _values[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                     }
                     ValueArgKind::Fp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _values[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
@@ -8408,7 +8534,7 @@ macro_rules! extract_va_args_registers {
                         // exactly as before and only the stored value changes.
                         let _ = unsafe { $args.next_arg::<f64>() };
                         if _idx < $extract_count {
-                            $buf[_idx] = 0;
+                            _values[_idx] = 0;
                             _idx += 1;
                         }
                     }
@@ -8423,12 +8549,12 @@ macro_rules! extract_va_args_registers {
                     // `as i64` recovers negative values correctly.
                     if spec.width.uses_arg() && _idx < $extract_count {
                         let raw = unsafe { $args.next_arg::<core::ffi::c_int>() };
-                        $buf[_idx] = (raw as i64) as u64;
+                        _values[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
                         let raw = unsafe { $args.next_arg::<core::ffi::c_int>() };
-                        $buf[_idx] = (raw as i64) as u64;
+                        _values[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
                     // ONE classification, not two. `value_arg_is_float()` and
@@ -8443,7 +8569,7 @@ macro_rules! extract_va_args_registers {
                     // where the original fell through to a test that could not match.
                     match spec.value_arg_kind() {
                         Some(ValueArgKind::Fp) if _idx < $extract_count => {
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _values[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                         // Split out of the `Fp` arm above rather than merged
@@ -8466,11 +8592,11 @@ macro_rules! extract_va_args_registers {
                             // version did, so a broken invariant moves the cursor
                             // exactly as before and only the stored value changes.
                             let _ = unsafe { $args.next_arg::<f64>() };
-                            $buf[_idx] = 0;
+                            _values[_idx] = 0;
                             _idx += 1;
                         }
                         Some(ValueArgKind::Gp) if _idx < $extract_count => {
-                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _values[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                         _ => {}
@@ -11242,8 +11368,14 @@ pub unsafe extern "C-unwind" fn snprintf(
         (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
     } else {
         let segments = parse_format_string(fmt_bytes);
-        let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-        let mut arg_buf = [0u64; MAX_VA_ARGS];
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
         extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
         match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
             Some(DirectPrintfPayload::String(bytes)) => {
@@ -11436,8 +11568,14 @@ pub unsafe extern "C-unwind" fn sprintf(
         (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
     } else {
         let segments = parse_format_string(fmt_bytes);
-        let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-        let mut arg_buf = [0u64; MAX_VA_ARGS];
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
         extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
         match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
             Some(DirectPrintfPayload::String(bytes)) => {
@@ -11588,8 +11726,14 @@ pub unsafe extern "C-unwind" fn fprintf(
         return unsafe { strict_direct_stream_f(id, stream, arg, precision, caller) };
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let direct_payload =
@@ -11851,8 +11995,14 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
         return unsafe { strict_direct_stream_f(id, stdout_ptr, arg, precision, caller) };
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let direct_payload =
@@ -12110,8 +12260,14 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     // Bare "%s" fast path: write the string straight to the fd, else render.
@@ -12168,8 +12324,14 @@ pub unsafe extern "C-unwind" fn asprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     // Bare "%s" fast path: use the string directly, else render.
@@ -12229,20 +12391,34 @@ pub unsafe extern "C-unwind" fn asprintf(
 /// Reads each argument according to the format specifiers: integer/pointer/string
 /// args come from GP registers or overflow area, float args from FP registers or
 /// overflow area.
-#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn vprintf_extract_args(
     segments: &[FormatSegment<'_>],
     ap: *mut c_void,
-    buf: &mut [u64; MAX_VA_ARGS],
+    buf: &mut [u64],
     extract_count: usize,
 ) -> usize {
+    let plan = core_positional_printf_arg_plan(segments);
+    // SAFETY: the original caller supplies the live va_list and writable
+    // buffer. The architecture walker bounds writes by both count and length.
+    unsafe { vprintf_extract_args_with_plan(segments, ap, buf, extract_count, plan.as_deref()) }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn vprintf_extract_args_with_plan(
+    segments: &[FormatSegment<'_>],
+    ap: *mut c_void,
+    buf: &mut [u64],
+    extract_count: usize,
+    plan: Option<&[ValueArgKind]>,
+) -> usize {
+    let extract_count = extract_count.min(buf.len());
     let gp_offset_ptr = ap as *mut u32;
     let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
     let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
     let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
 
     let mut idx = 0usize;
-    if let Some(plan) = core_positional_printf_arg_plan(segments) {
+    if let Some(plan) = plan {
         for kind in plan.iter().take(extract_count) {
             match kind {
                 ValueArgKind::Gp => {
@@ -12314,12 +12490,14 @@ pub(crate) unsafe fn vprintf_extract_args(
 }
 
 #[cfg(target_arch = "aarch64")]
-pub(crate) unsafe fn vprintf_extract_args(
+unsafe fn vprintf_extract_args_with_plan(
     segments: &[FormatSegment<'_>],
     ap: *mut c_void,
-    buf: &mut [u64; MAX_VA_ARGS],
+    buf: &mut [u64],
     extract_count: usize,
+    plan: Option<&[ValueArgKind]>,
 ) -> usize {
+    let extract_count = extract_count.min(buf.len());
     let stack_ptr = ap as *mut *mut u8;
     let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
     let vr_top = unsafe { *((ap as *mut u8).add(16) as *const *mut u8) };
@@ -12327,7 +12505,7 @@ pub(crate) unsafe fn vprintf_extract_args(
     let vr_offs_ptr = unsafe { (ap as *mut u8).add(28) as *mut i32 };
 
     let mut idx = 0usize;
-    if let Some(plan) = core_positional_printf_arg_plan(segments) {
+    if let Some(plan) = plan {
         for kind in plan.iter().take(extract_count) {
             match kind {
                 ValueArgKind::Gp => {
@@ -12387,11 +12565,12 @@ pub(crate) unsafe fn vprintf_extract_args(
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-pub(crate) unsafe fn vprintf_extract_args(
+unsafe fn vprintf_extract_args_with_plan(
     _segments: &[FormatSegment<'_>],
     _ap: *mut c_void,
-    _buf: &mut [u64; MAX_VA_ARGS],
+    _buf: &mut [u64],
     _extract_count: usize,
+    _plan: Option<&[ValueArgKind]>,
 ) -> usize {
     0
 }
@@ -12603,11 +12782,16 @@ pub(crate) unsafe fn vprintf_extract_and_render(
     ap: *mut c_void,
 ) -> String {
     let segments = parse_format_string(fmt.as_bytes());
-    let needed = core_count_printf_args(&segments);
-    let extract = std::cmp::min(needed, MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return String::new();
+        }
+    };
+    let extract = arg_buf.len();
     if extract > 0 && !ap.is_null() {
-        unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract) };
+        unsafe { arg_buf.extract(&segments, ap) };
     }
     // Reuse the segments parsed above instead of re-parsing in render_printf.
     let rendered = unsafe { render_segments(symbol, &segments, arg_buf.as_ptr(), extract, false) };
@@ -12775,9 +12959,15 @@ pub unsafe extern "C-unwind" fn vsnprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     // Fast path for ubiquitous exact "%s" and "%s\n": copy the string
     // argument straight to the destination, skipping the render engine and
@@ -12931,9 +13121,15 @@ pub unsafe extern "C-unwind" fn vsprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     // Fast path for exact "%s" and "%s\n" (see snprintf): copy the string
     // argument straight to the destination, skipping the render engine and its
@@ -13101,9 +13297,15 @@ pub(crate) unsafe fn vfprintf_for_caller(
         return r;
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     let direct_payload =
         unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
@@ -13339,9 +13541,15 @@ pub(crate) unsafe fn vprintf_for_caller(
         return r;
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     let direct_payload =
         unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
@@ -13575,9 +13783,15 @@ pub(crate) unsafe fn vdprintf_for_caller(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     // Bare "%s" fast path: use the string directly, else render.
     let mut _bare_hold = None;
@@ -13655,9 +13869,15 @@ pub unsafe extern "C-unwind" fn vasprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
 
     // Bare "%s" fast path: use the string directly, else render.
     let mut _bare_hold = None;

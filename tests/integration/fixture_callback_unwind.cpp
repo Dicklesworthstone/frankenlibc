@@ -451,7 +451,189 @@ extern "C" int flc_walk_unwind_child(void *function, unsigned variant, const cha
   return WIFSIGNALED(status) ? -WTERMSIG(status) : WIFEXITED(status) ? WEXITSTATUS(status) : 64;
 }
 
+// The legacy cleanup-buffer ABI must use the same chain as pthread_exit and
+// pthread_cancel. Exercise actual exported functions; modern pthread_cleanup_*
+// macros use a different ABI and would not expose a broken legacy chain.
+static void legacy_check_at(bool condition, int line) {
+  if (!condition) {
+    dprintf(2, "legacy-cleanup: assertion failed at %d\n", line);
+    _exit(86);
+  }
+}
+#define legacy_check(condition) legacy_check_at((condition), __LINE__)
+static void *legacy_symbol(const char *name) {
+  void *address = dlsym(RTLD_DEFAULT, name);
+  // GNU retains defer/restore as compatibility-only symbols on newer hosts.
+#if defined(__aarch64__)
+  if (!address) address = dlvsym(RTLD_DEFAULT, name, "GLIBC_2.17");
+#else
+  if (!address) address = dlvsym(RTLD_DEFAULT, name, "GLIBC_2.2.5");
+#endif
+  const char *pin = getenv("FRANKENLIBC_TEST_LIBRARY");
+  struct stat wanted, actual;
+  Dl_info info;
+  legacy_check(pin && address && dladdr(address, &info) && info.dli_fname);
+  legacy_check(!syscall(SYS_newfstatat, AT_FDCWD, pin, &wanted, 0));
+  legacy_check(!syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0));
+  legacy_check(actual.st_dev == wanted.st_dev && actual.st_ino == wanted.st_ino);
+  return address;
+}
+struct LegacyCleanupApi {
+  using Push = void (*)(void *, void (*)(void *), void *);
+  using Pop = void (*)(void *, int);
+  using Change = int (*)(int, int *);
+  Push push, push_defer;
+  Pop pop, pop_restore;
+  Change set_state, set_type;
+  int (*create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+  int (*join)(pthread_t, void **);
+  int (*cancel)(pthread_t);
+  pthread_t (*self)();
+  void (*testcancel)();
+  void (*exit)(void *);
+};
+static LegacyCleanupApi legacy_api() {
+  // Potentially unwinding pointers deliberately have no C++ noexcept qualifier.
+  return {
+    reinterpret_cast<LegacyCleanupApi::Push>(legacy_symbol("_pthread_cleanup_push")),
+    reinterpret_cast<LegacyCleanupApi::Push>(legacy_symbol("_pthread_cleanup_push_defer")),
+    reinterpret_cast<LegacyCleanupApi::Pop>(legacy_symbol("_pthread_cleanup_pop")),
+    reinterpret_cast<LegacyCleanupApi::Pop>(legacy_symbol("_pthread_cleanup_pop_restore")),
+    reinterpret_cast<LegacyCleanupApi::Change>(legacy_symbol("pthread_setcancelstate")),
+    reinterpret_cast<LegacyCleanupApi::Change>(legacy_symbol("pthread_setcanceltype")),
+    reinterpret_cast<int (*)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *)>(legacy_symbol("pthread_create")),
+    reinterpret_cast<int (*)(pthread_t, void **)>(legacy_symbol("pthread_join")),
+    reinterpret_cast<int (*)(pthread_t)>(legacy_symbol("pthread_cancel")),
+    reinterpret_cast<pthread_t (*)()>(legacy_symbol("pthread_self")),
+    reinterpret_cast<void (*)()>(legacy_symbol("pthread_testcancel")),
+    reinterpret_cast<void (*)(void *)>(legacy_symbol("pthread_exit"))
+  };
+}
+struct LegacyCleanupTrace {
+  LegacyCleanupApi api;
+  int action;
+  int order[4]{};
+  int count = 0;
+  int caller_drops = 0;
+  int callback_drops = 0;
+  int observed_type[2] = {-1, -1};
+};
+struct LegacyCleanupArgument {
+  LegacyCleanupTrace *trace;
+  int index;
+  bool observe_type;
+};
+struct LegacyCleanupGuard {
+  int *drops;
+  ~LegacyCleanupGuard() { ++*drops; }
+};
+struct LegacyCleanupBoom {};
+static void legacy_record(void *opaque) {
+  auto *argument = static_cast<LegacyCleanupArgument *>(opaque);
+  auto *trace = argument->trace;
+  legacy_check(trace->count < 4);
+  trace->order[trace->count++] = argument->index;
+  if (argument->observe_type) {
+    int old = -1;
+    legacy_check(!trace->api.set_type(PTHREAD_CANCEL_DEFERRED, &old));
+    trace->observed_type[argument->index - 1] = old;
+    legacy_check(!trace->api.set_type(old, nullptr));
+  }
+}
+static void legacy_throw(void *opaque) {
+  auto *argument = static_cast<LegacyCleanupArgument *>(opaque);
+  LegacyCleanupGuard guard{&argument->trace->callback_drops};
+  legacy_record(opaque);
+  throw LegacyCleanupBoom{};
+}
+static void legacy_exit_from_callback(void *opaque) {
+  auto *argument = static_cast<LegacyCleanupArgument *>(opaque);
+  LegacyCleanupGuard guard{&argument->trace->callback_drops};
+  legacy_record(opaque);
+  argument->trace->api.exit(reinterpret_cast<void *>(uintptr_t(73)));
+  _exit(87);
+}
+static void legacy_pop_exception(LegacyCleanupTrace *trace, bool restore) {
+  auto &api = trace->api;
+  _pthread_cleanup_buffer outer{}, inner{};
+  LegacyCleanupArgument outer_argument{trace, 1, true}, inner_argument{trace, 2, true};
+  int saved_state = -1, saved_type = -1;
+  legacy_check(!api.set_state(PTHREAD_CANCEL_DISABLE, &saved_state));
+  legacy_check(!api.set_type(PTHREAD_CANCEL_ASYNCHRONOUS, &saved_type));
+  auto push = restore ? api.push_defer : api.push;
+  auto pop = restore ? api.pop_restore : api.pop;
+  push(&outer, legacy_record, &outer_argument);
+  push(&inner, legacy_throw, &inner_argument);
+  bool caught = false;
+  try {
+    LegacyCleanupGuard guard{&trace->caller_drops};
+    pop(&inner, 1);
+  } catch (const LegacyCleanupBoom &) {
+    caught = true;
+  }
+  pop(&outer, 1);
+  int restored = -1;
+  legacy_check(!api.set_type(saved_type, &restored));
+  legacy_check(!api.set_state(saved_state, nullptr));
+  legacy_check(caught && trace->caller_drops == 1 && trace->callback_drops == 1);
+  legacy_check(trace->count == 2 && trace->order[0] == 2 && trace->order[1] == 1);
+  legacy_check(restored == PTHREAD_CANCEL_ASYNCHRONOUS);
+  legacy_check(trace->observed_type[0] == PTHREAD_CANCEL_ASYNCHRONOUS);
+  legacy_check(trace->observed_type[1] ==
+               (restore ? PTHREAD_CANCEL_DEFERRED : PTHREAD_CANCEL_ASYNCHRONOUS));
+}
+static void *legacy_cleanup_worker(void *opaque) {
+  auto *trace = static_cast<LegacyCleanupTrace *>(opaque);
+  auto &api = trace->api;
+  _pthread_cleanup_buffer outer{}, inner{};
+  LegacyCleanupArgument outer_argument{trace, 1, false}, inner_argument{trace, 2, false};
+  if (trace->action == 4) {
+    legacy_check(!api.set_state(PTHREAD_CANCEL_DISABLE, nullptr));
+    legacy_check(!api.set_type(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr));
+  }
+  api.push(&outer, legacy_record, &outer_argument);
+  if (trace->action == 4) api.push_defer(&inner, legacy_record, &inner_argument);
+  else api.push(&inner, trace->action == 5 ? legacy_exit_from_callback : legacy_record,
+                &inner_argument);
+  LegacyCleanupGuard guard{&trace->caller_drops};
+  if (trace->action == 2) api.exit(reinterpret_cast<void *>(uintptr_t(73)));
+  if (trace->action == 5) api.pop(&inner, 1);
+  legacy_check(!api.cancel(api.self()));
+  if (trace->action == 4) {
+    legacy_check(!api.set_state(PTHREAD_CANCEL_ENABLE, nullptr));
+    // A pending request acts while restoring ASYNCHRONOUS. The popped inner
+    // handler must be gone, and the outer handler must still run exactly once.
+    api.pop_restore(&inner, 1);
+  } else {
+    api.testcancel();
+  }
+  return reinterpret_cast<void *>(uintptr_t(99));
+}
+static int legacy_cleanup_case(const char *name) {
+  const char *cases[] = {"pop", "pop-restore", "exit", "cancel", "restore-cancel", "pop-exit"};
+  int action = -1;
+  for (int i = 0; i < 6; ++i) if (!strcmp(name, cases[i])) action = i;
+  if (action < 0) return 2;
+  LegacyCleanupTrace trace{legacy_api(), action};
+  if (action < 2) legacy_pop_exception(&trace, action == 1);
+  else {
+    pthread_t thread;
+    void *result = nullptr;
+    legacy_check(!trace.api.create(&thread, nullptr, legacy_cleanup_worker, &trace));
+    legacy_check(!trace.api.join(thread, &result));
+    legacy_check(result == ((action == 2 || action == 5)
+                           ? reinterpret_cast<void *>(uintptr_t(73)) : PTHREAD_CANCELED));
+    legacy_check(trace.caller_drops == 1);
+    legacy_check(trace.callback_drops == (action == 5 ? 1 : 0));
+    if (action == 4) legacy_check(trace.count == 1 && trace.order[0] == 1);
+    else legacy_check(trace.count == 2 && trace.order[0] == 2 && trace.order[1] == 1);
+  }
+  printf("legacy-cleanup:%s:PASS\n", name);
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 3 && !strcmp(argv[1], "--legacy-cleanup")) return legacy_cleanup_case(argv[2]);
   if (argc == 5 && !strcmp(argv[1], "--walk-unwind")) {
     const char *names[] = {"ftw", "ftw64", "nftw", "nftw64"};
     unsigned variant = (unsigned)strtoul(argv[2], nullptr, 10);

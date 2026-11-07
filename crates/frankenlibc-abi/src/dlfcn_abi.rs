@@ -306,6 +306,23 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
     }
 }
 
+/// Standalone public lookups share the native import provider/version map.
+/// A known name with an unsupported version must not reach the older generic
+/// builtin allowlist. Public loader entrypoints still use their public wrappers.
+#[cfg(feature = "standalone")]
+fn resolve_standalone_export(symbol: &[u8], version: Option<&[u8]>) -> Option<*mut c_void> {
+    let name = std::str::from_utf8(symbol).ok()?;
+    let version_name = version.map(std::str::from_utf8).transpose().ok()?;
+    if let Some(address) = native::runtime_export(name, version_name) {
+        return address.map(|address| address as *mut c_void);
+    }
+    if version.is_some_and(|version| !version_supported(version)) {
+        return None;
+    }
+    let address = resolve_exported_symbol(symbol);
+    (!address.is_null()).then_some(address)
+}
+
 unsafe fn host_dlsym(handle: *mut c_void, symbol: *const c_char) -> Option<*mut c_void> {
     type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
     let addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
@@ -686,10 +703,9 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         // Builtins retain their existing precedence. An explicit main handle
         // additionally sees live GLOBAL plugins, but never LOCAL-only objects.
         if is_main_program_handle(handle) || is_rtld_default(handle) {
-            let sym = resolve_exported_symbol(symbol_name);
-            if !sym.is_null() {
+            if let Some(address) = resolve_standalone_export(symbol_name, None) {
                 clear_dlerror();
-                return sym;
+                return address;
             }
             if is_main_program_handle(handle)
                 && let Some(Some(address)) = resolve_native_dso_symbol(handle, symbol_name, None)
@@ -919,12 +935,9 @@ pub unsafe extern "C" fn dlvsym(
                     }
                 };
             }
-            if version_supported(version_name) {
-                let sym = resolve_exported_symbol(symbol_name);
-                if !sym.is_null() {
-                    clear_dlerror();
-                    return sym;
-                }
+            if let Some(address) = resolve_standalone_export(symbol_name, Some(version_name)) {
+                clear_dlerror();
+                return address;
             }
             // Plugin versions are defined by the object's own version table,
             // not the GLIBC allowlist used for the builtin export surface.

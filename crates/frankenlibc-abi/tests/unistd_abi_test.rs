@@ -17307,3 +17307,117 @@ fn futex_requeue_null_waiters_returns_minus_one_with_errno() {
     assert_eq!(rc, -1);
     assert!(unsafe { *libc::__errno_location() } != 0);
 }
+
+
+// A netlink failure means interface configuration is unknown. In particular,
+// getaddrinfo(AI_ADDRCONFIG) must not receive a successful empty snapshot when
+// socket creation, request transmission, or response reception was denied.
+#[test]
+fn getifaddrs_syscall_errors_are_not_successful_snapshots() {
+    const CHILD_MODE: &str = "FRANKENLIBC_GETIFADDRS_ERROR_CHILD";
+    if let Some(mode) = std::env::var_os(CHILD_MODE) {
+        let syscall_nr = match mode.to_str() {
+            Some("socket") => libc::SYS_socket,
+            Some("send") => libc::SYS_sendto,
+            Some("recv") => libc::SYS_recvfrom,
+            _ => panic!("unknown getifaddrs error probe"),
+        };
+        if syscall_nr != libc::SYS_socket {
+            // SAFETY: this probe owns the descriptor and supplies valid socket
+            // parameters. Ensure the later injected failure is actually reached.
+            let probe = unsafe {
+                libc::socket(
+                    libc::AF_NETLINK,
+                    libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+                    libc::NETLINK_ROUTE,
+                )
+            };
+            assert!(probe >= 0, "netlink must be available before fault injection");
+            // SAFETY: probe is the descriptor opened immediately above.
+            assert_eq!(unsafe { libc::close(probe) }, 0);
+        }
+
+        // Load seccomp_data.nr, deny just this syscall with EACCES, and allow
+        // everything else. The filter is installed only in an exec'd child.
+        let mut filter = [
+            libc::sock_filter {
+                code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+                jt: 0,
+                jf: 0,
+                k: 0,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 1,
+                k: syscall_nr as u32,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_RET | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 0,
+                k: libc::SECCOMP_RET_ERRNO | libc::EACCES as u32,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_RET | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 0,
+                k: libc::SECCOMP_RET_ALLOW,
+            },
+        ];
+        let mut program = libc::sock_fprog {
+            len: filter.len() as u16,
+            filter: filter.as_mut_ptr(),
+        };
+        // SAFETY: the no-new-privileges option takes scalar arguments; program
+        // points to the live, bounded filter array for the installation call.
+        unsafe {
+            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+            assert_eq!(
+                libc::prctl(
+                    libc::PR_SET_SECCOMP,
+                    libc::SECCOMP_MODE_FILTER,
+                    std::ptr::addr_of_mut!(program),
+                ),
+                0
+            );
+        }
+
+        let mut result = std::ptr::dangling_mut::<c_void>();
+        // SAFETY: result is a writable output slot. The sentinel itself is
+        // never dereferenced; getifaddrs must clear it before reporting failure.
+        let (rc, error) = unsafe {
+            *__errno_location() = 0;
+            let rc = frankenlibc_abi::unistd_abi::getifaddrs(&mut result);
+            (rc, *__errno_location())
+        };
+        assert_eq!(rc, -1, "{mode:?} failure must not become an empty success");
+        assert_eq!(error, libc::EACCES, "{mode:?} must preserve syscall errno");
+        assert!(result.is_null(), "failed enumeration must not publish a list");
+        return;
+    }
+
+    for mode in ["socket", "send", "recv"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "getifaddrs_syscall_errors_are_not_successful_snapshots",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_MODE, mode)
+            .output()
+            .expect("run isolated getifaddrs error probe");
+        assert!(
+            output.status.success(),
+            "{mode} probe failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("test result: ok. 1 passed; 0 failed;"),
+            "{mode} probe did not execute its named test"
+        );
+    }
+}

@@ -102,14 +102,22 @@ impl ObjectImage {
             if header.p_type != ProgramType::GnuRelro || header.p_memsz == 0 {
                 continue;
             }
+            let Ok(start) = usize::try_from(header.p_vaddr) else {
+                return false;
+            };
             let Some(end) = header
                 .p_vaddr
                 .checked_add(header.p_memsz)
-                .and_then(|end| end.checked_add(4095))
+                .and_then(|end| usize::try_from(end).ok())
             else {
                 return false;
             };
-            if (header.p_vaddr & !4095) <= offset && offset < (end & !4095) {
+            // Match the exact interval installed by protect_object. A trailing
+            // partial RELRO page retains its PT_LOAD execution permission.
+            let Some(pages) = super::map_layout::relro_pages(&(start..end), self.len) else {
+                return false;
+            };
+            if pages.contains(&(offset as usize)) {
                 return false;
             }
         }

@@ -49,6 +49,245 @@ fn buf_used(buf: &[u8]) -> &[u8] {
     &buf[..n]
 }
 
+// Cross the old 32-slot extraction ceiling using real C varargs. Widths keep
+// these cases on the generic parser rather than the fused literal lane.
+#[test]
+fn diff_snprintf_more_than_32_integer_arguments() {
+    let sequential = std::iter::repeat_n("%02d", 40)
+        .collect::<Vec<_>>()
+        .join(":");
+    let positional = (1..=40)
+        .rev()
+        .map(|position| format!("%{position}$02d"))
+        .collect::<Vec<_>>()
+        .join(":");
+    for format in [sequential, positional] {
+        let format = std::ffi::CString::new(format).unwrap();
+        for capacity in [0, 1, 17, 256] {
+            let mut native = [0xa5u8; 256];
+            let mut host = [0xa5u8; 256];
+            macro_rules! render {
+                ($function:path, $buffer:expr) => {
+                    // SAFETY: forty directives have matching promoted ints;
+                    // both buffers are valid for the declared capacity.
+                    unsafe {
+                        $function(
+                            $buffer.as_mut_ptr().cast(),
+                            capacity,
+                            format.as_ptr(),
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6,
+                            7,
+                            8,
+                            9,
+                            10,
+                            11,
+                            12,
+                            13,
+                            14,
+                            15,
+                            16,
+                            17,
+                            18,
+                            19,
+                            20,
+                            21,
+                            22,
+                            23,
+                            24,
+                            25,
+                            26,
+                            27,
+                            28,
+                            29,
+                            30,
+                            31,
+                            32,
+                            33,
+                            34,
+                            35,
+                            36,
+                            37,
+                            38,
+                            39,
+                            40,
+                        )
+                    }
+                };
+            }
+            let actual = render!(fl::snprintf, native);
+            let expected = render!(libc::snprintf, host);
+            assert_eq!(expected, 119);
+            assert_eq!(actual, expected, "{format:?}, capacity={capacity}");
+            assert_eq!(native, host, "{format:?}, capacity={capacity}");
+        }
+    }
+}
+
+#[test]
+fn diff_snprintf_more_than_32_float_arguments() {
+    let format = std::ffi::CString::new(
+        std::iter::repeat_n("%.2f", 40)
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
+    .unwrap();
+    let mut native = [0xa5u8; 512];
+    let mut host = [0xa5u8; 512];
+    macro_rules! render {
+        ($function:path, $buffer:expr) => {
+            // SAFETY: forty initialized doubles match forty %f conversions.
+            unsafe {
+                $function(
+                    $buffer.as_mut_ptr().cast(),
+                    $buffer.len(),
+                    format.as_ptr(),
+                    0.25f64,
+                    1.25f64,
+                    2.25f64,
+                    3.25f64,
+                    4.25f64,
+                    5.25f64,
+                    6.25f64,
+                    7.25f64,
+                    8.25f64,
+                    9.25f64,
+                    10.25f64,
+                    11.25f64,
+                    12.25f64,
+                    13.25f64,
+                    14.25f64,
+                    15.25f64,
+                    16.25f64,
+                    17.25f64,
+                    18.25f64,
+                    19.25f64,
+                    20.25f64,
+                    21.25f64,
+                    22.25f64,
+                    23.25f64,
+                    24.25f64,
+                    25.25f64,
+                    26.25f64,
+                    27.25f64,
+                    28.25f64,
+                    29.25f64,
+                    30.25f64,
+                    31.25f64,
+                    32.25f64,
+                    33.25f64,
+                    34.25f64,
+                    35.25f64,
+                    36.25f64,
+                    37.25f64,
+                    38.25f64,
+                    39.25f64,
+                )
+            }
+        };
+    }
+    assert_eq!(render!(fl::snprintf, native), render!(libc::snprintf, host));
+    assert_eq!(native, host);
+}
+
+#[test]
+fn diff_snprintf_mixed_arguments_and_count_after_32() {
+    let mut format = "%02d:".repeat(30);
+    format.push_str("%*.*f|%s|%ld%n");
+    let format = std::ffi::CString::new(format).unwrap();
+    for capacity in [0, 1, 95, 256] {
+        let mut native = [0xa5u8; 256];
+        let mut host = [0xa5u8; 256];
+        let mut native_count = -1;
+        let mut host_count = -1;
+        macro_rules! render {
+            ($function:path, $buffer:expr, $count:expr) => {
+                // SAFETY: stars consume ints, then a promoted double, C string,
+                // LP64 long and writable int pointer follow the first 30 ints.
+                unsafe {
+                    $function(
+                        $buffer.as_mut_ptr().cast(),
+                        capacity,
+                        format.as_ptr(),
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12,
+                        13,
+                        14,
+                        15,
+                        16,
+                        17,
+                        18,
+                        19,
+                        20,
+                        21,
+                        22,
+                        23,
+                        24,
+                        25,
+                        26,
+                        27,
+                        28,
+                        29,
+                        30,
+                        -7,
+                        2,
+                        3.25f64,
+                        c"tail".as_ptr(),
+                        -4294967297i64 as libc::c_long,
+                        &mut $count as *mut c_int,
+                    )
+                }
+            };
+        }
+        let actual = render!(fl::snprintf, native, native_count);
+        let expected = render!(libc::snprintf, host, host_count);
+        assert!(expected > 100);
+        assert_eq!(actual, expected, "capacity={capacity}");
+        assert_eq!(native_count, host_count, "capacity={capacity}");
+        assert_eq!(native_count, expected);
+        assert_eq!(native, host, "capacity={capacity}");
+    }
+}
+
+#[test]
+fn snprintf_rejects_unrepresentable_argument_positions_before_allocation() {
+    for format in [
+        c"%2147483648$d",
+        c"%18446744073709551616$d",
+        c"%1$*2147483648$d",
+        c"%1$.*2147483648$f",
+    ] {
+        let mut buffer = [0xa5u8; 16];
+        // SAFETY: these positions cannot fit the GNU int-valued contract and
+        // must be rejected before fetching any nonexistent variadic arguments.
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = 0;
+            assert_eq!(
+                fl::snprintf(buffer.as_mut_ptr().cast(), buffer.len(), format.as_ptr()),
+                -1
+            );
+            assert_eq!(
+                *frankenlibc_abi::errno_abi::__errno_location(),
+                libc::EOVERFLOW
+            );
+        }
+    }
+}
+
 // ===========================================================================
 // snprintf — integer formats
 // ===========================================================================

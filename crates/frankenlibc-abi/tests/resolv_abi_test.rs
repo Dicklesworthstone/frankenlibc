@@ -1876,6 +1876,159 @@ fn getaddrinfo_accepts_signed_service_port_field_like_glibc() {
 }
 
 #[test]
+fn getaddrinfo_default_hints_match_host_glibc() {
+    with_resolver_lock(|| {
+        // This is the real host's configuration, including its fail-open
+        // behavior if netlink is unavailable. No procfs fixture is installed.
+        // SAFETY: Symbols use the declared libc signatures. Each successful
+        // call returns a live chain released by its own matching allocator.
+        unsafe {
+            let host: GetaddrinfoFn =
+                dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ());
+            let host_free: FreeaddrinfoFn =
+                dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ());
+            let zeroed: libc::addrinfo = mem::zeroed();
+            for implicit in [true, false] {
+                let hints: *const libc::addrinfo = if implicit { ptr::null() } else { &zeroed };
+                let snapshot = |function: GetaddrinfoFn, free: FreeaddrinfoFn| {
+                    let mut result = ptr::null_mut();
+                    let rc = function(ptr::null(), c"8080".as_ptr(), hints, &mut result);
+                    let mut rows = Vec::new();
+                    let mut current = result;
+                    while !current.is_null() {
+                        let entry = &*current;
+                        rows.push((
+                            entry.ai_flags,
+                            entry.ai_family,
+                            entry.ai_socktype,
+                            entry.ai_protocol,
+                        ));
+                        current = entry.ai_next;
+                    }
+                    if !result.is_null() {
+                        free(result);
+                    }
+                    // Address preference sorting is tested separately. This
+                    // regression checks selection, socket profiles and flags.
+                    rows.sort_unstable();
+                    (rc, rows)
+                };
+                let expected = snapshot(host, host_free);
+                let actual = snapshot(resolv_abi::getaddrinfo, resolv_abi::freeaddrinfo);
+                assert_eq!(actual, expected, "implicit hints: {implicit}");
+                if expected.0 == 0 {
+                    assert!(!expected.1.is_empty());
+                    let flags = if implicit {
+                        libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                    } else {
+                        0
+                    };
+                    assert!(expected.1.iter().all(|row| row.0 == flags));
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn getaddrinfo_default_hints_filter_named_and_null_nodes() {
+    let route = b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n";
+    let loopback_v6 = b"00000000000000000000000000000001 01 80 10 80 lo\n";
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(route),
+        Some(loopback_v6),
+        |_| {
+            for node in [ptr::null(), c"dual-stack".as_ptr()] {
+                let mut result = ptr::null_mut();
+                // SAFETY: Node/service strings are valid and result is writable.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(node, c"8080".as_ptr(), ptr::null(), &mut result)
+                };
+                assert_eq!(rc, 0);
+                assert!(!result.is_null());
+                // SAFETY: A successful call returned this live addrinfo chain.
+                assert_eq!(
+                    unsafe { collect_addrinfo_families(result) },
+                    vec![libc::AF_INET]
+                );
+                let mut current = result;
+                while !current.is_null() {
+                    // SAFETY: getaddrinfo returned this live, owned chain.
+                    let entry = unsafe { &*current };
+                    assert_eq!(entry.ai_flags, libc::AI_V4MAPPED | libc::AI_ADDRCONFIG);
+                    current = entry.ai_next;
+                }
+                // SAFETY: The chain is owned by this call and freed once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+
+                // An explicit zeroed structure must continue requesting both
+                // families. The GNU defaults apply only to a NULL pointer.
+                // SAFETY: All-zero fields are valid for an addrinfo hints value.
+                let hints: libc::addrinfo = unsafe { mem::zeroed() };
+                // SAFETY: Strings, hints and writable result remain live.
+                let rc =
+                    unsafe { resolv_abi::getaddrinfo(node, c"8080".as_ptr(), &hints, &mut result) };
+                assert_eq!(rc, 0);
+                // SAFETY: The successful call returned a live chain.
+                let mut families = unsafe { collect_addrinfo_families(result) };
+                families.sort_unstable();
+                assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+                // SAFETY: This call owns the chain and releases it once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_default_hints_filter_ipv6_only_and_keep_unknown_configuration() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(b"Iface Destination Gateway Flags\n"),
+        Some(b"20010db8000000000000000000000001 02 80 00 20 eth0\n"),
+        |paths| {
+            let mut result = ptr::null_mut();
+            // SAFETY: The service is NUL-terminated and result is writable.
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), ptr::null(), &mut result)
+            };
+            assert_eq!(rc, 0);
+            // SAFETY: The successful call returned a live chain.
+            assert_eq!(
+                unsafe { collect_addrinfo_families(result) },
+                vec![libc::AF_INET6]
+            );
+            // SAFETY: This call owns the chain and releases it once.
+            unsafe { resolv_abi::freeaddrinfo(result) };
+
+            // An unreadable snapshot is unknown, not an IPv4-only/IPv6-only
+            // machine. Use a nonexistent path; no real configuration changes.
+            // SAFETY: The resolver test lock serializes environment mutations.
+            unsafe {
+                std::env::set_var(
+                    PROC_NET_IF_INET6_PATH_ENV,
+                    paths.if_inet6.with_extension("missing"),
+                );
+            }
+            // SAFETY: The service is NUL-terminated and result is writable.
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), ptr::null(), &mut result)
+            };
+            assert_eq!(rc, 0);
+            // SAFETY: The successful call returned a live chain.
+            let mut families = unsafe { collect_addrinfo_families(result) };
+            families.sort_unstable();
+            assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+            // SAFETY: This call owns the chain and releases it once.
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv4() {
     with_resolver_backends_and_addrconfig(
         Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
@@ -1975,6 +2128,7 @@ fn getaddrinfo_ai_addrconfig_ignores_malformed_ipv6_addrconfig_rows() {
             let service = CString::new("8080").unwrap();
             let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
             hints.ai_flags = libc::AI_ADDRCONFIG;
+            hints.ai_family = libc::AF_INET6;
             let mut res: *mut libc::addrinfo = ptr::null_mut();
 
             let rc = unsafe {
@@ -1987,36 +2141,197 @@ fn getaddrinfo_ai_addrconfig_ignores_malformed_ipv6_addrconfig_rows() {
 }
 
 #[test]
-fn getaddrinfo_ai_addrconfig_numeric_ipv6_bypasses_filter() {
+fn getaddrinfo_ai_addrconfig_selects_numeric_family_before_lookup() {
+    // Expected GNU results are explicit: numeric hosts obey AI_ADDRCONFIG,
+    // NULL hints carry AI_V4MAPPED, and a zeroed hints value stays unfiltered.
+    const V4: &[u8] = b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n";
+    const NO_V4: &[u8] = b"Iface Destination Gateway Flags\n";
+    const V6: &[u8] = b"20010db8000000000000000000000001 02 80 00 20 eth0\n";
+    type Case = (&'static CStr, Option<c_int>, c_int, c_int, c_int);
+    let v4_only: &[Case] = &[
+        (c"::1", None, 0, EAI_ADDRFAMILY, 0),
+        (
+            c"::1",
+            Some(libc::AF_UNSPEC),
+            libc::AI_ADDRCONFIG,
+            EAI_ADDRFAMILY,
+            0,
+        ),
+        (
+            c"::1",
+            Some(libc::AF_INET6),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (c"::1", Some(libc::AF_UNSPEC), 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET),
+        (c"::ffff:192.0.2.9", None, 0, 0, libc::AF_INET),
+    ];
+    let v6_only: &[Case] = &[
+        (c"::1", None, 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET6),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_UNSPEC),
+            libc::AI_ADDRCONFIG,
+            EAI_ADDRFAMILY,
+            0,
+        ),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_INET),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (c"192.0.2.9", Some(libc::AF_UNSPEC), 0, 0, libc::AF_INET),
+        (c"::ffff:192.0.2.9", None, 0, 0, libc::AF_INET6),
+    ];
+    let neither: &[Case] = &[
+        (c"::1", None, 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET),
+        (
+            c"::1",
+            Some(libc::AF_INET6),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_INET),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+    ];
+    for (route, inet6, cases) in [
+        (V4, &b""[..], v4_only),
+        (NO_V4, V6, v6_only),
+        (NO_V4, &b""[..], neither),
+    ] {
+        with_resolver_backends_and_addrconfig(None, None, Some(route), Some(inet6), |_| {
+            for &(node, family, flags, expected_rc, expected_family) in cases {
+                // SAFETY: zero is a valid initial addrinfo hints value.
+                let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+                hints.ai_family = family.unwrap_or(libc::AF_UNSPEC);
+                hints.ai_flags = flags;
+                let hints_ptr = if family.is_some() {
+                    &hints
+                } else {
+                    ptr::null()
+                };
+                let mut result = ptr::null_mut();
+                // SAFETY: strings and optional hints are live; result is writable.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(node.as_ptr(), c"8080".as_ptr(), hints_ptr, &mut result)
+                };
+                assert_eq!(
+                    rc, expected_rc,
+                    "node={node:?}, family={family:?}, flags={flags}"
+                );
+                if rc != 0 {
+                    assert!(result.is_null());
+                    continue;
+                }
+                // SAFETY: successful getaddrinfo returned this owned chain.
+                assert_eq!(
+                    unsafe { collect_addrinfo_families(result) },
+                    [expected_family]
+                );
+                let mut profiles = unsafe { collect_addrinfo_profiles(result) };
+                profiles.sort_unstable();
+                let mut expected = vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 8080),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 8080),
+                    (libc::SOCK_RAW, 0, 8080),
+                ];
+                expected.sort_unstable();
+                assert_eq!(profiles, expected);
+                let mut current = result;
+                while !current.is_null() {
+                    let entry = unsafe { &*current };
+                    assert_eq!(
+                        entry.ai_flags,
+                        if family.is_none() {
+                            libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                        } else {
+                            flags
+                        }
+                    );
+                    if node == c"192.0.2.9" && expected_family == libc::AF_INET6 {
+                        let address = unsafe { &*entry.ai_addr.cast::<libc::sockaddr_in6>() };
+                        assert_eq!(
+                            address.sin6_addr.s6_addr,
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 192, 0, 2, 9]
+                        );
+                    }
+                    current = entry.ai_next;
+                }
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        });
+    }
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_rejects_unavailable_family_before_service() {
     with_resolver_backends_and_addrconfig(
         None,
-        None,
-        Some(
-            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
-        ),
-        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        Some(b""),
+        Some(b"Iface Destination Gateway Flags\n"),
+        Some(b""),
         |_| {
-            let node = CString::new("::1").unwrap();
-            let service = CString::new("8080").unwrap();
             let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET6;
             hints.ai_flags = libc::AI_ADDRCONFIG;
-            let mut res: *mut libc::addrinfo = ptr::null_mut();
-
+            let mut result = ptr::null_mut();
             let rc = unsafe {
-                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+                resolv_abi::getaddrinfo(
+                    c"::1".as_ptr(),
+                    c"not-a-number".as_ptr(),
+                    &hints,
+                    &mut result,
+                )
             };
-            assert_eq!(rc, 0);
-            assert!(!res.is_null());
-            let families = unsafe { collect_addrinfo_families(res) };
-            assert_eq!(families, vec![libc::AF_INET6]);
-
-            unsafe { resolv_abi::freeaddrinfo(res) };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(result.is_null());
         },
     );
 }
 
 #[test]
-fn getaddrinfo_ai_addrconfig_returns_noname_when_all_families_filtered() {
+fn getaddrinfo_ai_addrconfig_selects_family_specific_hosts_view() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"::1 loopback-files\n"),
+        None,
+        Some(b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n"),
+        Some(b""),
+        |_| {
+            let mut result = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    c"loopback-files".as_ptr(),
+                    c"80".as_ptr(),
+                    ptr::null(),
+                    &mut result,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert_eq!(
+                unsafe { collect_addrinfo_families(result) },
+                [libc::AF_INET]
+            );
+            let address = unsafe { &*(*result).ai_addr.cast::<libc::sockaddr_in>() };
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 1]);
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_returns_noname_when_selected_hosts_family_is_absent() {
     with_resolver_backends_and_addrconfig(
         Some(b"2001:db8::10 v6-only\n"),
         None,
@@ -2025,6 +2340,26 @@ fn getaddrinfo_ai_addrconfig_returns_noname_when_all_families_filtered() {
         ),
         Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
         |_| {
+            // Narrowing the family now happens before NSS dispatch. Keep
+            // this files-only failure independent of the runner's DNS.
+            struct RestoreNsswitch(Option<std::ffi::OsString>);
+            impl Drop for RestoreNsswitch {
+                fn drop(&mut self) {
+                    // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+                    unsafe {
+                        if let Some(value) = &self.0 {
+                            std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", value);
+                        } else {
+                            std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                        }
+                    }
+                }
+            }
+            let nsswitch = temp_resolver_path("addrconfig-files-only");
+            std::fs::write(&nsswitch, b"hosts: files\n").unwrap();
+            let _restore = RestoreNsswitch(std::env::var_os("FRANKENLIBC_NSSWITCH_CONF"));
+            // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+            unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
             let node = CString::new("v6-only").unwrap();
             let service = CString::new("8080").unwrap();
             let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
@@ -2132,24 +2467,60 @@ fn getaddrinfo_null_node_ai_addrconfig_preserves_both_families_on_dual_stack() {
 }
 
 #[test]
-fn getaddrinfo_null_node_ai_addrconfig_returns_noname_without_nonloopback_families() {
+fn getaddrinfo_default_hints_keep_unspecified_on_loopback_only_hosts() {
     with_resolver_backends_and_addrconfig(
         None,
         None,
-        Some(
-            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n",
-        ),
-        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        Some(b"Iface Destination Gateway Flags\nlo 00000000 00000000 0001\n"),
+        Some(b"00000000000000000000000000000001 01 80 10 80 lo\n"),
         |_| {
-            let service = CString::new("8080").unwrap();
-            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
-            hints.ai_flags = libc::AI_ADDRCONFIG;
-            let mut res: *mut libc::addrinfo = ptr::null_mut();
-
-            let rc =
-                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
-            assert_eq!(rc, libc::EAI_NONAME);
-            assert!(res.is_null());
+            for family in [
+                None,
+                Some(libc::AF_UNSPEC),
+                Some(libc::AF_INET),
+                Some(libc::AF_INET6),
+            ] {
+                // SAFETY: Zero is valid for every addrinfo hints field.
+                let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+                hints.ai_flags = libc::AI_ADDRCONFIG;
+                hints.ai_family = family.unwrap_or(libc::AF_UNSPEC);
+                let hints_ptr = if family.is_some() {
+                    &hints as *const libc::addrinfo
+                } else {
+                    ptr::null()
+                };
+                let mut result = ptr::null_mut();
+                // SAFETY: The service and optional hints remain live, and
+                // result is writable for the duration of the call.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), hints_ptr, &mut result)
+                };
+                if family.is_some_and(|value| value != libc::AF_UNSPEC) {
+                    assert_eq!(rc, libc::EAI_NONAME, "family: {family:?}");
+                    assert!(result.is_null());
+                    continue;
+                }
+                assert_eq!(rc, 0, "family: {family:?}");
+                assert!(!result.is_null());
+                // SAFETY: The successful call returned this live owned chain.
+                let mut families = unsafe { collect_addrinfo_families(result) };
+                families.sort_unstable();
+                assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+                let expected_flags = if family.is_none() {
+                    libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                } else {
+                    libc::AI_ADDRCONFIG
+                };
+                let mut current = result;
+                while !current.is_null() {
+                    // SAFETY: Every node belongs to the returned live chain.
+                    let entry = unsafe { &*current };
+                    assert_eq!(entry.ai_flags, expected_flags);
+                    current = entry.ai_next;
+                }
+                // SAFETY: This call owns the chain and releases it once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
         },
     );
 }
@@ -4802,6 +5173,219 @@ fn bd_dcfj5_hostalias_helpers_return_null() {
 }
 
 #[test]
+fn hostaliases_helpers_match_host_parser_buffers_and_resolver_options() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::resolv_state::{RES_NOALIASES, State};
+    use std::os::unix::ffi::OsStringExt;
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_HELPER_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        type Hostalias =
+            unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_char, usize) -> *const c_char;
+        let oracle: Hostalias = unsafe {
+            dlsym_oracle::host_fn(c"__res_hostalias", resolv_abi::__res_hostalias as *const ())
+        };
+        let host_errno: unsafe extern "C" fn() -> *mut c_int =
+            unsafe { dlsym_oracle::host_fn(c"__errno_location", __errno_location as *const ()) };
+        let path = std::path::PathBuf::from(std::env::var_os("HOSTALIASES").unwrap());
+        let mut cases = vec![
+            (Vec::new(), b"alias".to_vec()),
+            (b"ALIAS Target.Test\n".to_vec(), b"alias".to_vec()),
+            (b"alias.. target.test\n".to_vec(), b"ALIAS.".to_vec()),
+            (
+                b"\nbroken\nother \xff\nalias target.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (
+                b" alias wrong.test\nalias target.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (b"alias\nalias later.test\n".to_vec(), b"alias".to_vec()),
+            (b"alias \nalias later.test\n".to_vec(), b"alias".to_vec()),
+            (
+                b"alias\0 ignored\nalias later.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (
+                b"alias one\0two\nalias later.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (b"alias\x0b\xff.test\r\n".to_vec(), b"alias".to_vec()),
+            (
+                b"alias first.test extra\nalias second.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (br"a\.b target.test".to_vec(), br"A\.B".to_vec()),
+            (br"a\046b target.test".to_vec(), br"a\.b".to_vec()),
+            (b". root.test\n".to_vec(), Vec::new()),
+            (b"other target.test\n".to_vec(), b"missing".to_vec()),
+        ];
+        let mut long = b"alias ".to_vec();
+        long.extend(std::iter::repeat_n(b'x', 9000));
+        long.push(b'\n');
+        cases.push((long, b"alias".to_vec()));
+        for (file, name) in cases {
+            std::fs::write(&path, &file).unwrap();
+            let name = CString::new(name).unwrap();
+            for options in [0, RES_NOALIASES] {
+                for capacity in [1usize, 5, 32, 1025, 10000] {
+                    let mut native = State::zeroed();
+                    let mut host = State::zeroed();
+                    native.options = options;
+                    host.options = options;
+                    let mut actual = vec![0xa5u8; capacity + 2];
+                    let mut expected = actual.clone();
+                    // SAFETY: both live states match the public Linux layout;
+                    // caller-owned spans include a canary on each side.
+                    let (actual_result, actual_errno, expected_result, expected_errno) = unsafe {
+                        *__errno_location() = 77;
+                        let actual_result = resolv_abi::__res_hostalias(
+                            (&mut native as *mut State).cast(),
+                            name.as_ptr(),
+                            actual.as_mut_ptr().add(1).cast(),
+                            capacity,
+                        );
+                        let actual_errno = *__errno_location();
+                        *host_errno() = 77;
+                        let expected_result = oracle(
+                            (&mut host as *mut State).cast(),
+                            name.as_ptr(),
+                            expected.as_mut_ptr().add(1).cast(),
+                            capacity,
+                        );
+                        (actual_result, actual_errno, expected_result, *host_errno())
+                    };
+                    assert_eq!(
+                        actual_result.is_null(),
+                        expected_result.is_null(),
+                        "name={name:?} options={options:#x} capacity={capacity}"
+                    );
+                    if !actual_result.is_null() {
+                        assert_eq!(actual_result.cast::<u8>(), unsafe {
+                            actual.as_ptr().add(1)
+                        });
+                    }
+                    assert_eq!(actual, expected, "name={name:?} capacity={capacity}");
+                    assert_eq!(actual_errno, expected_errno, "name={name:?}");
+                    assert_eq!((native.options, host.options), (options, options));
+                }
+            }
+        }
+
+        std::fs::write(&path, b"alias target.test\n").unwrap();
+        let mut local = State::zeroed();
+        let mut buffer = [0 as c_char; 32];
+        // SAFETY: this isolated subprocess exclusively owns its resolver TLS.
+        let global = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() }.cast::<State>();
+        let saved = unsafe { (*global).options };
+        unsafe { (*global).options = RES_NOALIASES };
+        assert!(unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) }.is_null());
+        // Caller-owned state does not inherit the thread's NOALIASES flag.
+        assert!(
+            !unsafe {
+                resolv_abi::__res_hostalias(
+                    (&mut local as *mut State).cast(),
+                    c"alias".as_ptr(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            }
+            .is_null()
+        );
+        unsafe { (*global).options = 0 };
+        let found = unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) };
+        assert!(!found.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(found) }.to_bytes(), b"target.test");
+
+        #[cfg(feature = "conformance-testing")]
+        {
+            use frankenlibc_abi::stdlib_abi::{getauxval, set_secure_auxv_for_conformance};
+            let secure = unsafe { getauxval(libc::AT_SECURE as _) } as usize;
+            for mode in [Some(1), None] {
+                // SAFETY: this exact-test child has no concurrent auxv readers.
+                unsafe { set_secure_auxv_for_conformance(mode) };
+                assert!(unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) }.is_null());
+                assert!(
+                    unsafe {
+                        resolv_abi::__res_hostalias(
+                            (&mut local as *mut State).cast(),
+                            c"alias".as_ptr(),
+                            buffer.as_mut_ptr(),
+                            buffer.len(),
+                        )
+                    }
+                    .is_null()
+                );
+            }
+            unsafe { set_secure_auxv_for_conformance(Some(secure)) };
+        }
+        unsafe { (*global).options = saved };
+
+        std::fs::remove_file(&path).unwrap();
+        for options in [0, RES_NOALIASES] {
+            local.options = options;
+            let mut host = State::zeroed();
+            host.options = options;
+            buffer.fill(0x55);
+            unsafe { *__errno_location() = 77 };
+            assert!(
+                unsafe {
+                    resolv_abi::__res_hostalias(
+                        (&mut local as *mut State).cast(),
+                        c"alias".as_ptr(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                    )
+                }
+                .is_null()
+            );
+            let actual_errno = unsafe { *__errno_location() };
+            unsafe { *host_errno() = 77 };
+            assert!(
+                unsafe {
+                    oracle(
+                        (&mut host as *mut State).cast(),
+                        c"alias".as_ptr(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                    )
+                }
+                .is_null()
+            );
+            let expected_errno = unsafe { *host_errno() };
+            assert_eq!(actual_errno, expected_errno);
+            assert_eq!(actual_errno, if options == 0 { libc::ENOENT } else { 77 });
+            assert!(buffer.iter().all(|&byte| byte == 0x55));
+        }
+        return;
+    }
+
+    // The path itself is not required to be UTF-8 either.
+    let mut path = temp_resolver_path("hostaliases-oracle")
+        .into_os_string()
+        .into_vec();
+    path.push(0xff);
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_helpers_match_host_parser_buffers_and_resolver_options",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("HOSTALIASES", &path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn bd_dcfj5_loc_helpers_round_trip_rfc1876() {
     use frankenlibc_abi::resolv_abi::*;
     let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
@@ -6240,6 +6824,574 @@ fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
     out.extend_from_slice(question);
     out.extend_from_slice(&answers);
     Some(out)
+}
+
+/// Address-family selection must constrain DNS requests, not just discard
+/// answers after performing work for an unavailable family.
+#[test]
+fn getaddrinfo_ai_addrconfig_limits_dns_queries() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_ADDRCONFIG_DNS_TEST_CHILD";
+    if let Ok(case) = std::env::var(CHILD) {
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET6;
+        hints.ai_flags = libc::AI_ADDRCONFIG;
+        let hints_ptr = if case == "unavailable" {
+            &hints
+        } else {
+            ptr::null()
+        };
+        let mut result = ptr::null_mut();
+        // SAFETY: all inputs and the output pointer remain live for the call.
+        let rc = unsafe {
+            resolv_abi::getaddrinfo(
+                c"dual.hermetic.test".as_ptr(),
+                c"80".as_ptr(),
+                hints_ptr,
+                &mut result,
+            )
+        };
+        if case == "unavailable" {
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(result.is_null());
+        } else {
+            assert_eq!(rc, 0);
+            let expected = if case == "ipv4" {
+                libc::AF_INET
+            } else {
+                libc::AF_INET6
+            };
+            assert_eq!(unsafe { collect_addrinfo_families(result) }, [expected]);
+            assert_eq!(unsafe { collect_addrinfo_profiles(result) }.len(), 3);
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        }
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("addrconfig-dns-resolv");
+    let nsswitch_path = temp_resolver_path("addrconfig-dns-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+    for (case, route, inet6, expected_types) in [
+        (
+            "ipv4",
+            "Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n",
+            "",
+            vec![1u16],
+        ),
+        (
+            "ipv6",
+            "Iface Destination Gateway Flags\n",
+            "20010db8000000000000000000000001 02 80 00 20 eth0\n",
+            vec![28],
+        ),
+        (
+            "unavailable",
+            "Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n",
+            "",
+            vec![],
+        ),
+    ] {
+        let route_path = temp_resolver_path("addrconfig-dns-route");
+        let inet6_path = temp_resolver_path("addrconfig-dns-inet6");
+        std::fs::write(&route_path, route).unwrap();
+        std::fs::write(&inet6_path, inet6).unwrap();
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = udp.local_addr().unwrap().port();
+        udp.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            let mut buffer = [0u8; 512];
+            while !stop_server.load(Ordering::Relaxed) {
+                if let Ok((len, peer)) = udp.recv_from(&mut buffer) {
+                    let query = &buffer[..len];
+                    let (name, kind, _) = parse_dns_question(query).unwrap();
+                    observed.push((name, kind));
+                    udp.send_to(&build_hermetic_dns_reply(query, false).unwrap(), peer)
+                        .unwrap();
+                }
+            }
+            observed
+        });
+        // Only the child receives overrides; other parallel resolver tests
+        // cannot race this fixture's configuration or DNS wire observations.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "getaddrinfo_ai_addrconfig_limits_dns_queries",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, case)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env(PROC_NET_ROUTE_PATH_ENV, &route_path)
+            .env(PROC_NET_IF_INET6_PATH_ENV, &inet6_path)
+            .env("LOCALDOMAIN", "")
+            .env("RES_OPTIONS", "")
+            .output();
+        stop.store(true, Ordering::Relaxed);
+        let observed = worker.join().unwrap();
+        let output = output.unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+        let expected = expected_types
+            .into_iter()
+            .map(|kind| ("dual.hermetic.test".to_owned(), kind))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "wire queries for {case}");
+    }
+}
+
+/// Inspect real wire queries in subprocesses: changing resolver environment
+/// variables in the parallel test process would race unrelated libc lookups.
+#[test]
+fn native_dns_environment_controls_search_order_and_transport() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_DNS_ENV_TEST_CHILD";
+    if let Ok(case) = std::env::var(CHILD) {
+        let node = if case == "empty" {
+            c"dual.hermetic.test"
+        } else {
+            c"dual"
+        };
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        hints.ai_flags = libc::AI_CANONNAME;
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), &hints, &mut result) },
+            0
+        );
+        assert!(!result.is_null());
+        // SAFETY: successful getaddrinfo returned one IPv4 address and the
+        // requested canonical name, all owned until freeaddrinfo below.
+        unsafe {
+            assert_eq!((*result).ai_family, libc::AF_INET);
+            let address = &*(*result).ai_addr.cast::<libc::sockaddr_in>();
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [198, 51, 100, 42]);
+            assert!(!(*result).ai_canonname.is_null());
+            assert_eq!(
+                CStr::from_ptr((*result).ai_canonname).to_bytes(),
+                b"dual.hermetic.test"
+            );
+            resolv_abi::freeaddrinfo(result);
+        }
+
+        if case == "tcp" {
+            // Legacy IPv4/IPv6 lookups must use the same environment snapshot
+            // policy as getaddrinfo; both must issue TCP queries here.
+            let entry = unsafe { resolv_abi::gethostbyname(node.as_ptr()) }.cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!(unsafe { (*entry).h_addrtype }, libc::AF_INET);
+            let mut entry: libc::hostent = unsafe { mem::zeroed() };
+            let mut buffer = [0 as c_char; 1024];
+            let mut found: *mut libc::hostent = ptr::null_mut();
+            let mut host_error = 0;
+            assert_eq!(
+                unsafe {
+                    unistd_abi::gethostbyname2_r(
+                        node.as_ptr(),
+                        libc::AF_INET6,
+                        (&mut entry as *mut libc::hostent).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        (&mut found as *mut *mut libc::hostent).cast(),
+                        &mut host_error,
+                    )
+                },
+                0
+            );
+            assert!(!found.is_null());
+            assert_eq!(entry.h_addrtype, libc::AF_INET6);
+
+            let address = libc::sockaddr_in {
+                sin_family: libc::AF_INET as _,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes([198, 51, 100, 42]),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut host = [0 as c_char; 256];
+            assert_eq!(
+                unsafe {
+                    resolv_abi::getnameinfo(
+                        (&address as *const libc::sockaddr_in).cast(),
+                        mem::size_of_val(&address) as _,
+                        host.as_mut_ptr(),
+                        host.len() as _,
+                        ptr::null_mut(),
+                        0,
+                        libc::NI_NAMEREQD,
+                    )
+                },
+                0
+            );
+            assert_eq!(
+                unsafe { CStr::from_ptr(host.as_ptr()) }.to_bytes(),
+                b"dual.hermetic.test"
+            );
+            let entry = unsafe {
+                resolv_abi::gethostbyaddr(
+                    (&address.sin_addr as *const libc::in_addr).cast(),
+                    4,
+                    libc::AF_INET,
+                )
+            }
+            .cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*entry).h_name) }.to_bytes(),
+                b"dual.hermetic.test"
+            );
+        }
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("environment-resolv");
+    let nsswitch_path = temp_resolver_path("environment-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\nsearch ignored.hermetic.test\noptions ndots:4 timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+
+    for (case, localdomain, options, expected_names) in [
+        (
+            "domain",
+            "hermetic.test",
+            "",
+            vec![("dual.hermetic.test", 1)],
+        ),
+        ("empty", "", "", vec![("dual.hermetic.test", 1)]),
+        (
+            "ndots",
+            "hermetic.test",
+            "ndots:0",
+            vec![("dual", 1), ("dual.hermetic.test", 1)],
+        ),
+        (
+            "tcp",
+            "hermetic.test",
+            "use-vc trust-ad",
+            vec![
+                ("dual.hermetic.test", 1),
+                ("dual.hermetic.test", 1),
+                ("dual.hermetic.test", 28),
+                ("42.100.51.198.in-addr.arpa", 12),
+                ("42.100.51.198.in-addr.arpa", 12),
+            ],
+        ),
+    ] {
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let tcp = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        udp.set_read_timeout(Some(Duration::from_millis(5)))
+            .unwrap();
+        tcp.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            let mut record = |query: &[u8], is_tcp: bool| {
+                let (name, kind, _) = parse_dns_question(query).unwrap();
+                observed.push((name, kind, is_tcp, query[3] & 0x20 != 0));
+                build_hermetic_dns_reply(query, is_tcp).unwrap()
+            };
+            let mut buffer = [0u8; 512];
+            while !stop_server.load(Ordering::Relaxed) {
+                while let Ok((n, peer)) = udp.recv_from(&mut buffer) {
+                    udp.send_to(&record(&buffer[..n], false), peer).unwrap();
+                }
+                while let Ok((mut stream, _)) = tcp.accept() {
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    let mut size = [0u8; 2];
+                    stream.read_exact(&mut size).unwrap();
+                    let mut query = vec![0u8; u16::from_be_bytes(size) as usize];
+                    stream.read_exact(&mut query).unwrap();
+                    let reply = record(&query, true);
+                    stream
+                        .write_all(&(reply.len() as u16).to_be_bytes())
+                        .unwrap();
+                    stream.write_all(&reply).unwrap();
+                }
+            }
+            observed
+        });
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "native_dns_environment_controls_search_order_and_transport",
+                "--nocapture",
+            ])
+            .env(CHILD, case)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env("LOCALDOMAIN", localdomain)
+            .env("RES_OPTIONS", options)
+            .output()
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        let observed = worker.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected = expected_names
+            .into_iter()
+            .map(|(name, kind)| (name.to_owned(), kind, case == "tcp", case == "tcp"))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "wire queries for {case}");
+    }
+    let _ = std::fs::remove_file(resolv_path);
+    let _ = std::fs::remove_file(nsswitch_path);
+}
+
+#[test]
+fn hostaliases_native_dns_preserves_nss_order_and_direct_target_semantics() {
+    use frankenlibc_abi::resolv_state::{RES_NOALIASES, State};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_DNS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let lookup = |name: &CStr, family, flags| {
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = family;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = flags;
+            let mut result = ptr::null_mut();
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(name.as_ptr(), ptr::null(), &hints, &mut result) };
+            let (families, canonical) = if result.is_null() {
+                (Vec::new(), None)
+            } else {
+                let families = unsafe { collect_addrinfo_families(result) };
+                let canonical = unsafe { collect_addrinfo_canonname(result) }
+                    .into_iter()
+                    .flatten()
+                    .next();
+                unsafe { resolv_abi::freeaddrinfo(result) };
+                (families, canonical)
+            };
+            (rc, families, canonical)
+        };
+        let (rc, mut families, canonical) = lookup(c"sHoRt", libc::AF_UNSPEC, libc::AI_CANONNAME);
+        assert_eq!(rc, 0);
+        families.sort_unstable();
+        assert_eq!(families, [libc::AF_INET, libc::AF_INET6]);
+        assert_eq!(canonical.as_deref(), Some(b"dual.hermetic.test".as_slice()));
+
+        let legacy =
+            unsafe { resolv_abi::gethostbyname(c"short".as_ptr()) }.cast::<libc::hostent>();
+        assert!(!legacy.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr((*legacy).h_name) }.to_bytes(),
+            b"dual.hermetic.test"
+        );
+        assert_eq!(
+            unsafe { hostent_addr_octets(&*legacy) },
+            [[198, 51, 100, 42]]
+        );
+        let mut entry: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0 as c_char; 1024];
+        let mut result: *mut libc::hostent = ptr::null_mut();
+        let mut host_error = 0;
+        assert_eq!(
+            unsafe {
+                unistd_abi::gethostbyname2_r(
+                    c"short".as_ptr(),
+                    libc::AF_INET6,
+                    (&mut entry as *mut libc::hostent).cast(),
+                    scratch.as_mut_ptr(),
+                    scratch.len(),
+                    (&mut result as *mut *mut libc::hostent).cast(),
+                    &mut host_error,
+                )
+            },
+            0
+        );
+        assert!(!result.is_null());
+        assert_eq!(entry.h_addrtype, libc::AF_INET6);
+        assert_eq!(
+            unsafe { CStr::from_ptr(entry.h_name) }.to_bytes(),
+            b"dual.hermetic.test"
+        );
+
+        // The files source wins before DNS even when an alias of the same
+        // spelling points elsewhere. Numeric-only requests never reach DNS.
+        let (rc, _, canonical) = lookup(c"shadow", libc::AF_INET, libc::AI_CANONNAME);
+        assert_eq!(rc, 0);
+        assert_eq!(canonical.as_deref(), Some(b"shadow".as_slice()));
+        let shadow =
+            unsafe { resolv_abi::gethostbyname(c"shadow".as_ptr()) }.cast::<libc::hostent>();
+        assert!(!shadow.is_null());
+        assert_eq!(
+            unsafe { hostent_addr_octets(&*shadow) },
+            [[203, 0, 113, 11]]
+        );
+        assert_eq!(
+            lookup(c"short", libc::AF_INET, libc::AI_NUMERICHOST).0,
+            libc::EAI_NONAME
+        );
+
+        for (name, expected) in [
+            (c"negative", libc::EAI_NONAME),
+            (c"temporary", libc::EAI_AGAIN),
+            (c"chain", libc::EAI_NONAME),
+            (c"dotted.alias", libc::EAI_NONAME),
+            (c"short.", libc::EAI_NONAME),
+            (c"invalid", libc::EAI_FAIL),
+        ] {
+            assert_eq!(lookup(name, libc::AF_INET, 0).0, expected, "{name:?}");
+        }
+        for (name, expected) in [(c"negative", 1), (c"temporary", 2), (c"invalid", 3)] {
+            assert!(unsafe { resolv_abi::gethostbyname(name.as_ptr()) }.is_null());
+            assert_eq!(unsafe { *resolv_abi::__h_errno_location() }, expected);
+        }
+
+        // The native address API observes the public per-thread switch too.
+        let state = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() }.cast::<State>();
+        let options = unsafe { (*state).options };
+        unsafe { (*state).options |= RES_NOALIASES };
+        assert_eq!(lookup(c"short", libc::AF_INET, 0).0, libc::EAI_NONAME);
+        assert!(unsafe { resolv_abi::gethostbyname(c"short".as_ptr()) }.is_null());
+        unsafe { (*state).options = options };
+        assert_eq!(lookup(c"short", libc::AF_INET, 0).0, 0);
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("hostaliases-resolv");
+    let nsswitch_path = temp_resolver_path("hostaliases-nsswitch");
+    let hosts_path = temp_resolver_path("hostaliases-hosts");
+    let aliases_path = temp_resolver_path("hostaliases-dns");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\nsearch ignored.hermetic.test\noptions ndots:4 timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: files dns\n").unwrap();
+    std::fs::write(&hosts_path, b"203.0.113.11 shadow\n").unwrap();
+    std::fs::write(
+        &aliases_path,
+        b"broken\nother \xff\nSHORT dual.hermetic.test\nshadow dual.hermetic.test\nnegative missing.hermetic.test\ntemporary temporary.hermetic.test\nchain next\nnext dual.hermetic.test\ndotted.alias dual.hermetic.test\ninvalid invalid..name\n",
+    )
+    .unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let worker = std::thread::spawn(move || {
+        let mut observed = Vec::new();
+        let mut query = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            let (n, peer) = match socket.recv_from(&mut query) {
+                Ok(received) => received,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => panic!("DNS fixture: {error}"),
+            };
+            let (name, kind, _) = parse_dns_question(&query[..n]).unwrap();
+            let mut reply = build_hermetic_dns_reply(&query[..n], false).unwrap();
+            if name == "temporary.hermetic.test" {
+                reply[3] = (reply[3] & !15) | 2;
+            }
+            observed.push((name, kind));
+            socket.send_to(&reply, peer).unwrap();
+        }
+        observed
+    });
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_native_dns_preserves_nss_order_and_direct_target_semantics",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("FRANKENLIBC_MODE", "strict")
+        .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+        .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+        .env(HOSTS_PATH_ENV, &hosts_path)
+        .env("FRANKENLIBC_DNS_PORT", port.to_string())
+        .env("HOSTALIASES", &aliases_path)
+        .env("LOCALDOMAIN", "ignored.hermetic.test")
+        .env("RES_OPTIONS", "ndots:4 timeout:1 attempts:1")
+        .output()
+        .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    let observed = worker.join().unwrap();
+    for path in [resolv_path, nsswitch_path, hosts_path, aliases_path] {
+        let _ = std::fs::remove_file(path);
+    }
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = [
+        ("dual.hermetic.test", 1),
+        ("dual.hermetic.test", 28),
+        ("dual.hermetic.test", 1),
+        ("dual.hermetic.test", 28),
+        ("missing.hermetic.test", 1),
+        ("temporary.hermetic.test", 1),
+        ("next", 1),
+        ("dotted.alias.ignored.hermetic.test", 1),
+        ("dotted.alias", 1),
+        ("short", 1),
+        ("missing.hermetic.test", 1),
+        ("temporary.hermetic.test", 1),
+        ("short.ignored.hermetic.test", 1),
+        ("short", 1),
+        ("short.ignored.hermetic.test", 1),
+        ("short", 1),
+        ("dual.hermetic.test", 1),
+    ]
+    .map(|(name, kind)| (name.to_owned(), kind));
+    assert_eq!(observed, expected);
 }
 
 /// Live ABI differential test against host glibc (`dlsym_oracle::host_fn`)
