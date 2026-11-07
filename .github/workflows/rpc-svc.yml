@@ -5,9 +5,12 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/rpc*'
       - 'crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs'
+      - 'crates/frankenlibc-abi/tests/rpc_des_server_state_test.rs'
       - 'crates/frankenlibc-core/src/rpc/**'
       - 'tests/integration/fixture_rpc_svc*'
+      - 'tests/integration/fixture_rpc_auth_des_module.c'
       - 'scripts/check_rpc_svc*.py'
+      - 'scripts/check_rpc_auth_des.py'
       - '.github/workflows/rpc-svc.yml'
   workflow_dispatch:
 permissions:
@@ -46,8 +49,8 @@ jobs:
           mkdir -p "$root/source"
           git rev-parse HEAD > "$root/revision.txt"
           rustc --version --verbose > "$root/rustc.txt"
-          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs scripts/check_rpc_svc*.py tests/integration/fixture_rpc_svc*
-          for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs; do
+          git diff --exit-code HEAD -- crates/frankenlibc-abi/src/rpc*.rs scripts/check_rpc_svc*.py scripts/check_rpc_auth_des.py tests/integration/fixture_rpc_svc* tests/integration/fixture_rpc_auth_des_module.c
+          for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs rpc_svc_des.rs; do
             cp "crates/frankenlibc-abi/src/$file" "$root/source/"
             git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
           done
@@ -64,6 +67,15 @@ jobs:
           sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
+          # Direct GNU authentication/identity oracles require no network.
+          # Candidate NSS reads only the disposable worker's private chroot.
+          # The runner keeps GNU's unavailable raw transport separate from its
+          # native AUTH_DES raw-dispatch and callback-reentry integration checks.
+          sudo python3 "$PWD/scripts/check_rpc_auth_des.py" "$PWD/$root/libfrankenlibc_abi.so" --server-only --output "$PWD/$root/auth-des"
+          cargo test --locked -p frankenlibc-core rpc::auth_des::tests -- --test-threads=1 2>&1 | tee "$root/auth-des-core.log"
+          grep -Eq 'test result: ok\. 8 passed; 0 failed;' "$root/auth-des-core.log"
+          cargo test --locked -p frankenlibc-abi --test rpc_des_server_state_test "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/auth-des-state.log"
+          grep -Eq 'test result: ok\. 5 passed; 0 failed;' "$root/auth-des-state.log"
           # UDP registerrpc and TCP svc_register publish through an exclusive loopback port 111 peer,
           # using the same privilege boundary as the existing RPC client gate.
           sudo python3 "$PWD/scripts/check_rpc_svc.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/cases"
@@ -84,10 +96,11 @@ jobs:
           import hashlib, json, pathlib, subprocess
           subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--',
               'crates/frankenlibc-abi/src/rpc*.rs', 'scripts/check_rpc_svc*.py',
-              'tests/integration/fixture_rpc_svc*'], check=True)
+              'scripts/check_rpc_auth_des.py', 'tests/integration/fixture_rpc_svc*',
+              'tests/integration/fixture_rpc_auth_des_module.c'], check=True)
           assert pathlib.Path('Cargo.lock').read_bytes() == pathlib.Path('artifacts/rpc-svc/Cargo.lock').read_bytes()
           result = {}
-          for name in ['rpc_svc.rs', 'rpc_abi.rs', 'rpc_svc_cache.rs']:
+          for name in ['rpc_svc.rs', 'rpc_abi.rs', 'rpc_svc_cache.rs', 'rpc_svc_des.rs']:
               path = pathlib.Path('crates/frankenlibc-abi/src') / name
               data = path.read_bytes()
               assert data == (pathlib.Path('artifacts/rpc-svc/source') / name).read_bytes()
