@@ -7107,6 +7107,15 @@ pub unsafe extern "C-unwind" fn swprintf(
     finish_swprintf(&rendered, s, n)
 }
 
+struct WideFormattedOutputLock(*mut std::ffi::c_void);
+
+impl Drop for WideFormattedOutputLock {
+    fn drop(&mut self) {
+        // SAFETY: this guard follows one flockfile on the same stream.
+        unsafe { super::stdio_abi::funlockfile(self.0) };
+    }
+}
+
 /// Write the completed wide rendering through its FILE, including buffering
 /// and memory streams. Keep both the rendered buffer and the wide-I/O guard
 /// outside the narrow layer's cancellable syscall window.
@@ -7115,29 +7124,91 @@ unsafe fn write_wprintf_rendered(
     rendered: &[u8],
     caller: usize,
 ) -> c_int {
-    // The result counts wide characters, not encoded bytes. Reject an invalid
-    // conversion before emitting any part of the rendering.
+    // Validate the internal transport and bound the wide-character result
+    // before output. Embedded NUL contributes one character to the count.
     let Some(wide_count) = narrow_to_wide_count(rendered) else {
         unsafe { set_abi_errno(libc::EILSEQ) };
         return -1;
     };
+    let Ok(wide_count) = c_int::try_from(wide_count) else {
+        unsafe { set_abi_errno(libc::EOVERFLOW) };
+        return -1;
+    };
+    // Wide memory streams store private UTF-8, independent of LC_CTYPE.
+    // External streams keep the codec fixed by their first wide orientation.
+    let codec = if reserve_wide_output(stream, 0).is_some() {
+        crate::locale_abi::MultibyteCodec::Utf8
+    } else {
+        super::stdio_abi::stream_wide_codec(stream)
+    };
     super::stdio_abi::with_wide_io_active(|| {
-        // SAFETY: the rendering is initialized and stream was wide-oriented by
-        // the caller. The narrow implementation retains the original caller.
-        let written = unsafe {
-            super::stdio_abi::fwrite_for_caller(
-                rendered.as_ptr().cast(),
-                1,
-                rendered.len(),
-                stream,
-                caller,
-            )
-        };
-        if written == rendered.len() {
-            wide_count as c_int
-        } else {
-            -1
+        if matches!(codec, crate::locale_abi::MultibyteCodec::Utf8) {
+            // SAFETY: rendered is initialized, and the caller oriented stream
+            // wide. Keep the direct UTF-8 write and the original caller.
+            let written = unsafe {
+                super::stdio_abi::fwrite_for_caller(
+                    rendered.as_ptr().cast(),
+                    1,
+                    rendered.len(),
+                    stream,
+                    caller,
+                )
+            };
+            return if written == rendered.len() {
+                wide_count
+            } else {
+                -1
+            };
         }
+
+        // Keep all chunks under one recursive FILE lock, as the extension
+        // writer does. The guard also releases it during cancellation unwind.
+        unsafe { super::stdio_abi::flockfile(stream) };
+        let _lock = WideFormattedOutputLock(stream);
+
+        // The remaining codecs encode each scalar in exactly one byte.
+        // Keep staging bounded, including for arbitrarily long renderings.
+        let mut chunk = [0u8; 1024];
+        let mut offset = 0;
+        while offset < rendered.len() {
+            let mut used = 0;
+            while used < chunk.len() && offset < rendered.len() {
+                let wchar_core::Utf8Step::Char { wc, len } =
+                    wchar_core::utf8_decode_step(&rendered[offset..])
+                else {
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return -1;
+                };
+                // Match fputwc's replacement policy in this same codec;
+                // '?' itself is not necessarily byte 0x3f (for example EBCDIC).
+                let encoded = codec
+                    .encode(wc, &mut chunk[used..used + 1])
+                    .or_else(|| codec.encode(u32::from(b'?'), &mut chunk[used..used + 1]));
+                if encoded != Some(1) {
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return -1;
+                }
+                used += 1;
+                // NUL is an ordinary output character with a one-byte
+                // transport step; never treat it as a string terminator here.
+                offset += len;
+            }
+            // SAFETY: chunk[..used] contains only complete encoded characters
+            // and stays live outside the narrow write's cancellation window.
+            if unsafe {
+                super::stdio_abi::fwrite_for_caller(
+                    chunk.as_ptr().cast(),
+                    1,
+                    used,
+                    stream,
+                    caller,
+                )
+            } != used
+            {
+                return -1;
+            }
+        }
+        wide_count
     })
 }
 

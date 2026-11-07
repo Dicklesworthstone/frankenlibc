@@ -611,6 +611,126 @@ mod locale_scanning {
         }
     }
 
+    type FwprintfFn = unsafe extern "C-unwind" fn(*mut c_void, *const Wc, ...) -> c_int;
+    type VfwprintfFn =
+        unsafe extern "C-unwind" fn(*mut c_void, *const Wc, *mut c_void) -> c_int;
+
+    fn host_fwprintf() -> FwprintfFn {
+        static HOST: OnceLock<FwprintfFn> = OnceLock::new();
+        *HOST.get_or_init(|| unsafe { host_fn(c"fwprintf", fl::fwprintf as *const ()) })
+    }
+
+    fn host_vfwprintf() -> VfwprintfFn {
+        static HOST: OnceLock<VfwprintfFn> = OnceLock::new();
+        *HOST.get_or_init(|| unsafe { host_fn(c"vfwprintf", fl::vfwprintf as *const ()) })
+    }
+
+    unsafe extern "C-unwind" fn call_vfwprintf(
+        stream: *mut c_void,
+        format: *const Wc,
+        mut args: ...
+    ) -> c_int {
+        unsafe { fl::vfwprintf(stream, format, std::ptr::addr_of_mut!(args).cast()) }
+    }
+
+    unsafe extern "C-unwind" fn call_host_vfwprintf(
+        stream: *mut c_void,
+        format: *const Wc,
+        mut args: ...
+    ) -> c_int {
+        unsafe { host_vfwprintf()(stream, format, std::ptr::addr_of_mut!(args).cast()) }
+    }
+
+    #[test]
+    fn formatted_wide_streams_keep_bound_codec() {
+        if !isolated("formatted_wide_streams_keep_bound_codec") {
+            return;
+        }
+        const PREFIX_LEN: usize = 2047;
+        let prefix = w(&"é".repeat(PREFIX_LEN));
+        let suffix = w("éX");
+        let format = w("%ls%lc%ls%s");
+        for (bound, active, encoded, narrow) in [
+            (
+                c"C.UTF-8",
+                c"fr_FR",
+                b"\xc3\xa9".as_slice(),
+                b"\xe9".as_slice(),
+            ),
+            (
+                c"C.UTF-8",
+                c"C",
+                b"\xc3\xa9".as_slice(),
+                b"A".as_slice(),
+            ),
+            (
+                c"fr_FR",
+                c"C.UTF-8",
+                b"\xe9".as_slice(),
+                b"\xc3\xa9".as_slice(),
+            ),
+        ] {
+            let narrow = std::ffi::CString::new(narrow).unwrap();
+            for engine in wide_io_engines() {
+                let entries: [(&str, FwprintfFn); 2] = if engine.name == "host" {
+                    [("fwprintf", host_fwprintf()), ("vfwprintf", call_host_vfwprintf)]
+                } else {
+                    [("fwprintf", fl::fwprintf), ("vfwprintf", call_vfwprintf)]
+                };
+                for (entry, print) in entries {
+                    select(bound);
+                    let (output_path, path) = wide_stream_path(engine.name, b"");
+                    let stream = unsafe { (engine.open)(path.as_ptr(), c"r+".as_ptr()) };
+                    assert!(!stream.is_null(), "{} {entry} FILE", engine.name);
+                    assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                    select(active);
+                    let rc = unsafe {
+                        print(
+                            stream,
+                            format.as_ptr(),
+                            prefix.as_ptr(),
+                            0u32,
+                            suffix.as_ptr(),
+                            narrow.as_ptr(),
+                        )
+                    };
+                    // Count wide characters, including the embedded NUL, not
+                    // external bytes or the internal UTF8 transport length.
+                    assert_eq!(
+                        rc,
+                        (PREFIX_LEN + 4) as c_int,
+                        "{bound:?} -> {active:?}/{} {entry} wide count",
+                        engine.name
+                    );
+                    unsafe {
+                        assert_eq!((engine.flush)(stream), 0);
+                        assert_eq!((engine.error)(stream), 0);
+                    }
+                    let mut expected = encoded.repeat(PREFIX_LEN);
+                    expected.push(0);
+                    expected.extend_from_slice(encoded);
+                    expected.push(b'X');
+                    if active == c"C" {
+                        expected.push(b'A');
+                    } else {
+                        expected.extend_from_slice(encoded);
+                    }
+                    // The wide argument exceeds 1024 characters. In Latin1,
+                    // NUL ends the second 1024-byte chunk; both following wide
+                    // characters and the active-locale %s must survive it.
+                    assert_eq!(
+                        std::fs::read(&output_path).unwrap(),
+                        expected,
+                        "{bound:?} -> {active:?}/{} {entry} output bytes",
+                        engine.name
+                    );
+                    assert_current_multibyte_codec(engine, active);
+                    unsafe { assert_eq!((engine.close)(stream), 0) };
+                }
+            }
+        }
+    }
+
     #[test]
     fn narrow_destinations_follow_locale_and_width() {
         if !isolated("narrow_destinations_follow_locale_and_width") {
