@@ -46,6 +46,11 @@ static pthread_key_t key;
 static int *parent_slot;
 static int explicit_exit;
 
+typedef void (*legacy_push_fn)(struct _pthread_cleanup_buffer *, void (*)(void *), void *);
+typedef void (*legacy_pop_fn)(struct _pthread_cleanup_buffer *, int);
+static legacy_push_fn legacy_push, legacy_push_defer;
+static legacy_pop_fn legacy_pop, legacy_pop_restore;
+
 static void wait_at_least(_Atomic int *word, int value) {
     while (atomic_load_explicit(word, memory_order_acquire) < value) {}
 }
@@ -73,6 +78,32 @@ static int verify_provider(const char *expected) {
             return 86;
         }
     }
+    return 0;
+}
+
+static int verify_legacy_provider(const char *expected) {
+    const char *names[] = {
+        "_pthread_cleanup_push", "_pthread_cleanup_pop",
+        "_pthread_cleanup_push_defer", "_pthread_cleanup_pop_restore",
+    };
+    void *symbols[4];
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        symbols[i] = dlsym(RTLD_DEFAULT, names[i]);
+#if defined(__aarch64__)
+        if (!symbols[i]) symbols[i] = dlvsym(RTLD_DEFAULT, names[i], "GLIBC_2.17");
+#else
+        if (!symbols[i]) symbols[i] = dlvsym(RTLD_DEFAULT, names[i], "GLIBC_2.2.5");
+#endif
+        Dl_info info;
+        if (!symbols[i] || !dladdr(symbols[i], &info) || !same_file(info.dli_fname, expected)) {
+            fprintf(stderr, "pthread-native-state:provider-mismatch:%s\n", names[i]);
+            return 86;
+        }
+    }
+    legacy_push = (legacy_push_fn)symbols[0];
+    legacy_pop = (legacy_pop_fn)symbols[1];
+    legacy_push_defer = (legacy_push_fn)symbols[2];
+    legacy_pop_restore = (legacy_pop_fn)symbols[3];
     return 0;
 }
 
@@ -442,14 +473,35 @@ static void *cleanup_worker(void *argument) {
     return state;
 }
 
-static void cleanup_exit(int cancel, int reenter, int siblings) {
+static void *legacy_cleanup_worker(void *argument) {
+    struct cleanup_state *state = argument;
+    struct cleanup_argument first = {state, 1};
+    struct cleanup_argument second = {state, 2};
+    struct cleanup_argument popped = {state, 3};
+    struct _pthread_cleanup_buffer first_buffer = {0}, second_buffer = {0}, popped_buffer = {0};
+    CHECK(pthread_setspecific(key, state) == 0);
+    legacy_push(&first_buffer, record_cleanup, &first);
+    legacy_push(&popped_buffer, record_cleanup, &popped);
+    legacy_pop(&popped_buffer, 0);
+    legacy_push(&second_buffer, record_cleanup, &second);
+    publish(&state->ready, 1);
+    wait_at_least(&state->release, 1);
+    if (state->cancel) {
+        pthread_testcancel();
+        _Exit(92);
+    }
+    pthread_exit(state);
+}
+
+static void cleanup_exit_with_worker(int cancel, int reenter, int siblings,
+                                     void *(*start)(void *)) {
     CHECK(pthread_key_create(&key, cleanup_key_destructor) == 0);
     int count = siblings ? 2 : 1;
     for (int i = 0; i < count; ++i) {
         struct cleanup_state *state = &cleanup_states[i];
         state->cancel = cancel;
         state->reenter = reenter;
-        CHECK(pthread_create(&state->thread, NULL, cleanup_worker, state) == 0);
+        CHECK(pthread_create(&state->thread, NULL, start, state) == 0);
         wait_at_least(&state->ready, 1);
     }
     for (int i = 0; i < count; ++i) {
@@ -473,6 +525,44 @@ static void cleanup_exit(int cancel, int reenter, int siblings) {
         CHECK(state->log[state->count - 1] == 9);
         if (i + 1 < count) CHECK(cleanup_states[i + 1].count == 0);
     }
+    CHECK(pthread_key_delete(key) == 0);
+}
+
+static void cleanup_exit(int cancel, int reenter, int siblings) {
+    cleanup_exit_with_worker(cancel, reenter, siblings, cleanup_worker);
+}
+
+static void legacy_cleanup_exit(int cancel, int reenter, int siblings) {
+    cleanup_exit_with_worker(cancel, reenter, siblings, legacy_cleanup_worker);
+}
+
+static void *legacy_cleanup_defer_worker(void *argument) {
+    struct cleanup_state *state = argument;
+    struct cleanup_argument first = {state, 1}, second = {state, 2};
+    struct _pthread_cleanup_buffer first_buffer = {0}, second_buffer = {0};
+    CHECK(pthread_setspecific(key, state) == 0);
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+    legacy_push(&first_buffer, record_cleanup, &first);
+    legacy_push_defer(&second_buffer, record_cleanup, &second);
+    int type;
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type) == 0);
+    CHECK(type == PTHREAD_CANCEL_DEFERRED);
+    publish(&state->ready, 1);
+    wait_at_least(&state->release, 1);
+    legacy_pop_restore(&second_buffer, 0);
+    _Exit(93);
+}
+
+static void legacy_cleanup_defer(void) {
+    CHECK(pthread_key_create(&key, cleanup_key_destructor) == 0);
+    struct cleanup_state *state = &cleanup_states[0];
+    CHECK(pthread_create(&state->thread, NULL, legacy_cleanup_defer_worker, state) == 0);
+    wait_at_least(&state->ready, 1);
+    CHECK(pthread_cancel(state->thread) == 0);
+    publish(&state->release, 1);
+    void *result = NULL;
+    CHECK(pthread_join(state->thread, &result) == 0 && result == PTHREAD_CANCELED);
+    CHECK(state->count == 2 && state->log[0] == 1 && state->log[1] == 9);
     CHECK(pthread_key_delete(key) == 0);
 }
 
@@ -559,6 +649,10 @@ int main(int argc, char **argv) {
     if (argc != 3) return 2;
     int provider = verify_provider(argv[2]);
     if (provider) return provider;
+    if (!strncmp(argv[1], "legacy-", 7)) {
+        provider = verify_legacy_provider(argv[2]);
+        if (provider) return provider;
+    }
     alarm(12);
     const char *name = argv[1];
     if (!strcmp(name, "errno-siblings")) errno_siblings();
@@ -578,6 +672,12 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "cleanup-defer")) cleanup_defer();
     else if (!strcmp(name, "cleanup-initial")) cleanup_initial();
     else if (!strcmp(name, "cleanup-return-reentry")) cleanup_exit(0, 3, 0);
+    else if (!strcmp(name, "legacy-exit")) legacy_cleanup_exit(0, 0, 0);
+    else if (!strcmp(name, "legacy-cancel")) legacy_cleanup_exit(1, 0, 0);
+    else if (!strcmp(name, "legacy-reentry")) legacy_cleanup_exit(0, 1, 0);
+    else if (!strcmp(name, "legacy-cancel-reentry")) legacy_cleanup_exit(1, 2, 0);
+    else if (!strcmp(name, "legacy-siblings")) legacy_cleanup_exit(1, 1, 1);
+    else if (!strcmp(name, "legacy-defer")) legacy_cleanup_defer();
     else return 2;
     printf("pthread-native-state:%s:PASS\n", name);
     return 0;

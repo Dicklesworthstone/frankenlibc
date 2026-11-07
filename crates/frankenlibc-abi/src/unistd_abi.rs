@@ -29614,9 +29614,16 @@ pub unsafe extern "C" fn c8rtomb(s: *mut c_char, c8: u8, ps: *mut c_void) -> usi
         }
     };
 
-    // s == NULL is equivalent to c8rtomb(buf, u8'\0', ps): reset state, "write" a
-    // single NUL byte to an internal buffer, and return 1.
+    // A null destination converts a NUL code unit into private storage. It
+    // cannot complete a pending UTF-8 prefix; GNU reports EILSEQ there rather
+    // than discarding that prefix. In the initial state every supported locale
+    // encodes NUL as a single byte.
     if s.is_null() {
+        if st[0] != 0 {
+            // SAFETY: errno is this thread's writable ABI error slot.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
         store([0; 8]);
         return 1;
     }
@@ -29680,18 +29687,29 @@ pub unsafe extern "C" fn c8rtomb(s: *mut c_char, c8: u8, ps: *mut c_void) -> usi
         store(st);
         return 0;
     }
-    // Complete character (total == len): write its multibyte (UTF-8) bytes.
-    // SAFETY: caller provides a buffer of at least MB_CUR_MAX (>= len) bytes.
-    unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr(), s as *mut u8, len) };
+    // char8_t always carries UTF-8, but the destination uses LC_CTYPE. In a
+    // single-byte locale the caller owes only MB_CUR_MAX == 1 byte: copying the
+    // UTF-8 code units here would both corrupt the text and overflow that
+    // valid destination. The completed, validated scalar goes through the same
+    // external encoder as wchar_t / char16_t / char32_t conversions.
+    let Some((wc, _)) = frankenlibc_core::string::wchar::mbtowc(&buf[..len]) else {
+        store([0; 8]);
+        // SAFETY: errno is this thread's writable ABI error slot.
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
+    };
     store([0; 8]);
-    len
+    // SAFETY: s has space for the active MB_CUR_MAX. The supported external
+    // encoders are stateless; the char8_t partial state was consumed above.
+    unsafe { crate::wchar_abi::wcrtomb(s, wc as libc::wchar_t, std::ptr::null_mut()) }
 }
 
 // Internal mbstate for `mbrtoc8(.., ps=NULL)` (matches glibc's static state).
-// Layout shared with a caller `mbstate_t`: bytes [0..4] are the OUTPUT queue of
-// not-yet-returned UTF-8 bytes (byte 0 = count 0..=3, then the bytes); bytes
-// [4..8] are the partial-INPUT accumulator for an incomplete multibyte sequence
-// (byte 4 = count, then the bytes). The two are never both non-empty.
+// While decoding, the entire object uses mbrtowc's partial-input layout. Once
+// a character is complete, byte 0's high bit tags an OUTPUT queue: its low bits
+// hold 1..=3 trailing UTF-8 bytes, stored in bytes [1..4]. The two phases never
+// coexist. Keeping the count in byte 0 makes mbsinit observe either phase, and
+// retaining mbrtowc's full input state supports its GNU five/six-byte prefixes.
 thread_local! {
     static MBRTOC8_STATE: std::cell::Cell<[u8; 8]> = const { std::cell::Cell::new([0; 8]) };
 }
@@ -29709,9 +29727,8 @@ pub unsafe extern "C" fn mbrtoc8(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
-    use frankenlibc_core::string::wchar::{Utf8Step, utf8_decode_step};
-    const INCOMPLETE: usize = usize::MAX - 1; // (size_t)-2
     const PENDING: usize = usize::MAX - 2; // (size_t)-3
+    const OUTPUT_PENDING: u8 = 0x80;
 
     // Load the 8-byte conversion state from `ps` (or the internal thread-local).
     let mut st: [u8; 8] = if ps.is_null() {
@@ -29729,66 +29746,63 @@ pub unsafe extern "C" fn mbrtoc8(
         }
     };
 
-    if s.is_null() {
-        store([0; 8]); // reset
-        return 0;
-    }
-
-    // 1. Drain a buffered output byte from the current character, if any.
-    let out_count = (st[0] as usize).min(3);
+    // Queued UTF-8 output is delivered before inspecting the source or n,
+    // including a null source. This consumes no input and remains observable
+    // with a null destination through the return value and mbsinit.
+    let out_count = if st[0] & OUTPUT_PENDING != 0 {
+        usize::from(st[0] & !OUTPUT_PENDING).min(3)
+    } else {
+        0
+    };
     if out_count > 0 {
         if !pc8.is_null() {
+            // SAFETY: a non-null pc8 points to one writable char8_t.
             unsafe { *pc8 = st[1] };
         }
-        st[1] = st[2];
-        st[2] = st[3];
-        st[3] = 0;
-        st[0] = (out_count - 1) as u8;
+        if out_count == 1 {
+            st = [0; 8];
+        } else {
+            st[1] = st[2];
+            st[2] = st[3];
+            st[3] = 0;
+            st[0] = OUTPUT_PENDING | (out_count - 1) as u8;
+        }
         store(st);
         return PENDING;
     }
 
-    if n == 0 {
-        return INCOMPLETE;
+    // Decode external bytes through LC_CTYPE with the same partial-sequence,
+    // null-source, zero-length and errno contracts as mbrtowc. Its explicit
+    // private state keeps mbrtoc8's implicit stream independent of mbrtowc's.
+    let mut wc: libc::wchar_t = 0;
+    // SAFETY: source satisfies this entrypoint's input contract; wc and st are
+    // live private output/state objects for the nested conversion.
+    let consumed = unsafe { crate::wchar_abi::mbrtowc(&mut wc, s, n, st.as_mut_ptr().cast()) };
+    store(st);
+    if consumed >= usize::MAX - 1 || s.is_null() {
+        return consumed;
     }
 
-    // 2. Decode the next character, prepending any partial-input bytes from `ps`.
-    let icount = (st[4] as usize).min(3);
-    let mut buf = [0u8; 8];
-    buf[..icount].copy_from_slice(&st[5..5 + icount]);
-    let take = n.min(8 - icount);
-    // SAFETY: caller guarantees `s` points to at least `n` (>= take) bytes.
-    let new = unsafe { std::slice::from_raw_parts(s as *const u8, take) };
-    buf[icount..icount + take].copy_from_slice(new);
-    let total = icount + take;
-
-    match utf8_decode_step(&buf[..total]) {
-        Utf8Step::Char { wc, len } => {
-            // Output bytes for this character are buf[0..len] (UTF-8 locale).
-            let mut new_st = [0u8; 8];
-            let rem = &buf[1..len]; // up to 3 trailing output bytes
-            new_st[0] = rem.len() as u8;
-            new_st[1..1 + rem.len()].copy_from_slice(rem);
-            store(new_st);
-            if !pc8.is_null() {
-                unsafe { *pc8 = buf[0] };
-            }
-            if wc == 0 { 0 } else { len - icount }
-        }
-        Utf8Step::Incomplete => {
-            if total <= 3 {
-                st[4] = total as u8;
-                st[5..5 + total].copy_from_slice(&buf[..total]);
-                st[0] = 0; // no output pending
-                store(st);
-            }
-            INCOMPLETE
-        }
-        Utf8Step::Invalid => {
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            usize::MAX
-        }
+    let Some(ch) = char::from_u32(wc as u32) else {
+        // GNU's external UTF-8 decoder also accepts extended values above
+        // U+10FFFF. Its char8_t adapter consumes those values without producing
+        // a Unicode code unit; keep the destination and errno untouched.
+        return consumed;
+    };
+    let mut encoded = [0u8; 4];
+    let bytes = ch.encode_utf8(&mut encoded).as_bytes();
+    let remaining = &bytes[1..];
+    let mut new_st = [0u8; 8];
+    if !remaining.is_empty() {
+        new_st[0] = OUTPUT_PENDING | remaining.len() as u8;
+        new_st[1..1 + remaining.len()].copy_from_slice(remaining);
     }
+    store(new_st);
+    if !pc8.is_null() {
+        // SAFETY: a non-null pc8 points to one writable char8_t.
+        unsafe { *pc8 = bytes[0] };
+    }
+    consumed
 }
 
 // ===========================================================================

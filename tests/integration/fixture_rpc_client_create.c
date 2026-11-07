@@ -583,6 +583,53 @@ static void broadcast_case(const char *name) {
     CHECK(broadcast_frees>=broadcast_decodes);
     CHECK(broadcast_output.text==NULL && descriptor_count()==before);
 }
+/* Resolve the entry point itself from the selected provider. The independent
+   peer supplies the expected service port, so a constant-zero stub cannot pass. */
+static void getrpcport_case(const char *name) {
+    typedef int (*GetRpcPort)(const char *,unsigned long,unsigned long,unsigned int);
+    GetRpcPort query=(GetRpcPort)symbol("getrpcport");
+    void *(*error_slot)(void)=(void *(*)(void))symbol("__rpc_thread_createerr");
+    unsigned char *slot=(unsigned char *)error_slot();
+    const int tcp=strstr(name,"-tcp")!=NULL;
+    const char *port_text=getenv(tcp?"RPC_TEST_TCP_PORT":"RPC_TEST_UDP_PORT");
+    CHECK(port_text && *port_text);
+    char *end=NULL;
+    long peer_port=strtol(port_text,&end,10);
+    CHECK(end && !*end && peer_port>0 && peer_port<=65535);
+    const char *host=strstr(name,"-name")?"localhost":"127.0.0.1";
+    unsigned long p=program,v=1;
+    int expected=(int)peer_port,status=0,nested=0;
+    if(strstr(name,"unregistered")) { p++;expected=0;status=15; }
+    if(strstr(name,"portmapper-error")) { p+=2;expected=0;status=14;nested=8; }
+    if(strstr(name,"decode-error")) { p+=3;expected=0;status=14;nested=2; }
+    if(strstr(name,"max-port")) { p+=4;expected=65535; }
+    if(strstr(name,"wrong-family")) { host="::1";expected=0;status=13; }
+    if(strstr(name,"mapped-host")) { host="::ffff:127.0.0.1";p=0x100000000UL;expected=0;status=13; }
+    if(strstr(name,"large-host-entry")) host="rpc-scratch.test";
+    if(strstr(name,"high-ids")) { p=0x100000000UL;expected=0;status=14;nested=1; }
+    if(strstr(name,"version-overflow")) { v=0x100000000UL;expected=0;status=14;nested=1; }
+    if(strstr(name,"high-wire-ids")) { p=0xf4567001UL;v=0xfffffffeUL; }
+    if(strstr(name,"null-host")) { host=NULL;expected=0;status=13; }
+    int before=descriptor_count();
+    for(int i=0;i<(strstr(name,"repeat")?32:1);i++) {
+        unsigned char prior[32];
+        memset(prior,0xa5,sizeof(prior));memcpy(slot,prior,sizeof(prior));
+        errno=EDOM;
+        int result=query(host,p,v,tcp?IPPROTO_TCP:IPPROTO_UDP);
+        int saved_errno=errno,actual_status=0,actual_nested=0;
+        memcpy(&actual_status,slot,sizeof(actual_status));
+        memcpy(&actual_nested,slot+8,sizeof(actual_nested));
+        CHECK(result==expected);
+        if(!status) CHECK(!memcmp(slot,prior,sizeof(prior)));
+        else {
+            CHECK(actual_status==status);
+            if(status==13 || status==15) CHECK(!memcmp(slot+4,prior+4,sizeof(prior)-4));
+            else CHECK(actual_nested==nested);
+        }
+        if(!host) CHECK(saved_errno==EDOM);
+    }
+    CHECK(descriptor_count()==before);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2); alarm(8);
     if(!strncmp(argv[1],"netname-",8)) {
@@ -590,6 +637,9 @@ int main(int argc,char **argv) {
     }
     if(!strncmp(argv[1],"broadcast-",10)) {
         broadcast_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
+    }
+    if(!strncmp(argv[1],"getrpcport-",11)) {
+        getrpcport_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
     }
     create=(Create)symbol("clnt_create");
     xdr_uint=(Xdr)symbol("xdr_u_int");

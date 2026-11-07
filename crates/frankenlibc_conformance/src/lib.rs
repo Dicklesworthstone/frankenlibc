@@ -2552,9 +2552,12 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
             ))
         }
         "getrpcport" => {
-            let host = CString::new("localhost").map_err(|err| err.to_string())?;
-            // SAFETY: valid host string; ABI returns deterministic unsupported port.
-            let rc = unsafe { frankenlibc_abi::rpc_abi::getrpcport(host.as_ptr(), 0, 0, 0) };
+            let host = CString::new("127.0.0.1").map_err(|err| err.to_string())?;
+            // SAFETY: the live numeric host needs no DNS. This unrepresentable
+            // program is rejected before transport; live discovery is covered
+            // by the provider-pinned RPC integration fixture.
+            let rc =
+                unsafe { frankenlibc_abi::rpc_abi::getrpcport(host.as_ptr(), 1u64 << 32, 1, 17) };
             Ok(format!("RETURN={rc}"))
         }
         other => Err(format!("unsupported RPC legacy fixture symbol: {other}")),

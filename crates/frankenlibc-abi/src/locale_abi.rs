@@ -66,15 +66,17 @@ static C_LOCALE_CODESET: &[u8] = b"ANSI_X3.4-1968\0";
 // Active locale
 // ---------------------------------------------------------------------------
 
-/// The character encodings FrankenLibC can select.
+/// The encodings of the built-in C and C.UTF-8 locales.
 ///
 /// These are not decoration: the whole point of separating them is that the
 /// reported locale NAME, the reported CODESET, `MB_CUR_MAX` and the multibyte
-/// codec itself must move together. A build where `setlocale(LC_ALL,"C")`
-/// reports `"C"` while the codec keeps decoding UTF-8 matches neither glibc nor
-/// this library's own contract, and would make `MB_CUR_MAX` disagree with what
-/// `wctomb` actually emits. Every accessor below derives from this one value so
-/// that state cannot be constructed.
+/// codec itself must move together. Named single-byte locales additionally
+/// carry an immutable native codec in their loaded category. A build where
+/// `setlocale(LC_ALL,"C")` reports `"C"` while the codec keeps decoding UTF-8
+/// matches neither glibc nor this library's own contract, and would make
+/// `MB_CUR_MAX` disagree with what `wctomb` actually emits. Conversion and
+/// metadata derive from the same
+/// selected category, including its native codec when it is a named locale.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Charset {
     /// 7-bit ASCII, the POSIX C locale's encoding (`ANSI_X3.4-1968`).
@@ -138,17 +140,44 @@ fn category_charset(cat: c_int) -> Charset {
     }
 }
 
-/// The character set every conversion entrypoint must honour.
+/// The built-in character-set selection for metadata and transliteration.
 ///
 /// This is `LC_CTYPE` specifically, not "the locale": POSIX puts character
 /// classification and multibyte conversion under `LC_CTYPE`, so a program that
-/// sets only `LC_NUMERIC` to `C.UTF-8` must NOT get a UTF-8 codec.
+/// sets only `LC_NUMERIC` to `C.UTF-8` must NOT get a UTF-8 codec. Conversion
+/// entrypoints use `active_multibyte_codec` to include named single-byte data.
 #[inline]
 pub(crate) fn active_charset() -> Charset {
     if let Some(category) = thread_category(locale_core::LC_CTYPE) {
         return resolved_charset(category);
     }
     decode_charset(ACTIVE_CHARSET[locale_core::LC_CTYPE as usize].load(Ordering::Acquire))
+}
+
+/// The actual conversion engine selected by LC_CTYPE. Named locale codecs
+/// are built once, then borrowed without allocation or locks while converting.
+#[derive(Clone, Copy)]
+pub(crate) enum MultibyteCodec {
+    Ascii,
+    Utf8,
+    SingleByte(&'static frankenlibc_core::iconv::SingleByteCodec),
+}
+
+#[inline]
+pub(crate) fn active_multibyte_codec() -> MultibyteCodec {
+    let category = thread_category(locale_core::LC_CTYPE)
+        .or_else(|| global_named(locale_core::LC_CTYPE).map(Resolved::Named));
+    if let Some(Resolved::Named(named)) = category
+        && let Some(codec) = named.single_byte_codec.as_ref()
+    {
+        return MultibyteCodec::SingleByte(codec);
+    }
+    let charset =
+        category.map_or_else(|| category_charset(locale_core::LC_CTYPE), resolved_charset);
+    match charset {
+        Charset::Ascii => MultibyteCodec::Ascii,
+        Charset::Utf8 => MultibyteCodec::Utf8,
+    }
 }
 
 #[inline]
@@ -298,6 +327,9 @@ struct NamedCategory {
     ctype: Option<frankenlibc_core::locale::data::CtypeTables<'static>>,
     /// For LC_CTYPE: the single-byte tables, when they differ from C's.
     bytes: Option<&'static ByteCtype>,
+    /// For a supported single-byte LC_CTYPE: native byte/Unicode conversion.
+    /// Classification tables alone do not describe the external encoding.
+    single_byte_codec: Option<frankenlibc_core::iconv::SingleByteCodec>,
 }
 
 /// A named LC_CTYPE's single-byte tables, glibc's `_NL_CTYPE_CLASS`,
@@ -570,6 +602,24 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     let mut stored = name.to_vec();
     stored.push(0);
     let blob = blob?;
+    let single_byte_codec = if category == locale_core::LC_CTYPE {
+        let codeset = blob.string(14)?;
+        if codeset.eq_ignore_ascii_case(b"UTF-8") {
+            None
+        } else {
+            // An accepted locale must have a working conversion engine, not
+            // merely a CODESET string. Other multibyte/stateful engines need
+            // their own mbstate_t integration; never silently treat them as C.
+            if blob.word(13)? != 1 {
+                return None;
+            }
+            Some(frankenlibc_core::iconv::SingleByteCodec::from_name(
+                codeset,
+            )?)
+        }
+    } else {
+        None
+    };
     let (ctype, bytes) = if category == locale_core::LC_CTYPE {
         (
             frankenlibc_core::locale::data::CtypeTables::from_blob(&blob),
@@ -584,6 +634,7 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         blob,
         ctype,
         bytes,
+        single_byte_codec,
     }));
     loaded.push(entry);
     Some(entry)
@@ -603,7 +654,8 @@ fn resolve_category(category: c_int, name: &[u8]) -> Option<Resolved> {
     load_category(category, name).map(Resolved::Named)
 }
 
-/// The codec a named LC_CTYPE implies.
+/// Built-in fallback used for category metadata and Unicode transliteration.
+/// Conversion dispatch uses `active_multibyte_codec` and the named codec too.
 fn named_charset(n: &NamedCategory) -> Charset {
     // CODESET is LC_CTYPE item 14.
     match n.blob.string(14) {
@@ -909,9 +961,9 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
 /// value and not by what `wctomb` emits.
 #[inline]
 pub(crate) fn mb_cur_max() -> libc::size_t {
-    match active_charset() {
-        Charset::Ascii => 1,
-        Charset::Utf8 => 6,
+    match active_multibyte_codec() {
+        MultibyteCodec::Ascii | MultibyteCodec::SingleByte(_) => 1,
+        MultibyteCodec::Utf8 => 6,
     }
 }
 

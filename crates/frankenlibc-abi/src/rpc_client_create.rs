@@ -3,8 +3,8 @@
 //! No host RPC delegation or process-global client cache.
 
 use super::{
-    __rpc_thread_createerr, Timeval, XdrProc, c_char, c_int, c_ulong, c_void, read_bounded_cstr,
-    rpc_udp, set_abi_errno,
+    __rpc_thread_createerr, Timeval, XdrProc, c_char, c_int, c_uint, c_ulong, c_void,
+    read_bounded_cstr, rpc_udp, set_abi_errno,
 };
 
 /// Create an IPv4 RPC client using the native resolver and UDP/TCP transports.
@@ -105,6 +105,93 @@ pub unsafe extern "C" fn clnt_create(
     }
     rpc_udp::creation_status(13, 0);
     std::ptr::null_mut()
+}
+
+/// Resolve the first legacy IPv4 host address and query its native portmapper.
+/// Reentrant host lookup preserves hostname acceptance and address ordering;
+/// all returned pointers remain owned by this call's scratch buffer.
+pub(super) unsafe fn getrpcport(
+    host: *const c_char,
+    program: c_ulong,
+    version: c_ulong,
+    protocol: c_uint,
+) -> c_int {
+    if host.is_null() {
+        rpc_udp::creation_status_preserving_details(13, None); // RPC_UNKNOWNHOST
+        return 0;
+    }
+    let mut local = [0u8; 1024];
+    let mut grown = Vec::<u8>::new();
+    loop {
+        let buffer = if grown.is_empty() {
+            &mut local[..]
+        } else {
+            grown.as_mut_slice()
+        };
+        let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::null_mut();
+        let mut host_error = 0;
+        // SAFETY: host has the caller's C-string contract; every output and
+        // the scratch buffer are writable and remain live through the lookup.
+        let status = unsafe {
+            crate::unistd_abi::gethostbyname2_r(
+                host,
+                libc::AF_INET,
+                &mut hostent,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+                &mut host_error,
+            )
+        };
+        // The native reentrant API returns ERANGE for a short scratch buffer
+        // while preserving h_errno and errno. Its return code drives growth.
+        if status == libc::ERANGE {
+            let Some(length) = buffer.len().checked_mul(2) else {
+                rpc_udp::creation_status_preserving_details(12, Some(libc::ENOMEM));
+                return 0;
+            };
+            if grown.try_reserve_exact(length - grown.len()).is_err() {
+                rpc_udp::creation_status_preserving_details(12, Some(libc::ENOMEM));
+                return 0;
+            }
+            grown.resize(length, 0);
+            continue;
+        }
+        if status != 0 || result.is_null() {
+            rpc_udp::creation_status_preserving_details(13, None);
+            return 0;
+        }
+        // SAFETY: a successful native lookup returns the owned hostent above.
+        let entry = unsafe { &*result };
+        if entry.h_addrtype != libc::AF_INET || entry.h_length != 4 {
+            rpc_udp::creation_status_preserving_details(12, Some(libc::EAFNOSUPPORT));
+            return 0;
+        }
+        if entry.h_addr_list.is_null() {
+            rpc_udp::creation_status_preserving_details(13, None);
+            return 0;
+        }
+        // SAFETY: the native resolver returns a terminated address-pointer array.
+        let first = unsafe { entry.h_addr_list.read() };
+        if first.is_null() {
+            rpc_udp::creation_status_preserving_details(13, None);
+            return 0;
+        }
+        let mut address: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        address.sin_family = libc::AF_INET as libc::sa_family_t;
+        // SAFETY: the IPv4 hostent supplies four readable network-order bytes.
+        address.sin_addr = unsafe { first.cast::<libc::in_addr>().read_unaligned() };
+        // SAFETY: the copied address is private and writable for this query.
+        return unsafe {
+            rpc_udp::getport(
+                (&mut address as *mut libc::sockaddr_in).cast(),
+                program,
+                version,
+                protocol,
+            ) as c_int
+        };
+    }
 }
 
 /// Execute a one-shot UDP RPC using the native CLIENT and XDR implementations.

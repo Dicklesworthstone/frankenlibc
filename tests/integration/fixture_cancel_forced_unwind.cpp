@@ -23,6 +23,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <cstdint>
+#include <new>
 
 static int pipefd[2];
 
@@ -110,6 +112,10 @@ static int native_join_sentinel;
 static std::atomic<int> native_join_started{0};
 using NativeJoin = int (*)(pthread_t, void **);
 static NativeJoin native_alias_join;
+using NativeLegacyPush = void (*)(void *, void (*)(void *), void *);
+using NativeLegacyPop = void (*)(void *, int);
+static NativeLegacyPush native_legacy_push;
+static NativeLegacyPop native_legacy_pop;
 static int native_event_fd = -1;
 static constexpr eventfd_t native_event_sentinel = 0x1122334455667788ULL;
 
@@ -118,6 +124,9 @@ struct NativeState {
   bool cancel = false;
   bool catch_all = false;
   bool mixed = false;
+  bool legacy = false;
+  bool legacy_base = false;
+  bool legacy_inside_c = false;
   const char *point = nullptr;
   bool disabled = false;
   bool internal_io = false;
@@ -229,7 +238,7 @@ static void native_observe_event_wait(NativeState *state) {
   }
 }
 
-static void native_inner(void *argument) {
+__attribute__((noinline)) static void native_inner(void *argument) {
   auto *state = static_cast<NativeState *>(argument);
   NativeGuard guard{state, 1};
   state->tid.store(static_cast<pid_t>(syscall(SYS_gettid)), std::memory_order_release);
@@ -280,8 +289,86 @@ static void native_inner(void *argument) {
   pthread_exit(state);
 }
 
+static void native_legacy_outer_cleanup(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  native_require(pthread_getspecific(native_key) == state, "legacy cleanup precedes key destructor");
+  native_event(state, 10);
+}
+
+static void native_legacy_inner_cleanup(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  native_require(pthread_getspecific(native_key) == state, "legacy cleanup precedes key destructor");
+  native_event(state, 12);
+}
+
+static void native_legacy_popped_cleanup(void *argument) {
+  native_event(static_cast<NativeState *>(argument), 13);
+}
+
+__attribute__((always_inline)) static inline std::uintptr_t native_stack_pointer() {
+  std::uintptr_t stack;
+#if defined(__x86_64__)
+  asm volatile("mov %%rsp,%0" : "=r"(stack));
+#elif defined(__aarch64__)
+  asm volatile("mov %0,sp" : "=r"(stack));
+#else
+#error unsupported native cleanup stack
+#endif
+  return stack;
+}
+
+__attribute__((noinline)) static void native_legacy_base_frame(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  NativeGuard before{state, 8};
+  auto *buffer = new (__builtin_alloca(sizeof(_pthread_cleanup_buffer))) _pthread_cleanup_buffer{};
+  native_require(reinterpret_cast<std::uintptr_t>(buffer) == native_stack_pointer(),
+                 "legacy equality probe must register a buffer exactly at the stack base");
+  native_legacy_push(buffer, native_legacy_outer_cleanup, state);
+  NativeGuard after{state, 11};
+  native_inner(state);
+  native_legacy_pop(buffer, 0);
+}
+
+__attribute__((noinline)) static void native_legacy_frame(void *argument) {
+  auto *state = static_cast<NativeState *>(argument);
+  NativeGuard before{state, 8};
+  struct alignas(16) Buffers {
+    unsigned char prefix[16];
+    _pthread_cleanup_buffer first, second, popped;
+  } buffers{};
+  // Keep the enclosing object intact so these buffers are strictly above SP,
+  // independently of how the compiler lays out other local variables.
+  asm volatile("" : : "r"(&buffers) : "memory");
+  const auto stack = native_stack_pointer();
+  native_require(reinterpret_cast<std::uintptr_t>(&buffers.first) > stack &&
+                 reinterpret_cast<std::uintptr_t>(&buffers.second) > stack,
+                 "legacy interior probes must register buffers above the stack base");
+  native_legacy_push(&buffers.first, native_legacy_outer_cleanup, state);
+  native_legacy_push(&buffers.popped, native_legacy_popped_cleanup, state);
+  native_legacy_pop(&buffers.popped, 0);
+  native_legacy_push(&buffers.second, native_legacy_inner_cleanup, state);
+  NativeGuard after{state, 11};
+  if (state->mixed && !state->legacy_inside_c) {
+    native_require(frankenlibc_native_cleanup_frame != nullptr, "C frame linked inside legacy frame");
+    frankenlibc_native_cleanup_frame(native_inner, native_c_cleanup, state);
+  } else {
+    native_inner(state);
+  }
+  native_legacy_pop(&buffers.second, 0);
+  native_legacy_pop(&buffers.first, 0);
+}
+
 static void native_inner_dispatch(NativeState *state) {
-  if (state->mixed) {
+  if (state->legacy_base) {
+    native_legacy_base_frame(state);
+  } else if (state->legacy) {
+    if (state->legacy_inside_c) {
+      native_require(frankenlibc_native_cleanup_frame != nullptr, "C frame linked outside legacy frame");
+      frankenlibc_native_cleanup_frame(native_legacy_frame, native_c_cleanup, state);
+    } else {
+      native_legacy_frame(state);
+    }
+  } else if (state->mixed) {
     native_require(frankenlibc_native_cleanup_frame != nullptr, "C frame linked");
     frankenlibc_native_cleanup_frame(native_inner, native_c_cleanup, state);
   } else {
@@ -319,6 +406,8 @@ static int native_provider(const char *expected, const char *name) {
                          "read", "write", "nanosleep", "sem_wait", "sem_timedwait", "getpwnam",
                          "eventfd", "eventfd_read", "eventfd_write",
                          "pthread_timedjoin_np", "pthread_clockjoin_np", "pthread_tryjoin_np",
+                         std::strstr(name, "legacy") ? "_pthread_cleanup_push" : "pthread_exit",
+                         std::strstr(name, "legacy") ? "_pthread_cleanup_pop" : "pthread_exit",
                          std::strstr(name, "join-alias") ? "__pthread_join" : "pthread_join"};
   struct stat wanted{};
   if (stat(expected, &wanted)) return 86;
@@ -334,6 +423,12 @@ static int native_provider(const char *expected, const char *name) {
   }
   if (std::strstr(name, "join-alias"))
     native_alias_join = reinterpret_cast<NativeJoin>(dlsym(RTLD_DEFAULT, "__pthread_join"));
+  if (std::strstr(name, "legacy")) {
+    native_legacy_push =
+        reinterpret_cast<NativeLegacyPush>(dlsym(RTLD_DEFAULT, "_pthread_cleanup_push"));
+    native_legacy_pop =
+        reinterpret_cast<NativeLegacyPop>(dlsym(RTLD_DEFAULT, "_pthread_cleanup_pop"));
+  }
   return 0;
 }
 
@@ -342,6 +437,9 @@ static int native_probe(const char *name, const char *provider) {
   if (checked) return checked;
   bool cancel = std::strstr(name, "cancel") != nullptr;
   bool mixed = std::strstr(name, "mixed") != nullptr;
+  bool legacy = std::strstr(name, "legacy") != nullptr;
+  bool legacy_base = std::strstr(name, "legacy-base") != nullptr;
+  bool legacy_inside_c = std::strstr(name, "mixed-legacy") != nullptr;
   bool catch_all = std::strstr(name, "catch-all") != nullptr;
   bool disabled = std::strstr(name, "disabled") != nullptr;
   bool blocking_event = std::strstr(name, "blocked") != nullptr;
@@ -395,6 +493,9 @@ static int native_probe(const char *name, const char *provider) {
     NativeState *state = &native_states[i];
     state->cancel = cancel;
     state->mixed = mixed;
+    state->legacy = legacy;
+    state->legacy_base = legacy_base;
+    state->legacy_inside_c = legacy_inside_c;
     state->catch_all = catch_all;
     state->point = point;
     state->disabled = disabled;
@@ -475,12 +576,27 @@ static int native_probe(const char *name, const char *provider) {
                        "pipe contents expose whether the canceled syscall ran");
       }
     }
-    const int expected[] = {1, 4, 6, 5, 7, 9};
-    native_require(state->count == (mixed ? 6 : 5), "all cleanup frames run exactly once");
-    int index = 0;
-    for (int event : expected) {
-      if (!mixed && event == 4) continue;
-      native_require(state->events[index++] == event, "C/C++/key cleanup order");
+    if (legacy) {
+      // GNU's equality case runs the legacy handler before same-frame
+      // destructors; interior buffers run after those destructors. Both
+      // placements are checked above, rather than guessed from variable order.
+      const int at_base[] = {1, 10, 11, 8, 6, 5, 7, 9};
+      const int plain[] = {1, 11, 8, 12, 10, 6, 5, 7, 9};
+      const int c_inside[] = {1, 4, 11, 8, 12, 10, 6, 5, 7, 9};
+      const int c_outside[] = {1, 11, 8, 12, 10, 4, 6, 5, 7, 9};
+      const int *expected = legacy_base ? at_base : legacy_inside_c ? c_outside : mixed ? c_inside : plain;
+      native_require(state->count == (legacy_base ? 8 : mixed ? 10 : 9),
+                     "all legacy/C/C++/key cleanups run once");
+      for (int index = 0; index < state->count; ++index)
+        native_require(state->events[index] == expected[index], "legacy/C/C++/key cleanup order");
+    } else {
+      const int expected[] = {1, 4, 6, 5, 7, 9};
+      native_require(state->count == (mixed ? 6 : 5), "all cleanup frames run exactly once");
+      int index = 0;
+      for (int event : expected) {
+        if (!mixed && event == 4) continue;
+        native_require(state->events[index++] == event, "C/C++/key cleanup order");
+      }
     }
     if (i + 1 < count) native_require(native_states[i + 1].count == 0, "sibling remains live");
   }

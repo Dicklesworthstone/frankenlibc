@@ -1194,6 +1194,31 @@ pub(super) fn resolve_native_dso_symbol(
     symbol_name: &[u8],
     version_name: Option<&[u8]>,
 ) -> Option<Option<*mut c_void>> {
+    resolve_native_dso_symbol_inner(handle, symbol_name, version_name, false)
+}
+
+/// Public standalone DEFAULT has program scope. Its successful provider must
+/// survive closing the explicit open references, even for a NULL-valued IFUNC.
+/// Native import bridges separately retain providers for their actual callers.
+#[cfg(feature = "standalone")]
+pub(super) fn resolve_program_default_symbol(
+    symbol_name: &[u8],
+    version_name: Option<&[u8]>,
+) -> Option<Option<*mut c_void>> {
+    resolve_native_dso_symbol_inner(
+        super::main_program_handle(),
+        symbol_name,
+        version_name,
+        true,
+    )
+}
+
+fn resolve_native_dso_symbol_inner(
+    handle: *mut c_void,
+    symbol_name: &[u8],
+    version_name: Option<&[u8]>,
+    retain_for_program: bool,
+) -> Option<Option<*mut c_void>> {
     // An explicit main-program handle can search native globals in either
     // build. The interpose ABI searches its host prefix before reaching here.
     // RTLD_DEFAULT/RTLD_NEXT need caller-relative scope and lifetime handling;
@@ -1251,6 +1276,11 @@ pub(super) fn resolve_native_dso_symbol(
                 if unique.commit(&mut dsos, &mut []).is_none() {
                     return Some(None);
                 }
+                if retain_for_program {
+                    dsos.iter_mut()
+                        .find(|dso| dso.id == definition.provider)?
+                        .nodelete = true;
+                }
                 return Some(Some(address));
             }
             let address = usize::try_from(definition.address()?).ok()?;
@@ -1266,10 +1296,22 @@ pub(super) fn resolve_native_dso_symbol(
                 if unique.commit(&mut dsos, &mut []).is_none() {
                     return Some(None);
                 }
+                if retain_for_program {
+                    // resolve_symbol already records a separately owned
+                    // implementation as a dependency of this provider.
+                    dsos.iter_mut()
+                        .find(|dso| dso.id == definition.provider)?
+                        .nodelete = true;
+                }
                 return Some(Some(resolved as *mut c_void));
             }
             if unique.commit(&mut dsos, &mut []).is_none() {
                 return Some(None);
+            }
+            if retain_for_program {
+                dsos.iter_mut()
+                    .find(|dso| dso.id == definition.provider)?
+                    .nodelete = true;
             }
             return Some(Some(address as *mut c_void));
         }

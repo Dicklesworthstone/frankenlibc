@@ -24,8 +24,15 @@ HOST = ('unknown-protocol', 'unregistered', 'portmapper-error', 'udp', 'tcp',
         'callrpc-encode-error', 'callrpc-decode-error', 'callrpc-procedure-error',
         'callrpc-high-ids', 'callrpc-high-wire-ids', 'callrpc-version-overflow',
         'callrpc-procedure-overflow')
+GETRPCPORT = ('getrpcport-udp', 'getrpcport-tcp', 'getrpcport-udp-name',
+              'getrpcport-tcp-name', 'getrpcport-unregistered',
+              'getrpcport-portmapper-error', 'getrpcport-decode-error',
+              'getrpcport-wrong-family', 'getrpcport-mapped-host', 'getrpcport-high-ids',
+              'getrpcport-version-overflow', 'getrpcport-high-wire-ids',
+              'getrpcport-max-port', 'getrpcport-udp-repeat', 'getrpcport-tcp-repeat')
 OWNED = ('callrpc-reentrant', 'callrpc-null-host', 'callrpc-null-encode',
-         'callrpc-null-decode', 'diag-native-initial')
+         'callrpc-null-decode', 'diag-native-initial', 'getrpcport-null-host',
+         'getrpcport-large-host-entry')
 UNWIND = ('callrpc-encode-throw', 'callrpc-decode-throw', 'callrpc-encode-exit',
           'callrpc-decode-exit', 'client-encode-throw', 'client-decode-throw',
           'client-free-throw', 'client-marshal-throw', 'client-validate-throw',
@@ -322,6 +329,10 @@ class Peers:
                 return words(prefix + [1])  # PROG_UNAVAIL at the mapper.
             if target == PROGRAM + 1:
                 return words(prefix + [0, 0])
+            if target == PROGRAM + 3:
+                return words(prefix + [0])  # Accepted reply missing its port.
+            if target == PROGRAM + 4:
+                return words(prefix + [0, 65535])
             expected_version = 0xfffffffe if target == 0xf4567001 else 1
             if target not in (PROGRAM, 0xf4567001) or target_version != expected_version:
                 raise ValueError(f'unexpected program/version {data[10:]}')
@@ -424,6 +435,21 @@ def main():
 
     def run(provider, case, env, negative=False, cpp=False):
         before = peers.counts.copy()
+        if case.startswith('getrpcport-'):
+            env = dict(env, RPC_TEST_UDP_PORT=str(peers.udp.getsockname()[1]),
+                       RPC_TEST_TCP_PORT=str(peers.tcp.getsockname()[1]))
+        if case in ('getrpcport-large-host-entry', 'getrpcport-wrong-family',
+                    'getrpcport-mapped-host') and provider != 'host':
+            # Keep negative host lookups off ambient DNS. The large alias row
+            # also forces scratch growth; a second row checks first-address order.
+            hosts = out / 'getrpcport-hosts'
+            hosts.write_text('127.0.0.1 rpc-scratch.test '
+                             + ' '.join(f'alias-{index:03d}.test' for index in range(200))
+                             + '\n127.0.0.2 rpc-scratch.test second-row\n')
+            policy = out / 'getrpcport-nsswitch'
+            policy.write_text('hosts: files\n')
+            env = dict(env, FRANKENLIBC_HOSTS_PATH=str(hosts),
+                       FRANKENLIBC_NSSWITCH_CONF=str(policy))
         try:
             process = subprocess.run([str(binaries[cpp]), case], env=env,
                                      capture_output=True, timeout=12)
@@ -450,6 +476,15 @@ def main():
             passed = passed and wire['portmap'] == 0
         if not negative and case in NETNAME_ROWS:
             passed = passed and all(count == 0 for count in wire.values())
+        if not negative and case.startswith('getrpcport-'):
+            no_query = case in ('getrpcport-wrong-family', 'getrpcport-mapped-host',
+                               'getrpcport-high-ids', 'getrpcport-version-overflow',
+                               'getrpcport-null-host')
+            queries = 0 if no_query else 32 if case.endswith('-repeat') else 1
+            tcp_queries = queries if case.startswith('getrpcport-tcp') else 0
+            passed = (passed and wire['portmap'] == queries
+                      and wire['portmap_tcp'] == tcp_queries
+                      and wire['udp'] == 0 and wire['tcp'] == 0)
         stem = f'{provider}-{case}'
         (out / f'{stem}.out').write_bytes(stdout)
         (out / f'{stem}.err').write_bytes(stderr)
@@ -463,11 +498,11 @@ def main():
         print(f'{"PASS" if passed else "FAIL"} {provider}/{case}: rc={code}', flush=True)
 
     try:
-        for case in HOST + DIAGNOSTICS + tuple(NETNAME_ROWS):
+        for case in HOST + GETRPCPORT + DIAGNOSTICS + tuple(NETNAME_ROWS):
             run('host', case, clean)
         for case in DIAGNOSTIC_UNWIND:
             run('host', case, clean, cpp=True)
-        for case in ('unknown-protocol',) + tuple(NETNAME_ROWS):
+        for case in ('unknown-protocol', 'getrpcport-udp') + tuple(NETNAME_ROWS):
             run('wrong-provider-host', case,
                 dict(clean, FRANKENLIBC_TEST_LIBRARY=str(library)), True)
             run('wrong-provider-forced', case,
@@ -476,7 +511,7 @@ def main():
         for mode in ('strict', 'hardened'):
             env = dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
                        FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE='0')
-            for case in HOST + DIAGNOSTICS + tuple(NETNAME_ROWS) + OWNED:
+            for case in HOST + GETRPCPORT + DIAGNOSTICS + tuple(NETNAME_ROWS) + OWNED:
                 run(mode, case, env)
             for case in UNWIND + DIAGNOSTIC_UNWIND:
                 run(mode, case, env, cpp=True)

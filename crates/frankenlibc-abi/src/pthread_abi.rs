@@ -9387,7 +9387,9 @@ pub unsafe extern "C" fn __pthread_setspecific(
 /// Native threads share the creating thread's TCB, so they must never be
 /// linked into glibc's per-thread cleanup chain.
 pub(crate) fn host_cancellation_thread() -> bool {
-    current_threading_backend() == THREAD_BACKEND_HOST
+    // A registered native identity is authoritative even if inherited compiler
+    // TLS still contains its creator's cached host-backend classification.
+    core_current_thread_handle().is_none() && current_threading_backend() == THREAD_BACKEND_HOST
 }
 
 pub(crate) type LegacyCleanupPush =
@@ -9460,6 +9462,25 @@ const CANCEL_BUFFER_PRIVATE_WORD: usize = 9;
 #[cfg(target_arch = "aarch64")]
 const CANCEL_BUFFER_PRIVATE_WORD: usize = 23;
 
+// Both GNU buffer layouts are pointer-aligned on the supported downward-growing
+// stacks. Bit zero distinguishes a legacy callback buffer from a modern C jump
+// buffer. The head and each buffer's private previous link carry this tag; only
+// untagged addresses may be dereferenced. Host cleanup chains never see tags.
+const NATIVE_LEGACY_CLEANUP_TAG: usize = 1;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeLegacyCleanupBuffer {
+    routine: *mut c_void,
+    argument: *mut c_void,
+    cancel_type: c_int,
+    previous: usize,
+}
+
+const _: () = assert!(std::mem::size_of::<NativeLegacyCleanupBuffer>() == 32);
+const _: () =
+    assert!(std::mem::align_of::<NativeLegacyCleanupBuffer>() > NATIVE_LEGACY_CLEANUP_TAG);
+
 fn native_cleanup_head() -> usize {
     if let Some(handle) = core_current_thread_handle() {
         // SAFETY: this is the calling native thread's live handle.
@@ -9474,6 +9495,55 @@ fn set_native_cleanup_head(head: usize) {
         unsafe { (*handle).cleanup_head.store(head, Ordering::Relaxed) };
     } else {
         with_pthread_tls(|tls| tls.native_cleanup_head = head);
+    }
+}
+
+pub(crate) unsafe fn native_legacy_cleanup_push(
+    buf: *mut c_void,
+    routine: *mut c_void,
+    argument: *mut c_void,
+    deferred: bool,
+) {
+    let frame = buf.cast::<NativeLegacyCleanupBuffer>();
+    // SAFETY: the caller owns a live, aligned GNU legacy cleanup buffer.
+    // Initialize every field before publishing it in this native thread's
+    // owned chain. Its previous link may name either kind of cleanup buffer.
+    unsafe {
+        frame.write(NativeLegacyCleanupBuffer {
+            routine,
+            argument,
+            cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
+            previous: native_cleanup_head(),
+        });
+    }
+    set_native_cleanup_head(buf as usize | NATIVE_LEGACY_CLEANUP_TAG);
+    if deferred {
+        // Moving to DEFERRED cannot act on a pending asynchronous request.
+        unsafe {
+            pthread_setcanceltype(
+                PTHREAD_CANCEL_DEFERRED_TYPE,
+                std::ptr::addr_of_mut!((*frame).cancel_type),
+            );
+        }
+    }
+}
+
+pub(crate) unsafe fn native_legacy_cleanup_pop(buf: *mut c_void, execute: c_int, restore: bool) {
+    // SAFETY: this is a matching live legacy buffer. Copy its scalar fields
+    // before user code runs; no Rust reference, TLS borrow or lock may survive
+    // a handler which reenters libc or initiates an unwind.
+    let frame = unsafe { buf.cast::<NativeLegacyCleanupBuffer>().read() };
+    set_native_cleanup_head(frame.previous);
+    if restore {
+        // A pending request can act while restoring ASYNCHRONOUS, after this
+        // buffer is removed and before an explicitly requested callback runs.
+        unsafe { pthread_setcanceltype(frame.cancel_type, std::ptr::null_mut()) };
+    }
+    if execute != 0 {
+        // SAFETY: push received the caller's live cleanup routine and argument.
+        let routine: unsafe extern "C-unwind" fn(*mut c_void) =
+            unsafe { std::mem::transmute(frame.routine) };
+        unsafe { routine(frame.argument) };
     }
 }
 
@@ -9504,19 +9574,30 @@ unsafe fn unregister_native_cleanup(buf: *mut c_void, restore: bool) {
     }
 }
 
-/// Transfer to one C cleanup buffer after its deeper frames have unwound.
-/// No lock, Rust borrow, or owned temporary may span this non-local transfer.
+/// Transfer to one C jump buffer after its deeper frames have unwound.
+/// The experimental no-unwinder lane also drains legacy callbacks here; the
+/// ordinary lane runs them at the corresponding stack boundary below.
+/// No lock, Rust borrow, or owned temporary may span a callback or transfer.
 unsafe fn transfer_native_cleanup() -> ! {
-    let head = native_cleanup_head();
-    if head != 0 {
-        let buf = head as *mut c_void;
-        // SAFETY: the registration chain contains only this thread's still
-        // live stack buffers. The saved mask flag is zero for cleanup jumps.
-        let previous = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD).read() };
-        set_native_cleanup_head(previous);
-        unsafe { crate::setjmp_abi::longjmp(buf, 1) };
+    loop {
+        let head = native_cleanup_head();
+        if head & NATIVE_LEGACY_CLEANUP_TAG != 0 {
+            let buf = (head & !NATIVE_LEGACY_CLEANUP_TAG) as *mut c_void;
+            // SAFETY: this is the owned chain's live legacy buffer. Removing
+            // it before its callback preserves reentrant push/pop behavior.
+            unsafe { native_legacy_cleanup_pop(buf, 1, false) };
+            continue;
+        }
+        if head != 0 {
+            let buf = head as *mut c_void;
+            // SAFETY: this untagged entry is a modern C jump buffer. Preserve
+            // its previous link's tag for the next cleanup after the longjmp.
+            let previous = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD).read() };
+            set_native_cleanup_head(previous);
+            unsafe { crate::setjmp_abi::longjmp(buf, 1) };
+        }
+        unsafe { finish_native_thread_exit() };
     }
-    unsafe { finish_native_thread_exit() };
 }
 
 unsafe fn finish_native_thread_exit() -> ! {
@@ -9550,7 +9631,7 @@ struct NativeUnwindException {
 unsafe extern "C-unwind" {
     fn _Unwind_ForcedUnwind(
         exception: *mut NativeUnwindException,
-        stop: unsafe extern "C" fn(
+        stop: unsafe extern "C-unwind" fn(
             c_int,
             c_int,
             u64,
@@ -9571,7 +9652,7 @@ unsafe extern "C" fn native_unwind_cleanup(_reason: c_int, _exception: *mut Nati
 }
 
 #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
-unsafe fn native_cleanup_stack_pointer(head: usize) -> usize {
+unsafe fn native_jump_buffer_stack_pointer(head: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         // SAFETY: the registered buffer is live; its machine context was
@@ -9593,7 +9674,7 @@ unsafe fn native_cleanup_stack_pointer(head: usize) -> usize {
 }
 
 #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
-unsafe extern "C" fn native_unwind_stop(
+unsafe extern "C-unwind" fn native_unwind_stop(
     version: c_int,
     actions: c_int,
     _exception_class: u64,
@@ -9610,11 +9691,33 @@ unsafe extern "C" fn native_unwind_stop(
     } else {
         unsafe { _Unwind_GetCFA(context) }
     };
-    let head = native_cleanup_head();
-    if head != 0 && (at_end || cfa >= unsafe { native_cleanup_stack_pointer(head) }) {
-        // Every deeper C++/C-with-exceptions frame has run its cleanup. Remove
-        // this plain C buffer before transferring to its macro's callback.
-        unsafe { transfer_native_cleanup() };
+    loop {
+        let head = native_cleanup_head();
+        if head == 0 {
+            break;
+        }
+        if head & NATIVE_LEGACY_CLEANUP_TAG != 0 {
+            let address = head & !NATIVE_LEGACY_CLEANUP_TAG;
+            // A stop callback precedes its current frame's language cleanup.
+            // GNU's observable boundary includes equality with the buffer's
+            // start: a buffer at the frame's stack base runs before that
+            // frame's destructors, while one above it is reached on a later
+            // outward stop. Comparing the buffer's end changes this ordering.
+            if !at_end && cfa < address {
+                break;
+            }
+            // SAFETY: only the owner registered these live, aligned buffers.
+            // Unlink before invoking user code; a callback may push/pop either
+            // buffer kind and must not inherit a borrow of our thread state.
+            unsafe { native_legacy_cleanup_pop(address as *mut c_void, 1, false) };
+            continue;
+        }
+        if at_end || cfa >= unsafe { native_jump_buffer_stack_pointer(head) } {
+            // Every deeper language cleanup has run. This untagged plain C
+            // buffer resumes its macro and restarts the remaining chain.
+            unsafe { transfer_native_cleanup() };
+        }
+        break;
     }
     if at_end {
         unsafe { finish_native_thread_exit() };

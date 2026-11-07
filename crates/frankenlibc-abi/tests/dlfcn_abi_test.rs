@@ -28,6 +28,10 @@ fn compile_self_contained_test_dso() -> PathBuf {
 }
 
 fn compile_native_test_dso(code: &str) -> PathBuf {
+    compile_native_test_dso_with_versions(code, None)
+}
+
+fn compile_native_test_dso_with_versions(code: &str, versions: Option<&str>) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -41,7 +45,8 @@ fn compile_native_test_dso(code: &str) -> PathBuf {
     let output = dir.join("libfranken_native_answer.so");
     std::fs::write(&source, code).unwrap();
 
-    let cc_output = Command::new("cc")
+    let mut command = Command::new("cc");
+    command
         .args([
             "-shared",
             "-fPIC",
@@ -51,9 +56,13 @@ fn compile_native_test_dso(code: &str) -> PathBuf {
             "-o",
         ])
         .arg(&output)
-        .arg(&source)
-        .output()
-        .unwrap();
+        .arg(&source);
+    if let Some(versions) = versions {
+        let version_script = dir.join("native.map");
+        std::fs::write(&version_script, versions).unwrap();
+        command.arg(format!("-Wl,--version-script={}", version_script.display()));
+    }
+    let cc_output = command.output().unwrap();
     assert!(
         cc_output.status.success(),
         "cc failed: status={:?}\nstdout={}\nstderr={}",
@@ -1454,25 +1463,146 @@ mod standalone_public_exports {
                 assert!(unsafe { dlerror() }.is_null());
             }
         }
-        let path = compile_native_test_dso("int standalone_global_export(void) { return 73; }\n");
-        let local = open_native_fixture(&path, libc::RTLD_NOW | libc::RTLD_LOCAL);
-        assert!(
-            unsafe { dlsym(main, c"standalone_global_export".as_ptr()) }.is_null(),
-            "LOCAL-only definitions must remain outside the main scope"
-        );
-        assert!(!unsafe { dlerror() }.is_null());
-        let global = open_native_fixture(&path, libc::RTLD_NOW | libc::RTLD_GLOBAL);
-        let address = checked_symbol(main, c"standalone_global_export");
-        // SAFETY: this live native fixture defines exactly int function(void).
-        let call: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(address) };
-        assert_eq!(unsafe { call() }, 73);
-        assert_eq!(unsafe { dlclose(local) }, 0);
-        assert_eq!(unsafe { dlclose(global) }, 0);
-        assert!(
-            unsafe { dlsym(main, c"standalone_global_export".as_ptr()) }.is_null(),
-            "the explicit main lookup must not retain an unloaded plugin"
-        );
-        assert!(!unsafe { dlerror() }.is_null());
+        #[derive(Clone, Copy, Debug)]
+        enum Request {
+            Main,
+            FailedDefaultVersion,
+            Default,
+            DefaultVersioned,
+        }
+        let version = c"FRANKEN_GLOBAL_1.0";
+        // Distinct names prevent a permanently retained GLOBAL definition from
+        // shadowing a later case. Explicit-main and failed DEFAULT controls
+        // must remain unloadable; successful DEFAULT is a program dependency.
+        for (name, request, null_ifunc) in [
+            (c"standalone_global_main", Request::Main, false),
+            (
+                c"standalone_global_failed_version",
+                Request::FailedDefaultVersion,
+                false,
+            ),
+            (c"standalone_global_default", Request::Default, false),
+            (
+                c"standalone_global_default_version",
+                Request::DefaultVersioned,
+                false,
+            ),
+            (c"standalone_global_main_null", Request::Main, true),
+            (c"standalone_global_default_null", Request::Default, true),
+            (
+                c"standalone_global_default_version_null",
+                Request::DefaultVersioned,
+                true,
+            ),
+        ] {
+            let symbol = name.to_str().unwrap();
+            let code = if null_ifunc {
+                format!(
+                    "typedef int (*target_fn)(void);\n\
+                     static target_fn resolve_null(void) {{ return 0; }}\n\
+                     int {symbol}(void) __attribute__((ifunc(\"resolve_null\")));\n"
+                )
+            } else {
+                format!("int {symbol}(void) {{ return 73; }}\n")
+            };
+            let versions = format!("FRANKEN_GLOBAL_1.0 {{ global: {symbol}; local: *; }};\n");
+            let path = compile_native_test_dso_with_versions(&code, Some(&versions));
+            let assert_missing = |scope, stage| {
+                // SAFETY: each scope is a live main handle or RTLD_DEFAULT;
+                // symbol/version strings remain live for these lookup calls.
+                unsafe {
+                    assert!(dlsym(scope, name.as_ptr()).is_null(), "{stage}");
+                    assert!(!dlerror().is_null(), "{stage}");
+                    assert!(dlerror().is_null(), "lookup error must be consumed");
+                    assert!(
+                        dlvsym(scope, name.as_ptr(), version.as_ptr()).is_null(),
+                        "{stage}"
+                    );
+                    assert!(!dlerror().is_null(), "{stage}");
+                    assert!(dlerror().is_null(), "version error must be consumed");
+                }
+            };
+            let local = open_native_fixture(&path, libc::RTLD_NOW | libc::RTLD_LOCAL);
+            for scope in [main, libc::RTLD_DEFAULT] {
+                assert_missing(
+                    scope,
+                    "LOCAL-only definitions must stay outside the global scope",
+                );
+            }
+            let global = open_native_fixture(&path, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+            // SAFETY: the fixture remains loaded and owns this symbol/version.
+            // A NULL IFUNC result is success only when dlerror remains clear.
+            let expected = unsafe {
+                let address = dlsym(main, name.as_ptr());
+                assert_eq!(address.is_null(), null_ifunc);
+                assert!(dlerror().is_null());
+                assert_eq!(dlvsym(main, name.as_ptr(), version.as_ptr()), address);
+                assert!(dlerror().is_null());
+                match request {
+                    Request::Main => {}
+                    Request::FailedDefaultVersion => {
+                        assert!(
+                            dlvsym(
+                                libc::RTLD_DEFAULT,
+                                name.as_ptr(),
+                                c"FRANKEN_GLOBAL_2.0".as_ptr(),
+                            )
+                            .is_null()
+                        );
+                        assert!(!dlerror().is_null());
+                        assert!(dlerror().is_null(), "wrong-version error must be consumed");
+                    }
+                    Request::Default => {
+                        assert_eq!(dlsym(libc::RTLD_DEFAULT, name.as_ptr()), address);
+                        assert!(dlerror().is_null());
+                    }
+                    Request::DefaultVersioned => {
+                        assert_eq!(
+                            dlvsym(libc::RTLD_DEFAULT, name.as_ptr(), version.as_ptr()),
+                            address
+                        );
+                        assert!(dlerror().is_null());
+                    }
+                }
+                address
+            };
+            let call: Option<unsafe extern "C" fn() -> c_int> = if null_ifunc {
+                None
+            } else {
+                // SAFETY: the non-NULL fixture defines exactly int function(void).
+                Some(unsafe { std::mem::transmute(expected) })
+            };
+            if let Some(call) = call {
+                // SAFETY: both explicit references still own the function.
+                assert_eq!(unsafe { call() }, 73);
+            }
+            // SAFETY: close each successful explicit open exactly once.
+            unsafe {
+                assert_eq!(dlclose(local), 0);
+                assert_eq!(dlclose(global), 0);
+            }
+            let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+            // Probe residency before any further symbol lookup could retain it.
+            // SAFETY: NOLOAD only inspects the fixture's known absolute pathname.
+            let resident = unsafe { dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+            let retained = matches!(request, Request::Default | Request::DefaultVersioned);
+            assert_eq!(!resident.is_null(), retained, "{name:?}: {request:?}");
+            // SAFETY: consume the NOLOAD outcome before later lookup assertions.
+            let _ = unsafe { dlerror() };
+            if retained {
+                // SAFETY: release the audit reference; DEFAULT must keep the
+                // mapping alive independently of it and of both original opens.
+                assert_eq!(unsafe { dlclose(resident) }, 0);
+                if let Some(call) = call {
+                    // SAFETY: the verified program dependency retains the code.
+                    assert_eq!(unsafe { call() }, 73);
+                }
+            } else {
+                for scope in [main, libc::RTLD_DEFAULT] {
+                    assert_missing(scope, "non-retaining lookup must allow unloading");
+                }
+            }
+        }
         assert_eq!(unsafe { dlclose(main) }, 0);
     }
 }

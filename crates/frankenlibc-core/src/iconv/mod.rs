@@ -2923,6 +2923,108 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
 /// every former member (last was ISO-2022-CN-EXT) is implemented and byte-exact.
 pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 0] = [];
 
+/// An immutable, stateless single-byte character codec for locale conversions.
+///
+/// The mappings and canonical output bytes come from the same native codecs as
+/// [`iconv`]. Undefined input bytes and unrepresentable wide characters remain
+/// errors; no replacement, transliteration, or shift state is introduced.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SingleByteCodec {
+    encoding: Encoding,
+    decoded: [i32; 256],
+    reverse: Option<SingleByteReverse>,
+    ascii_compatible: bool,
+}
+
+impl SingleByteCodec {
+    /// Resolve an encoding name or alias that supports one-byte locale I/O.
+    ///
+    /// Every valid byte must decode independently to one character, NUL must
+    /// map to itself in both directions, and encoding must not need multiple
+    /// output bytes. Unknown, multibyte, stateful, and decomposing codecs are
+    /// rejected. Iconv suffixes such as `//IGNORE` are not locale encodings.
+    #[must_use]
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        let encoding = classify_encoding(name).encoding?;
+        // These decode individual bytes but can encode additional precomposed
+        // characters as base-plus-combining sequences. Probing decoded bytes
+        // alone would miss those multi-byte outputs.
+        if matches!(
+            encoding,
+            Encoding::Cp1255 | Encoding::Cp1258 | Encoding::Tcvn
+        ) {
+            return None;
+        }
+        // Rejects incomplete single-byte inputs, including multibyte leads.
+        let decoded = build_from_decode(encoding)?.cp;
+        let mut output = [0u8; 8];
+        if decoded[0] != 0
+            || !matches!(encode_char(encoding, '\0', &mut output), Ok(1) if output[0] == 0)
+        {
+            // Whole-buffer/stateful codecs deliberately report Invalid from
+            // decode_char; an all-invalid table is not a single-byte codec.
+            // This also excludes formats where byte zero is a non-NUL glyph.
+            return None;
+        }
+        for &cp in &decoded {
+            if cp < 0 {
+                continue;
+            }
+            let ch = char::from_u32(cp as u32)?;
+            match encode_char(encoding, ch, &mut output) {
+                Ok(1) | Err(EncodeError::Unrepresentable) => {}
+                _ => return None,
+            }
+        }
+        let ascii_compatible = pair_is_ascii_identity(encoding, encoding);
+        let mut reverse = build_to_reverse(encoding);
+        if let Some(table) = reverse.as_mut() {
+            // The shared cache infers this shortcut from decoding. Locale
+            // conversions require the identity in both directions.
+            table.ascii_low &= ascii_compatible;
+        }
+        Some(Self {
+            encoding,
+            decoded,
+            reverse,
+            ascii_compatible,
+        })
+    }
+
+    /// Decode one byte, returning `None` for an undefined byte in this codec.
+    #[inline]
+    #[must_use]
+    pub fn decode(&self, byte: u8) -> Option<u32> {
+        u32::try_from(self.decoded[usize::from(byte)]).ok()
+    }
+
+    /// Encode a wide character using the codec's canonical single output byte.
+    ///
+    /// Invalid Unicode scalar values and unrepresentable characters return
+    /// `None`. The native encoder handles aliases absent from the reverse map,
+    /// as well as NUL in codecs whose low bytes are not ASCII-compatible.
+    #[inline]
+    #[must_use]
+    pub fn encode(&self, wc: u32) -> Option<u8> {
+        let ch = char::from_u32(wc)?;
+        if let Some(byte) = self.reverse.as_ref().and_then(|table| table.lookup(ch)) {
+            return Some(byte);
+        }
+        let mut output = [0u8; 1];
+        match encode_char(self.encoding, ch, &mut output) {
+            Ok(1) => Some(output[0]),
+            _ => None,
+        }
+    }
+
+    /// Whether every byte and character below 128 maps to itself both ways.
+    #[inline]
+    #[must_use]
+    pub const fn is_ascii_compatible(&self) -> bool {
+        self.ascii_compatible
+    }
+}
+
 /// Opaque conversion descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IconvDescriptor {
@@ -50970,6 +51072,189 @@ pub fn iconv_close(_cd: IconvDescriptor) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_byte_codec_latin1_and_aliases() {
+        let codec = SingleByteCodec::from_name(b"ISO-8859-1").unwrap();
+        assert!(codec.is_ascii_compatible());
+        for byte in 0u8..=u8::MAX {
+            assert_eq!(codec.decode(byte), Some(u32::from(byte)));
+            assert_eq!(codec.encode(u32::from(byte)), Some(byte));
+        }
+        assert_eq!(
+            SingleByteCodec::from_name(b"lAtIn-1"),
+            SingleByteCodec::from_name(b"iso_8859_1")
+        );
+        for wc in [0x0100, 0x20ac, 0xd800, 0xdfff, 0x110000, u32::MAX] {
+            assert_eq!(codec.encode(wc), None, "wc={wc:#x}");
+        }
+    }
+
+    #[test]
+    fn single_byte_codec_latin15_replacements() {
+        let codec = SingleByteCodec::from_name(b"ISO-8859-15").unwrap();
+        assert!(codec.is_ascii_compatible());
+        for (byte, wc) in [
+            (0xa4, 0x20ac),
+            (0xa6, 0x0160),
+            (0xa8, 0x0161),
+            (0xb4, 0x017d),
+            (0xb8, 0x017e),
+            (0xbc, 0x0152),
+            (0xbd, 0x0153),
+            (0xbe, 0x0178),
+            (0xe9, 0x00e9),
+        ] {
+            assert_eq!(codec.decode(byte), Some(wc));
+            assert_eq!(codec.encode(wc), Some(byte));
+        }
+        for replaced in [
+            0x00a4, 0x00a6, 0x00a8, 0x00b4, 0x00b8, 0x00bc, 0x00bd, 0x00be,
+        ] {
+            assert_eq!(codec.encode(replaced), None);
+        }
+    }
+
+    #[test]
+    fn single_byte_codec_cyrillic() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"KOI8-R", &[0xf0, 0xd2, 0xc9, 0xd7, 0xc5, 0xd4]),
+            (b"WINDOWS-1251", &[0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]),
+        ];
+        for &(name, bytes) in cases {
+            let codec = SingleByteCodec::from_name(name).unwrap();
+            assert!(codec.is_ascii_compatible());
+            for (&byte, ch) in bytes
+                .iter()
+                .zip("\u{041f}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}".chars())
+            {
+                assert_eq!(codec.decode(byte), Some(ch as u32));
+                assert_eq!(codec.encode(ch as u32), Some(byte));
+            }
+        }
+    }
+
+    #[test]
+    fn single_byte_codec_undefined_bytes_and_scalars() {
+        let ascii = SingleByteCodec::from_name(b"ANSI_X3.4-1968").unwrap();
+        assert!(ascii.is_ascii_compatible());
+        assert_eq!(ascii.decode(0), Some(0));
+        assert_eq!(ascii.encode(0), Some(0));
+        for byte in 0x80u8..=u8::MAX {
+            assert_eq!(ascii.decode(byte), None);
+            assert_eq!(ascii.encode(u32::from(byte)), None);
+        }
+        let cp1252 = SingleByteCodec::from_name(b"CP1252").unwrap();
+        for byte in [0x81, 0x8d, 0x8f, 0x90, 0x9d] {
+            assert_eq!(cp1252.decode(byte), None);
+            assert_eq!(cp1252.encode(u32::from(byte)), None);
+        }
+        assert_eq!(cp1252.decode(0x80), Some(0x20ac));
+        assert_eq!(cp1252.encode(0x20ac), Some(0x80));
+        assert_eq!(cp1252.encode(0xfffd), None);
+        assert_eq!(cp1252.encode(0xffff), None);
+        assert_eq!(
+            SingleByteCodec::from_name(b"CP1251").unwrap().decode(0x98),
+            None
+        );
+        assert_eq!(
+            SingleByteCodec::from_name(b"ISO-8859-3")
+                .unwrap()
+                .decode(0xa5),
+            None
+        );
+    }
+
+    #[test]
+    fn single_byte_codec_low_ascii_remapping() {
+        let ebcdic = SingleByteCodec::from_name(b"IBM037").unwrap();
+        assert!(!ebcdic.is_ascii_compatible());
+        for (byte, ch) in [
+            (0, '\0'),
+            (0x40, ' '),
+            (0xc1, 'A'),
+            (0x81, 'a'),
+            (0xf0, '0'),
+        ] {
+            assert_eq!(ebcdic.decode(byte), Some(ch as u32));
+            assert_eq!(ebcdic.encode(ch as u32), Some(byte));
+        }
+        let british = SingleByteCodec::from_name(b"ISO646-GB").unwrap();
+        assert!(!british.is_ascii_compatible());
+        assert_eq!(british.decode(b'#'), Some(0x00a3));
+        assert_eq!(british.encode(0x00a3), Some(b'#'));
+        assert_eq!(british.encode(u32::from(b'#')), None);
+        assert_eq!(british.decode(0), Some(0));
+        assert_eq!(british.encode(0), Some(0));
+    }
+
+    #[test]
+    fn single_byte_codec_canonical_and_one_way_mappings() {
+        let armenian = SingleByteCodec::from_name(b"ARMSCII-8").unwrap();
+        // Two bytes decode to '('; encoding must keep the canonical ASCII byte.
+        assert_eq!(armenian.decode(0xa5), Some(u32::from(b'(')));
+        assert_eq!(armenian.decode(b'('), Some(u32::from(b'(')));
+        assert_eq!(armenian.encode(u32::from(b'(')), Some(b'('));
+        assert_eq!(armenian.decode(0xb2), Some(0x0531));
+        assert_eq!(armenian.encode(0x0531), Some(0xb2));
+        // CP1140 can encode overline as macron, an alias with no matching
+        // decoded byte. It must survive outside the round-trip reverse cache.
+        let ebcdic = SingleByteCodec::from_name(b"CP1140").unwrap();
+        assert_eq!(ebcdic.decode(0xbc), Some(0x00af));
+        assert_eq!(ebcdic.encode(0x00af), Some(0xbc));
+        assert_eq!(ebcdic.encode(0x203e), Some(0xbc));
+    }
+
+    #[test]
+    fn single_byte_codec_rejects_multibyte_and_stateful_encodings() {
+        let names: &[&[u8]] = &[
+            b"UTF-8",
+            b"UTF-16",
+            b"UTF-16BE",
+            b"UCS-2",
+            b"UTF-32",
+            b"SHIFT_JIS",
+            b"GB18030",
+            b"EUC-JP",
+            b"ISO_6937",
+            b"UTF-7",
+            b"UTF-7-IMAP",
+            b"ISO-2022-JP",
+            b"ISO-2022-KR",
+            b"ISO-2022-CN-EXT",
+            b"IBM930",
+            b"SHIFT_JISX0213",
+            b"BIG5-HKSCS",
+            b"TSCII",
+        ];
+        for &name in names {
+            assert!(classify_encoding(name).encoding.is_some());
+            assert!(
+                SingleByteCodec::from_name(name).is_none(),
+                "{} must not become a byte codec",
+                String::from_utf8_lossy(name)
+            );
+        }
+    }
+
+    #[test]
+    fn single_byte_codec_rejects_decomposing_and_nonlocale_encodings() {
+        let names: &[&[u8]] = &[b"CP1255", b"CP1258", b"TCVN", b"ISO/TR_11548-1"];
+        for &name in names {
+            assert!(classify_encoding(name).encoding.is_some());
+            assert!(SingleByteCodec::from_name(name).is_none());
+        }
+        for &name in [
+            b"".as_slice(),
+            b"unknown-locale-codec",
+            b"ISO-8859-1//IGNORE",
+            b"ISO-8859-1//TRANSLIT",
+        ]
+        .iter()
+        {
+            assert!(SingleByteCodec::from_name(name).is_none());
+        }
+    }
 
     /// `//TRANSLIT` takes the C.UTF-8 table under a UTF-8 LC_CTYPE and the C
     /// table otherwise (both black-box captures of glibc 2.43).

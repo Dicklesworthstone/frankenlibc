@@ -3640,21 +3640,21 @@ pub unsafe extern "C" fn getsecretkey(
     c_int::from(unsafe { rpc_des_copy(output.as_ptr(), secretkey.cast(), length) })
 }
 
-/// Get the port number for an RPC program on a remote host.
-/// Returns 0 (not found) — portmapper queries not supported natively.
-/// Programs needing real portmapper lookups will use clnt_create which
-/// delegates to host glibc.
+/// Discover an RPC service port through the native IPv4 resolver and portmapper.
+/// A failed lookup or an unregistered service returns zero and publishes the
+/// corresponding thread-local RPC creation error.
 ///
 /// # Safety
-/// ABI boundary function.
+/// `host` must point to a live, NUL-terminated hostname or IPv4 address.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcport(
-    _host: *const c_char,
-    _prognum: c_ulong,
-    _versnum: c_ulong,
-    _proto: c_int,
+    host: *const c_char,
+    prognum: c_ulong,
+    versnum: c_ulong,
+    proto: c_uint,
 ) -> c_int {
-    0 // Not found — no native portmapper support
+    // SAFETY: the helper retains the resolver result until discovery completes.
+    unsafe { rpc_client_create::getrpcport(host, prognum, versnum, proto) }
 }
 
 /// Convert a hostname to a Secure RPC netname in a caller-owned buffer.
