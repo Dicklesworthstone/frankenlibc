@@ -2972,7 +2972,7 @@ impl MultibyteCodec {
         Some(1)
     }
 
-    /// Convert a fitting prefix of a wide string, stopping before its NUL.
+    /// Convert a fitting prefix, writing but not counting a reached NUL.
     /// The UTF-8 arm retains the existing vectorized conversion kernel.
     #[must_use]
     pub fn encode_prefix(self, destination: &mut [u8], source: &[u32]) -> Option<usize> {
@@ -2981,10 +2981,11 @@ impl MultibyteCodec {
         }
         let mut written = 0;
         for &wc in source.iter().take(destination.len()) {
+            let length = self.encode(wc, &mut destination[written..])?;
             if wc == 0 {
                 break;
             }
-            written += self.encode(wc, &mut destination[written..])?;
+            written += length;
         }
         Some(written)
     }
@@ -51173,6 +51174,14 @@ mod tests {
         assert_eq!(latin1.decode(&[0]), Utf8Step::Char { wc: 0, len: 1 });
         assert_eq!(latin1.encode(0, &mut bytes), Some(1));
         assert_eq!(bytes[0], 0);
+        for codec in [MultibyteCodec::Ascii, MultibyteCodec::Utf8, latin1] {
+            let mut terminated = [0xa5; 4];
+            assert_eq!(
+                codec.encode_prefix(&mut terminated, &[u32::from(b'A'), 0, u32::from(b'B')]),
+                Some(1)
+            );
+            assert_eq!(terminated, [b'A', 0, 0xa5, 0xa5]);
+        }
     }
 
     #[test]
