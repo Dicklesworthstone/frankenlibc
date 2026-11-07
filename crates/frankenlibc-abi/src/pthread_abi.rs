@@ -1824,8 +1824,8 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
         return false;
     }
     let ts = unsafe { &*abstime };
-    // The remaining conversion-based mutex/join paths require a nonnegative
-    // input. Condition and rwlock waits validate nanoseconds separately and
+    // The remaining conversion-based mutex paths require a nonnegative input.
+    // Condition, rwlock and join waits validate nanoseconds separately and
     // pass a clamped expired deadline to the kernel without epoch arithmetic.
     ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec)
 }
@@ -1948,15 +1948,6 @@ fn futex_wait_timed_private(
     abstime: *const libc::timespec,
 ) -> c_int {
     futex_wait_timed(word, expected, abstime, true)
-}
-
-#[cfg(target_os = "linux")]
-fn futex_wait_timed_shared(
-    word: &AtomicI32,
-    expected: i32,
-    abstime: *const libc::timespec,
-) -> c_int {
-    futex_wait_timed(word, expected, abstime, false)
 }
 
 #[allow(unsafe_code)]
@@ -2404,6 +2395,18 @@ unsafe fn native_pthread_join(
     retval: *mut *mut c_void,
     caller: usize,
 ) -> c_int {
+    unsafe { native_pthread_join_common(thread, retval, caller, None) }
+}
+
+/// Wait before core join can claim FINISHED -> JOINED or reclaim the handle.
+/// A cancellation or timeout leaves the target joinable and retval untouched.
+/// The optional deadline retains its original clock throughout the wait.
+unsafe fn native_pthread_join_common(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    caller: usize,
+    deadline: Option<(c_int, *const libc::timespec)>,
+) -> c_int {
     let thread_key = thread as usize;
     let handle_ptr = thread as *mut ThreadHandle;
     let my_tid = core_self_tid();
@@ -2425,7 +2428,11 @@ unsafe fn native_pthread_join(
     // a detached thread is undefined; we choose the same convention used for
     // joining an already-joined handle so callers see consistent behavior.
     if is_detached_thread_handle(thread) {
-        return libc::ESRCH;
+        return if deadline.is_some() {
+            libc::EINVAL
+        } else {
+            libc::ESRCH
+        };
     }
 
     // Verify this is a valid managed thread handle that we know about.
@@ -2441,16 +2448,95 @@ unsafe fn native_pthread_join(
         return libc::ESRCH;
     }
 
+    // SAFETY: the registry admitted this live, joinable handle. Concurrent
+    // join/detach of the same target is outside the pthread caller's contract.
+    let handle = unsafe { &*handle_ptr };
+    if matches!(
+        handle.state.load(Ordering::Acquire),
+        THREAD_DETACHED | THREAD_JOINED
+    ) {
+        return libc::EINVAL;
+    }
+
+    // A target that already exited is immediately joinable even with a past
+    // deadline. Keep explicit nanosecond validation for live waits; negative
+    // seconds with valid nanoseconds mean that the absolute deadline expired.
+    let deadline = if handle.tid.load(Ordering::Acquire) == 0 {
+        None
+    } else {
+        match deadline {
+            Some((clock, time)) => {
+                // SAFETY: timed entry points pass a non-null readable timespec.
+                let mut time = unsafe { *time };
+                if !(0..1_000_000_000).contains(&time.tv_nsec) {
+                    return libc::EINVAL;
+                }
+                if time.tv_sec < 0 {
+                    time = libc::timespec {
+                        tv_sec: 0,
+                        tv_nsec: 0,
+                    };
+                }
+                Some((clock, time))
+            }
+            None => None,
+        }
+    };
+
     if caller != 0 {
-        // SAFETY: validation has released the registry lock, and core join has
-        // not claimed the target or changed retval. Preserve the external
-        // caller through aliases; zero keeps tryjoin non-canceling. This only
-        // delivers pending requests, not interruption after blocking begins.
+        // SAFETY: all validation has finished and no registry lock is held.
+        // Nothing has claimed the target or written the caller's return value.
         unsafe { cancellation_window(caller, || ()) };
     }
 
-    // Call core_join_thread which handles final state transitions and synchronization.
-    // We must ensure the handle is removed from the registry if join succeeds.
+    // Native handles enter the registry only after CLONE_PARENT_SETTID and the
+    // startup handshake complete. Thereafter zero means kernel clear-tid, not
+    // an unpublished STARTING thread. Its exit wake is deliberately non-private.
+    let word = core::ptr::from_ref(&handle.tid).cast::<u32>().cast_mut();
+    loop {
+        let tid = handle.tid.load(Ordering::Acquire);
+        if tid == 0 {
+            break;
+        }
+        let (operation, timeout, bitset) = match deadline.as_ref() {
+            Some((clock, time)) => (
+                libc::FUTEX_WAIT_BITSET
+                    | if *clock == libc::CLOCK_REALTIME {
+                        libc::FUTEX_CLOCK_REALTIME
+                    } else {
+                        0
+                    },
+                time as *const libc::timespec as usize,
+                u32::MAX,
+            ),
+            None => (libc::FUTEX_WAIT, 0, 0),
+        };
+        let result = if caller == 0 {
+            // tryjoin and internal callers must never open a host cancellation
+            // window, even when the joining thread itself is host-backed.
+            unsafe { raw_syscall::sys_futex(word, operation, tid as u32, timeout, 0, bitset) }
+        } else {
+            // SAFETY: preserve the actual exported caller; the new wait adapter
+            // wakes owned threads through their static cancellation word.
+            unsafe {
+                cancellation_futex_window(caller, word, operation, tid as u32, timeout, bitset)
+            }
+        };
+        match result {
+            Ok(_) | Err(libc::EAGAIN | libc::EINTR) => {}
+            Err(error) => return error,
+        }
+    }
+
+    if caller != 0 {
+        // A request racing the final exit is still delivered before ownership
+        // transfers. Nothing below this point introduces a cancellation point.
+        unsafe { cancellation_window(caller, || ()) };
+    }
+
+    // Kernel clear-tid already completed, so core join cannot park after its
+    // FINISHED -> JOINED claim. It can safely reclaim the target before retval
+    // and registry ownership are committed together on the successful path.
     match unsafe { core_join_thread(handle_ptr) } {
         Ok(value) => {
             if !retval.is_null() {
@@ -6689,6 +6775,11 @@ unsafe fn cancellation_futex_window(
 /// nor the closure has an LSDA and the unwind passes through to the callers.
 #[inline(never)]
 unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() -> R) -> R {
+    // Explicit internal callers never introduce a cancellation point, including
+    // on hosted threads where address zero is outside this object's image.
+    if caller == 0 {
+        return blocking_syscall();
+    }
     // Native threads keep cooperative requests outside the host's TCB. Deliver
     // an already-pending request before the syscall can consume data, publish
     // output or acquire a semaphore token. Internal libc I/O must still finish
@@ -8688,83 +8779,13 @@ unsafe fn pthread_timedjoin_for_caller(
         // NULL timeout = blocking join.
         return unsafe { native_pthread_join(thread, retval, caller) };
     }
-    if !absolute_timespec_valid(abstime) {
-        return libc::EINVAL;
-    }
-    let thread_key = thread as usize;
-    let handle_ptr = thread as *mut ThreadHandle;
-    let my_tid = core_self_tid();
-
-    // Self-join detection.
-    if let Some(my_handle) = core_handle_for_tid(my_tid)
-        && handle_ptr == my_handle
-    {
-        return libc::EDEADLK;
-    }
-    if my_tid > 0 && thread_key == my_tid as usize {
-        return libc::EDEADLK;
-    }
-
-    // Peek at state without removing from registry.
-    let handle_ptr = {
-        let registry = THREAD_HANDLE_REGISTRY
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        match registry.get(&thread_key) {
-            Some(record) => {
-                let hp = record.handle_raw as *mut ThreadHandle;
-                let state = unsafe { (*hp).state.load(Ordering::Acquire) };
-                if state == THREAD_DETACHED || state == THREAD_JOINED {
-                    return libc::EINVAL;
-                }
-                hp
-            }
-            None => {
-                if is_detached_thread_handle(thread) {
-                    return libc::EINVAL;
-                }
-                return libc::ESRCH;
-            }
-        }
-    };
-
-    if caller != 0 {
-        // SAFETY: deadline, self-join and target checks completed with no lock
-        // held. The wait has not consumed the handle or published a result.
-        unsafe { cancellation_window(caller, || ()) };
-    }
-
-    // Wait for TID to be cleared (thread exit) with timeout.
-    // The kernel clears tid via CLONE_CHILD_CLEARTID and wakes futex waiters.
-    loop {
-        let tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
-        if tid == 0 {
-            // Thread exited. Perform the actual join.
-            return unsafe { native_pthread_join(thread, retval, caller) };
-        }
-        // Check if deadline has passed.
-        let now = match clock_gettime_checked(libc::CLOCK_REALTIME) {
-            Ok(now) => now,
-            Err(errno) => return errno,
-        };
-        if now.tv_sec > unsafe { (*abstime).tv_sec }
-            || (now.tv_sec == unsafe { (*abstime).tv_sec }
-                && now.tv_nsec >= unsafe { (*abstime).tv_nsec })
-        {
-            return libc::ETIMEDOUT;
-        }
-        // Futex wait on the tid field with timeout.
-        // SAFETY: handle_ptr is valid (from registry lookup above).
-        let tid_ptr = unsafe { &(*handle_ptr).tid };
-        // CLONE_CHILD_CLEARTID wakes joiners with a non-private futex op.
-        let ret = futex_wait_timed_shared(tid_ptr, tid, abstime);
-        if ret < 0 {
-            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
-            if errno == libc::ETIMEDOUT {
-                return libc::ETIMEDOUT;
-            }
-            // EINTR/EAGAIN — just retry.
-        }
+    unsafe {
+        native_pthread_join_common(
+            thread,
+            retval,
+            caller,
+            Some((libc::CLOCK_REALTIME, abstime)),
+        )
     }
 }
 
@@ -8835,8 +8856,8 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
 
 /// GNU `pthread_clockjoin_np` — clock-specific timed join.
 ///
-/// Native implementation: converts the clock-specific deadline to CLOCK_REALTIME
-/// and delegates to `pthread_timedjoin_np`.
+/// The kernel waits against the requested clock without epoch conversion.
+/// Cancellation and timeout leave the target available for a later join.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     thread: libc::pthread_t,
@@ -8845,6 +8866,9 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     abstime: *const libc::timespec,
 ) -> c_int {
     let caller = core::intrinsics::return_address() as usize;
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
     if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
         if abstime.is_null() {
             return unsafe { pthread_join_for_caller(thread, retval, caller) };
@@ -8857,15 +8881,7 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     if abstime.is_null() {
         return unsafe { native_pthread_join(thread, retval, caller) };
     }
-    if clockid == libc::CLOCK_REALTIME {
-        return unsafe { pthread_timedjoin_for_caller(thread, retval, abstime, caller) };
-    }
-    // Convert from the specified clock to CLOCK_REALTIME.
-    let real_deadline = match clock_convert_to_realtime(clockid, abstime) {
-        Ok(deadline) => deadline,
-        Err(err) => return err,
-    };
-    unsafe { pthread_timedjoin_for_caller(thread, retval, &real_deadline, caller) }
+    unsafe { native_pthread_join_common(thread, retval, caller, Some((clockid, abstime))) }
 }
 
 // ---------------------------------------------------------------------------

@@ -47,6 +47,15 @@ HOSTED_CPP_CASES = (
     "native-mixed-cancel-eventfd-read-blocked", "native-mixed-cancel-eventfd-write-blocked",
     "native-cancel-eventfd-read-blocked-disabled", "native-cancel-eventfd-write-blocked-disabled",
 )
+WAIT_CASES = (
+    "sem-wait", "sem-timed", "sem-clock-real", "sem-clock-mono",
+    "cond-wait", "cond-timed", "cond-clock-real", "cond-clock-mono",
+    "sem-wait-disabled", "cond-wait-disabled", "sem-wait-enosys", "cond-wait-enosys",
+    "cond-wait-peers", "cond-wait-peers-enosys",
+    "join", "join-alias", "join-timed", "join-clock-real", "join-clock-mono",
+    "join-timed-null", "join-clock-null", "join-disabled", "join-clock-mono-disabled",
+    "join-enosys", "join-disabled-enosys",
+)
 
 
 def sha256(path):
@@ -68,9 +77,11 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     source = root / "tests/integration/fixture_pthread_native_state.c"
     cpp_source = root / "tests/integration/fixture_cancel_forced_unwind.cpp"
+    wait_source = root / "tests/integration/fixture_pthread_native_wait.c"
     binary = output / "fixture_pthread_native_state"
     exceptions_binary = output / "fixture_pthread_native_state_exceptions"
     cpp_binary = output / "fixture_pthread_native_unwind"
+    wait_binary = output / "fixture_pthread_native_wait"
     c_frame_object = output / "native_cleanup_c_frame.o"
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("LD_PRELOAD", "LD_AUDIT") and not key.startswith("FRANKENLIBC_")}
@@ -96,6 +107,8 @@ def main():
         "-std=c++17", "-O2", "-fno-builtin", "-Wall", "-Wextra", "-Werror",
         str(cpp_source), str(c_frame_object), "-o", str(cpp_binary), "-pthread", "-ldl",
     ])
+    compile_fixture("wait", c_flags + ["-fno-exceptions", str(wait_source),
+                                      "-o", str(wait_binary), "-pthread", "-ldl"])
     provider = subprocess.run([str(binary), "--provider"], env=environment,
                               capture_output=True, text=True, timeout=15)
     if provider.returncode or provider.stderr:
@@ -103,6 +116,7 @@ def main():
     host = str(Path(provider.stdout.strip()).resolve(strict=True))
     records = []
     failures = []
+    explicit_skips = []
 
     def execute(label, case, expected, extra, executable=binary, oracle_for=None):
         try:
@@ -116,6 +130,12 @@ def main():
             stderr = (error.stderr or b"").decode(errors="replace") + "\nfixture timeout\n"
         record = {"lane": label, "case": case, "returncode": code,
                   "stdout": stdout, "stderr": stderr}
+        if code == 77 and stdout == f"pthread-native-wait:{case}:SKIP\n":
+            record["skipped"] = True
+            explicit_skips.append({"lane": label, "case": case, "reason": stderr.strip()})
+            print(f"{label} {case}: SKIP ({stderr.strip()})", flush=True)
+            # Required kernel/backend evidence being unavailable is never PASS.
+            # Keep this in failures below, and preserve the explicit reason.
         if oracle_for is not None:
             record["oracle_for"] = oracle_for
         records.append(record)
@@ -133,18 +153,30 @@ def main():
             cpp_negative["stderr"] == "pthread-native-unwind:provider-mismatch:pthread_create\n"):
         failures.append("cpp-provider-negative")
 
+    wait_negative = execute("wait-provider-negative", WAIT_CASES[0], str(library), {}, wait_binary)
+    if not (wait_negative["returncode"] == 86 and wait_negative["stdout"] == "" and
+            wait_negative["stderr"] == "pthread-native-wait:provider-mismatch:pthread_create\n"):
+        failures.append("wait-provider-negative")
+    backend_negative = execute("wait-backend-negative", WAIT_CASES[0], host,
+                               {"FRANKENLIBC_THREAD_NATIVE": "1"}, wait_binary)
+    if not (backend_negative["returncode"] == 1 and backend_negative["stdout"] == "" and
+            backend_negative["stderr"] ==
+            "pthread-native-wait:sem-wait:FAIL:thread backend does not match inherited/native or hosted TP\n"):
+        failures.append("wait-backend-negative")
+
     variants = (("", CASES, binary, "pthread-native-state", ("0", "1")),
                 ("exceptions-", CLEANUP_CASES, exceptions_binary, "pthread-native-state", ("0", "1")),
                 ("cpp-", CPP_CASES, cpp_binary, "pthread-native-unwind", ("0", "1")),
-                # Already-blocked native interruption is a separate open
-                # backend feature. These cases require actual hosted waits.
+                 ("wait-", WAIT_CASES, wait_binary, "pthread-native-wait", ("0", "1")),
+                 # Already-blocked eventfd I/O interruption remains a separate
+                 # backend feature; owned sem/cond/join waits are covered above.
                 ("cpp-blocked-", HOSTED_CPP_CASES, cpp_binary, "pthread-native-unwind", ("0",)))
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
             # surface. Compare its behavior to the public GNU contract while
             # requiring the candidate alias's actual provider in the fixture.
-            oracle_case = case.replace("-join-alias", "-join") if prefix == "cpp-" else case
+            oracle_case = case.replace("join-alias", "join") if prefix in ("cpp-", "wait-") else case
             reference = execute(f"{prefix}gnu", oracle_case, host, {}, executable,
                                 oracle_for=case if oracle_case != case else None)
             expected = f"{output_prefix}:{case}:PASS\n"
@@ -160,7 +192,8 @@ def main():
                     }, executable)
                     passed = (candidate["returncode"] == 0 and candidate["stdout"] == expected
                               and candidate["stderr"] == "")
-                    print(f"{label} {case}: {'PASS' if passed else 'FAIL'}", flush=True)
+                    if not candidate.get("skipped"):
+                        print(f"{label} {case}: {'PASS' if passed else 'FAIL'}", flush=True)
                     if not passed:
                         failures.append(f"{label}:{case}")
 
@@ -169,16 +202,19 @@ def main():
     report = {"library": str(library), "library_sha256": sha256(library),
               "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
               "cpp_fixture_sha256": sha256(cpp_source), "cpp_binary_sha256": sha256(cpp_binary),
+              "wait_fixture_sha256": sha256(wait_source), "wait_binary_sha256": sha256(wait_binary),
               "exceptions_binary_sha256": sha256(exceptions_binary),
               "gnu_provider": host, "gnu_cases": gnu_cases,
-              "candidate_cases": candidate_cases, "provider_negative_cases": 2,
+              "candidate_cases": candidate_cases, "provider_negative_cases": 3,
+              "backend_negative_cases": 1, "explicit_skips": explicit_skips,
               "failures": failures, "runs": records}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
         raise SystemExit("pthread native state: FAIL " + ", ".join(failures))
     print(f"pthread native state: PASS ({gnu_cases} live GNU cases, "
-          f"{candidate_cases} candidate cases, two provider negatives)")
+          f"{candidate_cases} candidate cases, three provider negatives, one backend negative)")
 
 
 if __name__ == "__main__":
     main()
+

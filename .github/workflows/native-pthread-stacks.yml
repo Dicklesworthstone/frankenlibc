@@ -27,6 +27,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'tests/integration/fixture_pthread_native_state.c'
+      - 'tests/integration/fixture_pthread_native_wait.c'
       - 'tests/integration/fixture_cancel_forced_unwind.cpp'
       - 'tests/integration/fixture_runtime_ready_arm.cpp'
       - 'scripts/check_pthread_native_state.py'

@@ -1294,7 +1294,13 @@ pub fn request_cancellation(handle_address: usize) -> bool {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 pub fn current_cancellation_wait() -> Option<CancellationWait> {
-    let handle = current_thread_handle()?;
+    if !super::tls::native_threads_may_exist() {
+        return None;
+    }
+    // Fork can rekey the registration before cached handle metadata changes.
+    // Use one current kernel identity for both the handle and its wait word.
+    let tid = syscall::sys_gettid();
+    let handle = handle_for_tid(tid)?;
     // SAFETY: the calling native thread owns its live handle until final exit.
     let handle = unsafe { &*handle };
     if handle.cancel_state.load(Ordering::Acquire) != 0
@@ -1302,7 +1308,7 @@ pub fn current_cancellation_wait() -> Option<CancellationWait> {
     {
         return None;
     }
-    super::tls::thread_cancellation_wait(handle.self_tid.load(Ordering::Acquire))
+    super::tls::thread_cancellation_wait(tid)
 }
 
 /// Consume a cooperative request for the calling native thread only.
@@ -1898,6 +1904,21 @@ mod tests {
             checks |= 32;
         }
         handle.exit_started.store(0, Ordering::Release);
+        // A fork survivor's TLS slot can have its new kernel TID while the
+        // handle still records its old identity. Metadata alone must not select
+        // another thread's cancellation word or hide the survivor's request.
+        let saved_tid = handle.self_tid.load(Ordering::Acquire);
+        handle
+            .self_tid
+            .store(saved_tid.wrapping_add(1), Ordering::Release);
+        if current_cancellation_wait().is_some_and(|current| {
+            current.address() == wait.address()
+                && current.expected() == wait.expected()
+                && current.pending()
+        }) {
+            checks |= 128;
+        }
+        handle.self_tid.store(saved_tid, Ordering::Release);
         if take_current_cancellation() && !wait.pending() && !take_current_cancellation() {
             checks |= 64;
         }
@@ -1914,7 +1935,7 @@ mod tests {
         let handle =
             unsafe { create_thread(cancellation_wait_state_start as *const () as usize, 0, 0) }
                 .expect("native cancellation-state probe must start");
-        assert_eq!(unsafe { join_thread(handle) }, Ok(127));
+        assert_eq!(unsafe { join_thread(handle) }, Ok(255));
         assert!(current_cancellation_wait().is_none());
     }
 
