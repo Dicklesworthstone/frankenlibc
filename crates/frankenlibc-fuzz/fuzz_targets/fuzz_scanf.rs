@@ -134,16 +134,28 @@ fn fuzz_parse_format(input: &ScanfFuzzInput) {
             ScanDirective::Literal(b) => {
                 let _ = b;
             }
-            ScanDirective::Whitespace => {}
+            ScanDirective::WideLiteral(_) => {
+                panic!("narrow format parser produced a wide literal");
+            }
+            ScanDirective::Whitespace | ScanDirective::Malformed => {}
             ScanDirective::Spec(spec) => {
                 let _ = spec.suppress;
                 let _ = spec.width;
                 let _ = spec.length;
                 let _ = spec.conversion;
                 if let Some(ref scanset) = spec.scanset {
-                    let _ = scanset.negated;
-                    // Verify the bitmap is valid (256 entries)
-                    assert_eq!(scanset.chars.len(), 256);
+                    // Exercise the complete byte domain through the public
+                    // membership API. Negation is applied by the scanner, so
+                    // it must not change the set's raw membership.
+                    let mut inverted = scanset.as_ref().clone();
+                    inverted.negated = !scanset.negated;
+                    for byte in u8::MIN..=u8::MAX {
+                        assert_eq!(
+                            scanset.contains(byte),
+                            inverted.contains(byte),
+                            "raw scanset membership must not depend on negation"
+                        );
+                    }
                 }
             }
         }
@@ -177,6 +189,7 @@ fn fuzz_scan_input(input: &ScanfFuzzInput) {
     // Verify value types
     for val in &result.values {
         match val {
+            ScanValue::Unset => panic!("scanner exposed an unused inline value"),
             ScanValue::SignedInt(_) => {}
             ScanValue::UnsignedInt(_) => {}
             ScanValue::Float(f) => {
@@ -184,6 +197,7 @@ fn fuzz_scan_input(input: &ScanfFuzzInput) {
                 let _ = f.is_nan();
                 let _ = f.is_infinite();
             }
+            ScanValue::LongDouble(_) => {}
             ScanValue::Char(bytes) => {
                 // Empty bytes is a valid outcome for crafted format
                 // specs like "%0c" (width=0). Harness can't assume

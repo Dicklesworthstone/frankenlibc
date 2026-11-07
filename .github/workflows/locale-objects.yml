@@ -9,9 +9,12 @@ on:
       - 'crates/frankenlibc-abi/src/string_abi*'
       - 'crates/frankenlibc-abi/src/time_abi*'
       - 'crates/frankenlibc-abi/src/wchar_abi*'
+      - 'crates/frankenlibc-abi/src/stdio_abi*'
       - 'crates/frankenlibc-abi/tests/conformance_diff_c_locale_codec.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_swscanf.rs'
       - 'crates/frankenlibc-core/src/iconv/**'
       - 'crates/frankenlibc-core/src/locale/**'
+      - 'crates/frankenlibc-core/src/stdio/scanf.rs'
       - 'tests/integration/fixture_locale_objects.c'
       - '.github/workflows/locale-objects.yml'
   workflow_dispatch:
@@ -75,6 +78,9 @@ jobs:
       - name: Check named single-byte conversion and locale selection
         run: |
           cargo test --release -p frankenlibc-abi --test conformance_diff_c_locale_codec -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/codec.log
+      - name: Check wide scanning with independent locale and destination oracles
+        run: |
+          cargo test --release -p frankenlibc-abi --test conformance_diff_swscanf --test conformance_diff_scanf_engine_still_covered -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/wide-scanf.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

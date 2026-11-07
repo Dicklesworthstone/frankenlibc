@@ -3772,7 +3772,12 @@ mod codec {
     /// Encode one character, as [`wchar_core::wctomb`].
     #[inline]
     pub(super) fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
-        let codec = active_multibyte_codec();
+        wctomb_with(active_multibyte_codec(), wc, dest)
+    }
+
+    /// Use one immutable codec across a conversion's sizing and writing passes.
+    #[inline]
+    pub(super) fn wctomb_with(codec: MultibyteCodec, wc: u32, dest: &mut [u8]) -> Option<usize> {
         if matches!(codec, MultibyteCodec::Utf8) {
             return wchar_core::wctomb(wc, dest);
         }
@@ -5752,7 +5757,9 @@ const WEOF_VALUE: u32 = u32::MAX;
 // ===========================================================================
 
 use frankenlibc_core::stdio::printf::LengthMod;
-use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue};
+use frankenlibc_core::stdio::scanf::{
+    InlineVec, ScanSpec, ScanValue, ScanWriteContext, ScanWriteError,
+};
 
 /// Extract variadic args for wide printf — mirrors extract_va_args from stdio_abi.
 /// Extract wide-printf variadic arguments, choosing a reader that can see them
@@ -5872,174 +5879,243 @@ macro_rules! extract_wprintf_args_registers {
     }};
 }
 
-/// Write scanned values through va_list pointers (variadic scanf).
-macro_rules! scanf_write_values {
-    ($values:expr, $directives:expr, $args:expr) => {{
-        let mut _val_idx = 0usize;
-        for _dir in $directives {
-            if let ScanDirective::Spec(_spec) = _dir {
-                if _spec.suppress {
-                    continue;
-                }
-                if _val_idx >= $values.len() {
-                    break;
-                }
-                unsafe {
-                    wscanf_write_one!(&$values[_val_idx], _spec, $args);
-                }
-                _val_idx += 1;
-            }
-        }
-    }};
+#[derive(Default)]
+struct WideScanAllocation {
+    destination: *mut *mut u8,
+    buffer: *mut u8,
 }
 
-/// Write a single scanned value to the next pointer from va_list.
-macro_rules! wscanf_write_one {
-    ($val:expr, $spec:expr, $args:expr) => {
-        match $val {
-            // `Unset` is the inline-slot placeholder from `ScanValues`; it never
-            // appears inside `as_slice()`'s populated prefix, and writing nothing
-            // is the safe answer if it ever did — a libc entry point must not
-            // panic on its own bookkeeping.
-            ScanValue::Unset => {}
-            ScanValue::SignedInt(v) => match $spec.length {
-                LengthMod::Hh => {
-                    let ptr = $args.next_arg::<*mut i8>();
-                    *ptr = *v as i8;
-                }
-                LengthMod::H => {
-                    let ptr = $args.next_arg::<*mut i16>();
-                    *ptr = *v as i16;
-                }
-                LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.next_arg::<*mut i64>();
-                    *ptr = *v;
-                }
-                LengthMod::Z | LengthMod::T => {
-                    let ptr = $args.next_arg::<*mut isize>();
-                    *ptr = *v as isize;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut c_int>();
-                    *ptr = *v as c_int;
-                }
-            },
-            ScanValue::UnsignedInt(v) => match $spec.length {
-                LengthMod::Hh => {
-                    let ptr = $args.next_arg::<*mut u8>();
-                    *ptr = *v as u8;
-                }
-                LengthMod::H => {
-                    let ptr = $args.next_arg::<*mut u16>();
-                    *ptr = *v as u16;
-                }
-                LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.next_arg::<*mut u64>();
-                    *ptr = *v;
-                }
-                LengthMod::Z | LengthMod::T => {
-                    let ptr = $args.next_arg::<*mut usize>();
-                    *ptr = *v as usize;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut u32>();
-                    *ptr = *v as u32;
-                }
-            },
-            // `%Lf` on the wide side reaches the same core engine, so it
-            // arrives already parsed at x87 precision; the destination is a
-            // `long double *` and the length modifier needs no second look.
-            ScanValue::LongDouble(bytes) => {
-                let ptr = $args.next_arg::<*mut c_void>();
-                crate::stdio_abi::write_long_double_bytes(ptr, bytes);
-            }
-            ScanValue::Float(v) => match $spec.length {
-                // `%Lf` writes a LONG DOUBLE, not a double. Conflating the two
-                // put an f64 bit pattern in the first eight bytes of an x87
-                // object -- read back as x87 that is a nonsense significand
-                // paired with whatever stale bytes were already in the
-                // sign/exponent halfword, so the stored value was unrelated to
-                // the input. The narrow side has always split these; this is
-                // the same call it makes.
-                LengthMod::BigL => {
-                    let ptr = $args.next_arg::<*mut c_void>();
-                    crate::stdio_abi::write_long_double_from_f64(ptr, *v);
-                }
-                LengthMod::L => {
-                    let ptr = $args.next_arg::<*mut f64>();
-                    *ptr = *v;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut f32>();
-                    *ptr = *v as f32;
-                }
-            },
-            ScanValue::Char(bytes) => match $spec.length {
-                // `%lc`: the destination is a `wchar_t*`. Decode the matched
-                // narrow (UTF-8) bytes back to wide characters; no NUL (like %c).
-                LengthMod::L => {
-                    let ptr = $args.next_arg::<*mut libc::wchar_t>();
-                    let mut i = 0isize;
-                    for ch in String::from_utf8_lossy(bytes).chars() {
-                        *ptr.offset(i) = ch as u32 as libc::wchar_t;
-                        i += 1;
-                    }
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut u8>();
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
-                }
-            },
-            ScanValue::String(bytes) => match $spec.length {
-                // `%ls`: the destination is a `wchar_t*`. Decode the matched
-                // narrow (UTF-8) token to wide characters and NUL-terminate.
-                // (Writing the raw narrow bytes left a `wchar_t` array of
-                // mangled half-characters.)
-                LengthMod::L => {
-                    let ptr = $args.next_arg::<*mut libc::wchar_t>();
-                    let mut i = 0isize;
-                    for ch in String::from_utf8_lossy(bytes).chars() {
-                        *ptr.offset(i) = ch as u32 as libc::wchar_t;
-                        i += 1;
-                    }
-                    *ptr.offset(i) = 0;
-                }
-                _ => {
-                    // Narrow `%s`/`%[` destination in a WIDE scanf: glibc converts
-                    // each matched wide char to multibyte then terminates by BOTH
-                    // a `wcrtomb(L'\0')` (one NUL in UTF-8) AND an explicit string
-                    // terminator — so it writes TWO trailing NUL bytes. Match it
-                    // byte-for-byte.
-                    let ptr = $args.next_arg::<*mut c_char>();
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
-                    *ptr.add(bytes.len()) = 0;
-                    *ptr.add(bytes.len() + 1) = 0;
-                }
-            },
-            ScanValue::CharsConsumed(n) => match $spec.length {
-                LengthMod::Hh => {
-                    let ptr = $args.next_arg::<*mut i8>();
-                    *ptr = *n as i8;
-                }
-                LengthMod::H => {
-                    let ptr = $args.next_arg::<*mut i16>();
-                    *ptr = *n as i16;
-                }
-                LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.next_arg::<*mut i64>();
-                    *ptr = *n as i64;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut c_int>();
-                    *ptr = *n as c_int;
-                }
-            },
-            ScanValue::Pointer(v) => {
-                let ptr = $args.next_arg::<*mut *mut c_void>();
-                *ptr = *v as *mut c_void;
+/// One assignment path for plain, va_list, and ISO-dialect wide scanf calls.
+/// Values are written as the scanner reaches them; an encoding error must not
+/// assign a later field or leave a stream past the failing wide character.
+struct WideScanWriter {
+    ap: *mut c_void,
+    codec: crate::locale_abi::MultibyteCodec,
+    arguments: InlineVec<*mut c_void, 4>,
+    sequential: usize,
+    allocations: InlineVec<WideScanAllocation, 4>,
+    error: Option<c_int>,
+    allocation_failure: bool,
+}
+
+impl WideScanWriter {
+    fn new(ap: *mut c_void) -> Self {
+        Self {
+            ap,
+            codec: crate::locale_abi::active_multibyte_codec(),
+            arguments: InlineVec::default(),
+            sequential: 0,
+            allocations: InlineVec::default(),
+            error: None,
+            allocation_failure: false,
+        }
+    }
+
+    /// Fetch only the arguments required by reached conversions. Positional
+    /// references can repeat or reorder pointers, including stack arguments.
+    unsafe fn destination(&mut self, spec: &ScanSpec) -> *mut c_void {
+        let index = if let Some(index) = spec.argument_index {
+            index.get() as usize - 1
+        } else {
+            let index = self.sequential;
+            self.sequential += 1;
+            index
+        };
+        while self.arguments.len() <= index {
+            // SAFETY: all scanf arguments, including those skipped by an N$
+            // reference, are pointers in the caller's live va_list.
+            let argument = unsafe { super::stdio_abi::va_next_pointer(self.ap) };
+            self.arguments.push(argument);
+        }
+        self.arguments[index]
+    }
+
+    fn encoding_failure(
+        &mut self,
+        spec: &ScanSpec,
+        context: ScanWriteContext,
+        consumed: usize,
+    ) -> ScanWriteError {
+        self.error = Some(libc::EILSEQ);
+        ScanWriteError {
+            consumed: context.token_start.saturating_add(consumed),
+            // GNU treats a failing %c as input failure; %s/%[ instead return
+            // the preceding assignment count, including zero.
+            input_failure: spec.writes_char_buffer(),
+        }
+    }
+
+    unsafe fn allocation_failed(
+        &mut self,
+        destination: *mut c_void,
+        context: ScanWriteContext,
+    ) -> ScanWriteError {
+        self.error = Some(libc::ENOMEM);
+        self.allocation_failure = true;
+        // GNU releases earlier allocations from this call on ENOMEM and
+        // clears their receiving pointers. Encoding failures keep them.
+        for allocation in self.allocations.as_mut_slice() {
+            // SAFETY: these buffers were allocated by this writer and have not
+            // been freed; each receiving pointer is a live caller argument.
+            unsafe {
+                crate::malloc_abi::free(allocation.buffer.cast());
+                *allocation.destination = std::ptr::null_mut();
             }
         }
-    };
+        // SAFETY: the failed assignment-allocation argument is a char ** or
+        // wchar_t **; both store an object pointer of the supported ABI size.
+        unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
+        ScanWriteError {
+            consumed: context.token_start,
+            input_failure: true,
+        }
+    }
+
+    unsafe fn write(
+        &mut self,
+        spec: &ScanSpec,
+        value: Option<&ScanValue>,
+        context: ScanWriteContext,
+    ) -> Result<(), ScanWriteError> {
+        // SAFETY: the scanner invokes this writer only for a reached,
+        // nonsuppressed directive whose destination the caller supplied.
+        let destination = unsafe { self.destination(spec) };
+        let Some(value) = value else {
+            // A reached %m may fail to match before producing any value.
+            // SAFETY: the core only sends this notification for %m pointers.
+            unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
+            return Ok(());
+        };
+        match value {
+            ScanValue::Char(bytes) | ScanValue::String(bytes) => {
+                // SAFETY: the parsed directive specifies the destination's
+                // element type and allocation form; input bytes are borrowed.
+                unsafe { self.write_text(spec, bytes, destination, context) }
+            }
+            _ => {
+                // Numeric, pointer, %n, and long-double stores are identical
+                // for narrow and wide scanners. The core counts wide %n in
+                // wide characters, before handing that value to this store.
+                // SAFETY: destination has the type required by the directive.
+                unsafe { super::stdio_abi::vscanf_write_one(value, spec, destination) };
+                Ok(())
+            }
+        }
+    }
+
+    unsafe fn write_text(
+        &mut self,
+        spec: &ScanSpec,
+        bytes: &[u8],
+        destination: *mut c_void,
+        context: ScanWriteContext,
+    ) -> Result<(), ScanWriteError> {
+        let wide = matches!(spec.length, LengthMod::L);
+        let string = spec.writes_string_buffer();
+        // A string needs one terminator in its destination encoding. Do not
+        // duplicate the reset NUL: callers may provide exactly width times
+        // MB_CUR_MAX plus one byte. Character fields have no terminator.
+        let terminator_bytes = if !string {
+            0
+        } else if wide {
+            size_of::<libc::wchar_t>()
+        } else {
+            1
+        };
+        let mut scratch = [0u8; 6];
+        let output = if spec.alloc {
+            // Failed %m conversions leave NULL, without exposing a partially
+            // converted allocation. Validate and size using the same codec as
+            // the write pass, then allocate exactly the complete output.
+            // SAFETY: an assignment-allocation destination is a live pointer.
+            unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
+            let mut needed = terminator_bytes;
+            let mut offset = 0usize;
+            while offset < bytes.len() {
+                let Some((wc, advance)) = wchar_core::mbtowc(&bytes[offset..]) else {
+                    return Err(self.encoding_failure(spec, context, offset));
+                };
+                let width = if wide {
+                    size_of::<libc::wchar_t>()
+                } else {
+                    let Some(width) = codec::wctomb_with(self.codec, wc, &mut scratch) else {
+                        return Err(self.encoding_failure(spec, context, offset + advance));
+                    };
+                    width
+                };
+                let Some(total) = needed.checked_add(width) else {
+                    // SAFETY: no current allocation exists yet; previous
+                    // allocations and the receiving pointer remain live.
+                    return Err(unsafe { self.allocation_failed(destination, context) });
+                };
+                needed = total;
+                offset += advance;
+            }
+            // SAFETY: the requested size was checked for overflow. malloc
+            // supplies alignment sufficient for either char or wchar_t.
+            let buffer = unsafe { crate::malloc_abi::malloc(needed.max(1)).cast::<u8>() };
+            if buffer.is_null() {
+                // SAFETY: prior allocations and destination remain live.
+                return Err(unsafe { self.allocation_failed(destination, context) });
+            }
+            buffer
+        } else {
+            destination.cast::<u8>()
+        };
+
+        let mut offset = 0usize;
+        let mut written = 0usize;
+        while offset < bytes.len() {
+            let step = wchar_core::mbtowc(&bytes[offset..]);
+            let encoded = step.and_then(|(wc, advance)| {
+                let width = if wide {
+                    Some(size_of::<libc::wchar_t>())
+                } else {
+                    codec::wctomb_with(self.codec, wc, &mut scratch)
+                }?;
+                Some((wc, advance, width))
+            });
+            let Some((wc, advance, width)) = encoded else {
+                if spec.alloc {
+                    // SAFETY: output is this conversion's unpublished malloc
+                    // allocation; the caller's receiving pointer is still NULL.
+                    unsafe { crate::malloc_abi::free(output.cast()) };
+                }
+                let consumed = offset + step.map_or(0, |(_, advance)| advance);
+                return Err(self.encoding_failure(spec, context, consumed));
+            };
+            // SAFETY: a fixed destination has space for the converted field;
+            // a %m destination was sized with this same stateless codec. Each
+            // store contains one complete character, leaving failures' prefix.
+            unsafe {
+                if wide {
+                    output
+                        .add(written)
+                        .cast::<libc::wchar_t>()
+                        .write(wc as libc::wchar_t);
+                } else {
+                    std::ptr::copy_nonoverlapping(scratch.as_ptr(), output.add(written), width);
+                }
+            }
+            offset += advance;
+            written += width;
+        }
+        if terminator_bytes != 0 {
+            // SAFETY: the conversion's destination includes its terminators;
+            // %m reserves these bytes explicitly before allocation.
+            unsafe { std::ptr::write_bytes(output.add(written), 0, terminator_bytes) };
+        }
+        if spec.alloc {
+            // SAFETY: output is now a complete caller-owned allocation and the
+            // receiving argument is a live char ** or wchar_t **.
+            unsafe { *destination.cast::<*mut u8>() = output };
+            self.allocations.push(WideScanAllocation {
+                destination: destination.cast(),
+                buffer: output,
+            });
+        }
+        Ok(())
+    }
 }
 
 // ===========================================================================
@@ -7337,6 +7413,58 @@ unsafe fn wide_scanf_format_cstr(format: *const libc::wchar_t) -> Option<std::ff
     }
 }
 
+struct WideScanOutcome {
+    count: c_int,
+    consumed: usize,
+    input_failure: bool,
+    allocation_failure: bool,
+    error: Option<c_int>,
+}
+
+impl WideScanOutcome {
+    fn return_value(&self) -> c_int {
+        if let Some(error) = self.error {
+            // Publish conversion errors after the stream's cursor restoration
+            // and all temporary writer allocations have been released.
+            unsafe { set_abi_errno(error) };
+        }
+        if self.allocation_failure || (self.input_failure && self.count == 0) {
+            libc::EOF
+        } else {
+            self.count
+        }
+    }
+}
+
+/// Scan and assign together, so a failed destination encoding terminates the
+/// scan before any later assignment or stream consumption is committed.
+unsafe fn scan_wide_buffer(
+    input: &[u8],
+    format: *const c_char,
+    ap: *mut c_void,
+    dialect: ScanfDialect,
+) -> Option<WideScanOutcome> {
+    let directives = super::stdio_abi::scanf_wide_directives(format, dialect)?;
+    let mut writer = WideScanWriter::new(ap);
+    let result = frankenlibc_core::stdio::scanf::scan_input_wide_with(
+        input,
+        directives.as_slice(),
+        |spec, value, context| {
+            // SAFETY: this call owns the live va_list and the parsed format
+            // describes each reached destination supplied by the caller.
+            unsafe { writer.write(spec, value, context) }
+        },
+    );
+    let outcome = WideScanOutcome {
+        count: result.count,
+        consumed: result.consumed,
+        input_failure: result.input_failure,
+        allocation_failure: writer.allocation_failure,
+        error: writer.error,
+    };
+    Some(outcome)
+}
+
 /// Native `swscanf`: scan from wide string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swscanf(
@@ -7344,24 +7472,14 @@ pub unsafe extern "C" fn swscanf(
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
-    if s.is_null() || format.is_null() {
-        return libc::EOF;
+    unsafe {
+        vswscanf_with_dialect(
+            s,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            ScanfDialect::Legacy,
+        )
     }
-    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
-        return 0;
-    };
-    let input = unsafe { wide_input_to_narrow(s) };
-    let Some((result, directives)) =
-        super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), ScanfDialect::Legacy)
-    else {
-        return libc::EOF;
-    };
-
-    if result.input_failure && result.count == 0 {
-        return libc::EOF;
-    }
-    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
-    result.count
 }
 
 /// A single wide character requires no speculative byte refill after it has
@@ -7384,54 +7502,14 @@ unsafe fn scan_one_wide_char(
 /// Native `wscanf`: scan from stdin.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> c_int {
-    let caller = core::intrinsics::return_address() as usize;
-    let stdin_ptr = super::stdio_abi::active_stdin_stream();
-    if format.is_null() {
-        return libc::EOF;
-    }
-    #[cfg(not(feature = "standalone"))]
-    if let Some(result) = unsafe {
-        super::stdio_abi::try_host_vfwscanf(
-            stdin_ptr,
+    unsafe {
+        vwscanf_with_dialect(
             format,
             std::ptr::addr_of_mut!(args).cast(),
+            core::intrinsics::return_address() as usize,
             ScanfDialect::Legacy,
         )
-    } {
-        return result;
     }
-    if !super::stdio_abi::orient_stream_wide(stdin_ptr) {
-        return libc::EOF;
-    }
-    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
-        return 0;
-    };
-    if fmt_cstr.as_bytes() == b"%lc" {
-        // SAFETY: the exact format consumes one wchar_t pointer.
-        let destination = unsafe { args.next_arg::<*mut libc::wchar_t>() };
-        return unsafe { scan_one_wide_char(stdin_ptr, destination, caller) };
-    }
-    let sid = super::stdio_abi::stream_id_from_handle(stdin_ptr);
-    let Some((result, directives)) = super::stdio_abi::with_wide_io_active(|| {
-        let (input, scanf_seek_base) =
-            unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(sid, 4096, caller) };
-        let Some((result, directives)) =
-            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), ScanfDialect::Legacy)
-        else {
-            super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, 0);
-            return None;
-        };
-        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, result.consumed);
-        Some((result, directives))
-    }) else {
-        return libc::EOF;
-    };
-
-    if result.input_failure && result.count == 0 {
-        return libc::EOF;
-    }
-    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
-    result.count
 }
 
 /// Native `fwscanf`: scan from stream.
@@ -7441,53 +7519,15 @@ pub unsafe extern "C-unwind" fn fwscanf(
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
-    let caller = core::intrinsics::return_address() as usize;
-    if stream.is_null() || format.is_null() {
-        return libc::EOF;
-    }
-    #[cfg(not(feature = "standalone"))]
-    if let Some(result) = unsafe {
-        super::stdio_abi::try_host_vfwscanf(
+    unsafe {
+        vfwscanf_with_dialect(
             stream,
             format,
             std::ptr::addr_of_mut!(args).cast(),
+            core::intrinsics::return_address() as usize,
             ScanfDialect::Legacy,
         )
-    } {
-        return result;
     }
-    if !super::stdio_abi::orient_stream_wide(stream) {
-        return libc::EOF;
-    }
-    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
-        return 0;
-    };
-    if fmt_cstr.as_bytes() == b"%lc" {
-        // SAFETY: the exact format consumes one wchar_t pointer.
-        let destination = unsafe { args.next_arg::<*mut libc::wchar_t>() };
-        return unsafe { scan_one_wide_char(stream, destination, caller) };
-    }
-    let id = super::stdio_abi::stream_id_from_handle(stream);
-    let Some((result, directives)) = super::stdio_abi::with_wide_io_active(|| {
-        let (input, scanf_seek_base) =
-            unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
-        let Some((result, directives)) =
-            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), ScanfDialect::Legacy)
-        else {
-            super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
-            return None;
-        };
-        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, result.consumed);
-        Some((result, directives))
-    }) else {
-        return libc::EOF;
-    };
-
-    if result.input_failure && result.count == 0 {
-        return libc::EOF;
-    }
-    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
-    result.count
 }
 
 /// Native `vswscanf`: scan from wide string with va_list.
@@ -7513,24 +7553,11 @@ pub(crate) unsafe fn vswscanf_with_dialect(
         return 0;
     };
     let input = unsafe { wide_input_to_narrow(s) };
-    let Some((result, directives)) =
-        super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), dialect)
+    let Some(outcome) = (unsafe { scan_wide_buffer(&input, fmt_cstr.as_ptr(), ap, dialect) })
     else {
         return libc::EOF;
     };
-
-    if result.input_failure && result.count == 0 {
-        return libc::EOF;
-    }
-    unsafe {
-        super::stdio_abi::vscanf_write_values(
-            result.values.as_slice(),
-            directives.as_slice(),
-            ap,
-            result.failed_alloc,
-        )
-    };
-    result.count
+    outcome.return_value()
 }
 
 /// Native `vwscanf`: scan from stdin with va_list.
@@ -7621,33 +7648,20 @@ pub(crate) unsafe fn vfwscanf_with_dialect(
         return unsafe { scan_one_wide_char(stream, destination, caller) };
     }
     let id = super::stdio_abi::stream_id_from_handle(stream);
-    let Some((result, directives)) = super::stdio_abi::with_wide_io_active(|| {
+    let Some(outcome) = super::stdio_abi::with_wide_io_active(|| {
         let (input, scanf_seek_base) =
             unsafe { super::stdio_abi::read_stream_for_scanf_for_caller(id, 4096, caller) };
-        let Some((result, directives)) =
-            super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr(), dialect)
+        let Some(outcome) = (unsafe { scan_wide_buffer(&input, fmt_cstr.as_ptr(), ap, dialect) })
         else {
             super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
             return None;
         };
-        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, result.consumed);
-        Some((result, directives))
+        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, outcome.consumed);
+        Some(outcome)
     }) else {
         return libc::EOF;
     };
-
-    if result.input_failure && result.count == 0 {
-        return libc::EOF;
-    }
-    unsafe {
-        super::stdio_abi::vscanf_write_values(
-            result.values.as_slice(),
-            directives.as_slice(),
-            ap,
-            result.failed_alloc,
-        )
-    };
-    result.count
+    outcome.return_value()
 }
 
 // ---------------------------------------------------------------------------

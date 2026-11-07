@@ -14059,26 +14059,26 @@ pub(crate) fn scanf_core(
     format: *const c_char,
     dialect: ScanfDialect,
 ) -> Option<(ScanResult, ScanDirectives)> {
-    scanf_core_impl(input, format, false, dialect)
+    let directives = scanf_directives(format, false, dialect)?;
+    let result = scan_input(input, directives.as_slice());
+    Some((result, directives))
 }
 
-/// WIDE-stream variant for the `swscanf`/`fwscanf` family: `input` is the wide
-/// input re-encoded as UTF-8, and narrow `%s`/`%c`/`%[` field widths count WIDE
-/// characters (not bytes), matching the C wide-scanf semantics.
-pub(crate) fn scanf_core_wide(
-    input: &[u8],
+/// Parse the wide scanf language independently of executing its assignments.
+/// The wide ABI's writer runs during scanning so a locale-conversion failure
+/// stops input consumption and later assignments at the same boundary.
+pub(crate) fn scanf_wide_directives(
     format: *const c_char,
     dialect: ScanfDialect,
-) -> Option<(ScanResult, ScanDirectives)> {
-    scanf_core_impl(input, format, true, dialect)
+) -> Option<ScanDirectives> {
+    scanf_directives(format, true, dialect)
 }
 
-fn scanf_core_impl(
-    input: &[u8],
+fn scanf_directives(
     format: *const c_char,
     wide_input: bool,
     dialect: ScanfDialect,
-) -> Option<(ScanResult, ScanDirectives)> {
+) -> Option<ScanDirectives> {
     // PERF (bd-2g7oyh, same lever family as the sscanf input scan):
     // this is the SHARED scanf engine, so EVERY scanf variant (sscanf/fscanf/
     // vfscanf/vsscanf/wide) lengths a short caller FORMAT string here. Strict mode
@@ -14088,7 +14088,11 @@ fn scanf_core_impl(
         return None;
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
-    let mut directives = parse_scanf_format(fmt_bytes);
+    let mut directives = if wide_input {
+        frankenlibc_core::stdio::scanf::parse_scanf_format_wide(fmt_bytes)
+    } else {
+        parse_scanf_format(fmt_bytes)
+    };
     if wide_input || dialect == ScanfDialect::C23 {
         // Keep the input and dialect flags on this call's directives: a nested
         // scan must not change the outer call's prefix or whitespace policy.
@@ -14099,12 +14103,7 @@ fn scanf_core_impl(
             }
         }
     }
-    let result = if wide_input {
-        frankenlibc_core::stdio::scanf::scan_input_wide(input, directives.as_slice())
-    } else {
-        scan_input(input, directives.as_slice())
-    };
-    Some((result, directives))
+    Some(directives)
 }
 
 /// Origin metadata for a bulk scanf read.

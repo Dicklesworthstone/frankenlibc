@@ -11,7 +11,7 @@
 //! excludes `%n`, matching POSIX/glibc.
 
 use super::printf::LengthMod;
-use core::num::NonZeroUsize;
+use core::num::NonZeroU32;
 
 /// Whitespace test matching C's `isspace` in the C locale. POSIX scanf
 /// defines both the white-space *directive* and the `%s`/`%[`-style
@@ -355,7 +355,9 @@ pub struct ScanSpec {
     pub width: Option<usize>,
     /// One-based POSIX destination index (`%2$s`), recognized by the wide parser.
     /// Narrow parsing leaves this unset until its ABI writers support indices.
-    pub argument_index: Option<NonZeroUsize>,
+    /// Fits the existing padding; POSIX destination limits are below u32::MAX.
+    /// The parser rejects larger indices rather than truncating them.
+    pub argument_index: Option<NonZeroU32>,
     pub length: LengthMod,
     pub conversion: u8,
     /// Boxed so a spec without a scanset — every conversion except `%[...]` —
@@ -643,14 +645,14 @@ fn parse_scanf_format_impl<const WIDE_INPUT: bool>(fmt: &[u8]) -> ScanDirectives
             // this wide-only avoids changing narrow writers' argument order.
             if wide_input && fmt[i].is_ascii_digit() {
                 let mut end = i;
-                let mut index = Some(0usize);
+                let mut index = Some(0u32);
                 while end < fmt.len() && fmt[end].is_ascii_digit() {
                     index = index
-                        .and_then(|n| n.checked_mul(10)?.checked_add((fmt[end] - b'0') as usize));
+                        .and_then(|n| n.checked_mul(10)?.checked_add((fmt[end] - b'0') as u32));
                     end += 1;
                 }
                 if end < fmt.len() && fmt[end] == b'$' {
-                    let Some(index) = index.and_then(NonZeroUsize::new) else {
+                    let Some(index) = index.and_then(NonZeroU32::new) else {
                         directives.push(ScanDirective::Malformed);
                         break;
                     };
@@ -4062,6 +4064,7 @@ mod wide_scan_tests {
         );
         for malformed in [
             b"%0$s".as_slice(),
+            b"%4294967296$s",
             b"%999999999999999999999999999999999999999$s",
         ] {
             let directives = parse_scanf_format_wide(malformed);
