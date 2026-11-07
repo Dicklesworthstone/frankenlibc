@@ -6028,24 +6028,21 @@ impl WideScanWriter {
             terminator_bytes,
         };
         if spec.alloc && spec.writes_char_buffer() {
-            // Character fields have a known requested extent. Reserve it
-            // before reading so an impossible large width reports ENOMEM
-            // even when the available input is only a short prefix. Narrow
-            // fields may grow later if actual encoded characters need more
-            // than one byte; strings and scansets remain incremental.
-            let unit = if wide { size_of::<libc::wchar_t>() } else { 1 };
-            let Some(capacity) = spec.width.unwrap_or(1).checked_mul(unit) else {
-                // SAFETY: this field has no allocation yet; its receiving
-                // pointer and all completed earlier allocations remain live.
-                return Err(unsafe { self.stream_allocation_failed(destination) });
-            };
-            let capacity = capacity.max(1);
-            // SAFETY: the checked size reserves correctly aligned storage for
-            // char or wchar_t and stays private until EndText publishes it.
+            // Keep initial allocation failure before the first source read,
+            // while bounding the reservation independently of a huge width.
+            // Later appends grow storage from characters actually supplied.
+            let units = spec
+                .width
+                .unwrap_or(1)
+                .clamp(1, if wide { 1024 } else { 100 });
+            let unit_bytes = if wide { size_of::<libc::wchar_t>() } else { 1 };
+            let capacity = units * unit_bytes;
+            // SAFETY: at most 1024 wchar_t elements are reserved, and malloc
+            // supplies their required alignment. Storage is not yet published.
             text.output = unsafe { crate::malloc_abi::malloc(capacity).cast() };
             if text.output.is_null() {
-                // SAFETY: failed malloc owns no storage; fatal cleanup also
-                // clears and releases the earlier completed %m assignments.
+                // SAFETY: this field owns no allocation; its receiving pointer
+                // and all completed earlier allocation arguments remain live.
                 return Err(unsafe { self.stream_allocation_failed(destination) });
             }
             text.capacity = capacity;
@@ -6517,6 +6514,24 @@ pub(crate) unsafe fn printf_multibyte_prefix(
         }
     }
     Some((consumed, count))
+}
+
+/// Carry a validated narrow printf prefix into the renderer's UTF-8 transport.
+/// The prefix scanner already checked UTF-8/ASCII; named single-byte codecs
+/// still need transcoding even when the FILE itself is bound to UTF-8.
+pub(crate) fn printf_multibyte_utf8(bytes: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+    let crate::locale_abi::MultibyteCodec::SingleByte(codec) =
+        crate::locale_abi::active_multibyte_codec()
+    else {
+        return Some(std::borrow::Cow::Borrowed(bytes));
+    };
+    let mut utf8 = Vec::with_capacity(bytes.len());
+    for &byte in bytes {
+        let character = char::from_u32(codec.decode(byte)?)?;
+        let mut encoded = [0; 4];
+        utf8.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+    }
+    Some(std::borrow::Cow::Owned(utf8))
 }
 
 /// Decode the wide renderer's internal transport into a bounded wchar buffer.

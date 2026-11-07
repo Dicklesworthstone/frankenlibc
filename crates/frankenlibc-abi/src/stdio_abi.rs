@@ -5162,6 +5162,11 @@ unsafe fn read_cached_ascii_line_wide_inner(
     if s.is_eof() {
         return Some((0, false));
     }
+    // The ordinary wide reader reports EBADF for write-only streams. The core
+    // ASCII probe can mark ferror, but it cannot publish the ABI errno value.
+    if !s.is_readable() {
+        return None;
+    }
     if s.wide_codec()
         .is_some_and(|codec| !codec.is_ascii_compatible())
     {
@@ -9428,14 +9433,18 @@ pub(crate) unsafe fn render_segments(
                             };
                             // SAFETY: the decoder read exactly these bytes, and
                             // the surrounding branch established a nonnull ptr.
-                            let utf8 = unsafe { std::slice::from_raw_parts(ptr, byte_count) };
+                            let bytes = unsafe { std::slice::from_raw_parts(ptr, byte_count) };
+                            let Some(utf8) = crate::wchar_abi::printf_multibyte_utf8(bytes) else {
+                                frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
+                                break;
+                            };
                             let mut width_spec = resolved_spec;
                             width_spec.precision = Precision::None;
                             if let Width::Fixed(w) = width_spec.width {
                                 let extra = utf8.len().saturating_sub(wide_count);
                                 width_spec.width = Width::Fixed(w + extra);
                             }
-                            format_str(utf8, &width_spec, &mut buf);
+                            format_str(&utf8, &width_spec, &mut buf);
                         } else {
                             let s_bytes = if let Precision::Fixed(precision) =
                                 resolved_spec.precision

@@ -1645,12 +1645,15 @@ impl<'a> WideScanSession<'a> {
                             }
                         }
                         Some(WideScanInput::Eof | WideScanInput::Error) => {
-                            // FILE scanf completes a nonempty short %c too.
-                            // A source error may finish a prefix; a destination
-                            // writer error above always stops immediately.
-                            if let Some(result) =
-                                self.end_text(spec, matched, matched != 0, true, writer)
-                            {
+                            // Character fields must reach their full width;
+                            // strings and scansets may finish a nonempty prefix.
+                            if let Some(result) = self.end_text(
+                                spec,
+                                matched,
+                                matched != 0 && kind != ScanOperationKind::Character,
+                                true,
+                                writer,
+                            ) {
                                 return result;
                             }
                         }
@@ -5067,34 +5070,63 @@ mod wide_stream_scan_tests {
     }
 
     #[test]
-    fn source_end_finishes_nonempty_text_including_short_character_fields() {
+    fn source_end_aborts_short_character_fields_and_finishes_strings() {
         for terminal in [WideScanInput::Eof, WideScanInput::Error] {
-            for format in ["%3c%n", "%3lc%n", "%3mc%n", "%3mlc%n", "%s%n", "%[A-Z]%n"] {
+            for (format, characters) in [
+                ("%3c%n", true),
+                ("%3lc%n", true),
+                ("%3mc%n", true),
+                ("%3mlc%n", true),
+                ("%s%n", false),
+                ("%[A-Z]%n", false),
+            ] {
                 for input in ["A", "AB"] {
                     let trace = run(format, input, Some(terminal));
                     assert_eq!(
                         trace.summary,
                         WideScanSummary {
-                            count: 1,
+                            count: i32::from(!characters),
                             consumed: input.len(),
-                            input_failure: false
+                            input_failure: characters
                         },
                         "{format}/{input}/{terminal:?}"
                     );
-                    assert_eq!((trace.ends, trace.aborts), (1, 0));
-                    assert!(
-                        matches!(trace.values[0], ScanValue::CharsConsumed(n) if n == input.len())
+                    assert_eq!(
+                        (trace.ends, trace.aborts),
+                        (usize::from(!characters), usize::from(characters))
                     );
+                    if characters {
+                        assert!(trace.values.is_empty());
+                    } else {
+                        assert!(
+                            matches!(trace.values[0], ScanValue::CharsConsumed(n) if n == input.len())
+                        );
+                    }
+                }
+                if characters {
+                    let trace = run(format, "ABC", Some(terminal));
+                    assert_eq!(
+                        trace.summary,
+                        WideScanSummary {
+                            count: 1,
+                            consumed: 3,
+                            input_failure: false
+                        }
+                    );
+                    assert_eq!((trace.ends, trace.aborts), (1, 0));
+                    assert_eq!(trace.requests.len(), 3);
+                    assert!(matches!(
+                        trace.values.as_slice(),
+                        [ScanValue::CharsConsumed(3)]
+                    ));
                 }
             }
             let trace = run("%*3c%n", "A", Some(terminal));
             assert_eq!(trace.summary.count, 0);
-            assert!(!trace.summary.input_failure);
+            assert!(trace.summary.input_failure);
             assert!(trace.texts.is_empty());
-            assert!(matches!(
-                trace.values.as_slice(),
-                [ScanValue::CharsConsumed(1)]
-            ));
+            assert!(trace.values.is_empty());
+            assert_eq!(trace.requests.len(), 2);
         }
     }
 

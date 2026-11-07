@@ -612,10 +612,18 @@ mod locale_scanning {
             return;
         }
         for engine in stream_scan_engines() {
-            for input in [&b"A\xffX"[..], &b"A\xc3X"[..], &b"A"[..], &b"AB"[..]] {
+            for input in [
+                &b"A\xffX"[..],
+                &b"A\xc3X"[..],
+                &b"A"[..],
+                &b"AB"[..],
+                &b"ABA"[..],
+            ] {
                 let invalid = input.iter().any(|&byte| byte >= 0x80);
-                let prefix = if input == b"AB" { 2 } else { 1 };
+                let prefix = input.iter().take_while(|byte| byte.is_ascii()).count();
                 for format in ["%s%n", "%[AB]%n", "%3c%n"] {
+                    let characters = format == "%3c%n";
+                    let complete = !characters || prefix == 3;
                     let stream = scan_stream(engine, input, c"C.UTF-8", c"C.UTF-8");
                     let mut output = [0xa5u8; 16];
                     let mut count = SENTINEL;
@@ -631,7 +639,11 @@ mod locale_scanning {
                     };
                     assert_eq!(
                         (rc, error, count),
-                        (1, if invalid { libc::EILSEQ } else { 23 }, prefix as c_int),
+                        (
+                            if complete { 1 } else { libc::EOF },
+                            if invalid { libc::EILSEQ } else { 23 },
+                            if complete { prefix as c_int } else { SENTINEL },
+                        ),
                         "{} {input:?} {format}",
                         engine.name
                     );
@@ -644,7 +656,10 @@ mod locale_scanning {
                     unsafe {
                         assert_eq!((engine.io.tell)(stream), prefix as libc::c_long);
                         assert_eq!((engine.io.error)(stream) != 0, invalid);
-                        assert_eq!((engine.io.eof)(stream) != 0, !invalid);
+                        assert_eq!(
+                            (engine.io.eof)(stream) != 0,
+                            !invalid && !(characters && complete)
+                        );
                         assert_eq!((engine.io.close)(stream), 0);
                     }
                 }
@@ -654,6 +669,7 @@ mod locale_scanning {
                     ("%3mlc%n", true, false),
                     ("%ms%n", false, true),
                 ] {
+                    let complete = terminated || prefix == 3;
                     let stream = scan_stream(engine, input, c"C.UTF-8", c"C.UTF-8");
                     let mut narrow_pointer = std::ptr::without_provenance_mut::<c_char>(1);
                     let mut wide_pointer = std::ptr::without_provenance_mut::<Wc>(1);
@@ -679,28 +695,108 @@ mod locale_scanning {
                     };
                     assert_eq!(
                         (rc, error, count),
-                        (1, if invalid { libc::EILSEQ } else { 23 }, prefix as c_int),
+                        (
+                            if complete { 1 } else { libc::EOF },
+                            if invalid { libc::EILSEQ } else { 23 },
+                            if complete { prefix as c_int } else { SENTINEL },
+                        ),
                         "{} {input:?} {format}",
                         engine.name
                     );
-                    assert!(!pointer.is_null());
-                    unsafe {
-                        if wide {
-                            assert_eq!(
-                                std::slice::from_raw_parts(pointer.cast::<Wc>(), prefix),
-                                &w(if prefix == 1 { "A" } else { "AB" })[..prefix]
-                            );
-                        } else {
-                            assert_eq!(
-                                std::slice::from_raw_parts(pointer, prefix),
-                                &input[..prefix]
-                            );
-                            if terminated {
-                                assert_eq!(*pointer.add(prefix), 0);
+                    if complete {
+                        assert!(!pointer.is_null() && pointer.addr() != 1);
+                        // SAFETY: a completed assignment owns at least prefix
+                        // output elements, and a string also owns its NUL.
+                        unsafe {
+                            if wide {
+                                let expected: Vec<Wc> =
+                                    input[..prefix].iter().map(|byte| Wc::from(*byte)).collect();
+                                assert_eq!(
+                                    std::slice::from_raw_parts(pointer.cast::<Wc>(), prefix),
+                                    expected
+                                );
+                            } else {
+                                assert_eq!(
+                                    std::slice::from_raw_parts(pointer, prefix),
+                                    &input[..prefix]
+                                );
+                                if terminated {
+                                    assert_eq!(*pointer.add(prefix), 0);
+                                }
                             }
+                            (engine.free)(pointer.cast());
                         }
-                        (engine.free)(pointer.cast());
+                    } else {
+                        assert!(
+                            pointer.is_null(),
+                            "{} unfinished field cleared",
+                            engine.name
+                        );
+                    }
+                    // SAFETY: the same FILE remains live through these queries.
+                    unsafe {
                         assert_eq!((engine.io.tell)(stream), prefix as libc::c_long);
+                        assert_eq!((engine.io.error)(stream) != 0, invalid);
+                        assert_eq!(
+                            (engine.io.eof)(stream) != 0,
+                            !invalid && (terminated || !complete)
+                        );
+                        assert_eq!((engine.io.close)(stream), 0);
+                    }
+                }
+            }
+
+            // An unfinished character conversion preserves earlier assignments
+            // and its written prefix, without reaching the following %n.
+            for input in [b"7 A\xffX".as_slice(), b"7 A".as_slice()] {
+                let invalid = input.contains(&0xff);
+                for (format, complete) in [("%d %s%n", true), ("%d %3c%n", false)] {
+                    let stream = scan_stream(engine, input, c"C.UTF-8", c"C.UTF-8");
+                    let mut output = [0xa5u8; 16];
+                    let (mut integer, mut count) = (SENTINEL, SENTINEL);
+                    // SAFETY: live FILE and terminated format; the argument
+                    // pointers own their integer and sixteen-byte destinations.
+                    unsafe {
+                        *(engine.io.errno)() = 23;
+                        let rc = (engine.scan)(
+                            stream,
+                            w(format).as_ptr(),
+                            &mut integer,
+                            output.as_mut_ptr(),
+                            &mut count,
+                        );
+                        assert_eq!(
+                            (rc, *(engine.io.errno)(), integer, count),
+                            (
+                                if complete { 2 } else { 1 },
+                                if invalid { libc::EILSEQ } else { 23 },
+                                7,
+                                if complete { 3 } else { SENTINEL },
+                            ),
+                            "{} {input:?} {format}",
+                            engine.name
+                        );
+                        assert_eq!(output[0], b'A');
+                        let guards = if complete {
+                            assert_eq!(output[1], 0);
+                            if engine.name.starts_with("host_") {
+                                // GNU writes both the initial-state encoding
+                                // terminator and a final NUL. Native output ends
+                                // after its one NUL; check each engine's tail.
+                                assert_eq!(output[2], 0);
+                                &output[3..]
+                            } else {
+                                &output[2..]
+                            }
+                        } else {
+                            &output[1..]
+                        };
+                        assert!(
+                            guards.iter().all(|&byte| byte == 0xa5),
+                            "{} {input:?} {format} output={output:?}",
+                            engine.name
+                        );
+                        assert_eq!((engine.io.tell)(stream), 3);
                         assert_eq!((engine.io.error)(stream) != 0, invalid);
                         assert_eq!((engine.io.eof)(stream) != 0, !invalid);
                         assert_eq!((engine.io.close)(stream), 0);
@@ -708,10 +804,17 @@ mod locale_scanning {
                 }
             }
 
-            for (format, expected_count, expected_error, expected_flag) in [
-                ("%n", 0, 23, false),
-                ("A %n", 1, 23, true),
-                ("%*3c%n", 1, libc::EILSEQ, true),
+            for (
+                format,
+                expected_result,
+                expected_count,
+                expected_error,
+                expected_flag,
+                position,
+            ) in [
+                ("%n", 0, 0, 23, false, 0),
+                ("A %n", 0, 1, 23, true, 1),
+                ("%*3c%n", libc::EOF, SENTINEL, libc::EILSEQ, true, 1),
             ] {
                 let stream = scan_stream(engine, b"A\xffX", c"C.UTF-8", c"C.UTF-8");
                 let mut count = SENTINEL;
@@ -722,14 +825,14 @@ mod locale_scanning {
                 };
                 assert_eq!(
                     (rc, error, count),
-                    (0, expected_error, expected_count),
+                    (expected_result, expected_error, expected_count),
                     "{} {format}",
                     engine.name
                 );
                 unsafe {
                     assert_eq!((engine.io.error)(stream) != 0, expected_flag);
                     assert_eq!((engine.io.eof)(stream), 0);
-                    assert_eq!((engine.io.tell)(stream), expected_count as libc::c_long);
+                    assert_eq!((engine.io.tell)(stream), position);
                     assert_eq!((engine.io.close)(stream), 0);
                 }
             }
@@ -947,8 +1050,8 @@ mod locale_scanning {
     }
 
     #[test]
-    fn wide_file_fixed_character_allocation_reports_enomem() {
-        if !isolated("wide_file_fixed_character_allocation_reports_enomem") {
+    fn wide_file_large_character_width_preserves_completed_fields() {
+        if !isolated("wide_file_large_character_width_preserves_completed_fields") {
             return;
         }
         // Prepare the native allocator before restricting the address space;
@@ -969,9 +1072,9 @@ mod locale_scanning {
                 let mut failed_wide = std::ptr::without_provenance_mut::<Wc>(1);
                 let (mut integer, mut prefix_count, mut count) = (SENTINEL, SENTINEL, SENTINEL);
 
-                // A limit relative to the live process accommodates the Rust
-                // harness and libc metadata. Large native user blocks obtain
-                // fresh raw allocations; only small blocks use segment caches.
+                // Field width limits input, rather than requiring a width-sized
+                // allocation before reading. Keep little address-space headroom
+                // to reject an eager billion-character allocation on short input.
                 let status = std::fs::read_to_string("/proc/self/status").unwrap();
                 let vm_kib = status
                     .lines()
@@ -1027,15 +1130,35 @@ mod locale_scanning {
                 };
                 let restored = unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) };
                 assert_eq!(restored, 0, "restore address-space limit");
+                // SAFETY: the FILE stays live until close and status queries
+                // do not consume input or release the completed allocation.
+                let status = unsafe {
+                    (
+                        (engine.io.tell)(stream),
+                        (engine.io.error)(stream) != 0,
+                        (engine.io.eof)(stream) != 0,
+                    )
+                };
                 unsafe { assert_eq!((engine.io.close)(stream), 0) };
                 assert_eq!(
                     (rc, error, integer, prefix_count, count),
-                    (libc::EOF, libc::ENOMEM, 7, 3, SENTINEL),
-                    "{} {} allocation failure",
+                    (2, 23, 7, 3, SENTINEL),
+                    "{} {} incomplete character field",
                     engine.name,
                     if wide { "%mlc" } else { "%mc" }
                 );
-                assert!(first.is_null(), "{} prior allocation released", engine.name);
+                assert_eq!(status, (5, false, true));
+                assert!(
+                    !first.is_null(),
+                    "{} prior allocation retained",
+                    engine.name
+                );
+                // SAFETY: the earlier completed %ms assigned "A" and its NUL;
+                // its allocation remains caller-owned after the later failure.
+                unsafe {
+                    assert_eq!(std::slice::from_raw_parts(first.cast::<u8>(), 2), b"A\0");
+                    (engine.free)(first.cast());
+                }
                 assert!(
                     if wide {
                         failed_wide.is_null()
@@ -1188,40 +1311,62 @@ mod locale_scanning {
         if !isolated("wide_character_read_checks_stream_mode") {
             return;
         }
-        for (mode, readable) in [(c"w", false), (c"r+", true)] {
-            for engine in wide_io_engines() {
-                select(c"C.UTF-8");
-                let (backing, _) = wide_stream_path(engine.name, b"Z");
-                let file = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(backing)
-                    .unwrap();
-                let fd = file.into_raw_fd();
-                // SAFETY: fd is live and transferred to a successful fdopen;
-                // mode is terminated, and the FILE remains live until close.
-                unsafe {
-                    let stream = (engine.fdopen)(fd, mode.as_ptr());
-                    assert!(!stream.is_null());
-                    assert!((engine.orient)(stream, 1) > 0);
-                    *(engine.errno)() = 0;
-                    let wc = (engine.get)(stream);
-                    assert_eq!(
-                        wc,
-                        if readable { u32::from(b'Z') } else { u32::MAX },
-                        "{} stream mode {mode:?}",
-                        engine.name
-                    );
-                    assert_eq!(*(engine.errno)(), if readable { 0 } else { libc::EBADF });
-                    assert_eq!((engine.error)(stream) != 0, !readable);
-                    assert_eq!((engine.eof)(stream), 0);
-                    assert_eq!(
-                        frankenlibc_core::syscall::sys_lseek(fd, 0, libc::SEEK_CUR),
-                        Ok(i64::from(readable)),
-                        "{} denied reads must not consume descriptor bytes",
-                        engine.name
-                    );
-                    assert_eq!((engine.close)(stream), 0);
+        for line_read in [false, true] {
+            for (mode, readable) in [(c"w", false), (c"r+", true)] {
+                for engine in wide_io_engines() {
+                    select(c"C.UTF-8");
+                    let (backing, _) = wide_stream_path(engine.name, b"Z");
+                    let file = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(backing)
+                        .unwrap();
+                    let fd = file.into_raw_fd();
+                    // SAFETY: fd is live and transferred to a successful fdopen;
+                    // mode is terminated, line buffers have four writable slots,
+                    // and the FILE remains live until close.
+                    unsafe {
+                        let stream = (engine.fdopen)(fd, mode.as_ptr());
+                        assert!(!stream.is_null());
+                        assert!((engine.orient)(stream, 1) > 0);
+                        *(engine.errno)() = 0;
+                        if line_read {
+                            let mut line = [SENTINEL as Wc; 4];
+                            let result = (engine.gets)(line.as_mut_ptr(), 4, stream);
+                            if readable {
+                                assert_eq!(result, line.as_mut_ptr());
+                                assert_eq!(line, [Wc::from(b'Z'), 0, SENTINEL, SENTINEL]);
+                                assert_ne!((engine.eof)(stream), 0);
+                            } else {
+                                assert!(result.is_null());
+                                assert_eq!(line, [SENTINEL; 4]);
+                                assert_eq!((engine.eof)(stream), 0);
+                            }
+                        } else {
+                            let wc = (engine.get)(stream);
+                            assert_eq!(
+                                wc,
+                                if readable { u32::from(b'Z') } else { u32::MAX },
+                                "{} stream mode {mode:?}",
+                                engine.name
+                            );
+                            assert_eq!((engine.eof)(stream), 0);
+                        }
+                        assert_eq!(
+                            *(engine.errno)(),
+                            if readable { 0 } else { libc::EBADF },
+                            "{} line_read={line_read} stream mode {mode:?}",
+                            engine.name
+                        );
+                        assert_eq!((engine.error)(stream) != 0, !readable);
+                        assert_eq!(
+                            frankenlibc_core::syscall::sys_lseek(fd, 0, libc::SEEK_CUR),
+                            Ok(i64::from(readable)),
+                            "{} denied reads must not consume descriptor bytes",
+                            engine.name
+                        );
+                        assert_eq!((engine.close)(stream), 0);
+                    }
                 }
             }
         }

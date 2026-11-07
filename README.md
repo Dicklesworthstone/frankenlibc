@@ -3943,9 +3943,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,822 native/direct-syscall rows (68.5%), 1,279 host-backed wrapper rows (31.1%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,898 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 231,712 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 232,467 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,795 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,172,833 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,172,897 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
@@ -3954,7 +3954,7 @@ Selected project health snapshot:
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Top-level shell/scripts files | 731 files under `scripts/` |
+| Top-level shell/scripts files | 732 files under `scripts/` |
 | GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,049 lines (supplied-matrix consistency + atomic-site inventory) |
 | Curated `LD_PRELOAD` snapshot | 189 pass / 0 fail / 4 optional skip + 1 xfail at source `a8a4110b…`; stale relative to HEAD |
