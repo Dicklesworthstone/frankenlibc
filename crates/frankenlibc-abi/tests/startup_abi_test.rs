@@ -24,6 +24,13 @@ use frankenlibc_abi::startup_helpers::SecureModeState;
 use frankenlibc_abi::stdlib_abi::{atexit, on_exit};
 use frankenlibc_abi::unistd_abi::{__cxa_atexit, __cxa_finalize};
 
+// Exercise the production build-policy helpers in this existing startup target.
+// Unrelated build entrypoints are unused here; production builds retain their
+// usual lint settings. A path module also lets cargo fmt visit build.rs.
+#[path = "../build.rs"]
+#[allow(dead_code)]
+mod build_policy;
+
 // ---------------------------------------------------------------------------
 // Helpers for building synthetic argv/envp/auxv
 // ---------------------------------------------------------------------------

@@ -1,7 +1,4 @@
 // Preserve all existing build-time policy checks and generated artifacts.
-// The test target exercises the included policy helpers, rather than the
-// unrelated build entrypoint and startup-certificate generator.
-#[cfg_attr(test, allow(dead_code))]
 mod checks {
     include!("build.rs");
     pub fn run() {
