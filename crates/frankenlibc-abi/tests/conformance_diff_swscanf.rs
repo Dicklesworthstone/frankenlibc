@@ -1916,6 +1916,131 @@ mod locale_scanning {
     }
 
     #[test]
+    fn allocated_output_failure_stops_later_count_stores() {
+        if !isolated("allocated_output_failure_stops_later_count_stores") {
+            return;
+        }
+        type AsprintfFn =
+            unsafe extern "C-unwind" fn(*mut *mut c_char, *const c_char, ...) -> c_int;
+        // SAFETY: resolve the independent GNU provider before imposing the
+        // temporary address-space limit; its signature matches asprintf.
+        let host_print: AsprintfFn =
+            unsafe { host_fn(c"asprintf", stdio_abi::asprintf as *const ()) };
+        let entries = [
+            ("host", host_print, host().errno, host().free),
+            (
+                "native",
+                stdio_abi::asprintf as AsprintfFn,
+                errno_abi::__errno_location as ErrnoFn,
+                malloc_abi::free as FreeFn,
+            ),
+        ];
+        // Small valid fields warm both allocators and prove the count stores
+        // work. The large fields are valid int widths, but need more memory
+        // than the additional mappings allowed for either actual call.
+        for width in [4, 128 * 1024 * 1024] {
+            for left in [false, true] {
+                for kind in ["d", "s"] {
+                    let text = format!("P%n%{}{width}{kind}%nQ", if left { "-" } else { "" });
+                    let format = std::ffi::CString::new(text.as_bytes()).unwrap();
+                    let mut expected = None;
+                    for (engine, print, errno, free) in entries {
+                        let (mut before, mut after) = (SENTINEL, SENTINEL);
+                        let mut output = std::ptr::null_mut();
+                        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+                        let vm_kib = status
+                            .lines()
+                            .find(|line| line.starts_with("VmSize:"))
+                            .and_then(|line| line.split_whitespace().nth(1))
+                            .expect("Linux supplies VmSize")
+                            .parse::<libc::rlim_t>()
+                            .unwrap();
+                        let ceiling = vm_kib
+                            .checked_mul(1024)
+                            .and_then(|bytes| bytes.checked_add(64 * 1024 * 1024))
+                            .unwrap();
+                        let mut previous = libc::rlimit {
+                            rlim_cur: 0,
+                            rlim_max: 0,
+                        };
+                        // SAFETY: the limit structures are initialized and
+                        // writable. Restore the exact previous limit before
+                        // allocating observations, asserting, or unwinding.
+                        assert_eq!(
+                            unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) },
+                            0
+                        );
+                        let constrained = libc::rlimit {
+                            rlim_cur: ceiling.min(previous.rlim_cur),
+                            rlim_max: previous.rlim_max,
+                        };
+                        // SAFETY: the initialized limit keeps the previous hard
+                        // ceiling; this isolated child owns its process limits.
+                        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &constrained) }, 0);
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            // SAFETY: each promoted argument matches its
+                            // terminated format and all count slots are live.
+                            unsafe {
+                                *errno() = 23;
+                                let rc = if kind == "d" {
+                                    print(
+                                        &mut output,
+                                        format.as_ptr(),
+                                        &mut before,
+                                        7 as c_int,
+                                        &mut after,
+                                    )
+                                } else {
+                                    print(
+                                        &mut output,
+                                        format.as_ptr(),
+                                        &mut before,
+                                        c"A".as_ptr(),
+                                        &mut after,
+                                    )
+                                };
+                                (rc, *errno(), before, after)
+                            }
+                        }));
+                        // SAFETY: previous is the exact limit read above; only
+                        // the soft ceiling changed during the call.
+                        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) }, 0);
+                        let result =
+                            result.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+                        // Failed GNU asprintf leaves the out-pointer unspecified.
+                        // Compare successful bytes only. Release successful
+                        // GNU output and every native block with its own
+                        // allocator; do not use GNU's unspecified error output.
+                        let bytes = if result.0 >= 0 {
+                            assert!(!output.is_null());
+                            // SAFETY: a successful provider result owns a live,
+                            // NUL-terminated string until its matching free.
+                            unsafe { CStr::from_ptr(output).to_bytes().to_vec() }
+                        } else {
+                            Vec::new()
+                        };
+                        if !output.is_null() && (result.0 >= 0 || engine == "native") {
+                            // SAFETY: free matches this provider. Native returns
+                            // its owned block even if rendering had failed.
+                            unsafe { free(output.cast()) };
+                        }
+                        eprintln!("{engine} {text:?}: {result:?}");
+                        if engine == "host" && width != 4 {
+                            assert_eq!(result, (-1, libc::ENOMEM, 1, SENTINEL), "GNU {text}");
+                        }
+                        let observed = (result, bytes);
+                        if let Some(expected) = expected.as_ref() {
+                            assert_eq!(&observed, expected, "{engine} {text}");
+                        } else {
+                            expected = Some(observed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn formatted_output_field_overflow_keeps_completed_prefix() {
         if !isolated("formatted_output_field_overflow_keeps_completed_prefix") {
             return;

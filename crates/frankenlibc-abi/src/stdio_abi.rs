@@ -9645,6 +9645,13 @@ pub(crate) unsafe fn render_segments(
                         let _ = resolved_spec.render_value_arg(raw, &mut buf);
                     }
                 }
+                // Core renderers latch allocation errors instead of aborting.
+                // Stop before later directives (especially %n), and retain
+                // the failure for the outer printf-family result to consume.
+                if let Some(error) = take_render_failure() {
+                    frankenlibc_core::stdio::printf::note_render_failure(error);
+                    break;
+                }
             }
         }
     }
