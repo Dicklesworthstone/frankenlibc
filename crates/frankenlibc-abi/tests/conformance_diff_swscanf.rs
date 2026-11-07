@@ -1916,6 +1916,213 @@ mod locale_scanning {
     }
 
     #[test]
+    fn formatted_output_field_overflow_keeps_completed_prefix() {
+        if !isolated("formatted_output_field_overflow_keeps_completed_prefix") {
+            return;
+        }
+        select(c"C.UTF-8");
+        type SwprintfFn = unsafe extern "C-unwind" fn(*mut Wc, usize, *const Wc, ...) -> c_int;
+        #[derive(Clone, Copy)]
+        enum Print {
+            Narrow(SnprintfFn),
+            Wide(SwprintfFn),
+        }
+        // SAFETY: each independent GNU symbol has the declared variadic ABI.
+        let entries = unsafe {
+            [
+                (
+                    "swprintf",
+                    Print::Wide(host_fn(c"swprintf", fl::swprintf as *const ())),
+                    Print::Wide(fl::swprintf),
+                ),
+                (
+                    "snprintf",
+                    Print::Narrow(host_fn(c"snprintf", stdio_abi::snprintf as *const ())),
+                    Print::Narrow(stdio_abi::snprintf),
+                ),
+                (
+                    "vsnprintf",
+                    Print::Narrow(call_host_vsnprintf),
+                    Print::Narrow(call_vsnprintf),
+                ),
+            ]
+        };
+        // Warm the native allocator before a temporary, per-call limit. The
+        // limit prevents a regression from reserving gigabytes for padding.
+        let warm = unsafe { malloc_abi::malloc(64) };
+        assert!(!warm.is_null());
+        unsafe { malloc_abi::free(warm) };
+        for field in [
+            "18446744073709551615",
+            "2147483648",
+            "18446744073709551616",
+            "4",
+        ] {
+            for precision in [false, true] {
+                for kind in ["lc", "ls", "s", "d"] {
+                    for counts in [true, false] {
+                        let conversion =
+                            format!("%{}{field}{kind}", if precision { "." } else { "" });
+                        let text = if counts {
+                            format!("P%n{conversion}%nQ")
+                        } else {
+                            format!("P{conversion}Q")
+                        };
+                        let narrow_format = std::ffi::CString::new(text.as_bytes()).unwrap();
+                        let wide_format = w(&text);
+                        let input = [0x110000u32, 0];
+                        for (entry, host_print, native_print) in entries {
+                            let mut expected = None;
+                            for (engine, print, errno) in [
+                                ("host", host_print, host().errno),
+                                (
+                                    "native",
+                                    native_print,
+                                    errno_abi::__errno_location as ErrnoFn,
+                                ),
+                            ] {
+                                let (mut before, mut after) = (SENTINEL, SENTINEL);
+                                let mut narrow_output = [0xa5u8; 64];
+                                let mut wide_output = [SENTINEL as Wc; 64];
+                                let status = std::fs::read_to_string("/proc/self/status").unwrap();
+                                let vm_kib = status
+                                    .lines()
+                                    .find(|line| line.starts_with("VmSize:"))
+                                    .and_then(|line| line.split_whitespace().nth(1))
+                                    .expect("Linux supplies VmSize")
+                                    .parse::<libc::rlim_t>()
+                                    .unwrap();
+                                let ceiling = vm_kib
+                                    .checked_mul(1024)
+                                    .and_then(|bytes| bytes.checked_add(64 * 1024 * 1024))
+                                    .unwrap();
+                                let mut previous = libc::rlimit {
+                                    rlim_cur: 0,
+                                    rlim_max: 0,
+                                };
+                                assert_eq!(
+                                    unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) },
+                                    0
+                                );
+                                let constrained = libc::rlimit {
+                                    rlim_cur: ceiling.min(previous.rlim_cur),
+                                    rlim_max: previous.rlim_max,
+                                };
+                                assert_eq!(
+                                    unsafe { libc::setrlimit(libc::RLIMIT_AS, &constrained) },
+                                    0
+                                );
+                                // Keep the actual promoted argument types, including
+                                // the optional count pointers, for every format.
+                                macro_rules! invoke {
+                                    ($print:expr, $output:expr, $format:expr) => {
+                                        match (counts, kind) {
+                                            (true, "lc") => $print(
+                                                $output,
+                                                64,
+                                                $format,
+                                                &mut before,
+                                                input[0],
+                                                &mut after,
+                                            ),
+                                            (true, "ls") => $print(
+                                                $output,
+                                                64,
+                                                $format,
+                                                &mut before,
+                                                input.as_ptr(),
+                                                &mut after,
+                                            ),
+                                            (true, "s") => $print(
+                                                $output,
+                                                64,
+                                                $format,
+                                                &mut before,
+                                                c"A".as_ptr(),
+                                                &mut after,
+                                            ),
+                                            (true, _) => $print(
+                                                $output,
+                                                64,
+                                                $format,
+                                                &mut before,
+                                                7 as c_int,
+                                                &mut after,
+                                            ),
+                                            (false, "lc") => $print($output, 64, $format, input[0]),
+                                            (false, "ls") => {
+                                                $print($output, 64, $format, input.as_ptr())
+                                            }
+                                            (false, "s") => {
+                                                $print($output, 64, $format, c"A".as_ptr())
+                                            }
+                                            (false, _) => $print($output, 64, $format, 7 as c_int),
+                                        }
+                                    };
+                                }
+                                // SAFETY: buffers, terminated formats and promoted
+                                // arguments match each provider. Restore the limit
+                                // even if native Rust reports an arithmetic panic.
+                                let result = std::panic::catch_unwind(
+                                    std::panic::AssertUnwindSafe(|| unsafe {
+                                        *errno() = 23;
+                                        let rc = match print {
+                                            Print::Narrow(print) => invoke!(
+                                                print,
+                                                narrow_output.as_mut_ptr().cast(),
+                                                narrow_format.as_ptr()
+                                            ),
+                                            Print::Wide(print) => invoke!(
+                                                print,
+                                                wide_output.as_mut_ptr(),
+                                                wide_format.as_ptr()
+                                            ),
+                                        };
+                                        (rc, *errno(), before, after)
+                                    }),
+                                );
+                                assert_eq!(
+                                    unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) },
+                                    0
+                                );
+                                let result = result.unwrap_or_else(|panic| {
+                                    eprintln!("{entry}/{engine} format={text:?}");
+                                    std::panic::resume_unwind(panic)
+                                });
+                                let output: Vec<u32> = match print {
+                                    Print::Narrow(_) => {
+                                        narrow_output.iter().copied().map(u32::from).collect()
+                                    }
+                                    Print::Wide(_) => {
+                                        wide_output.iter().map(|&wc| wc as u32).collect()
+                                    }
+                                };
+                                let observed = (result, output);
+                                if let Some(expected) = expected.as_ref() {
+                                    assert_eq!(
+                                        &observed, expected,
+                                        "{entry}/{engine} format={text:?}"
+                                    );
+                                } else {
+                                    if field != "4" {
+                                        assert_eq!(result.0, -1, "GNU {entry} format={text:?}");
+                                        assert_eq!(
+                                            result.1,
+                                            libc::EOVERFLOW,
+                                            "GNU {entry} format={text:?}"
+                                        );
+                                    }
+                                    expected = Some(observed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn wide_output_preserves_extended_wide_arguments() {
         if !isolated("wide_output_preserves_extended_wide_arguments") {
             return;

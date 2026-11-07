@@ -7371,6 +7371,7 @@ struct ExtensionSpec {
 enum ExtensionSegment<'a> {
     Literal(&'a [u8]),
     Spec(ExtensionSpec),
+    Error(c_int),
 }
 
 struct ExtensionPlan<'a> {
@@ -7394,14 +7395,16 @@ fn extension_decimal(bytes: &[u8], pos: &mut usize) -> Result<usize, c_int> {
 
 fn extension_position(bytes: &[u8], pos: &mut usize) -> Result<Option<usize>, c_int> {
     let start = *pos;
-    let value = extension_decimal(bytes, pos)?;
-    if *pos > start && bytes.get(*pos) == Some(&b'$') {
-        *pos += 1;
-        value.checked_sub(1).map(Some).ok_or(errno::EINVAL)
-    } else {
-        *pos = start;
-        Ok(None)
+    let mut end = start;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
     }
+    if end == start || bytes.get(end) != Some(&b'$') {
+        return Ok(None);
+    }
+    let value = extension_decimal(bytes, pos)?;
+    *pos += 1;
+    value.checked_sub(1).map(Some).ok_or(errno::EINVAL)
 }
 
 fn extension_record_type(
@@ -7558,7 +7561,15 @@ unsafe fn extension_plan<'a>(
                 // precision; the renderer receives the actual argument later.
                 if is_precision { -1 } else { 0 }
             } else {
-                extension_decimal(bytes, &mut pos)? as c_int
+                match extension_decimal(bytes, &mut pos) {
+                    Ok(value) => value as c_int,
+                    Err(error) => {
+                        // This field fails when reached, after previous output
+                        // and %n effects. Its value and later fields are unused.
+                        plan.segments.push(ExtensionSegment::Error(error));
+                        return Ok(plan);
+                    }
+                }
             };
             if is_precision {
                 precision = value;
@@ -7778,6 +7789,19 @@ pub(crate) unsafe fn parse_printf_extensions(bytes: &[u8], n: usize, types: *mut
         )
     } {
         Ok(plan) => {
+            // The public type-query API keeps its all-or-error contract;
+            // deferred output errors must not publish a partial type array.
+            if let Some(error) = plan.segments.iter().find_map(|segment| {
+                if let ExtensionSegment::Error(error) = segment {
+                    Some(*error)
+                } else {
+                    None
+                }
+            }) {
+                // SAFETY: errno is the current thread's writable error slot.
+                unsafe { set_abi_errno(error) };
+                return 0;
+            }
             for (index, kind) in plan.types.iter().enumerate() {
                 if let Some(kind) = kind {
                     // SAFETY: plan.types is capped at the caller's n slots.
@@ -8124,6 +8148,7 @@ unsafe fn extension_format_stream(
     let mut count = 0usize;
     for segment in plan.segments {
         let emitted = match segment {
+            ExtensionSegment::Error(error) => return Err(error),
             ExtensionSegment::Literal(literal) => {
                 // SAFETY: the formatter owns the live, oriented FILE lock.
                 unsafe { output.write(literal) }?
@@ -9264,6 +9289,18 @@ pub(crate) unsafe fn render_segments(
                 } else {
                     None
                 };
+
+                // GNU rejects literal width/precision beyond INT_MAX before
+                // rendering this field, even if that conversion ignores it.
+                // Preserve earlier output/count stores and stop before later
+                // directives. Dynamic fields retain their conversion-specific
+                // handling, including GNU's unknown-conversion INT_MIN spelling.
+                let field_overflow = matches!(spec.width, Width::Fixed(width) if width > c_int::MAX as usize)
+                    || matches!(spec.precision, Precision::Fixed(precision) if precision > c_int::MAX as usize);
+                if field_overflow {
+                    frankenlibc_core::stdio::printf::note_render_failure(errno::EOVERFLOW);
+                    break;
+                }
 
                 if resolved_spec.is_literal_percent() {
                     buf.push(b'%');
