@@ -122,6 +122,7 @@ struct AllocatorReentrySlot {
     in_fallback_table: AtomicBool,
     /// Set (by this thread only) while `StringMembraneGuard` is active on this
     /// thread, avoiding a separate `thread_local!` lookup on entry and drop.
+    #[cfg(not(feature = "owned-tls-cache"))]
     string_membrane_active: AtomicBool,
     /// Stack address of the innermost user signal handler frame entered on
     /// this thread through signal_abi's trampolines, 0 when none; see
@@ -153,6 +154,7 @@ impl AllocatorReentrySlot {
             mt_folded: UnsafeCell::new(MallocStatsState::new()),
             mt_unfolded_events: AtomicU32::new(0),
             in_fallback_table: AtomicBool::new(false),
+            #[cfg(not(feature = "owned-tls-cache"))]
             string_membrane_active: AtomicBool::new(false),
             signal_handler_sp: AtomicUsize::new(0),
         }
@@ -4876,6 +4878,7 @@ pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {
 /// Combined slot check for `enter_string_membrane_guard`: verifies this thread
 /// is not in allocator reentry or a signal handler, and returns its per-slot
 /// `string_membrane_active` flag in a single slot lookup.
+#[cfg(not(feature = "owned-tls-cache"))]
 #[inline(always)]
 pub(crate) fn try_string_membrane_slot_flag() -> Option<&'static AtomicBool> {
     let slot = current_allocator_reentry_slot()?;

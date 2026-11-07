@@ -257,6 +257,7 @@ impl TlsValidationCache {
     /// `Option<RefCell<TlsValidationCache>>` via exported `memcpy` before the
     /// `RefCell` borrow guard was active, re-entering validation and
     /// overflowing 32 KiB thread stacks).
+    #[cfg(not(feature = "owned-tls-cache"))]
     #[must_use]
     const fn const_new() -> Self {
         Self {
