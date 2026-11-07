@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -2768,10 +2769,20 @@ fn hosts_lookup_error_code(
 /// is selected, following the hosts/services backend convention.
 fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
     let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
-    match std::fs::read(path) {
+    let mut config = match std::fs::read(path) {
         Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
         Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
-    }
+    };
+    // Address and reverse lookups honor the same process overrides as
+    // res_ninit, including an explicitly empty LOCALDOMAIN. Snapshot each
+    // value once so search order and transport options share one config.
+    let localdomain = std::env::var_os("LOCALDOMAIN");
+    let options = std::env::var_os("RES_OPTIONS");
+    config.apply_overrides(
+        localdomain.as_ref().map(|value| value.as_bytes()),
+        options.as_ref().map(|value| value.as_bytes()),
+    );
+    config
 }
 
 /// Preserve the difference between a missing name and a temporary DNS failure.

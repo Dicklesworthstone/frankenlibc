@@ -6432,6 +6432,226 @@ fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Inspect real wire queries in subprocesses: changing resolver environment
+/// variables in the parallel test process would race unrelated libc lookups.
+#[test]
+fn native_dns_environment_controls_search_order_and_transport() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_DNS_ENV_TEST_CHILD";
+    if let Ok(case) = std::env::var(CHILD) {
+        let node = if case == "empty" {
+            c"dual.hermetic.test"
+        } else {
+            c"dual"
+        };
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        hints.ai_flags = libc::AI_CANONNAME;
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), &hints, &mut result) },
+            0
+        );
+        assert!(!result.is_null());
+        // SAFETY: successful getaddrinfo returned one IPv4 address and the
+        // requested canonical name, all owned until freeaddrinfo below.
+        unsafe {
+            assert_eq!((*result).ai_family, libc::AF_INET);
+            let address = &*(*result).ai_addr.cast::<libc::sockaddr_in>();
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [198, 51, 100, 42]);
+            assert!(!(*result).ai_canonname.is_null());
+            assert_eq!(
+                CStr::from_ptr((*result).ai_canonname).to_bytes(),
+                b"dual.hermetic.test"
+            );
+            resolv_abi::freeaddrinfo(result);
+        }
+
+        if case == "tcp" {
+            // Legacy IPv4/IPv6 lookups must use the same environment snapshot
+            // policy as getaddrinfo; both must issue TCP queries here.
+            let entry = unsafe { resolv_abi::gethostbyname(node.as_ptr()) }.cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!(unsafe { (*entry).h_addrtype }, libc::AF_INET);
+            let mut entry: libc::hostent = unsafe { mem::zeroed() };
+            let mut buffer = [0 as c_char; 1024];
+            let mut found: *mut libc::hostent = ptr::null_mut();
+            let mut host_error = 0;
+            assert_eq!(
+                unsafe {
+                    unistd_abi::gethostbyname2_r(
+                        node.as_ptr(),
+                        libc::AF_INET6,
+                        (&mut entry as *mut libc::hostent).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        (&mut found as *mut *mut libc::hostent).cast(),
+                        &mut host_error,
+                    )
+                },
+                0
+            );
+            assert!(!found.is_null());
+            assert_eq!(entry.h_addrtype, libc::AF_INET6);
+
+            let address = libc::sockaddr_in {
+                sin_family: libc::AF_INET as _,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes([198, 51, 100, 42]),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut host = [0 as c_char; 256];
+            assert_eq!(
+                unsafe {
+                    resolv_abi::getnameinfo(
+                        (&address as *const libc::sockaddr_in).cast(),
+                        mem::size_of_val(&address) as _,
+                        host.as_mut_ptr(),
+                        host.len() as _,
+                        ptr::null_mut(),
+                        0,
+                        libc::NI_NAMEREQD,
+                    )
+                },
+                0
+            );
+            assert_eq!(
+                unsafe { CStr::from_ptr(host.as_ptr()) }.to_bytes(),
+                b"dual.hermetic.test"
+            );
+            let entry = unsafe {
+                resolv_abi::gethostbyaddr(
+                    (&address.sin_addr as *const libc::in_addr).cast(),
+                    4,
+                    libc::AF_INET,
+                )
+            }
+            .cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*entry).h_name) }.to_bytes(),
+                b"dual.hermetic.test"
+            );
+        }
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("environment-resolv");
+    let nsswitch_path = temp_resolver_path("environment-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\nsearch ignored.hermetic.test\noptions ndots:4 timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+
+    for (case, localdomain, options, expected_names) in [
+        (
+            "domain",
+            "hermetic.test",
+            "",
+            vec![("dual.hermetic.test", 1)],
+        ),
+        ("empty", "", "", vec![("dual.hermetic.test", 1)]),
+        (
+            "ndots",
+            "hermetic.test",
+            "ndots:0",
+            vec![("dual", 1), ("dual.hermetic.test", 1)],
+        ),
+        (
+            "tcp",
+            "hermetic.test",
+            "use-vc trust-ad",
+            vec![
+                ("dual.hermetic.test", 1),
+                ("dual.hermetic.test", 1),
+                ("dual.hermetic.test", 28),
+                ("42.100.51.198.in-addr.arpa", 12),
+                ("42.100.51.198.in-addr.arpa", 12),
+            ],
+        ),
+    ] {
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let tcp = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        udp.set_read_timeout(Some(Duration::from_millis(5)))
+            .unwrap();
+        tcp.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            let mut record = |query: &[u8], is_tcp: bool| {
+                let (name, kind, _) = parse_dns_question(query).unwrap();
+                observed.push((name, kind, is_tcp, query[3] & 0x20 != 0));
+                build_hermetic_dns_reply(query, is_tcp).unwrap()
+            };
+            let mut buffer = [0u8; 512];
+            while !stop_server.load(Ordering::Relaxed) {
+                while let Ok((n, peer)) = udp.recv_from(&mut buffer) {
+                    udp.send_to(&record(&buffer[..n], false), peer).unwrap();
+                }
+                while let Ok((mut stream, _)) = tcp.accept() {
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    let mut size = [0u8; 2];
+                    stream.read_exact(&mut size).unwrap();
+                    let mut query = vec![0u8; u16::from_be_bytes(size) as usize];
+                    stream.read_exact(&mut query).unwrap();
+                    let reply = record(&query, true);
+                    stream
+                        .write_all(&(reply.len() as u16).to_be_bytes())
+                        .unwrap();
+                    stream.write_all(&reply).unwrap();
+                }
+            }
+            observed
+        });
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "native_dns_environment_controls_search_order_and_transport",
+                "--nocapture",
+            ])
+            .env(CHILD, case)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env("LOCALDOMAIN", localdomain)
+            .env("RES_OPTIONS", options)
+            .output()
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        let observed = worker.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected = expected_names
+            .into_iter()
+            .map(|(name, kind)| (name.to_owned(), kind, case == "tcp", case == "tcp"))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "wire queries for {case}");
+    }
+    let _ = std::fs::remove_file(resolv_path);
+    let _ = std::fs::remove_file(nsswitch_path);
+}
+
 /// Live ABI differential test against host glibc (`dlsym_oracle::host_fn`)
 /// backed by a hermetic local UDP+TCP DNS server on `127.0.0.1:<port>`
 /// (bd-rc0923-epic-eeuy4f.19).

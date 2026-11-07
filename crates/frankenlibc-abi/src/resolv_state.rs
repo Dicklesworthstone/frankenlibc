@@ -200,17 +200,45 @@ fn random_id() -> Result<u16, c_int> {
 }
 
 fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
-    let mut content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
-    if let Some(options) = std::env::var_os("RES_OPTIONS") {
-        content.extend_from_slice(b"\noptions ");
-        content.extend_from_slice(options.as_bytes());
-        content.push(b'\n');
-    }
+    let content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
+    let localdomain = std::env::var_os("LOCALDOMAIN");
+    let options = std::env::var_os("RES_OPTIONS");
+    let mut config = ResolverConfig::parse(&content);
+    config.apply_overrides(
+        localdomain.as_ref().map(|value| value.as_bytes()),
+        options.as_ref().map(|value| value.as_bytes()),
+    );
     // EDNS is a public res_state option, not part of the address-only
     // ResolverConfig. Read it from the same fresh file/environment snapshot.
     // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
     let mut edns0 = false;
     let mut explicit_timing = [false; 2];
+    let mut observe_option = |word: &[u8]| {
+        edns0 |= word.starts_with(b"edns0");
+        for (index, prefix) in [b"timeout:".as_slice(), b"attempts:".as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(value) = word.strip_prefix(prefix) {
+                // Match the core config parser: a leading '+' is valid,
+                // while empty, negative, nondecimal and overflowing values
+                // do not override the legacy caller's nonzero timing.
+                let digits = value.strip_prefix(b"+").unwrap_or(value);
+                let valid = !digits.is_empty()
+                    && digits
+                        .iter()
+                        .try_fold(0u32, |number, &byte| {
+                            if byte.is_ascii_digit() {
+                                number.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some();
+                explicit_timing[index] |= valid;
+            }
+        }
+    };
     for line in content.split(|&byte| byte == b'\n') {
         let mut words = line
             .split(u8::is_ascii_whitespace)
@@ -219,41 +247,17 @@ fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
             continue;
         }
         for word in words {
-            edns0 |= word.starts_with(b"edns0");
-            for (index, prefix) in [b"timeout:".as_slice(), b"attempts:".as_slice()]
-                .into_iter()
-                .enumerate()
-            {
-                if let Some(value) = word.strip_prefix(prefix) {
-                    // Match the core config parser: a leading '+' is valid,
-                    // while empty, negative, nondecimal and overflowing values
-                    // do not override the legacy caller's nonzero timing.
-                    let digits = value.strip_prefix(b"+").unwrap_or(value);
-                    let valid = !digits.is_empty()
-                        && digits
-                            .iter()
-                            .try_fold(0u32, |number, &byte| {
-                                if byte.is_ascii_digit() {
-                                    number.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
-                                } else {
-                                    None
-                                }
-                            })
-                            .is_some();
-                    explicit_timing[index] |= valid;
-                }
-            }
+            observe_option(word);
         }
     }
-    let mut config = ResolverConfig::parse(&content);
-    if let Some(domain) = std::env::var_os("LOCALDOMAIN") {
-        config.search = domain
+    if let Some(options) = options {
+        for word in options
             .as_bytes()
             .split(u8::is_ascii_whitespace)
             .filter(|part| !part.is_empty())
-            .filter_map(|part| std::str::from_utf8(part).ok().map(str::to_owned))
-            .collect();
-        config.domain = config.search.first().cloned();
+        {
+            observe_option(word);
+        }
     }
     (
         config,

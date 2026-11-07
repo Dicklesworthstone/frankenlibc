@@ -367,7 +367,7 @@ fn dnssec_formerr_never_silently_downgrades_the_request() {
 
 #[test]
 fn edns_initialization_honors_res_options_without_process_wide_test_races() {
-    use frankenlibc_abi::resolv_state::{RES_USE_DNSSEC, RES_USE_EDNS0};
+    use frankenlibc_abi::resolv_state::{RES_ROTATE, RES_USE_DNSSEC, RES_USE_EDNS0, RES_USEVC};
     const CHILD: &str = "FRANKENLIBC_EDNS_INIT_TEST_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let mut a = State::zeroed();
@@ -380,6 +380,63 @@ fn edns_initialization_honors_res_options_without_process_wide_test_races() {
         assert_ne!(b.options & RES_USE_EDNS0, 0);
         assert_eq!(unsafe { state::init(pointer(&mut a)) }, 0);
         assert_ne!(a.options & RES_USE_EDNS0, 0);
+        assert_eq!((a.retrans, a.retry), (1, 1));
+        assert_ne!(a.options & RES_ROTATE, 0);
+        assert_ne!(a.options & RES_TRUSTAD, 0);
+        assert_ne!(a.options & RES_USEVC, 0);
+        let ndots = if cfg!(target_endian = "little") {
+            a.ndots_nsort & 15
+        } else {
+            a.ndots_nsort >> 28
+        };
+        assert_eq!(ndots, 4);
+
+        // LOCALDOMAIN's leading whitespace denotes a root suffix. With
+        // ndots:4, the bare single-label query comes from that suffix, then
+        // the second domain is tried. Both TCP requests retain EDNS and AD.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        a.nscount = 1;
+        a.nsaddr_list[0] = v4_state(listener.local_addr().unwrap()).nsaddr_list[0];
+        let options = a.options;
+        let worker = thread::spawn(move || {
+            for (name, code, marker) in [
+                (b"host".as_slice(), 3, 0),
+                (b"host.environment.test".as_slice(), 0, 81),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut size = [0u8; 2];
+                stream.read_exact(&mut size).unwrap();
+                let mut query = vec![0u8; u16::from_be_bytes(size) as usize];
+                stream.read_exact(&mut query).unwrap();
+                assert_eq!(DnsMessage::decode(&query).unwrap().questions[0].qname, name);
+                assert_edns_query(&query, options, 512);
+                let reply = answer_without_opt(&query, code, marker);
+                stream
+                    .write_all(&(reply.len() as u16).to_be_bytes())
+                    .unwrap();
+                stream.write_all(&reply).unwrap();
+            }
+        });
+        let mut output = [0u8; 512];
+        let length = unsafe {
+            state::search(
+                pointer(&mut a),
+                c"host".as_ptr(),
+                1,
+                1,
+                output.as_mut_ptr().cast(),
+                512,
+            )
+        };
+        assert!(length > 0);
+        assert_eq!(output[length as usize - 1], 81);
+        worker.join().unwrap();
         unsafe {
             state::close(pointer(&mut a));
             state::close(pointer(&mut b));
@@ -393,7 +450,11 @@ fn edns_initialization_honors_res_options_without_process_wide_test_races() {
             "--nocapture",
         ])
         .env(CHILD, "1")
-        .env("RES_OPTIONS", "edns0 timeout:1 attempts:1")
+        .env("LOCALDOMAIN", " environment.test")
+        .env(
+            "RES_OPTIONS",
+            "edns0 ndots:4 timeout:+1 attempts:1 rotate trust-ad use-vc",
+        )
         .status()
         .unwrap();
     assert!(status.success());
