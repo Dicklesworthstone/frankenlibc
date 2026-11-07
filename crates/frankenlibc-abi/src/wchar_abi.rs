@@ -5998,7 +5998,7 @@ impl WideScanWriter {
         unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
     }
 
-    unsafe fn begin_stream_text(&mut self, spec: &ScanSpec) {
+    unsafe fn begin_stream_text(&mut self, spec: &ScanSpec) -> Result<(), WideScanWriteError> {
         // SAFETY: the core begins each reached, nonsuppressed field once.
         let destination = unsafe { self.destination(spec) };
         let wide = spec.length == LengthMod::L;
@@ -6014,7 +6014,7 @@ impl WideScanWriter {
             // cannot match; a later unreached field is never touched.
             unsafe { *destination.cast::<*mut u8>() = std::ptr::null_mut() };
         }
-        self.pending_text = Some(WideScanPendingText {
+        let mut text = WideScanPendingText {
             destination,
             output: if spec.alloc {
                 std::ptr::null_mut()
@@ -6026,7 +6026,32 @@ impl WideScanWriter {
             alloc: spec.alloc,
             wide,
             terminator_bytes,
-        });
+        };
+        if spec.alloc && spec.writes_char_buffer() {
+            // Character fields have a known requested extent. Reserve it
+            // before reading so an impossible large width reports ENOMEM
+            // even when the available input is only a short prefix. Narrow
+            // fields may grow later if actual encoded characters need more
+            // than one byte; strings and scansets remain incremental.
+            let unit = if wide { size_of::<libc::wchar_t>() } else { 1 };
+            let Some(capacity) = spec.width.unwrap_or(1).checked_mul(unit) else {
+                // SAFETY: this field has no allocation yet; its receiving
+                // pointer and all completed earlier allocations remain live.
+                return Err(unsafe { self.stream_allocation_failed(destination) });
+            };
+            let capacity = capacity.max(1);
+            // SAFETY: the checked size reserves correctly aligned storage for
+            // char or wchar_t and stays private until EndText publishes it.
+            text.output = unsafe { crate::malloc_abi::malloc(capacity).cast() };
+            if text.output.is_null() {
+                // SAFETY: failed malloc owns no storage; fatal cleanup also
+                // clears and releases the earlier completed %m assignments.
+                return Err(unsafe { self.stream_allocation_failed(destination) });
+            }
+            text.capacity = capacity;
+        }
+        self.pending_text = Some(text);
+        Ok(())
     }
 
     unsafe fn stream_allocation_failed(
@@ -6158,8 +6183,7 @@ impl WideScanWriter {
         match event {
             WideScanEvent::BeginText => {
                 // SAFETY: the caller supplied the reached field's argument.
-                unsafe { self.begin_stream_text(spec) };
-                Ok(())
+                unsafe { self.begin_stream_text(spec) }
             }
             WideScanEvent::Character(wc) => {
                 // SAFETY: BeginText established a live destination.

@@ -5042,4 +5042,47 @@ mod wide_stream_scan_tests {
         assert_eq!(characters, [0x20_0000]);
         assert_eq!(counts, [1]);
     }
+
+    #[test]
+    fn initial_allocation_failure_preserves_prior_assignments_without_reading() {
+        let directives = parse_scanf_format_wide(b"%d%1ms%100000000mc%n");
+        let mut session = WideScanSession::new(&directives, u32::from(b'.'));
+        let mut input = "7A".chars();
+        let mut integer = None;
+        let mut text = Vec::new();
+        let mut completed_text = 0;
+        let mut allocation_attempts = 0;
+        let mut writer = |spec: &ScanSpec, event, context: WideScanContext| {
+            match event {
+                WideScanEvent::Value(ScanValue::SignedInt(value)) => {
+                    assert!(integer.replace(value).is_none());
+                }
+                WideScanEvent::BeginText if spec.conversion == b's' => {}
+                WideScanEvent::Character(character) => text.push(character),
+                WideScanEvent::EndText => completed_text += 1,
+                WideScanEvent::BeginText => {
+                    assert!(spec.alloc && spec.writes_char_buffer());
+                    assert_eq!((context.directive_index, context.consumed, context.matched), (2, 2, 0));
+                    allocation_attempts += 1;
+                    return Err(WideScanWriteError { input_failure: true });
+                }
+                event => panic!("an event followed the initial allocation failure: {event:?}"),
+            }
+            Ok(())
+        };
+        let mut supplied = None;
+        let summary = loop {
+            match session.resume(supplied, &mut writer, &crate::string::wchar::iswspace) {
+                WideScanProgress::Complete(summary) => break summary,
+                WideScanProgress::NeedInput(_) => {
+                    supplied = Some(WideScanInput::Character(input.next().expect("initial allocation failure must precede another read") as u32));
+                }
+            }
+        };
+        assert_eq!(summary, WideScanSummary { count: 2, consumed: 2, input_failure: true });
+        assert_eq!(integer, Some(7));
+        assert_eq!(text, [u32::from(b'A')]);
+        assert_eq!((completed_text, allocation_attempts), (1, 1));
+        assert!(session.unread().next().is_none());
+    }
 }

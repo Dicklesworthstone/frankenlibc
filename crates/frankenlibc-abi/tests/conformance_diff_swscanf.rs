@@ -893,6 +893,103 @@ mod locale_scanning {
         }
     }
 
+    #[test]
+    fn wide_file_fixed_character_allocation_reports_enomem() {
+        if !isolated("wide_file_fixed_character_allocation_reports_enomem") {
+            return;
+        }
+        // Prepare the native allocator before restricting the address space;
+        // the ordinary prefix allocation must remain available in both modes.
+        let warm = unsafe { malloc_abi::malloc(64) };
+        assert!(!warm.is_null());
+        unsafe { malloc_abi::free(warm) };
+        let formats = [
+            w("%d %ms%n %1000000000mc%n"),
+            w("%d %ms%n %1000000000mlc%n"),
+        ];
+        for engine in stream_scan_engines() {
+            for (index, format) in formats.iter().enumerate() {
+                let wide = index == 1;
+                let stream = scan_stream(engine, b"7 A B", c"C.UTF-8", c"C.UTF-8");
+                let mut first: *mut c_char = std::ptr::null_mut();
+                let mut failed_narrow = std::ptr::without_provenance_mut::<c_char>(1);
+                let mut failed_wide = std::ptr::without_provenance_mut::<Wc>(1);
+                let (mut integer, mut prefix_count, mut count) =
+                    (SENTINEL, SENTINEL, SENTINEL);
+
+                // A limit relative to the live process accommodates the Rust
+                // harness and libc metadata. Large native user blocks obtain
+                // fresh raw allocations; only small blocks use segment caches.
+                let status = std::fs::read_to_string("/proc/self/status").unwrap();
+                let vm_kib = status
+                    .lines()
+                    .find(|line| line.starts_with("VmSize:"))
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .expect("Linux supplies VmSize")
+                    .parse::<libc::rlim_t>()
+                    .unwrap();
+                let ceiling = vm_kib
+                    .checked_mul(1024)
+                    .and_then(|bytes| bytes.checked_add(64 * 1024 * 1024))
+                    .unwrap();
+                let mut previous = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut previous) }, 0);
+                let constrained = libc::rlimit {
+                    rlim_cur: ceiling.min(previous.rlim_cur),
+                    rlim_max: previous.rlim_max,
+                };
+                assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_AS, &constrained) }, 0);
+
+                // No formatting, file preparation, or assertions run under the
+                // temporary limit. Record the result and restore first.
+                let (rc, error) = unsafe {
+                    *(engine.io.errno)() = 23;
+                    let rc = if wide {
+                        (engine.scan)(
+                            stream,
+                            format.as_ptr(),
+                            &mut integer,
+                            &mut first,
+                            &mut prefix_count,
+                            &mut failed_wide,
+                            &mut count,
+                        )
+                    } else {
+                        (engine.scan)(
+                            stream,
+                            format.as_ptr(),
+                            &mut integer,
+                            &mut first,
+                            &mut prefix_count,
+                            &mut failed_narrow,
+                            &mut count,
+                        )
+                    };
+                    (rc, *(engine.io.errno)())
+                };
+                let restored = unsafe { libc::setrlimit(libc::RLIMIT_AS, &previous) };
+                assert_eq!(restored, 0, "restore address-space limit");
+                unsafe { assert_eq!((engine.io.close)(stream), 0) };
+                assert_eq!(
+                    (rc, error, integer, prefix_count, count),
+                    (libc::EOF, libc::ENOMEM, 7, 3, SENTINEL),
+                    "{} {} allocation failure",
+                    engine.name,
+                    if wide { "%mlc" } else { "%mc" }
+                );
+                assert!(first.is_null(), "{} prior allocation released", engine.name);
+                assert!(
+                    if wide { failed_wide.is_null() } else { failed_narrow.is_null() },
+                    "{} failed destination cleared",
+                    engine.name
+                );
+            }
+        }
+    }
+
     fn assert_current_multibyte_codec(engine: WideIoEngine, locale: &CStr) {
         let mut bytes = [0xa5u8; 8];
         let (rc, error) = unsafe {
