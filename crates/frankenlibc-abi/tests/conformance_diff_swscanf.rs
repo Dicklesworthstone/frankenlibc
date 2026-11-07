@@ -1,5 +1,4 @@
 #![cfg(target_os = "linux")]
-#![feature(c_variadic)]
 #![allow(unsafe_code)] // real variadic and va_list entrypoints, independent host oracle
 //! Differential conformance for `swscanf` vs glibc, focused on the wide-specific
 //! conversions: `%ls`/`%S` (wide-string) and `%lc`/`%C` (wide-char) write into a

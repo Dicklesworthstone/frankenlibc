@@ -658,6 +658,7 @@ impl StdioStream {
         } else {
             self.flags.orientation
         }
+    }
 
     /// Bind an immutable conversion engine once. Later locale selections,
     /// seeks, and buffering changes cannot replace a wide stream's encoding.
@@ -668,7 +669,6 @@ impl StdioStream {
     #[must_use]
     pub fn wide_codec(&self) -> Option<crate::iconv::MultibyteCodec> {
         self.wide_codec
-    }
     }
 
     /// Give a [`Self::new_mem_fixed_readonly`] stream its bytes.
