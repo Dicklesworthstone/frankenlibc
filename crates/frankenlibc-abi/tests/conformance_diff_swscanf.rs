@@ -1916,6 +1916,146 @@ mod locale_scanning {
     }
 
     #[test]
+    fn descriptor_output_errors_are_scoped_to_call() {
+        if !isolated("descriptor_output_errors_are_scoped_to_call") {
+            return;
+        }
+        select(c"C");
+        type DprintfFn = unsafe extern "C-unwind" fn(c_int, *const c_char, ...) -> c_int;
+        type VdprintfFn = unsafe extern "C-unwind" fn(c_int, *const c_char, *mut c_void) -> c_int;
+
+        unsafe extern "C-unwind" fn native_vdprintf(
+            fd: c_int,
+            format: *const c_char,
+            mut args: ...
+        ) -> c_int {
+            // SAFETY: the promoted arguments match the live va_list and format.
+            unsafe { stdio_abi::vdprintf(fd, format, std::ptr::addr_of_mut!(args).cast()) }
+        }
+
+        unsafe extern "C-unwind" fn host_vdprintf(
+            fd: c_int,
+            format: *const c_char,
+            mut args: ...
+        ) -> c_int {
+            static PRINT: OnceLock<VdprintfFn> = OnceLock::new();
+            let print = *PRINT.get_or_init(|| {
+                // SAFETY: this independent GNU provider has the declared ABI.
+                unsafe { host_fn(c"vdprintf", stdio_abi::vdprintf as *const ()) }
+            });
+            // SAFETY: the descriptor and promoted arguments belong to this call.
+            unsafe { print(fd, format, std::ptr::addr_of_mut!(args).cast()) }
+        }
+
+        // SAFETY: each GNU symbol has this exact variadic C ABI.
+        let host_dprintf: DprintfFn =
+            unsafe { host_fn(c"dprintf", stdio_abi::dprintf as *const ()) };
+        let host_snprintf: SnprintfFn =
+            unsafe { host_fn(c"snprintf", stdio_abi::snprintf as *const ()) };
+        for (entry, host_print, native_print, access) in [
+            (
+                "dprintf",
+                host_dprintf,
+                stdio_abi::dprintf as DprintfFn,
+                libc::O_RDONLY,
+            ),
+            (
+                "vdprintf",
+                host_vdprintf as DprintfFn,
+                native_vdprintf as DprintfFn,
+                libc::O_RDONLY,
+            ),
+            (
+                "dprintf",
+                host_dprintf,
+                stdio_abi::dprintf as DprintfFn,
+                libc::O_WRONLY,
+            ),
+            (
+                "vdprintf",
+                host_vdprintf as DprintfFn,
+                native_vdprintf as DprintfFn,
+                libc::O_WRONLY,
+            ),
+        ] {
+            for format in [c"P%lc", c"P%2147483648d", c"P%d"] {
+                for next_format in [c"OK", c"%s", c"%s\n"] {
+                    let mut expected = None;
+                    for (engine, print, next_print, errno) in [
+                        ("host", host_print, host_snprintf, host().errno),
+                        (
+                            "native",
+                            native_print,
+                            stdio_abi::snprintf as SnprintfFn,
+                            errno_abi::__errno_location as ErrnoFn,
+                        ),
+                    ] {
+                        // SAFETY: open the existing device without O_CREAT or
+                        // O_TRUNC. Each live fd is closed after both calls and
+                        // before any assertion; no file is created or removed.
+                        let fd = unsafe { libc::open(c"/dev/null".as_ptr(), access) };
+                        assert!(fd >= 0);
+                        let mut output = [0xa5u8; 16];
+                        // SAFETY: the first call's promoted argument matches
+                        // its format, and the next call owns a live destination.
+                        // Extra variadic arguments to a literal format are legal.
+                        let (first_result, first_error, next_result, next_error) = unsafe {
+                            *errno() = 23;
+                            let rc = if format == c"P%lc" {
+                                print(fd, format.as_ptr(), 0xe9u32)
+                            } else {
+                                print(fd, format.as_ptr(), 7 as c_int)
+                            };
+                            let error = *errno();
+                            *errno() = 23;
+                            let next = next_print(
+                                output.as_mut_ptr().cast(),
+                                output.len(),
+                                next_format.as_ptr(),
+                                c"OK".as_ptr(),
+                            );
+                            (rc, error, next, *errno())
+                        };
+                        // SAFETY: fd is the still-live descriptor opened above;
+                        // neither printf call owns or closes it.
+                        assert_eq!(unsafe { libc::close(fd) }, 0);
+                        let observed = (
+                            first_result,
+                            first_error,
+                            next_result,
+                            next_error,
+                            output,
+                        );
+                        eprintln!(
+                            "{entry}/{engine} access={access} {format:?} then {next_format:?}: {observed:?}"
+                        );
+                        if let Some(expected) = expected.as_ref() {
+                            assert_eq!(
+                                &observed, expected,
+                                "{entry}/{engine} access={access} {format:?} then {next_format:?}"
+                            );
+                        } else {
+                            let expected_first_call = if format == c"P%lc" {
+                                (-1, libc::EILSEQ)
+                            } else if format == c"P%2147483648d" {
+                                (-1, libc::EOVERFLOW)
+                            } else if access == libc::O_RDONLY {
+                                (-1, libc::EBADF)
+                            } else {
+                                (2, 23)
+                            };
+                            assert_eq!((first_result, first_error), expected_first_call);
+                            assert!(next_result > 0);
+                            assert_eq!(next_error, 23);
+                            expected = Some(observed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn allocated_output_failure_stops_later_count_stores() {
         if !isolated("allocated_output_failure_stops_later_count_stores") {
             return;
