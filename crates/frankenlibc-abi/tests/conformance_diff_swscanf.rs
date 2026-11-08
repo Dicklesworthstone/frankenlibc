@@ -2019,13 +2019,7 @@ mod locale_scanning {
                         // SAFETY: fd is the still-live descriptor opened above;
                         // neither printf call owns or closes it.
                         assert_eq!(unsafe { libc::close(fd) }, 0);
-                        let observed = (
-                            first_result,
-                            first_error,
-                            next_result,
-                            next_error,
-                            output,
-                        );
+                        let observed = (first_result, first_error, next_result, next_error, output);
                         eprintln!(
                             "{entry}/{engine} access={access} {format:?} then {next_format:?}: {observed:?}"
                         );
