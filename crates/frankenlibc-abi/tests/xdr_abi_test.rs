@@ -993,6 +993,352 @@ fn xdr_array_int_roundtrip() {
     unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
+mod array_regressions {
+    use super::*;
+    use std::ffi::CStr;
+
+    type ArrayFn = unsafe extern "C" fn(
+        *mut c_void,
+        *mut *mut c_char,
+        *mut c_uint,
+        c_uint,
+        c_uint,
+        *mut c_void,
+    ) -> c_int;
+
+    #[derive(Clone, Copy)]
+    struct Provider {
+        name: &'static str,
+        array: ArrayFn,
+        element: *mut c_void,
+    }
+
+    impl Provider {
+        unsafe fn run(
+            self,
+            operation: c_int,
+            wire: &mut [u8],
+            data: &mut *mut c_char,
+            count: &mut c_uint,
+            stride: usize,
+        ) -> c_int {
+            let mut stream = XdrHandle::new();
+            // SAFETY: each test supplies matching object/serializer layouts;
+            // the initialized public XDR handle and wire remain live here.
+            unsafe {
+                xdrmem_create(
+                    stream.as_mut_ptr(),
+                    wire.as_mut_ptr().cast(),
+                    wire.len() as c_uint,
+                    operation,
+                );
+                (self.array)(
+                    stream.as_mut_ptr(),
+                    data,
+                    count,
+                    32,
+                    stride as c_uint,
+                    self.element,
+                )
+            }
+        }
+
+        fn roundtrip<T: Copy + std::fmt::Debug + PartialEq>(self, values: &[T], expected: &[u8]) {
+            assert!(!values.is_empty());
+            let mut input = values.to_vec();
+            let mut data = input.as_mut_ptr().cast();
+            let mut count = values.len() as c_uint;
+            let mut wire = vec![0; expected.len()];
+            let stride = std::mem::size_of::<T>();
+            // SAFETY: the selected codec matches T and the input is live.
+            assert_eq!(
+                unsafe { self.run(XDR_ENCODE, &mut wire, &mut data, &mut count, stride) },
+                1,
+                "{} encode",
+                self.name
+            );
+            assert_eq!(wire, expected, "{} exact wire", self.name);
+            data = std::ptr::null_mut();
+            count = 0;
+            // SAFETY: a null destination requests an allocation from this provider.
+            assert_eq!(
+                unsafe { self.run(XDR_DECODE, &mut wire, &mut data, &mut count, stride) },
+                1,
+                "{} decode",
+                self.name
+            );
+            assert_eq!(count as usize, values.len());
+            assert!(!data.is_null());
+            // SAFETY: successful decode initialized count elements of T.
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(data.cast::<T>(), count as usize) },
+                values,
+                "{} values",
+                self.name
+            );
+            // SAFETY: the same provider owns this decoded array.
+            assert_eq!(
+                unsafe { self.run(XDR_FREE, &mut [], &mut data, &mut count, stride) },
+                1
+            );
+            assert!(data.is_null());
+        }
+    }
+
+    fn providers(element: *mut c_void, name: Option<&CStr>) -> Vec<Provider> {
+        let native = Provider {
+            name: "native",
+            array: xdr_array,
+            element,
+        };
+        #[cfg(target_env = "gnu")]
+        {
+            static GNU: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let handle = *GNU.get_or_init(|| {
+                // SAFETY: retain the host handle for all independently resolved codecs.
+                let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW) };
+                assert!(
+                    !handle.is_null(),
+                    "GNU XDR oracle is required on GNU targets"
+                );
+                handle as usize
+            });
+            let resolve = |name: &CStr, candidate: *mut c_void| {
+                let mut symbol = std::ptr::null_mut();
+                for version in [c"GLIBC_2.2.5", c"GLIBC_2.17"] {
+                    // SAFETY: the process-lifetime handle and names are live.
+                    symbol = unsafe {
+                        libc::dlvsym(handle as *mut c_void, name.as_ptr(), version.as_ptr())
+                    };
+                    if !symbol.is_null() {
+                        break;
+                    }
+                }
+                assert!(!symbol.is_null(), "missing GNU XDR oracle: {name:?}");
+                assert_ne!(symbol, candidate, "oracle resolved to candidate: {name:?}");
+                symbol
+            };
+            let array = resolve(c"xdr_array", xdr_array as *mut c_void);
+            vec![
+                native,
+                Provider {
+                    name: "GNU",
+                    // SAFETY: xdr_array has the public ArrayFn signature.
+                    array: unsafe { std::mem::transmute::<*mut c_void, ArrayFn>(array) },
+                    element: name.map_or(element, |name| resolve(name, element)),
+                },
+            ]
+        }
+        #[cfg(not(target_env = "gnu"))]
+        {
+            let _ = name;
+            vec![native]
+        }
+    }
+
+    #[test]
+    fn xdr_array_longs_use_wire_width_not_lp64_stride() {
+        let values = [i32::MIN as c_long, -1, 0, i32::MAX as c_long];
+        let wire = [
+            0, 0, 0, 4, 0x80, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0, 0x7f, 0xff, 0xff, 0xff,
+        ];
+        for provider in providers(xdr_long as *mut c_void, Some(c"xdr_long")) {
+            provider.roundtrip(&values, &wire);
+        }
+    }
+
+    #[test]
+    fn xdr_array_unsigned_longs_preserve_high_wire_bits() {
+        let values: [c_ulong; 4] = [0, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff];
+        let wire = [
+            0, 0, 0, 4, 0, 0, 0, 0, 0x7f, 0xff, 0xff, 0xff, 0x80, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,
+        ];
+        for provider in providers(xdr_u_long as *mut c_void, Some(c"xdr_u_long")) {
+            provider.roundtrip(&values, &wire);
+        }
+    }
+
+    #[test]
+    fn xdr_array_custom_padded_elements_have_independent_wire_layout() {
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        struct Element {
+            tag: u8,
+            value: c_ulong,
+        }
+        unsafe extern "C" fn codec(stream: *mut c_void, object: *mut c_void) -> c_int {
+            // SAFETY: this callback is used only with Element storage.
+            let element = unsafe { &mut *object.cast::<Element>() };
+            // SAFETY: both fields match their serializers and the live stream.
+            unsafe {
+                if xdr_u_char(stream, &mut element.tag) == 0 {
+                    return 0;
+                }
+                xdr_u_long(stream, &mut element.value)
+            }
+        }
+        let values = [Element { tag: 7, value: 19 }, Element { tag: 8, value: 23 }];
+        let wire = [0, 0, 0, 2, 0, 0, 0, 7, 0, 0, 0, 19, 0, 0, 0, 8, 0, 0, 0, 23];
+        for provider in providers(codec as *mut c_void, None) {
+            provider.roundtrip(&values, &wire);
+        }
+    }
+
+    #[test]
+    fn xdr_array_custom_elements_can_consume_no_wire_bytes() {
+        unsafe extern "C" fn codec(stream: *mut c_void, object: *mut c_void) -> c_int {
+            // SAFETY: the stream starts with x_op; the object is a live u64 slot.
+            unsafe {
+                if *stream.cast::<c_int>() == XDR_DECODE {
+                    *object.cast::<u64>() = 77;
+                }
+            }
+            1
+        }
+        for provider in providers(codec as *mut c_void, None) {
+            provider.roundtrip(&[77u64; 3], &[0, 0, 0, 3]);
+        }
+    }
+
+    #[test]
+    fn xdr_array_empty_strings_decode_into_initialized_pointer_slots() {
+        for provider in providers(xdr_wrapstring as *mut c_void, Some(c"xdr_wrapstring")) {
+            let mut wire = [0u8; 16];
+            wire[3] = 3;
+            let mut data = std::ptr::null_mut();
+            let mut count = 0;
+            let stride = std::mem::size_of::<*mut c_char>();
+            // SAFETY: the wire is a three-element array of empty strings.
+            assert_eq!(
+                unsafe { provider.run(XDR_DECODE, &mut wire, &mut data, &mut count, stride) },
+                1,
+                "{} empty strings",
+                provider.name
+            );
+            assert_eq!(count, 3);
+            assert!(!data.is_null());
+            // SAFETY: successful decode initialized three string pointers.
+            for &string in unsafe { std::slice::from_raw_parts(data.cast::<*mut c_char>(), 3) } {
+                assert!(!string.is_null());
+                // SAFETY: each successful string decode includes its terminator.
+                assert_eq!(unsafe { CStr::from_ptr(string) }.to_bytes(), b"");
+            }
+            // SAFETY: this provider owns the array and all nested strings.
+            assert_eq!(
+                unsafe { provider.run(XDR_FREE, &mut [], &mut data, &mut count, stride) },
+                1
+            );
+            assert!(data.is_null());
+        }
+    }
+
+    #[test]
+    fn xdr_array_partial_nested_decode_leaves_unvisited_slots_safe_to_free() {
+        for provider in providers(xdr_wrapstring as *mut c_void, Some(c"xdr_wrapstring")) {
+            // Sixteen payload bytes satisfy the three-element minimum of twelve.
+            // The second string then claims eight bytes with only four available.
+            let mut wire = [
+                0, 0, 0, 3, 0, 0, 0, 3, b'a', b'b', b'c', 0, 0, 0, 0, 8, b'x', b'x', b'x', b'x',
+            ];
+            let mut data = std::ptr::null_mut();
+            let mut count = 0;
+            let stride = std::mem::size_of::<*mut c_char>();
+            // SAFETY: the valid outer count requests storage for three strings.
+            assert_eq!(
+                unsafe { provider.run(XDR_DECODE, &mut wire, &mut data, &mut count, stride) },
+                0
+            );
+            assert_eq!(count, 3);
+            assert!(
+                !data.is_null(),
+                "{} must reach element decoding",
+                provider.name
+            );
+            // SAFETY: array allocation initializes the complete published count.
+            let strings = unsafe { std::slice::from_raw_parts(data.cast::<*mut c_char>(), 3) };
+            assert!(!strings[0].is_null());
+            // SAFETY: the first string completed decoding before the later failure.
+            assert_eq!(unsafe { CStr::from_ptr(strings[0]) }.to_bytes(), b"abc");
+            assert!(strings[2].is_null(), "{} unvisited slot", provider.name);
+            // SAFETY: FREE must handle both partial and unvisited elements.
+            assert_eq!(
+                unsafe { provider.run(XDR_FREE, &mut [], &mut data, &mut count, stride) },
+                1
+            );
+            assert!(data.is_null());
+        }
+    }
+
+    unsafe extern "C" fn failing_element(_: *mut c_void, _: *mut c_void) -> c_int {
+        0
+    }
+
+    #[test]
+    fn xdr_array_free_null_with_nonzero_count_does_not_call_serializer() {
+        for provider in providers(failing_element as *mut c_void, None) {
+            let mut data = std::ptr::null_mut();
+            let mut count = 3;
+            // SAFETY: a null result is valid after an earlier decode failure.
+            assert_eq!(
+                unsafe { provider.run(XDR_FREE, &mut [], &mut data, &mut count, 4) },
+                1
+            );
+            assert!(data.is_null());
+        }
+    }
+
+    #[test]
+    fn xdr_array_free_releases_empty_existing_storage() {
+        for provider in providers(xdr_int as *mut c_void, Some(c"xdr_int")) {
+            let mut wire = [0, 0, 0, 1, 0, 0, 0, 42];
+            let mut data = std::ptr::null_mut();
+            let mut count = 0;
+            // SAFETY: decode one int using the provider that will release it.
+            assert_eq!(
+                unsafe { provider.run(XDR_DECODE, &mut wire, &mut data, &mut count, 4) },
+                1
+            );
+            assert!(!data.is_null());
+            count = 0;
+            let provider = Provider {
+                element: std::ptr::null_mut(),
+                ..provider
+            };
+            // SAFETY: an empty array has no callback invocations, even with storage.
+            assert_eq!(
+                unsafe { provider.run(XDR_FREE, &mut [], &mut data, &mut count, 4) },
+                1
+            );
+            assert!(data.is_null());
+        }
+    }
+
+    #[test]
+    fn xdr_array_free_releases_outer_storage_after_element_failure() {
+        for provider in providers(xdr_int as *mut c_void, Some(c"xdr_int")) {
+            let mut wire = [0, 0, 0, 1, 0, 0, 0, 42];
+            let mut data = std::ptr::null_mut();
+            let mut count = 0;
+            // SAFETY: decode scalar storage with no nested allocations to leak.
+            assert_eq!(
+                unsafe { provider.run(XDR_DECODE, &mut wire, &mut data, &mut count, 4) },
+                1
+            );
+            assert!(!data.is_null());
+            let provider = Provider {
+                element: failing_element as *mut c_void,
+                ..provider
+            };
+            // SAFETY: the callback reports failure without changing array ownership.
+            assert_eq!(
+                unsafe { provider.run(XDR_FREE, &mut [], &mut data, &mut count, 4) },
+                0
+            );
+            assert!(data.is_null());
+        }
+    }
+}
+
 // ===========================================================================
 // 16. Composite types: xdr_pointer / xdr_reference
 // ===========================================================================
@@ -2738,6 +3084,72 @@ fn xdr_bytes_rejects_oversized_wire_length_without_oom() {
         "xdr_bytes must refuse 1 GiB length from 16-byte stream"
     );
     assert!(out_ptr.is_null(), "xdr_bytes must not allocate on refusal");
+}
+
+#[test]
+fn xdr_array_rejects_impossible_known_codec_counts_without_allocating() {
+    let codecs = [
+        ("char", xdr_char as *mut c_void, 1),
+        ("int", xdr_int as *mut c_void, 4),
+        ("long", xdr_long as *mut c_void, 8),
+        ("unsigned long", xdr_u_long as *mut c_void, 8),
+        ("hyper", xdr_hyper as *mut c_void, 8),
+        ("float", xdr_float as *mut c_void, 4),
+        ("double", xdr_double as *mut c_void, 8),
+        ("string", xdr_wrapstring as *mut c_void, 8),
+    ];
+    for (name, codec, stride) in codecs {
+        // The product count*stride still fits u32, so only a sound wire-width
+        // bound prevents the huge allocation. Do not run this hostile input
+        // through the host oracle, which need not provide this admission guard.
+        let mut wire = [0u8; 16];
+        wire[..4].copy_from_slice(&0x1000_0000u32.to_be_bytes());
+        let mut stream = XdrHandle::new();
+        xdr_decode(&mut stream, &mut wire);
+        let mut data = std::ptr::null_mut();
+        let mut count = 0;
+        // SAFETY: all inputs and the matching built-in codec are live; rejection
+        // must happen before the declared oversized object can be allocated.
+        assert_eq!(
+            unsafe {
+                xdr_array(
+                    stream.as_mut_ptr(),
+                    &mut data,
+                    &mut count,
+                    c_uint::MAX,
+                    stride,
+                    codec,
+                )
+            },
+            0,
+            "{name} must reject an impossible count"
+        );
+        assert_eq!(count, 0x1000_0000);
+        assert!(data.is_null(), "{name} must reject before allocating");
+    }
+
+    // A narrow C char still requires a four-byte XDR integer. This small
+    // truncated array checks the bound in the opposite direction from LP64.
+    let mut wire = [0, 0, 0, 3, 0, 0, 0, b'a', 0, 0, 0, b'b'];
+    let mut stream = XdrHandle::new();
+    xdr_decode(&mut stream, &mut wire);
+    let mut data = std::ptr::null_mut();
+    let mut count = 0;
+    // SAFETY: the codec matches the declared one-byte element storage.
+    assert_eq!(
+        unsafe {
+            xdr_array(
+                stream.as_mut_ptr(),
+                &mut data,
+                &mut count,
+                3,
+                1,
+                xdr_char as *mut c_void,
+            )
+        },
+        0
+    );
+    assert!(data.is_null(), "truncated char array must not allocate");
 }
 
 // ===========================================================================

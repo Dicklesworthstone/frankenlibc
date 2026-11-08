@@ -1342,6 +1342,54 @@ pub unsafe extern "C" fn xdr_wrapstring(xdrs: *mut c_void, sp: *mut *mut c_char)
     unsafe { xdr_string(xdrs, sp, c_uint::MAX) }
 }
 
+/// Minimum encoded bytes for array elements with a known native serializer.
+/// The C object stride is not a wire bound: an LP64 long takes eight bytes in
+/// memory and four on the wire, and custom serializers may consume no bytes.
+/// An unrecognized callback therefore leaves admission to the caller's maximum
+/// count, the allocation-overflow checks, and the callback's stream checks.
+fn xdr_array_min_wire_bytes(elproc: *mut c_void) -> Option<c_uint> {
+    if [
+        xdr_int as *mut c_void,
+        xdr_u_int as *mut c_void,
+        xdr_int32_t as *mut c_void,
+        xdr_uint32_t as *mut c_void,
+        xdr_enum as *mut c_void,
+        xdr_bool as *mut c_void,
+        xdr_short as *mut c_void,
+        xdr_u_short as *mut c_void,
+        xdr_char as *mut c_void,
+        xdr_u_char as *mut c_void,
+        xdr_int8_t as *mut c_void,
+        xdr_uint8_t as *mut c_void,
+        xdr_int16_t as *mut c_void,
+        xdr_uint16_t as *mut c_void,
+        xdr_long as *mut c_void,
+        xdr_u_long as *mut c_void,
+        xdr_float as *mut c_void,
+        xdr_wrapstring as *mut c_void,
+    ]
+    .contains(&elproc)
+    {
+        Some(4)
+    } else if [
+        xdr_hyper as *mut c_void,
+        xdr_u_hyper as *mut c_void,
+        xdr_longlong_t as *mut c_void,
+        xdr_u_longlong_t as *mut c_void,
+        xdr_quad_t as *mut c_void,
+        xdr_u_quad_t as *mut c_void,
+        xdr_int64_t as *mut c_void,
+        xdr_uint64_t as *mut c_void,
+        xdr_double as *mut c_void,
+    ]
+    .contains(&elproc)
+    {
+        Some(8)
+    } else {
+        None
+    }
+}
+
 /// Serialize a variable-length array (count + elements).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_array(
@@ -1361,7 +1409,10 @@ pub unsafe extern "C" fn xdr_array(
     if c > maxsize && op != XDR_FREE {
         return XDR_FALSE;
     }
-    if c == 0 {
+    // A null allocation has nothing to release, even if a failed decoder
+    // already published a nonzero element count. Conversely, an empty array
+    // can still have caller-owned storage that XDR_FREE must release.
+    if (c == 0 && op != XDR_FREE) || (op == XDR_FREE && unsafe { (*arrp).is_null() }) {
         return XDR_TRUE;
     }
     // Reject elsize=0 outright: an array of zero-size elements is
@@ -1376,16 +1427,12 @@ pub unsafe extern "C" fn xdr_array(
     if elsize > 0 && c > u32::MAX / elsize && op != XDR_FREE {
         return XDR_FALSE;
     }
-    // Defense in depth (bd-bhqcn): refuse an attacker-supplied count
-    // whose total wire footprint cannot fit in the remaining xdrmem
-    // stream. We treat each element as at least `elsize` wire bytes —
-    // the per-element xdr proc may consume more (variable-length
-    // members), but cannot consume less, so this is a sound lower
-    // bound for the malloc-blocking check.
+    // Reject impossible known-codec counts before allocating (bd-bhqcn),
+    // using their actual wire widths rather than their in-memory strides.
     if op == XDR_DECODE
-        && elsize > 0
         && let Some(remaining) = xdrmem_remaining_bytes(xdrs)
-        && (c as u64).saturating_mul(elsize as u64) > remaining as u64
+        && let Some(minimum) = xdr_array_min_wire_bytes(elproc)
+        && c > remaining / minimum
     {
         return XDR_FALSE;
     }
@@ -1394,8 +1441,12 @@ pub unsafe extern "C" fn xdr_array(
             Some(b) => b,
             None => return XDR_FALSE,
         };
-        // mem_alloc semantics: caller frees via free.
-        let buf = unsafe { crate::malloc_abi::malloc(total_bytes) as *mut c_char };
+        // Nested serializers treat null pointer members as allocation requests.
+        // Zero all elements, including ones not reached after a partial decode,
+        // so a later XDR_FREE can safely visit the entire published count.
+        // SAFETY: the checked product is the complete caller-declared array;
+        // calloc returns initialized storage owned by this XDR result.
+        let buf = unsafe { crate::malloc_abi::calloc(1, total_bytes) as *mut c_char };
         if buf.is_null() {
             return XDR_FALSE;
         }
@@ -1406,11 +1457,15 @@ pub unsafe extern "C" fn xdr_array(
     } else {
         unsafe { *arrp }
     };
-    let pf: XdrProc = unsafe { std::mem::transmute(elproc) };
+    let mut result = XDR_TRUE;
     let mut ptr = target;
     for _ in 0..c {
+        // SAFETY: nonempty arrays require a live element serializer. Do not
+        // materialize a function pointer for an empty array's unused callback.
+        let pf: XdrProc = unsafe { std::mem::transmute(elproc) };
         if unsafe { pf(xdrs, ptr.cast()) } != XDR_TRUE {
-            return XDR_FALSE;
+            result = XDR_FALSE;
+            break;
         }
         ptr = unsafe { ptr.add(elsize as usize) };
     }
@@ -1423,7 +1478,7 @@ pub unsafe extern "C" fn xdr_array(
             }
         }
     }
-    XDR_TRUE
+    result
 }
 
 /// Serialize a fixed-length array (no count on wire).
