@@ -63,6 +63,28 @@ impl XdrHandle {
     fn x_private_raw(&self) -> usize {
         usize::from_ne_bytes(self.data[24..32].try_into().unwrap())
     }
+
+    fn position(&self) -> c_uint {
+        // SAFETY: callers initialized this stream with its provider's backend.
+        // x_getpostn is the fifth operation in the public XDR operation table.
+        unsafe {
+            let operations = self.x_ops_raw() as *const *const c_void;
+            let get_position: unsafe extern "C" fn(*const c_void) -> c_uint =
+                std::mem::transmute(*operations.add(4));
+            get_position(self.data.as_ptr().cast())
+        }
+    }
+
+    fn destroy(&mut self) {
+        // SAFETY: callers release each live backend once through its own
+        // public x_destroy operation; the handle storage itself remains owned.
+        unsafe {
+            let operations = self.x_ops_raw() as *const *const c_void;
+            let destroy: unsafe extern "C" fn(*mut c_void) =
+                std::mem::transmute(*operations.add(7));
+            destroy(self.as_mut_ptr());
+        }
+    }
 }
 
 /// Helper: create a memory XDR stream in encode mode over the given buffer.
@@ -2008,6 +2030,8 @@ fn xdr_callmsg_roundtrip() {
     let mut msg = CallMsg { bytes: [0; 104] };
     unsafe {
         *(msg.bytes.as_mut_ptr().add(0) as *mut c_ulong) = 0x01020304;
+        *(msg.bytes.as_mut_ptr().add(8) as *mut c_int) = 0; // CALL
+        *(msg.bytes.as_mut_ptr().add(16) as *mut c_ulong) = 2; // RPC_MSG_VERSION
         *(msg.bytes.as_mut_ptr().add(24) as *mut c_ulong) = 100000;
         *(msg.bytes.as_mut_ptr().add(32) as *mut c_ulong) = 2;
         *(msg.bytes.as_mut_ptr().add(40) as *mut c_ulong) = 3;
@@ -2047,6 +2071,367 @@ fn xdr_callmsg_roundtrip() {
         assert_eq!(*(out.bytes.as_ptr().add(64) as *const c_uint), 0);
         assert_eq!(*(out.bytes.as_ptr().add(72) as *const c_int), 0);
         assert_eq!(*(out.bytes.as_ptr().add(88) as *const c_uint), 0);
+    }
+}
+
+mod message_header_regressions {
+    use super::*;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct Auth {
+        flavor: c_int,
+        bytes: *mut c_char,
+        length: c_uint,
+    }
+
+    impl Auth {
+        fn empty() -> Self {
+            Self {
+                flavor: 0,
+                bytes: std::ptr::null_mut(),
+                length: 0,
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct CallBody {
+        rpc_version: c_ulong,
+        program: c_ulong,
+        version: c_ulong,
+        procedure: c_ulong,
+        credential: Auth,
+        verifier: Auth,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct CallMessage {
+        xid: c_ulong,
+        direction: c_int,
+        body: CallBody,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct AcceptedReply {
+        verifier: Auth,
+        status: c_int,
+        results: [c_ulong; 2],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct ReplyBody {
+        status: c_int,
+        accepted: AcceptedReply,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct ReplyMessage {
+        xid: c_ulong,
+        direction: c_int,
+        body: ReplyBody,
+        // rpc_msg's shared union is sized for the larger call_body as well.
+        unused_call_tail: [u8; 24],
+    }
+
+    fn call_input(direction: c_int, rpc_version: c_ulong) -> CallMessage {
+        CallMessage {
+            xid: 0x0102_0304,
+            direction,
+            body: CallBody {
+                rpc_version,
+                program: 100_000,
+                version: 2,
+                procedure: 3,
+                credential: Auth {
+                    flavor: 1,
+                    bytes: c"cred".as_ptr().cast_mut(),
+                    length: 4,
+                },
+                verifier: Auth {
+                    flavor: 2,
+                    bytes: c"verf".as_ptr().cast_mut(),
+                    length: 4,
+                },
+            },
+        }
+    }
+
+    fn call_output() -> CallMessage {
+        CallMessage {
+            xid: c_ulong::MAX,
+            direction: -9,
+            body: CallBody {
+                rpc_version: c_ulong::MAX,
+                program: 9001,
+                version: 9002,
+                procedure: 9003,
+                credential: Auth::empty(),
+                verifier: Auth::empty(),
+            },
+        }
+    }
+
+    fn call_wire(direction: c_int, version: u32) -> Vec<u8> {
+        let mut wire: Vec<u8> = [0x0102_0304, direction as u32, version, 100_000, 2, 3, 1, 4]
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect();
+        wire.extend_from_slice(b"cred");
+        wire.extend_from_slice(&2u32.to_be_bytes());
+        wire.extend_from_slice(&4u32.to_be_bytes());
+        wire.extend_from_slice(b"verf");
+        wire
+    }
+
+    fn reply_input(direction: c_int) -> ReplyMessage {
+        ReplyMessage {
+            xid: 0x0102_0304,
+            direction,
+            body: ReplyBody {
+                status: 0, // MSG_ACCEPTED
+                accepted: AcceptedReply {
+                    verifier: Auth {
+                        flavor: 2,
+                        bytes: c"verf".as_ptr().cast_mut(),
+                        length: 4,
+                    },
+                    status: 1, // PROG_UNAVAIL: no result callback or payload.
+                    results: [0; 2],
+                },
+            },
+            unused_call_tail: [0; 24],
+        }
+    }
+
+    fn reply_output() -> ReplyMessage {
+        let mut message = reply_input(-9);
+        message.xid = c_ulong::MAX;
+        message.body.status = -9;
+        message.body.accepted.verifier = Auth::empty();
+        message.body.accepted.status = -9;
+        message
+    }
+
+    fn reply_wire(direction: c_int) -> Vec<u8> {
+        let mut wire: Vec<u8> = [0x0102_0304, direction as u32, 0, 2, 4]
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect();
+        wire.extend_from_slice(b"verf");
+        wire.extend_from_slice(&1u32.to_be_bytes());
+        wire
+    }
+
+    fn run<T>(
+        memory: KeyProtocolMemoryFn,
+        codec: KeyProtocolCodecFn,
+        operation: c_int,
+        wire: &mut [u8],
+        value: &mut T,
+    ) -> (c_int, c_uint) {
+        let mut stream = XdrHandle::new();
+        // SAFETY: each call below pairs the codec with its complete public
+        // message layout and a live wire buffer. Both backends are independent.
+        let result = unsafe {
+            memory(
+                stream.as_mut_ptr(),
+                wire.as_mut_ptr().cast(),
+                wire.len() as c_uint,
+                operation,
+            );
+            codec(stream.as_mut_ptr(), std::ptr::from_mut(value).cast())
+        };
+        let position = stream.position();
+        stream.destroy();
+        (result, position)
+    }
+
+    const INVALID_CALL_HEADERS: [(c_int, u32); 6] =
+        [(1, 2), (-1, 2), (0, 0), (0, 1), (0, 3), (0, u32::MAX)];
+
+    #[test]
+    fn callmsg_rejects_invalid_headers_without_rewriting_inputs_or_decoding_auth() {
+        for (name, memory, codec, _) in key_protocol_providers(xdr_callmsg, c"xdr_callmsg") {
+            for (direction, version) in INVALID_CALL_HEADERS {
+                let mut input = call_input(direction, u64::from(version));
+                let before = input;
+                let mut wire = [0xa5; 48];
+                let (result, _) = run(memory, codec, XDR_ENCODE, &mut wire, &mut input);
+                assert_eq!(result, 0, "{name}: rejected encode {direction}/{version}");
+                assert_eq!(input, before, "{name}: rejected encode mutated input");
+
+                let boundary = if direction != 0 { 8 } else { 12 };
+                for length in [boundary, 48] {
+                    let mut wire = call_wire(direction, version);
+                    let mut output = call_output();
+                    let mut untouched = output.body;
+                    if direction == 0 {
+                        untouched.rpc_version = u64::from(version);
+                    }
+                    let (result, position) =
+                        run(memory, codec, XDR_DECODE, &mut wire[..length], &mut output);
+                    assert_eq!(result, 0, "{name}: rejected decode {direction}/{version}");
+                    assert_eq!(output.xid, 0x0102_0304, "{name}");
+                    assert_eq!(output.direction, direction, "{name}");
+                    assert_eq!(output.body, untouched, "{name}: visited rejected call body");
+                    // A short stream cannot offer GNU's 32-byte XDR_INLINE
+                    // header reservation, so both scalar paths stop exactly at
+                    // the invalid field. On a full stream GNU may reserve 32
+                    // before rejecting; no cursor-parity claim is made there.
+                    if length == boundary {
+                        assert_eq!(position as usize, boundary, "{name}: rejection boundary");
+                    } else {
+                        assert!(position as usize >= boundary && position as usize <= length);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn callmsg_valid_wire_and_rejected_free_preserve_credential_ownership() {
+        for (name, memory, codec, release) in key_protocol_providers(xdr_callmsg, c"xdr_callmsg") {
+            let mut input = call_input(0, 2);
+            let before = input;
+            let expected = call_wire(0, 2);
+            let mut encoded = vec![0xa5; expected.len()];
+            assert_eq!(
+                run(memory, codec, XDR_ENCODE, &mut encoded, &mut input),
+                (1, 48),
+                "{name}"
+            );
+            assert_eq!(encoded, expected, "{name}: valid call wire");
+            assert_eq!(input, before, "{name}: borrowed input changed");
+
+            for (direction, version) in INVALID_CALL_HEADERS {
+                let mut output = call_output();
+                assert_eq!(
+                    run(memory, codec, XDR_DECODE, &mut encoded, &mut output),
+                    (1, 48),
+                    "{name}"
+                );
+                assert!(!output.body.credential.bytes.is_null());
+                assert!(!output.body.verifier.bytes.is_null());
+                assert_ne!(output.body.credential.bytes, input.body.credential.bytes);
+                assert_ne!(output.body.verifier.bytes, input.body.verifier.bytes);
+                // SAFETY: successful decode allocated both four-byte auth bodies.
+                unsafe {
+                    assert_eq!(
+                        std::slice::from_raw_parts(output.body.credential.bytes.cast::<u8>(), 4),
+                        b"cred"
+                    );
+                    assert_eq!(
+                        std::slice::from_raw_parts(output.body.verifier.bytes.cast::<u8>(), 4),
+                        b"verf"
+                    );
+                }
+                output.direction = direction;
+                output.body.rpc_version = u64::from(version);
+                let before = output;
+                assert_eq!(
+                    run(memory, codec, XDR_FREE, &mut [], &mut output),
+                    (0, 0),
+                    "{name}: rejected FREE"
+                );
+                assert_eq!(
+                    output, before,
+                    "{name}: rejected FREE touched owned credentials"
+                );
+                output.direction = 0;
+                output.body.rpc_version = 2;
+                // SAFETY: restore the valid header before releasing this provider's
+                // owned credential/verifier bodies through the same codec.
+                unsafe { release(codec as *mut c_void, std::ptr::from_mut(&mut output).cast()) };
+                assert!(output.body.credential.bytes.is_null(), "{name}");
+                assert!(output.body.verifier.bytes.is_null(), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn replymsg_rejects_call_directions_before_the_reply_union() {
+        for (name, memory, codec, release) in key_protocol_providers(xdr_replymsg, c"xdr_replymsg")
+        {
+            let expected = reply_wire(1);
+            let mut input = reply_input(1);
+            let mut encoded = vec![0xa5; expected.len()];
+            assert_eq!(
+                run(memory, codec, XDR_ENCODE, &mut encoded, &mut input),
+                (1, 28),
+                "{name}"
+            );
+            assert_eq!(encoded, expected, "{name}: valid reply wire");
+            for direction in [0, -1, 2] {
+                let mut input = reply_input(direction);
+                let before = input;
+                let mut wire = vec![0xa5; expected.len()];
+                assert_eq!(
+                    run(memory, codec, XDR_ENCODE, &mut wire, &mut input),
+                    (0, 8),
+                    "{name}"
+                );
+                assert_eq!(input, before, "{name}: rejected encode mutated input");
+
+                let mut wire = reply_wire(direction);
+                let mut output = reply_output();
+                let before = output.body;
+                assert_eq!(
+                    run(memory, codec, XDR_DECODE, &mut wire, &mut output),
+                    (0, 8),
+                    "{name}"
+                );
+                assert_eq!(output.body, before, "{name}: visited rejected reply body");
+                assert_eq!(output.direction, direction, "{name}");
+
+                assert_eq!(
+                    run(memory, codec, XDR_DECODE, &mut encoded, &mut output),
+                    (1, 28),
+                    "{name}"
+                );
+                assert!(!output.body.accepted.verifier.bytes.is_null());
+                output.direction = direction;
+                let before = output;
+                assert_eq!(
+                    run(memory, codec, XDR_FREE, &mut [], &mut output),
+                    (0, 0),
+                    "{name}"
+                );
+                assert_eq!(output, before, "{name}: rejected FREE touched verifier");
+                output.direction = 1;
+                // SAFETY: the successful decode allocated this verifier through
+                // the same provider; its header is valid again for release.
+                unsafe { release(codec as *mut c_void, std::ptr::from_mut(&mut output).cast()) };
+                assert!(output.body.accepted.verifier.bytes.is_null(), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn callhdr_still_initializes_the_static_protocol_header() {
+        let expected: Vec<u8> = [0x0102_0304u32, 0, 2, 100_000, 2]
+            .into_iter()
+            .flat_map(u32::to_be_bytes)
+            .collect();
+        for (name, memory, codec, _) in key_protocol_providers(xdr_callhdr, c"xdr_callhdr") {
+            let mut input = call_input(-7, 99);
+            let mut expected_input = input;
+            expected_input.direction = 0;
+            expected_input.body.rpc_version = 2;
+            let mut wire = [0xa5; 20];
+            assert_eq!(
+                run(memory, codec, XDR_ENCODE, &mut wire, &mut input),
+                (1, 20),
+                "{name}"
+            );
+            assert_eq!(wire.as_slice(), expected, "{name}");
+            assert_eq!(input, expected_input, "{name}: callhdr initialization");
+        }
     }
 }
 
@@ -3157,13 +3542,16 @@ fn xdrrec_encode_decode_via_pipe() {
         *(dec_xdr.as_mut_ptr() as *mut c_int) = XDR_DECODE;
     }
 
-    // Skip record header (xdrrec_skiprecord resets to next record)
-    // First we need to feed the fragment header
+    // Record streams begin between records. The explicit skip enters the
+    // first record before any decoder is allowed to consume its fragment.
+    assert_eq!(unsafe { xdrrec_skiprecord(dec_xdr.as_mut_ptr()) }, 1);
     let mut out: c_int = 0;
     let rc = unsafe { xdr_int(dec_xdr.as_mut_ptr(), &mut out) };
     assert_eq!(rc, 1, "Should decode int from record stream");
     assert_eq!(out, 12345);
 
+    enc_xdr.destroy();
+    dec_xdr.destroy();
     unsafe {
         libc::close(read_fd);
     }

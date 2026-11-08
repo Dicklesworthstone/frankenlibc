@@ -1740,7 +1740,6 @@ pub unsafe extern "C" fn xdr_sizeof(func: *mut c_void, data: *mut c_void) -> c_u
 const MAX_AUTH_BYTES: c_uint = 400;
 const RPC_MSG_VERSION: c_ulong = 2;
 const MSG_CALL: c_int = 0;
-#[allow(dead_code)]
 const MSG_REPLY: c_int = 1;
 
 #[repr(C)]
@@ -1940,7 +1939,9 @@ pub unsafe extern "C" fn xdr_replymsg(xdrs: *mut c_void, rmsg: *mut c_void) -> c
     if unsafe { xdr_u_long(xdrs, b.add(0) as *mut c_ulong) } != XDR_TRUE {
         return XDR_FALSE;
     }
-    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE {
+    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE
+        || unsafe { *(b.add(8) as *const c_int) } != MSG_REPLY
+    {
         return XDR_FALSE;
     }
     if unsafe { xdr_enum(xdrs, b.add(16) as *mut c_int) } != XDR_TRUE {
@@ -1984,21 +1985,21 @@ pub unsafe extern "C" fn xdr_callhdr(xdrs: *mut c_void, cmsg: *mut c_void) -> c_
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_callmsg(xdrs: *mut c_void, cmsg: *mut c_void) -> c_int {
     let b = cmsg as *mut u8;
-    let x = xdrs as *mut Xdr;
-    if unsafe { (*x).x_op } == XDR_ENCODE {
-        unsafe {
-            *(b.add(8) as *mut c_int) = MSG_CALL;
-            *(b.add(16) as *mut c_ulong) = RPC_MSG_VERSION;
-        }
-    }
+    // Unlike xdr_callhdr, this codec validates the supplied message. Reject
+    // an invalid header before visiting credentials or other body storage,
+    // and never turn a malformed caller-owned message into a valid request.
     // xid(0) + direction(8) + rpcvers(16) + prog(24) + vers(32) + proc(40) + cred(48) + verf(72)
     if unsafe { xdr_u_long(xdrs, b.add(0) as *mut c_ulong) } != XDR_TRUE {
         return XDR_FALSE;
     }
-    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE {
+    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE
+        || unsafe { *(b.add(8) as *const c_int) } != MSG_CALL
+    {
         return XDR_FALSE;
     }
-    if unsafe { xdr_u_long(xdrs, b.add(16) as *mut c_ulong) } != XDR_TRUE {
+    if unsafe { xdr_u_long(xdrs, b.add(16) as *mut c_ulong) } != XDR_TRUE
+        || unsafe { *(b.add(16) as *const c_ulong) } != RPC_MSG_VERSION
+    {
         return XDR_FALSE;
     }
     if unsafe { xdr_u_long(xdrs, b.add(24) as *mut c_ulong) } != XDR_TRUE {
