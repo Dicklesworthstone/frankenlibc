@@ -1,4 +1,4 @@
-//! Bounded native cancellation for poll, epoll and monotonic sleep waits.
+//! Bounded native cancellation for poll, select, epoll and monotonic sleep waits.
 //!
 //! A native request does not send a signal. Recheck its stable cancellation
 //! word between at most 50 ms of kernel waiting. Block signals between slices
@@ -9,11 +9,306 @@ use frankenlibc_core::pthread::thread::CancellationWait;
 use frankenlibc_core::syscall::{self, Timespec};
 use std::ffi::c_int;
 
+use crate::io_abi::iov_snapshot::copy_user_bytes;
+
 const KERNEL_SIGSET_BYTES: usize = core::mem::size_of::<u64>();
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 const NANOS_PER_MILLISECOND: i64 = 1_000_000;
 const SLICE_NS: i64 = 50_000_000;
 const STICKY_TIMEOUTS: usize = 0x0400_0000;
+
+/// select publishes a mutable microsecond remainder; pselect owns an internal
+/// nanosecond copy and must never publish it to the application's const input.
+#[derive(Clone, Copy)]
+pub(super) enum SelectTimeout {
+    Timeval(*mut u8),
+    Timespec(*const u8),
+}
+
+impl SelectTimeout {
+    unsafe fn duration(&self) -> Result<Option<Timespec>, c_int> {
+        match *self {
+            Self::Timeval(pointer) if !pointer.is_null() => {
+                let mut value = libc::timeval {
+                    tv_sec: 0,
+                    tv_usec: 0,
+                };
+                // SAFETY: import caller storage through a fault-checked kernel
+                // copy, including unaligned timevals, without forming a reference.
+                unsafe {
+                    copy_user_bytes(
+                        pointer,
+                        core::ptr::from_mut(&mut value).cast(),
+                        core::mem::size_of::<libc::timeval>(),
+                    )?;
+                }
+                // Leave Linux's normalization of out-of-range microseconds and
+                // rejection of negative fields to the original select syscall.
+                let nanoseconds = if (0..1_000_000).contains(&value.tv_usec) {
+                    value.tv_usec * 1000
+                } else {
+                    -1
+                };
+                Ok(Some(Timespec {
+                    tv_sec: value.tv_sec,
+                    tv_nsec: nanoseconds,
+                }))
+            }
+            Self::Timespec(pointer) if !pointer.is_null() => {
+                // SAFETY: the ABI keeps its prepared, aligned timeout copy live.
+                Ok(Some(unsafe { *pointer.cast::<Timespec>() }))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+const SELECT_WORDS: usize = libc::FD_SETSIZE / u64::BITS as usize;
+
+/// Keep the caller's initial interest masks across empty select slices. The
+/// kernel still reads and writes the original buffers, preserving its exact
+/// fd-table clipping, output-fault behavior and aliases between the three sets.
+/// No intermediate mask is observable to a signal handler: signals remain
+/// blocked between the atomic pselect6 waits.
+struct SelectMasks {
+    pointers: [*mut u8; 3],
+    original: [[u64; SELECT_WORDS]; 3],
+    words: usize,
+}
+
+impl SelectMasks {
+    unsafe fn capture(nfds: c_int, pointers: [*mut u8; 3]) -> Result<Self, c_int> {
+        let mut masks = Self {
+            pointers,
+            original: [[0; SELECT_WORDS]; 3],
+            words: (nfds as usize).div_ceil(u64::BITS as usize),
+        };
+        for (pointer, original) in masks.pointers.into_iter().zip(&mut masks.original) {
+            if !pointer.is_null() {
+                // SAFETY: original owns initialized storage for the requested
+                // word count; caller pointers are only kernel-copy sources.
+                unsafe {
+                    copy_user_bytes(
+                        pointer,
+                        original.as_mut_ptr().cast(),
+                        masks.words * core::mem::size_of::<u64>(),
+                    )?;
+                }
+            }
+        }
+        Ok(masks)
+    }
+
+    unsafe fn restore(&self) -> Result<(), c_int> {
+        for (pointer, original) in self.pointers.into_iter().zip(&self.original) {
+            if pointer.is_null() || self.words == 0 {
+                continue;
+            }
+            let mut current = [0u64; SELECT_WORDS];
+            // SAFETY: both extents have the captured word count. A concurrent
+            // caller unmap is reported as EFAULT instead of a Rust dereference.
+            unsafe {
+                copy_user_bytes(
+                    pointer,
+                    current.as_mut_ptr().cast(),
+                    self.words * core::mem::size_of::<u64>(),
+                )?;
+            }
+            for word in 0..self.words {
+                if current[word] != original[word] {
+                    // Linux may clip nfds to its smaller fd-table capacity.
+                    // Restore only words it changed: an untouched, readable but
+                    // unwritable suffix must not introduce a new output fault.
+                    // SAFETY: the source is an owned initialized word; the
+                    // destination is validated by the kernel copier.
+                    unsafe {
+                        copy_user_bytes(
+                            core::ptr::from_ref(&original[word]).cast(),
+                            pointer.add(word * core::mem::size_of::<u64>()),
+                            core::mem::size_of::<u64>(),
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Wait on ordinary fd_set inputs without losing their interest bits between
+/// slices. Extended Linux bitsets, unavailable snapshots and unusual timeval
+/// syntax retain the original syscall rather than acquiring new ABI errors.
+///
+/// # Safety
+/// The pointers retain the public select/pselect lifetime contract. A Timespec
+/// timeout is the ABI's owned copy; a Timeval timeout remains caller storage.
+/// The cancellation descriptor and callback have the same contract as [`wait`].
+pub(super) unsafe fn wait_select(
+    nfds: c_int,
+    pointers: [*mut u8; 3],
+    timeout: SelectTimeout,
+    mask: *const u8,
+    cancel: CancellationWait,
+    on_cancel: unsafe extern "C-unwind" fn(),
+) -> Option<Result<c_int, c_int>> {
+    if !(0..=libc::FD_SETSIZE as c_int).contains(&nfds) {
+        return None;
+    }
+    let duration = match unsafe { timeout.duration() } {
+        Ok(duration) => duration,
+        // No input or output has changed. Let the original syscall distinguish
+        // EFAULT from a snapshot mechanism unavailable under the caller's policy.
+        Err(_) => return None,
+    };
+    if duration.is_some_and(|time| {
+        time.tv_sec < 0
+            || !(0..1_000_000_000).contains(&time.tv_nsec)
+            || (time.tv_sec == 0 && time.tv_nsec == 0)
+    }) {
+        return None;
+    }
+    // Linux can read fewer words than nfds names when its fd table is smaller.
+    // If the additional snapshot extent is inaccessible, preserve that syscall
+    // behavior through the original path rather than manufacturing EFAULT.
+    let masks = match unsafe { SelectMasks::capture(nfds, pointers) } {
+        Ok(masks) => masks,
+        Err(_) => return None,
+    };
+    let mut guard = match SignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => return Some(Err(error)),
+    };
+    let mut publish_timeout = false;
+    if let SelectTimeout::Timeval(pointer) = timeout
+        && !pointer.is_null()
+    {
+        // select's STICKY_TIMEOUTS personality leaves the caller's timeval
+        // untouched. If the query is denied, retain the original syscall.
+        // SAFETY: a read-only per-thread personality query has no pointer args.
+        let persona =
+            unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+        if (-4095..0).contains(&(persona as isize)) {
+            return match guard.restore() {
+                Ok(()) => None,
+                Err(error) => Some(Err(error)),
+            };
+        }
+        publish_timeout = persona & STICKY_TIMEOUTS == 0;
+    }
+    let original_mask = guard.original;
+    let wait_mask = if mask.is_null() {
+        core::ptr::from_ref(&original_mask).cast::<u8>()
+    } else {
+        mask
+    };
+    // SAFETY: masks and the original signal-set copy remain stationary until
+    // the bounded loop returns or the public cancellation callback unwinds.
+    let outcome = unsafe { select_slices(nfds, &masks, duration, wait_mask, &mut guard, cancel) };
+    let (result, remaining) = match outcome {
+        Ok((WaitResult::Completed(ready), remaining)) => (Ok(ready), remaining),
+        Ok((WaitResult::Cancel, _)) => (
+            unsafe { guard.deliver_cancel(mask, on_cancel) }.and(Err(libc::EINTR)),
+            None,
+        ),
+        Err((error, remaining)) => (Err(error), remaining),
+    };
+    let result = guard.restore().and(result);
+    if publish_timeout
+        && let (SelectTimeout::Timeval(pointer), Some(remaining)) = (timeout, remaining)
+    {
+        let value = libc::timeval {
+            tv_sec: remaining.tv_sec,
+            tv_usec: remaining.tv_nsec / 1000,
+        };
+        // SAFETY: initialized owned timeval; a read-only/unmapped destination
+        // returns EFAULT, just as the original select timeout writeback does.
+        if let Err(error) = unsafe {
+            copy_user_bytes(
+                core::ptr::from_ref(&value).cast(),
+                pointer,
+                core::mem::size_of::<libc::timeval>(),
+            )
+        } {
+            return Some(Err(error));
+        }
+    }
+    Some(result)
+}
+
+// Like the other sliced waits, this frame owns no Drop state. Disarm the outer
+// mask guard while an application signal handler may unwind from pselect6.
+#[inline(never)]
+unsafe fn select_slices(
+    nfds: c_int,
+    masks: &SelectMasks,
+    duration: Option<Timespec>,
+    mask: *const u8,
+    guard: &mut SignalMaskGuard,
+    cancel: CancellationWait,
+) -> Result<(WaitResult, Option<Timespec>), (c_int, Option<Timespec>)> {
+    let deadline = match duration {
+        Some(time) => Some(
+            monotonic_nanoseconds().map_err(|error| (error, None))?
+                + i128::from(time.tv_sec) * NANOS_PER_SECOND
+                + i128::from(time.tv_nsec),
+        ),
+        None => None,
+    };
+    let sig_data = [mask as usize, KERNEL_SIGSET_BYTES];
+    let mut waited = false;
+    loop {
+        if cancel.pending() {
+            return if waited {
+                Ok((WaitResult::Cancel, None))
+            } else {
+                Err((libc::EINTR, None))
+            };
+        }
+        let now = if deadline.is_some() {
+            monotonic_nanoseconds().map_err(|error| (error, None))?
+        } else {
+            0
+        };
+        let (mut slice, final_slice) = next_slice(deadline, now);
+        let unscheduled = deadline.map(|end| (end - now).max(0) - i128::from(slice.tv_nsec));
+        guard.armed = false;
+        // SAFETY: the original fd_set pointers remain kernel-validated. The
+        // timeout and pselect6 mask descriptor are owned initialized storage.
+        let result = unsafe {
+            syscall::sys_pselect6(
+                nfds,
+                masks.pointers[0],
+                masks.pointers[1],
+                masks.pointers[2],
+                core::ptr::from_mut(&mut slice).cast::<u8>().cast_const(),
+                sig_data.as_ptr().cast(),
+            )
+        };
+        guard.armed = true;
+        // Kernel remainder writeback occurs before a signal handler runs.
+        // Preserve it rather than deducting handler time from select's result.
+        let remaining = unscheduled.map(|unscheduled| {
+            sleep_remainder(
+                unscheduled
+                    + i128::from(slice.tv_sec) * NANOS_PER_SECOND
+                    + i128::from(slice.tv_nsec),
+            )
+        });
+        if matches!(result, Ok(0)) && !final_slice {
+            // SAFETY: a successful empty wait cleared only kernel-written
+            // output words; restore interest before another slice or cleanup.
+            unsafe { masks.restore() }.map_err(|error| (error, remaining))?;
+        }
+        if cancel.pending() && matches!(result, Ok(_) | Err(libc::EINTR)) {
+            return Ok((WaitResult::Cancel, None));
+        }
+        match result {
+            Ok(0) if !final_slice => waited = true,
+            Ok(ready) => return Ok((WaitResult::Completed(ready), remaining)),
+            Err(error) => return Err((error, remaining)),
+        }
+    }
+}
 
 /// The sleep boundary publishes a remainder only for an interrupted relative
 /// wait. Unsupported forms retain their original raw syscall, including its

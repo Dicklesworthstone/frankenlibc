@@ -297,55 +297,14 @@ pub(crate) unsafe fn select_cp(
         return reject_efault();
     }
 
-    // SYS_select doesn't exist on aarch64; use SYS_pselect6 with timeout conversion.
-    #[cfg(target_arch = "x86_64")]
     let result = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_select(
-                actual_nfds,
-                readfds as *mut u8,
-                writefds as *mut u8,
-                exceptfds as *mut u8,
-                timeout as *mut u8,
-            )
-        })
-    };
-    #[cfg(not(target_arch = "x86_64"))]
-    let result = {
-        // Convert timeval to timespec for pselect6 and mirror the remaining
-        // timeout back into the caller's timeval (select() semantics).
-        let mut ts_storage = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        let ts_ptr = if timeout.is_null() {
-            std::ptr::null::<libc::timespec>()
-        } else {
-            let tv = unsafe { &*timeout };
-            ts_storage = libc::timespec {
-                tv_sec: tv.tv_sec,
-                tv_nsec: tv.tv_usec * 1000,
-            };
-            &ts_storage as *const libc::timespec
-        };
-        let res = unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_pselect6(
-                    actual_nfds,
-                    readfds as *mut u8,
-                    writefds as *mut u8,
-                    exceptfds as *mut u8,
-                    ts_ptr as *const u8,
-                    std::ptr::null(),
-                )
-            })
-        };
-        if !timeout.is_null() {
-            let tv = unsafe { &mut *timeout };
-            tv.tv_sec = ts_storage.tv_sec;
-            tv.tv_usec = (ts_storage.tv_nsec / 1000) as libc::suseconds_t;
-        }
-        res
+        crate::pthread_abi::cancellation_point_select(
+            actual_nfds,
+            readfds.cast(),
+            writefds.cast(),
+            exceptfds.cast(),
+            timeout.cast(),
+        )
     };
     let (rc, adverse) = match result {
         Ok(n) => (n, false),
@@ -435,26 +394,15 @@ pub(crate) unsafe fn pselect_cp(
         }
     };
     let (ts_ptr, mask_ptr) = input.kernel_args();
-    // pselect6 expects { kernel_sigset_t*, size_t }. Build this only after
-    // input stops moving, so it points to the same imported mask we own.
-    let sig_data: [usize; 2] = [mask_ptr as usize, wait_snapshot::KERNEL_SIGSET_BYTES];
-    let sig_ptr = if mask_ptr.is_null() {
-        std::ptr::null::<[usize; 2]>()
-    } else {
-        &sig_data as *const [usize; 2]
-    };
-
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_pselect6(
-                actual_nfds,
-                readfds as *mut u8,
-                writefds as *mut u8,
-                exceptfds as *mut u8,
-                ts_ptr,
-                sig_ptr as *const u8,
-            )
-        })
+        crate::pthread_abi::cancellation_point_pselect(
+            actual_nfds,
+            readfds.cast(),
+            writefds.cast(),
+            exceptfds.cast(),
+            ts_ptr,
+            mask_ptr,
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {

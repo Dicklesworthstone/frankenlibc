@@ -6837,6 +6837,138 @@ pub(crate) unsafe fn cancellation_point_ppoll(
     }
 }
 
+/// select cancellation point, retaining the public caller through aliases.
+/// Native threads use bounded pselect6 waits; other paths retain the original
+/// architecture-specific syscall and timeval behavior.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_select(
+    nfds: c_int,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *mut u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    if let Some(result) = unsafe {
+        native_select_window(
+            caller,
+            nfds,
+            [readfds, writefds, exceptfds],
+            cancel_poll::SelectTimeout::Timeval(timeout),
+            std::ptr::null(),
+        )
+    } {
+        return result;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        unsafe {
+            cancellation_window(caller, || {
+                raw_syscall::sys_select(nfds, readfds, writefds, exceptfds, timeout)
+            })
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // Keep the existing select emulation on architectures without SYS_select.
+        let mut duration = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let pointer = if timeout.is_null() {
+            std::ptr::null()
+        } else {
+            // SAFETY: retain select's existing caller-owned timeval contract.
+            let value = unsafe { &*timeout.cast::<libc::timeval>() };
+            duration.tv_sec = value.tv_sec;
+            duration.tv_nsec = value.tv_usec * 1000;
+            std::ptr::from_mut(&mut duration).cast::<u8>().cast_const()
+        };
+        let result = unsafe {
+            cancellation_window(caller, || {
+                raw_syscall::sys_pselect6(
+                    nfds,
+                    readfds,
+                    writefds,
+                    exceptfds,
+                    pointer,
+                    std::ptr::null(),
+                )
+            })
+        };
+        if !timeout.is_null() {
+            // SAFETY: mirror the kernel's remainder into the original timeval.
+            let value = unsafe { &mut *timeout.cast::<libc::timeval>() };
+            value.tv_sec = duration.tv_sec;
+            value.tv_usec = duration.tv_nsec / 1000;
+        }
+        result
+    }
+}
+
+/// pselect cancellation point with an owned timeout and kernel-width mask.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_pselect(
+    nfds: c_int,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    if let Some(result) = unsafe {
+        native_select_window(
+            caller,
+            nfds,
+            [readfds, writefds, exceptfds],
+            cancel_poll::SelectTimeout::Timespec(timeout),
+            mask,
+        )
+    } {
+        return result;
+    }
+    let sig_data = [mask as usize, std::mem::size_of::<u64>()];
+    let sig_pointer = if mask.is_null() {
+        std::ptr::null()
+    } else {
+        sig_data.as_ptr().cast()
+    };
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_pselect6(nfds, readfds, writefds, exceptfds, timeout, sig_pointer)
+        })
+    }
+}
+
+#[inline(never)]
+unsafe fn native_select_window(
+    caller: usize,
+    nfds: c_int,
+    pointers: [*mut u8; 3],
+    timeout: cancel_poll::SelectTimeout,
+    mask: *const u8,
+) -> Option<Result<c_int, c_int>> {
+    let cancel = core_current_cancellation_wait()?;
+    if caller == 0 || address_is_inside_this_object(caller) {
+        return None;
+    }
+    if cancel.pending() {
+        // SAFETY: cancellation acts before any application output is modified.
+        unsafe { pthread_testcancel() };
+    }
+    // SAFETY: the originating ABI entry retains all pointers and the owned
+    // timeout. A blocked cancellation invokes testcancel under the wait mask.
+    let result = unsafe {
+        cancel_poll::wait_select(nfds, pointers, timeout, mask, cancel, pthread_testcancel)
+    };
+    if result.is_some() && cancel.pending() {
+        // Readiness has no ownership transfer, unlike edge-triggered epoll.
+        unsafe { pthread_testcancel() };
+    }
+    result
+}
+
 /// No resources are owned by this frame: hosted asynchronous cancellation
 /// must cross it without entering a Rust cleanup landing pad. The native
 /// adapter delivers cancellation during a wait under ppoll's temporary mask,

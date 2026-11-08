@@ -1,4 +1,4 @@
-/* Real blocked poll/epoll/sleep cancellation and signal behavior, with a GNU oracle.
+/* Real blocked poll/select/epoll/sleep cancellation and signal behavior, with a GNU oracle.
  * Successful blocked cases require a sleeping syscall and a kernel snapshot of
  * its pollfd array. Missing procfs evidence is an explicit, non-passing SKIP.
  */
@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
@@ -40,6 +41,12 @@ typedef int (*epoll_pwait2_function)(int, struct epoll_event *, int,
 static epoll_wait_function selected_epoll_wait;
 static epoll_pwait_function selected_epoll_pwait;
 static epoll_pwait2_function selected_epoll_pwait2;
+typedef int (*select_function)(int, fd_set *, fd_set *, fd_set *, struct timeval *);
+typedef int (*pselect_function)(int, fd_set *, fd_set *, fd_set *,
+                                const struct timespec *, const sigset_t *);
+static select_function selected_select;
+static pselect_function selected_pselect;
+enum select_api { SELECT_NONE, SELECT_PLAIN, SELECT_MASK };
 static const sigset_t *guarded_mask;
 enum event_api { EVENT_NONE, EVENT_WAIT, EVENT_PWAIT, EVENT_PWAIT2 };
 static const uint64_t event_tokens[] = {UINT64_C(0x123456789abcdef0), UINT64_C(0xfedcba9876543210)};
@@ -150,7 +157,71 @@ struct state {
     int epfd, duplicate_fd, maxevents, timeout_ms;
     struct epoll_event events[4];
     int64_t elapsed_ns;
+    enum select_api select_api;
+    int select_nfds, select_remainder;
+    fd_set sets[3], expected_sets[3];
+    struct timeval select_timeout;
 };
+
+static int select_call(struct state *state, int nfds, fd_set *readfds,
+                       fd_set *writefds, fd_set *exceptfds, struct timeval *timeval,
+                       const struct timespec *timespec, const sigset_t *mask) {
+    if (state->select_api == SELECT_PLAIN)
+        return selected_select(nfds, readfds, writefds, exceptfds, timeval);
+    return selected_pselect(nfds, readfds, writefds, exceptfds, timespec, mask);
+}
+
+static void select_errors(struct state *state) {
+    struct timeval zero = {0, 0};
+    const struct timespec zero_ts = {0, 0};
+    sigset_t temporary, after;
+    sigemptyset(&temporary);
+    sigaddset(&temporary, SIGUSR1);
+    errno = EDOM;
+    REQUIRE(select_call(state, -1, NULL, NULL, NULL, &zero, &zero_ts, NULL) == -1 &&
+            errno == EINVAL, "select preserves invalid nfds");
+    int closed = fcntl(state->pipefd[0], F_DUPFD_CLOEXEC, 128);
+    REQUIRE(closed >= 128 && closed < FD_SETSIZE && close(closed) == 0,
+            "reserve then close a descriptor in the kernel table");
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(closed, &readfds);
+    struct timeval finite = {0, 250000};
+    const struct timespec finite_ts = {0, 250000000};
+    errno = EDOM;
+    REQUIRE(select_call(state, closed + 1, &readfds, NULL, NULL, &finite, &finite_ts,
+                        &temporary) == -1 && errno == EBADF,
+            "select rejects a closed descriptor without losing its requested bit");
+    REQUIRE(FD_ISSET(closed, &readfds), "select error preserves its input mask");
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &after) == 0 &&
+            sigismember(&after, SIGUSR1) == 0, "select error restores the original mask");
+    struct timeval invalid = {-1, 0};
+    const struct timespec invalid_ts = {-1, 0};
+    errno = EDOM;
+    REQUIRE(select_call(state, 1, (fd_set *)(uintptr_t)1, NULL, NULL, &invalid, &invalid_ts,
+                        (const sigset_t *)(uintptr_t)1) == -1 && errno == EINVAL,
+            "select rejects timeout syntax before reading sets or temporary mask");
+    errno = EDOM;
+    REQUIRE(select_call(state, 1, (fd_set *)(uintptr_t)1, NULL, NULL, &zero, &zero_ts,
+                        NULL) == -1 && errno == EFAULT,
+            "select retains fault-checked kernel fd-set access");
+    FD_ZERO(&readfds);
+    FD_SET(state->pipefd[1], &readfds);
+    errno = EDOM;
+    REQUIRE(select_call(state, state->pipefd[1] + 1, &readfds, &readfds, NULL,
+                        &zero, &zero_ts, NULL) == 1 && FD_ISSET(state->pipefd[1], &readfds),
+            "select preserves aliased input/output sets and kernel write order");
+    if (state->select_api == SELECT_MASK) {
+        errno = EDOM;
+        REQUIRE(selected_pselect(0, NULL, NULL, NULL, &finite_ts,
+                                 (const sigset_t *)(uintptr_t)1) == -1 && errno == EFAULT,
+                "pselect rejects an unreadable temporary mask");
+        REQUIRE(selected_pselect(0, NULL, NULL, NULL, &zero_ts, guarded_mask) == 0,
+                "pselect reads only the eight-byte kernel signal mask");
+        REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &after) == 0 &&
+                sigismember(&after, SIGUSR1) == 0, "pselect mask error preserves caller state");
+    }
+}
 
 static int epoll_call(const struct state *state, int epfd, struct epoll_event *events,
                       int maxevents, int timeout_ms, const struct timespec *timeout,
@@ -301,7 +372,18 @@ static void *worker(void *argument) {
                                 state->kind == MASK_CANCEL || state->kind == MASK_CANCEL_BLOCK
                                   ? &state->temporary_mask : NULL;
     int64_t started = monotonic_ns();
-    if (state->event_api != EVENT_NONE) {
+    if (state->select_api != SELECT_NONE) {
+        if (state->kind == EVENT_ERRORS) {
+            select_errors(state);
+            state->result = 0;
+        } else {
+            int empty = state->select_nfds == 0;
+            state->result = select_call(state, state->select_nfds,
+                empty ? NULL : &state->sets[0], empty ? NULL : &state->sets[1],
+                empty ? NULL : &state->sets[2],
+                state->timeout ? &state->select_timeout : NULL, state->timeout, temporary);
+        }
+    } else if (state->event_api != EVENT_NONE) {
         if (state->kind == EVENT_ERRORS) {
             epoll_errors(state);
             state->result = 0;
@@ -373,6 +455,40 @@ static void observe_parked(struct state *state, int memory) {
             sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
                    &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 3)
             goto retry;
+        if (state->select_api != SELECT_NONE) {
+            int is_select = 0;
+#ifdef SYS_select
+            is_select = number == SYS_select;
+#endif
+            if ((!is_select && number != SYS_pselect6) ||
+                args[0] != (unsigned)state->select_nfds || (sliced && number != SYS_pselect6))
+                goto retry;
+            fd_set observed;
+            size_t bytes = ((size_t)state->select_nfds + 63) / 64 * sizeof(uint64_t);
+            for (unsigned i = 0; i < 3 && bytes != 0; ++i) {
+                if (args[i + 1] == 0 || !snapshot(memory, args[i + 1], &observed, bytes) ||
+                    memcmp(&observed, &state->expected_sets[i], bytes) != 0) goto retry;
+            }
+            if (!read_proc(state, "stat", status, sizeof(status))) goto retry;
+            char *end = strrchr(status, ')');
+            if (end == NULL || end[1] != ' ' || end[2] != 'S') goto retry;
+            if (sliced) {
+                struct timespec quantum;
+                uintptr_t mask_argument[2];
+                uint64_t mask;
+                if (args[4] == 0 || !snapshot(memory, args[4], &quantum, sizeof(quantum)) ||
+                    args[5] == 0 || !snapshot(memory, args[5], mask_argument, sizeof(mask_argument)) ||
+                    mask_argument[0] == 0 || !snapshot(memory, mask_argument[0], &mask, sizeof(mask)))
+                    goto retry;
+                REQUIRE(quantum.tv_sec == 0 && quantum.tv_nsec > 0 && quantum.tv_nsec <= 50000000,
+                        "native select has a bounded nonzero pselect6 quantum");
+                REQUIRE(mask_argument[1] == sizeof(mask), "select uses a kernel-width signal mask");
+                REQUIRE(((mask >> (SIGUSR1 - 1)) & 1) ==
+                            (uint64_t)(state->kind == MASK_BLOCK || state->kind == MASK_CANCEL_BLOCK),
+                        "select submits the intended atomic signal mask");
+            }
+            return;
+        }
         if (state->event_api != EVENT_NONE) {
             int is_epoll_wait = 0;
 #ifdef SYS_epoll_wait
@@ -481,6 +597,31 @@ static void initialize(struct state *state, enum kind kind, int use_ppoll,
     atomic_init(&state->cleaned, 0);
 }
 
+static void initialize_select(struct state *state, enum kind kind,
+                               const int pipefd[2], const struct timespec *timeout,
+                               enum select_api api, int remainder) {
+    initialize(state, kind, 0, pipefd, timeout, EVENT_NONE, -1, -1);
+    state->select_api = api;
+    state->select_remainder = remainder;
+    state->select_nfds = kind == EMPTY_BLOCKED ? 0 :
+                        (pipefd[0] > pipefd[1] ? pipefd[0] : pipefd[1]) + 1;
+    if (kind == BLOCKED || kind == EMPTY_BLOCKED) state->timeout = NULL;
+    if (state->timeout) {
+        state->select_timeout.tv_sec = timeout->tv_sec;
+        state->select_timeout.tv_usec = timeout->tv_nsec / 1000;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        FD_ZERO(&state->sets[i]);
+        FD_SET(FD_SETSIZE - 1, &state->sets[i]); /* Untouched beyond nfds. */
+    }
+    if (state->select_nfds) {
+        FD_SET(pipefd[0], &state->sets[0]);
+        FD_SET(pipefd[0], &state->sets[2]);
+        if (kind == READY) FD_SET(pipefd[1], &state->sets[1]);
+    }
+    memcpy(state->expected_sets, state->sets, sizeof(state->sets));
+}
+
 static void seed_pipe(const struct state *state) {
     REQUIRE(write(state->pipefd[1], "P", 1) == 1, "publish controlled readiness");
 }
@@ -559,7 +700,10 @@ static void run_case(struct state *state, int memory) {
     for (nfds_t i = 0; i < state->count; ++i)
         REQUIRE(state->fds[i].fd == state->expected[i].fd &&
                 state->fds[i].events == state->expected[i].events, "poll inputs unchanged");
-    if (kind == PENDING && state->event_api == EVENT_NONE)
+    if (kind == PENDING && state->select_api != SELECT_NONE)
+        REQUIRE(memcmp(state->sets, state->expected_sets, sizeof(state->sets)) == 0,
+                "pending select cancellation precedes output publication");
+    if (kind == PENDING && state->event_api == EVENT_NONE && state->select_api == SELECT_NONE)
         REQUIRE(state->fds[0].revents == 0x4000, "pending cancellation precedes output publication");
     if (kind == PENDING && state->event_api != EVENT_NONE) {
         for (size_t i = 0; i < sizeof(state->events); ++i)
@@ -573,6 +717,22 @@ static void run_case(struct state *state, int memory) {
     if (kind == SIGNAL || kind == SIGNAL_RESTART || kind == MASK_UNBLOCK) {
         REQUIRE(state->result == -1 && state->error == EINTR, "user signal returns EINTR without restart");
         REQUIRE(atomic_load_explicit(&signals_delivered, memory_order_relaxed) == 1, "one user signal delivered");
+    } else if (state->select_api != SELECT_NONE &&
+               (kind == READY || kind == READY_LATE || kind == DISABLED || kind == MASK_BLOCK)) {
+        REQUIRE(state->result == (kind == READY ? 2 : 1), "select counts ready bits across sets");
+        REQUIRE(FD_ISSET(state->pipefd[0], &state->sets[0]) &&
+                FD_ISSET(state->pipefd[1], &state->sets[1]) == (kind == READY) &&
+                !FD_ISSET(state->pipefd[0], &state->sets[2]),
+                "select returns only ready interest bits after internal slices");
+    } else if (state->select_api != SELECT_NONE &&
+               (kind == FINITE_TIMEOUT || kind == READONLY_TIMEOUT)) {
+        REQUIRE(state->result == 0 && !FD_ISSET(state->pipefd[0], &state->sets[0]) &&
+                !FD_ISSET(state->pipefd[0], &state->sets[2]), "select timeout clears watched bits");
+        REQUIRE(state->elapsed_ns >= (kind == FINITE_TIMEOUT ? 220000000 : 450000000) &&
+                state->elapsed_ns < 2000000000, "select retains one deadline across empty slices");
+        if (state->select_api == SELECT_PLAIN)
+            REQUIRE(state->select_timeout.tv_sec == 0 && state->select_timeout.tv_usec == 0,
+                    "select publishes an exhausted timeval");
     } else if (kind == READY && state->event_api == EVENT_NONE) {
         REQUIRE(state->result == 2, "duplicate pollfd entries retain multiplicity");
         REQUIRE(state->fds[0].revents == POLLIN && state->fds[2].revents == POLLIN &&
@@ -605,6 +765,22 @@ static void run_case(struct state *state, int memory) {
     if (kind == READY_LATE)
         REQUIRE(state->elapsed_ns >= 160000000 && state->elapsed_ns < 2000000000,
                 "epoll returns real readiness after several empty native slices");
+    if (state->select_api != SELECT_NONE) {
+        for (unsigned i = 0; i < 3; ++i)
+            REQUIRE(FD_ISSET(FD_SETSIZE - 1, &state->sets[i]), "select preserves words beyond nfds");
+        if (state->select_api == SELECT_PLAIN && kind == READY_LATE)
+            REQUIRE(state->select_timeout.tv_sec == 0 && state->select_timeout.tv_usec > 300000 &&
+                    state->select_timeout.tv_usec < 900000, "select publishes its unslept duration");
+        if (state->select_remainder) {
+            REQUIRE(atomic_load_explicit(&sleep_signal_finished, memory_order_relaxed) -
+                    atomic_load_explicit(&sleep_signal_started, memory_order_relaxed) >= 300000000,
+                    "remainder check actually ran a slow signal handler");
+            if (state->select_api == SELECT_PLAIN)
+                REQUIRE(state->select_timeout.tv_sec == 0 && state->select_timeout.tv_usec > 100000 &&
+                        state->select_timeout.tv_usec <= 250000,
+                        "select remainder excludes time spent in the signal handler");
+        }
+    }
     if (!canceled || kind == DISABLED)
         REQUIRE(state->restored_usr1 == (kind == MASK_UNBLOCK), "caller signal mask restored");
     if (kind == MASK_BLOCK)
@@ -980,10 +1156,108 @@ static int sleep_contract_main(char **argv) {
     return 0;
 }
 
+static int select_contract_main(char **argv) {
+    enum select_api api = strncmp(case_name, "pselect-", 8) == 0 ? SELECT_MASK : SELECT_PLAIN;
+    const char *suffix = case_name + (api == SELECT_MASK ? 8 : 7);
+    int alias = strncmp(suffix, "alias-", 6) == 0;
+    if (alias) suffix += 6;
+    const char *names[] = {"blocked", "pending", "disabled", "signal", "signal-restart", "ready",
+                          "reuse", "mask-unblock", "mask-block", "readonly-timeout", "empty-blocked",
+                          "mask-cancel", "mask-cancel-block", "timeout", "ready-late",
+                          "edge-ready", "errors"};
+    int index = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(suffix, names[i]) == 0) index = (int)i;
+    int remainder = strcmp(suffix, "remainder") == 0;
+    if (remainder) index = SIGNAL;
+    if (index < 0 || index == EDGE_READY || (api == SELECT_PLAIN &&
+        ((index >= MASK_UNBLOCK && index <= READONLY_TIMEOUT) ||
+         index == MASK_CANCEL || index == MASK_CANCEL_BLOCK))) return 2;
+    enum kind kind = (enum kind)index;
+    int pin = pin_providers(argv[2], 0, EVENT_NONE);
+    if (pin != 0) return pin;
+    const char *name = api == SELECT_MASK ? (alias ? "__pselect" : "pselect") :
+                                          (alias ? "__select" : "select");
+    void *address = dlsym(RTLD_DEFAULT, name);
+    struct stat wanted, actual;
+    Dl_info info = {0};
+    if (stat(argv[2], &wanted) != 0 || address == NULL || !dladdr(address, &info) ||
+        info.dli_fname == NULL || stat(info.dli_fname, &actual) != 0 ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
+        return 86;
+    }
+    if (api == SELECT_MASK) selected_pselect = (pselect_function)address;
+    else selected_select = (select_function)address;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    sleep_handler_delay = remainder;
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = user_signal;
+    action.sa_flags = kind == SIGNAL_RESTART ? SA_RESTART : 0;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "install select signal handler");
+    sigset_t unblocked;
+    sigemptyset(&unblocked);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &unblocked, NULL) == 0, "creator signal mask");
+    alarm(15);
+    int pipefd[2];
+    REQUIRE(pipe2(pipefd, O_CLOEXEC | O_NONBLOCK) == 0, "create select application pipe");
+    int high = fcntl(pipefd[0], F_DUPFD_CLOEXEC, 130);
+    REQUIRE(high >= 130 && high < FD_SETSIZE - 64 && close(pipefd[0]) == 0,
+            "watch a descriptor beyond the first two fd-set words");
+    pipefd[0] = high;
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("kernel-select-mask-snapshot-unavailable");
+    long page = sysconf(_SC_PAGESIZE);
+    REQUIRE(page > 0, "page size");
+    struct timespec *timeout = mmap(NULL, 2 * (size_t)page, PROT_READ | PROT_WRITE,
+                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(timeout != MAP_FAILED, "map select timeout storage");
+    *timeout = kind == READONLY_TIMEOUT ? (struct timespec){0, 500000000} :
+               kind == FINITE_TIMEOUT || remainder ? (struct timespec){0, 250000000} :
+               kind == READY_LATE ? (struct timespec){1, 0} : (struct timespec){60, 0};
+    struct timespec expected = *timeout;
+    REQUIRE(mprotect(timeout, (size_t)page, PROT_READ) == 0, "protect pselect timeout storage");
+    REQUIRE(mprotect((char *)timeout + page, (size_t)page, PROT_NONE) == 0,
+            "protect page after kernel-width select mask");
+    guarded_mask = (const sigset_t *)((const char *)timeout + page - sizeof(uint64_t));
+    struct state state;
+    if (kind == REUSE) {
+        initialize_select(&state, READY, pipefd, timeout, api, 0);
+        run_case(&state, memory);
+        size_t before = descriptor_count();
+        for (int round = 0; round < 8; ++round) {
+            initialize_select(&state, BLOCKED, pipefd, timeout, api, 0);
+            run_case(&state, memory);
+            REQUIRE(descriptor_count() == before, "retired select thread leaked a descriptor");
+            initialize_select(&state, READY, pipefd, timeout, api, 0);
+            run_case(&state, memory);
+            REQUIRE(descriptor_count() == before, "select replacement inherited cancellation or leaked");
+        }
+    } else {
+        initialize_select(&state, kind, pipefd, timeout, api, remainder);
+        run_case(&state, memory);
+    }
+    REQUIRE(timeout->tv_sec == expected.tv_sec && timeout->tv_nsec == expected.tv_nsec,
+            "pselect must not change the caller's const timeout");
+    REQUIRE(munmap(timeout, 2 * (size_t)page) == 0, "release select timeout storage");
+    REQUIRE(close(memory) == 0 && close(pipefd[0]) == 0 && close(pipefd[1]) == 0,
+            "release select fixture descriptors");
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
     if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);
+    if (strncmp(case_name, "select-", 7) == 0 || strncmp(case_name, "pselect-", 8) == 0)
+        return select_contract_main(argv);
     int use_ppoll = strncmp(case_name, "ppoll-", 6) == 0;
     int alias = strncmp(case_name, "ppoll-alias-", 12) == 0;
     enum event_api event_api = EVENT_NONE;
