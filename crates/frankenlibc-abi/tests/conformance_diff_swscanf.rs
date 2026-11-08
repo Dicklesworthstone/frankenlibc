@@ -2077,13 +2077,15 @@ mod locale_scanning {
                 let kinds: &[&str] = if left {
                     &["d", "s"]
                 } else {
-                    &["d", "s", "literal", "bare_s"]
+                    &["d", "s", "literal", "bare_s", "precision_s"]
                 };
                 for &kind in kinds {
                     let text = if kind == "literal" {
                         format!("P%n{}%nQ", "A".repeat(width))
                     } else if kind == "bare_s" {
                         "P%n%s%nQ".to_owned()
+                    } else if kind == "precision_s" {
+                        format!("P%n%.{width}s%nQ")
                     } else {
                         format!("P%n%{}{width}{kind}%nQ", if left { "-" } else { "" })
                     };
@@ -2091,7 +2093,7 @@ mod locale_scanning {
                     // Allocate the large input before imposing the limit. Only
                     // the formatter's output growth should fail, including
                     // the literal and bare-%s paths that skip the field code.
-                    let string = (kind == "bare_s")
+                    let string = matches!(kind, "bare_s" | "precision_s")
                         .then(|| std::ffi::CString::new(vec![b'A'; width]).unwrap());
                     let mut expected = None;
                     for (engine, print, errno, free) in entries {
@@ -2141,12 +2143,7 @@ mod locale_scanning {
                                         &mut after,
                                     )
                                 } else if kind == "literal" {
-                                    print(
-                                        &mut output,
-                                        format.as_ptr(),
-                                        &mut before,
-                                        &mut after,
-                                    )
+                                    print(&mut output, format.as_ptr(), &mut before, &mut after)
                                 } else {
                                     print(
                                         &mut output,

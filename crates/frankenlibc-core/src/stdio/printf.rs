@@ -46,6 +46,10 @@ impl PushBytes for Vec<u8> {
         if n == 0 {
             return;
         }
+        if self.try_reserve(n).is_err() {
+            note_render_alloc_failure();
+            return;
+        }
         // NO `unsafe` HERE, and that is a constraint rather than a preference:
         // `frankenlibc-core` is the safe-implementations crate and denies it, so
         // the ABI side's overlapping power-of-two moves cannot be reused. A
@@ -61,7 +65,6 @@ impl PushBytes for Vec<u8> {
             self.extend_from_slice(src);
             return;
         }
-        self.reserve(n);
         for &b in src {
             self.push(b);
         }
