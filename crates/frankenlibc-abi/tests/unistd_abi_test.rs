@@ -17308,6 +17308,491 @@ fn futex_requeue_null_waiters_returns_minus_one_with_errno() {
     assert!(unsafe { *libc::__errno_location() } != 0);
 }
 
+#[cfg(target_os = "linux")]
+mod getifaddrs_materialization_tests {
+    use super::*;
+    use frankenlibc_abi::unistd_abi::{freeifaddrs, getifaddrs_from_netlink_for_tests};
+
+    fn attribute(kind: u16, payload: &[u8]) -> Vec<u8> {
+        let length = payload.len() + 4;
+        let mut result = Vec::new();
+        result.extend_from_slice(&(length as u16).to_ne_bytes());
+        result.extend_from_slice(&kind.to_ne_bytes());
+        result.extend_from_slice(payload);
+        result.resize((length + 3) & !3, 0);
+        result
+    }
+
+    fn message(kind: u16, body: &[u8]) -> Vec<u8> {
+        let mut result = vec![0u8; 16];
+        result[..4].copy_from_slice(&((16 + body.len()) as u32).to_ne_bytes());
+        result[4..6].copy_from_slice(&kind.to_ne_bytes());
+        result.extend_from_slice(body);
+        result.resize((result.len() + 3) & !3, 0);
+        result
+    }
+
+    fn finish_dump(mut result: Vec<u8>) -> Vec<u8> {
+        result.extend_from_slice(&message(3, &[]));
+        result
+    }
+
+    fn link_dump(with_address: bool) -> Vec<u8> {
+        let mut body = vec![0u8; 16];
+        body[2..4].copy_from_slice(&32u16.to_ne_bytes());
+        body[4..8].copy_from_slice(&17u32.to_ne_bytes());
+        body[8..12].copy_from_slice(&0x1043u32.to_ne_bytes());
+        body.extend_from_slice(&attribute(3, b"ib\xff0\0"));
+        if with_address {
+            body.extend_from_slice(&attribute(1, &(0..20u8).collect::<Vec<_>>()));
+            body.extend_from_slice(&attribute(2, &[0xff; 20]));
+        }
+        body.extend_from_slice(&attribute(7, &[0x41; 92]));
+        finish_dump(message(16, &body))
+    }
+
+    fn address_dump(index: u32) -> Vec<u8> {
+        let mut v4 = vec![0u8; 8];
+        v4[0] = libc::AF_INET as u8;
+        v4[1] = 27;
+        v4[4..8].copy_from_slice(&index.to_ne_bytes());
+        v4.extend_from_slice(&attribute(1, &[192, 0, 2, 2]));
+        v4.extend_from_slice(&attribute(2, &[192, 0, 2, 1]));
+        v4.extend_from_slice(&attribute(3, b"ib\xff0:7\0"));
+        let mut v6 = vec![0u8; 8];
+        v6[0] = libc::AF_INET6 as u8;
+        v6[1] = 65;
+        v6[4..8].copy_from_slice(&index.to_ne_bytes());
+        let mut local = [0u8; 16];
+        local[0] = 0xfe;
+        local[1] = 0x80;
+        local[15] = 1;
+        v6.extend_from_slice(&attribute(1, &local));
+        let mut result = message(20, &v4);
+        result.extend_from_slice(&message(20, &v6));
+        finish_dump(result)
+    }
+
+    struct Snapshot(*mut libc::ifaddrs);
+
+    impl Drop for Snapshot {
+        fn drop(&mut self) {
+            // SAFETY: each successful snapshot is exclusively owned here and
+            // was allocated by the native builder's production-compatible helper.
+            unsafe { freeifaddrs(self.0.cast()) };
+        }
+    }
+
+    fn snapshot(links: &[u8], addresses: &[&[u8]]) -> Snapshot {
+        let (result, _, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(links, addresses, None);
+        assert_eq!(still_live_on_error, 0);
+        Snapshot(
+            result
+                .expect("materialize the complete synthetic snapshot")
+                .cast(),
+        )
+    }
+
+    #[test]
+    fn packet_only_link_preserves_long_hardware_name_and_padded_stats() {
+        let result = snapshot(&link_dump(true), &[]);
+        assert!(!result.0.is_null());
+        // SAFETY: materialization returned an owned, initialized link node.
+        let node = unsafe { &*result.0 };
+        assert!(node.ifa_next.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes(),
+            b"ib\xff0"
+        );
+        assert_eq!(node.ifa_flags, 0x1043);
+        assert!(node.ifa_netmask.is_null());
+        for (address, expected) in [
+            (node.ifa_addr, (0..20u8).collect::<Vec<_>>()),
+            (node.ifa_ifu, vec![0xff; 20]),
+        ] {
+            assert!(!address.is_null());
+            // SAFETY: the AF_PACKET allocation includes the declared 20-byte tail.
+            let packet = unsafe { &*address.cast::<libc::sockaddr_ll>() };
+            assert_eq!(packet.sll_family, libc::AF_PACKET as u16);
+            assert_eq!(
+                (packet.sll_ifindex, packet.sll_hatype, packet.sll_halen),
+                (17, 32, 20)
+            );
+            assert_eq!((packet.sll_protocol, packet.sll_pkttype), (0, 0));
+            let offset = std::mem::offset_of!(libc::sockaddr_ll, sll_addr);
+            // SAFETY: the entire extended array belongs to this allocation.
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(address.cast::<u8>().add(offset), 20) },
+                expected
+            );
+        }
+        assert!(!node.ifa_data.is_null());
+        // SAFETY: old 92-byte stats are padded to the current 96-byte ABI.
+        let stats = unsafe { std::slice::from_raw_parts(node.ifa_data.cast::<u8>(), 96) };
+        assert_eq!(&stats[..92], &[0x41; 92]);
+        assert_eq!(&stats[92..], &[0; 4]);
+    }
+
+    #[test]
+    fn missing_hardware_attribute_keeps_link_without_fabricating_address() {
+        let result = snapshot(&link_dump(false), &[]);
+        assert!(!result.0.is_null());
+        // SAFETY: result owns the complete node and its retained statistics.
+        let node = unsafe { &*result.0 };
+        assert_eq!(
+            unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes(),
+            b"ib\xff0"
+        );
+        assert!(node.ifa_addr.is_null());
+        assert!(node.ifa_ifu.is_null());
+        assert!(!node.ifa_data.is_null());
+    }
+
+    #[test]
+    fn internet_nodes_preserve_labels_peers_masks_and_ipv6_scope() {
+        let links = link_dump(true);
+        let addresses = address_dump(17);
+        let result = snapshot(&links, &[&addresses]);
+        // SAFETY: the known fixture contains link, IPv4, then IPv6 nodes.
+        let v4 = unsafe { &*(*result.0).ifa_next };
+        assert_eq!(
+            unsafe { CStr::from_ptr(v4.ifa_name) }.to_bytes(),
+            b"ib\xff0:7"
+        );
+        assert_eq!(v4.ifa_flags, 0x1043);
+        assert!(v4.ifa_data.is_null());
+        for (address, expected) in [
+            (v4.ifa_addr, [192, 0, 2, 1]),
+            (v4.ifa_ifu, [192, 0, 2, 2]),
+            (v4.ifa_netmask, [255, 255, 255, 224]),
+        ] {
+            assert!(!address.is_null());
+            // SAFETY: these are the fixture's initialized IPv4 sockaddrs.
+            let address = unsafe { &*address.cast::<libc::sockaddr_in>() };
+            assert_eq!(address.sin_family, libc::AF_INET as u16);
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), expected);
+            assert_eq!(address.sin_port, 0);
+            assert_eq!(address.sin_zero, [0; 8]);
+        }
+        // SAFETY: the second Internet node is a fully initialized IPv6 record.
+        let v6 = unsafe { &*v4.ifa_next };
+        assert!(v6.ifa_next.is_null());
+        assert!(v6.ifa_ifu.is_null());
+        assert!(v6.ifa_data.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(v6.ifa_name) }.to_bytes(),
+            b"ib\xff0"
+        );
+        let address = unsafe { &*v6.ifa_addr.cast::<libc::sockaddr_in6>() };
+        assert_eq!(address.sin6_family, libc::AF_INET6 as u16);
+        assert_eq!(address.sin6_scope_id, 17);
+        assert_eq!((address.sin6_port, address.sin6_flowinfo), (0, 0));
+        assert_eq!(&address.sin6_addr.s6_addr[..2], &[0xfe, 0x80]);
+        assert_eq!(address.sin6_addr.s6_addr[15], 1);
+        let mask = unsafe { &*v6.ifa_netmask.cast::<libc::sockaddr_in6>() };
+        assert_eq!(&mask.sin6_addr.s6_addr[..8], &[255; 8]);
+        assert_eq!(mask.sin6_addr.s6_addr[8], 0x80);
+        assert_eq!(&mask.sin6_addr.s6_addr[9..], &[0; 7]);
+        assert_eq!(
+            (mask.sin6_port, mask.sin6_flowinfo, mask.sin6_scope_id),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn every_node_allocation_failure_rejects_the_entire_snapshot() {
+        let links = link_dump(true);
+        let addresses = address_dump(17);
+        let (result, allocation_count, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(&links, &[&addresses], None);
+        assert_eq!(still_live_on_error, 0);
+        let complete = Snapshot(result.unwrap().cast());
+        assert!(allocation_count >= 14);
+        drop(complete);
+        for refuse in 0..allocation_count {
+            let (result, attempted, still_live_on_error) =
+                getifaddrs_from_netlink_for_tests(&links, &[&addresses], Some(refuse));
+            assert_eq!(result, Err(libc::ENOMEM), "allocation {refuse}");
+            assert_eq!(attempted, refuse + 1, "must stop at the failed allocation");
+            assert_eq!(
+                still_live_on_error, 0,
+                "allocation {refuse} must release the entire allocated prefix"
+            );
+        }
+    }
+
+    #[test]
+    fn equal_local_peer_and_explicit_broadcast_are_preserved() {
+        let mut links = link_dump(true);
+        links[24..28].copy_from_slice(&0u32.to_ne_bytes());
+        for broadcast in [None, Some([127, 255, 255, 255])] {
+            let mut body = vec![0u8; 8];
+            body[0] = libc::AF_INET as u8;
+            body[1] = 8;
+            body[4..8].copy_from_slice(&17u32.to_ne_bytes());
+            body.extend_from_slice(&attribute(1, &[127, 0, 0, 1]));
+            body.extend_from_slice(&attribute(2, &[127, 0, 0, 1]));
+            if let Some(bytes) = broadcast {
+                body.extend_from_slice(&attribute(4, &bytes));
+            }
+            let dump = finish_dump(message(20, &body));
+            let result = snapshot(&links, &[&dump]);
+            // SAFETY: the snapshot contains one link followed by this IPv4 node.
+            let node = unsafe { &*(*result.0).ifa_next };
+            assert_eq!(node.ifa_flags, 0);
+            assert!(!node.ifa_ifu.is_null());
+            // SAFETY: the public union points to its owned initialized IPv4 address.
+            let other = unsafe { &*node.ifa_ifu.cast::<libc::sockaddr_in>() };
+            assert_eq!(
+                other.sin_addr.s_addr.to_ne_bytes(),
+                broadcast.unwrap_or([127, 0, 0, 1])
+            );
+        }
+    }
+
+    #[test]
+    fn late_parse_and_changed_interface_errors_reject_allocated_prefix() {
+        let links = link_dump(true);
+        let (result, allocations, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(&links, &[&address_dump(99)], None);
+        assert_eq!(result, Err(libc::EAGAIN));
+        assert_eq!(still_live_on_error, 0, "missing-interface rollback");
+        assert!(
+            allocations >= 5,
+            "the link node and children must have been built"
+        );
+
+        let mut malformed = links;
+        malformed.extend_from_slice(&message(2, &(-libc::EACCES).to_ne_bytes()));
+        let (result, allocations, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(&malformed, &[], None);
+        assert_eq!(result, Err(libc::EACCES));
+        assert_eq!(still_live_on_error, 0, "late-kernel-error rollback");
+        assert!(allocations >= 5);
+    }
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod getifaddrs_snapshot {
+    use super::*;
+
+    type GetIfAddrs = unsafe extern "C" fn(*mut *mut c_void) -> c_int;
+    type FreeIfAddrs = unsafe extern "C" fn(*mut c_void);
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum Address {
+        Inet {
+            address: [u8; 4],
+            port: u16,
+            zero: [u8; 8],
+        },
+        Inet6 {
+            address: [u8; 16],
+            port: u16,
+            flowinfo: u32,
+            scope_id: u32,
+        },
+        Packet {
+            index: c_int,
+            hardware_type: u16,
+            protocol: u16,
+            packet_type: u8,
+            hardware_len: u8,
+            address: Vec<u8>,
+        },
+    }
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Interface {
+        name: Vec<u8>,
+        flags: c_uint,
+        address: Option<Address>,
+        netmask: Option<Address>,
+        broadcast_or_peer: Option<Address>,
+        has_stats: bool,
+    }
+
+    struct OwnedList {
+        head: *mut c_void,
+        release: FreeIfAddrs,
+    }
+
+    impl Drop for OwnedList {
+        fn drop(&mut self) {
+            if !self.head.is_null() {
+                // SAFETY: each list is released by the provider that allocated
+                // it, including when an assertion unwinds during inspection.
+                unsafe { (self.release)(self.head) };
+            }
+        }
+    }
+
+    unsafe fn address(pointer: *const libc::sockaddr, provider: &str) -> Option<Address> {
+        if pointer.is_null() {
+            return None;
+        }
+        // SAFETY: getifaddrs promises a sockaddr of the reported family for
+        // every non-null address field, alive until its matching freeifaddrs.
+        Some(match unsafe { (*pointer).sa_family } as c_int {
+            libc::AF_INET => {
+                let value = unsafe { &*pointer.cast::<libc::sockaddr_in>() };
+                assert_eq!(value.sin_port, 0, "{provider}: interface IPv4 port");
+                assert_eq!(value.sin_zero, [0; 8], "{provider}: IPv4 padding");
+                Address::Inet {
+                    address: value.sin_addr.s_addr.to_ne_bytes(),
+                    port: value.sin_port,
+                    zero: value.sin_zero,
+                }
+            }
+            libc::AF_INET6 => {
+                let value = unsafe { &*pointer.cast::<libc::sockaddr_in6>() };
+                assert_eq!(value.sin6_port, 0, "{provider}: interface IPv6 port");
+                assert_eq!(value.sin6_flowinfo, 0, "{provider}: IPv6 flow info");
+                Address::Inet6 {
+                    address: value.sin6_addr.s6_addr,
+                    port: value.sin6_port,
+                    flowinfo: value.sin6_flowinfo,
+                    scope_id: value.sin6_scope_id,
+                }
+            }
+            libc::AF_PACKET => {
+                let value = unsafe { &*pointer.cast::<libc::sockaddr_ll>() };
+                assert!(value.sll_ifindex > 0, "{provider}: interface index");
+                assert_eq!(value.sll_protocol, 0, "{provider}: packet protocol");
+                assert_eq!(value.sll_pkttype, 0, "{provider}: packet type");
+                assert!(value.sll_halen <= 32, "{provider}: hardware address size");
+                // Linux permits hardware addresses longer than the public
+                // sockaddr_ll's eight-byte array. The allocated address record
+                // must contain all sll_halen bytes, including e.g. InfiniBand.
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        pointer
+                            .cast::<u8>()
+                            .add(std::mem::offset_of!(libc::sockaddr_ll, sll_addr)),
+                        usize::from(value.sll_halen),
+                    )
+                };
+                if usize::from(value.sll_halen) < value.sll_addr.len() {
+                    assert!(
+                        value.sll_addr[usize::from(value.sll_halen)..]
+                            .iter()
+                            .all(|&byte| byte == 0),
+                        "{provider}: unused hardware address bytes"
+                    );
+                }
+                Address::Packet {
+                    index: value.sll_ifindex,
+                    hardware_type: value.sll_hatype,
+                    protocol: value.sll_protocol,
+                    packet_type: value.sll_pkttype,
+                    hardware_len: value.sll_halen,
+                    address: bytes.to_vec(),
+                }
+            }
+            family => panic!("{provider}: unexpected interface address family {family}"),
+        })
+    }
+
+    fn snapshot(get: GetIfAddrs, release: FreeIfAddrs, provider: &str) -> Vec<Interface> {
+        let mut list = OwnedList {
+            head: std::ptr::null_mut(),
+            release,
+        };
+        // SAFETY: the output slot is writable and initialized. OwnedList keeps
+        // all returned records alive for inspection, then uses the same provider.
+        let rc = unsafe { get(&mut list.head) };
+        assert_eq!(
+            rc,
+            0,
+            "{provider}: getifaddrs requires a successful live snapshot; errno={}",
+            unsafe { *libc::__errno_location() }
+        );
+        assert!(!list.head.is_null(), "{provider}: empty interface snapshot");
+        let mut records = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pointer = list.head.cast::<libc::ifaddrs>();
+        while !pointer.is_null() {
+            assert!(seen.insert(pointer as usize), "{provider}: cyclic list");
+            // SAFETY: each reachable list node belongs to the live provider
+            // allocation. The seen set prevents looping on a malformed cycle.
+            let node = unsafe { &*pointer };
+            assert!(!node.ifa_name.is_null(), "{provider}: missing name");
+            let name = unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes();
+            assert!(
+                !name.is_empty() && name.len() < libc::IFNAMSIZ,
+                "{provider}: invalid interface name {name:?}"
+            );
+            // SAFETY: all three optional sockaddr pointers have the lifetime
+            // of this node and are decoded according to their own sa_family.
+            // GNU also retains an IFA_ADDRESS peer when IFA_LOCAL is present
+            // without IFF_POINTOPOINT (e.g. loopback). Compare that deliberate
+            // GNU compatibility behavior in addition to the flag-defined API.
+            let (address, netmask, broadcast_or_peer) = unsafe {
+                (
+                    address(node.ifa_addr, provider),
+                    address(node.ifa_netmask, provider),
+                    address(node.ifa_ifu, provider),
+                )
+            };
+            let packet = matches!(address, Some(Address::Packet { .. }));
+            if packet {
+                assert!(netmask.is_none(), "{provider}: link entry has a netmask");
+            } else if matches!(address, Some(Address::Inet { .. } | Address::Inet6 { .. })) {
+                assert!(node.ifa_data.is_null(), "{provider}: IP entry has stats");
+            }
+            if !node.ifa_data.is_null() {
+                // The original rtnl_link_stats ABI contains 23 u32 counters.
+                // Exercise that public prefix but do not compare the volatile
+                // values: even taking the next snapshot can change counters.
+                let counters = unsafe { node.ifa_data.cast::<[u32; 23]>().read_unaligned() };
+                std::hint::black_box(counters);
+            }
+            records.push(Interface {
+                name: name.to_vec(),
+                flags: node.ifa_flags,
+                address,
+                netmask,
+                broadcast_or_peer,
+                has_stats: !node.ifa_data.is_null(),
+            });
+            pointer = node.ifa_next;
+        }
+        assert!(
+            records
+                .iter()
+                .any(|node| matches!(node.address, Some(Address::Packet { .. }))),
+            "{provider}: no AF_PACKET entries; IP-only enumeration is incomplete"
+        );
+        assert!(
+            records.iter().any(|node| node.has_stats),
+            "{provider}: no link statistics were returned"
+        );
+        records.sort();
+        records
+    }
+
+    #[test]
+    fn complete_snapshot_matches_host_glibc() {
+        use frankenlibc_abi::unistd_abi::{freeifaddrs, getifaddrs};
+
+        // SAFETY: these are the exact C pointer/scalar signatures. The common
+        // helper rejects resolution back to FrankenLibC for either symbol.
+        let (host_get, host_free): (GetIfAddrs, FreeIfAddrs) = unsafe {
+            (
+                dlsym_oracle::host_fn(c"getifaddrs", getifaddrs as *const ()),
+                dlsym_oracle::host_fn(c"freeifaddrs", freeifaddrs as *const ()),
+            )
+        };
+        let host = snapshot(host_get, host_free, "glibc");
+        let native = snapshot(getifaddrs, freeifaddrs, "FrankenLibC");
+        assert_eq!(
+            native, host,
+            "complete interface snapshots must agree independently of netlink ordering"
+        );
+    }
+}
+
 // A netlink failure means interface configuration is unknown. In particular,
 // getaddrinfo(AI_ADDRCONFIG) must not receive a successful empty snapshot when
 // socket creation, request transmission, or response reception was denied.

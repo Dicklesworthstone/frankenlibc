@@ -7,6 +7,7 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
+use frankenlibc_core::socket as socket_core;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 use frankenlibc_core::syscall;
 use frankenlibc_core::unistd as unistd_core;
@@ -14971,7 +14972,7 @@ pub unsafe extern "C-unwind" fn __sigwaitinfo(set: *const c_void, info: *mut c_v
 // interfaces and their addresses. Builds a linked list of `struct ifaddrs`
 // compatible with the glibc ABI.
 
-/// Match glibc's `struct ifaddrs` layout on x86_64.
+/// Match the Linux C `struct ifaddrs` layout.
 #[repr(C)]
 struct Ifaddrs {
     ifa_next: *mut Ifaddrs,
@@ -14994,60 +14995,20 @@ struct NlMsgHdr {
     nlmsg_pid: u32,
 }
 
-/// ifinfomsg from <linux/if_link.h>
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct IfInfoMsg {
-    ifi_family: u8,
-    _pad: u8,
-    ifi_type: u16,
-    ifi_index: i32,
-    ifi_flags: u32,
-    ifi_change: u32,
-}
-
-/// ifaddrmsg from <linux/if_addr.h>
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct IfAddrMsg {
-    ifa_family: u8,
-    ifa_prefixlen: u8,
-    ifa_flags: u8,
-    ifa_scope: u8,
-    ifa_index: u32,
-}
-
-/// Netlink route attribute.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct RtAttr {
-    rta_len: u16,
-    rta_type: u16,
-}
-
 const NLMSG_ALIGNTO: usize = 4;
-const RTA_ALIGNTO: usize = 4;
 const RTM_GETLINK: u16 = 18;
-const RTM_NEWLINK: u16 = 16;
 const RTM_GETADDR: u16 = 22;
-const RTM_NEWADDR: u16 = 20;
+const IFINFO_MSG_LEN: usize = 16;
+const IFADDR_MSG_LEN: usize = 8;
 const NLM_F_REQUEST: u16 = 1;
 const NLM_F_DUMP: u16 = 0x300;
 const NLM_F_DUMP_INTR: u16 = 0x10;
 const NLMSG_DONE: u16 = 3;
 const NLMSG_ERROR: u16 = 2;
 const NLMSG_OVERRUN: u16 = 4;
-const IFLA_IFNAME: u16 = 3;
-const IFA_ADDRESS: u16 = 1;
-const IFA_LOCAL: u16 = 2;
-const IFA_BROADCAST: u16 = 4;
 
 fn nlmsg_align(len: usize) -> usize {
     (len + NLMSG_ALIGNTO - 1) & !(NLMSG_ALIGNTO - 1)
-}
-
-fn rta_align(len: usize) -> usize {
-    (len + RTA_ALIGNTO - 1) & !(RTA_ALIGNTO - 1)
 }
 
 /// Send a netlink dump request and collect only a complete response.
@@ -15063,12 +15024,12 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     let outcome = (|| {
         let hdr_size = std::mem::size_of::<NlMsgHdr>();
         let payload_size = if msg_type == RTM_GETLINK {
-            std::mem::size_of::<IfInfoMsg>()
+            IFINFO_MSG_LEN
         } else {
-            std::mem::size_of::<IfAddrMsg>()
+            IFADDR_MSG_LEN
         };
         let msg_len = nlmsg_align(hdr_size + payload_size);
-        let mut buf = vec![0u8; msg_len];
+        let mut buf = [0u8; 32];
         let hdr = NlMsgHdr {
             nlmsg_len: msg_len as u32,
             nlmsg_type: msg_type,
@@ -15089,8 +15050,15 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
             return Err(errno::EIO);
         }
 
-        let mut result = Vec::with_capacity(8192);
-        let mut recv_buf = vec![0u8; 16384];
+        let mut result = Vec::new();
+        result.try_reserve(8192).map_err(|_| errno::ENOMEM)?;
+        // Keep the receive buffer off callers' small pthread stacks while
+        // reporting allocation failure through getifaddrs instead of aborting.
+        let mut recv_buf = Vec::new();
+        recv_buf
+            .try_reserve_exact(16384)
+            .map_err(|_| errno::ENOMEM)?;
+        recv_buf.resize(16384, 0u8);
         loop {
             // MSG_TRUNC reports the full datagram length, so an oversized
             // response cannot silently become a successful partial snapshot.
@@ -15160,6 +15128,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
                 }
                 off += nlmsg_align(msg_len);
             }
+            result.try_reserve(data.len()).map_err(|_| errno::ENOMEM)?;
             result.extend_from_slice(data);
             if done {
                 return Ok(result);
@@ -15177,297 +15146,350 @@ pub(crate) fn addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::Ad
     frankenlibc_core::resolv::addrconfig_state_from_netlink(&data)
 }
 
-/// Build a sockaddr from AF family and address bytes.
-fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
-    match family as i32 {
-        libc::AF_INET if addr_data.len() >= 4 => {
-            let sa =
-                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
-                    as *mut libc::sockaddr_in;
-            if sa.is_null() {
-                return std::ptr::null_mut();
-            }
-            unsafe {
-                (*sa).sin_family = libc::AF_INET as libc::sa_family_t;
-                std::ptr::copy_nonoverlapping(
-                    addr_data.as_ptr(),
-                    &raw mut (*sa).sin_addr as *mut u8,
-                    4,
-                );
-            };
-            sa as *mut libc::sockaddr
-        }
-        libc::AF_INET6 if addr_data.len() >= 16 => {
-            let sa =
-                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
-                    as *mut libc::sockaddr_in6;
-            if sa.is_null() {
-                return std::ptr::null_mut();
-            }
-            unsafe {
-                (*sa).sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                std::ptr::copy_nonoverlapping(
-                    addr_data.as_ptr(),
-                    &raw mut (*sa).sin6_addr as *mut u8,
-                    16,
-                );
-            };
-            sa as *mut libc::sockaddr
-        }
-        _ => std::ptr::null_mut(),
+/// Own the unpublished list while parsing and allocating a complete snapshot.
+/// Every node is zeroed and linked before its child allocations, so Drop can
+/// release any prefix after an allocation, parse, or snapshot-consistency error.
+struct IfaddrsBuilder<A> {
+    head: *mut Ifaddrs,
+    tail: *mut Ifaddrs,
+    allocate: A,
+}
+
+impl<A> Drop for IfaddrsBuilder<A> {
+    fn drop(&mut self) {
+        // SAFETY: the builder exclusively owns the list until finish detaches it.
+        unsafe { freeifaddrs(self.head.cast()) };
     }
 }
 
-/// Build a netmask sockaddr from prefix length.
-fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
-    match family as i32 {
-        libc::AF_INET => {
-            let sa =
-                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
-                    as *mut libc::sockaddr_in;
-            if sa.is_null() {
-                return std::ptr::null_mut();
-            }
-            let mask: u32 = if prefixlen >= 32 {
-                0xFFFF_FFFF
-            } else if prefixlen == 0 {
-                0
+impl<A: FnMut(usize) -> *mut c_void> IfaddrsBuilder<A> {
+    /// The allocator must return null or raw_alloc-compatible owned storage.
+    unsafe fn new(allocate: A) -> Self {
+        Self {
+            head: std::ptr::null_mut(),
+            tail: std::ptr::null_mut(),
+            allocate,
+        }
+    }
+
+    fn zeroed(&mut self, size: usize) -> Result<*mut c_void, c_int> {
+        let allocation = (self.allocate)(size);
+        if allocation.is_null() {
+            return Err(errno::ENOMEM);
+        }
+        // SAFETY: new's allocator contract provides size writable bytes.
+        // Zeroing also initializes sockaddr padding, ports, and flow fields.
+        unsafe { std::ptr::write_bytes(allocation.cast::<u8>(), 0, size) };
+        Ok(allocation)
+    }
+
+    fn copy_bytes(&mut self, bytes: &[u8], size: usize) -> Result<*mut c_void, c_int> {
+        if size < bytes.len() {
+            return Err(errno::EIO);
+        }
+        let allocation = self.zeroed(size)?;
+        // SAFETY: the fresh allocation is disjoint and large enough.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), allocation.cast(), bytes.len()) };
+        Ok(allocation)
+    }
+
+    fn node(&mut self, name: &[u8], flags: u32) -> Result<*mut Ifaddrs, c_int> {
+        let node = self
+            .zeroed(std::mem::size_of::<Ifaddrs>())?
+            .cast::<Ifaddrs>();
+        // SAFETY: node is completely initialized, including null child pointers.
+        // Link it before further fallible work so rollback always owns it.
+        unsafe {
+            if self.tail.is_null() {
+                self.head = node;
             } else {
-                !((1u32 << (32 - prefixlen)) - 1)
-            };
-            unsafe {
-                (*sa).sin_family = libc::AF_INET as libc::sa_family_t;
-                (*sa).sin_addr.s_addr = mask.to_be();
-            };
-            sa as *mut libc::sockaddr
-        }
-        libc::AF_INET6 => {
-            let sa =
-                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
-                    as *mut libc::sockaddr_in6;
-            if sa.is_null() {
-                return std::ptr::null_mut();
+                (*self.tail).ifa_next = node;
             }
-            unsafe {
-                (*sa).sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                let mask_bytes: &mut [u8; 16] = &mut *(&raw mut (*sa).sin6_addr as *mut [u8; 16]);
-                let mut bits_left = prefixlen as usize;
-                for byte in mask_bytes.iter_mut() {
-                    if bits_left >= 8 {
-                        *byte = 0xFF;
-                        bits_left -= 8;
-                    } else if bits_left > 0 {
-                        *byte = 0xFF << (8 - bits_left);
-                        bits_left = 0;
-                    } else {
-                        *byte = 0;
-                    }
-                }
-            };
-            sa as *mut libc::sockaddr
+            self.tail = node;
+            (*node).ifa_flags = flags;
+            (*node).ifa_name = self.copy_bytes(name, name.len() + 1)?.cast();
         }
-        _ => std::ptr::null_mut(),
+        Ok(node)
+    }
+
+    fn packet_address(
+        &mut self,
+        link: socket_core::InterfaceLink<'_>,
+        bytes: &[u8],
+    ) -> Result<*mut libc::sockaddr, c_int> {
+        if bytes.len() > 32 {
+            return Err(errno::EIO);
+        }
+        let address_offset = std::mem::offset_of!(libc::sockaddr_ll, sll_addr);
+        // Linux supports MAX_ADDR_LEN=32, including 20-byte InfiniBand. The
+        // public eight-byte array is only the beginning of this owned tail.
+        let size = address_offset + bytes.len().max(8);
+        let address = self.zeroed(size)?.cast::<libc::sockaddr_ll>();
+        // SAFETY: the allocation contains the complete sockaddr_ll and any
+        // extended hardware bytes. Copy through the allocation pointer rather
+        // than stepping beyond the bounds of the public sll_addr array.
+        unsafe {
+            (*address).sll_family = libc::AF_PACKET as libc::sa_family_t;
+            (*address).sll_ifindex = link.index as c_int;
+            (*address).sll_hatype = link.hardware_type;
+            (*address).sll_halen = bytes.len() as u8;
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                address.cast::<u8>().add(address_offset),
+                bytes.len(),
+            );
+        }
+        Ok(address.cast())
+    }
+
+    fn internet_address(
+        &mut self,
+        family: u8,
+        bytes: &[u8],
+        index: u32,
+    ) -> Result<*mut libc::sockaddr, c_int> {
+        match i32::from(family) {
+            libc::AF_INET if bytes.len() == 4 => {
+                let address = self
+                    .zeroed(std::mem::size_of::<libc::sockaddr_in>())?
+                    .cast::<libc::sockaddr_in>();
+                // SAFETY: the zeroed sockaddr contains its family and four
+                // network-order address bytes; port and sin_zero remain zero.
+                unsafe {
+                    (*address).sin_family = libc::AF_INET as libc::sa_family_t;
+                    std::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        std::ptr::addr_of_mut!((*address).sin_addr).cast::<u8>(),
+                        4,
+                    );
+                }
+                Ok(address.cast())
+            }
+            libc::AF_INET6 if bytes.len() == 16 => {
+                let address = self
+                    .zeroed(std::mem::size_of::<libc::sockaddr_in6>())?
+                    .cast::<libc::sockaddr_in6>();
+                let mut octets = [0; 16];
+                octets.copy_from_slice(bytes);
+                // SAFETY: all sockaddr_in6 storage is initialized and owned.
+                unsafe {
+                    (*address).sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                    (*address).sin6_addr.s6_addr = octets;
+                    (*address).sin6_scope_id = socket_core::ipv6_interface_scope_id(&octets, index);
+                }
+                Ok(address.cast())
+            }
+            _ => Err(errno::EIO),
+        }
+    }
+
+    fn netmask(&mut self, family: u8, prefix_len: u8) -> Result<*mut libc::sockaddr, c_int> {
+        let width = match i32::from(family) {
+            libc::AF_INET => 4,
+            libc::AF_INET6 => 16,
+            _ => return Err(errno::EIO),
+        };
+        if usize::from(prefix_len) > width * 8 {
+            return Err(errno::EIO);
+        }
+        let mut bytes = [0u8; 16];
+        for bit in 0..usize::from(prefix_len) {
+            bytes[bit / 8] |= 0x80 >> (bit % 8);
+        }
+        self.internet_address(family, &bytes[..width], 0)
+    }
+
+    fn link(&mut self, link: socket_core::InterfaceLink<'_>) -> Result<(), c_int> {
+        let node = self.node(link.name, link.flags)?;
+        // SAFETY: node is owned by this builder; each successful child allocation
+        // is attached immediately so the same ownership guard covers later errors.
+        unsafe {
+            if let Some(address) = link.address {
+                (*node).ifa_addr = self.packet_address(link, address)?;
+            }
+            if let Some(broadcast) = link.broadcast {
+                (*node).ifa_broadaddr = self.packet_address(link, broadcast)?;
+            }
+            if let Some(stats) = link.stats {
+                // The original 23-field layout is 92 bytes; reserve the current
+                // 96-byte ABI too, zeroing fields absent from older kernels.
+                (*node).ifa_data = self.copy_bytes(stats, stats.len().max(96))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn address(
+        &mut self,
+        address: socket_core::InterfaceAddress<'_>,
+        link: socket_core::InterfaceLink<'_>,
+    ) -> Result<(), c_int> {
+        let node = self.node(address.label.unwrap_or(link.name), link.flags)?;
+        // SAFETY: the node and all successfully assigned children belong to
+        // this builder; no output pointer is published before finish.
+        unsafe {
+            (*node).ifa_addr =
+                self.internet_address(address.family, address.local, address.index)?;
+            (*node).ifa_netmask = self.netmask(address.family, address.prefix_len)?;
+            if let Some(other) = address.broadcast.or(address.peer) {
+                (*node).ifa_broadaddr =
+                    self.internet_address(address.family, other, address.index)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> *mut Ifaddrs {
+        let head = self.head;
+        self.head = std::ptr::null_mut();
+        self.tail = std::ptr::null_mut();
+        head
     }
 }
 
-/// POSIX `getifaddrs` — get interface addresses via netlink.
+/// Materialize complete borrowed snapshots with one allocation ownership model.
 ///
-/// Native implementation using NETLINK_ROUTE to enumerate interfaces
-/// and their IPv4/IPv6 addresses. Builds a linked list of `struct ifaddrs`.
+/// The allocator must return null or memory compatible with raw_free. Production
+/// supplies raw_alloc; integration tests can refuse individual allocations without
+/// changing runtime API behavior or weakening kernel error handling.
+unsafe fn ifaddrs_from_netlink<A: FnMut(usize) -> *mut c_void>(
+    link_data: &[u8],
+    address_dumps: &[&[u8]],
+    allocate: A,
+) -> Result<*mut Ifaddrs, c_int> {
+    // SAFETY: the caller establishes the matching raw allocator contract.
+    let mut builder = unsafe { IfaddrsBuilder::new(allocate) };
+    let mut links = Vec::new();
+    socket_core::for_each_netlink_link(link_data, |link| {
+        links.try_reserve(1).map_err(|_| errno::ENOMEM)?;
+        links.push(link);
+        builder.link(link)
+    })?;
+    links.sort_unstable_by_key(|link| link.index);
+    if links.windows(2).any(|pair| pair[0].index == pair[1].index) {
+        return Err(errno::EIO);
+    }
+    for data in address_dumps {
+        socket_core::for_each_netlink_address(data, |address| {
+            // The interface set changed between dumps. Refuse a fabricated
+            // "ifNN" name or a successful partial list; callers may retry.
+            let index = links
+                .binary_search_by_key(&address.index, |link| link.index)
+                .map_err(|_| errno::EAGAIN)?;
+            builder.address(address, links[index])
+        })?;
+    }
+    Ok(builder.finish())
+}
+
+/// Exercise the production snapshot builder with poisoned, fallible allocations.
+///
+/// Returns the owned result, allocation attempts, and allocations still live
+/// after an error. Successful lists must be released with `freeifaddrs`.
+/// This Rust-only observation point leaves the public C entrypoint unchanged.
+#[doc(hidden)]
+pub fn getifaddrs_from_netlink_for_tests(
+    link_data: &[u8],
+    address_dumps: &[&[u8]],
+    refuse: Option<usize>,
+) -> (Result<*mut c_void, c_int>, usize, usize) {
+    // Every node requires a complete 16-byte netlink header and owns at most
+    // five allocations. Reserve all observation storage before building so it
+    // cannot reuse a just-freed node while we inspect rollback bookkeeping.
+    let capacity = address_dumps
+        .iter()
+        .try_fold(link_data.len() / 16, |records, data| {
+            records.checked_add(data.len() / 16)
+        })
+        .and_then(|records| records.checked_mul(5));
+    let Some(capacity) = capacity else {
+        return (Err(errno::ENOMEM), 0, 0);
+    };
+    let mut allocations = Vec::new();
+    if allocations.try_reserve_exact(capacity).is_err() {
+        return (Err(errno::ENOMEM), 0, 0);
+    }
+    let mut attempted = 0;
+    let allocate = |size| {
+        let ordinal = attempted;
+        attempted += 1;
+        if refuse == Some(ordinal) {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: raw_alloc provides size bytes compatible with the builder's
+        // raw_free cleanup. Poisoning makes its explicit initialization visible.
+        let allocation = unsafe { crate::malloc_abi::raw_alloc(size) };
+        if !allocation.is_null() {
+            unsafe { std::ptr::write_bytes(allocation.cast::<u8>(), 0xa5, size) };
+            // Initialize the bounds observer while all snapshot blocks are
+            // still live. Its first hardened lookup may initialize metadata;
+            // that must not allocate into already released rollback storage.
+            assert!(
+                crate::malloc_abi::malloc_known_remaining_for_tests(allocation)
+                    .is_some_and(|remaining| remaining >= size),
+                "raw allocation must be visible to the rollback observer"
+            );
+            allocations.push(allocation);
+        }
+        allocation
+    };
+    // SAFETY: the internal allocator only returns raw_alloc-owned blocks or null.
+    let result = unsafe { ifaddrs_from_netlink(link_data, address_dumps, allocate) };
+    let still_live_on_error = if result.is_err() {
+        allocations
+            .iter()
+            .filter(|&&allocation| {
+                crate::malloc_abi::malloc_known_remaining_for_tests(allocation)
+                    .is_some_and(|remaining| remaining > 0)
+            })
+            .count()
+    } else {
+        0
+    };
+    (
+        result.map(|head| head.cast()),
+        attempted,
+        still_live_on_error,
+    )
+}
+
+/// POSIX getifaddrs: enumerate link-layer and IPv4/IPv6 addresses via netlink.
+///
+/// Includes interfaces with no IP address, hardware addresses/statistics,
+/// address labels, point-to-point peers, masks, and scoped IPv6 addresses.
+/// Any transport, parse, or allocation failure leaves the caller's output null.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut c_void) -> c_int {
     if ifap.is_null() {
+        // SAFETY: errno belongs to the calling thread.
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    unsafe { *(ifap as *mut *mut Ifaddrs) = std::ptr::null_mut() };
-
-    // Step 1: Get link info (interface names and flags)
-    let link_data = match netlink_dump(RTM_GETLINK, libc::AF_UNSPEC as u8) {
-        Ok(d) => d,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return -1;
-        }
-    };
-
-    // Parse link data to get index→name mapping
-    let mut if_names: ArtifactHashMap<i32, (String, u32)> = artifact_hash_map();
-    parse_netlink_links(&link_data, &mut if_names);
-
-    // Step 2: Get addresses for AF_INET and AF_INET6
-    let mut head: *mut Ifaddrs = std::ptr::null_mut();
-    let mut tail: *mut Ifaddrs = std::ptr::null_mut();
-
-    for family in [libc::AF_INET as u8, libc::AF_INET6 as u8] {
-        let addr_data = match netlink_dump(RTM_GETADDR, family) {
-            Ok(d) => d,
-            Err(e) => {
-                // SAFETY: head is the owned partial list built above and has
-                // not been published to the caller; ifap still contains null.
-                unsafe {
-                    freeifaddrs(head.cast::<c_void>());
-                    set_abi_errno(e);
-                }
-                return -1;
-            }
+    // SAFETY: the C caller supplies a writable output slot.
+    unsafe { ifap.write(std::ptr::null_mut()) };
+    let outcome = (|| {
+        let links = netlink_dump(RTM_GETLINK, libc::AF_UNSPEC as u8)?;
+        let ipv4 = netlink_dump(RTM_GETADDR, libc::AF_INET as u8)?;
+        let ipv6 = netlink_dump(RTM_GETADDR, libc::AF_INET6 as u8)?;
+        let allocate = |size| {
+            // SAFETY: this is the matching allocator for freeifaddrs.
+            unsafe { crate::malloc_abi::raw_alloc(size) }
         };
-        parse_netlink_addrs(&addr_data, &if_names, &mut head, &mut tail);
-    }
-
-    unsafe { *(ifap as *mut *mut Ifaddrs) = head };
-    0
-}
-
-fn parse_netlink_links(data: &[u8], if_names: &mut ArtifactHashMap<i32, (String, u32)>) {
-    let hdr_size = std::mem::size_of::<NlMsgHdr>();
-    let info_size = std::mem::size_of::<IfInfoMsg>();
-    let mut off = 0;
-
-    while off + hdr_size <= data.len() {
-        let h = unsafe { &*(data.as_ptr().add(off) as *const NlMsgHdr) };
-        let msg_len = h.nlmsg_len as usize;
-        if msg_len < hdr_size || off + msg_len > data.len() {
-            break;
+        // SAFETY: allocate returns only raw_alloc-owned blocks or null.
+        unsafe { ifaddrs_from_netlink(&links, &[&ipv4, &ipv6], allocate) }
+    })();
+    match outcome {
+        Ok(head) => {
+            // SAFETY: all nodes and children are initialized; transfer the
+            // complete list to the caller exactly once.
+            unsafe { ifap.write(head.cast()) };
+            0
         }
-        if h.nlmsg_type == RTM_NEWLINK && msg_len >= hdr_size + info_size {
-            let info = unsafe { &*(data.as_ptr().add(off + hdr_size) as *const IfInfoMsg) };
-            let mut attr_off = off + hdr_size + nlmsg_align(info_size);
-            while attr_off + std::mem::size_of::<RtAttr>() <= off + msg_len {
-                let rta = unsafe { &*(data.as_ptr().add(attr_off) as *const RtAttr) };
-                let rta_len = rta.rta_len as usize;
-                if rta_len < std::mem::size_of::<RtAttr>() {
-                    break;
-                }
-                if rta.rta_type == IFLA_IFNAME {
-                    let name_start = attr_off + std::mem::size_of::<RtAttr>();
-                    let name_end = (attr_off + rta_len).min(off + msg_len);
-                    if name_start < name_end {
-                        let name_bytes = &data[name_start..name_end];
-                        // Strip trailing NUL
-                        let name_bytes = name_bytes.split(|b| *b == 0).next().unwrap_or(name_bytes);
-                        if let Ok(name) = std::str::from_utf8(name_bytes) {
-                            if_names.insert(info.ifi_index, (name.to_string(), info.ifi_flags));
-                        }
-                    }
-                }
-                attr_off += rta_align(rta_len);
-            }
+        Err(error) => {
+            // SAFETY: ownership rollback has completed; the output is still null.
+            unsafe { set_abi_errno(error) };
+            -1
         }
-        if h.nlmsg_type == NLMSG_DONE {
-            break;
-        }
-        off += nlmsg_align(msg_len);
-    }
-}
-
-fn parse_netlink_addrs(
-    data: &[u8],
-    if_names: &ArtifactHashMap<i32, (String, u32)>,
-    head: &mut *mut Ifaddrs,
-    tail: &mut *mut Ifaddrs,
-) {
-    let hdr_size = std::mem::size_of::<NlMsgHdr>();
-    let addr_msg_size = std::mem::size_of::<IfAddrMsg>();
-    let mut off = 0;
-
-    while off + hdr_size <= data.len() {
-        let h = unsafe { &*(data.as_ptr().add(off) as *const NlMsgHdr) };
-        let msg_len = h.nlmsg_len as usize;
-        if msg_len < hdr_size || off + msg_len > data.len() {
-            break;
-        }
-        if h.nlmsg_type == RTM_NEWADDR && msg_len >= hdr_size + addr_msg_size {
-            let amsg = unsafe { &*(data.as_ptr().add(off + hdr_size) as *const IfAddrMsg) };
-
-            let (if_name, if_flags) = if_names
-                .get(&(amsg.ifa_index as i32))
-                .cloned()
-                .unwrap_or_else(|| (format!("if{}", amsg.ifa_index), 0));
-
-            let mut local_addr: Option<&[u8]> = None;
-            let mut addr: Option<&[u8]> = None;
-            let mut brd: Option<&[u8]> = None;
-
-            let mut attr_off = off + hdr_size + nlmsg_align(addr_msg_size);
-            while attr_off + std::mem::size_of::<RtAttr>() <= off + msg_len {
-                let rta = unsafe { &*(data.as_ptr().add(attr_off) as *const RtAttr) };
-                let rta_len = rta.rta_len as usize;
-                if rta_len < std::mem::size_of::<RtAttr>() {
-                    break;
-                }
-                let payload_start = attr_off + std::mem::size_of::<RtAttr>();
-                let payload_end = (attr_off + rta_len).min(off + msg_len);
-                if payload_start < payload_end {
-                    let payload = &data[payload_start..payload_end];
-                    match rta.rta_type {
-                        IFA_LOCAL => local_addr = Some(payload),
-                        IFA_ADDRESS => addr = Some(payload),
-                        IFA_BROADCAST => brd = Some(payload),
-                        _ => {}
-                    }
-                }
-                attr_off += rta_align(rta_len);
-            }
-
-            // Prefer IFA_LOCAL for point-to-point, otherwise IFA_ADDRESS
-            let effective_addr = local_addr.or(addr);
-
-            if let Some(addr_bytes) = effective_addr {
-                // Name
-                let name_cstr = match CString::new(if_name.as_str()) {
-                    Ok(name) => name,
-                    Err(_) => continue,
-                };
-
-                // Allocate an ifaddrs node
-                let node = unsafe {
-                    crate::malloc_abi::raw_alloc(std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs
-                };
-                if node.is_null() {
-                    continue;
-                }
-                let name_ptr = unsafe {
-                    crate::malloc_abi::raw_alloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char
-                };
-                if !name_ptr.is_null() {
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            name_cstr.as_ptr(),
-                            name_ptr,
-                            name_cstr.as_bytes_with_nul().len(),
-                        );
-                    };
-                }
-
-                unsafe {
-                    (*node).ifa_name = name_ptr;
-                    (*node).ifa_flags = if_flags;
-                    (*node).ifa_addr = alloc_sockaddr(amsg.ifa_family, addr_bytes);
-                    (*node).ifa_netmask = alloc_netmask(amsg.ifa_family, amsg.ifa_prefixlen);
-                    (*node).ifa_broadaddr = if let Some(b) = brd {
-                        alloc_sockaddr(amsg.ifa_family, b)
-                    } else {
-                        std::ptr::null_mut()
-                    };
-                    (*node).ifa_data = std::ptr::null_mut();
-                    (*node).ifa_next = std::ptr::null_mut();
-                };
-
-                // Link into list
-                if tail.is_null() {
-                    *head = node;
-                    *tail = node;
-                } else {
-                    unsafe { (**tail).ifa_next = node };
-                    *tail = node;
-                }
-            }
-        }
-        if h.nlmsg_type == NLMSG_DONE {
-            break;
-        }
-        off += nlmsg_align(msg_len);
     }
 }
 
@@ -15489,6 +15511,9 @@ pub unsafe extern "C" fn freeifaddrs(ifa: *mut c_void) {
             }
             if !(*cur).ifa_broadaddr.is_null() {
                 crate::malloc_abi::raw_free((*cur).ifa_broadaddr as *mut c_void);
+            }
+            if !(*cur).ifa_data.is_null() {
+                crate::malloc_abi::raw_free((*cur).ifa_data);
             }
             crate::malloc_abi::raw_free(cur as *mut c_void);
         };

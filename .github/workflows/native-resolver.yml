@@ -7,6 +7,7 @@ on:
       - 'crates/frankenlibc-core/src/addrinfo.rs'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/resolv/**'
+      - 'crates/frankenlibc-core/src/socket/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
@@ -27,6 +28,9 @@ jobs:
     timeout-minutes: 20
     env:
       CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
       RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +78,25 @@ jobs:
               getifaddrs_syscall_errors_are_not_successful_snapshots -- --test-threads=1 --nocapture \
               2>&1 | tee "artifacts/resolver/interface-errors-$mode.log"
             grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "artifacts/resolver/interface-errors-$mode.log"
+          done
+      - name: Verify complete interface records against GNU libc
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver
+          cargo test -p frankenlibc-core --lib socket::tests::netlink_ -- --nocapture \
+            2>&1 | tee artifacts/resolver/interface-parser.log
+          grep -Eq '^test result: ok\. 10 passed; 0 failed; 0 ignored;' artifacts/resolver/interface-parser.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test unistd_abi_test \
+              getifaddrs_materialization_tests:: -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/interface-materialization-$mode.log"
+            grep -Eq '^test result: ok\. 6 passed; 0 failed; 0 ignored;' "artifacts/resolver/interface-materialization-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test unistd_abi_test \
+              getifaddrs_snapshot:: -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/interface-snapshot-$mode.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' "artifacts/resolver/interface-snapshot-$mode.log"
           done
       - name: Verify address-family selection before numeric and DNS lookup
         if: always()
