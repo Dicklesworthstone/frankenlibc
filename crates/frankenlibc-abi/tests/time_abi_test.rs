@@ -11,6 +11,10 @@ use std::ffi::{c_char, c_void};
 
 use frankenlibc_abi::time_abi;
 
+#[cfg(target_env = "gnu")]
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 // ---------------------------------------------------------------------------
 // time
 // ---------------------------------------------------------------------------
@@ -1479,6 +1483,110 @@ fn timespec_getres_rejects_tracked_short_timespec() {
 // ---------------------------------------------------------------------------
 // __clock_settime / __clock_nanosleep (glibc reserved aliases)
 // ---------------------------------------------------------------------------
+
+#[cfg(target_env = "gnu")]
+#[test]
+fn clock_nanosleep_thread_cpu_clock_matches_gnu_error_precedence() {
+    type HostSleep = unsafe extern "C" fn(
+        libc::clockid_t,
+        libc::c_int,
+        *const libc::timespec,
+        *mut libc::timespec,
+    ) -> libc::c_int;
+    type NativeSleep = unsafe extern "C-unwind" fn(
+        libc::clockid_t,
+        libc::c_int,
+        *const libc::timespec,
+        *mut libc::timespec,
+    ) -> libc::c_int;
+
+    struct InaccessiblePage(*mut c_void, usize);
+    impl Drop for InaccessiblePage {
+        fn drop(&mut self) {
+            // SAFETY: this guard owns the complete mapping until test exit.
+            unsafe { libc::munmap(self.0, self.1) };
+        }
+    }
+
+    // SAFETY: resolve the exact C signature in GNU libc; the shared oracle
+    // rejects a symbol that resolves to FrankenLibC's own definition.
+    let host: HostSleep = unsafe {
+        dlsym_oracle::host_fn(c"clock_nanosleep", time_abi::clock_nanosleep as *const ())
+    };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0);
+    // SAFETY: mmap creates owned, deliberately inaccessible address storage.
+    let mapping = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size as usize,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(mapping, libc::MAP_FAILED);
+    let inaccessible = InaccessiblePage(mapping, page_size as usize);
+    let zero = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let invalid = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 1_000_000_000,
+    };
+    let implementations: [(&str, NativeSleep); 2] = [
+        ("clock_nanosleep", time_abi::clock_nanosleep),
+        ("__clock_nanosleep", time_abi::__clock_nanosleep),
+    ];
+    // Resolve both errno slots before the calls. They may coincide in hosted
+    // mode; either way an error-number API must preserve the caller's value.
+    let host_errno = unsafe { libc::__errno_location() };
+    let native_errno = unsafe { frankenlibc_abi::errno_abi::__errno_location() };
+    for flags in [0, libc::TIMER_ABSTIME] {
+        for (case, request, inaccessible_remainder) in [
+            ("zero", &zero as *const libc::timespec, false),
+            ("invalid", &invalid as *const libc::timespec, false),
+            ("null", std::ptr::null(), false),
+            ("unreadable", inaccessible.0.cast_const().cast(), false),
+            ("unwritable remainder", &zero as *const libc::timespec, true),
+        ] {
+            let mut remaining = libc::timespec {
+                tv_sec: 71,
+                tv_nsec: 72,
+            };
+            let output = if inaccessible_remainder {
+                inaccessible.0.cast()
+            } else {
+                &mut remaining
+            };
+            // SAFETY: GNU rejects CLOCK_THREAD_CPUTIME_ID before accessing
+            // req/rem, including null, inaccessible, and malformed requests.
+            let expected = unsafe {
+                *host_errno = libc::EDOM;
+                *native_errno = libc::EDOM;
+                host(libc::CLOCK_THREAD_CPUTIME_ID, flags, request, output)
+            };
+            assert_eq!(expected, libc::EINVAL, "GNU {case}, flags={flags}");
+            assert_eq!(unsafe { *host_errno }, libc::EDOM);
+            assert_eq!((remaining.tv_sec, remaining.tv_nsec), (71, 72));
+            for (name, implementation) in implementations {
+                // SAFETY: the public entry and alias must reject the same
+                // unsupported clock without accessing either pointer.
+                let actual = unsafe {
+                    *host_errno = libc::EDOM;
+                    *native_errno = libc::EDOM;
+                    implementation(libc::CLOCK_THREAD_CPUTIME_ID, flags, request, output)
+                };
+                assert_eq!(actual, expected, "{name}: {case}, flags={flags}");
+                assert_eq!(unsafe { *host_errno }, libc::EDOM, "{name}: host errno");
+                assert_eq!(unsafe { *native_errno }, libc::EDOM, "{name}: native errno");
+                assert_eq!((remaining.tv_sec, remaining.tv_nsec), (71, 72));
+            }
+        }
+    }
+}
 
 #[test]
 fn under_clock_nanosleep_zero_time_returns_zero() {

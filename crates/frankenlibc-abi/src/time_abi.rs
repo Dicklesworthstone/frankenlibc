@@ -1587,6 +1587,13 @@ pub(crate) unsafe fn clock_nanosleep_cp(
     req: *const libc::timespec,
     rem: *mut libc::timespec,
 ) -> c_int {
+    // GNU rejects this clock before reading either pointer or entering a
+    // cancellation point. Linux instead returns EOPNOTSUPP when called
+    // directly. Keep GNU's EINVAL precedence and leave errno untouched.
+    if clock_id == libc::CLOCK_THREAD_CPUTIME_ID {
+        return errno::EINVAL;
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Time,
         req as usize,

@@ -22,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_cancel_wait_test.rs'
+      - 'crates/frankenlibc-abi/tests/time_abi_test.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
@@ -137,6 +138,9 @@ jobs:
           for mode in ['strict', 'hardened']:
               cases.append((mode, ['cargo', 'test', '-p', 'frankenlibc-abi',
                   '--test', 'pthread_stack_abi_test'], mode, 8))
+              cases.append((f'clock-errors-{mode}', ['cargo', 'test', '-p', 'frankenlibc-abi',
+                  '--test', 'time_abi_test',
+                  'clock_nanosleep_thread_cpu_clock_matches_gnu_error_precedence'], mode, 1))
           failures = []
           for label, command, mode, count in cases:
               run = subprocess.run(command + ['--', '--nocapture', '--test-threads=1'],
