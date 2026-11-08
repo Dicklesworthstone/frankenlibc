@@ -1465,6 +1465,163 @@ fn xdr_reference_roundtrip() {
     unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
+#[test]
+fn xdr_reference_free_null_matches_gnu_without_leaking_depth() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    type ReferenceFn =
+        unsafe extern "C" fn(*mut c_void, *mut *mut c_char, c_uint, *mut c_void) -> c_int;
+    static CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn decode_or_fail(stream: *mut c_void, object: *mut c_void) -> c_int {
+        CALLBACKS.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the public XDR operation is the first c_int. A decode call
+        // supplies provider-owned storage for one complete integer.
+        if unsafe { *stream.cast::<c_int>() } == XDR_DECODE {
+            unsafe { *object.cast::<c_int>() = 77 };
+            1
+        } else {
+            0
+        }
+    }
+
+    let native = ("native", xdr_reference as ReferenceFn);
+    let providers = {
+        #[cfg(target_env = "gnu")]
+        {
+            // SAFETY: keep the GNU handle live through all oracle calls.
+            let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW) };
+            assert!(!handle.is_null(), "GNU XDR oracle is required");
+            let mut symbol = std::ptr::null_mut();
+            for version in [c"GLIBC_2.2.5", c"GLIBC_2.17"] {
+                // SAFETY: these terminated names select the public host ABI.
+                symbol =
+                    unsafe { libc::dlvsym(handle, c"xdr_reference".as_ptr(), version.as_ptr()) };
+                if !symbol.is_null() {
+                    break;
+                }
+            }
+            assert!(!symbol.is_null(), "GNU xdr_reference oracle is required");
+            assert_ne!(symbol, xdr_reference as *mut c_void);
+            // SAFETY: the independently resolved symbol has the public signature.
+            let host = unsafe { std::mem::transmute::<*mut c_void, ReferenceFn>(symbol) };
+            vec![native, ("GNU", host)]
+        }
+        #[cfg(not(target_env = "gnu"))]
+        {
+            vec![native]
+        }
+    };
+
+    for (name, reference) in providers {
+        CALLBACKS.store(0, Ordering::SeqCst);
+        let mut stream = XdrHandle::new();
+        stream.data[..4].copy_from_slice(&XDR_FREE.to_ne_bytes());
+        let mut object = std::ptr::null_mut();
+        // The callback performs no wire I/O, so the public operation field is
+        // sufficient; neither provider shares the other's memory backend.
+        for _ in 0..1024 {
+            // SAFETY: no object is owned. FREE must not invoke this failing
+            // callback, and repeated no-ops must release the native depth slot.
+            assert_eq!(
+                unsafe {
+                    reference(
+                        stream.as_mut_ptr(),
+                        &mut object,
+                        4,
+                        decode_or_fail as *mut c_void,
+                    )
+                },
+                1,
+                "{name} null FREE"
+            );
+        }
+        assert!(object.is_null());
+        assert_eq!(
+            CALLBACKS.load(Ordering::SeqCst),
+            0,
+            "{name} null callback count"
+        );
+        // SAFETY: null FREE must not construct an unused null function pointer.
+        assert_eq!(
+            unsafe { reference(stream.as_mut_ptr(), &mut object, 4, std::ptr::null_mut()) },
+            1,
+            "{name} null FREE without serializer"
+        );
+
+        stream.data[..4].copy_from_slice(&XDR_DECODE.to_ne_bytes());
+        // SAFETY: null decode requests provider-owned storage of the declared size.
+        assert_eq!(
+            unsafe {
+                reference(
+                    stream.as_mut_ptr(),
+                    &mut object,
+                    4,
+                    decode_or_fail as *mut c_void,
+                )
+            },
+            1,
+            "{name} decode after repeated FREE"
+        );
+        assert!(!object.is_null());
+        assert_eq!(unsafe { *object.cast::<c_int>() }, 77);
+        assert_eq!(CALLBACKS.load(Ordering::SeqCst), 1);
+        stream.data[..4].copy_from_slice(&XDR_FREE.to_ne_bytes());
+        // SAFETY: the same provider owns this object; a failed callback must
+        // still release and null the outer reference while preserving FALSE.
+        assert_eq!(
+            unsafe {
+                reference(
+                    stream.as_mut_ptr(),
+                    &mut object,
+                    4,
+                    decode_or_fail as *mut c_void,
+                )
+            },
+            0,
+            "{name} failed serializer status"
+        );
+        assert!(
+            object.is_null(),
+            "{name} releases reference after callback failure"
+        );
+        assert_eq!(CALLBACKS.load(Ordering::SeqCst), 2);
+        // SAFETY: the completed cleanup leaves an empty reference to free again.
+        assert_eq!(
+            unsafe {
+                reference(
+                    stream.as_mut_ptr(),
+                    &mut object,
+                    4,
+                    decode_or_fail as *mut c_void,
+                )
+            },
+            1,
+            "{name} repeated cleanup"
+        );
+        assert_eq!(CALLBACKS.load(Ordering::SeqCst), 2);
+    }
+
+    // Preserve the native policy that encoding a required null reference fails
+    // before entering a user serializer; only FREE gained the empty no-op case.
+    CALLBACKS.store(0, Ordering::SeqCst);
+    let mut stream = XdrHandle::new();
+    stream.data[..4].copy_from_slice(&XDR_ENCODE.to_ne_bytes());
+    let mut object = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            xdr_reference(
+                stream.as_mut_ptr(),
+                &mut object,
+                4,
+                decode_or_fail as *mut c_void,
+            )
+        },
+        0
+    );
+    assert_eq!(CALLBACKS.load(Ordering::SeqCst), 0);
+}
+
 // ===========================================================================
 // 17. Composite types: xdr_netobj
 // ===========================================================================
@@ -2041,25 +2198,46 @@ fn xdr_des_block_roundtrip() {
 
 #[test]
 fn xdr_keybuf_roundtrip() {
-    let mut buf = [0u8; 256];
-    let mut xdr = XdrHandle::new();
+    // Public rpcsvc/key_prot.h defines HEXKEYBYTES as 48. A keybuf is
+    // fixed opaque data: it has no length word and no trailing string byte.
+    #[repr(C)]
+    struct GuardedKey {
+        key: [u8; 48],
+        guard: [u8; 8],
+    }
 
-    // HEXKEYBYTES = 144
-    let mut keybuf = [0xABu8; 144];
+    for (name, memory, codec, _) in key_protocol_providers(xdr_keybuf, c"xdr_keybuf") {
+        let mut buf = [0u8; 48];
+        let mut xdr = XdrHandle::new();
+        let mut keybuf = [0xABu8; 48];
+        // SAFETY: both providers receive the public fixed-width key buffer and
+        // their own memory stream, with exactly the required wire capacity.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 48, XDR_ENCODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), keybuf.as_mut_ptr().cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(buf, [0xAB; 48], "{name}: exact keybuf wire");
 
-    xdr_encode(&mut xdr, &mut buf);
-    assert_eq!(
-        unsafe { xdr_keybuf(xdr.as_mut_ptr(), keybuf.as_mut_ptr().cast()) },
-        1
-    );
-
-    xdr_decode(&mut xdr, &mut buf);
-    let mut out = [0u8; 144];
-    assert_eq!(
-        unsafe { xdr_keybuf(xdr.as_mut_ptr(), out.as_mut_ptr().cast()) },
-        1
-    );
-    assert_eq!(out, [0xAB; 144]);
+        let mut out = GuardedKey {
+            key: [0; 48],
+            guard: [0x5A; 8],
+        };
+        // SAFETY: the destination owns the exact public keybuf plus a guard.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 48, XDR_DECODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), out.key.as_mut_ptr().cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(out.key, [0xAB; 48], "{name}");
+        assert_eq!(out.guard, [0x5A; 8], "{name}: decode exceeded keybuf");
+    }
 }
 
 // ===========================================================================
@@ -2276,50 +2454,69 @@ fn xdr_u_quad_t_roundtrip() {
 
 #[test]
 fn xdr_unixcred_roundtrip() {
-    let mut buf = [0u8; 256];
-    let mut xdr = XdrHandle::new();
-
-    // UnixCred layout: { uid: u32, gid: u32, gidlen: i16, [6pad], gids: *mut u32 }
-    // On x86_64 this is ~24 bytes due to pointer alignment.
-    // For encoding with gidlen=0, no gids array needed.
+    // The public unixcred has unsigned uid/gid and an unsigned XDR array
+    // count. The short* parameter of authdes_getucred is a different API.
     #[repr(C)]
     struct UnixCred {
-        uid: u32,
-        gid: u32,
-        gidlen: i16,
-        _pad: [u8; 6],
-        gids: *mut u32,
+        uid: c_uint,
+        gid: c_uint,
+        gidlen: c_uint,
+        gids: *mut c_uint,
     }
 
-    let mut cred = UnixCred {
-        uid: 1000,
-        gid: 1000,
-        gidlen: 0,
-        _pad: [0; 6],
-        gids: std::ptr::null_mut(),
-    };
-
-    xdr_encode(&mut xdr, &mut buf);
-    assert_eq!(
-        unsafe { xdr_unixcred(xdr.as_mut_ptr(), (&mut cred as *mut UnixCred).cast(),) },
-        1
-    );
-
-    xdr_decode(&mut xdr, &mut buf);
-    let mut out = UnixCred {
-        uid: 0,
-        gid: 0,
-        gidlen: 0,
-        _pad: [0; 6],
-        gids: std::ptr::null_mut(),
-    };
-    assert_eq!(
-        unsafe { xdr_unixcred(xdr.as_mut_ptr(), (&mut out as *mut UnixCred).cast(),) },
-        1
-    );
-    assert_eq!(out.uid, 1000);
-    assert_eq!(out.gid, 1000);
-    assert_eq!(out.gidlen, 0);
+    let expected: Vec<u8> = [1000u32, 1001, 3, 10, 20, 0xFEDC_BA98]
+        .into_iter()
+        .flat_map(u32::to_be_bytes)
+        .collect();
+    for (name, memory, codec, release) in key_protocol_providers(xdr_unixcred, c"xdr_unixcred") {
+        let mut buf = [0u8; 24];
+        let mut xdr = XdrHandle::new();
+        let mut groups = [10u32, 20, 0xFEDC_BA98];
+        let mut cred = UnixCred {
+            uid: 1000,
+            gid: 1001,
+            gidlen: groups.len() as c_uint,
+            gids: groups.as_mut_ptr(),
+        };
+        // SAFETY: the public C layout and its borrowed group array remain live
+        // throughout ENCODE; the selected provider owns its memory stream.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 24, XDR_ENCODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), (&mut cred as *mut UnixCred).cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(buf.as_slice(), expected, "{name}: exact unixcred wire");
+        let mut out = UnixCred {
+            uid: 0,
+            gid: 0,
+            gidlen: 0,
+            gids: std::ptr::null_mut(),
+        };
+        // SAFETY: a null array destination asks the provider to allocate it.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 24, XDR_DECODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), (&mut out as *mut UnixCred).cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!((out.uid, out.gid, out.gidlen), (1000, 1001, 3), "{name}");
+        assert!(!out.gids.is_null(), "{name}");
+        // SAFETY: successful decode initialized the three declared groups.
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(out.gids, 3) },
+            groups,
+            "{name}"
+        );
+        // SAFETY: the same provider frees only its decoded array; the input
+        // points to borrowed stack storage and is never passed to XDR_FREE.
+        unsafe { release(codec as *mut c_void, (&mut out as *mut UnixCred).cast()) };
+        assert!(out.gids.is_null(), "{name}: decoded group ownership");
+    }
 }
 
 // ===========================================================================
@@ -2496,148 +2693,354 @@ fn xdr_cryptkeyarg_roundtrip() {
     unsafe { frankenlibc_abi::malloc_abi::free(out.remotename.cast()) };
 }
 
+type KeyProtocolMemoryFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_uint, c_int);
+type KeyProtocolCodecFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
+type KeyProtocolFreeFn = unsafe extern "C" fn(*mut c_void, *mut c_char);
+
+/// Pair native Secure RPC serializers with the independently resolved GNU
+/// serializer, memory backend, and matching release operation.
+fn key_protocol_providers(
+    candidate: KeyProtocolCodecFn,
+    symbol: &std::ffi::CStr,
+) -> Vec<(
+    &'static str,
+    KeyProtocolMemoryFn,
+    KeyProtocolCodecFn,
+    KeyProtocolFreeFn,
+)> {
+    let native = (
+        "native",
+        xdrmem_create as KeyProtocolMemoryFn,
+        candidate,
+        xdr_free as KeyProtocolFreeFn,
+    );
+    #[cfg(target_env = "gnu")]
+    {
+        static GNU: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let handle = *GNU.get_or_init(|| {
+            // SAFETY: retain the host handle while any provider may use it.
+            let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW) };
+            assert!(!handle.is_null(), "GNU XDR oracle is required");
+            handle as usize
+        }) as *mut c_void;
+        let resolve = |name: &std::ffi::CStr, candidate: *mut c_void| {
+            let mut symbol = std::ptr::null_mut();
+            for version in [c"GLIBC_2.2.5", c"GLIBC_2.17"] {
+                // SAFETY: the live handle and terminated symbol/version names
+                // select the host's public SunRPC ABI independently.
+                symbol = unsafe { libc::dlvsym(handle, name.as_ptr(), version.as_ptr()) };
+                if !symbol.is_null() {
+                    break;
+                }
+            }
+            assert!(!symbol.is_null(), "missing GNU XDR oracle: {name:?}");
+            assert_ne!(symbol, candidate, "oracle resolved to candidate: {name:?}");
+            symbol
+        };
+        // SAFETY: each public symbol has the corresponding declared ABI.
+        let host = unsafe {
+            (
+                "GNU",
+                std::mem::transmute::<*mut c_void, KeyProtocolMemoryFn>(resolve(
+                    c"xdrmem_create",
+                    xdrmem_create as *mut c_void,
+                )),
+                std::mem::transmute::<*mut c_void, KeyProtocolCodecFn>(resolve(
+                    symbol,
+                    candidate as *mut c_void,
+                )),
+                std::mem::transmute::<*mut c_void, KeyProtocolFreeFn>(resolve(
+                    c"xdr_free",
+                    xdr_free as *mut c_void,
+                )),
+            )
+        };
+        vec![native, host]
+    }
+    #[cfg(not(target_env = "gnu"))]
+    {
+        let _ = symbol;
+        vec![native]
+    }
+}
+
 #[test]
 fn xdr_cryptkeyarg2_roundtrip() {
-    let mut buf = [0u8; 512];
-    let mut xdr = XdrHandle::new();
-
+    // key_prot.x declares a counted binary netobj, not a second netname.
+    // On LP64 its length and pointer occupy 16 bytes, placing deskey at 24.
+    #[repr(C)]
+    struct NetObj {
+        len: c_uint,
+        bytes: *mut c_char,
+    }
     #[repr(C)]
     struct CryptKeyArg2 {
         remotename: *mut c_char,
-        netname: *mut c_char,
+        remotekey: NetObj,
         deskey: [u8; 8],
     }
+    assert_eq!(std::mem::size_of::<CryptKeyArg2>(), 32);
+    assert_eq!(std::mem::offset_of!(CryptKeyArg2, remotekey), 8);
+    assert_eq!(std::mem::offset_of!(CryptKeyArg2, deskey), 24);
 
-    let remote = std::ffi::CString::new("unix.2000@remote").unwrap();
-    let local = std::ffi::CString::new("unix.1000@local").unwrap();
-    let mut arg = CryptKeyArg2 {
-        remotename: remote.as_ptr() as *mut c_char,
-        netname: local.as_ptr() as *mut c_char,
-        deskey: [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44],
-    };
+    let remote = c"unix.2000@remote";
+    let key: [u8; 5] = [0xa1, 0, 0xff, 0x7f, 0x42];
+    let deskey = [0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x22, 0x33, 0x44];
+    let expected = [
+        0, 0, 0, 16, b'u', b'n', b'i', b'x', b'.', b'2', b'0', b'0', b'0', b'@', b'r', b'e', b'm',
+        b'o', b't', b'e', 0, 0, 0, 5, 0xa1, 0, 0xff, 0x7f, 0x42, 0, 0, 0, 0xaa, 0xbb, 0xcc, 0xdd,
+        0x11, 0x22, 0x33, 0x44,
+    ];
 
-    xdr_encode(&mut xdr, &mut buf);
-    assert_eq!(
-        unsafe { xdr_cryptkeyarg2(xdr.as_mut_ptr(), (&mut arg as *mut CryptKeyArg2).cast()) },
-        1
-    );
-
-    xdr_decode(&mut xdr, &mut buf);
-    let mut out = CryptKeyArg2 {
-        remotename: std::ptr::null_mut(),
-        netname: std::ptr::null_mut(),
-        deskey: [0; 8],
-    };
-    assert_eq!(
-        unsafe { xdr_cryptkeyarg2(xdr.as_mut_ptr(), (&mut out as *mut CryptKeyArg2).cast()) },
-        1
-    );
-
-    let decoded_remote = unsafe { std::ffi::CStr::from_ptr(out.remotename) }
-        .to_str()
-        .unwrap();
-    let decoded_local = unsafe { std::ffi::CStr::from_ptr(out.netname) }
-        .to_str()
-        .unwrap();
-    assert_eq!(decoded_remote, "unix.2000@remote");
-    assert_eq!(decoded_local, "unix.1000@local");
-    assert_eq!(out.deskey, [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44]);
-
-    unsafe {
-        frankenlibc_abi::malloc_abi::free(out.remotename.cast());
-        frankenlibc_abi::malloc_abi::free(out.netname.cast());
+    for (name, memory, codec, release) in
+        key_protocol_providers(xdr_cryptkeyarg2, c"xdr_cryptkeyarg2")
+    {
+        let mut wire = [0xa5; 40];
+        let mut stream = XdrHandle::new();
+        let mut input = CryptKeyArg2 {
+            remotename: remote.as_ptr().cast_mut(),
+            remotekey: NetObj {
+                len: key.len() as c_uint,
+                bytes: key.as_ptr().cast_mut().cast(),
+            },
+            deskey,
+        };
+        // SAFETY: every public field has the matching layout and live input
+        // storage; the encode operation only reads those borrowed inputs.
+        unsafe {
+            memory(
+                stream.as_mut_ptr(),
+                wire.as_mut_ptr().cast(),
+                wire.len() as c_uint,
+                XDR_ENCODE,
+            );
+            assert_eq!(
+                codec(
+                    stream.as_mut_ptr(),
+                    (&mut input as *mut CryptKeyArg2).cast()
+                ),
+                1,
+                "{name} encode"
+            );
+        }
+        assert_eq!(
+            wire, expected,
+            "{name} exact binary wire, including padding"
+        );
+        let mut output = CryptKeyArg2 {
+            remotename: std::ptr::null_mut(),
+            remotekey: NetObj {
+                len: 0,
+                bytes: std::ptr::null_mut(),
+            },
+            deskey: [0; 8],
+        };
+        // SAFETY: null pointer fields request provider-owned decode allocations.
+        unsafe {
+            memory(
+                stream.as_mut_ptr(),
+                wire.as_mut_ptr().cast(),
+                wire.len() as c_uint,
+                XDR_DECODE,
+            );
+            assert_eq!(
+                codec(
+                    stream.as_mut_ptr(),
+                    (&mut output as *mut CryptKeyArg2).cast()
+                ),
+                1,
+                "{name} decode"
+            );
+        }
+        assert!(!output.remotename.is_null());
+        assert!(!output.remotekey.bytes.is_null());
+        assert_eq!(
+            output.remotekey.len as usize,
+            key.len(),
+            "{name} key length"
+        );
+        // SAFETY: successful decode produced the declared name and counted key.
+        unsafe {
+            assert_eq!(
+                std::ffi::CStr::from_ptr(output.remotename),
+                remote,
+                "{name} name"
+            );
+            assert_eq!(
+                std::slice::from_raw_parts(output.remotekey.bytes.cast::<u8>(), key.len()),
+                key,
+                "{name} embedded-NUL key"
+            );
+        }
+        assert_eq!(output.deskey, deskey, "{name} DES block");
+        // SAFETY: free only decoded storage, through its owning provider's codec.
+        unsafe {
+            release(
+                codec as *mut c_void,
+                (&mut output as *mut CryptKeyArg2).cast(),
+            )
+        };
+        assert!(output.remotename.is_null(), "{name} frees remote name");
+        assert!(output.remotekey.bytes.is_null(), "{name} frees binary key");
     }
 }
 
 #[test]
 fn xdr_getcredres_roundtrip() {
-    let mut buf = [0u8; 256];
-    let mut xdr = XdrHandle::new();
-
+    // Public key_prot.h: KEY_SUCCESS selects a unixcred union arm, not a
+    // client-name string. repr(C) supplies the required union alignment.
+    #[repr(C)]
+    struct UnixCred {
+        uid: c_uint,
+        gid: c_uint,
+        gidlen: c_uint,
+        gids: *mut c_uint,
+    }
     #[repr(C)]
     struct GetCredRes {
         status: c_int,
-        _pad: c_int,
-        client_name: *mut c_char,
+        cred: UnixCred,
     }
 
-    let client = std::ffi::CString::new("unix.1000@client").unwrap();
-    let mut res = GetCredRes {
-        status: 0,
-        _pad: 0,
-        client_name: client.as_ptr() as *mut c_char,
-    };
-
-    xdr_encode(&mut xdr, &mut buf);
-    assert_eq!(
-        unsafe { xdr_getcredres(xdr.as_mut_ptr(), (&mut res as *mut GetCredRes).cast()) },
-        1
-    );
-
-    xdr_decode(&mut xdr, &mut buf);
-    let mut out = GetCredRes {
-        status: -1,
-        _pad: 0,
-        client_name: std::ptr::null_mut(),
-    };
-    assert_eq!(
-        unsafe { xdr_getcredres(xdr.as_mut_ptr(), (&mut out as *mut GetCredRes).cast()) },
-        1
-    );
-
-    assert_eq!(out.status, 0);
-    let decoded = unsafe { std::ffi::CStr::from_ptr(out.client_name) }
-        .to_str()
-        .unwrap();
-    assert_eq!(decoded, "unix.1000@client");
-
-    unsafe { frankenlibc_abi::malloc_abi::free(out.client_name.cast()) };
+    let expected: Vec<u8> = [0u32, 1000, 1001, 3, 10, 20, 0xFEDC_BA98]
+        .into_iter()
+        .flat_map(u32::to_be_bytes)
+        .collect();
+    for (name, memory, codec, release) in key_protocol_providers(xdr_getcredres, c"xdr_getcredres")
+    {
+        let mut buf = [0u8; 28];
+        let mut xdr = XdrHandle::new();
+        let mut groups = [10u32, 20, 0xFEDC_BA98];
+        let mut res = GetCredRes {
+            status: 0,
+            cred: UnixCred {
+                uid: 1000,
+                gid: 1001,
+                gidlen: groups.len() as c_uint,
+                gids: groups.as_mut_ptr(),
+            },
+        };
+        // SAFETY: this is the full public discriminated-union layout. The
+        // borrowed input groups are only encoded and remain owned by this test.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 28, XDR_ENCODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), (&mut res as *mut GetCredRes).cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(buf.as_slice(), expected, "{name}: exact getcredres wire");
+        let mut out = GetCredRes {
+            status: -1,
+            cred: UnixCred {
+                uid: 0,
+                gid: 0,
+                gidlen: 0,
+                gids: std::ptr::null_mut(),
+            },
+        };
+        // SAFETY: the full output arm is initialized and its null group pointer
+        // requests provider-owned storage; no input allocation can be aliased.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 28, XDR_DECODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), (&mut out as *mut GetCredRes).cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            (out.status, out.cred.uid, out.cred.gid, out.cred.gidlen),
+            (0, 1000, 1001, 3),
+            "{name}"
+        );
+        assert!(!out.cred.gids.is_null(), "{name}");
+        assert_ne!(
+            out.cred.gids,
+            groups.as_mut_ptr(),
+            "{name}: decoded ownership"
+        );
+        // SAFETY: the successful result contains three initialized groups.
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(out.cred.gids, 3) },
+            groups,
+            "{name}"
+        );
+        // SAFETY: XDR_FREE visits the active credential arm and frees only the
+        // decoded group allocation, using the same provider that allocated it.
+        unsafe { release(codec as *mut c_void, (&mut out as *mut GetCredRes).cast()) };
+        assert!(out.cred.gids.is_null(), "{name}: decoded group cleanup");
+    }
 }
 
 #[test]
 fn xdr_key_netstarg_roundtrip() {
-    let mut buf = [0u8; 1024];
-    let mut xdr = XdrHandle::new();
-
+    // Each public keybuf has HEXKEYBYTES=48; the netname pointer follows
+    // immediately after the two fixed arrays (offset 96 on LP64).
     #[repr(C)]
     struct KeyNetstArg {
-        priv_key: [u8; 144],
-        pub_key: [u8; 144],
+        priv_key: [u8; 48],
+        pub_key: [u8; 48],
         netname: *mut c_char,
     }
 
-    let netname = std::ffi::CString::new("unix.1000@net").unwrap();
-    let mut arg = KeyNetstArg {
-        priv_key: [0x11; 144],
-        pub_key: [0x22; 144],
-        netname: netname.as_ptr() as *mut c_char,
-    };
-
-    xdr_encode(&mut xdr, &mut buf);
-    assert_eq!(
-        unsafe { xdr_key_netstarg(xdr.as_mut_ptr(), (&mut arg as *mut KeyNetstArg).cast()) },
-        1
-    );
-
-    xdr_decode(&mut xdr, &mut buf);
-    let mut out = KeyNetstArg {
-        priv_key: [0; 144],
-        pub_key: [0; 144],
-        netname: std::ptr::null_mut(),
-    };
-    assert_eq!(
-        unsafe { xdr_key_netstarg(xdr.as_mut_ptr(), (&mut out as *mut KeyNetstArg).cast()) },
-        1
-    );
-
-    assert_eq!(out.priv_key, [0x11; 144]);
-    assert_eq!(out.pub_key, [0x22; 144]);
-    let decoded = unsafe { std::ffi::CStr::from_ptr(out.netname) }
-        .to_str()
-        .unwrap();
-    assert_eq!(decoded, "unix.1000@net");
-
-    unsafe { frankenlibc_abi::malloc_abi::free(out.netname.cast()) };
+    for (name, memory, codec, release) in
+        key_protocol_providers(xdr_key_netstarg, c"xdr_key_netstarg")
+    {
+        let mut buf = [0u8; 116];
+        let mut xdr = XdrHandle::new();
+        let netname = std::ffi::CString::new("unix.1000@net").unwrap();
+        let mut arg = KeyNetstArg {
+            priv_key: std::array::from_fn(|i| i as u8),
+            pub_key: std::array::from_fn(|i| 128 + i as u8),
+            netname: netname.as_ptr() as *mut c_char,
+        };
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&arg.priv_key);
+        expected.extend_from_slice(&arg.pub_key);
+        expected.extend_from_slice(&13u32.to_be_bytes());
+        expected.extend_from_slice(netname.as_bytes());
+        expected.extend_from_slice(&[0; 3]);
+        // SAFETY: both arrays have their public width and netname is a live
+        // borrowed string. The selected provider supplies its own XDR stream.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 116, XDR_ENCODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), (&mut arg as *mut KeyNetstArg).cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(buf.as_slice(), expected, "{name}: exact key_netstarg wire");
+        let mut out = KeyNetstArg {
+            priv_key: [0; 48],
+            pub_key: [0; 48],
+            netname: std::ptr::null_mut(),
+        };
+        // SAFETY: the initialized destination requests an owned decoded name.
+        unsafe {
+            memory(xdr.as_mut_ptr(), buf.as_mut_ptr().cast(), 116, XDR_DECODE);
+            assert_eq!(
+                codec(xdr.as_mut_ptr(), (&mut out as *mut KeyNetstArg).cast()),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(out.priv_key, arg.priv_key, "{name}");
+        assert_eq!(out.pub_key, arg.pub_key, "{name}");
+        assert!(!out.netname.is_null(), "{name}");
+        assert_ne!(out.netname, arg.netname, "{name}: decoded name ownership");
+        // SAFETY: successful decode returned a NUL-terminated name.
+        assert_eq!(
+            unsafe { std::ffi::CStr::from_ptr(out.netname) },
+            netname.as_c_str(),
+            "{name}"
+        );
+        // SAFETY: only the decoded name is owned by this XDR provider.
+        unsafe { release(codec as *mut c_void, (&mut out as *mut KeyNetstArg).cast()) };
+        assert!(out.netname.is_null(), "{name}: decoded name cleanup");
+    }
 }
 
 #[test]

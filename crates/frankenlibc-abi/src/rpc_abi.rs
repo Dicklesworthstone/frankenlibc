@@ -1595,7 +1595,9 @@ pub unsafe extern "C" fn xdr_reference(
     if unsafe { (*pp).is_null() } {
         if op != XDR_DECODE {
             leave_xdr_reference_depth();
-            return XDR_FALSE;
+            // A null reference has no remaining ownership to release. Do not
+            // invoke (or even materialize) its unused serializer in FREE mode.
+            return if op == XDR_FREE { XDR_TRUE } else { XDR_FALSE };
         }
         // mem_alloc semantics: caller frees via libc free (bd-zgifl).
         // Use calloc not malloc so recursive procs that read inner
