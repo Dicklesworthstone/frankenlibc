@@ -3,8 +3,284 @@
 > **Canonical single plan document.** Always revise in place; never create `REALITY_CHECK_BRIDGE_PLAN_v2.md` or parallel plan files.
 > **Original assessment:** 2026-09-08 at commit `3bf05e3a` (`bd-reality-202609-lx578q`).
 > **Second pass:** 2026-09-23 (`bd-rc0923-epic-eeuy4f`).
-> **Current reality check & revision:** 2026-10-30 at commit `edd6fba82a7920c917b9a723fbaaaa03a19232bf`.
+> **Current reality check & revision:** 2026-11-08 at commit `a71d465dab4a1588e6e0162f418c215ecd9c9301`.
 > **Scope:** Close the remaining gap between FrankenLibC's vision (`README.md`, `AGENTS.md`, `PROPOSED_ARCHITECTURE.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, `FEATURE_PARITY.md`) and executed reality at HEAD across all replacement levels (`L0` → `L1` → `L2` → `L3`).
+
+---
+
+## Current assessment — 2026-11-08
+
+**Verdict: substantial, functioning L0 interposition work, with genuine current-source
+successes, but no integrated qualification of the full POSIX/GNU, safety,
+performance or standalone vision.** The most consequential new source finding is
+a 32-bit entropy collapse in the deployed hardened-arena canary derivation.
+Passing inventory checks and thousands of closed tasks do not discharge that
+defect or the remaining behavioral and release obligations.
+
+This section supersedes older present-tense assessments below; their dated
+measurements and execution history remain preserved. Prefixes used here are
+`VR = bd-reality-202609-lx578q` and `RC = bd-rc0923-epic-eeuy4f`.
+
+### Scope, identity and evidence classes
+
+The full on-disk `AGENTS.md` (1,567 lines), `README.md` (4,028 lines), and applicable
+suite instructions were read. Porting/architecture plans, the existing bridge,
+parity/compatibility guides, stdio plan, support/semantic/replacement artifacts,
+the unfinished task graph, relevant implementations and tests informed this
+goal-oriented assessment. It is not exhaustive verification of every ABI input,
+source file or historical closure.
+
+The intake tree was clean at `a71d465dab4a1588e6e0162f418c215ecd9c9301`.
+Local reproduction files are under
+`/data/tmp/frankenlibc-reality-20261108T1912Z/`: `intake.json`,
+`tracker-intake.json`, `gate-results.json`, individual gate logs,
+`historical-library-smoke.json`, `github-ci-evidence.json`, and
+`canary-rank-counterexample.json`. These are local aids, not a portable release
+dossier. The findings, commands and counterexamples needed to act are retained
+in this document and task records.
+
+The mandatory `sbh check --need 20G` returned exit 1, critical: approximately
+29.3 GiB available, 4.88% free against a 14% minimum. No local or newly dispatched
+Rust compilation, workspace test, Clippy, full fixture build or performance
+campaign was attempted. No disk-policy override or deletion was used.
+**Current-source build/test evidence below comes from inspected, already
+completed GitHub jobs for this exact SHA; it is not a fresh local execution.**
+
+### What is actually working
+
+1. **Current-source bounded release paths have executable evidence.** The
+   [Legacy host DNS job](https://github.com/Dicklesworthstone/frankenlibc/actions/runs/42454951967/job/128651883058)
+   builds the release ABI, runs independent host/native lookups, and executes
+   NSS module tests in both modes: `test result: ok. 4 passed; 0 failed; 0 ignored`
+   per mode. Its DNS transport target reports `54 passed; 0 failed`.
+   Tuple-based NSS positive and defensive-result cases are among the passing
+   tests; older README statements that tuple-only modules are unsupported need
+   reconciliation with this code and evidence.
+2. **Versioned numeric ABI work is real.** The
+   [Versioned fromfp ABI job](https://github.com/Dicklesworthstone/frankenlibc/actions/runs/42454951983/job/128651883068)
+   succeeds at this SHA, including deployed strict/hardened checks and
+   `conformance_diff_gamma_signgam`: `4 passed; 0 failed` per mode. Its deliberate
+   previous-path control reports `FAILED. 0 passed; 1 failed`, which the job
+   requires. That expected failure is useful gate sensitivity, not a candidate
+   regression or general proof of libm accuracy.
+3. **A failed stdio workflow still contains substantial passing behavior.** Its
+   steps build the release ABI and exercise read/write failures, popen lifecycle,
+   stream cancellation, C/C++ cleanup, formatting frontends, registration,
+   callback unwinding, GNU printf and inline FILE operations. Registration
+   reports five executed passing Rust tests in each mode. The failed nested
+   cleanup case below must remain visible alongside those successes.
+4. **The old local library remains usable for a narrow smoke check.** Its hash
+   is `e70dbad54e23b07bc7e3202ef5d32cfc89ada3bde1261bb3d6ae9808816671db`
+   (October 19 file; source identity unverified). Eight comparisons passed:
+   echo, numeric sort, an explicit two-file listing, and Python using ctypes,
+   SQLite and SSL, each in strict and hardened mode. Exits, stdout and stderr
+   matched live host runs. An `LD_DEBUG=bindings` probe confirms candidate
+   bindings, including allocation. This qualifies neither HEAD, every function
+   provider, the full corpus, repair behavior nor latency. The hash was unchanged.
+
+The source supports these advances: printf registration reaches a native
+registry, RPC constructors dispatch into real client/service/authentication
+modules, native thread cancellation and cleanup have implementations, and
+`owned_unwind_abi.rs` contains bounded search/cleanup/landing-pad machinery.
+Describing those as absent or unconditional stubs from old task titles would
+be inaccurate. Their full contracts and composition still need acceptance.
+
+### New concrete safety defect: the canary has only 32 independent bits
+
+`crates/frankenlibc-membrane/src/fingerprint.rs:100` computes:
+
+```text
+canary(h) = h XOR rotate_left(h, 32) XOR 0xDEADBEEFCAFEBABE
+```
+
+Write `h = (a << 32) | b`. Before the constant XOR, both output halves are
+`a XOR b`. Thus the mapping has rank 32 over GF(2), exactly `2^32` outputs,
+and the invariant:
+
+```text
+high32(canary) XOR low32(canary) = 0x14530451
+canary(0) = canary(0x0000000100000001) = 0xDEADBEEFCAFEBABE
+canary(0x123456789ABCDEF0) = canary(0x123456799ABCDEF1)
+                        = 0x5625366742763236
+```
+
+Even an ideal uniform secret 64-bit hash therefore leaves only 32 independent
+canary bits; a targeted guess restricted to that known output set does not have
+the documented `2^-64` bound. This statement distinguishes targeted guessing
+from uniformly random eight-byte corruption. Arena allocation and validation
+actually use `fp.canary()` (`arena.rs:509`, `:803`–`:815`), so this is on a real
+hardened allocation path. The source expression was matched structurally with
+`ast-grep`; the algebra and explicit collisions were checked with Python.
+No compiled Rust test or deployed forgery was executed by this audit.
+
+This focused defect had no matching specific task in the searched tracker
+titles/descriptions/acceptance/notes. **VR.8.1** now owns the repair and honest
+claim reconciliation; **VR.8.2** owns independent structural, compiled and
+deployed positive/corruption acceptance. VR.8.2 depends on VR.8.1, and integrated
+L1 acceptance **RC.47 now depends on VR.8.2**. Both remain open. Changing the
+claim to 32 bits alone is not completion of the original safety target.
+Tests must reject the retained old transform; finite no-collision samples must
+not be described as a cryptographic proof. Preserve layout, strict behavior,
+quarantine, existing repairs and explicit key/header-disclosure assumptions.
+
+### Fresh gate and upstream failure observations
+
+All original scripts ran without changing their policies or thresholds:
+
+| Command under `scripts/` | Result | What the observation establishes |
+|---|---|---|
+| `check_docs_semantic_claims.sh` | Exit 0 | The implemented claim predicates pass; they do not detect all contradictory prose listed below. |
+| `check_semantic_contract_drift.sh` | Exit 0 | Inventory/drift predicates pass; unknown semantics remain unknown. |
+| `check_support_semantic_overlay_schema.sh` | Exit 0 | The current overlay satisfies its schema and source-reference checks. |
+| `check_tooling_dependency_boundary.sh --validate-only` | Exit 0 | Static tooling/runtime dependency separation; no companion execution claim. |
+| `check_support_matrix_maintenance.sh` | Exit 1 | Host census re-derivation passes (38 same-symbol host symbols / 53 callsites); promotion-triage generation then rejects stale matrix provenance before full maintenance validation. |
+| `check_replacement_levels.sh` | Exit 1 | Global counts agree, but `wraps_host_libc_breakdown.glibc_internal_abi` is 207 versus 208 in the matrix. The structured L1 objective still has five pass / three blocked obligations. |
+| `check_closure_gate.sh` | Exit 1 | All 66 selected post-cutoff closures are unproven here: 30 lack execution contracts and 36 reference absent local receipt files. |
+| `check_ws8_e2e_standalone_verification.sh --preflight` | Exit 2 | Six scenarios blocked; zero executed workloads/tests. No explicit replacement/package inputs were supplied. |
+
+Maintenance rejects matrix source `d94f7ebf0…` because it predates ABI source
+`69ab400d6…`. The committed report's **1,085 invalid classifications** and
+**1,190/4,119 fixture-linked rows (28.9%)** are historical report values, not
+outcomes from the later stages that this invocation never reached. Neither
+number is a semantic failure/pass rate. Retain conservative review in RC.37/.38;
+do not refresh source pins to manufacture qualification.
+
+The exact-SHA GitHub results add three distinct failure classes:
+
+- **Core CI infrastructure/evidence failure:**
+  [Core Gates](https://github.com/Dicklesworthstone/frankenlibc/actions/runs/42482045980/job/128735899646)
+  reports `rch: command not found` at regeneration line 190, the same stale
+  matrix provenance, and `hard_parts_truth` regeneration disagreement.
+  Proptest/export and downstream fuzz/release/multiarch/version-matrix lanes
+  are skipped. VR.14, RC.37 and existing evidence work own these blockers.
+- **Executed cleanup regression:**
+  [stdio job](https://github.com/Dicklesworthstone/frankenlibc/actions/runs/42454952005/job/128651883308)
+  compiles `glibc_internal_abi_test` and runs filter `pthread_cleanup` serially.
+  `pthread_cleanup_defer_restores_nested_cancellation_types` fails at line 3526:
+  `(in_outer, in_inner, after_inner) = (0, 0, 1)`, expected `(0, 0, 0)`.
+  The result is `FAILED. 4 passed; 1 failed; 0 ignored; 307 filtered out`.
+  The forced-native counterpart passes. RC.24 acceptance must examine the
+  host bridge/provider mixture and native behavior separately; do not infer
+  universal cancellation failure or silently change the expected tuple.
+- **Locale oracle qualification failure:**
+  [locale job](https://github.com/Dicklesworthstone/frankenlibc/actions/runs/42454951971/job/128651883038)
+  builds the release library, but its independent host composition probe stops
+  at `fixture_locale_objects.c:86`: `errno == ENOENT (errno=0)`. Both candidate
+  modes complete the 4,096-mask category matrix. This is not established
+  candidate failure. VR.6.3 must retain host version, mask/base state,
+  return/errno and statuses, adjudicate the contract, and publish the admitted
+  positive/negative split for any legitimate gate repair. Later codec and
+  wide-scanf stages were skipped and remain unqualified by this run.
+
+The closure result is an evidence-publication problem as well as an admission
+problem. Thirty-six absolute `/data/tmp/.../receipt.json` references are absent
+in this checkout. RC.44 now explicitly requires retrieval and verification
+from a clean checkout/authorized artifact store. Missing evidence does not
+prove nonexistent implementation, and a receipt hash does not establish test
+adequacy. No historical implementation was mass-reopened or declared broken.
+
+### Vision checklist and bridge to completion
+
+The matrix contains 4,119 classifications: 2,414 Implemented, 408 RawSyscall,
+1,279 WrapsHostLibc, zero GlibcCallThrough and 18 Stub, or **68.5% native
+classifications**. This is ownership taxonomy. The semantic inventory accounts
+for 4,730 declared candidates (a different denominator from dynamic exports),
+in 159 groups, with **4,730 unknown / zero full semantic qualifications** and
+29 unqualified configurations. That conservative accounting is progress; it
+does not mean every function lacks tests or that all semantics are wrong.
+
+Tracker intake: **7,542 closed, nine open, 29 in progress, six blocked**, plus
+four tombstones. Thus 44 unfinished tasks coexist with 99.4% closed visible
+records. The two new canary children bring unfinished work to 46. These counts
+measure tracker state, not vision completion.
+
+| Goal and measurable completion condition | Current verdict | Existing implementation / acceptance work |
+|---|---|---|
+| V1: the actual release preserves full declared workload outputs/exits in both modes | PARTIAL; bounded current CI and old local smoke pass, integrated corpus unqualified | RC.4 produces fresh corpus/provider/skip/xfail evidence; RC.47 accepts that same release. |
+| V2: full declared POSIX/GNU contracts, aliases, errno and fenv match their independent oracle | PARTIAL; numeric/NSS successes and one executed cleanup regression | VR.7, RC.24, RC.33/.34 and RC.35/.36; preserve `bd-li7fb3` / `bd-otip6a` numeric accuracy work. |
+| V3: census, providers and claims identify actual source/configuration | FAIL at provenance/module-rollup gates | RC.37/.38 reconcile source and rows; review evidence before promoting the 18 dated stub labels. |
+| V4: wired spatial/temporal and integrity guarantees hold under their stated threat model | PARTIAL, with canary-width defect | VR.8 and new VR.8.1/.8.2; compiled and deployed old/new controls, bounds/quarantine/reuse/racing-free and bypass scope. |
+| V5: runtime math has causal influence on permitted production decisions | UNPROVEN as a general claim | VR.4; real `cfg(not(test))` signal-to-action controls and cost, preserving strict behavior/basic validation. |
+| V6: <20 ns strict / <200 ns hardened and named workload budgets hold | UNPROVEN globally; known open bottlenecks | RC.9/.26, deployed allocator/stdio children and `bd-2g7oyh`; live incumbent/glibc/candidate in one invocation with tails and losses retained. |
+| V7: owned startup/TLS/unwind/thread/FILE/services compose through teardown | PARTIAL; meaningful source and tests, remaining failures and feature integration | VR.6/.6.1/.6.2/.6.3; first-use/reentry, callback unwind, cancellation, locale and shutdown acceptance. |
+| V8: a primary-libc process runs without host-glibc/transitive-provider dependence | UNPROVEN; local standalone preflight blocked | VR.1/VR.6 and `bd-38x82`; actual process startup, maps/provider isolation and adversarial fallback controls. |
+| V9: baseline x86 and ARM linked releases execute their declared coverage | PARTIAL; bounded historical ARM qualification remains valid within scope | RC.13, repaired RC.41/.42 and VR.9; fresh artifacts, baseline-CPU and broader ARM execution. |
+| V10: installed package and full 24-hour soak qualify that same release | UNPROVEN | VR.9 and `bd-38x82.4`; isolated installation, real duration, resource growth and injected-failure rejection. |
+| V11: exhaustive semantic accounting feeds independently qualified behavior | Inventory complete for its declaration scope; semantic review PARTIAL | Reuse RC.45/.46 outputs and VR.7 followups; explicit unknowns must not become full merely because inventory tasks closed. |
+| V12: operator claims, executable closure and build health agree | FAIL overall; three narrower local semantic gates now pass | RC.39/.40, RC.44, VR.14 and `bd-blnp4u`; retrievable receipts, current full build/tests and semantic negative controls. |
+| V13: formal guarantees have the declared proof strength | DEFERRED; 24 binder obligations remain deferred | Preserve owner dispositions `bd-e4phe.1/.2`; finite tests, matrix arithmetic and controller names do not discharge mechanized theorems. |
+| V14: asupersync/frankentui execute as tooling without runtime leakage | Static separation PASS; fresh integrated companion execution unproven here | Existing dependency-boundary gate and VR.9 feature-specific execution/acceptance. |
+
+Safety limits are architectural, not resolved by larger symbol counts. Strict
+copies, bootstrap/reentry and signal paths bypass parts of the membrane. Raw
+C addresses cannot encode old allocation generations after reuse. A completed
+validation does not pin the caller's later access against a racing free. Seven
+high-frequency hardened ABI families return before the shared policy kernel;
+the separate pointer-validator kernel can still run. Unit-test liveness under
+different cfg is insufficient evidence of deployed causal influence.
+
+**Would completing every existing task close the vision? Not demonstrably.**
+Before this pass, the focused canary-width defect was not represented; it is now
+explicitly tracked. Broad semantic and standalone tasks still contain discovery
+work. Fully completing their original behavioral acceptance would close the
+known engineering gaps, but closing bounded children or inventories alone
+would not. Owner-deferred formal ambitions are a separate, explicitly retained
+gap. No defensible universal vision-completion percentage follows from the
+bead or taxonomy percentages.
+
+### Priorities, ambition rounds and five refinement passes
+
+Execute in this order while preserving independent work and current owners:
+
+1. Repair the canary collapse and run its independent acceptance; restore
+   usable source-qualified CI/evidence generation through existing owners.
+2. Resolve the observed cleanup failure and locale oracle qualification, then
+   run their complete positive/negative and downstream suites. Continue real
+   printf/RPC/stdio/locale/native lifecycle completion rather than chasing labels.
+3. Qualify one release artifact through corpus, healing, provider, safety and
+   performance acceptance. RC.47 now cannot ignore the new canary acceptance.
+4. Measure deployed allocator/sort/stdio bottlenecks against live glibc and an
+   incumbent; optimize from profiles without relaxing gates or counting core
+   models as deployed performance.
+5. Compose owned services/startup/TLS/unwind, then qualify primary-libc process,
+   architectures, installed package and full-duration soak. Maintain all original
+   goals and explicit proof deferrals.
+
+The unchanged Phase 3a and Phase 5 templates retained later in this document
+govern this in-place task refinement. Two ambition rounds sharpened the bridge:
+first, assess guarantees at their concrete failure surfaces (including the
+canary's linear-map rank), rather than controller/manifest presence; second,
+carry actual independently observable behavior and retrievable evidence across
+the same source/configuration/artifact, including positive gates inside failed
+workflows. This does not initiate a new speculative math architecture.
+
+Five review passes were applied: (1) map all fourteen goals to existing tasks
+and isolate the one newly identified focused safety gap; (2) retain independent
+oracles and the old canary as a failing control; (3) connect repair to companion
+acceptance to RC.47 without duplicating existing broad epics; (4) distinguish
+source algebra, old-library execution, current upstream results, missing
+receipts and deferred proofs; (5) check task/plan consistency and dependency
+cycles before publication. Existing tasks received concrete failure evidence;
+no implementation task was closed by this assessment.
+
+Graph validation after the two additions: `br --no-db dep cycles --json`
+returns `cycles: []`, count zero. `bv --robot-triage` reads the complete JSONL
+authority, reports 46 unfinished tasks, and identifies VR.8.1 as unclaimed work
+that unblocks its companion. `bv --robot-insights` computes centrality/critical
+metrics but skips its own cycle algorithm because the graph exceeds 2,000
+nodes; the independent `br` result supplies that check. `br --no-db sync
+--flush-only` reports nothing dirty to export. `git diff --check` passes.
+`UBS_KEEP_TEMP=1 ubs docs/planning/REALITY_CHECK_BRIDGE_PLAN.md` returns exit 3
+because Markdown has no supported scanner; this is not a clean code-scan result.
+Only the existing plan and tracker records were edited; no runtime fix,
+Rust quality-gate result or performance improvement is claimed.
+
+Remaining documentation contradictions belong to RC.39/.40: late README DNS
+and fingerprint-layout traces, its full-version-script/default-codegen narrative,
+outdated tuple-NSS statements, PARITY-COVERAGE counts/static-ARM wording, and the
+repository description's old 2,829/68.7% headline. The passing docs gate does not
+establish that those claims are correct. Correcting prose alone earns no feature
+or performance credit.
 
 ---
 
