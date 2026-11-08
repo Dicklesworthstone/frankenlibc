@@ -12491,6 +12491,10 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
     };
     let total_len = bytes.len();
 
+    // The render error belongs to this call, even if the descriptor write
+    // fails too. Consume it before I/O so no early return can poison the next
+    // fast-path printf, and retain it for the final errno decision.
+    let render_failure = take_render_failure();
     let adverse = !write_all_fd_for_caller(fd, bytes, caller);
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -12498,7 +12502,11 @@ pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut ar
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    if adverse {
+    if let Some(error) = render_failure {
+        // SAFETY: errno is this thread's writable ABI error slot.
+        unsafe { set_abi_errno(error) };
+        -1
+    } else if adverse {
         -1
     } else {
         printf_result_to_c_int(total_len)
@@ -14014,6 +14022,9 @@ pub(crate) unsafe fn vdprintf_for_caller(
     };
     let total_len = bytes.len();
 
+    // Keep the current call's render failure out of shared thread-local state
+    // while the descriptor write may fail or invoke policy hooks.
+    let render_failure = take_render_failure();
     let mut written = 0usize;
     let mut adverse = false;
     while written < total_len {
@@ -14044,7 +14055,11 @@ pub(crate) unsafe fn vdprintf_for_caller(
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    if adverse {
+    if let Some(error) = render_failure {
+        // SAFETY: errno is this thread's writable ABI error slot.
+        unsafe { set_abi_errno(error) };
+        -1
+    } else if adverse {
         -1
     } else {
         printf_result_to_c_int(total_len)
