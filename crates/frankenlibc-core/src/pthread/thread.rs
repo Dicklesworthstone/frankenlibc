@@ -152,6 +152,11 @@ pub struct ThreadHandle {
     pub cancel_state: AtomicI32,
     pub cancel_type: AtomicI32,
 
+    /// ABI threading-policy reentry belongs to this kernel thread. Native
+    /// clones share their creator's compiler TLS until an owned TCB exists,
+    /// so a compiler-TLS depth would suppress unrelated threads' policy work.
+    pub threading_policy_depth: AtomicU32,
+
     /// Top of the ABI's caller-owned C cancellation cleanup chain. Only the
     /// owner changes this pointer, and every entry is removed before its
     /// callback can reenter libc. Kept here rather than in inherited TLS.
@@ -791,6 +796,7 @@ pub unsafe fn create_thread_with_startup(
         errno: core::cell::UnsafeCell::new(0),
         cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
         cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
+        threading_policy_depth: AtomicU32::new(0),
         cleanup_head: AtomicUsize::new(0),
         exit_started: AtomicU32::new(0),
         unwind_stack_boundary: AtomicUsize::new(0),

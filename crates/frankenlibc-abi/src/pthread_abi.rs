@@ -356,10 +356,10 @@ thread_local! {
 // (`RefCell::new(PthreadTlsState::new())`) and so carries a state word the
 // accessor must test on every use.
 //
-// A single `u32` in its own `const`-initialised `Cell` needs neither. Same value,
-// same two writers, same reader semantics -- only the container changes.
-// Unconditional: the field it replaces was removed from `PthreadTlsState` for both
-// feature configurations, and `in_threading_policy_context()` has one definition.
+// A single `u32` in its own `const`-initialised `Cell` needs neither. Hosted
+// threads use that fast path in both feature configurations. Registered native
+// clones instead keep the depth in their live ThreadHandle: even the owned-cache
+// feature does not give those clones independent compiler TLS.
 thread_local! {
     static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
@@ -822,18 +822,30 @@ pub(crate) fn prewarm_host_thread_symbols() {
 static ACTIVE_THREADING_POLICY_CONTEXTS: AtomicU32 = AtomicU32::new(0);
 
 #[allow(dead_code)]
-struct ThreadingPolicyGuard;
+enum ThreadingPolicyGuard {
+    Hosted,
+    // The calling thread keeps its handle alive until its stack is unwound.
+    // Keeping the pointer also prevents accidentally moving this guard to a
+    // different thread, which would release another owner's policy context.
+    Native(*const AtomicU32),
+}
 
 impl Drop for ThreadingPolicyGuard {
     fn drop(&mut self) {
-        let decremented_to_zero = THREADING_POLICY_DEPTH
-            .try_with(|d| {
-                let prev = d.get();
-                let next = prev.saturating_sub(1);
-                d.set(next);
-                prev > 0 && next == 0
-            })
-            .unwrap_or(false);
+        let decremented_to_zero = match self {
+            Self::Hosted => THREADING_POLICY_DEPTH
+                .try_with(|d| {
+                    let prev = d.get();
+                    let next = prev.saturating_sub(1);
+                    d.set(next);
+                    prev > 0 && next == 0
+                })
+                .unwrap_or(false),
+            // SAFETY: only this native owner and its signal handlers access
+            // the field. The handle outlives every guard on its stack,
+            // including cancellation unwinding and key-destructor callbacks.
+            Self::Native(depth) => unsafe { (**depth).swap(0, Ordering::Relaxed) != 0 },
+        };
         if decremented_to_zero {
             ACTIVE_THREADING_POLICY_CONTEXTS.fetch_sub(1, Ordering::Release);
         }
@@ -842,6 +854,16 @@ impl Drop for ThreadingPolicyGuard {
 
 #[allow(dead_code)]
 fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: current_thread_handle returns this thread's live handle.
+        // No allocation, lock, or inherited compiler TLS is needed here.
+        let depth = unsafe { &(*handle).threading_policy_depth };
+        depth
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+            .ok()?;
+        ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
+        return Some(ThreadingPolicyGuard::Native(depth));
+    }
     THREADING_POLICY_DEPTH
         .try_with(|d| {
             if d.get() > 0 {
@@ -849,7 +871,7 @@ fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
             } else {
                 d.set(d.get() + 1);
                 ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
-                Some(ThreadingPolicyGuard)
+                Some(ThreadingPolicyGuard::Hosted)
             }
         })
         .unwrap_or(None)
@@ -871,6 +893,10 @@ where
 #[cold]
 #[inline(never)]
 fn in_threading_policy_context_slow() -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the calling native thread owns this field until final exit.
+        return unsafe { (*handle).threading_policy_depth.load(Ordering::Relaxed) != 0 };
+    }
     // `unwrap_or(true)` preserved: a thread whose TLS cannot be reached is treated
     // as being inside the threading-policy context, which is the conservative answer
     // the allocator guard relies on.
@@ -886,6 +912,19 @@ pub(crate) fn in_threading_policy_context() -> bool {
         return false;
     }
     in_threading_policy_context_slow()
+}
+
+/// Exercise the production reentry guard without exporting a C ABI symbol.
+#[doc(hidden)]
+pub fn __test_with_threading_policy_context<R>(work: impl FnOnce() -> R) -> Option<R> {
+    let _guard = enter_threading_policy_guard()?;
+    Some(work())
+}
+
+/// Observe the calling thread's policy context using the allocator's query.
+#[doc(hidden)]
+pub fn __test_threading_policy_context_active() -> bool {
+    in_threading_policy_context()
 }
 
 /// Treats the leading atomic word of `pthread_mutex_t` as our lock state.

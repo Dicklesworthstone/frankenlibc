@@ -22,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_cancel_wait_test.rs'
+      - 'crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs'
       - 'crates/frankenlibc-abi/tests/time_abi_test.rs'
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/syscall/**'
@@ -135,6 +136,10 @@ jobs:
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
                   *features, 'pthread::tls::tests::'], 'strict', 50))
+              for mode in ['strict', 'hardened']:
+                  cases.append((f'policy-{label}-{mode}', ['cargo', 'test', '-p', 'frankenlibc-abi',
+                      *features, '--test', 'pthread_thread_lifecycle_test',
+                      'threading_policy_context_'], mode, 2))
           for mode in ['strict', 'hardened']:
               cases.append((mode, ['cargo', 'test', '-p', 'frankenlibc-abi',
                   '--test', 'pthread_stack_abi_test'], mode, 8))

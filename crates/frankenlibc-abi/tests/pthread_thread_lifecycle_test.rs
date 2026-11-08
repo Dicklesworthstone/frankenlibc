@@ -107,6 +107,179 @@ fn scoped_native_override_does_not_change_another_test_worker() {
         .expect("native override worker must not panic");
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+mod policy_context_tests {
+    use super::lock_only;
+    use frankenlibc_abi::pthread_abi::{
+        __test_threading_policy_context_active as context_active,
+        __test_with_threading_policy_context as with_context,
+    };
+    use frankenlibc_core::{pthread::thread, syscall};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    struct Probe {
+        ready: AtomicBool,
+        release: AtomicBool,
+    }
+
+    impl Probe {
+        fn new() -> Self {
+            Self {
+                ready: AtomicBool::new(false),
+                release: AtomicBool::new(false),
+            }
+        }
+
+        fn wait_ready(&self) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !self.ready.load(Ordering::Acquire) {
+                assert!(
+                    Instant::now() < deadline,
+                    "native policy probe did not start"
+                );
+                syscall::sys_sched_yield();
+            }
+        }
+
+        fn wait_release(&self) {
+            while !self.release.load(Ordering::Acquire) {
+                syscall::sys_sched_yield();
+            }
+        }
+    }
+
+    // No allocation, assertion, panic, or host call is allowed in this child:
+    // the real core clone intentionally inherits its creator's compiler TLS.
+    unsafe extern "C" fn policy_child(argument: usize) -> usize {
+        // SAFETY: NativeChild keeps the borrowed probe alive until join.
+        let probe = unsafe { &*(argument as *const Probe) };
+        let mut observed = usize::from(!context_active());
+        let entered = with_context(|| {
+            observed |= 1 << 1;
+            if context_active() {
+                observed |= 1 << 2;
+            }
+            if with_context(|| ()).is_none() {
+                observed |= 1 << 3;
+            }
+            probe.ready.store(true, Ordering::Release);
+            probe.wait_release();
+            if context_active() {
+                observed |= 1 << 4;
+            }
+        });
+        if entered.is_none() {
+            // The old shared-depth implementation takes this path. Publish
+            // readiness anyway, so it fails the observations rather than hangs.
+            probe.ready.store(true, Ordering::Release);
+            probe.wait_release();
+        }
+        if !context_active() {
+            observed |= 1 << 5;
+        }
+        observed
+    }
+
+    struct NativeChild<'a> {
+        handle: *mut thread::ThreadHandle,
+        probe: &'a Probe,
+    }
+
+    impl<'a> NativeChild<'a> {
+        fn create(probe: &'a Probe) -> Self {
+            // SAFETY: the entry has the expected C pointer-sized signature;
+            // this guard joins before the borrowed probe can be destroyed.
+            let handle = unsafe {
+                thread::create_thread(
+                    policy_child as *const () as usize,
+                    probe as *const Probe as usize,
+                    64 * 1024,
+                )
+            }
+            .expect("creating an actual native policy probe must succeed");
+            Self { handle, probe }
+        }
+
+        fn join(mut self) -> usize {
+            self.probe.release.store(true, Ordering::Release);
+            // SAFETY: this guard exclusively owns its live joinable handle.
+            let result = unsafe { thread::join_thread(self.handle) }
+                .expect("joining the native policy probe must succeed");
+            self.handle = std::ptr::null_mut();
+            result
+        }
+    }
+
+    impl Drop for NativeChild<'_> {
+        fn drop(&mut self) {
+            if !self.handle.is_null() {
+                self.probe.release.store(true, Ordering::Release);
+                // SAFETY: release and join even when a parent assertion
+                // unwinds, before any child can outlive its borrowed probe.
+                let _ = unsafe { thread::join_thread(self.handle) };
+            }
+        }
+    }
+
+    #[test]
+    fn threading_policy_context_isolated_between_creator_and_native_siblings() {
+        let _guard = lock_only();
+        assert!(!context_active());
+        let first_probe = Probe::new();
+        let second_probe = Probe::new();
+        let observations = with_context(|| {
+            assert!(context_active());
+            assert!(with_context(|| ()).is_none());
+            let first = NativeChild::create(&first_probe);
+            first_probe.wait_ready();
+            let second = NativeChild::create(&second_probe);
+            second_probe.wait_ready();
+
+            let parent_with_both = context_active();
+            let first_observed = first.join();
+            let parent_after_first = context_active();
+            // The second child still owns its guard after its sibling exits.
+            let second_observed = second.join();
+            (
+                parent_with_both,
+                parent_after_first,
+                context_active(),
+                first_observed,
+                second_observed,
+            )
+        });
+        assert_eq!(
+            observations,
+            Some((true, true, true, 0b11_1111, 0b11_1111)),
+            "each native child must enter and leave its own context while its creator and sibling remain active"
+        );
+        assert!(
+            !context_active(),
+            "creator guard must be restored after exit"
+        );
+    }
+
+    #[test]
+    fn threading_policy_context_hosted_unwind_restores_depth() {
+        let _guard = lock_only();
+        assert!(!context_active());
+        let unwind = std::panic::catch_unwind(|| {
+            let _ = with_context(|| {
+                assert!(context_active());
+                assert!(with_context(|| ()).is_none());
+                // Only the ordinary hosted test worker unwinds. Native child
+                // code above records observations without panicking.
+                panic!("exercise threading-policy guard unwinding");
+            });
+        });
+        assert!(unwind.is_err());
+        assert!(!context_active(), "unwinding must release the hosted guard");
+        assert_eq!(with_context(context_active), Some(true));
+        assert!(!context_active(), "the replacement guard must also release");
+    }
+}
+
 unsafe extern "C" fn start_return_arg(arg: *mut c_void) -> *mut c_void {
     arg
 }
