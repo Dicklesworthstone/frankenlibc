@@ -4,7 +4,605 @@
 > **Original assessment:** 2026-09-08 at commit `3bf05e3a` (`bd-reality-202609-lx578q`).
 > **Second pass:** 2026-09-23 (`bd-rc0923-epic-eeuy4f`).
 > **Current reality check & revision:** 2026-11-08 at commit `a71d465dab4a1588e6e0162f418c215ecd9c9301`.
+> **Security qualification planning:** 2026-11-08, grounded at `32986af21`; proposed work below is not executed security qualification.
 > **Scope:** Close the remaining gap between FrankenLibC's vision (`README.md`, `AGENTS.md`, `PROPOSED_ARCHITECTURE.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, `FEATURE_PARITY.md`) and executed reality at HEAD across all replacement levels (`L0` → `L1` → `L2` → `L3`).
+
+---
+
+## Security qualification program — demonstrate a useful, bounded security benefit
+
+### SQ.0 Outcome and decision rule
+
+The user wants a convincing answer to a practical question: can a security-conscious
+person do a useful task with less security risk because FrankenLibC is present?
+The deliverable is an independently reproducible answer for a specific workflow,
+including an honest negative answer if the mechanism does not help. A favorable
+presentation, a healing counter, a fixed CVE count or process survival is insufficient.
+
+The initial workflow is a trusted, unprivileged archive-conversion worker processing
+untrusted archive bytes. Its first experiment uses a published libarchive ZIP-writer
+memory-corruption case. A second RAR-reader case probes a distinct read boundary.
+Both are real upstream parser/library paths. Their outcomes are unknown until run.
+The qualified product scope is the pinned worker/profile/artifact combination;
+neither experiment establishes safety for arbitrary archives or arbitrary software.
+
+There are four separate deliverables:
+
+1. A real-application intervention result with a demonstrated harmful baseline,
+   an independent harm oracle, genuine providers, and honest treatment outcomes.
+2. Evidence that legitimate jobs remain useful, including complete output semantics,
+   resource use, failures, cancellation and publication behavior.
+3. An executable deployment profile that bounds inputs, privileges, resources and
+   outputs, and refuses jobs outside its tested admission contract.
+4. A portable evidence bundle and concise demonstration that another person can
+   reproduce without trusting our interpretation, local paths or existing summaries.
+
+Success means the workflow meets its frozen acceptance conditions. Failure, no
+effect, inability to measure, and incompatibility remain first-class results.
+No task is allowed to guarantee a positive outcome before seeing the experiment.
+Publishing a bounded negative result completes the relevant experiment, but does
+not complete an operator-ready or mitigation-success acceptance criterion.
+
+### SQ.1 Grounding and existing work to reuse
+
+Planning starts at source `32986af21`. The earlier canary diagnosis remains valid
+for its audited source, but `a24292e44` has replaced the rank-32 fold with an
+invertible full-width transform and added tests. VR.8.1 and VR.8.2 remain open:
+independent compiled/deployed acceptance is still required. Do not implement a
+duplicate repair or interpret the reversible transform as proof of secret entropy.
+
+Existing reusable surfaces are:
+
+- `tests/cve_arena/runner.sh`: target execution, process observations and verdicts.
+- `tests/cve_arena/manifest_schema.json`: target contract, extended in place.
+- `tests/cve_arena/targets/`: existing external-target recipes and fixtures.
+- `tests/cve_arena/report.sh` and `generate_report.sh`: human and machine reports.
+- `scripts/cve_arena_gate.sh`: gate admission, currently including a rate threshold.
+- `scripts/generate_cve_paired_mode_runner.py`: existing paired evidence machinery.
+- `crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs` and related
+  CVE/hardened-assertion tests: actual consumer and adversarial acceptance coverage.
+- `tests/integration/fixture_malloc.c`: deployed allocator/repair probes.
+- `scripts/gentoo/security_analyzer.py`, `generate_security_report.py`,
+  `tests/gentoo/test_security_validation.py`: ecosystem claim consumers.
+- `SECURITY.md`, `DEPLOYMENT.md`, `docs/gentoo/security-validation.md`: user guidance.
+
+The current runner's `compute_verdict` can infer PREVENTED from a heal log or
+success-looking stdout, and its serialized `rust_exit` can be forced to zero by
+that verdict. The Gentoo analyzer derives prevention and confidence from heal
+counts. These are specific acceptance defects, not trustworthy security oracles.
+The new work must preserve raw observations and reproduce/reject those false
+positives through the real consumers. Do not infer current behavior from the
+closed status of historical CVE Arena tasks.
+
+Build scripts and runners also contain cleanup/deletion paths and fail-open
+fallbacks. This planning session does not execute them. Implementation must revise
+those paths before use: retain evidence, use fresh output directories, and do not
+delete files, containers or images without the owner's separate authorization.
+Add new files only for genuinely new external target fixtures or necessary
+functionality that cannot reasonably live in an existing file.
+
+Reuse VR.8/.8.2 for the safety boundary and canary acceptance, VR.7 for actual
+runtime fixes discovered by qualification, RC.4 for real-program corpus evidence,
+RC.44 for retained execution receipts, and RC.39/.40 for public claim consistency.
+VR.14 owns the existing hosted-CI RCH configuration problem. A scoped lab run may
+use an already authorized working RCH worker; it must disclose unrelated global
+CI failures. An experiment is not gated on implementing a standalone libc,
+qualifying every export, or repairing unrelated math/sort behavior first.
+
+### SQ.2 Threat model and user workflow
+
+The attacker controls archive bytes, entry names, lengths, metadata, ordering and
+compression structure. The trusted program, supervisor, kernel and host runtime
+are separate assumptions. The target is a reproducible application memory error
+or unintended output effect; the program is not being treated as trustworthy after
+compromise. Do not run unknown executables supplied by an attacker.
+
+The worker receives an immutable input object and a declared operation. A supervisor
+checks the exact profile and candidate hashes, enforces limits and starts one fresh
+unprivileged process per job. The child writes only to a private staging location.
+After exit, an independent validator checks all required output properties before
+the supervisor exposes any result. A killed, timed-out, malformed or unverifiable
+job exposes no output as successful. Retain the rejected output as evidence.
+
+The initial profile permits archive inspection and bounded conversion into staging;
+it does not extract arbitrary archive paths into a user's directory. It has no
+credentials, production data, host home directory, host process sockets or network
+access. Input, executable and library mounts are read-only. Output and evidence
+locations are separate, private and bounded. The validator itself runs with bounded
+resources and no extra privileges or network access.
+
+Confinement protects the experiment host independently of the memory mitigation.
+Every comparison arm uses the same confinement policy and limits, so a denied
+filesystem/network operation cannot be credited to FrankenLibC. Root escape and
+remote-code-execution payloads are unnecessary: bounded memory-effect witnesses
+and output checks answer the stated question without exceeding the published
+vulnerability's demonstrated impact.
+
+For dangerous historical targets, use an already authorized isolated lab with a
+hardware-virtualized VM boundary and an unprivileged guest worker. QEMU's security
+policy distinguishes supported accelerated virtualization from TCG emulation;
+an ARM smoke run under user-mode QEMU is not proof of isolation. Existing
+container/namespace/LSM restrictions are additional layers, not equivalent claims.
+Missing isolation must block execution, never trigger `--no-docker` or host fallback.
+
+Primary references checked during planning:
+
+- [QEMU security requirements](https://www.qemu.org/docs/master/system/security.html)
+  distinguish supported virtualization from unsupported isolation claims.
+- [Landlock documentation](https://docs.kernel.org/userspace-api/landlock.html)
+  describes resource-access restrictions. Admission must probe the required rights
+  on the actual kernel; do not assume a new ABI is available or silently weaken it.
+
+This program designs an experiment and an optional constrained worker profile;
+it does not authorize changing fleet settings, provisioning privileged hosts,
+installing production services, sending exploits to other systems, or publishing
+newly discovered upstream vulnerabilities without an appropriate disclosure process.
+
+### SQ.3 The first real-application case and its exact scope
+
+The primary candidate is
+[libarchive GHSA-xgqq-r5j8-3mch / CVE-2026-45308](https://github.com/libarchive/libarchive/security/advisories/GHSA-xgqq-r5j8-3mch).
+Upstream reports a ZIP-writer heap overwrite reachable when a long-path archive
+is converted to ZIP. Its source allocates fixed 64-KiB central-directory segments
+and can pass a larger pathname copy to `memcpy`. The reported impact is memory
+corruption; this plan does not elevate it to demonstrated code execution.
+
+Verified annotated-tag identities, distinct from their peeled source commits:
+
+| Role | Tag | Tag object | Peeled source commit |
+|---|---|---|---|
+| Published vulnerable candidate | `v3.8.7` | `cf3debc3fa8ca6db59e77fe99d0283f056c97004` | `ded82291ab41d5e355831b96b0e1ff49e24d8939` |
+| Published patched control | `v3.8.8` | `24d992722659c529700143e3087dee6454addecd` | `7219b0134d771dc4b51bf86b4d01761b87398b1b` |
+
+Tag objects were verified through the upstream Git API. The vulnerable source
+path was inspected at `libarchive/archive_write_set_format_zip.c`. Treat these
+as experiment inputs; inspect the actual fixing change and source-to-binary
+bindings before accepting a control. Do not deploy the vulnerable release as a
+normal user recommendation. The maintained-production profile selects a current
+patched upstream version at implementation time and qualifies that exact build.
+
+Construct or retain a small reproducible archive input through the ordinary upstream
+parser, with boundary variants around the segment limit and a bounded larger path.
+Record exact input bytes and generator/source hashes. Keep legitimate cases around
+the boundary too; not every long pathname is an attack. Use the real conversion
+entrypoint, not a hand-written substitute that merely calls malloc and memcpy.
+
+The second candidate is
+[GHSA-6vpf-5947-22g5](https://github.com/libarchive/libarchive/security/advisories/GHSA-6vpf-5947-22g5),
+an upstream RAR-reader copy-boundary issue affecting the advisory's listed releases.
+Its published description mixes buffer-overflow wording with an out-of-bounds-read
+observation. Resolve the actual read/write direction, affected allocation and
+private-data effect from source and execution before defining the security endpoint.
+Pin the exact vulnerable/fixed commits and specimen hashes in its own intake task.
+
+These two paths test different memory effects but share one upstream project.
+Report that limitation explicitly. A second application/codebase is a later
+generalization campaign, not an inference from having two CVE identifiers.
+
+Case admission is ordered: verify source and published scope; build and inspect
+ordinary optimized linkage; show the real vulnerable path is reachable; establish
+an independent harm oracle; then freeze the case/matrix before testing mitigation.
+If a compiler inlines the vulnerable copy or another provider owns the allocation,
+record the ordinary build as uncovered. A no-builtin diagnostic build may explain
+the mechanism, but cannot replace the ordinary build as the primary user claim.
+
+### SQ.4 Counterfactual arms and causal attribution
+
+Use one immutable vulnerable application binary across these primary arms:
+
+| Arm | Application | Provider configuration | Purpose |
+|---|---|---|---|
+| H | Vulnerable | Host glibc, no FrankenLibC | Live incumbent and harmful baseline |
+| S | Same vulnerable bytes | Candidate FrankenLibC, strict | Compatibility and mode control |
+| F | Same vulnerable bytes | Same candidate, hardened | Treatment under evaluation |
+| P | Patched upstream | Host glibc | Repair/reference behavior and valid-workload oracle |
+
+An unchanged patched application under hardened mode is an additional regression
+arm for the maintained profile. All primary arms use the same input, confinement,
+resource policy and relevant environment. Record ASLR and scheduling conditions;
+do not disable mitigations to manufacture an impressive baseline.
+
+Inspect executable, ELF dependencies, build flags, FORTIFY/LTO settings, allocator
+ownership, actual call providers and loaded mappings. A lookup through `dlsym`
+alone does not prove the executed call reaches that provider. Verify real call
+bindings or equivalent observations, reject a partial foreign interposer, and
+pin hashes before and after the run. A change in upstream source, optimization,
+feature set, instrumentation or allocator is a different experiment arm.
+
+Where a mechanism ablation is useful, use a separately built diagnostic library
+with only the nominated bounds action disabled. Keep that source difference
+explicit, retain all other validation, and never ship or describe the ablation
+as the candidate. H/S/F/P plus an upstream fix are mandatory; a safe, narrowly
+implemented ablation strengthens attribution but is not a reason to postpone
+the first honest result indefinitely.
+
+Runtime-math influence is a separate question. A hardened copy repair cannot be
+credited to adaptive controllers if its deployed fast path bypasses their decision.
+Use actual source routing and observation; VR.4 continues to own broader causal
+controller qualification.
+
+### SQ.5 Independent harm and semantic oracles
+
+The harmful baseline must demonstrate the nominated event, not merely crash,
+print a magic token, or return an error. Examples include an observed write
+outside a known allocation, an unauthorized read that exposes a private marker,
+or independently verified output corruption caused by the vulnerable path.
+Absence of an observed event has a stated observation domain, not universal scope.
+
+Use a separate ASan diagnostic build to locate and characterize the upstream bug.
+It is not the release binary, may replace memcpy/allocator providers, and cannot
+qualify the candidate's deployment or performance. Keep its receipts separate.
+The primary release comparison must have its own endpoint observation.
+
+For the ZIP case, develop an external bounded debugger/watchpoint observation
+of the offending allocation and first boundary write, with identical observation
+conditions in H/S/F/P. Establish allocation base/requested extent independently
+from the candidate's own metadata and record the actual write/copy instruction.
+If this is infeasible on the available platform, the harm endpoint is unmeasured
+and the case cannot earn the strongest mitigation verdict. Do not substitute a
+heal log or an ASan result from a different binary.
+
+Debugger observation can alter timing and heap behavior. Pair observed and normal
+release runs, publish the difference, and never use debugger runs for performance.
+The watchpoint covers a nominated boundary/event; it does not prove every memory
+access in the process is safe. A candidate that avoids the first write but later
+corrupts memory fails the broader workflow contract when that effect is observed.
+
+For an out-of-bounds-read claim, distinguish read occurrence from disclosure.
+Any marker is private synthetic data created only inside the disposable experiment.
+Require an independent output observation and a documented marker-placement
+diagnostic; classify a changed layout that merely hides the marker as inconclusive
+unless the read itself is also excluded in the stated observation domain.
+
+Validate benign output through a separately built patched upstream implementation
+and explicit structure/content/metadata checks. For converted archives, compare
+entry sets, names, types, lengths, content digests and required metadata. If output
+bytes legitimately vary, name the narrow normalization before running and retain
+both raw versions. Never normalize away path names, file contents or other
+security-relevant differences to obtain parity.
+
+For hostile input, successful processing is optional; safe rejection may be the
+right outcome. A crash, timeout, OOM kill, missing output, failed observation or
+unverified process lifetime is not counted as useful successful processing.
+Distinguish harm avoided through a controlled refusal from harm detected after it
+occurred. Outputs from repaired or rejected jobs remain staged until validation.
+
+### SQ.6 Evidence and outcome contract
+
+Extend existing manifests/reports rather than creating a competing ledger.
+Use independent dimensions instead of a single optimistic PREVENTED boolean:
+
+| Dimension | Required distinctions |
+|---|---|
+| Setup | admitted / unsupported / missing infrastructure / wrong artifact/provider |
+| Baseline | nominated harm observed / not reproduced / unmeasured |
+| Candidate memory effect | nominated harm observed / excluded within declared observation / unmeasured |
+| Response | correct completion / controlled rejection / crash / timeout / resource kill |
+| Output | independently valid / rejected and unpublished / invalid / unmeasured |
+| Attribution | supported for stated mechanism / confounded / unresolved |
+| Qualification | experiment only / profile accepted / unsupported / superseded |
+
+Examples of defensible experiment labels are `baseline_not_reproduced`,
+`observed_harm`, `mitigated_in_tested_case`, `safe_rejection_in_tested_case`,
+`detected_after_harm`, `regression`, `unsupported` and `inconclusive`.
+A mitigation-success label requires admitted setup, observed baseline harm,
+measured candidate exclusion of that event, correct completion or a defined safe
+rejection, independently checked output/publication, and supported attribution.
+These labels describe evidence; they are not universal guarantees.
+
+Every observation retains the actual exit code, signal, timeout/resource cause,
+stdout/stderr hashes and bytes, process-tree completion, input hash, output tree
+manifest, requested/performed operation and oracle result. Never overwrite a
+nonzero `rust_exit` with zero because a verdict says PREVENTED. Healing telemetry
+is corroborating evidence only, with symbol/path/action and counter context when
+available. Missing telemetry can limit attribution; fabricated telemetry cannot
+replace a successful independent endpoint.
+
+Bind source commit and source tree, compiler/toolchain, target ISA, features,
+profile/optimization, upstream application/fix, host glibc, candidate library,
+transitive DSOs, confinement policy, manifest, input/corpus, test binaries and
+commands to immutable digests. Distinguish diagnostic, actual release, ablation
+and patched artifacts. Store receipt references relative to a bundle root.
+Unknown fields and unsupported evidence classes cannot silently qualify.
+
+Bundle-relative does not mean trusting a supplied path: reject absolute paths,
+`..` traversal, symlink escapes, duplicate identities and recursive/cyclic
+references. Bound file counts and total bytes before hashing or decoding. The
+consumer rechecks matrix completeness and raw outcomes independently of the
+producer's verdict. A hash proves byte identity relative to the index, not that
+an oracle is correct or an execution actually happened. Independent replay is a
+separate requirement, and unsigned bundles do not authenticate their author.
+
+A gate implementation repair must first reproduce its own defect. Freeze an
+adversarial matrix including heal-only success, detection after corruption, both
+arms returning zero with corruption, forged SAFE stdout, wrong provider, stale
+files, missing child output, zero executed tests, partial corpus and altered exits.
+Show which old verdicts change and why. Keep old evidence dated; do not rewrite
+the historical results into an apparently green new run.
+
+Keep `scripts/cve_arena_gate.sh` thresholds unchanged while evaluating their
+legitimacy. If the old denominator incorrectly mixes detected, unsupported or
+ineligible cases with prevention, repair that defect under the repository's
+evidence standard and publish the old/new admission split. Do not lower a rate
+until everything passes, drop losing cases, or treat schema migration as a win.
+There is no meaningful global CVE-prevention percentage from this campaign.
+
+### SQ.7 Corpus, challenges and valid-program value
+
+Freeze a small explicit coverage matrix before campaign execution. Include the
+published vulnerable path, boundary-adjacent valid/invalid lengths, different
+entry orderings, zero/short inputs, truncated metadata, duplicate names and
+multiple entries, with both modes and every mandatory comparison arm. Name exact
+cells and their expected oracle. Missing cells remain missing, never passes.
+
+Keep design/training fixtures separate from an independently prepared holdout.
+Record the selection rule and every admitted, rejected or uncovered candidate;
+count distinct roots/inputs rather than repetitions as independent vulnerabilities.
+No selection step may discard a case because hardened mode loses. A new finding
+becomes a concrete runtime/test task under VR.7 or its owning subsystem, followed
+by a new candidate and complete affected replay.
+
+Boundary challenges must include direct/inlined writes, foreign/custom allocators,
+same-address reuse, a racing free, signal/reentry paths, malformed output after
+clamping, and a program that intentionally bypasses interposition. Their expected
+result may be unsupported or observable harm. The classifier must refuse to
+promote these to universal safety. Do not execute setuid tests on the host;
+interposition exclusions can be tested through controlled metadata/admission cases.
+
+Fuzzing and mutation extend evidence after deterministic controls pass. Reuse
+existing fuzz surfaces where possible, save seeds and failures, and enforce
+runtime/memory/output caps. A campaign timeout or no crashes in a finite corpus
+does not prove absence of vulnerabilities. Predeclare stopping rules and retain
+all attempted inputs and infrastructure failures.
+
+The legitimate corpus must exercise useful application operations, not only
+version banners or tiny crafted API calls. Verify content-preserving archive
+conversion, normal long names within supported limits, compression variants,
+error recovery, multiple independent jobs and deterministic rejection behavior.
+Measure both false rejection and silent output change. One forbidden output
+publication or silently corrupted benign result blocks profile acceptance.
+
+### SQ.8 Resource and performance qualification
+
+These are proposed experiment limits, not measurements: initially admit at most
+16 MiB compressed input, 64 MiB decoded/staged output, 256 KiB individual pathname,
+512 MiB RSS, 64 descriptors and a 30-second per-job deadline. Bound process/thread
+counts and the total retained run size before execution. Refine caps from the
+frozen workload requirement and available lab capacity before seeing treatment
+results; version a changed contract instead of moving limits to rescue a run.
+
+Reject archive bombs and excessive expansion explicitly. A smaller input does
+not imply smaller memory or output demand. Limit the validator and evidence
+collector too. Retained evidence cannot grow without admission accounting; when
+capacity is exhausted stop scheduling, retain existing files, and report blocked.
+
+Probe the actual enforcement mechanism before launching a case. RSS, address-space
+and compressed-input limits are different controls: do not describe RLIMIT_AS as
+an RSS cap. Use an authorized VM/cgroup memory controller for the declared RSS/
+memory envelope and process limits; missing delegation is an infrastructure
+blocker. Record controller memory events and supervisor causes so OOM, timeout,
+signal and application rejection remain distinguishable. Never adjust host-wide
+resource policy or clear old evidence to make the experiment fit.
+
+Measure live H/S/F plus a pre-change FrankenLibC incumbent in the same invocation,
+under identical confinement. Patched-upstream timing is useful context, not the
+same-binary counterfactual. Keep cold startup and warmed batches separate. Use
+paired/randomized blocks with frozen sample counts and preserve raw samples,
+wall time, CPU time, RSS, FD/thread peaks and throughput.
+
+Before treatment measurement, a valid-input noise pilot freezes sample sizes,
+block order, seed and estimator. Use at least 30 paired blocks and three warmups
+per arm as the initial protocol; increase that design before inspecting mitigation
+results if the noise pilot requires it. Keep individual-case and cold/warm strata
+separate. The proposed latency gate uses the upper endpoint of a 95% interval for
+the paired runtime ratio, not only its point estimate. Resample complete paired
+blocks when using bootstrap intervals and record their dependence assumptions.
+Publish p95/p99 only with sample counts and uncertainty; small samples cannot
+support an asserted production tail bound. These are proposed protocol parameters,
+not statistically guaranteed security rates or measured performance.
+
+The proposed operator profile requires the declared valid-workload wall-time ratio
+against live H to be at most 2.0, plus the frozen absolute resource envelope.
+This is an engineering acceptance target, not a claim that it is currently met.
+Use the existing statistical/noise rules and an independently specified interval
+estimator; noisy/inconclusive measurements do not qualify. Existing strict <20 ns
+and hardened <200 ns call budgets remain separate contracts, not inferred from
+whole-program timings. Preserve RC.9/.26 and other global performance work.
+
+Profile a missed budget before proposing optimizations. Score impact/confidence/
+effort, change one lever, preserve semantic outputs and security controls, and
+rerun the complete affected security/valid-workload matrix. A faster run that
+disabled the protection is a regression. Report losses plainly; no self-speedup
+or diagnostic-provider result becomes a deployment win.
+
+### SQ.9 The executable operator profile
+
+Extend the existing runner with a clearly separated qualification/profile path;
+do not create a web service or a general sandbox product. Proposed CLI shape:
+
+```text
+tests/cve_arena/runner.sh --qualification-manifest <pinned-manifest>
+                         --results-dir <new-empty-directory>
+tests/cve_arena/report.sh --qualification <bundle-root> --verify
+```
+
+These options are proposed and must be implemented/tested before documentation
+calls them working. The manifest identifies the allowed operation, exact artifact,
+required confinement, caps, inputs, independent validators and evidence contract.
+Unknown profiles, hash mismatches or unavailable required rights fail before a
+child starts. Operators see concrete dispositions and an explicit explanation of
+which claims were and were not qualified; internal math names are not required.
+
+Every job starts fresh with process-immutable mode and its own staging/evidence
+locations. Enforce process-tree deadlines and cancellation without losing raw
+exit/signal information. A supervisor outside the candidate validates publication.
+Do not rely on the interposed application's own success flag, parser or log as
+the only acceptance. Clean termination, restart and repeated-job tests must show
+no prior-job input, output, descriptor or marker crosses the job boundary.
+
+The supervisor owns all publication paths. Treat child filenames, symlinks,
+hardlinks, stdout and suggested receipt paths as untrusted data. Resolve staging
+entries relative to trusted directory descriptors, reject traversal and unexpected
+file types, and validate the same immutable bytes that will be published. Archive
+entry metadata is inspected without extracting paths onto the host. Validation,
+hashing and publication must not reopen a child-controlled pathname in a way that
+permits substitution between checks. The acceptance suite includes symlink swaps,
+partial writes, malformed JSON/terminal escapes and oversized evidence records.
+
+Qualification is bound to a release/profile, not an unqualified claim about HEAD.
+Changed candidate bytes, upstream build, dependencies, policy or validator require
+new admission and applicable replay. Mark superseded/revoked profiles explicitly
+and preserve their evidence. Historical reproduction remains possible, but cannot
+silently satisfy current operator admission. Do not introduce a signing service or
+claim hash integrity proves the producer's honesty.
+
+### SQ.10 Portable evidence and a compelling demonstration
+
+Retain an inspectable bundle containing a machine index, raw observations,
+input/output manifests, actual commands, all artifact identities, builds/recipes,
+oracle traces, negative controls, benign corpus and performance samples. Include
+licenses/attribution and fetch-source verification information. Do not redistribute
+third-party artifacts without checking their licensing and the bounded lab policy.
+
+The verifier must accept relocation to a different absolute directory, reject
+missing/altered/swapped artifacts, and validate every required matrix cell. A
+future reviewer must not need the producer's `/data/tmp` tree or a seven-day
+Actions artifact. Use the existing release/artifact publication path with declared
+retention and an offline-verifiable manifest; publication does not make unsigned
+evidence an independent attestation.
+
+Independent replication uses a clean authorized environment and source-built
+artifacts, including ordinary optimization/provider checks. Compare the same
+input and outputs without trusting the producer's expected-verdict field. Record
+compiler/kernel/glibc differences as explicit replication strata; do not hide
+environment-sensitive losses. A second reader reviews the bundle and the claim
+without being the author of the mechanism or only consumer implementation.
+
+The demonstration should fit a short explanation: identify the useful job and
+published bug; show the real baseline harm; show strict and hardened outcomes;
+show independent validation of output or safe rejection; show benign jobs and
+costs; show one boundary case that protection does not cover; link the complete
+reproduction. The evidence does the persuasion. Do not use a shell pop, a dramatic
+crash video, CVSS score or total heal count as a substitute for that chain.
+
+The public claim template is: "On [application/build], [input family] reached
+[verified provider/path]. Under [exact profile/artifact], we observed [specific
+harmful event] in the baseline and [defined treatment outcome], with [legitimate
+workload results and costs]. These exclusions remain [list]." Use "corruption
+prevented in tested cases" only where that is measured. Safe rejection and correct
+completion are separate achievements. No "makes untrusted software safe" wording.
+
+### SQ.11 Mathematical methods and proof boundaries
+
+Use the repository's required methods only where they produce concrete artifacts:
+
+- **Causal inference:** the frozen H/S/F/P design, explicit interventions and
+  confounder ledger compile into experiment manifests and attribution predicates.
+- **Abstract interpretation / separation-style ownership:** allocation extents,
+  lifetime and observation domains compile into boundary cases and admission rules.
+- **Abstract algebra:** full-width canary reasoning is reused from VR.8.2; a finite
+  collision sample is not an entropy proof.
+- **Conformal/statistical methods:** frozen calibration/holdout strata and explicit
+  abstention compile into uncertainty reports. Do not claim exchangeability,
+  independent trials or a distribution-free exploit-prevention rate without the
+  corresponding assumptions and test design. Exact deterministic endpoints lead.
+- **Topological/local-to-global methods:** a finite cover of profile/case/provider/
+  mode observations and overlap consistency compile into coverage and witness
+  joins. Treat this as a consistency model; it is not a machine-checked theorem
+  about all paths or a reason to add another production controller.
+
+Preserve owner-deferred mechanized obligations. The required branch-diversity
+mapping records assumptions, evidence class, counterexamples and where obligations
+remain deferred. Do not manufacture proof credit from method names.
+
+The central evidence card is deliberately simple:
+
+```text
+qualified(c) requires admitted(c) AND baseline_harm_observed(c)
+  AND candidate_harm_excluded_in_declared_domain(c)
+  AND accepted_response_and_output(c) AND attribution_supported(c).
+Example: admitted=1, harm=1, exclusion=unknown, output=1 => unqualified.
+```
+
+Unknowns cannot be converted to true by log volume or a probability label.
+The failure cost is asymmetric: falsely telling a user a dangerous operation is
+safe is worse than withholding an unsupported qualification. This determines the
+conservative admission rule, not a promise that false negatives are impossible.
+
+### SQ.12 Work packages and dependency graph
+
+Each package becomes a self-contained bead with background, files, exact output,
+positive/negative tests, dependency purpose and closure evidence. Existing owners
+keep their implementation tasks. IDs S01–S24 below are stable plan keys; the bead
+mapping is filled after conversion, without changing task scope to fit a count.
+
+| Key | Deliverable | Prerequisites | Main consumer |
+|---|---|---|---|
+| S01 | Freeze threat/profile/claim and experiment protocol | Existing source review | Every package |
+| S02 | Preserve observations and implement conservative outcome contract | S01 | S03, runner, reports |
+| S03 | Execute false-positive and outcome-classifier controls | S02 | Both case qualifications, final gate |
+| S04 | Bind actual release/application/providers/builds | S01 | S05, cases, bundle |
+| S05 | Reject wrong/stale/partial artifact and provider admission | S02, S04 | Case qualifications, profile tests |
+| S06 | Enforce isolated bounded execution and raw child outcomes | S01, S02 | S07, corpus, profile |
+| S07 | Execute missing-confinement, timeout and process-tree controls | S06 | Both cases, final gate |
+| S08 | Pin/build ordinary vulnerable and patched ZIP case inputs | S01 | S09, legitimate corpus |
+| S09 | Establish ZIP baseline harm and execute H/S/F/P | S03, S05, S07, S08 | Repair tests, replication, demo |
+| S10 | Execute useful benign archive semantics across arms | S04, S06, S08 | S11, profile, performance |
+| S11 | Reject harmful truncation and incorrect output publication | S09, S10 | Profile and final acceptance |
+| S12 | Preserve known bypass/temporal limits and holdout challenges | S03, S05, S07 | Profile tests, final gate |
+| S13 | Pin and admit the independent RAR read-boundary candidate | S01 | S14 |
+| S14 | Execute RAR harm/disclosure/oracle controls across arms | S03, S05, S07, S13 | Replication and final acceptance |
+| S15 | Measure useful work, protection and live-incumbent costs | S09, S10, S11, S14 | Operator acceptance |
+| S16 | Implement exact profile admission, staging and job lifecycle | S02, S06, S10, S11 | S17, revocation, final gate |
+| S17 | Execute operator lifecycle and publication failure controls | S05, S07, S12, S16 | Final gate |
+| S18 | Export and verify portable, complete evidence bundles | S02, S04, S06 | Replication, demonstration |
+| S19 | Independently reproduce from a clean authorized environment | S09, S11, S14, S18 | Final acceptance |
+| S20 | Produce the concise real-program demo and full report | S09, S11, S18 | Final acceptance and readers |
+| S21 | Repair prevention/confidence consumers and security prose | S02, S03 | Final gate and user claims |
+| S22 | Execute integrated profile acceptance or an honest non-qualification | All named acceptances below | Epic outcome / RC.47 input |
+| S23 | Replay independently prepared adversarial holdout and mutations | S09, S14 | Final acceptance |
+| S24 | Test changed-artifact, supersession and revocation admission | S16, S18 | Final acceptance |
+
+S22 requires S03, S05, S07, S11, S12, S14, S15, S17, S19, S20, S21, S23,
+S24 and existing VR.8.2. Parent-child edges organize work; only real prerequisites
+use blocking edges. The epic must not become a blocker of its own children.
+RC.47 consumes this work as scoped security evidence; no child may silently
+promote the global replacement level. Preserve related existing task links.
+
+The shortest route to an informative first result is S01 → S02/S04/S06/S08 →
+S03/S05/S07 → S09/S10 → S11 → the first-case portion of S18/S20. Secondary
+coverage, independent replication, costs and operator controls then determine
+whether the profile can be recommended. Design and artifact preparation may run
+in parallel; unsafe execution and public qualification wait for their prerequisites.
+
+### SQ.13 Milestones, stopping rules and planning review
+
+M0 is a frozen protocol plus source-grounded cases and working admission controls.
+M1 is the first useful real-program result, including a negative one, with independent
+harm/output observations. M2 adds the distinct read-boundary challenge and holdout.
+M3 accepts or rejects the constrained operator profile after legitimate-workload,
+performance, lifecycle, portability and independent-replication checks. M4 is a
+public evidence package and appropriately bounded user recommendation.
+
+Do not wait for every libc ambition before M1. Do not call M1 a production security
+endorsement. A failed baseline yields `baseline_not_reproduced`, an uncovered ordinary
+build yields `unsupported`, and a failed oracle yields `inconclusive`. Fix a discovered
+runtime bug through its owner and rerun affected controls with a new artifact identity.
+No evidence quantity can upgrade one of those dispositions automatically.
+
+Planning uses at least four substantive review passes and six bead-polish passes.
+Review contracts, causal/provider confounding, independent observation, downstream
+semantics, runtime safety/resource limits, portability and task dependencies.
+An independent model review challenges implementability and false security claims.
+Record actual revisions and remaining issues; do not claim a fresh session or
+cross-model validation that was not performed. Reuse the frozen planning/bead
+prompts and preserve all existing project goals.
+
+No runtime implementation or vulnerable-program execution is part of this planning
+turn. The output is this in-place plan plus a validated, self-contained br graph.
+Implementation tasks close only after their named tests compile and execute with
+nonzero counts through the authorized RCH/disk policy. Source-only planning evidence
+is labeled accordingly. Files and prior evidence are retained throughout.
 
 ---
 
