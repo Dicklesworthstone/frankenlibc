@@ -8942,14 +8942,19 @@ fn push_bytes(v: &mut Vec<u8>, src: &[u8]) {
     if n == 0 {
         return;
     }
+    // Literal and bare-string output must report allocation failure through
+    // the same errno latch as conversion fields, rather than aborting.
+    if v.try_reserve(n).is_err() {
+        frankenlibc_core::stdio::printf::note_render_failure(errno::ENOMEM);
+        return;
+    }
     if n > 16 {
         v.extend_from_slice(src);
         return;
     }
-    v.reserve(n);
     let len = v.len();
-    // SAFETY: `reserve(n)` guarantees `n` writable bytes at `len`; `src` is a
-    // live slice of `n` bytes and cannot alias the vector's spare capacity.
+    // SAFETY: successful `try_reserve(n)` guarantees `n` writable bytes at `len`.
+    // `src` is a live slice of `n` bytes and cannot alias the vector's spare capacity.
     // Every branch writes exactly the bytes in `[0, n)`, with overlap where the
     // two accesses meet, before `set_len` publishes them.
     unsafe {
@@ -9144,9 +9149,16 @@ pub(crate) unsafe fn render_segments(
     };
 
     for seg in segments.iter() {
+        // Check before every segment: literal output and fast conversions
+        // can fail too, and their continue paths skip the general field code.
+        // Retain the error for the outer result, without reaching later %n.
+        if let Some(error) = take_render_failure() {
+            frankenlibc_core::stdio::printf::note_render_failure(error);
+            break;
+        }
         match seg {
             FormatSegment::Literal(lit) => push_bytes(&mut buf, lit),
-            FormatSegment::Percent => buf.push(b'%'),
+            FormatSegment::Percent => push_bytes(&mut buf, b"%"),
             FormatSegment::Spec(spec) => {
                 // FAST PATH: plain narrow `%s` — no width, no precision, no
                 // flags, no length modifier, non-positional.
@@ -9303,7 +9315,7 @@ pub(crate) unsafe fn render_segments(
                 }
 
                 if resolved_spec.is_literal_percent() {
-                    buf.push(b'%');
+                    push_bytes(&mut buf, b"%");
                 } else if resolved_spec.is_unknown_conversion() {
                     resolved_spec.render_unknown_conversion(&mut buf);
                 } else if resolved_spec.is_errno_message() {
@@ -9644,13 +9656,6 @@ pub(crate) unsafe fn render_segments(
                     } else {
                         let _ = resolved_spec.render_value_arg(raw, &mut buf);
                     }
-                }
-                // Core renderers latch allocation errors instead of aborting.
-                // Stop before later directives (especially %n), and retain
-                // the failure for the outer printf-family result to consume.
-                if let Some(error) = take_render_failure() {
-                    frankenlibc_core::stdio::printf::note_render_failure(error);
-                    break;
                 }
             }
         }

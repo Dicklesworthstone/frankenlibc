@@ -2070,13 +2070,29 @@ mod locale_scanning {
             ),
         ];
         // Small valid fields warm both allocators and prove the count stores
-        // work. The large fields are valid int widths, but need more memory
+        // work. Large fields, literals, and strings need more output memory
         // than the additional mappings allowed for either actual call.
         for width in [4, 128 * 1024 * 1024] {
             for left in [false, true] {
-                for kind in ["d", "s"] {
-                    let text = format!("P%n%{}{width}{kind}%nQ", if left { "-" } else { "" });
+                let kinds: &[&str] = if left {
+                    &["d", "s"]
+                } else {
+                    &["d", "s", "literal", "bare_s"]
+                };
+                for &kind in kinds {
+                    let text = if kind == "literal" {
+                        format!("P%n{}%nQ", "A".repeat(width))
+                    } else if kind == "bare_s" {
+                        "P%n%s%nQ".to_owned()
+                    } else {
+                        format!("P%n%{}{width}{kind}%nQ", if left { "-" } else { "" })
+                    };
                     let format = std::ffi::CString::new(text.as_bytes()).unwrap();
+                    // Allocate the large input before imposing the limit. Only
+                    // the formatter's output growth should fail, including
+                    // the literal and bare-%s paths that skip the field code.
+                    let string = (kind == "bare_s")
+                        .then(|| std::ffi::CString::new(vec![b'A'; width]).unwrap());
                     let mut expected = None;
                     for (engine, print, errno, free) in entries {
                         let (mut before, mut after) = (SENTINEL, SENTINEL);
@@ -2124,12 +2140,19 @@ mod locale_scanning {
                                         7 as c_int,
                                         &mut after,
                                     )
+                                } else if kind == "literal" {
+                                    print(
+                                        &mut output,
+                                        format.as_ptr(),
+                                        &mut before,
+                                        &mut after,
+                                    )
                                 } else {
                                     print(
                                         &mut output,
                                         format.as_ptr(),
                                         &mut before,
-                                        c"A".as_ptr(),
+                                        string.as_deref().unwrap_or(c"A").as_ptr(),
                                         &mut after,
                                     )
                                 };
@@ -2158,13 +2181,20 @@ mod locale_scanning {
                             // its owned block even if rendering had failed.
                             unsafe { free(output.cast()) };
                         }
-                        eprintln!("{engine} {text:?}: {result:?}");
+                        eprintln!("{engine} width={width} left={left} kind={kind}: {result:?}");
                         if engine == "host" && width != 4 {
-                            assert_eq!(result, (-1, libc::ENOMEM, 1, SENTINEL), "GNU {text}");
+                            assert_eq!(
+                                result,
+                                (-1, libc::ENOMEM, 1, SENTINEL),
+                                "GNU width={width} left={left} kind={kind}"
+                            );
                         }
                         let observed = (result, bytes);
                         if let Some(expected) = expected.as_ref() {
-                            assert_eq!(&observed, expected, "{engine} {text}");
+                            assert_eq!(
+                                &observed, expected,
+                                "{engine} width={width} left={left} kind={kind}"
+                            );
                         } else {
                             expected = Some(observed);
                         }
