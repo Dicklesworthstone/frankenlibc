@@ -584,7 +584,7 @@ Developer transparency remains mandatory:
 2. **Galois Connection:** `gamma(alpha(c)) >= c`. Safe interpretation is at least as permissive as what correct programs need.
 3. **Allocation Integrity:** For a hardened-arena allocation whose fingerprint is checked, a targeted 64-bit SipHash forgery has probability at most 2^-64 under the keyed-hash assumptions.
 4. **UAF Detection:** Deterministic for a freed block while it is in the hardened arena's quarantine queue. A raw C pointer carries no generation, so after same-address reuse a stale pointer resolves to the new allocation and is NOT detected (`arena.rs` module doc). Strict-mode (segment) allocations have no quarantine.
-5. **Buffer Overflow Detection:** Hardened-arena trailing canaries detect corruption when a later checked operation reaches the block; under an unpredictable 64-bit canary, a targeted forgery has probability at most 2^-64.
+5. **Buffer Overflow Detection:** Hardened-arena trailing canaries detect changed bytes when a later checked operation reaches the block. The invertible `hash XOR 0xDEADBEEFCAFEBABE` derivation preserves 64 bits but adds no entropy. A single blind guess has probability 2^-64 only under a uniformly unpredictable, undisclosed hash assumption; the process/time/address key mix does not establish it. Reading the header hash reveals the tail, and header/tail probabilities must not be multiplied.
 6. **Healing Scope:** Explicitly membrane-gated families have defined policy-table actions for their wired validation outcomes. Universal per-function/per-invalid-input completeness is not yet established.
 
 ### Key Design Decisions

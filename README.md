@@ -497,7 +497,7 @@ The fingerprint header is a `#[repr(C)]` struct:
 | Generation | 8 bytes | `u64` generation counter for temporal safety |
 | Allocation size | 8 bytes | User-requested size as `u64` (supports allocations > 4 GiB) |
 
-The trailing canary is derived from the same SipHash computation. Corruption of either signals tampering or buffer overflow. Probability of an undetected collision is bounded by **2⁻⁶⁴** (SipHash collision probability).
+The trailing canary stores `hash XOR 0xDEADBEEFCAFEBABE` in little-endian order. This invertible transform preserves all 64 input bits; the previous `hash XOR rotate_left(hash, 32)` fold discarded half of them. Header and canary checks detect mismatches when validation reaches them. A single blind guess has probability **2⁻⁶⁴** only under a uniformly unpredictable 64-bit hash assumption. The process/time/address key mix does not establish that assumption, and reading the header hash reveals the canary. These two checks are correlated, not independent authentication tags.
 
 ### Bloom Filter
 
@@ -1346,7 +1346,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 | Galois soundness | `γ(α(c)) ≥ c` is the intended abstraction/concretization law | Unit/property-test evidence plus proof notes; not established for every deployed ABI path |
 | Allocation integrity | Hardened-arena fingerprint checks use a keyed 64-bit SipHash value | A targeted forgery is bounded by `2⁻⁶⁴` under the keyed-hash assumptions when the check is reached |
 | Use-after-free detection (hardened) | Freed blocks sit in a quarantine queue; access to a quarantined block is recognised | Deterministic while the block is quarantined. A raw C pointer carries no generation, so once the address is reused a stale pointer resolves to the NEW allocation and is not detected (`arena.rs` module doc) |
-| Buffer overflow detection (hardened arena allocations) | Trailing canary checked at `free` | `P(miss) ≤ 2⁻⁶⁴` per corrupted canary; detected when the block is freed, not at the overflowing write |
+| Buffer overflow detection (hardened arena allocations) | Full-width trailing canary checked at `free` | A single blind guess is `2⁻⁶⁴` only for a uniformly unpredictable, undisclosed hash. Changed bytes are detected when checked, not at the overflowing write; header disclosure reveals the canary |
 | Bloom filter soundness | Zero false negatives | By construction (all insertions are remembered) |
 | Healing policy coverage | Explicitly membrane-gated families map wired validation outcomes to policy actions | Partial; universal per-function/per-invalid-input completeness is not established |
 | Supplied SOS-task consistency | Three supplied Gram matrices are PSD and the generated quadratic terms recompose algebraically | Checked at build time; this does not connect the variables to allocator fragmentation, thread safety, or size-class behavior |
@@ -2007,17 +2007,19 @@ Arena draining updates metadata under the shard lock. The validation pipeline th
 Why SipHash-2-4 specifically:
 
 - **Designed for short messages.** Allocation metadata is tens of bytes; this is SipHash's sweet spot.
-- **Keyed.** A per-process secret derived at init from a mix of PID, wall-clock nanoseconds, and ASLR address noise means an attacker cannot precompute a colliding header.
+- **Keyed.** Keys are initialized from process/thread identifiers, wall-clock time, and address noise. This mix is not an established cryptographic entropy source; it does not by itself justify an attacker-independent forgery bound.
 - **Fast.** SipHash-2-4 runs in a handful of cycles per 8-byte block on x86_64; the per-call cost is ~20 ns even before vectorization.
 - **Strong against differential attacks.** The 2-4 round count is conservatively chosen to defeat known cryptanalytic shortcuts.
 
-The header layout `[hash:8][generation:4][size:8]` is laid out so that:
+The 24-byte header layout is `[hash:8][generation:8][size:8]`, immediately before the user region:
 
-- Reading the size from `*(u64*)(p - 12)` is one aligned load
-- The generation is the verify-critical quantity for UAF
-- The hash binds the metadata to the allocation address, defeating "swap two headers" attacks
+- The size occupies bytes `p - 8` through `p - 1`, serialized in little-endian order
+- The generation binds the current metadata to an allocation lifetime; raw pointers still cannot identify an old lifetime after same-address reuse
+- The hash binds size and generation to the user allocation address
 
-Trailing canaries derive from the same SipHash key but use a different domain separator. The documented bound is `P(success) ≤ 2⁻⁶⁴` for a coordinated 64-bit forgery; the implementation does not establish the independence needed to multiply header and canary probabilities.
+Trailing canaries use the invertible map `c(h) = h XOR 0xDEADBEEFCAFEBABE`, not a separate keyed hash or cryptographic domain separator. Since `h = c(h) XOR 0xDEADBEEFCAFEBABE`, the map is one-to-one over all 64-bit inputs and preserves their entropy without increasing it. The former `h XOR rotate_left(h, 32)` map had rank 32 over GF(2); regression tests measure the repaired affine map's rank as 64 and reject that frozen negative control. These are structural and execution checks, not a proof that the process keys are uniformly secret.
+
+For a uniformly unpredictable and undisclosed hash, a single blind full-word guess has success probability `2⁻⁶⁴`. This is distinct from birthday collisions across many allocations, and from overwriting bytes that happen to remain unchanged. Header disclosure reveals the tail exactly, so coordinated header/tail forgery probabilities must not be multiplied. Repeated attempts, arbitrary reads, direct writes outside checked libc calls, bootstrap/signal bypasses, and same-address stale-pointer reuse require their own threat models.
 
 The fingerprint and canary together are a *detection* mechanism, not an *exclusion* mechanism for an attacker who has already achieved arbitrary write. The membrane's job is to make corruption visible, not to make it impossible.
 

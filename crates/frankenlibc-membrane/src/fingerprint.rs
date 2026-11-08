@@ -2,12 +2,20 @@
 //!
 //! Every membrane-managed allocation gets:
 //! - A 24-byte fingerprint header: `[u64 hash | u64 generation | u64 size]`
-//! - An 8-byte trailing canary (known pattern derived from the hash)
+//! - An 8-byte trailing canary (an invertible transform of the hash)
 //!
 //! The fingerprint provides:
-//! - Allocation integrity verification (P(undetected corruption) <= 2^-64)
+//! - Allocation integrity checks when the arena/validator reaches them
 //! - Generation tracking for temporal safety
 //! - Size metadata for bounds checking (supports allocations >4GiB)
+//!
+//! The canary preserves all 64 hash bits; it does not add entropy or provide
+//! an independent authentication tag. A single blind guess succeeds with
+//! probability 2^-64 only if the hash is uniformly unpredictable to the caller.
+//! Reading the header hash reveals the canary. The process/time/address key
+//! initialization below does not establish cryptographic entropy, and neither
+//! metadata check intercepts direct C writes or identifies stale raw pointers
+//! after same-address reuse.
 
 /// Size of the fingerprint header prepended to allocations.
 pub const FINGERPRINT_SIZE: usize = 24;
@@ -93,13 +101,17 @@ pub struct Canary {
 }
 
 impl Canary {
-    /// Derive canary from a fingerprint hash.
+    /// Derive a canary without discarding any fingerprint hash bits.
+    ///
+    /// XOR with a constant is a bijection: applying the same XOR recovers the
+    /// hash. This separates the stored byte patterns, not cryptographic domains;
+    /// disclosure of either value reveals the other. In particular, do not XOR
+    /// the hash with its 32-bit rotation: that folds both halves into only 32
+    /// independent output bits.
     #[must_use]
     pub fn from_hash(hash: u64) -> Self {
-        // XOR-fold and bit-rotate to create a distinct pattern
-        let folded = hash ^ hash.rotate_left(32) ^ 0xDEAD_BEEF_CAFE_BABEu64;
         Self {
-            value: folded.to_le_bytes(),
+            value: (hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes(),
         }
     }
 
@@ -292,6 +304,71 @@ mod tests {
         assert!(!canary.verify(&corrupted));
     }
 
+    // Rank over GF(2) of the linear part of an affine 64-bit transform.
+    // This inspects the actual production function on a complete basis; a
+    // random collision sample would not establish its preserved bit width.
+    fn affine_difference_rank(transform: impl Fn(u64) -> u64, origin: u64) -> usize {
+        let offset = transform(origin);
+        let mut basis = [0u64; 64];
+        let mut rank = 0;
+        for bit in 0..64 {
+            let mut column = transform(origin ^ (1u64 << bit)) ^ offset;
+            while column != 0 {
+                let pivot = 63 - column.leading_zeros() as usize;
+                if basis[pivot] == 0 {
+                    basis[pivot] = column;
+                    rank += 1;
+                    break;
+                }
+                column ^= basis[pivot];
+            }
+        }
+        rank
+    }
+
+    #[test]
+    fn canary_derivation_preserves_full_width() {
+        for origin in [0, u64::MAX, 0x1234_5678_9ABC_DEF0] {
+            assert_eq!(
+                affine_difference_rank(
+                    |hash| u64::from_le_bytes(Canary::from_hash(hash).to_bytes()),
+                    origin,
+                ),
+                64,
+                "the affine canary transform must preserve all 64 hash bits"
+            );
+        }
+    }
+
+    #[test]
+    fn canary_width_check_rejects_legacy_fold() {
+        // Frozen negative control from bd-reality-202609-lx578q.8.1. The same
+        // structural check used above must reject the former production map.
+        let legacy = |hash: u64| hash ^ hash.rotate_left(32) ^ 0xDEAD_BEEF_CAFE_BABE;
+        assert_eq!(affine_difference_rank(legacy, 0), 32);
+        for (left, right) in [
+            (0, 0x0000_0001_0000_0001),
+            (0x1234_5678_9ABC_DEF0, 0x1234_5679_9ABC_DEF1),
+        ] {
+            assert_eq!(legacy(left), legacy(right));
+            assert_ne!(Canary::from_hash(left), Canary::from_hash(right));
+        }
+    }
+
+    #[test]
+    fn canary_derivation_known_vectors_and_layout() {
+        assert_eq!(std::mem::size_of::<AllocationFingerprint>(), 24);
+        assert_eq!(std::mem::size_of::<Canary>(), 8);
+        for (hash, expected) in [
+            (0, 0xDEAD_BEEF_CAFE_BABE_u64),
+            (u64::MAX, 0x2152_4110_3501_4541),
+            (0x0000_0001_0000_0001, 0xDEAD_BEEE_CAFE_BABF),
+            (0xDEAD_BEEF_CAFE_BABE, 0),
+        ] {
+            assert_eq!(Canary::from_hash(hash).to_bytes(), expected.to_le_bytes());
+        }
+    }
+
     #[test]
     fn different_params_produce_different_fingerprints() {
         let fp1 = AllocationFingerprint::compute(0x1000, 256, 1);
@@ -302,19 +379,11 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // FORMAL PROOF: SipHash Collision Resistance
-    //
-    // Theorem: P(undetected corruption) <= 2^-64.
-    //
-    // SipHash-2-4 is a keyed PRF with 64-bit output. For any fixed
-    // secret key, the probability that two distinct inputs produce
-    // the same hash is <= 2^-64 (birthday bound for targeted
-    // collision is 2^-64, birthday paradox is 2^-32 for random
-    // collisions among 2^32 items).
-    //
-    // We empirically verify no collisions occur among a large set
-    // of systematically varied inputs, supporting the theoretical
-    // bound.
+    // Regression sample: distinct allocation inputs at the current process key.
+    // This is not a cryptographic proof. A blind guess against a uniformly
+    // unpredictable 64-bit tag has probability 2^-64; random collisions among
+    // many tags follow a birthday bound instead. Neither key unpredictability
+    // nor either probability bound can be established by this finite sample.
     // ═══════════════════════════════════════════════════════════════
 
     #[test]
@@ -352,12 +421,10 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // FORMAL PROOF: Generation-Distinct Hashes (UAF Detection)
-    //
-    // Theorem: For any fixed (addr, size), changing the generation
-    // counter always produces a different hash. This is the
-    // mechanism guaranteeing UAF detection with P=1 — a stale
-    // pointer's fingerprint will never match the current generation.
+    // Regression sample: generation changes alter the checked fingerprints.
+    // A finite 64-bit hash is not universally collision-free, and raw caller
+    // pointers do not carry generations. Same-address reuse is therefore not
+    // detected merely by verifying the current allocation's fingerprint.
     // ═══════════════════════════════════════════════════════════════
 
     #[test]
@@ -419,8 +486,9 @@ mod tests {
     // is detected. For each byte position and each non-original
     // value (255 alternatives), verify() returns false.
     //
-    // This bounds P(undetected buffer overflow) for single-byte
-    // overflows at exactly 0.
+    // This enumerates changed-byte detection for this canary value when verify
+    // is called. A write that leaves the bytes intact, skips the tail, or never
+    // reaches a check is outside this test's scope.
     // ═══════════════════════════════════════════════════════════════
 
     #[test]
@@ -532,6 +600,13 @@ mod tests {
             let canary = Canary::from_hash(hash);
             let bytes = canary.to_bytes();
             prop_assert!(canary.verify(&bytes), "canary must verify its own bytes");
+        }
+
+        #[test]
+        fn prop_canary_preserves_hash_differences(left: u64, right: u64) {
+            let left_canary = u64::from_le_bytes(Canary::from_hash(left).to_bytes());
+            let right_canary = u64::from_le_bytes(Canary::from_hash(right).to_bytes());
+            prop_assert_eq!(left_canary ^ right_canary, left ^ right);
         }
 
         #[test]
