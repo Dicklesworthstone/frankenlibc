@@ -179,6 +179,46 @@ fn innetgr_matches_glibc_with_synthetic_netgroup() {
         }
         assert_eq!(fl_result, host_result, "{name}: group={group}");
     }
+    // Both positive and negative expectations are fixed by the independent GNU
+    // oracle. In particular, later duplicate definitions must not grant a
+    // member that the first definition omitted, even when the first is empty.
+    for (group, query_host, expected) in [
+        ("continued_triples", "build", 1),
+        ("continued_children", "build", 1),
+        ("continued_children", "first", 1),
+        ("continued_inside", "bu", 1),
+        ("continued_inside", "build", 0),
+        ("continued_field_start", "build", 1),
+        ("continuation_owner", "build", 1),
+        ("continued_hidden", "build", 0),
+        ("dup_first", "first", 1),
+        ("dup_first", "build", 0),
+        ("dup_empty", "build", 0),
+        ("dup_parent", "first", 1),
+        ("dup_parent", "build", 0),
+        ("continued_cycle", "build", 1),
+        ("continued_cycle", "first", 1),
+        ("comment_hidden", "build", 0),
+        ("indented", "build", 0),
+        ("literal#name", "build", 1),
+        ("literal", "build", 0),
+        ("inline_hash", "build", 1),
+        ("hash_glued", "build", 0),
+        ("comment_chain", "build", 1),
+        ("blank_ends", "build", 0),
+    ] {
+        let arguments = (Some(query_host), Some("alice"), Some("example.com"));
+        let host_result = call_innetgr(host, group, arguments.0, arguments.1, arguments.2);
+        let fl_result = call_innetgr(fl, group, arguments.0, arguments.1, arguments.2);
+        assert_eq!(
+            host_result, expected,
+            "GNU record {group}: host={query_host}"
+        );
+        assert_eq!(
+            fl_result, host_result,
+            "native record {group}: host={query_host}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -503,11 +543,8 @@ fn read_entry(api: NetgroupApi, size: Option<usize>) -> (c_int, c_int, Fields) {
 #[test]
 fn netgroup_iteration_and_buffer_retries_match_glibc() {
     if std::env::var_os("FRANKENLIBC_NETGROUP_ITER_CHILD").is_none() {
-        let mut fixture = String::from(
-            "team (build,alice,example.com) (,ops,) child\n\
-             child (ci,,example.com) (build,bob,example.com)\n\
-             empty\nwild (,,)\nplain (build,alice,example.com)\n",
-        );
+        let mut fixture = String::from(include_str!("fixtures/innetgr_synthetic.netgroup"));
+        fixture.push_str("empty\nwild (,,)\nplain (build,alice,example.com)\n");
         for (index, fields) in [
             ["h".repeat(1500), "alice".into(), "example.com".into()],
             ["build".into(), "u".repeat(1500), "example.com".into()],
@@ -521,7 +558,10 @@ fn netgroup_iteration_and_buffer_retries_match_glibc() {
                 fields[0], fields[1], fields[2]
             ));
         }
-        fixture.push_str(&format!("exact ({},alice,example.com)\n", "e".repeat(1005)));
+        fixture.push_str(&format!(
+            "buffer_exact_capacity ({},alice,example.com)\n",
+            "e".repeat(1005)
+        ));
         let mut child = Command::new("bwrap")
             .args([
                 "--dev-bind",
@@ -632,8 +672,54 @@ fn netgroup_iteration_and_buffer_retries_match_glibc() {
             (api.end)();
             assert_eq!(read_entry(api, None), exhausted, "{name}: end resets state");
 
+            let first = || fields(b"first", b"alice", b"example.com");
+            let build = || fields(b"build", b"alice", b"example.com");
+            for (group, found, entries) in [
+                ("continued_triples", 1, vec![first(), build()]),
+                ("continued_children", 1, vec![build(), first()]),
+                (
+                    "continued_inside",
+                    1,
+                    vec![fields(b"bu", b"alice", b"example.com")],
+                ),
+                ("continued_field_start", 1, vec![build()]),
+                ("continuation_owner", 1, vec![first(), build()]),
+                ("continued_hidden", 0, vec![]),
+                ("dup_first", 1, vec![first()]),
+                ("dup_empty", 1, vec![]),
+                ("dup_parent", 1, vec![first()]),
+                ("continued_cycle", 1, vec![build(), first()]),
+                ("comment_hidden", 0, vec![]),
+                ("indented", 0, vec![]),
+                ("literal#name", 1, vec![build()]),
+                ("literal", 0, vec![]),
+                ("inline_hash", 1, vec![first(), build()]),
+                ("hash_glued", 1, vec![first()]),
+                ("comment_chain", 1, vec![first(), build()]),
+                ("blank_ends", 1, vec![first()]),
+            ] {
+                let group_name = CString::new(group).expect("logical record group");
+                assert_eq!((api.set)(group_name.as_ptr()), found, "{name}: set {group}");
+                for (index, expected) in entries.into_iter().enumerate() {
+                    // Exercise both APIs against the same provider-owned
+                    // iterator, including continuation and duplicate records.
+                    let size = if index % 2 == 0 { None } else { Some(128) };
+                    assert_eq!(
+                        read_entry(api, size),
+                        (1, 0, expected),
+                        "{name}: {group} entry {index}"
+                    );
+                }
+                assert_eq!(
+                    read_entry(api, Some(128)),
+                    exhausted,
+                    "{name}: end of {group}"
+                );
+                (api.end)();
+            }
+
             let expected = [vec![b'e'; 1005], b"alice".to_vec(), b"example.com".to_vec()];
-            assert_eq!((api.set)(c"exact".as_ptr()), 1, "{name}");
+            assert_eq!((api.set)(c"buffer_exact_capacity".as_ptr()), 1, "{name}");
             assert_eq!(
                 read_entry(api, None),
                 (1, 0, expected.map(Some)),

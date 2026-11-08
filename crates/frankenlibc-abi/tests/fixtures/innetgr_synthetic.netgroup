@@ -2,3 +2,40 @@
 team (build,alice,example.com) (,ops,) child
 child (ci,,example.com) (build,bob,example.com)
 CaseGroup (CaseHost,CaseUser,CaseDomain)
+# Logical records continue across physical lines, including child references.
+continued_triples (first,alice,example.com) \
+ (build,alice,example.com)
+continued_children first_child \
+ second_child
+first_child (first,alice,example.com)
+second_child (build,alice,example.com)
+continued_inside (bu\
+ild,alice,example.com)
+continued_field_start (build,\
+alice,example.com)
+continuation_owner (first,alice,example.com) \
+continued_hidden (build,alice,example.com)
+# Later definitions cannot add members to an existing or empty group.
+dup_first (first,alice,example.com)
+dup_first (build,alice,example.com)
+dup_empty
+dup_empty (build,alice,example.com)
+dup_parent dup_child
+dup_child (first,alice,example.com)
+dup_child (build,alice,example.com)
+continued_cycle cycle_left \
+ cycle_right
+cycle_left continued_cycle (first,alice,example.com)
+cycle_right cycle_left (build,alice,example.com)
+# A continuation is consumed even on an unrelated comment-like record. \
+comment_hidden (build,alice,example.com)
+ indented (build,alice,example.com)
+literal#name (build,alice,example.com)
+inline_hash (first,alice,example.com) # (build,alice,example.com)
+hash_glued (first,alice,example.com) #(build,alice,example.com)
+comment_chain (first,alice,example.com) \
+ # continued text \
+ (build,alice,example.com)
+blank_ends (first,alice,example.com) \
+
+ (build,alice,example.com)
