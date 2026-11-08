@@ -51,7 +51,7 @@ struct ConfigCache {
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 6],
+    parsed: [Option<Arc<Vec<Service>>>; 7],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
 }
@@ -60,7 +60,7 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None, None, None],
+    parsed: [None, None, None, None, None, None, None],
     initgroups_explicit: None,
 });
 
@@ -72,6 +72,7 @@ fn database_slot(database: Database) -> usize {
         Database::Initgroups => 3,
         Database::Publickey => 4,
         Database::Services => 5,
+        Database::Netgroup => 6,
     }
 }
 
@@ -154,7 +155,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None, None, None];
+        cache.parsed = [None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
     }
     fn read(cache: &ConfigCache) -> Option<Vec<u8>> {

@@ -8,10 +8,16 @@ on:
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/socket/**'
+      - 'crates/frankenlibc-core/src/nss/**'
+      - 'crates/frankenlibc-core/src/netgroup/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
+      - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
       - 'tests/integration/fixture_nss.c'
       - 'tests/integration/fixture_addrconfig.c'
       - 'tests/integration/fixture_native_dns_transport.c'
@@ -66,6 +72,43 @@ jobs:
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo_default_hints -- --test-threads=1 --nocapture 2>&1 | tee "artifacts/resolver/default-hints-$mode.log"
             grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "artifacts/resolver/default-hints-$mode.log"
+          done
+      - name: Verify netgroup NSS policy and iterator recovery against GNU
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          for module in nss netgroup; do
+            cargo test -p frankenlibc-core --lib "$module::tests::" -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/netgroup-$module.log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "artifacts/resolver/netgroup-$module.log"
+          done
+          # Compile as the runner user; only the finished test process needs
+          # permission to mount private /etc fixtures. System NSS is untouched.
+          cargo test -p frankenlibc-abi --test conformance_diff_innetgr --no-run --message-format=json \
+            | tee artifacts/resolver/netgroup-build.jsonl
+          python3 - <<'PY'
+          import json, pathlib
+          root = pathlib.Path('artifacts/resolver')
+          executables = []
+          for line in (root / 'netgroup-build.jsonl').read_text().splitlines():
+              item = json.loads(line)
+              if (item.get('reason') == 'compiler-artifact'
+                      and item.get('target', {}).get('name') == 'conformance_diff_innetgr'
+                      and item.get('executable')):
+                  executables.append(item['executable'])
+          assert len(executables) == 1, executables
+          (root / 'netgroup-executable.txt').write_text(executables[0] + '\n')
+          PY
+          executable=$(cat artifacts/resolver/netgroup-executable.txt)
+          test -x "$executable"
+          for mode in strict hardened; do
+            sudo -n env FRANKENLIBC_MODE="$mode" "$executable" --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/netgroup-abi-$mode.log"
+            grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "artifacts/resolver/netgroup-abi-$mode.log"
           done
       - name: Reject failed interface discovery without publishing partial snapshots
         if: always()

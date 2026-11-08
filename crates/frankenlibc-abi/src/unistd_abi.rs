@@ -24801,91 +24801,61 @@ pub unsafe extern "C" fn endfsent() {
 //
 // Format: "groupname (host,user,domain) (host,user,domain) ..."
 // Fields within parens can be empty (wildcard). Groups can reference
-// other groups by name (non-paren tokens), but we don't expand those
-// recursively (matching minimal glibc files-backend behavior).
+// other groups by name; expansion follows those references with cycle checks.
 
 pub(crate) const NETGROUP_PATH: &str = "/etc/netgroup";
 
-/// Path to the NSS dispatch configuration glibc consults before any `files`
-/// backend runs.
-pub(crate) const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
+use frankenlibc_core::netgroup::NetgroupTriple;
 
-/// Does the `netgroup` database actually reach the `files` backend?
-///
-/// ## Why this exists (bd-4dipf6)
-///
-/// FrankenLibC read `/etc/netgroup` unconditionally, and glibc does not: it
-/// dispatches every database through `/etc/nsswitch.conf` first. The STOCK
-/// Debian/Ubuntu line is
-///
-/// ```text
-/// netgroup:       nis
-/// ```
-///
-/// with no `files` at all, so on a default-configured host that happens to have
-/// an `/etc/netgroup`, glibc never opens it and reports no membership while fl
-/// reported membership. That is the FAIL-OPEN direction in an access-control
-/// predicate — fl admitting where the incumbent denies.
-///
-/// ## The rule, measured rather than read from the manual
-///
-/// `bwrap`-bound `/etc` on glibc 2.42, one synthetic `/etc/netgroup`, varying
-/// only the nsswitch line. `innetgr("plain","host1","user1","dom1")` and
-/// `setnetgrent("plain")` agree on every row:
-///
-/// ```text
-///   no /etc/nsswitch.conf at all      1   (glibc's built-in default has files)
-///   nsswitch.conf, no `netgroup:` line 1  (same default)
-///   netgroup: nis                     0   <- the stock line
-///   netgroup: files                   1
-///   netgroup: nis files               1
-///   netgroup: files nis               1
-/// ```
-///
-/// So `files` is consulted exactly when the line is ABSENT or lists `files`
-/// among its sources; ORDER does not matter here, because NIS is unconfigured
-/// and glibc falls through to the next source.
-///
-/// ## Scope, deliberately narrow
-///
-/// This answers the question for the netgroup database ONLY. fl reads no other
-/// `nsswitch.conf` line, and whether it should is the systemic half of
-/// bd-4dipf6, left open on that bead. netgroup is fixed here because it is the
-/// one database whose STOCK line omits `files`, which is what turns a
-/// configuration difference into a wrong answer on a default install.
-pub(crate) fn netgroup_files_backend_enabled() -> bool {
-    let Ok(content) = std::fs::read(NSSWITCH_PATH) else {
-        // Measured: with no nsswitch.conf, glibc's compiled-in default reaches
-        // the files backend. Absent config must not deny.
-        return true;
-    };
-    for raw in content.split(|&b| b == b'\n') {
-        let line = match raw.iter().position(|&b| b == b'#') {
-            Some(hash) => &raw[..hash],
-            None => raw,
-        };
-        let mut parts = line.splitn(2, |&b| b == b':');
-        let Some(database) = parts.next() else {
-            continue;
-        };
-        let Some(sources) = parts.next() else {
-            continue;
-        };
-        if !database.trim_ascii().eq_ignore_ascii_case(b"netgroup") {
-            continue;
-        }
-        // A source list may carry `[NOTFOUND=return]` action blocks between
-        // sources; splitting on whitespace and comparing whole tokens ignores
-        // them, because an action block never equals `files`.
-        return sources
-            .split(|b| b.is_ascii_whitespace())
-            .any(|token| token.eq_ignore_ascii_case(b"files"));
-    }
-    // Measured: a `nsswitch.conf` with no `netgroup:` line behaves like no file.
-    true
+#[derive(Clone, Copy)]
+pub(crate) enum NetgroupLookup {
+    Membership,
+    Enumeration,
 }
 
-use frankenlibc_core::netgroup::NetgroupTriple;
+/// Apply the configured netgroup sources before opening the native files backend.
+///
+/// A preceding unavailable service can terminate lookup; the mere presence of
+/// `files` later in the line is not permission to read it. Netgroup module ABIs
+/// are not implemented here, so those sources explicitly report UNAVAIL and
+/// follow their actions. `compat` is not a files alias for this database.
+pub(crate) fn netgroup_entries(
+    group: &[u8],
+    operation: NetgroupLookup,
+) -> Option<Vec<NetgroupTriple>> {
+    use frankenlibc_core::nss::{self, Answer, Database, Service};
+
+    let services = crate::nss_module::services(Database::Netgroup);
+    let mut content: Option<Result<Vec<u8>, i32>> = None;
+    let query = |service: &Service| {
+        if service.name() != b"files" {
+            return Answer::Unavailable(libc::ENOSYS);
+        }
+        let content = content.get_or_insert_with(|| {
+            std::fs::read(NETGROUP_PATH).map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))
+        });
+        let bytes = match content {
+            Ok(bytes) => bytes,
+            Err(error) if matches!(*error, libc::ENOMEM | libc::EAGAIN) => {
+                return Answer::TryAgain(*error);
+            }
+            Err(error) => return Answer::Unavailable(*error),
+        };
+        if frankenlibc_core::netgroup::contains_netgroup(bytes, group) {
+            Answer::Found(frankenlibc_core::netgroup::expand_netgroup(bytes, group))
+        } else {
+            Answer::NotFound
+        }
+    };
+    let answer = match operation {
+        NetgroupLookup::Membership => nss::lookup_netgroup_membership(&services, query),
+        NetgroupLookup::Enumeration => nss::lookup(&services, query, None),
+    };
+    match answer {
+        Answer::Found(triples) => Some(triples),
+        _ => None,
+    }
+}
 
 struct NetgroupIterState {
     /// Pre-parsed triples for the current group.
@@ -24935,10 +24905,6 @@ fn with_netgroup_iter_state<R>(callback: impl FnOnce(&mut NetgroupIterState) -> 
     }
 }
 
-// parse_netgroup_triples moved to frankenlibc_core::netgroup. The
-// callers below invoke frankenlibc_core::netgroup::parse_netgroup_triples
-// directly.
-
 /// `endnetgrent` — end netgroup iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endnetgrent() {
@@ -24965,35 +24931,13 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
         });
         return 0;
     };
-    // The BACKEND decides before the file does. With the stock `netgroup: nis`
-    // line glibc never opens /etc/netgroup and `setnetgrent` returns 0 — measured,
-    // alongside `getnetgrent` yielding nothing (bd-4dipf6).
-    if !netgroup_files_backend_enabled() {
-        with_netgroup_iter_state(|state| {
-            state.triples.clear();
-            state.pos = 0;
-        });
-        return 0;
-    }
-    let content = match std::fs::read(NETGROUP_PATH) {
-        Ok(c) => c,
-        Err(_) => {
-            // No /etc/netgroup — not an error, just empty results
-            with_netgroup_iter_state(|state| {
-                state.triples.clear();
-                state.pos = 0;
-            });
-            return 0;
-        }
-    };
-    // Nested group references are followed, as glibc does — getnetgrent must
-    // yield members reachable only through another group.
-    let triples = frankenlibc_core::netgroup::expand_netgroup(&content, &group);
+    let triples = netgroup_entries(&group, NetgroupLookup::Enumeration);
+    let found = triples.is_some();
     with_netgroup_iter_state(|state| {
-        state.triples = triples;
+        state.triples = triples.unwrap_or_default();
         state.pos = 0;
     });
-    1
+    c_int::from(found)
 }
 
 /// `getnetgrent` — get next netgroup entry (host, user, domain triple).
@@ -25014,6 +24958,14 @@ pub unsafe extern "C" fn getnetgrent(
             return 0;
         }
         let triple = &state.triples[state.pos];
+        // Do not turn a concrete field that does not fit into a NULL wildcard,
+        // or consume the record: the caller can retry with getnetgrent_r.
+        let needed = triple.host.len() + triple.user.len() + triple.domain.len() + 3;
+        if needed > state.str_buf.len() {
+            // SAFETY: errno is this thread's ABI errno slot.
+            unsafe { set_abi_errno(libc::ERANGE) };
+            return 0;
+        }
         state.pos += 1;
 
         // Pack strings into thread-local buffer
@@ -25024,7 +24976,7 @@ pub unsafe extern "C" fn getnetgrent(
             ($field:expr, $ptr:expr) => {
                 if $field.is_empty() {
                     unsafe { *$ptr = std::ptr::null_mut() };
-                } else if off + $field.len() < state.str_buf.len() {
+                } else {
                     let p = unsafe { buf.add(off) } as *mut c_char;
                     unsafe {
                         std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
@@ -25032,8 +24984,6 @@ pub unsafe extern "C" fn getnetgrent(
                         *$ptr = p;
                     }
                     off += $field.len() + 1;
-                } else {
-                    unsafe { *$ptr = std::ptr::null_mut() };
                 }
             };
         }
@@ -25070,7 +25020,10 @@ pub unsafe extern "C" fn getnetgrent_r(
         // Check buffer space
         let needed = triple.host.len() + 1 + triple.user.len() + 1 + triple.domain.len() + 1;
         if needed > buflen {
-            return 0; // ERANGE-like, but getnetgrent_r returns 0/1
+            // SAFETY: errno is this thread's ABI errno slot. The cursor stays
+            // on the same record so a larger-buffer retry can read it.
+            unsafe { set_abi_errno(libc::ERANGE) };
+            return 0;
         }
         state.pos += 1;
 

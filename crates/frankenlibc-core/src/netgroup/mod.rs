@@ -51,6 +51,19 @@ pub fn parse_netgroup_triples(content: &[u8], group: &[u8]) -> Vec<NetgroupTripl
     result
 }
 
+/// Whether the files backend knows this group, including an empty group.
+///
+/// NSS distinguishes a present group with no triples (SUCCESS) from a missing
+/// group (NOTFOUND). Both expand to an empty vector, so callers must not infer
+/// the lookup status from the expanded members.
+#[must_use]
+pub fn contains_netgroup(content: &[u8], group: &[u8]) -> bool {
+    content.split(|&b| b == b'\n').any(|line| {
+        first_token_bounds(line)
+            .is_some_and(|(start, end)| netgroup_name_matches(&line[start..end], group))
+    })
+}
+
 fn first_token_bounds(line: &[u8]) -> Option<(usize, usize)> {
     let mut start = 0usize;
     while start < line.len() && matches!(line[start], b' ' | b'\t') {
@@ -215,6 +228,21 @@ mod tests {
         let content = b"admins (host1,alice,example.com)\n";
         let r = parse_netgroup_triples(content, b"admins");
         assert_eq!(r, vec![t(b"host1", b"alice", b"example.com")]);
+    }
+
+    #[test]
+    fn lookup_distinguishes_empty_missing_and_nested_only_groups() {
+        let content = b"# absent\nempty # no triples\nparent child\nchild (h,u,d)\n";
+        assert!(contains_netgroup(content, b"empty"));
+        assert!(expand_netgroup(content, b"empty").is_empty());
+        assert!(contains_netgroup(content, b"parent"));
+        assert_eq!(
+            expand_netgroup(content, b"parent"),
+            vec![t(b"h", b"u", b"d")]
+        );
+        for missing in [b"absent".as_slice(), b"Empty", b"", b"chil"] {
+            assert!(!contains_netgroup(content, missing));
+        }
     }
 
     #[test]

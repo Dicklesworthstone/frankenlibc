@@ -1,5 +1,5 @@
 //! Name Service Switch dispatch policy for passwd, group, shadow, initgroups
-//! services and Secure RPC publickey databases.
+//! services, netgroup and Secure RPC publickey databases.
 //!
 //! Clean-room from the GNU libc manual ("The NSS Configuration File",
 //! "Actions in the NSS configuration") and behaviour measured against glibc
@@ -146,6 +146,7 @@ pub enum Database {
     Initgroups,
     Publickey,
     Services,
+    Netgroup,
 }
 
 impl Database {
@@ -157,6 +158,7 @@ impl Database {
             Self::Initgroups => b"initgroups",
             Self::Publickey => b"publickey",
             Self::Services => b"services",
+            Self::Netgroup => b"netgroup",
         }
     }
 
@@ -184,7 +186,11 @@ pub fn services_for(config: Option<&[u8]>, database: Database) -> Vec<Service> {
     let fallback = match database {
         Database::Initgroups => Some(Database::Group),
         Database::Shadow => Some(Database::Passwd),
-        Database::Passwd | Database::Group | Database::Publickey | Database::Services => None,
+        Database::Passwd
+        | Database::Group
+        | Database::Publickey
+        | Database::Services
+        | Database::Netgroup => None,
     };
     if let Some(fallback) = fallback
         && let Some(services) = parse_database(config, fallback.key())
@@ -349,14 +355,40 @@ pub type MergeFn<'a, T> = &'a mut dyn FnMut(&mut T, T) -> bool;
 /// answers NotFound.
 pub fn lookup<T>(
     services: &[Service],
+    query: impl FnMut(&Service) -> Answer<T>,
+    merge: Option<MergeFn<'_, T>>,
+) -> Answer<T> {
+    lookup_with_success_policy(services, query, merge, false)
+}
+
+/// Resolve a group for `innetgr`, stopping at the first source that knows it.
+///
+/// GNU membership checks stop on a present group, even if none of its triples
+/// matches and even with SUCCESS=continue. Missing groups and source failures
+/// still follow their configured actions. `setnetgrent` instead uses [`lookup`]
+/// and honours SUCCESS actions too. Measured with a trace NSS module following
+/// files, for matching, nonmatching, empty and missing groups.
+pub fn lookup_netgroup_membership<T>(
+    services: &[Service],
+    query: impl FnMut(&Service) -> Answer<T>,
+) -> Answer<T> {
+    lookup_with_success_policy(services, query, None, true)
+}
+
+fn lookup_with_success_policy<T>(
+    services: &[Service],
     mut query: impl FnMut(&Service) -> Answer<T>,
     mut merge: Option<MergeFn<'_, T>>,
+    first_success_stops: bool,
 ) -> Answer<T> {
     let mut held: Option<T> = None;
     for (index, service) in services.iter().enumerate() {
         let answer = query(service);
         if matches!(answer, Answer::BufferTooSmall) {
             return Answer::BufferTooSmall;
+        }
+        if first_success_stops && matches!(answer, Answer::Found(_)) {
+            return answer;
         }
         let answer = match held.take() {
             Some(mut kept) => {
@@ -439,6 +471,7 @@ mod tests {
                 "shadow" => Database::Shadow,
                 "publickey" => Database::Publickey,
                 "services" => Database::Services,
+                "netgroup" => Database::Netgroup,
                 _ => Database::Initgroups,
             },
         )
@@ -455,6 +488,82 @@ mod tests {
             names(&services_for(Some(b"hosts: dns\n"), Database::Group)),
             [b"files"]
         );
+    }
+
+    #[test]
+    fn netgroup_uses_its_own_source_order_and_failure_actions() {
+        assert_eq!(names(&services_for(None, Database::Netgroup)), [b"files"]);
+        assert_eq!(
+            names(&services_for(Some(b"passwd: sss\n"), Database::Netgroup)),
+            [b"files"]
+        );
+        assert!(line("netgroup", "").is_empty());
+        let services = services_for(
+            Some(b"passwd: files\nnetgroup: missing [!SUCCESS=return] files\n"),
+            Database::Netgroup,
+        );
+        assert_eq!(names(&services), [b"missing".as_slice(), b"files"]);
+        assert_eq!(services[0].action(Status::Unavailable), Action::Return);
+        assert_eq!(services[0].action(Status::NotFound), Action::Return);
+    }
+
+    #[test]
+    fn netgroup_membership_stops_at_present_group_even_without_members() {
+        let services = line("netgroup", "files [SUCCESS=continue] later");
+        for entries in [Vec::<u8>::new(), vec![1]] {
+            let mut calls = 0;
+            let answer = lookup_netgroup_membership(&services, |_| {
+                calls += 1;
+                Answer::Found(entries.clone())
+            });
+            assert_eq!(answer, Answer::Found(entries));
+            assert_eq!(calls, 1, "present groups stop membership source lookup");
+        }
+        let mut calls = 0;
+        let answer = lookup(
+            &services,
+            |_| {
+                calls += 1;
+                Answer::Found(calls)
+            },
+            None,
+        );
+        assert_eq!(answer, Answer::Found(2));
+        assert_eq!(calls, 2, "setnetgrent honours SUCCESS=continue");
+    }
+
+    #[test]
+    fn netgroup_membership_honours_missing_and_unavailable_actions() {
+        for (source, missing, expected_calls) in [
+            ("first files", false, 2),
+            ("first [UNAVAIL=return] files", false, 1),
+            ("first [UNAVAIL=continue] files", false, 2),
+            ("first [!SUCCESS=return] files", false, 1),
+            ("first [NOTFOUND=return] files", true, 1),
+            ("first [NOTFOUND=continue] files", true, 2),
+        ] {
+            let services = line("netgroup", source);
+            for membership in [false, true] {
+                let mut calls = 0;
+                let query = |service: &Service| {
+                    calls += 1;
+                    if service.name() == b"files" {
+                        Answer::Found(42)
+                    } else if missing {
+                        Answer::NotFound
+                    } else {
+                        Answer::Unavailable(38)
+                    }
+                };
+                let answer = if membership {
+                    lookup_netgroup_membership(&services, query)
+                } else {
+                    lookup(&services, query, None)
+                };
+                assert_eq!(calls, expected_calls, "{source}, membership={membership}");
+                assert_eq!(matches!(answer, Answer::Found(42)), expected_calls == 2);
+            }
+        }
     }
 
     #[test]

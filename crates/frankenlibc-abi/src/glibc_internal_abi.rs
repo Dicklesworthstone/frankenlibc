@@ -6264,23 +6264,15 @@ pub unsafe extern "C" fn innetgr(
         return 0;
     };
 
-    // THE BACKEND DECIDES BEFORE THE FILE DOES. glibc dispatches netgroup through
-    // /etc/nsswitch.conf, whose STOCK Debian/Ubuntu line is `netgroup: nis` with
-    // no `files` — so on a default host carrying an /etc/netgroup, glibc never
-    // opens it and answers 0 while fl answered 1. Fail-OPEN in a membership
-    // predicate, which is the direction this function must never have
-    // (bd-4dipf6). Checked before the read, exactly as glibc orders it.
-    if !crate::unistd_abi::netgroup_files_backend_enabled() {
-        return 0;
-    }
-    let Ok(content) = std::fs::read(crate::unistd_abi::NETGROUP_PATH) else {
-        // No /etc/netgroup is not an error, just no members.
+    // A configured UNAVAIL=return must prevent a later files backend from
+    // granting membership. The first source that knows the group answers the
+    // membership query, even when its triples do not match.
+    let Some(triples) =
+        crate::unistd_abi::netgroup_entries(&group, crate::unistd_abi::NetgroupLookup::Membership)
+    else {
         return 0;
     };
-    // expand_netgroup, not parse_netgroup_triples: a member reachable only
-    // through a nested group reference is still a member, and glibc follows
-    // those references (see core::netgroup::expand_netgroup for the evidence).
-    for triple in frankenlibc_core::netgroup::expand_netgroup(&content, &group) {
+    for triple in triples {
         if netgroup_field_matches(&triple.host, wanted_host.as_deref(), true)
             && netgroup_field_matches(&triple.user, wanted_user.as_deref(), false)
             && netgroup_field_matches(&triple.domain, wanted_domain.as_deref(), true)
