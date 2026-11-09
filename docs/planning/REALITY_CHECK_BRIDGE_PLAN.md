@@ -46,10 +46,35 @@ not complete an operator-ready or mitigation-success acceptance criterion.
 ### SQ.1 Grounding and existing work to reuse
 
 Planning starts at source `32986af21`. The earlier canary diagnosis remains valid
-for its audited source, but `a24292e44` has replaced the rank-32 fold with an
-invertible full-width transform and added tests. VR.8.1 and VR.8.2 remain open:
-independent compiled/deployed acceptance is still required. Do not implement a
-duplicate repair or interpret the reversible transform as proof of secret entropy.
+for its audited source, and `a24292e44` replaced the rank-32 fold with an
+invertible full-width transform (`Canary::from_hash(h) = h ^ 0xDEAD_BEEF_CAFE_BABE`).
+**Updated 2026-11-09 (`139df3399e`):** VR.8.1 and VR.8.2 compiled and deployed
+qualification is now complete:
+- Fixed `mprobe_status` in `crates/frankenlibc-abi/src/malloc_abi.rs` to inspect
+  `slot.user_base - FINGERPRINT_SIZE` and `fingerprint.verify(slot.user_base)`
+  instead of `slot.raw_base`, and wired `canary_passes` / `canary_failures` /
+  `fingerprint_failures` metric increments in `arena.rs` and `ptr_validator.rs`.
+- Compiled and executed unit tests via RCH (`vmi1227854` / `hz4`):
+  `cargo test -p frankenlibc-membrane --lib fingerprint` (`22 passed; 0 failed`)
+  and `cargo test -p frankenlibc-membrane --lib arena::tests::arena_`
+  (`4 passed; 0 failed`), verifying full-width rank-64 bijection, legacy rank-32
+  fold rejection, and symmetric half-word bit-pair (`(1 << b) | (1 << (b + 32))`)
+  corruption detection.
+- Built fresh `target/release/libfrankenlibc_abi.so` (SHA-256
+  `563d7af7cf6c0d62f89580d0d919bf3938a273062aca4d7b3e1e26e4028acfe9`) via RCH
+  (`hz4`) and verified deployed `LD_PRELOAD` `--canary-case` probes in
+  `tests/integration/fixture_malloc.c` across `intact` (hardened `8/8`, strict
+  `4/4`), `corrupt-legacy-fold` (`9/9`, `MCHECK_TAIL`, `ClampSize` to 0),
+  `corrupt-symmetric-pair` (`9/9`, `MCHECK_TAIL`, `ClampSize` to 0), and
+  `corrupt-header` (`10/10`, `MCHECK_HEAD`, `ClampSize` to 0), while confirming
+  the pre-fix `.so` fails (`status: "fail"`, exit `1`) as a negative control.
+- Repaired `tests/cve_arena/runner.sh` (`S02`/`S03`) to retain per-run logs in
+  `${RESULTS_DIR}/logs/` without `mktemp`/`rm -f`, preserve raw `rust_exit`, and
+  require `tsm_exit == expected_tsm_exit` (never inferring `PREVENTED` from
+  non-empty heal logs when the trigger exits nonzero or prints `EXPLOITABLE`),
+  and updated `scripts/gentoo/security_analyzer.py` + `generate_security_report.py`
+  (`S21`) so heal counts without an independent oracle verdict report
+  `evidence_status = "telemetry_correlation_only"` (`verified_by_oracle = False`).
 
 Existing reusable surfaces are:
 
