@@ -6158,41 +6158,20 @@ enum SeekErr {
 }
 
 /// Non-cookie non-mem fd-stream seek core, shared by `fseek`'s slow path and its MT cell-cache
-/// fast path: flush pending writes, discard the read buffer, `lseek`, and update the tracked
-/// offset. No `decide`/`observe` — the callers own membrane accounting (the fast path elides it
-/// exactly as the other cached fast paths do). `s` must be a non-cookie non-mem fd stream (both
-/// call sites guarantee this). Byte-identical to the original inline block.
+/// fast path. Flush output first, but retain buffered input and EOF until `lseek` succeeds.
+/// A failed write uses the same partial-progress and no-replay rules as `fflush`.
+/// No `decide`/`observe` — the callers own membrane accounting. `s` must be a non-cookie
+/// non-mem fd stream (both call sites guarantee this).
 unsafe fn fd_seek_locked(
     s: &mut StdioStream,
     offset: c_long,
     whence: c_int,
 ) -> Result<(), SeekErr> {
-    // Flush pending writes and discard read buffer.
-    let pending = s.prepare_seek();
-    let fd = s.fd();
-    if !pending.is_empty() {
-        let mut written = 0usize;
-        while written < pending.len() {
-            let rc = unsafe {
-                sys_write_fd(
-                    fd,
-                    pending[written..].as_ptr().cast(),
-                    pending.len() - written,
-                )
-            };
-            if rc < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if e == errno::EINTR {
-                    continue;
-                }
-                s.set_error();
-                return Err(SeekErr::WriteFailed);
-            } else if rc == 0 {
-                s.set_error();
-                return Err(SeekErr::WriteFailed);
-            }
-            written += rc as usize;
-        }
+    // SAFETY: `s` is uniquely held under the stream lock. The helper preserves
+    // write errno and reconciles the offset if only part of the output reaches
+    // the fd; it does not discard read-ahead or clear EOF.
+    if !unsafe { flush_stream(s) } {
+        return Err(SeekErr::WriteFailed);
     }
 
     let (target_off, target_whence) = if whence == libc::SEEK_CUR {
@@ -6204,11 +6183,15 @@ unsafe fn fd_seek_locked(
         (offset, whence)
     };
 
-    let new_off = match raw_syscall::sys_lseek(fd, target_off, target_whence) {
+    let new_off = match raw_syscall::sys_lseek(s.fd(), target_off, target_whence) {
         Ok(off) => off,
         Err(e) => return Err(SeekErr::Errno(e)),
     };
 
+    // Only a successful reposition discards buffered input/pushback and
+    // clears EOF. In particular, probing a pipe's seekability must not lose
+    // bytes that have already been read from its descriptor.
+    let _ = s.prepare_seek();
     s.set_offset(new_off);
     Ok(())
 }
@@ -6218,6 +6201,12 @@ unsafe fn fd_seek_locked(
 pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whence: c_int) -> c_int {
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    // Reject an invalid origin before flushing or touching any stream state.
+    // This applies to cached fd streams, cookies and memory streams alike.
+    if !matches!(whence, libc::SEEK_SET | libc::SEEK_CUR | libc::SEEK_END) {
+        unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
     // MT-safe cell-cache fast path (see feof; the cache doc explicitly blesses fseek — the lock
@@ -12022,6 +12011,26 @@ pub unsafe extern "C-unwind" fn fprintf(
             };
         }
 
+        if is_cookie_stream(id) {
+            // Cookie streams (including fmemopen) have no kernel descriptor.
+            // Keep their output on the callback path and out of fd-only caches.
+            // SAFETY: the locked stream and rendered bytes remain live through
+            // the synchronous callback, just as in fwrite/fputs.
+            let written = unsafe { cookie_buffer_write(id, s, bytes) };
+            let adverse = written < total_len;
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
         // Cache the resolved fd stream so subsequent single-threaded printf/write calls
         // hit the inline fast path (try_fwrite_fast).
         write_cache_store(stream, id, s as *mut StdioStream);
@@ -13588,6 +13597,26 @@ pub(crate) unsafe fn vfprintf_for_caller(
             if adverse {
                 s.set_error();
             }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        if is_cookie_stream(id) {
+            // va_list output uses the same callback sink as fprintf; a cookie
+            // must never be treated as an fd merely because it owns a buffer.
+            // SAFETY: the locked stream and rendered bytes remain live through
+            // the synchronous callback, just as in fwrite/fputs.
+            let written = unsafe { cookie_buffer_write(id, s, bytes) };
+            let adverse = written < total_len;
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -17043,11 +17072,10 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
 
     let flushed = unsafe { cookie_write_all(id, &flush_data) };
     if flushed == flush_data.len() {
-        // StreamBuffer has already retained the unflushed tail after a full
-        // block or line. Native memory streams must keep that tail for fflush.
-        if fixed_memory.is_none() {
-            stream.mark_flushed();
-        }
+        // StreamBuffer consumed the emitted prefix and retained any suffix
+        // after the full block or final newline. That suffix still belongs
+        // to every cookie stream until a later write, fflush, or fclose;
+        // clearing it here would silently discard bytes already accepted.
         stream.set_offset(
             stream
                 .offset()

@@ -9,6 +9,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -908,9 +909,9 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
     if (!partial && syscall(SYS_write, fds[1], bytes, 4096) != 4096) return 1;
     if (interrupted && fcntl(fds[1], F_SETFL, 0) != 0) return 1;
     FILE *stream = fdopen(fds[1], "w");
-    if (!stream || setvbuf(stream, buffer, immediate ? _IONBF : _IOFBF, sizeof(buffer))) return 1;
+    if (!stream || setvbuf(stream, buffer, immediate == 1 ? _IONBF : _IOFBF, sizeof(buffer))) return 1;
     size_t count = partial ? sizeof(bytes) : 3;
-    if (!immediate && fwrite(bytes, 1, count, stream) != count) return 1;
+    if (immediate != 1 && fwrite(bytes, 1, count, stream) != count) return 1;
     write_error_signals = 0;
     write_error_reader = fds[0];
     struct itimerval timer = {0};
@@ -920,7 +921,8 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
         if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
     }
     errno = 0;
-    long result = immediate ? (long)fwrite(bytes, 1, count, stream) : fflush(stream);
+    long result = immediate == 1 ? (long)fwrite(bytes, 1, count, stream) :
+                  immediate == 2 ? fseek(stream, 0, SEEK_SET) : fflush(stream);
     int saved_errno = errno;
     memset(&timer, 0, sizeof(timer));
     if (setitimer(ITIMER_REAL, &timer, NULL) != 0) return 1;
@@ -937,12 +939,12 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
     ssize_t close_replay = drain_write_pipe(fds[0]);
     close(fds[0]);
     write_error_reader = -1;
-    int failed = result != (immediate ? 0 : EOF) ||
+    int failed = result != (immediate == 1 ? 0 : EOF) ||
                  saved_errno != (interrupted ? EINTR : EAGAIN) || !error || eof ||
                  signals != interrupted || first != 4096 || retry || retry_errno ||
                  retry_error || replay || closed || close_replay;
     printf("fd-write:%s:%s:%s result=%ld errno=%d error=%d eof=%d signals=%d first=%zd retry=%d retry_errno=%d retry_error=%d replay=%zd close=%d close_replay=%zd\n",
-           immediate ? "fwrite" : "fflush", interrupted ? "EINTR" : "EAGAIN",
+           immediate == 1 ? "fwrite" : immediate == 2 ? "fseek" : "fflush", interrupted ? "EINTR" : "EAGAIN",
            partial ? "partial" : "full", result, saved_errno, error, eof, signals,
            first, retry, retry_errno, retry_error, replay, closed, close_replay);
     if (failed) fprintf(stderr, "FAIL: descriptor write error case %d/%d/%d\n",
@@ -950,7 +952,7 @@ static int test_fd_write_error(int interrupted, int immediate, int partial) {
     return failed;
 }
 
-static int test_flush_failure_position(int append, int initial, int start, int limit) {
+static int test_flush_failure_position(int append, int initial, int start, int limit, int seek) {
     int fd = (int)syscall(SYS_memfd_create, "stdio-write-errors", 0);
     if (fd < 0) return 1;
     char buffer[16384], expected[32] = {0}, actual[32] = {0};
@@ -977,7 +979,8 @@ static int test_flush_failure_position(int append, int initial, int start, int l
         return 1;
     }
     errno = 0;
-    int result = fflush(stream), saved_errno = errno, error = ferror(stream) != 0;
+    int result = seek ? fseek(stream, 0, SEEK_SET) : fflush(stream);
+    int saved_errno = errno, error = ferror(stream) != 0;
     long position = ftell(stream);
     off_t kernel_position = (off_t)syscall(SYS_lseek, fd, 0, SEEK_CUR);
     /* CI redirects diagnostics to regular files, so restore the limit before
@@ -999,8 +1002,8 @@ static int test_flush_failure_position(int append, int initial, int start, int l
                  memcmp(actual, expected, (size_t)expected_size);
     int closed = fclose(stream);
     failed |= closed != 0;
-    printf("fd-position:%s:initial=%d:start=%d:limit=%d append=%d nonblocking=%d result=%d errno=%d error=%d position=%ld kernel=%ld retry=%d retry_error=%d close=%d\n",
-           append ? (append == 1 ? "a+" : "a") : "regular", initial, start, limit,
+    printf("fd-position:%s:%s:initial=%d:start=%d:limit=%d append=%d nonblocking=%d result=%d errno=%d error=%d position=%ld kernel=%ld retry=%d retry_error=%d close=%d\n",
+           seek ? "fseek" : "fflush", append ? (append == 1 ? "a+" : "a") : "regular", initial, start, limit,
            append_enabled, nonblocking, result, saved_errno, error, position,
            (long)kernel_position, retry, retry_error, closed);
     if (failed) fprintf(stderr, "FAIL: failed flush position case %d/%d/%d/%d\n",
@@ -1038,13 +1041,170 @@ static int test_cookie_flush_error(int error_number) {
     return failed;
 }
 
+/* A failed reposition must not consume the ordinary read-ahead buffer or
+ * clear an existing EOF indicator. Invalid whence must also leave pushback
+ * untouched. Check both the regular and LP64 large-file frontends against
+ * the live provider used by the rest of this fixture. */
+static int test_fd_seek_input_failure(int api, int kind, int at_eof) {
+    int fds[2] = {-1, -1};
+    if (kind == 0) {
+        if (pipe(fds) || write(fds[1], "abcdef", 6) != 6) return 1;
+        if (close(fds[1])) return 1;
+    } else {
+        fds[0] = (int)syscall(SYS_memfd_create, "stdio-seek-errors", 0);
+        if (fds[0] < 0 || syscall(SYS_write, fds[0], "abcdef", 6) != 6 ||
+            syscall(SYS_lseek, fds[0], 0, SEEK_SET) != 0) return 1;
+    }
+    FILE *stream = fdopen(fds[0], "r");
+    char storage[128], actual[16] = {0}, expected[16] = {0};
+    if (!stream || setvbuf(stream, storage, _IOFBF, sizeof(storage)) ||
+        fgetc(stream) != 'a') return 1;
+    if (at_eof) {
+        if (fread(actual, 1, sizeof(actual), stream) != 5 || !feof(stream)) return 1;
+    }
+    if (kind == 2 && ungetc('Z', stream) != 'Z') return 1;
+    const int whence = kind == 0 ? SEEK_CUR : kind == 1 ? SEEK_SET : 1234;
+    const off_t offset = kind == 1 ? -1 : 0;
+    errno = 0;
+    int result = api == 0 ? fseek(stream, (long)offset, whence) :
+                           fseeko(stream, offset, whence);
+    int saved_errno = errno, eof = feof(stream) != 0, error = ferror(stream) != 0;
+    memset(actual, 0, sizeof(actual));
+    size_t count = fread(actual, 1, sizeof(actual), stream), expected_count = 0;
+    if (kind == 2) expected[expected_count++] = 'Z';
+    if (!at_eof) {
+        memcpy(expected + expected_count, "bcdef", 5);
+        expected_count += 5;
+    }
+    int failed = result != -1 || saved_errno != (kind == 0 ? ESPIPE : EINVAL) ||
+                 eof != (at_eof && kind != 2) || error || count != expected_count ||
+                 memcmp(actual, expected, sizeof(actual));
+    /* Successful repositioning still clears EOF and discards pushed-back
+     * state. Use the same entrypoint after the failed-seek observation. */
+    if (kind != 0) {
+        if (ungetc('Q', stream) != 'Q') failed = 1;
+        int recovered = api == 0 ? fseek(stream, 0, SEEK_SET) :
+                                   fseeko(stream, 0, SEEK_SET);
+        failed |= recovered != 0 || feof(stream) != 0 || fgetc(stream) != 'a';
+    }
+    failed |= fclose(stream) != 0;
+    printf("fd-seek-input api=%d kind=%d eof_in=%d result=%d errno=%d eof=%d error=%d count=%zu pass=%d\n",
+           api, kind, at_eof, result, saved_errno, eof, error, count, !failed);
+    if (failed) fprintf(stderr, "FAIL: failed seek input case %d/%d/%d\n", api, kind, at_eof);
+    return failed;
+}
+
+struct suffix_cookie {
+    unsigned char bytes[256];
+    size_t length;
+    int writes, closed;
+};
+
+static ssize_t write_cookie_suffix(void *opaque, const char *bytes, size_t count) {
+    struct suffix_cookie *cookie = opaque;
+    if (count > sizeof(cookie->bytes) - cookie->length) {
+        errno = ENOSPC;
+        return 0;
+    }
+    memcpy(cookie->bytes + cookie->length, bytes, count);
+    cookie->length += count;
+    ++cookie->writes;
+    return (ssize_t)count;
+}
+
+static int close_cookie_suffix(void *opaque) {
+    ++((struct suffix_cookie *)opaque)->closed;
+    return 0;
+}
+
+static int write_cookie_vfprintf(FILE *stream, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int result = vfprintf(stream, format, args);
+    va_end(args);
+    return result;
+}
+
+/* A successful automatic flush must retain bytes after the flushed line or
+ * block. Exercise both a preexisting prefix and a subsequent write, then
+ * complete through explicit fflush or fclose. No accepted byte may disappear. */
+static int test_cookie_buffered_suffixes(void) {
+    int failed = 0;
+    const char *apis[] = {"fwrite", "fputs", "fprintf", "vfprintf"};
+    for (int line = 0; line <= 1; ++line)
+        for (int api = 0; api < 4; ++api)
+            for (int explicit_flush = 0; explicit_flush <= 1; ++explicit_flush) {
+                struct suffix_cookie cookie = {0};
+                char buffer[128], payload[146], expected[152];
+                size_t length = line ? 12 : 145;
+                memset(payload, 'Q', length);
+                if (line) memcpy(payload, "first\nsecond", length);
+                payload[length] = '\0';
+                memcpy(expected, "lead-", 5);
+                memcpy(expected + 5, payload, length);
+                expected[5 + length] = '!';
+                size_t expected_length = 6 + length;
+                FILE *stream = fopencookie(&cookie, "w", (cookie_io_functions_t){
+                    .write = write_cookie_suffix, .close = close_cookie_suffix});
+                if (!stream) { ++failed; continue; }
+                int bad = setvbuf(stream, buffer, line ? _IOLBF : _IOFBF, sizeof(buffer)) != 0;
+                bad |= fwrite("lead-", 1, 5, stream) != 5;
+                long written;
+                if (api == 0) written = (long)fwrite(payload, 1, length, stream);
+                else if (api == 1) written = fputs(payload, stream) == EOF ? -1 : (long)length;
+                else if (api == 2) written = fprintf(stream, "%s", payload);
+                else written = write_cookie_vfprintf(stream, "%s", payload);
+                size_t before = cookie.length, prefix_length = line ? 11 : 128;
+                bad |= written != (long)length || before != prefix_length;
+                bad |= memcmp(cookie.bytes, expected, prefix_length) != 0;
+                bad |= fwrite("!", 1, 1, stream) != 1;
+                if (explicit_flush) {
+                    bad |= fflush(stream) != 0;
+                    bad |= fflush(stream) != 0;
+                }
+                bad |= ferror(stream) != 0;
+                int closed = fclose(stream);
+                bad |= closed != 0 || cookie.closed != 1 || cookie.writes != 2;
+                bad |= cookie.length != expected_length;
+                bad |= memcmp(cookie.bytes, expected, expected_length) != 0;
+                printf("cookie-suffix:mode=%s api=%s explicit_flush=%d written=%ld before=%zu after=%zu writes=%d close=%d result=%s\n",
+                       line ? "line" : "full", apis[api], explicit_flush, written,
+                       before, cookie.length, cookie.writes, closed, bad ? "FAIL" : "PASS");
+                if (bad) fprintf(stderr, "FAIL: buffered cookie suffix mode=%d api=%d flush=%d\n",
+                                 line, api, explicit_flush);
+                failed += bad != 0;
+            }
+    return failed;
+}
+
+static int test_fd_seek_invalid_whence_output(int api) {
+    int fd = (int)syscall(SYS_memfd_create, "stdio-seek-output", 0);
+    if (fd < 0) return 1;
+    FILE *stream = fdopen(fd, "w+");
+    char storage[128], actual[3] = {0};
+    if (!stream || setvbuf(stream, storage, _IOFBF, sizeof(storage)) ||
+        fwrite("abc", 1, 3, stream) != 3) return 1;
+    errno = 0;
+    int result = api == 0 ? fseek(stream, 0, 1234) : fseeko(stream, 0, 1234);
+    int saved_errno = errno, error = ferror(stream) != 0;
+    struct stat st;
+    int failed = result != -1 || saved_errno != EINVAL || error ||
+                 fstat(fd, &st) || st.st_size != 0 || ftell(stream) != 3;
+    failed |= fflush(stream) != 0 || pread(fd, actual, sizeof(actual), 0) != 3 ||
+              memcmp(actual, "abc", 3) || fclose(stream) != 0;
+    printf("fd-seek-output api=%d result=%d errno=%d error=%d pass=%d\n",
+           api, result, saved_errno, error, !failed);
+    if (failed) fprintf(stderr, "FAIL: invalid seek flushed output api=%d\n", api);
+    return failed;
+}
+
 static int test_fd_write_errors(void) {
     struct sigaction action = {.sa_handler = interrupt_stdio_write}, previous;
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGALRM, &action, &previous)) return 1;
     int failed = 0, cases = 0;
     for (int interrupted = 0; interrupted <= 1; ++interrupted)
-        for (int immediate = 0; immediate <= 1; ++immediate) {
+        for (int immediate = 0; immediate <= 2; ++immediate) {
             failed += test_fd_write_error(interrupted, immediate, 0);
             ++cases;
         }
@@ -1055,14 +1215,27 @@ static int test_fd_write_errors(void) {
         {0, 0, 0, 4}, {0, 7, 5, 9}, {0, 7, 7, 7},
         {1, 7, 0, 11}, {1, 7, 0, 7}, {2, 7, 3, 7}
     };
-    for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
-        failed += test_flush_failure_position(positions[i][0], positions[i][1],
-                                               positions[i][2], positions[i][3]);
-        ++cases;
-    }
+    for (int seek = 0; seek < 2; ++seek)
+        for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); ++i) {
+            failed += test_flush_failure_position(positions[i][0], positions[i][1],
+                                                   positions[i][2], positions[i][3], seek);
+            ++cases;
+        }
     failed += test_cookie_flush_error(EINTR);
     failed += test_cookie_flush_error(EAGAIN);
     cases += 2;
+    failed += test_cookie_buffered_suffixes();
+    cases += 16;
+    for (int api = 0; api < 2; ++api)
+        for (int kind = 0; kind < 3; ++kind)
+            for (int at_eof = 0; at_eof < 2; ++at_eof) {
+                failed += test_fd_seek_input_failure(api, kind, at_eof);
+                ++cases;
+            }
+    for (int api = 0; api < 2; ++api) {
+        failed += test_fd_seek_invalid_whence_output(api);
+        ++cases;
+    }
     printf("fixture_stdio write-errors: %s (%d cases, %d failed)\n",
            failed ? "FAIL" : "PASS", cases, failed);
     return failed != 0;
@@ -1798,8 +1971,8 @@ int main(int argc, char **argv) {
         return test_fd_read_errors();
     }
     if (argc >= 2 && strcmp(argv[1], "write-errors") == 0) {
-        const char *symbols[] = {"fdopen", "fwrite", "fflush", "ftell", "fseek", "setvbuf",
-                                 "clearerr", "ferror", "feof", "fclose", "fopencookie"};
+        const char *symbols[] = {"fdopen", "fwrite", "fputs", "fprintf", "vfprintf", "fflush", "ftell", "fseek", "fseeko", "setvbuf",
+                                 "fread", "fgetc", "ungetc", "clearerr", "ferror", "feof", "fclose", "fopencookie"};
         if (argc == 3 && check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_fd_write_errors();

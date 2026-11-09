@@ -856,6 +856,91 @@ fn fopencookie_close_short_write_matches_glibc() {
 }
 
 #[test]
+fn fopencookie_partial_flush_preserves_buffered_suffix() {
+    for mode in [libc::_IOLBF, libc::_IOFBF] {
+        for api in ["fwrite", "fputs", "fprintf", "vfprintf"] {
+            for explicit_flush in [false, true] {
+                let mut state = CookieState::default();
+                let mut buffer = [0u8; 128];
+                let payload = if mode == libc::_IOLBF {
+                    b"first\nsecond".to_vec()
+                } else {
+                    vec![b'Q'; 145]
+                };
+                let mut expected = b"lead-".to_vec();
+                expected.extend_from_slice(&payload);
+                expected.push(b'!');
+                let mut terminated_payload = payload.clone();
+                terminated_payload.push(0);
+                let flushed_prefix = if mode == libc::_IOLBF { 11 } else { 128 };
+                let funcs = CookieIoFuncs {
+                    write: Some(cookie_write),
+                    close: Some(cookie_close),
+                    ..CookieIoFuncs::default()
+                };
+                // SAFETY: state and the caller buffer outlive the stream; every
+                // write supplies live bytes, and fclose runs before assertions.
+                unsafe {
+                    let stream = fopencookie(
+                        (&mut state as *mut CookieState).cast(),
+                        c"w".as_ptr(),
+                        funcs,
+                    );
+                    assert!(!stream.is_null());
+                    let buffered = setvbuf(stream, buffer.as_mut_ptr().cast(), mode, buffer.len());
+                    let prefix_written = fwrite(c"lead-".as_ptr().cast(), 1, 5, stream);
+                    let written = match api {
+                        "fwrite" => {
+                            fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) as isize
+                        }
+                        "fputs" => {
+                            if fputs(terminated_payload.as_ptr().cast(), stream) == libc::EOF {
+                                -1
+                            } else {
+                                payload.len() as isize
+                            }
+                        }
+                        "fprintf" => fprintf(
+                            stream,
+                            c"%s".as_ptr(),
+                            terminated_payload.as_ptr().cast::<c_char>(),
+                        ) as isize,
+                        "vfprintf" => call_vfprintf(
+                            stream,
+                            c"%s".as_ptr(),
+                            terminated_payload.as_ptr().cast::<c_char>(),
+                        ) as isize,
+                        _ => unreachable!(),
+                    };
+                    let after_write = state.data.clone();
+                    let suffix_written = fwrite(c"!".as_ptr().cast(), 1, 1, stream);
+                    let flushed = if explicit_flush { fflush(stream) } else { 0 };
+                    let repeated_flush = if explicit_flush { fflush(stream) } else { 0 };
+                    let error = ferror(stream);
+                    let closed = fclose(stream);
+                    assert_eq!(
+                        (buffered, flushed, repeated_flush, closed, error),
+                        (0, 0, 0, 0, 0)
+                    );
+                    assert_eq!(
+                        (prefix_written, written, suffix_written),
+                        (5, payload.len() as isize, 1),
+                        "mode={mode} api={api} explicit_flush={explicit_flush}"
+                    );
+                    assert_eq!(after_write, expected[..flushed_prefix]);
+                    assert_eq!(
+                        state.data, expected,
+                        "accepted cookie output lost: mode={mode} api={api} explicit_flush={explicit_flush}"
+                    );
+                    assert!(state.closed);
+                    assert_eq!(state.write_calls, 2, "output must not be replayed");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn mixed_buffered_and_unbuffered_same_fd_completes_without_deadlock() {
     let path = temp_path("mixed_buffer_modes");
     let _ = fs::remove_file(&path);
