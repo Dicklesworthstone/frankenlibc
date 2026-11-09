@@ -2257,6 +2257,344 @@ fn atfork_prepare_does_not_self_deadlock_on_reentrant_registration() {
     __test_atfork_handlers_clear();
 }
 
+mod atfork_dso_lifetime {
+    use super::*;
+    use frankenlibc_abi::glibc_internal_abi::__register_atfork;
+    use frankenlibc_abi::unistd_abi::__cxa_finalize;
+
+    static TRACE: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+    static OWNER_A: AtomicUsize = AtomicUsize::new(0);
+    static OWNER_B: AtomicUsize = AtomicUsize::new(0);
+    static REPLACED: AtomicI32 = AtomicI32::new(0);
+    static REPLACEMENT_RESULT: AtomicI32 = AtomicI32::new(-1);
+    static START_REGISTRAR: AtomicI32 = AtomicI32::new(0);
+    static REGISTRAR_LOCKED: AtomicI32 = AtomicI32::new(0);
+    static CHILD_REGISTRATION: AtomicI32 = AtomicI32::new(-1);
+    static RETIRED_CHILD_CALLS: AtomicI32 = AtomicI32::new(0);
+    static HOST_REGISTRAR_START: AtomicI32 = AtomicI32::new(0);
+    static HOST_REGISTRAR_DONE: AtomicI32 = AtomicI32::new(0);
+
+    fn owner_a() -> *mut c_void {
+        (&raw const OWNER_A).cast_mut().cast()
+    }
+    fn owner_b() -> *mut c_void {
+        (&raw const OWNER_B).cast_mut().cast()
+    }
+    fn record(value: u8) {
+        TRACE.lock().unwrap().push(value);
+    }
+    unsafe extern "C" fn a_prepare() {
+        record(1);
+    }
+    unsafe extern "C" fn a_parent() {
+        record(2);
+    }
+    unsafe extern "C" fn a_child() {
+        record(3);
+    }
+    unsafe extern "C" fn process_prepare() {
+        record(4);
+    }
+    unsafe extern "C" fn process_parent() {
+        record(5);
+    }
+    unsafe extern "C" fn process_child() {
+        record(6);
+    }
+    unsafe extern "C" fn b_prepare() {
+        record(7);
+    }
+    unsafe extern "C" fn b_parent() {
+        record(8);
+    }
+    unsafe extern "C" fn b_child() {
+        record(9);
+    }
+
+    unsafe fn register_a() -> c_int {
+        unsafe {
+            __register_atfork(
+                a_prepare as *mut c_void,
+                a_parent as *mut c_void,
+                a_child as *mut c_void,
+                owner_a(),
+            )
+        }
+    }
+    unsafe fn register_b() -> c_int {
+        unsafe {
+            __register_atfork(
+                b_prepare as *mut c_void,
+                b_parent as *mut c_void,
+                b_child as *mut c_void,
+                owner_b(),
+            )
+        }
+    }
+    unsafe extern "C" fn finalize_and_replace() {
+        record(4);
+        unsafe { __cxa_finalize(owner_a()) };
+        if REPLACED.swap(1, Ordering::Relaxed) == 0 {
+            REPLACEMENT_RESULT.store(unsafe { register_b() }, Ordering::Relaxed);
+        }
+    }
+    unsafe extern "C" fn finalize_in_parent() {
+        record(5);
+        unsafe { __cxa_finalize(owner_a()) };
+    }
+
+    unsafe extern "C" fn wait_for_registrar() {
+        START_REGISTRAR.store(1, Ordering::Release);
+        while REGISTRAR_LOCKED.load(Ordering::Acquire) == 0 {
+            std::thread::yield_now();
+        }
+    }
+
+    unsafe extern "C" fn finalize_in_child() {
+        // Bound an inherited-lock failure without relying on the parent's
+        // mutex release, which cannot unlock the child's private copy.
+        unsafe { libc::alarm(3) };
+        unsafe { __cxa_finalize(owner_a()) };
+        CHILD_REGISTRATION.store(
+            unsafe { pthread_atfork(None, None, None) },
+            Ordering::Relaxed,
+        );
+    }
+
+    unsafe extern "C" fn retired_child() {
+        RETIRED_CHILD_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    unsafe extern "C" fn host_fork_with_registry_reentry() -> libc::pid_t {
+        // A host prepare callback can synchronize with an existing worker.
+        // Freezing the registry around host fork would deadlock this entirely
+        // allocation-free inline registration on another thread.
+        HOST_REGISTRAR_START.store(1, Ordering::Release);
+        while HOST_REGISTRAR_DONE.load(Ordering::Acquire) == 0 {
+            std::thread::yield_now();
+        }
+        if HOST_REGISTRAR_DONE.load(Ordering::Relaxed) != 1 {
+            return -1;
+        }
+        if unsafe { pthread_atfork(None, None, None) } != 0 {
+            return -1;
+        }
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            unsafe { libc::alarm(3) };
+            // Host child callbacks execute before clone_for_fork returns.
+            // The first access can come from a newly created child thread.
+            let worker = std::thread::spawn(|| unsafe { pthread_atfork(None, None, None) });
+            if !matches!(worker.join(), Ok(0)) {
+                unsafe { libc::_exit(12) };
+            }
+        }
+        pid
+    }
+
+    fn run(child: bool) -> Vec<u8> {
+        TRACE.lock().unwrap().clear();
+        __test_run_atfork_phases(child);
+        TRACE.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn atfork_dso_finalize_preserves_live_process_order_and_slot_reuse() {
+        let _guard = atfork_registry_guard();
+        __test_atfork_handlers_clear();
+        assert_eq!(unsafe { register_a() }, 0);
+        assert_eq!(
+            unsafe {
+                pthread_atfork(
+                    Some(process_prepare),
+                    Some(process_parent),
+                    Some(process_child),
+                )
+            },
+            0
+        );
+        assert_eq!(unsafe { register_b() }, 0);
+        assert_eq!(run(false), [7, 4, 1, 2, 5, 8]);
+        assert_eq!(run(true), [7, 4, 1, 3, 6, 9]);
+
+        unsafe { __cxa_finalize(owner_a()) };
+        assert_eq!(run(false), [7, 4, 5, 8]);
+        assert_eq!(run(true), [7, 4, 6, 9]);
+        unsafe { __cxa_finalize(owner_a()) };
+        assert_eq!(__test_atfork_handlers_len(), 2);
+
+        // The reused first inline slot is the newest registration, not the
+        // oldest. Registering the same DSO token again starts a new lifetime.
+        assert_eq!(unsafe { register_a() }, 0);
+        assert_eq!(run(false), [1, 7, 4, 5, 8, 2]);
+        assert_eq!(run(true), [1, 7, 4, 6, 9, 3]);
+        unsafe { __cxa_finalize(owner_b()) };
+        assert_eq!(run(false), [1, 4, 5, 2]);
+        __test_atfork_handlers_clear();
+    }
+
+    #[test]
+    fn atfork_dso_finalize_invalidates_captured_inline_and_spill_callbacks() {
+        let _guard = atfork_registry_guard();
+        for child in [false, true] {
+            __test_atfork_handlers_clear();
+            REPLACED.store(0, Ordering::Relaxed);
+            REPLACEMENT_RESULT.store(-1, Ordering::Relaxed);
+            for _ in 0..40 {
+                assert_eq!(unsafe { register_a() }, 0);
+            }
+            assert_eq!(
+                unsafe {
+                    pthread_atfork(
+                        Some(finalize_and_replace),
+                        Some(process_parent),
+                        Some(process_child),
+                    )
+                },
+                0
+            );
+            // The last prepare callback finalizes A after the runner has
+            // captured all 40 callbacks, then reuses one of A's inline slots.
+            // Neither the withdrawn callbacks nor the new one belongs here.
+            assert_eq!(run(child), if child { vec![4, 6] } else { vec![4, 5] });
+            assert_eq!(REPLACEMENT_RESULT.load(Ordering::Relaxed), 0);
+            assert_eq!(__test_atfork_handlers_len(), 2);
+            assert_eq!(
+                run(child),
+                if child {
+                    vec![7, 4, 6, 9]
+                } else {
+                    vec![7, 4, 5, 8]
+                }
+            );
+        }
+        __test_atfork_handlers_clear();
+    }
+
+    #[test]
+    fn atfork_dso_finalize_from_parent_suppresses_later_parent_callbacks() {
+        let _guard = atfork_registry_guard();
+        __test_atfork_handlers_clear();
+        assert_eq!(
+            unsafe {
+                pthread_atfork(
+                    Some(process_prepare),
+                    Some(finalize_in_parent),
+                    Some(process_child),
+                )
+            },
+            0
+        );
+        assert_eq!(unsafe { register_a() }, 0);
+        assert_eq!(run(false), [1, 4, 5]);
+        assert_eq!(run(true), [4, 6]);
+        __test_atfork_handlers_clear();
+    }
+
+    #[test]
+    fn atfork_child_finalization_does_not_inherit_registrar_mutex() {
+        const NAME: &str =
+            "atfork_dso_lifetime::atfork_child_finalization_does_not_inherit_registrar_mutex";
+        if std::env::var("FL_ATFORK_CHILD").as_deref() != Ok(NAME) {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture"])
+                .env("FL_ATFORK_CHILD", NAME)
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success(), "atfork child failed: {status}");
+                    return;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    let _ = child.wait();
+                    panic!("atfork registry inheritance deadlocked");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        let _guard = atfork_registry_guard();
+        __test_atfork_handlers_clear();
+        assert_eq!(
+            unsafe { pthread_atfork(Some(wait_for_registrar), None, Some(finalize_in_child)) },
+            0
+        );
+        for _ in 0..40 {
+            assert_eq!(
+                unsafe {
+                    __register_atfork(
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        retired_child as *mut c_void,
+                        owner_a(),
+                    )
+                },
+                0
+            );
+        }
+        let registrar = std::thread::spawn(|| {
+            while START_REGISTRAR.load(Ordering::Acquire) == 0 {
+                std::thread::yield_now();
+            }
+            __test_with_atfork_unpublished_slot(|| {
+                REGISTRAR_LOCKED.store(1, Ordering::Release);
+                // Hold the mutation lock with an incomplete unpublished slot
+                // after the prepare snapshot. The child must recover the
+                // orphaned lock, ignore the partial write, and finalize A.
+                std::thread::sleep(std::time::Duration::from_millis(750));
+            });
+        });
+        let pid = unsafe { frankenlibc_abi::process_abi::fork() };
+        if pid == 0 {
+            let mut valid = CHILD_REGISTRATION.load(Ordering::Relaxed) == 0
+                && RETIRED_CHILD_CALLS.load(Ordering::Relaxed) == 0
+                && __test_atfork_handlers_len() == 2;
+            // Fill the remaining inline slots and ten spill slots, including
+            // the exact incomplete spill payload copied from the registrar.
+            // Reuse must overwrite it without reading or dropping its bytes.
+            for _ in 0..40 {
+                valid &= unsafe { pthread_atfork(None, None, None) } == 0;
+            }
+            valid &= __test_atfork_handlers_len() == 42;
+            unsafe { libc::_exit(if valid { 0 } else { 11 }) };
+        }
+        assert!(pid > 0, "fork failed");
+        registrar.join().unwrap();
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status), "child hung or crashed: {status}");
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        assert_eq!(__test_atfork_handlers_len(), 41);
+        __test_atfork_handlers_clear();
+
+        let host_worker = std::thread::spawn(|| {
+            while HOST_REGISTRAR_START.load(Ordering::Acquire) == 0 {
+                std::thread::yield_now();
+            }
+            HOST_REGISTRAR_DONE.store(
+                unsafe { pthread_atfork(None, None, None) } + 1,
+                Ordering::Release,
+            );
+        });
+        let pid = __test_clone_for_fork(host_fork_with_registry_reentry).unwrap();
+        if pid == 0 {
+            let result = unsafe { pthread_atfork(None, None, None) };
+            unsafe { libc::_exit(if result == 0 { 0 } else { 13 }) };
+        }
+        host_worker.join().unwrap();
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(
+            libc::WIFEXITED(status),
+            "host callback child hung: {status}"
+        );
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        __test_atfork_handlers_clear();
+    }
+}
+
 // ===========================================================================
 // __pthread_* internal aliases
 // ===========================================================================

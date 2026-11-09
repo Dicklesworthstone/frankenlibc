@@ -189,6 +189,116 @@ const API: &str = r#"
 "#;
 
 #[test]
+fn native_cxa_atfork_callbacks_retire_on_finalize_and_unload() {
+    if !child("native_cxa_atfork_callbacks_retire_on_finalize_and_unload") {
+        return;
+    }
+    let loader = Loader::Native;
+    let fixture = Fixture::new();
+    let sink_path = fixture.sink();
+    let sink = loader.load(&sink_path, libc::RTLD_NOW);
+    let plugin_path = fixture.compile(
+        "fork_handlers",
+        r#"
+        extern void record_event(long);
+        extern int __register_atfork(void (*)(void), void (*)(void), void (*)(void), void *);
+        extern void __cxa_finalize(void *);
+        static char owner;
+        static void before_fork(void) { record_event(1); }
+        long add(long count) {
+            for (long i=0; i<count; ++i)
+                if (__register_atfork(before_fork, 0, 0, &owner) != 0) return -1;
+            return 0;
+        }
+        long finish(void) { __cxa_finalize(&owner); return 0; }
+        /* No FINI hook: the native loader must also withdraw owner tokens
+           for custom CRTs that never call __cxa_finalize on dlclose. */
+        "#,
+        false,
+        &[&sink_path],
+    );
+    for round in 0..3 {
+        let plugin = loader.load(&plugin_path, libc::RTLD_NOW);
+        // Cross the inline-registry boundary and exercise repeated token and
+        // mapping-address reuse, without pinning the plugin through a callback.
+        assert_eq!(loader.arg(plugin, "add", 40), 0);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_prepare();
+        assert_eq!(loader.value(sink, "calls"), round * 80 + 40);
+        assert_eq!(loader.value(plugin, "finish"), 0);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_prepare();
+        assert_eq!(loader.value(sink, "calls"), round * 80 + 40);
+        assert_eq!(loader.arg(plugin, "add", 40), 0);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_prepare();
+        assert_eq!(loader.value(sink, "calls"), round * 80 + 80);
+        loader.close(plugin);
+        // A stale callback now addresses unmapped executable memory. The sink
+        // is separately owned and remains readable for the negative assertion.
+        frankenlibc_abi::pthread_abi::__test_run_atfork_prepare();
+        assert_eq!(loader.value(sink, "calls"), round * 80 + 80);
+    }
+    loader.close(sink);
+}
+
+#[test]
+fn native_cxa_gnu_atfork_registration_uses_native_lifetime() {
+    if !child("native_cxa_gnu_atfork_registration_uses_native_lifetime") {
+        return;
+    }
+    let loader = Loader::Native;
+    let fixture = Fixture::new();
+    let sink_path = fixture.sink();
+    let sink = loader.load(&sink_path, libc::RTLD_NOW);
+    let source = fixture.dir.join("gnu_atfork.c");
+    let plugin_path = fixture.dir.join("gnu_atfork.so");
+    std::fs::write(
+        &source,
+        fixture.source(
+            r#"
+            #include <pthread.h>
+            extern void record_event(long);
+            static void prepare(void) { record_event(1); }
+            static void parent(void) { record_event(2); }
+            static void child(void) { record_event(3); }
+            __attribute__((constructor)) static void register_handlers(void) {
+                if (pthread_atfork(prepare, parent, child) != 0) __builtin_trap();
+            }
+            "#,
+        ),
+    )
+    .unwrap();
+    // Keep the real GNU CRT and libc_nonshared pthread_atfork wrapper, whose
+    // __register_atfork call carries the CRT's own __dso_handle. As with the
+    // C++ fixtures, omit default runtime libraries: a libc.so.6 DT_NEEDED
+    // intentionally delegates this object to the host loader.
+    let output = Command::new("cc")
+        .args(["-shared", "-fPIC", "-nodefaultlibs", "-Wl,--build-id=none"])
+        .arg(&source)
+        .arg(&sink_path)
+        .args(["-pthread", "-lc_nonshared"])
+        .arg("-o")
+        .arg(&plugin_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "GNU atfork compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for round in 1..=3 {
+        let plugin = loader.load(&plugin_path, libc::RTLD_NOW);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_phases(false);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_phases(true);
+        assert_eq!(loader.value(sink, "calls"), round * 4);
+        assert_eq!(loader.value(sink, "total"), round * 7);
+        loader.close(plugin);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_phases(false);
+        frankenlibc_abi::pthread_abi::__test_run_atfork_phases(true);
+        assert_eq!(loader.value(sink, "calls"), round * 4);
+    }
+    loader.close(sink);
+}
+
+#[test]
 fn native_cxa_real_cpp_static_objects_execute_and_reload() {
     if !child("native_cxa_real_cpp_static_objects_execute_and_reload") {
         return;

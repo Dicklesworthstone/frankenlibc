@@ -137,7 +137,11 @@ pub(super) fn select(
     if symbol.is_undefined()
         && matches!(
             name,
-            "__tls_get_addr" | "__cxa_thread_atexit_impl" | "__cxa_atexit" | "__cxa_finalize"
+            "__tls_get_addr"
+                | "__cxa_thread_atexit_impl"
+                | "__cxa_atexit"
+                | "__cxa_finalize"
+                | "__register_atfork"
         )
     {
         let runtime = Resolver {

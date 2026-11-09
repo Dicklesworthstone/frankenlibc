@@ -87,6 +87,12 @@ Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generat
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
 - `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the implementation has grown far beyond the original four-codec phase-1 text (about 300 `Encoding` variants; `crates/frankenlibc-core/src/iconv/mod.rs` is ~54.5 kLOC, with generated tables in sibling files). Per-codec scope and remaining exclusions live in `tests/conformance/iconv_codec_scope_ledger.v1.json`.
 
+### Recent Native Behavior Additions
+
+- The ten passwd/group `_nss_files_*` lookup, enumeration, and set/end entrypoints now use the native files backends. Direct provider calls bypass configured NSS modules, preserve ordinary miss/error distinctions, and retain the enumeration record for an `ERANGE` retry. Coverage is in `pwd_abi_test.rs`, `grp_abi_test.rs`, and `nss_module_test.rs`; this does not complete the remaining identity providers or `_nss_files_initgroups_dyn`.
+- Narrow native FILE scanning now resumes across buffer refills and short reads instead of truncating a call at 8 KiB. It preserves unread input, finishes bounded fields on open pipes, and decodes length-qualified wide destinations while counting source bytes for `%n`. Coverage is in `conformance_diff_fscanf_host_stream.rs` and the core scanner tests. The existing target contracts for incomplete character fields and bare numeric prefixes remain unchanged; older GNU hosts can differ on those cases.
+- GNU atfork registrations now retain their DSO ownership and are withdrawn on finalization or native unload, including callbacks already captured by a pending fork. Atomically published, reusable registry slots let a child ignore interrupted registrations and recover registry ownership without holding a lock across host callbacks. Coverage is in `pthread_abi_test.rs`, `dlfcn_native_cxa_test.rs`, and the exit-ticket DSO fixture; complete native threading/TLS/unwind closure remains open.
+
 ## Deterministic Stub Surface
 
 Current support-taxonomy `Stub` rows:

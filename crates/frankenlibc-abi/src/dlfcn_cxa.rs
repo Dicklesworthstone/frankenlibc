@@ -194,15 +194,26 @@ unsafe extern "C" fn register_impl(
 
 unsafe extern "C-unwind" fn finalize_impl(token: *mut c_void) {
     let _ = drain(|entry| token.is_null() || entry.token == token as usize);
+    crate::pthread_abi::unregister_atfork(token);
 }
 
 pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64> {
-    if version.is_some_and(|version| version != "GLIBC_2.2.5") {
+    let original = if cfg!(target_arch = "aarch64") {
+        "GLIBC_2.17"
+    } else if name == "__register_atfork" {
+        "GLIBC_2.3.2"
+    } else {
+        "GLIBC_2.2.5"
+    };
+    if version.is_some_and(|version| version != original) {
         return None;
     }
     match name {
         "__cxa_atexit" => Some(register_impl as *const () as usize as u64),
         "__cxa_finalize" => Some(finalize_impl as *const () as usize as u64),
+        "__register_atfork" => {
+            Some(crate::glibc_internal_abi::__register_atfork as *const () as usize as u64)
+        }
         _ => None,
     }
 }

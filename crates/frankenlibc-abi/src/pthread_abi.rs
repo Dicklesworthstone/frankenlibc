@@ -5,16 +5,18 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-// `Cell` is unconditional: `THREADING_POLICY_DEPTH` below is defined for both
-// feature configurations. Only `RefCell` belongs to the non-owned-TLS path.
-use std::cell::Cell;
+// Threading policy state and atfork slots exist in both feature configurations.
+// Only `RefCell` belongs to the non-owned-TLS path.
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
+use std::cell::{Cell, UnsafeCell};
 use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use frankenlibc_core::elf::Elf64Header;
 use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
@@ -7975,11 +7977,24 @@ pub unsafe extern "C" fn pthread_atfork(
     parent: Option<unsafe extern "C" fn()>,
     child: Option<unsafe extern "C" fn()>,
 ) -> c_int {
+    register_atfork(prepare, parent, child, std::ptr::null_mut())
+}
+
+/// The GNU registration entry retains the calling DSO's token so finalizing
+/// that object can withdraw its callbacks before their code is unmapped.
+pub(crate) fn register_atfork(
+    prepare: Option<unsafe extern "C" fn()>,
+    parent: Option<unsafe extern "C" fn()>,
+    child: Option<unsafe extern "C" fn()>,
+    dso: *mut c_void,
+) -> c_int {
     let handlers = AtforkHandlers {
         prepare,
         parent,
         child,
     };
+    let mut spill_lifetime = None;
+    let mut spare_chunk = None;
     // Never allocate while holding the registry lock, and not at all for the
     // first ATFORK_INLINE registrations. An allocator that registers fork
     // handlers while initialising (jemalloc, mimalloc, a program's own malloc)
@@ -7987,30 +8002,33 @@ pub unsafe extern "C" fn pthread_atfork(
     // pthread_atfork blocked on the same non-recursive mutex forever. glibc
     // keeps its first handlers in static storage for the same reason.
     loop {
-        let spare = {
-            let Ok(mut reg) = ATFORK_HANDLERS.lock() else {
-                return libc::ENOMEM;
-            };
-            if reg.try_push(handlers) {
-                return 0;
+        let grow = {
+            let _guard = lock_atfork_registry();
+            if ATFORK_HANDLERS
+                .find_spill_slot(AtforkSlot::is_empty)
+                .is_none()
+                && let Some(chunk) = spare_chunk.take()
+            {
+                ATFORK_HANDLERS.add_chunk(chunk);
             }
-            reg.spill.capacity()
-        };
-        // Grow the spill outside the lock; a nested registration may run here.
-        let mut bigger: Vec<AtforkHandlers> = Vec::with_capacity((spare * 2).max(16));
-        let old = {
-            let Ok(mut reg) = ATFORK_HANDLERS.lock() else {
-                return libc::ENOMEM;
-            };
-            if reg.spill.capacity() > spare {
-                None // someone else grew it meanwhile: retry the push
-            } else {
-                bigger.extend_from_slice(&reg.spill);
-                Some(core::mem::replace(&mut reg.spill, bigger))
+            match ATFORK_HANDLERS.try_push(handlers, dso as usize, &mut spill_lifetime) {
+                Ok(true) => return 0,
+                Ok(false) => {}
+                Err(error) => return error,
             }
+            ATFORK_HANDLERS
+                .find_spill_slot(AtforkSlot::is_empty)
+                .is_none()
         };
-        // The replaced buffer is freed here, after unlocking.
-        drop(old);
+        // Inline registrations still allocate nothing. Overflow snapshots
+        // share this liveness word; its allocation, like vector growth, must
+        // remain outside the registry lock in case malloc registers a handler.
+        if spill_lifetime.is_none() {
+            spill_lifetime = Some(Arc::new(AtomicBool::new(true)));
+        }
+        if grow && spare_chunk.is_none() {
+            spare_chunk = Some(Box::new(AtforkChunk::new()));
+        }
     }
 }
 
@@ -8026,60 +8044,319 @@ struct AtforkHandlers {
 // SAFETY: Function pointers are Send+Sync (they're just code addresses).
 unsafe impl Send for AtforkHandlers {}
 
-/// Handlers kept inline, without any allocation, before the spill `Vec`.
+/// Handlers kept inline, without any allocation, before spill chunks.
 const ATFORK_INLINE: usize = 32;
+const ATFORK_CHUNK: usize = 16;
 
-/// Registered atfork handlers in registration order: `inline[..inline_len]`,
-/// then `spill`.
+#[derive(Clone)]
+enum AtforkLifetime {
+    Inline(usize),
+    Spill(Arc<AtomicBool>),
+}
+
+#[derive(Clone)]
+struct AtforkEntry {
+    handlers: AtforkHandlers,
+    dso: usize,
+    id: usize,
+    lifetime: AtforkLifetime,
+}
+
+impl AtforkEntry {
+    fn active(&self) -> bool {
+        match &self.lifetime {
+            AtforkLifetime::Inline(index) => {
+                ATFORK_HANDLERS.inline[*index]
+                    .published
+                    .load(Ordering::Acquire)
+                    == self.id
+            }
+            AtforkLifetime::Spill(active) => active.load(Ordering::Acquire),
+        }
+    }
+
+    fn invalidate(&self) {
+        match &self.lifetime {
+            AtforkLifetime::Inline(index) => {
+                ATFORK_HANDLERS.inline[*index]
+                    .published
+                    .store(0, Ordering::Release);
+            }
+            AtforkLifetime::Spill(active) => active.store(false, Ordering::Release),
+        }
+    }
+}
+
+/// A fork can interrupt another thread between any two stores. Publish a slot
+/// only after its payload is complete, and withdraw it before moving that
+/// payload out. A child can then ignore an interrupted write instead of
+/// recovering a mutex protecting a half-mutated Vec or Option.
+#[repr(C, align(64))]
+struct AtforkSlot {
+    published: AtomicUsize,
+    value: UnsafeCell<std::mem::MaybeUninit<AtforkEntry>>,
+}
+
+// SAFETY: payload access is serialized by lock_atfork_registry. A child takes
+// over that lock only after other parent threads have vanished; the publication
+// word distinguishes initialized payloads from interrupted writes/removals.
+unsafe impl Sync for AtforkSlot {}
+
+impl AtforkSlot {
+    const fn new() -> Self {
+        Self {
+            published: AtomicUsize::new(0),
+            value: UnsafeCell::new(std::mem::MaybeUninit::uninit()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.published.load(Ordering::Acquire) == 0
+    }
+
+    fn entry(&self) -> Option<&AtforkEntry> {
+        if self.is_empty() {
+            return None;
+        }
+        // SAFETY: callers hold the registry guard. Publication follows full
+        // initialization, and removal withdraws the word before moving out.
+        Some(unsafe { (&*self.value.get()).assume_init_ref() })
+    }
+
+    fn publish(&self, entry: AtforkEntry) {
+        debug_assert!(self.is_empty());
+        let id = entry.id;
+        // SAFETY: callers hold the registry guard and selected an empty slot.
+        // An unpublished payload is never read or dropped, including a write
+        // interrupted in another parent thread at the instant of fork.
+        unsafe { (*self.value.get()).write(entry) };
+        self.published.store(id, Ordering::Release);
+    }
+
+    fn take(&self) -> AtforkEntry {
+        // Invalidate captured snapshots before withdrawing the registry slot.
+        self.entry().unwrap().invalidate();
+        self.published.store(0, Ordering::Release);
+        // SAFETY: the guard excludes other readers/writers, and entry() above
+        // established initialization. Child recovery ignores this slot from
+        // the withdrawal onward, even if this move has not completed.
+        unsafe { (*self.value.get()).assume_init_read() }
+    }
+}
+
+struct AtforkChunk {
+    slots: [AtforkSlot; ATFORK_CHUNK],
+    next: *mut AtforkChunk,
+}
+
+impl AtforkChunk {
+    const fn new() -> Self {
+        Self {
+            slots: [const { AtforkSlot::new() }; ATFORK_CHUNK],
+            next: std::ptr::null_mut(),
+        }
+    }
+}
+
+/// Slots and chunk links never move after publication. Vacated slots are
+/// reused; chunks retain peak capacity just as the previous spill Vec did.
+/// Monotonic IDs retain callback order and distinguish reused inline slots.
 struct AtforkRegistry {
-    inline: [Option<AtforkHandlers>; ATFORK_INLINE],
-    inline_len: usize,
-    spill: Vec<AtforkHandlers>,
+    inline: [AtforkSlot; ATFORK_INLINE],
+    spill: AtomicPtr<AtforkChunk>,
+    next_id: AtomicUsize,
 }
 
 impl AtforkRegistry {
     const fn new() -> Self {
         Self {
-            inline: [None; ATFORK_INLINE],
-            inline_len: 0,
-            spill: Vec::new(),
+            inline: [const { AtforkSlot::new() }; ATFORK_INLINE],
+            spill: AtomicPtr::new(std::ptr::null_mut()),
+            next_id: AtomicUsize::new(1),
         }
     }
 
-    /// Append without allocating; `false` when the spill must grow first.
-    fn try_push(&mut self, handlers: AtforkHandlers) -> bool {
-        if self.inline_len < ATFORK_INLINE {
-            self.inline[self.inline_len] = Some(handlers);
-            self.inline_len += 1;
-            true
-        } else if self.spill.len() < self.spill.capacity() {
-            self.spill.push(handlers);
-            true
+    /// Append without allocating; false asks the caller for a spill slot/token.
+    fn try_push(
+        &self,
+        handlers: AtforkHandlers,
+        dso: usize,
+        spill_lifetime: &mut Option<Arc<AtomicBool>>,
+    ) -> Result<bool, c_int> {
+        let inline = self.inline.iter().position(AtforkSlot::is_empty);
+        let spill = if inline.is_none() {
+            self.find_spill_slot(AtforkSlot::is_empty)
         } else {
-            false
+            None
+        };
+        if inline.is_none() && (spill.is_none() || spill_lifetime.is_none()) {
+            return Ok(false);
+        }
+        let id = self
+            .next_id
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| libc::ENOMEM)?;
+        let (slot, lifetime) = if let Some(index) = inline {
+            (&self.inline[index], AtforkLifetime::Inline(index))
+        } else {
+            (
+                spill.unwrap(),
+                AtforkLifetime::Spill(spill_lifetime.take().unwrap()),
+            )
+        };
+        slot.publish(AtforkEntry {
+            handlers,
+            dso,
+            id,
+            lifetime,
+        });
+        Ok(true)
+    }
+
+    fn add_chunk(&self, chunk: Box<AtforkChunk>) {
+        let chunk = Box::into_raw(chunk);
+        // SAFETY: this fully initialized chunk is private until publication.
+        // The registry guard serializes writers of the immutable linked list.
+        unsafe { (*chunk).next = self.spill.load(Ordering::Relaxed) };
+        self.spill.store(chunk, Ordering::Release);
+    }
+
+    fn find_spill_slot(&self, matches: impl Fn(&AtforkSlot) -> bool) -> Option<&AtforkSlot> {
+        let mut chunk = self.spill.load(Ordering::Acquire);
+        while !chunk.is_null() {
+            // SAFETY: published chunks are fully initialized and never freed.
+            let current = unsafe { &*chunk };
+            if let Some(slot) = current.slots.iter().find(|slot| matches(slot)) {
+                return Some(slot);
+            }
+            chunk = current.next;
+        }
+        None
+    }
+
+    fn visit_slots(&self, mut visit: impl FnMut(&AtforkSlot)) {
+        for slot in &self.inline {
+            visit(slot);
+        }
+        let mut chunk = self.spill.load(Ordering::Acquire);
+        while !chunk.is_null() {
+            // SAFETY: published chunks are fully initialized and never freed.
+            let current = unsafe { &*chunk };
+            for slot in &current.slots {
+                visit(slot);
+            }
+            chunk = current.next;
         }
     }
 
     fn len(&self) -> usize {
-        self.inline_len + self.spill.len()
+        let mut length = 0;
+        self.visit_slots(|slot| length += usize::from(!slot.is_empty()));
+        length
     }
 
-    fn snapshot(&self) -> Vec<AtforkHandlers> {
-        self.inline[..self.inline_len]
+    fn append_snapshot(&self, entries: &mut Vec<AtforkEntry>) {
+        // The caller reserves outside the lock. Cloning liveness tokens
+        // only increments an Arc counter and cannot enter the allocator.
+        debug_assert!(entries.capacity() - entries.len() >= self.len());
+        self.visit_slots(|slot| {
+            if let Some(entry) = slot.entry() {
+                entries.push(entry.clone());
+            }
+        });
+    }
+
+    fn remove_one(&self, matches: impl Fn(&AtforkEntry) -> bool) -> Option<AtforkEntry> {
+        let matching = |slot: &AtforkSlot| slot.entry().is_some_and(&matches);
+        self.inline
             .iter()
-            .flatten()
-            .copied()
-            .chain(self.spill.iter().copied())
-            .collect()
-    }
-
-    fn clear(&mut self) {
-        *self = Self::new();
+            .find(|slot| matching(slot))
+            .or_else(|| self.find_spill_slot(matching))
+            .map(AtforkSlot::take)
     }
 }
 
 /// Registry of atfork handlers.
-static ATFORK_HANDLERS: Mutex<AtforkRegistry> = Mutex::new(AtforkRegistry::new());
+static ATFORK_HANDLERS: AtforkRegistry = AtforkRegistry::new();
+
+// No allocation, freeing, or user callback occurs while this lock is held.
+// It is NEVER held across host fork callbacks: a prepare callback can wait
+// for a different thread to register a handler. The child recovers ownership
+// using the PID and reads only atomically published slots/chunks above.
+static ATFORK_GATE_OWNER: AtomicI32 = AtomicI32::new(0);
+
+struct AtforkRegistryGuard {
+    process_id: i32,
+    _not_send_sync: std::marker::PhantomData<*mut ()>,
+}
+
+fn lock_atfork_registry() -> AtforkRegistryGuard {
+    let process_id = frankenlibc_core::syscall::sys_getpid();
+    let mut spins = 0u32;
+    loop {
+        let previous = ATFORK_GATE_OWNER.load(Ordering::Acquire);
+        if (previous == 0 || previous != process_id)
+            && ATFORK_GATE_OWNER
+                .compare_exchange(previous, process_id, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        {
+            break;
+        }
+        spins = spins.wrapping_add(1);
+        if spins & 0x3f == 0 {
+            frankenlibc_core::syscall::sys_sched_yield();
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+    AtforkRegistryGuard {
+        process_id,
+        _not_send_sync: std::marker::PhantomData,
+    }
+}
+
+impl Drop for AtforkRegistryGuard {
+    fn drop(&mut self) {
+        if self.process_id != frankenlibc_core::syscall::sys_getpid() {
+            // An inherited parent guard cannot release a child's new owner.
+            return;
+        }
+        ATFORK_GATE_OWNER.store(0, Ordering::Release);
+    }
+}
+
+fn unregister_atfork_matching(matches: impl Fn(&AtforkEntry) -> bool) {
+    loop {
+        let removed = {
+            let _guard = lock_atfork_registry();
+            ATFORK_HANDLERS.remove_one(&matches)
+        };
+        let Some(removed) = removed else { break };
+        // Releasing the final spill token can call an interposed allocator.
+        // As with registration, no registry lock may span that operation.
+        drop(removed);
+    }
+}
+
+pub(crate) fn unregister_atfork(dso: *mut c_void) {
+    // GNU __cxa_finalize(NULL) runs process destructors but does not withdraw
+    // fork callbacks. A NULL registration has process lifetime, too.
+    if !dso.is_null() {
+        unregister_atfork_matching(|entry| entry.dso == dso as usize);
+    }
+}
+
+/// Native loaders also retire custom CRTs with no __cxa_finalize hook. The
+/// caller supplies the object's still-mapped address range before unmapping.
+pub(crate) fn unregister_atfork_range(start: usize, length: usize) {
+    unregister_atfork_matching(|entry| {
+        entry.dso != 0
+            && entry
+                .dso
+                .checked_sub(start)
+                .is_some_and(|offset| offset < length)
+    });
+}
 
 /// Called before fork (from our fork() wrapper) — runs prepare handlers in LIFO order.
 // Snapshot-and-release: never invoke user callbacks while holding ATFORK_HANDLERS.
@@ -8087,12 +8364,25 @@ static ATFORK_HANDLERS: Mutex<AtforkRegistry> = Mutex::new(AtforkRegistry::new()
 // non-recursive Mutex otherwise (bd-sq7ae).
 #[allow(dead_code)]
 pub(crate) fn run_atfork_prepare() -> AtforkSnapshot {
-    let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
-        Ok(g) => g.snapshot(),
-        Err(_) => return AtforkSnapshot(Vec::new()),
-    };
+    let mut snapshot = Vec::new();
+    loop {
+        let needed = {
+            let _guard = lock_atfork_registry();
+            if snapshot.capacity() >= ATFORK_HANDLERS.len() {
+                ATFORK_HANDLERS.append_snapshot(&mut snapshot);
+                break;
+            }
+            ATFORK_HANDLERS.len()
+        };
+        // An interposed allocator can itself register a fork handler.
+        // Snapshot allocation must remain outside the registry lock too.
+        snapshot.reserve_exact(needed);
+    }
+    snapshot.sort_unstable_by_key(|entry| entry.id);
     for h in snapshot.iter().rev() {
-        if let Some(f) = h.prepare {
+        if h.active()
+            && let Some(f) = h.handlers.prepare
+        {
             // SAFETY: caller registered a valid function pointer.
             unsafe { f() };
         }
@@ -8102,17 +8392,22 @@ pub(crate) fn run_atfork_prepare() -> AtforkSnapshot {
 
 /// The handlers registered when a fork began, taken by [`run_atfork_prepare`]
 /// and run by [`run_atfork_parent`]/[`run_atfork_child`] without touching
-/// `ATFORK_HANDLERS` again. The child cannot lock it: another parent thread
-/// may have been inside `pthread_atfork` at the clone, and in the child that
-/// holder never exists to release it (a child hung on 1 of 300 forks with a
-/// registering thread; bd-rc0923-epic-eeuy4f.5).
-pub(crate) struct AtforkSnapshot(Vec<AtforkHandlers>);
+/// `ATFORK_HANDLERS` again. Child handlers can finalize a DSO or register new
+/// handlers, but those mutations must not change which registrations belong
+/// to this fork operation.
+// An earlier callback may finalize a DSO, invalidating callbacks already in
+// this snapshot. Check liveness without reacquiring an inherited child lock.
+// As with GNU atfork, callers must not dlclose code while it is executing;
+// these tokens suppress future calls, not an already-entered callback.
+pub(crate) struct AtforkSnapshot(Vec<AtforkEntry>);
 
 /// Called after fork in parent — runs parent handlers in registration order.
 #[allow(dead_code)]
 pub(crate) fn run_atfork_parent(snapshot: &AtforkSnapshot) {
     for h in snapshot.0.iter() {
-        if let Some(f) = h.parent {
+        if h.active()
+            && let Some(f) = h.handlers.parent
+        {
             // SAFETY: caller registered a valid function pointer.
             unsafe { f() };
         }
@@ -8123,7 +8418,9 @@ pub(crate) fn run_atfork_parent(snapshot: &AtforkSnapshot) {
 #[allow(dead_code)]
 pub(crate) fn run_atfork_child(snapshot: &AtforkSnapshot) {
     for h in snapshot.0.iter() {
-        if let Some(f) = h.child {
+        if h.active()
+            && let Some(f) = h.handlers.child
+        {
             // SAFETY: caller registered a valid function pointer.
             unsafe { f() };
         }
@@ -10573,19 +10870,48 @@ pub fn __test_run_atfork_prepare() {
 }
 
 #[doc(hidden)]
+pub fn __test_run_atfork_phases(child: bool) {
+    let snapshot = run_atfork_prepare();
+    if child {
+        run_atfork_child(&snapshot);
+    } else {
+        run_atfork_parent(&snapshot);
+    }
+}
+
+#[doc(hidden)]
+pub fn __test_with_atfork_unpublished_slot(operation: fn()) {
+    let _guard = lock_atfork_registry();
+    let slot = ATFORK_HANDLERS
+        .inline
+        .iter()
+        .find(|slot| slot.is_empty())
+        .or_else(|| ATFORK_HANDLERS.find_spill_slot(AtforkSlot::is_empty))
+        .expect("test requires an unused registration slot");
+    // Pause a registrar partway through initializing an unpublished payload.
+    // Its child must neither read nor drop these incomplete bytes, and must
+    // be able to reuse the slot for a later complete registration.
+    let pending = unsafe { (*slot.value.get()).as_mut_ptr() };
+    unsafe { std::ptr::addr_of_mut!((*pending).dso).write(usize::MAX) };
+    operation();
+}
+
+#[doc(hidden)]
+pub fn __test_clone_for_fork(
+    host_fork: unsafe extern "C" fn() -> libc::pid_t,
+) -> Result<libc::pid_t, c_int> {
+    crate::process_abi::clone_for_fork(Some(host_fork))
+}
+
+#[doc(hidden)]
 pub fn __test_atfork_handlers_len() -> usize {
-    ATFORK_HANDLERS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .len()
+    let _guard = lock_atfork_registry();
+    ATFORK_HANDLERS.len()
 }
 
 #[doc(hidden)]
 pub fn __test_atfork_handlers_clear() {
-    ATFORK_HANDLERS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    unregister_atfork_matching(|_| true);
 }
 
 /// Test-only hook (bd-rc0923-epic-eeuy4f.24): whether a cancellation point

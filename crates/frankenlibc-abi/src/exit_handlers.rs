@@ -182,6 +182,11 @@ pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
         let Some(handler) = handler else { break };
         invoke_exit_handler(handler, 0);
     }
+    // Destructors can fork or register another callback for this DSO. Keep
+    // its handlers until the destructor pass finishes, then withdraw all of
+    // them before the loader can unmap the object. NULL preserves process
+    // registrations, matching GNU __cxa_finalize's lifecycle contract.
+    crate::pthread_abi::unregister_atfork(dso);
 }
 
 /// Normal process termination destroys the calling thread's C++ TLS objects

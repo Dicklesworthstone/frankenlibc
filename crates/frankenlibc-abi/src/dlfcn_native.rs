@@ -791,7 +791,10 @@ impl SymbolLookup for Resolver<'_> {
         if name == "__cxa_thread_atexit_impl" {
             return thread_exit::resolver_address(version);
         }
-        if matches!(name, "__cxa_atexit" | "__cxa_finalize") {
+        if matches!(
+            name,
+            "__cxa_atexit" | "__cxa_finalize" | "__register_atfork"
+        ) {
             return cxa::resolver_address(name, version);
         }
         if matches!(name, "exit" | "_Exit" | "_exit" | "quick_exit") {
@@ -1365,7 +1368,14 @@ fn collect_unreachable() -> Option<()> {
         let mut retiring = dsos
             .iter()
             .filter(|dso| !live.contains(&dso.id))
-            .map(|dso| (dso.initialized_at, dso.id))
+            .map(|dso| {
+                (
+                    dso.initialized_at,
+                    dso.id,
+                    dso.mapping.base,
+                    dso.mapping.len,
+                )
+            })
             .collect::<Vec<_>>();
         if retiring.is_empty() {
             return Some(());
@@ -1391,6 +1401,14 @@ fn collect_unreachable() -> Option<()> {
         // A later finalizer may register onto an earlier member of a cycle.
         // Drain those entries too before dropping any mapping in this batch.
         cxa::finalize_owners(&ids)?;
+        for &(_, _, start, length) in &retiring {
+            // Custom CRTs need not call __cxa_finalize. Withdraw their
+            // owner-tagged fork handlers while the token and code mappings
+            // still exist, including registrations made by a later finalizer.
+            // The batch remains pinned and operation-serialized; do not hold
+            // the DSO registry mutex while retiring spill tokens can free.
+            crate::pthread_abi::unregister_atfork_range(start, length);
+        }
         let mut dsos = registry().lock().ok()?;
         let retired = dsos
             .extract_if(.., |dso| ids.contains(&dso.id))

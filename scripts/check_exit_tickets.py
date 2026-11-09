@@ -30,8 +30,8 @@ def main() -> int:
     plugin, cpp_binary = out/'plugin.so', out/'fixture-cpp'
     common = [cxx, '-O2', '-Wall', '-Wextra', '-Werror']
     subprocess.run([*common, '-shared', '-fPIC', '-DEXIT_DSO_BUILD', str(cpp),
-                    '-o', str(plugin)], check=True)
-    subprocess.run([*common, str(cpp), '-ldl', '-o', str(cpp_binary)], check=True)
+                    '-pthread', '-o', str(plugin)], check=True)
+    subprocess.run([*common, str(cpp), '-ldl', '-pthread', '-o', str(cpp_binary)], check=True)
     base = {k:v for k,v in os.environ.items()
             if k != 'LD_PRELOAD' and not k.startswith('FRANKENLIBC_')}
     report = {'library_sha256': hashlib.sha256(library.read_bytes()).hexdigest(), 'cases': []}
@@ -65,6 +65,16 @@ def main() -> int:
                 row = dict(mode=mode, endpoint=endpoint, case='cpp-dso', passed=False, returncode='timeout')
             report['cases'].append(row)
             (out/'results.json').write_text(json.dumps(report, indent=2)+'\n')
+        try:
+            p = subprocess.run([str(cpp_binary), str(plugin), 'native', 'atfork'], env=env,
+                               capture_output=True, text=True, timeout=10)
+            row = dict(mode=mode, endpoint='native', case='atfork-dso', returncode=p.returncode,
+                       stdout=p.stdout, stderr=p.stderr,
+                       passed=p.returncode == 0 and p.stdout == 'PASS atfork-dso\n' and not p.stderr)
+        except subprocess.TimeoutExpired:
+            row = dict(mode=mode, endpoint='native', case='atfork-dso', passed=False, returncode='timeout')
+        report['cases'].append(row)
+        (out/'results.json').write_text(json.dumps(report, indent=2)+'\n')
     wrong = dict(base, FRANKENLIBC_TEST_LIBRARY=str(library))
     p = subprocess.run([str(binary), 'order', 'host'], env=wrong,
                        capture_output=True, text=True, timeout=10)

@@ -4226,13 +4226,13 @@ pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
 pub unsafe extern "C-unwind" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
     unsafe { crate::unistd_abi::read_cp(fd, buf, count) }
 }
-// __register_atfork: native — forward to our pthread_atfork (dso_handle ignored)
+// __register_atfork: preserve the DSO token used to withdraw callbacks at unload.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __register_atfork(
     prepare: *mut c_void,
     parent: *mut c_void,
     child: *mut c_void,
-    _dso_handle: *mut c_void,
+    dso_handle: *mut c_void,
 ) -> c_int {
     // SAFETY: function pointers are transmuted from c_void; caller guarantees validity
     let prepare_fn: Option<unsafe extern "C" fn()> = if prepare.is_null() {
@@ -4250,7 +4250,7 @@ pub unsafe extern "C" fn __register_atfork(
     } else {
         Some(unsafe { std::mem::transmute::<*mut c_void, unsafe extern "C" fn()>(child) })
     };
-    unsafe { super::pthread_abi::pthread_atfork(prepare_fn, parent_fn, child_fn) }
+    super::pthread_abi::register_atfork(prepare_fn, parent_fn, child_fn, dso_handle)
 }
 // __sbrk: forward to libc::sbrk
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
