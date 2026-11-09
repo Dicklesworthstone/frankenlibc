@@ -274,6 +274,46 @@ jobs:
             done
           done
           test "$count" -eq 142
+      - name: Propagate FTS comparator exceptions through both public APIs
+        if: always()
+        run: |
+          set -euo pipefail
+          binary=target/stdio-callback-unwind
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          test -x "$binary"
+          test -f "$library"
+          host="$(env -u LD_PRELOAD ldd "$binary" | awk '$1 == "libc.so.6" {print $3}')"
+          test -f "$host"
+          mkdir -p artifacts/stdio-layout
+          count=0
+          for variant in 0 1; do
+            if [[ "$variant" == 0 ]]; then api=fts; else api=fts64; fi
+            for case in open read children; do
+              prefix="artifacts/stdio-layout/fts-unwind-$variant-$case"
+              env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$host" \
+                timeout 20 "$binary" --fts-unwind "$case" "$variant" > "$prefix-host.out" 2> "$prefix-host.err"
+              printf 'fts-callback-unwind:%s:%s:PASS\n' "$api" "$case" | cmp - "$prefix-host.out"
+              test ! -s "$prefix-host.err"
+              for mode in strict hardened; do
+                timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$library" \
+                  "$binary" --fts-unwind "$case" "$variant" > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+                cmp "$prefix-host.out" "$prefix-$mode.out"
+                cmp "$prefix-host.err" "$prefix-$mode.err"
+                count=$((count + 1))
+              done
+            done
+          done
+          test "$count" -eq 12
+          prefix=artifacts/stdio-layout/fts-unwind-wrong-provider
+          if timeout 20 env FRANKENLIBC_MODE=strict LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$host" \
+            "$binary" --fts-unwind open 0 > "$prefix.out" 2> "$prefix.err"; then
+            exit 1
+          else
+            status=$?
+            test "$status" -eq 86
+          fi
+          test ! -s "$prefix.out"
+          grep -q '^fts-callback-unwind: assertion failed at ' "$prefix.err"
       - name: Exercise GNU printf callbacks against the live host in both modes
         if: always()
         shell: bash

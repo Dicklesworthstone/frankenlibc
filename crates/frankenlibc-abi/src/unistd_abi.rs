@@ -17,7 +17,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationPr
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
+use crate::util::scan_c_string;
 
 #[repr(C)]
 struct RpcEnt {
@@ -22012,29 +22012,34 @@ use std::collections::VecDeque;
 
 /// Internal FTS stream state.
 struct FtsStream {
-    /// FIFO traversal queue. Directory children are pushed to the front so each
-    /// root is exhausted before the next root begins.
-    queue: VecDeque<FtsEntryInternal>,
-    /// Root paths passed to fts_open for the pre-read fts_children() case.
-    roots: Vec<std::path::PathBuf>,
+    /// Roots and siblings own the same entries exposed by fts_children.
+    roots: VecDeque<FtsEntryOwned>,
+    /// Keep each directory alive until its postorder return. Completed siblings
+    /// are retired on the next read, so storage follows the traversal frontier.
+    ancestors: Vec<FtsFrame>,
+    /// The root entries' level -1 parent must also outlive the entire walk.
+    _root_parent: FtsEntryOwned,
     /// Current entry returned to the caller.
     current: Option<FtsEntryOwned>,
     /// Cached child list returned by the most recent fts_children() call.
-    children_cache: Vec<FtsEntryOwned>,
+    children_cache: Option<FtsChildren>,
     /// Options bitmask.
     options: c_int,
-    /// Deferred revisit triggered by fts_set(..., FTS_AGAIN/FOLLOW).
-    pending_revisit: Option<FtsEntryInternal>,
-    /// Deferred directory expansion. Children (and postorder revisit) are
-    /// inserted on the next fts_read() after the preorder return.
-    pending_children: Option<FtsEntryInternal>,
-    /// One-shot controls installed via fts_set() on entries returned by
-    /// fts_children().
-    pending_controls: ArtifactHashMap<std::path::PathBuf, u16>,
     /// Whether fts_read() has been called at least once.
     started: bool,
-    /// Comparison function (reserved for future use).
-    _compar: Option<unsafe extern "C" fn(*const *const FTSENT, *const *const FTSENT) -> c_int>,
+    compar: Option<FtsCompare>,
+}
+
+type FtsCompare = unsafe extern "C" fn(*const *const FTSENT, *const *const FTSENT) -> c_int;
+
+struct FtsFrame {
+    directory: FtsEntryOwned,
+    children: VecDeque<FtsEntryOwned>,
+}
+
+struct FtsChildren {
+    entries: VecDeque<FtsEntryOwned>,
+    name_only: bool,
 }
 
 /// Internal entry representation.
@@ -22044,30 +22049,19 @@ struct FtsEntryInternal {
     level: i16,
     follow_symlink: bool,
     instr: u16,
-    visit: FtsVisit,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum FtsVisit {
-    Preorder,
-    Postorder,
-    /// The post-order visit of a directory whose entries could not be read:
-    /// glibc reports it as FTS_DNR with this errno in place of FTS_DP (the
-    /// pre-order FTS_D has already been returned).
-    Unreadable(c_int),
 }
 
 /// Owned FTSENT for returning to caller.
 /// The name is stored inline in a boxed flexible-array payload so callers can
 /// treat `fts_name` exactly like glibc's trailing storage.
 struct FtsEntryOwned {
-    raw: Box<[u8]>,
+    // Word storage supplies FTSENT's alignment as well as its trailing name.
+    raw: Box<[usize]>,
     path: std::path::PathBuf,
     _path_buf: CString,
     _stat_buf: Box<libc::stat>,
     level: i16,
     follow_symlink: bool,
-    visit: FtsVisit,
 }
 
 unsafe impl Send for FtsEntryOwned {}
@@ -22101,6 +22095,7 @@ pub struct FTSENT {
 
 // FTS_* info constants
 const FTS_D: u16 = 1; // preorder directory
+const FTS_DC: u16 = 2; // directory cycle
 const FTS_DNR: u16 = 4; // unreadable directory
 const FTS_DP: u16 = 6; // postorder directory
 const FTS_F: u16 = 8; // regular file
@@ -22115,6 +22110,7 @@ const FTS_COMFOLLOW: c_int = 0x0001;
 const FTS_LOGICAL: c_int = 0x0002;
 const FTS_NOSTAT: c_int = 0x0008;
 const FTS_PHYSICAL: c_int = 0x0010;
+const FTS_XDEV: c_int = 0x0040;
 const FTS_OPTIONMASK: c_int = 0x00ff;
 
 // fts_children() option
@@ -22143,22 +22139,6 @@ fn fts_name_bytes(path: &std::path::Path) -> Vec<u8> {
         .map(|name| name.as_bytes().to_vec())
         .filter(|bytes| !bytes.is_empty())
         .unwrap_or_else(|| fts_path_bytes(path).to_vec())
-}
-
-fn fts_controlled_entry(control: u16, mut entry: FtsEntryInternal) -> FtsEntryInternal {
-    match control {
-        FTS_FOLLOW => {
-            entry.follow_symlink = true;
-            entry.instr = FTS_FOLLOW;
-        }
-        FTS_SKIP => {
-            entry.instr = FTS_SKIP;
-        }
-        _ => {
-            entry.instr = FTS_NOINSTR;
-        }
-    }
-    entry
 }
 
 fn fts_stat_entry(
@@ -22258,25 +22238,20 @@ impl FtsEntryOwned {
         inline_name.push(0);
 
         let extra_name_bytes = inline_name.len().saturating_sub(1);
-        let total_size = std::mem::size_of::<FTSENT>() + extra_name_bytes;
-        let mut raw = vec![0u8; total_size].into_boxed_slice();
+        let total_size = std::mem::size_of::<FTSENT>()
+            .checked_add(extra_name_bytes)
+            .ok_or(errno::ENOMEM)?;
+        let mut raw =
+            vec![0usize; total_size.div_ceil(std::mem::size_of::<usize>())].into_boxed_slice();
         let raw_ptr = raw.as_mut_ptr() as *mut FTSENT;
 
-        let (stat_value, mut info, stat_errno) = if entry.visit == FtsVisit::Postorder {
-            let (stat_value, _info, stat_errno) =
-                fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
-            (stat_value, FTS_DP, stat_errno)
-        } else if let FtsVisit::Unreadable(err) = entry.visit {
-            let (stat_value, _info, _) =
-                fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
-            (stat_value, FTS_DNR, err)
+        let (stat_value, info, stat_errno) = if name_only {
+            // NAMEONLY entries are rebuilt before traversal; no metadata or
+            // caller data from this temporary list is promised to survive.
+            (unsafe { std::mem::zeroed() }, FTS_NSOK, 0)
         } else {
             fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level)
         };
-
-        if name_only {
-            info = FTS_NSOK;
-        }
 
         let mut stat_buf = Box::new(stat_value);
 
@@ -22309,15 +22284,16 @@ impl FtsEntryOwned {
             );
         }
 
-        Ok(Self {
+        let mut owned = Self {
             raw,
             path: entry.path.clone(),
             _path_buf: path_buf,
             _stat_buf: stat_buf,
             level: entry.level,
             follow_symlink: entry.follow_symlink,
-            visit: entry.visit,
-        })
+        };
+        owned.check_cycle();
+        Ok(owned)
     }
 
     fn entry(&self) -> &FTSENT {
@@ -22364,14 +22340,50 @@ impl FtsEntryOwned {
         std::ptr::eq(self.as_ptr(), ptr as *const FTSENT)
     }
 
-    fn internal(&self) -> FtsEntryInternal {
-        FtsEntryInternal {
-            path: self.path.clone(),
-            level: self.level,
-            follow_symlink: self.follow_symlink,
-            instr: self.entry().fts_instr,
-            visit: self.visit,
+    fn refresh(&mut self, options: c_int) {
+        let (value, info, err) =
+            fts_stat_entry(&self.path, options, self.follow_symlink, self.level);
+        *self._stat_buf = value;
+        let stat = &mut *self._stat_buf as *mut libc::stat;
+        let raw = self.entry_mut();
+        raw.fts_info = info;
+        raw.fts_errno = err;
+        raw.fts_statp = stat;
+        // SAFETY: stat remains in this entry's stable, owned allocation.
+        unsafe {
+            raw.fts_ino = (*stat).st_ino;
+            raw.fts_dev = (*stat).st_dev;
+            raw.fts_nlink = (*stat).st_nlink;
         }
+        raw.fts_cycle = std::ptr::null_mut();
+        self.check_cycle();
+    }
+
+    fn check_cycle(&mut self) {
+        if self.entry().fts_info != FTS_D {
+            return;
+        }
+        let (dev, ino) = (self._stat_buf.st_dev, self._stat_buf.st_ino);
+        let mut parent = self.entry().fts_parent;
+        // SAFETY: parents are owned by active directory frames (or the root
+        // sentinel). None is retired before its descendant's final read.
+        unsafe {
+            while !parent.is_null() && (*parent).fts_level >= 0 {
+                if (*parent).fts_dev == dev && (*parent).fts_ino == ino {
+                    self.entry_mut().fts_info = FTS_DC;
+                    self.entry_mut().fts_cycle = parent;
+                    break;
+                }
+                parent = (*parent).fts_parent;
+            }
+        }
+    }
+
+    fn finish(&mut self, error: Option<c_int>) {
+        let raw = self.entry_mut();
+        raw.fts_info = if error.is_some() { FTS_DNR } else { FTS_DP };
+        raw.fts_errno = error.unwrap_or(0);
+        raw.fts_instr = FTS_NOINSTR;
     }
 }
 
@@ -22386,93 +22398,76 @@ fn fts_read_dir_paths(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>,
     Ok(paths)
 }
 
-fn fts_expand_pending_children(stream: &mut FtsStream) {
-    let Some(dir_entry) = stream.pending_children.take() else {
-        return;
-    };
-
-    let postorder = FtsEntryInternal {
-        path: dir_entry.path.clone(),
-        level: dir_entry.level,
-        follow_symlink: dir_entry.follow_symlink,
-        instr: FTS_NOINSTR,
-        visit: FtsVisit::Postorder,
-    };
-    stream.queue.push_front(postorder);
-
-    if dir_entry.instr == FTS_SKIP {
-        return;
+fn fts_order_entries(entries: &mut VecDeque<FtsEntryOwned>, compar: Option<FtsCompare>) {
+    if let Some(compar) = compar {
+        type UnwindCompare =
+            unsafe extern "C-unwind" fn(*const *const FTSENT, *const *const FTSENT) -> c_int;
+        // SAFETY: identical C argument/result ABI; GNU comparators may unwind
+        // foreign exceptions through the FTS entrypoints, just like qsort.
+        let compar = unsafe { std::mem::transmute::<FtsCompare, UnwindCompare>(compar) };
+        entries.make_contiguous().sort_unstable_by(|left, right| {
+            let left = left.as_ptr();
+            let right = right.as_ptr();
+            // SAFETY: both entries and these pointer slots remain live for the
+            // callback. Moving their owners never moves their FTSENT storage.
+            unsafe { compar(&left, &right) }.cmp(&0)
+        });
     }
-
-    let children = match fts_read_dir_paths(&dir_entry.path) {
-        Ok(children) => children,
-        Err(err) => {
-            // Tcl's recursive `file delete`/`file copy` rely on this FTS_DNR
-            // to fail on a mode-000 subdirectory; fl reported FTS_DP and the
-            // operation silently succeeded.
-            if let Some(post) = stream.queue.front_mut() {
-                post.visit = FtsVisit::Unreadable(err);
-            }
-            unsafe { set_abi_errno(err) };
-            return;
-        }
-    };
-
-    for child in children.into_iter().rev() {
-        let control = stream
-            .pending_controls
-            .remove(&child)
-            .unwrap_or(FTS_NOINSTR);
-        stream.queue.push_front(fts_controlled_entry(
-            control,
-            FtsEntryInternal {
-                path: child,
-                level: dir_entry.level + 1,
-                follow_symlink: false,
-                instr: FTS_NOINSTR,
-                visit: FtsVisit::Preorder,
-            },
-        ));
-    }
-}
-
-fn fts_build_children_list(
-    stream: &mut FtsStream,
-    entries: Vec<FtsEntryInternal>,
-    parent: *mut FTSENT,
-    name_only: bool,
-) -> *mut FTSENT {
-    stream.children_cache.clear();
-    for entry in entries {
-        match FtsEntryOwned::new(&entry, stream.options, parent, name_only) {
-            Ok(owned) => stream.children_cache.push(owned),
-            Err(err) => {
-                unsafe { set_abi_errno(err) };
-                stream.children_cache.clear();
-                return std::ptr::null_mut();
-            }
-        }
-    }
-
-    for index in 0..stream.children_cache.len() {
-        let next = if index + 1 < stream.children_cache.len() {
-            stream.children_cache[index + 1].as_mut_ptr()
+    for index in 0..entries.len() {
+        let next = if index + 1 < entries.len() {
+            entries[index + 1].as_mut_ptr()
         } else {
             std::ptr::null_mut()
         };
-        stream.children_cache[index].entry_mut().fts_link = next;
+        entries[index].entry_mut().fts_link = next;
     }
+}
 
-    stream
-        .children_cache
-        .first_mut()
-        .map(FtsEntryOwned::as_mut_ptr)
-        .unwrap_or_default()
+fn fts_directory_children(
+    directory: &mut FtsEntryOwned,
+    options: c_int,
+    compar: Option<FtsCompare>,
+    name_only: bool,
+) -> Result<VecDeque<FtsEntryOwned>, c_int> {
+    let paths = fts_read_dir_paths(&directory.path)?;
+    let parent = directory.as_mut_ptr();
+    let level = directory.level.checked_add(1).ok_or(errno::EOVERFLOW)?;
+    let mut entries = VecDeque::new();
+    for path in paths {
+        entries.push_back(FtsEntryOwned::new(
+            &FtsEntryInternal {
+                path,
+                level,
+                follow_symlink: false,
+                instr: FTS_NOINSTR,
+            },
+            options,
+            parent,
+            name_only,
+        )?);
+    }
+    fts_order_entries(&mut entries, compar);
+    Ok(entries)
+}
+
+fn fts_publish(stream: &mut FtsStream, mut entry: FtsEntryOwned) -> *mut FTSENT {
+    if entry.entry().fts_instr == FTS_FOLLOW {
+        entry.entry_mut().fts_instr = FTS_NOINSTR;
+        if matches!(entry.entry().fts_info, FTS_SL | FTS_SLNONE) {
+            entry.follow_symlink = true;
+            entry.refresh(stream.options);
+        }
+    }
+    if entry.level == 0 {
+        entry.rename_root_to_basename();
+    }
+    stream.current = Some(entry);
+    stream.current.as_mut().unwrap().as_mut_ptr()
 }
 
 /// `fts_open` — open a file hierarchy for traversal.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts_open(
+pub unsafe extern "C-unwind" fn fts_open(
     path_argv: *const *const c_char,
     options: c_int,
     compar: Option<unsafe extern "C" fn(*const *const FTSENT, *const *const FTSENT) -> c_int>,
@@ -22488,8 +22483,24 @@ pub unsafe extern "C" fn fts_open(
         return std::ptr::null_mut();
     }
 
-    let mut queue = VecDeque::new();
-    let mut roots = Vec::new();
+    let mut root_parent = match FtsEntryOwned::new(
+        &FtsEntryInternal {
+            path: std::path::PathBuf::new(),
+            level: -1,
+            follow_symlink: false,
+            instr: FTS_NOINSTR,
+        },
+        options,
+        std::ptr::null_mut(),
+        true,
+    ) {
+        Ok(parent) => parent,
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
+            return std::ptr::null_mut();
+        }
+    };
+    let mut roots = VecDeque::new();
 
     // Collect initial paths
     let mut i = 0;
@@ -22503,20 +22514,29 @@ pub unsafe extern "C" fn fts_open(
             return std::ptr::null_mut();
         };
         if path_bytes.is_empty() {
-            unsafe { set_abi_errno(0) };
+            unsafe { set_abi_errno(errno::ENOENT) };
             return std::ptr::null_mut();
         }
         use std::os::unix::ffi::OsStringExt;
         let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path_bytes));
         let follow_root = options & FTS_COMFOLLOW != 0;
-        roots.push(path.clone());
-        queue.push_back(FtsEntryInternal {
-            path,
-            level: 0,
-            follow_symlink: follow_root,
-            instr: FTS_NOINSTR,
-            visit: FtsVisit::Preorder,
-        });
+        match FtsEntryOwned::new(
+            &FtsEntryInternal {
+                path,
+                level: 0,
+                follow_symlink: follow_root,
+                instr: FTS_NOINSTR,
+            },
+            options,
+            root_parent.as_mut_ptr(),
+            false,
+        ) {
+            Ok(entry) => roots.push_back(entry),
+            Err(err) => {
+                unsafe { set_abi_errno(err) };
+                return std::ptr::null_mut();
+            }
+        }
         i += 1;
     }
 
@@ -22525,17 +22545,16 @@ pub unsafe extern "C" fn fts_open(
         return std::ptr::null_mut();
     }
 
+    fts_order_entries(&mut roots, compar);
     let stream = Box::new(FtsStream {
-        queue,
         roots,
+        ancestors: Vec::new(),
+        _root_parent: root_parent,
         current: None,
-        children_cache: Vec::new(),
+        children_cache: None,
         options,
-        pending_revisit: None,
-        pending_children: None,
-        pending_controls: artifact_hash_map(),
         started: false,
-        _compar: compar,
+        compar,
     });
 
     Box::into_raw(stream) as *mut c_void
@@ -22543,77 +22562,95 @@ pub unsafe extern "C" fn fts_open(
 
 /// `fts_read` — return next entry in file hierarchy.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
+pub unsafe extern "C-unwind" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     if ftsp.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
     let stream = unsafe { &mut *(ftsp as *mut FtsStream) };
-    stream.started = true;
-
-    if stream.pending_revisit.is_none() {
-        fts_expand_pending_children(stream);
+    if !stream.started {
+        stream.started = true;
+        if let Some(root) = stream.roots.pop_front() {
+            return fts_publish(stream, root);
+        }
     }
 
-    let entry = match stream
-        .pending_revisit
-        .take()
-        .or_else(|| stream.queue.pop_front())
-    {
-        Some(e) => e,
-        None => {
-            unsafe { set_abi_errno(0) };
-            return std::ptr::null_mut();
-        }
-    };
-    let parent = stream
-        .current
-        .as_mut()
-        .and_then(|current| {
-            if current.level + 1 == entry.level && current.visit == FtsVisit::Preorder {
-                Some(current.as_mut_ptr())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(std::ptr::null_mut());
-
-    let mut owned = match FtsEntryOwned::new(&entry, stream.options, parent, false) {
-        Ok(owned) => owned,
-        Err(err) => {
-            unsafe { set_abi_errno(err) };
-            return std::ptr::null_mut();
-        }
-    };
-    if entry.level == 0 {
-        owned.rename_root_to_basename();
-    }
-
-    stream.current = Some(owned);
-    if entry.visit == FtsVisit::Preorder {
-        if stream
-            .current
-            .as_ref()
-            .is_some_and(|current| current.entry().fts_info == FTS_D)
+    if let Some(mut current) = stream.current.take() {
+        let instr = current.entry().fts_instr;
+        current.entry_mut().fts_instr = FTS_NOINSTR;
+        if instr == FTS_AGAIN
+            || (instr == FTS_FOLLOW && matches!(current.entry().fts_info, FTS_SL | FTS_SLNONE))
         {
-            stream.pending_children = Some(entry);
-        } else {
-            stream.pending_children = None;
+            stream.children_cache = None;
+            current.follow_symlink |= instr == FTS_FOLLOW;
+            current.refresh(stream.options);
+            return fts_publish(stream, current);
         }
-    } else {
-        stream.pending_children = None;
-    }
 
-    stream
-        .current
-        .as_mut()
-        .map(FtsEntryOwned::as_mut_ptr)
-        .unwrap_or(std::ptr::null_mut())
+        if current.entry().fts_info == FTS_D {
+            let cross_device = stream.options & FTS_XDEV != 0
+                && stream
+                    .ancestors
+                    .first()
+                    .is_some_and(|root| root.directory.entry().fts_dev != current.entry().fts_dev);
+            if instr == FTS_SKIP || cross_device {
+                stream.children_cache = None;
+                current.finish(None);
+                return fts_publish(stream, current);
+            }
+            let children = match stream.children_cache.take() {
+                Some(cache) if !cache.name_only => Ok(cache.entries),
+                _ => fts_directory_children(&mut current, stream.options, stream.compar, false),
+            };
+            match children {
+                Ok(mut children) => {
+                    if let Some(first) = children.pop_front() {
+                        stream.ancestors.push(FtsFrame {
+                            directory: current,
+                            children,
+                        });
+                        // GNU exposes the first child before applying SKIP;
+                        // its instruction controls descent on the next read.
+                        return fts_publish(stream, first);
+                    }
+                    current.finish(None);
+                }
+                Err(err) => {
+                    current.finish(Some(err));
+                    unsafe { set_abi_errno(err) };
+                }
+            }
+            return fts_publish(stream, current);
+        }
+    }
+    stream.children_cache = None;
+
+    loop {
+        if let Some(frame) = stream.ancestors.last_mut() {
+            if let Some(sibling) = frame.children.pop_front() {
+                if sibling.entry().fts_instr == FTS_SKIP {
+                    continue;
+                }
+                return fts_publish(stream, sibling);
+            }
+            let mut directory = stream.ancestors.pop().unwrap().directory;
+            directory.finish(None);
+            return fts_publish(stream, directory);
+        }
+        if let Some(root) = stream.roots.pop_front() {
+            if root.entry().fts_instr == FTS_SKIP {
+                continue;
+            }
+            return fts_publish(stream, root);
+        }
+        unsafe { set_abi_errno(0) };
+        return std::ptr::null_mut();
+    }
 }
 
 /// `fts_children` — return linked list of entries in current directory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts_children(ftsp: *mut c_void, options: c_int) -> *mut FTSENT {
+pub unsafe extern "C-unwind" fn fts_children(ftsp: *mut c_void, options: c_int) -> *mut FTSENT {
     if ftsp.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
@@ -22627,56 +22664,40 @@ pub unsafe extern "C" fn fts_children(ftsp: *mut c_void, options: c_int) -> *mut
     let name_only = options == FTS_NAMEONLY;
 
     if !stream.started {
-        let roots = stream
+        return stream
             .roots
-            .iter()
-            .cloned()
-            .map(|path| FtsEntryInternal {
-                path,
-                level: 0,
-                follow_symlink: stream.options & FTS_COMFOLLOW != 0,
-                instr: FTS_NOINSTR,
-                visit: FtsVisit::Preorder,
-            })
-            .collect();
-        return fts_build_children_list(stream, roots, std::ptr::null_mut(), name_only);
+            .front_mut()
+            .map(FtsEntryOwned::as_mut_ptr)
+            .unwrap_or_default();
     }
 
-    let (parent, current_path, current_level) = {
-        let Some(current) = stream.current.as_mut() else {
-            unsafe { set_abi_errno(0) };
-            return std::ptr::null_mut();
-        };
-        if current.visit != FtsVisit::Preorder || current.entry().fts_info != FTS_D {
-            unsafe { set_abi_errno(0) };
-            return std::ptr::null_mut();
-        }
-        (current.as_mut_ptr(), current.path.clone(), current.level)
+    let Some(current) = stream.current.as_mut() else {
+        unsafe { set_abi_errno(0) };
+        return std::ptr::null_mut();
     };
-
-    let child_paths = match fts_read_dir_paths(&current_path) {
-        Ok(paths) => paths,
-        Err(err) => {
-            unsafe { set_abi_errno(err) };
-            return std::ptr::null_mut();
-        }
-    };
-    if child_paths.is_empty() {
+    if current.entry().fts_info != FTS_D {
         unsafe { set_abi_errno(0) };
         return std::ptr::null_mut();
     }
 
-    let children = child_paths
-        .into_iter()
-        .map(|path| FtsEntryInternal {
-            path,
-            level: current_level + 1,
-            follow_symlink: false,
-            instr: FTS_NOINSTR,
-            visit: FtsVisit::Preorder,
-        })
-        .collect();
-    fts_build_children_list(stream, children, parent, name_only)
+    stream.children_cache = None;
+    match fts_directory_children(current, stream.options, stream.compar, name_only) {
+        Ok(mut entries) => {
+            let first = entries
+                .front_mut()
+                .map(FtsEntryOwned::as_mut_ptr)
+                .unwrap_or_default();
+            if first.is_null() {
+                unsafe { set_abi_errno(0) };
+            }
+            stream.children_cache = Some(FtsChildren { entries, name_only });
+            first
+        }
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// `fts_set` — set instruction for next fts_read return.
@@ -22704,49 +22725,23 @@ pub unsafe extern "C" fn fts_set(ftsp: *mut c_void, f: *mut FTSENT, instr: c_int
         && current.same_ptr(f)
     {
         current.entry_mut().fts_instr = normalized_instr;
-        match normalized_instr {
-            FTS_NOINSTR => return 0,
-            FTS_AGAIN => {
-                stream.pending_revisit = Some(current.internal());
-                return 0;
-            }
-            FTS_FOLLOW => {
-                current.follow_symlink = true;
-                stream.pending_revisit = Some(FtsEntryInternal {
-                    path: current.path.clone(),
-                    level: current.level,
-                    follow_symlink: true,
-                    instr: FTS_FOLLOW,
-                    visit: current.visit,
-                });
-                return 0;
-            }
-            FTS_SKIP => {
-                if let Some(pending) = stream.pending_children.as_mut()
-                    && pending.path == current.path
-                {
-                    pending.instr = FTS_SKIP;
-                }
-                return 0;
-            }
-            _ => {}
-        }
+        return 0;
     }
 
-    for child in &mut stream.children_cache {
+    let children = stream
+        .children_cache
+        .iter_mut()
+        .flat_map(|cache| &mut cache.entries)
+        .chain(&mut stream.roots)
+        .chain(
+            stream
+                .ancestors
+                .iter_mut()
+                .flat_map(|frame| &mut frame.children),
+        );
+    for child in children {
         if child.same_ptr(f) {
             child.entry_mut().fts_instr = normalized_instr;
-            if normalized_instr == FTS_AGAIN {
-                unsafe { set_abi_errno(errno::EINVAL) };
-                return -1;
-            }
-            if normalized_instr == FTS_NOINSTR {
-                stream.pending_controls.remove(&child.path);
-            } else {
-                stream
-                    .pending_controls
-                    .insert(child.path.clone(), normalized_instr);
-            }
             return 0;
         }
     }
@@ -26180,18 +26175,25 @@ pub unsafe extern "C-unwind" fn openat64(
 
 /// `fts64_open` — LFS file hierarchy traversal (identical to fts_open on 64-bit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts64_open(
+pub unsafe extern "C-unwind" fn fts64_open(
     path_argv: *const *mut c_char,
     options: c_int,
-    _compar: Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>,
+    compar: Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>,
 ) -> *mut c_void {
-    // On 64-bit, fts64 == fts. Cast *const *mut c_char → *const *const c_char.
-    unsafe { fts_open(path_argv as *const *const c_char, options, None) }
+    // SAFETY: FTSENT and FTSENT64 have the same layout and callback ABI on
+    // supported LP64 Linux targets. Preserve the caller's comparator.
+    let compar = unsafe {
+        std::mem::transmute::<
+            Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>,
+            Option<FtsCompare>,
+        >(compar)
+    };
+    unsafe { fts_open(path_argv as *const *const c_char, options, compar) }
 }
 
 /// `fts64_read` — LFS read next entry (identical to fts_read on 64-bit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts64_read(ftsp: *mut c_void) -> *mut c_void {
+pub unsafe extern "C-unwind" fn fts64_read(ftsp: *mut c_void) -> *mut c_void {
     unsafe { fts_read(ftsp) as *mut c_void }
 }
 
@@ -26203,7 +26205,7 @@ pub unsafe extern "C" fn fts64_close(ftsp: *mut c_void) -> c_int {
 
 /// `fts64_children` — LFS get child entries (identical to fts_children on 64-bit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts64_children(ftsp: *mut c_void, instr: c_int) -> *mut c_void {
+pub unsafe extern "C-unwind" fn fts64_children(ftsp: *mut c_void, instr: c_int) -> *mut c_void {
     unsafe { fts_children(ftsp, instr) as *mut c_void }
 }
 

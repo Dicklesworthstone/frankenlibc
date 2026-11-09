@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <fts.h>
 #include <ftw.h>
 #include <link.h>
 #include <pthread.h>
@@ -632,7 +633,109 @@ static int legacy_cleanup_case(const char *name) {
   return 0;
 }
 
+// FTS calls comparators while opening roots, building a traversal frontier,
+// and listing children. Each boundary must pass foreign exceptions through.
+static bool fts_should_throw;
+static int fts_comparisons, fts_callback_drops, fts_caller_drops;
+struct FtsBoom {};
+struct FtsGuard {
+  int *drops;
+  ~FtsGuard() { ++*drops; }
+};
+static void fts_check_at(bool condition, int line) {
+  if (!condition) {
+    dprintf(2, "fts-callback-unwind: assertion failed at %d\n", line);
+    _exit(86);
+  }
+}
+#define fts_check(condition) fts_check_at((condition), __LINE__)
+static void *fts_symbol(const char *name) {
+  void *address = dlsym(RTLD_DEFAULT, name);
+  const char *pin = getenv("FRANKENLIBC_TEST_LIBRARY");
+  struct stat wanted, actual;
+  Dl_info info;
+  fts_check(pin && address && dladdr(address, &info) && info.dli_fname);
+  fts_check(!syscall(SYS_newfstatat, AT_FDCWD, pin, &wanted, 0));
+  fts_check(!syscall(SYS_newfstatat, AT_FDCWD, info.dli_fname, &actual, 0));
+  fts_check(actual.st_dev == wanted.st_dev && actual.st_ino == wanted.st_ino);
+  return address;
+}
+template <typename Entry>
+static int fts_compare(const Entry **a, const Entry **b) {
+  ++fts_comparisons;
+  if (fts_should_throw) {
+    FtsGuard guard{&fts_callback_drops};
+    throw FtsBoom{};
+  }
+  return strcmp((*a)->fts_name, (*b)->fts_name);
+}
+template <typename Stream, typename Entry>
+static int fts_unwind_case(const char *phase, bool large) {
+  if (strcmp(phase, "open") && strcmp(phase, "read") && strcmp(phase, "children")) return 2;
+  // No noexcept qualifiers: these callbacks and their public callers unwind.
+  using Open = Stream *(*)(char *const *, int, int (*)(const Entry **, const Entry **));
+  using Read = Entry *(*)(Stream *);
+  using Children = Entry *(*)(Stream *, int);
+  using Close = int (*)(Stream *);
+  auto open_api = reinterpret_cast<Open>(fts_symbol(large ? "fts64_open" : "fts_open"));
+  auto read_api = reinterpret_cast<Read>(fts_symbol(large ? "fts64_read" : "fts_read"));
+  auto children_api = reinterpret_cast<Children>(fts_symbol(large ? "fts64_children" : "fts_children"));
+  auto close_api = reinterpret_cast<Close>(fts_symbol(large ? "fts64_close" : "fts_close"));
+  char root[] = "/tmp/fl-fts-unwind-XXXXXX", a[128], b[128];
+  fts_check(mkdtemp(root));
+  fts_check(snprintf(a, sizeof a, "%s/a", root) > 0);
+  fts_check(snprintf(b, sizeof b, "%s/b", root) > 0);
+  for (const char *path : {a, b}) {
+    int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    fts_check(fd >= 0 && !close(fd));
+  }
+  char *one_root[] = {root, nullptr}, *two_roots[] = {b, a, nullptr};
+  Stream *stream = nullptr;
+  bool caught = false;
+  try {
+    FtsGuard guard{&fts_caller_drops};
+    if (!strcmp(phase, "open")) {
+      fts_should_throw = true;
+      stream = open_api(two_roots, FTS_PHYSICAL | FTS_NOCHDIR, fts_compare<Entry>);
+    } else {
+      stream = open_api(one_root, FTS_PHYSICAL | FTS_NOCHDIR, fts_compare<Entry>);
+      fts_check(stream);
+      Entry *entry = read_api(stream);
+      fts_check(entry && entry->fts_info == FTS_D);
+      fts_should_throw = true;
+      if (!strcmp(phase, "read")) (void)read_api(stream);
+      else (void)children_api(stream, 0);
+    }
+  } catch (const FtsBoom &) {
+    caught = true;
+  }
+  fts_should_throw = false;
+  fts_check(caught && fts_callback_drops == 1 && fts_caller_drops == 1 && fts_comparisons > 0);
+  if (stream) fts_check(!close_api(stream));
+  // Closing the interrupted stream and starting another walk must remain safe.
+  stream = open_api(one_root, FTS_PHYSICAL | FTS_NOCHDIR, fts_compare<Entry>);
+  fts_check(stream);
+  int visits = 0, files = 0, comparisons_before = fts_comparisons;
+  while (Entry *entry = read_api(stream)) {
+    fts_check(++visits <= 4);
+    if (entry->fts_info == FTS_F) {
+      fts_check(files < 2 && !strcmp(entry->fts_name, files ? "b" : "a"));
+      ++files;
+    }
+  }
+  fts_check(visits == 4 && files == 2 && fts_comparisons > comparisons_before);
+  fts_check(!close_api(stream));
+  fts_check(!unlink(a) && !unlink(b) && !rmdir(root));
+  printf("fts-callback-unwind:%s:%s:PASS\n", large ? "fts64" : "fts", phase);
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 4 && !strcmp(argv[1], "--fts-unwind")) {
+    if (!strcmp(argv[3], "0")) return fts_unwind_case<FTS, FTSENT>(argv[2], false);
+    if (!strcmp(argv[3], "1")) return fts_unwind_case<FTS64, FTSENT64>(argv[2], true);
+    return 2;
+  }
   if (argc == 3 && !strcmp(argv[1], "--legacy-cleanup")) return legacy_cleanup_case(argv[2]);
   if (argc == 5 && !strcmp(argv[1], "--walk-unwind")) {
     const char *names[] = {"ftw", "ftw64", "nftw", "nftw64"};
