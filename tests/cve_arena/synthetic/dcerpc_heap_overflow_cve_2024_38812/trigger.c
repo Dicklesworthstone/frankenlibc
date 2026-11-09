@@ -153,7 +153,10 @@ static int process_dcerpc_packet(const struct network_packet *pkt)
     printf("  Copying %u bytes into %u-byte buffer (from header.copy_len)\n",
            copy_len, alloc_len);
 
-    memcpy(buffer, pkt->payload, copy_len);  /* <-- HEAP OVERFLOW */
+    memcpy(buffer, pkt->payload, copy_len);  /* <-- HEAP OVERFLOW if not clamped */
+
+    int overflow_landed =
+        (((const volatile uint8_t *)buffer)[alloc_len] == 0xCC);
 
     printf("  memcpy completed -- buffer contents:\n");
     printf("    First 8 bytes:  ");
@@ -198,7 +201,12 @@ static int process_dcerpc_packet(const struct network_packet *pkt)
     free(buffer);
     printf("  free() returned without error\n");
 
-    return 0;
+    if (overflow_landed) {
+        printf("  STATUS: EXPLOITABLE -- 192-byte heap overflow landed past buffer\n");
+        return 1;
+    }
+    printf("  STATUS: SAFE -- ClampSize prevented 192-byte heap overflow\n");
+    return result;
 }
 
 /* ---------------------------------------------------------------------------
@@ -288,5 +296,5 @@ int main(void)
     printf("           OR trailing canary detects overflow at free() and reports\n");
     printf("           FreedWithCanaryCorruption healing event\n");
 
-    return 0;
+    return result;
 }

@@ -81,6 +81,9 @@ static int test_cve_2024_33599(void)
     /* The vulnerable copy — no bounds check on response_len */
     memcpy(result_buf, malicious_response, response_len);
 
+    int overflow_landed =
+        (((const volatile unsigned char *)result_buf)[buf_size] == 'A');
+
     printf("  Overflowed stack buffer by %zu bytes\n",
            response_len - buf_size);
 
@@ -88,6 +91,11 @@ static int test_cve_2024_33599(void)
     printf("  Freeing buffer (canary check)...\n");
     free(result_buf);
     free(malicious_response);
+
+    if (!overflow_landed) {
+        printf("  PREVENTED: ClampSize clamped oversized netgroup response copy.\n");
+        return 0;
+    }
 
     printf("  EXPLOITABLE: stack overflow not detected!\n");
     return 1;
@@ -125,12 +133,12 @@ static int test_cve_2024_33600(void)
 
     printf("  Simulating not-found netgroup lookup (members=NULL)\n");
 
-    /* The vulnerable code path accesses members[0] without null check.
-     *
-     * We cannot actually dereference NULL in this test without crashing
-     * (which is the point — stock glibc crashes). Instead, we demonstrate
-     * the null-check pattern that TSM enforces. */
-    if (result.members == NULL) {
+    /* The vulnerable code path passes a NULL member string to strlen() without
+     * checking for NULL. Under stock glibc this dereferences NULL (SIGSEGV);
+     * under FrankenLibC hardened mode ReturnSafeDefault returns 0. */
+    const char *volatile null_member = (const char *)result.members;
+    size_t member_len = strlen(null_member);
+    if (member_len == 0) {
         printf("  TSM null-pointer guard: detected NULL members pointer\n");
         printf("  ReturnSafeDefault: returning empty member list instead "
                "of crashing\n");
@@ -138,8 +146,6 @@ static int test_cve_2024_33600(void)
         return 0;
     }
 
-    /* This path would be reached in stock glibc: */
-    /* char *first_member = result.members[0]; */  /* SEGFAULT */
     printf("  EXPLOITABLE: NULL pointer dereference would crash nscd!\n");
     return 1;
 }
@@ -217,6 +223,11 @@ static int test_cve_2024_33601(void)
     memcpy(cache_entry + CACHE_ENTRY_HEADER_SIZE + 16,
            &neg_cache_ts, sizeof(neg_cache_ts));
 
+    const volatile unsigned char *tail =
+        (const volatile unsigned char *)(cache_entry + entry_size);
+    int overflow_landed = (tail[0] == 'n' && tail[1] == 'e' &&
+                           tail[2] == 't' && tail[3] == 'g');
+
     size_t total_written = CACHE_ENTRY_HEADER_SIZE + 16 + sizeof(neg_cache_ts);
     printf("  Wrote %zu bytes into %zu-byte entry (overflow: %zu bytes)\n",
            total_written, entry_size, total_written - entry_size);
@@ -224,6 +235,11 @@ static int test_cve_2024_33601(void)
     /* Free — canary detects the overflow */
     printf("  Freeing cache entry (canary check)...\n");
     free(cache_entry);
+
+    if (!overflow_landed) {
+        printf("  PREVENTED: ClampSize prevented out-of-bounds cache metadata write.\n");
+        return 0;
+    }
 
     printf("  EXPLOITABLE: cache metadata corruption not detected!\n");
     return 1;

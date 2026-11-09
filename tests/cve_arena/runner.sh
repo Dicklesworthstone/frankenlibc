@@ -434,15 +434,16 @@ run_single_mode() {
     local run_cmd="$3"
     local build_cmd="$4"
     local glibc_lib="${5:-}"
+    local stem="${6:-$(basename "${test_dir}")}"
 
-    local stdout_file stderr_file result_file log_file
-    stdout_file=$(mktemp)
-    stderr_file=$(mktemp)
-    result_file=$(mktemp)
-    log_file=$(mktemp)
-
-    # Ensure cleanup of temp files.
-    trap "rm -f '${stdout_file}' '${stderr_file}' '${result_file}' '${log_file}'" RETURN
+    local logs_dir="${RESULTS_DIR}/logs"
+    mkdir -p "${logs_dir}"
+    local stdout_file="${logs_dir}/${stem}_${mode}.stdout"
+    local stderr_file="${logs_dir}/${stem}_${mode}.stderr"
+    local log_file="${logs_dir}/${stem}_${mode}.log"
+    : > "${stdout_file}"
+    : > "${stderr_file}"
+    : > "${log_file}"
 
     local exit_code=0
     local duration_ms=0
@@ -643,6 +644,7 @@ compute_verdict() {
     local stock_stdout="${3:-}"
     local tsm_stdout="${4:-}"
     local tsm_healing="${5:-[]}"
+    local expected_tsm_exit="${6:-0}"
 
     local stock_signal tsm_signal stock_exploitable tsm_exploitable
     stock_signal=$(exit_code_to_signal "${stock_exit}")
@@ -658,7 +660,7 @@ compute_verdict() {
 
     # Case 2: Stock crashes/exploits, FrankenLibC does not crash.
     if [[ "${stock_exploitable}" == "true" ]]; then
-        if [[ ${tsm_exit} -eq 0 || "${tsm_healing}" != "[]" ]]; then
+        if [[ ${tsm_exit} -eq ${expected_tsm_exit} ]]; then
             echo "PREVENTED"
         else
             echo "DETECTED"
@@ -666,22 +668,20 @@ compute_verdict() {
         return
     fi
 
-    # Case 3: Stock exits non-zero (but no crash signal), FrankenLibC succeeds or heals.
+    # Case 3: Stock exits non-zero (but no crash signal), FrankenLibC exits cleanly with expected exit code.
     if [[ ${stock_exit} -ne 0 ]]; then
-        if [[ ${tsm_exit} -eq 0 || "${tsm_healing}" != "[]" ]]; then
+        if [[ ${tsm_exit} -eq ${expected_tsm_exit} ]]; then
             echo "PREVENTED"
             return
         fi
     fi
 
-    # Case 4: Both exit 0 (e.g. multi-vector harness catching signals or checking reuse),
-    # but TSM emitted healing actions or quarantine prevented reuse.
-    if [[ ${tsm_exit} -eq 0 ]]; then
-        if [[ "${tsm_healing}" != "[]" ]]; then
-            echo "PREVENTED"
-            return
-        fi
+    # Case 4: Both exit with expected_tsm_exit (e.g. multi-vector harness catching signals or checking reuse),
+    # and the harness explicitly reports vulnerability in stock mode vs mitigation in TSM mode without
+    # any residual EXPLOITABLE/VULNERABLE status in TSM output.
+    if [[ ${stock_exit} -eq ${expected_tsm_exit} && ${tsm_exit} -eq ${expected_tsm_exit} ]]; then
         if echo "${stock_stdout}" | grep -qiE 'EXPLOITABLE|VULNERABLE|SAME ADDRESS|HEAP CORRUPTION' && \
+           ! echo "${tsm_stdout}" | grep -qiE 'EXPLOITABLE|VULNERABLE|SAME ADDRESS|HEAP CORRUPTION' && \
            echo "${tsm_stdout}" | grep -qiE 'quarantine working|Prevented|SAFE|mitigated|DETECTED'; then
             echo "PREVENTED"
             return
@@ -738,10 +738,15 @@ run_cve_test() {
         return 0
     fi
 
+    local timestamp stem expected_tsm_exit
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    stem=$(sanitize_result_stem "${cve_id}" "${test_name}")
+    expected_tsm_exit=$(jq -r '.expected_tsm.exit_code // 0' < "${manifest}")
+
     # Run stock mode.
     log_info "Running stock glibc mode..."
     local stock_json
-    stock_json=$(run_single_mode "${test_dir}" "stock" "${run_cmd_stock}" "${build_cmd}" "")
+    stock_json=$(run_single_mode "${test_dir}" "stock" "${run_cmd_stock}" "${build_cmd}" "" "${stem}")
     local stock_exit stock_stdout
     stock_exit=$(echo "${stock_json}" | jq -r '.exit_code')
     stock_stdout=$(echo "${stock_json}" | jq -r '.stdout // ""')
@@ -750,7 +755,7 @@ run_cve_test() {
     # Run TSM mode.
     log_info "Running FrankenLibC (TSM) mode..."
     local tsm_json
-    tsm_json=$(run_single_mode "${test_dir}" "tsm" "${run_cmd_tsm}" "${build_cmd}" "${glibc_lib}")
+    tsm_json=$(run_single_mode "${test_dir}" "tsm" "${run_cmd_tsm}" "${build_cmd}" "${glibc_lib}" "${stem}")
     local tsm_exit tsm_stdout tsm_healing
     tsm_exit=$(echo "${tsm_json}" | jq -r '.exit_code')
     tsm_stdout=$(echo "${tsm_json}" | jq -r '.stdout // ""')
@@ -759,7 +764,7 @@ run_cve_test() {
 
     # Compute verdict.
     local verdict
-    verdict=$(compute_verdict "${stock_exit}" "${tsm_exit}" "${stock_stdout}" "${tsm_stdout}" "${tsm_healing}")
+    verdict=$(compute_verdict "${stock_exit}" "${tsm_exit}" "${stock_stdout}" "${tsm_stdout}" "${tsm_healing}" "${expected_tsm_exit}")
     log_verdict "${verdict}" "${cve_id}"
 
     # Read additional manifest metadata for the result JSON.
@@ -767,11 +772,6 @@ run_cve_test() {
     cwe_ids=$(jq -c '.cwe_ids // []' < "${manifest}")
     cvss_score=$(jq -r '.cvss_score // 0.0' < "${manifest}")
     tsm_features=$(jq -c '.tsm_features_tested // []' < "${manifest}")
-
-    # Assemble the full result JSON.
-    local timestamp stem
-    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    stem=$(sanitize_result_stem "${cve_id}" "${test_name}")
 
     local result_file="${RESULTS_DIR}/${stem}.result.json"
 
@@ -799,7 +799,7 @@ run_cve_test() {
             stock_exit: $stock.exit_code,
             stock_signal: $stock.signal,
             stock_output: $stock.stdout,
-            rust_exit: (if $verdict == "PREVENTED" then 0 else $tsm.exit_code end),
+            rust_exit: $tsm.exit_code,
             rust_signal: $tsm.signal,
             rust_output: $tsm.stdout,
             tsm_features: (if ($tsm.healing_actions | length) > 0 then $tsm.healing_actions else $tsm_features end),

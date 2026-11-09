@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <mcheck.h>
 
 /* Maximum ident length that syslog typically handles */
 #define SYSLOG_INTERNAL_BUF_SIZE  1024
@@ -97,9 +98,12 @@ static int test_cve_2023_6246(void)
     memcpy(internal_buf + offset, pid_field, strlen(pid_field));
     offset += strlen(pid_field);
 
-    /* Write message — this overflows the buffer */
+    /* Write message — this overflows the buffer if not clamped */
     memcpy(internal_buf + offset, message, strlen(message));
     offset += strlen(message);
+
+    int overflow_landed =
+        (((const volatile unsigned char *)internal_buf)[alloc_size] == 'A');
 
     printf("  Wrote %zu bytes into %zu-byte buffer (overflow: %zu)\n",
            offset, alloc_size, offset > alloc_size ? offset - alloc_size : 0);
@@ -108,6 +112,11 @@ static int test_cve_2023_6246(void)
     printf("  Freeing buffer (canary check)...\n");
     free(internal_buf);
     free(ident);
+
+    if (!overflow_landed) {
+        printf("  PREVENTED: ClampSize clamped crafted ident overflow at buffer boundary.\n");
+        return 0;
+    }
 
     printf("  EXPLOITABLE: heap overflow not detected!\n");
     return 1;
@@ -153,14 +162,22 @@ static int test_cve_2023_6779(void)
      * buf[message_len] is 1 byte past the allocation.
      * This single byte can corrupt heap metadata (tcache next pointer
      * or chunk size field), leading to arbitrary write. */
-    buf[computed_size] = '\n';  /* Off-by-one: writes at buf[256] */
+    unsigned char orig_tail0 = ((const volatile unsigned char *)buf)[computed_size];
+    buf[computed_size] = (orig_tail0 == '\n') ? '\r' : '\n';  /* Off-by-one: writes at buf[256] */
 
     printf("  Wrote newline at offset %zu (1 byte past %zu-byte buffer)\n",
            computed_size, computed_size);
 
+    enum mcheck_status tail_status = mprobe(buf);
+
     /* Free — canary detects the 1-byte overflow */
     printf("  Freeing buffer (canary check)...\n");
     free(buf);
+
+    if (tail_status == MCHECK_TAIL) {
+        printf("  DETECTED: trailing canary caught 1-byte off-by-one overwrite.\n");
+        return 0;
+    }
 
     printf("  EXPLOITABLE: off-by-one heap overflow not detected!\n");
     return 1;
@@ -224,12 +241,20 @@ static int test_cve_2023_6780(void)
     /* The write overflows by (actual_write - wrapped_size) = 64 bytes */
     memset(buf, 'X', actual_write);
 
+    int overflow_landed =
+        (((const volatile unsigned char *)buf)[wrapped_size] == 'X');
+
     printf("  Overflow: %zu bytes past end of %zu-byte buffer\n",
            actual_write - wrapped_size, wrapped_size);
 
     /* Free — canary detects the massive overflow */
     printf("  Freeing buffer (canary check)...\n");
     free(buf);
+
+    if (!overflow_landed) {
+        printf("  PREVENTED: ClampSize clamped integer-overflow memset at 64-byte boundary.\n");
+        return 0;
+    }
 
     printf("  EXPLOITABLE: integer overflow led to undetected heap "
            "corruption!\n");

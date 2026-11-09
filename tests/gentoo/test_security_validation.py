@@ -222,12 +222,41 @@ class TestSecurityAnalyzer(unittest.TestCase):
         self.assertIn("buffer_overflow", analysis.healing_by_class)
         self.assertEqual(analysis.healing_by_class["buffer_overflow"], 2)
 
-        # Both CVEs should be marked as prevented
+        # Both CVEs have class telemetry correlation, but neither is oracle-verified from logs alone
         self.assertTrue(analysis.prevention_evidence["CVE-2014-0160"]["would_prevent"])
         self.assertTrue(analysis.prevention_evidence["CVE-2016-2108"]["would_prevent"])
+        self.assertFalse(analysis.prevention_evidence["CVE-2014-0160"]["verified_by_oracle"])
+        self.assertFalse(analysis.prevention_evidence["CVE-2016-2108"]["verified_by_oracle"])
+        self.assertEqual(
+            analysis.prevention_evidence["CVE-2014-0160"]["evidence_status"],
+            "telemetry_correlation_only",
+        )
 
         # Perfect score since both preventable CVEs have evidence
         self.assertEqual(analysis.security_score, 1.0)
+
+    def test_analyze_with_explicit_oracle_verdicts_overrides_telemetry_only(self) -> None:
+        actions = [
+            HealingAction(timestamp="2026-02-13T00:00:00Z", action="ClampSize", call="memcpy"),
+        ]
+        analysis = self.analyzer.analyze_package(
+            "dev-libs/openssl",
+            actions,
+            oracle_verdicts={"CVE-2014-0160": False, "CVE-2016-2108": True},
+        )
+        self.assertFalse(analysis.prevention_evidence["CVE-2014-0160"]["would_prevent"])
+        self.assertFalse(analysis.prevention_evidence["CVE-2014-0160"]["verified_by_oracle"])
+        self.assertEqual(
+            analysis.prevention_evidence["CVE-2014-0160"]["evidence_status"],
+            "verified_oracle_fail",
+        )
+        self.assertTrue(analysis.prevention_evidence["CVE-2016-2108"]["would_prevent"])
+        self.assertTrue(analysis.prevention_evidence["CVE-2016-2108"]["verified_by_oracle"])
+        self.assertEqual(
+            analysis.prevention_evidence["CVE-2016-2108"]["evidence_status"],
+            "verified_oracle_pass",
+        )
+        self.assertEqual(analysis.security_score, 0.5)
 
     def test_analyze_without_healing_actions(self) -> None:
         analysis = self.analyzer.analyze_package("dev-libs/openssl", [])

@@ -102,9 +102,13 @@ static int test_iconv_overflow(void)
     memcpy(outbuf + write_offset + sizeof(ESCAPE_SS2_DESIGNATE),
            ENCODED_CHAR, sizeof(ENCODED_CHAR));
 
-    /* At this point, bytes at outbuf[32] through outbuf[37] are corrupted.
-     * With stock glibc, this overwrites heap metadata or trailing padding.
-     * With frankenlibc, the trailing canary has been overwritten. */
+    /* At this point, bytes at outbuf[32] through outbuf[37] would be corrupted
+     * if memcpy were not clamped at the allocation boundary. */
+    const volatile unsigned char *tail =
+        (const volatile unsigned char *)(outbuf + OUTPUT_BUF_SIZE);
+    int overflow_landed = (tail[0] == 0x29 && tail[1] == 0x41 &&
+                           tail[2] == 0x21 && tail[3] == 0x21 &&
+                           tail[4] == 0x21 && tail[5] == 0x21);
 
     printf("  Wrote %d bytes at offset %zu (overflow: %d bytes past end)\n",
            OVERFLOW_BYTES, write_offset,
@@ -112,11 +116,16 @@ static int test_iconv_overflow(void)
 
     /* Step 4: Free the buffer.
      * Stock glibc: may crash here, may succeed (heap corruption is silent).
-     * frankenlibc: canary check at free() detects the overwrite. */
+     * frankenlibc: ClampSize prevented the out-of-bounds bytes from landing. */
     printf("  Freeing buffer (canary check happens here)...\n");
     free(outbuf);
 
-    /* If we reach here without detection, the overflow was NOT caught. */
+    if (!overflow_landed) {
+        printf("  PREVENTED: out-of-bounds iconv write was clamped at buffer boundary.\n");
+        return 0;
+    }
+
+    /* If we reach here with overflow bytes present, the overflow was NOT caught. */
     printf("  EXPLOITABLE: buffer overflow succeeded — "
            "8-byte heap overwrite was not detected!\n");
     return 1;
@@ -157,6 +166,11 @@ static int test_iconv_overflow_adjacent(void)
     memcpy(victim + write_offset + sizeof(ESCAPE_SS2_DESIGNATE),
            ENCODED_CHAR, sizeof(ENCODED_CHAR));
 
+    const volatile unsigned char *vtail =
+        (const volatile unsigned char *)(victim + OUTPUT_BUF_SIZE);
+    int overflow_landed = (vtail[0] == 0x29 && vtail[1] == 0x41 &&
+                           vtail[2] == 0x21 && vtail[3] == 0x21);
+
     /* Check if the adjacent buffer was corrupted.
      * Note: with modern allocators the two mallocs may not be adjacent,
      * but this demonstrates the attack concept. */
@@ -172,7 +186,12 @@ static int test_iconv_overflow_adjacent(void)
     free(victim);
     free(adjacent);
 
-    /* Even if adjacent was not corrupted, the canary on victim IS corrupted */
+    if (!overflow_landed && !adjacent_corrupted) {
+        printf("  PREVENTED: ClampSize prevented out-of-bounds overwrite.\n");
+        return 0;
+    }
+
+    /* Overflow bytes landed past the victim buffer boundary */
     printf("  EXPLOITABLE: overflow not detected by allocator!\n");
     return 1;
 }

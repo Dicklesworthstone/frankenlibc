@@ -109,7 +109,11 @@ def generate_aggregate_report(
         package_reports=package_reports,
         methodology={
             "description": "Security analysis correlates FrankenLibC healing actions with known CVEs",
-            "prevention_criteria": "A CVE is considered 'prevented' if healing actions matching its class were observed",
+            "evidence_classification": "runtime_repair_telemetry_not_cve_proof",
+            "prevention_criteria": (
+                "Heal-action logs indicate runtime repair telemetry correlation only; "
+                "verified CVE prevention requires an explicit exploit-outcome oracle"
+            ),
             "limitations": [
                 "Analysis based on healing action logs, not actual exploit attempts",
                 "Some CVEs are logic bugs, not preventable by memory safety",

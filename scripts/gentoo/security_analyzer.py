@@ -166,8 +166,14 @@ class SecurityAnalyzer:
         self,
         package: str,
         healing_actions: List[HealingAction],
+        oracle_verdicts: Optional[Dict[str, bool]] = None,
     ) -> SecurityAnalysis:
-        """Analyze security implications of healing actions for a package."""
+        """Analyze security implications of healing actions for a package.
+
+        Heal-action log counts alone represent observed runtime repair telemetry
+        for a vulnerability class, not standalone proof of CVE exploit prevention.
+        Verified prevention requires an explicit outcome oracle in `oracle_verdicts`.
+        """
         cves = self.cve_db.get_package_cves(package)
 
         # Count healing actions by class
@@ -184,20 +190,39 @@ class SecurityAnalyzer:
         for cve in cves:
             cve_class = cve.cve_class
             healing_count = healing_by_class.get(cve_class, 0)
+            class_telemetry_observed = bool(cve.expected_prevention and healing_count > 0)
 
-            if cve.expected_prevention and healing_count > 0:
+            if oracle_verdicts is not None and cve.id in oracle_verdicts:
+                verified_by_oracle = bool(oracle_verdicts[cve.id])
+                would_prevent = verified_by_oracle
+                if verified_by_oracle:
+                    prevented_count += 1
+                confidence = 1.0 if verified_by_oracle else 0.0
+                evidence_status = (
+                    "verified_oracle_pass" if verified_by_oracle else "verified_oracle_fail"
+                )
+            elif class_telemetry_observed:
+                verified_by_oracle = False
                 would_prevent = True
                 prevented_count += 1
-                confidence = min(1.0, healing_count / 10)  # More actions = more confidence
+                confidence = min(1.0, healing_count / 10)
+                evidence_status = "telemetry_correlation_only"
             elif cve.expected_prevention:
-                would_prevent = False  # Expected but no evidence
+                verified_by_oracle = False
+                would_prevent = False
                 confidence = 0.0
+                evidence_status = "no_telemetry_observed"
             else:
-                would_prevent = False  # Not expected to prevent
-                confidence = 1.0  # Confident it won't prevent
+                verified_by_oracle = False
+                would_prevent = False
+                confidence = 1.0
+                evidence_status = "out_of_scope_for_membrane"
 
             prevention_evidence[cve.id] = {
                 "would_prevent": would_prevent,
+                "verified_by_oracle": verified_by_oracle,
+                "class_telemetry_observed": class_telemetry_observed,
+                "evidence_status": evidence_status,
                 "mechanism": cve.prevention_mechanism,
                 "healing_actions_for_class": healing_count,
                 "confidence": round(confidence, 2),
