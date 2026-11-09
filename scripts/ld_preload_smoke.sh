@@ -234,7 +234,7 @@ cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCA
 QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
 cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
 GLOB_RESET_BIN="${BIN_DIR}/fixture_glob_reset"
-cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -o "${GLOB_RESET_BIN}"
+cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -ldl -o "${GLOB_RESET_BIN}"
 MEMCHR_PAGE_BOUNDARY_BIN="${BIN_DIR}/fixture_memchr_page_boundary"
 cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_memchr_page_boundary.c" -o "${MEMCHR_PAGE_BOUNDARY_BIN}"
 REMOVE_DIR_FTELL_EBADF_BIN="${BIN_DIR}/fixture_remove_dir_ftell_ebadf"

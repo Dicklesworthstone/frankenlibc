@@ -12386,37 +12386,33 @@ pub unsafe extern "C" fn glob(
             (*gt).gl_pathv = std::ptr::null_mut();
             let offs = (*gt).gl_offs;
             if offs > 0 {
-                let slots =
-                    crate::malloc_abi::raw_alloc((offs + 1) * std::mem::size_of::<*mut c_char>())
-                        as *mut *mut c_char;
+                // An unrepresentable vector is GLOB_NOSPACE, without a
+                // malloc attempt or errno change. A representable request
+                // above PTRDIFF_MAX has malloc's ENOMEM contract instead.
+                let Some(slot_count) = offs.checked_add(1) else {
+                    return glob_core::GLOB_NOSPACE;
+                };
+                let Some(bytes) = slot_count.checked_mul(std::mem::size_of::<*mut c_char>()) else {
+                    return glob_core::GLOB_NOSPACE;
+                };
+                if bytes > isize::MAX as usize {
+                    crate::errno_abi::set_abi_errno(frankenlibc_core::errno::ENOMEM);
+                    return glob_core::GLOB_NOSPACE;
+                }
+                let slots = crate::malloc_abi::raw_alloc(bytes) as *mut *mut c_char;
                 if slots.is_null() {
                     return glob_core::GLOB_NOSPACE;
                 }
-                for i in 0..=offs {
-                    *slots.add(i) = std::ptr::null_mut();
-                }
+                std::ptr::write_bytes(slots, 0, slot_count);
                 (*gt).gl_pathv = slots;
             }
         }
     }
 
-    // Read current state for GLOB_APPEND.
-    let (existing_paths, existing_count) = if append {
-        let pathc = unsafe { (*gt).gl_pathc };
-        let pathv = unsafe { (*gt).gl_pathv };
-        let mut paths: Vec<*mut c_char> = Vec::new();
-        if !pathv.is_null() && pathc > 0 {
-            for i in 0..pathc {
-                let p = unsafe { *pathv.add(i) };
-                if !p.is_null() {
-                    paths.push(p);
-                }
-            }
-        }
-        (paths, pathc)
-    } else {
-        (Vec::new(), 0)
-    };
+    // Keep the old vector live until every new string has been allocated.
+    // gl_pathc excludes the reserved gl_offs entries; no temporary pathname
+    // list is needed to transfer ownership of these unchanged allocations.
+    let existing_count = if append { unsafe { (*gt).gl_pathc } } else { 0 };
 
     // Error handler shared by both filesystem backends: marshal the path to a
     // CString and call the caller's errfunc (a NULL errfunc never aborts).
@@ -12451,25 +12447,37 @@ pub unsafe extern "C" fn glob(
             let offs = if dooffs { unsafe { (*gt).gl_offs } } else { 0 };
 
             let new_count = res.paths.len();
-            let total = existing_count + new_count;
+            let Some(total) = existing_count.checked_add(new_count) else {
+                return glob_core::GLOB_NOSPACE;
+            };
 
             // Allocate pathv: offs + total + 1 (null terminator)
-            let alloc_count = offs + total + 1;
-            let pathv = unsafe {
-                crate::malloc_abi::raw_alloc(alloc_count * std::mem::size_of::<*mut c_char>())
-            } as *mut *mut c_char;
+            let Some(alloc_count) = offs.checked_add(total).and_then(|n| n.checked_add(1)) else {
+                return glob_core::GLOB_NOSPACE;
+            };
+            let Some(bytes) = alloc_count.checked_mul(std::mem::size_of::<*mut c_char>()) else {
+                return glob_core::GLOB_NOSPACE;
+            };
+            if bytes > isize::MAX as usize {
+                unsafe { crate::errno_abi::set_abi_errno(frankenlibc_core::errno::ENOMEM) };
+                return glob_core::GLOB_NOSPACE;
+            }
+            let pathv = unsafe { crate::malloc_abi::raw_alloc(bytes) } as *mut *mut c_char;
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
             }
 
-            // Fill offset slots with null.
-            for i in 0..offs {
-                unsafe { *pathv.add(i) = std::ptr::null_mut() };
-            }
-
-            // Copy existing paths (for GLOB_APPEND).
-            for (i, &p) in existing_paths.iter().enumerate() {
-                unsafe { *pathv.add(offs + i) = p };
+            let old_pathv = unsafe { (*gt).gl_pathv };
+            if append && !old_pathv.is_null() {
+                // SAFETY: a preceding glob call owns offs + existing_count
+                // entries before its terminator. Preserve that entire prefix,
+                // including reserved slots, instead of mistaking those slots
+                // for pathnames and leaving counted entries uninitialized.
+                // The checked allocation above includes this prefix.
+                unsafe { std::ptr::copy_nonoverlapping(old_pathv, pathv, offs + existing_count) };
+            } else {
+                // SAFETY: the checked allocation includes all reserved slots.
+                unsafe { std::ptr::write_bytes(pathv, 0, offs) };
             }
 
             // Copy new paths as strdup'd C strings.
@@ -12500,7 +12508,6 @@ pub unsafe extern "C" fn glob(
 
             // Free old pathv array (not the strings -- those were moved; a
             // fresh call's array holds only the GLOB_DOOFFS null slots).
-            let old_pathv = unsafe { (*gt).gl_pathv };
             if !old_pathv.is_null() {
                 unsafe { crate::malloc_abi::raw_free(old_pathv.cast()) };
             }
