@@ -1530,6 +1530,7 @@ impl ValidationPipeline {
                             || fp.size != s.user_size as u64
                             || !fp.verify(s.user_base)
                         {
+                            MembraneMetrics::inc(&metrics.fingerprint_failures);
                             let abs = self.abstraction_from_slot(addr, &s);
                             self.runtime_math.note_check_order_outcome(
                                 mode,
@@ -1612,6 +1613,7 @@ impl ValidationPipeline {
                             );
                         }
                         if !expected_canary.verify(&actual) {
+                            MembraneMetrics::inc(&metrics.canary_failures);
                             let abs = self.abstraction_from_slot(addr, &s);
                             self.runtime_math.note_check_order_outcome(
                                 mode,
@@ -1859,6 +1861,7 @@ impl ValidationPipeline {
                 || fp.size != slot.user_size as u64
                 || !fp.verify(slot.user_base)
             {
+                MembraneMetrics::inc(&metrics.fingerprint_failures);
                 let abs = self.abstraction_from_slot(addr, &slot);
                 self.runtime_math.note_check_order_outcome(
                     mode,
@@ -1937,6 +1940,7 @@ impl ValidationPipeline {
                 );
             }
             if !expected_canary.verify(&actual) {
+                MembraneMetrics::inc(&metrics.canary_failures);
                 let abs = self.abstraction_from_slot(addr, &slot);
                 self.runtime_math.note_check_order_outcome(
                     mode,
@@ -3292,5 +3296,76 @@ mod tests {
             let reordered = ValidationPipeline::dependency_safe_order(ordered);
             prop_assert_eq!(reordered, ordered);
         }
+    }
+
+    #[test]
+    fn canary_and_fingerprint_failures_increment_metrics_and_reject_legacy_fold() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let metrics = global_metrics();
+        let size = 32_usize;
+
+        // 1. Corrupt trailing canary with the legacy rank-32 folded canary.
+        let ptr_canary = pipeline.allocate(size).expect("alloc canary test");
+        let addr_canary = ptr_canary as usize;
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (addr_canary - FINGERPRINT_SIZE) as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let fp = AllocationFingerprint::from_bytes(&header_bytes);
+        let legacy_canary = if fp.hash.rotate_left(32) != 0 {
+            ((fp.hash ^ fp.hash.rotate_left(32)) ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes()
+        } else {
+            (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64 ^ 1).to_le_bytes()
+        };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                legacy_canary.as_ptr(),
+                (addr_canary + size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+
+        let canary_failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let outcome = pipeline.validate(addr_canary);
+        assert!(
+            matches!(outcome, ValidationOutcome::TemporalViolation(_)),
+            "legacy folded canary must fail validation as TemporalViolation"
+        );
+        assert!(
+            MembraneMetrics::get(&metrics.canary_failures) > canary_failures_before,
+            "validation canary failure must increment canary_failures metric"
+        );
+        assert_eq!(
+            pipeline.free(ptr_canary),
+            FreeResult::FreedWithCanaryCorruption
+        );
+
+        // 2. Corrupt 24-byte fingerprint header.
+        let ptr_fp = pipeline.allocate(size).expect("alloc fingerprint test");
+        let addr_fp = ptr_fp as usize;
+        let saved_byte = unsafe {
+            let fp_hash_byte_ptr = (addr_fp - 1) as *mut u8;
+            let orig = *fp_hash_byte_ptr;
+            *fp_hash_byte_ptr ^= 0x80;
+            orig
+        };
+        let fp_failures_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let outcome_fp = pipeline.validate(addr_fp);
+        assert!(
+            matches!(outcome_fp, ValidationOutcome::TemporalViolation(_)),
+            "corrupted fingerprint header must fail validation as TemporalViolation"
+        );
+        assert!(
+            MembraneMetrics::get(&metrics.fingerprint_failures) > fp_failures_before,
+            "validation fingerprint failure must increment fingerprint_failures metric"
+        );
+        unsafe {
+            *((addr_fp - 1) as *mut u8) = saved_byte;
+        }
+        assert_eq!(pipeline.free(ptr_fp), FreeResult::Freed);
     }
 }

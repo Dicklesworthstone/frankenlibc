@@ -5069,11 +5069,12 @@ pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
         _ => {}
     }
 
-    let fingerprint_bytes = unsafe { read_fixed::<FINGERPRINT_SIZE>(slot.raw_base as *const u8) };
+    let fingerprint_bytes =
+        unsafe { read_fixed::<FINGERPRINT_SIZE>((slot.user_base - FINGERPRINT_SIZE) as *const u8) };
     let fingerprint = AllocationFingerprint::from_bytes(&fingerprint_bytes);
     if fingerprint.size != slot.user_size as u64
         || fingerprint.generation != slot.generation
-        || !fingerprint.verify(slot.raw_base)
+        || !fingerprint.verify(slot.user_base)
     {
         return MCHECK_HEAD;
     }

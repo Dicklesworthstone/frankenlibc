@@ -343,12 +343,156 @@ static int ws8_probe(const char *id, const char *library) {
     return ok ? 0 : 1;
 }
 
+static uint64_t raw_read_u64_le(const volatile unsigned char *src) {
+    uint64_t val = 0;
+    for (size_t i = 0; i < 8; i++) {
+        val |= ((uint64_t)src[i]) << (8 * i);
+    }
+    return val;
+}
+
+static void raw_write_u64_le(volatile unsigned char *dst, uint64_t val) {
+    for (size_t i = 0; i < 8; i++) {
+        dst[i] = (unsigned char)((val >> (8 * i)) & 0xFFU);
+    }
+}
+
+static int canary_probe(const char *id, const char *library) {
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (!mode || (strcmp(mode, "strict") && strcmp(mode, "hardened"))) return 2;
+    int hardened = strcmp(mode, "hardened") == 0;
+    int kind = !strcmp(id, "intact") ? 1 :
+               !strcmp(id, "corrupt-legacy-fold") ? 2 :
+               !strcmp(id, "corrupt-symmetric-pair") ? 3 :
+               !strcmp(id, "corrupt-header") ? 4 : 0;
+    if (!kind || (kind > 1 && !hardened)) return 2;
+
+    const char *symbols[] = {"malloc", "free", "mprobe", "memcpy",
+        "__frankenlibc_healing_action_count", "__frankenlibc_is_runtime_ready"};
+    void *addresses[sizeof(symbols) / sizeof(symbols[0])];
+    for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
+        addresses[i] = probe_symbol(symbols[i], library);
+        if (!addresses[i]) return 2;
+    }
+    void *(*allocate)(size_t) = addresses[0];
+    void (*release)(void *) = addresses[1];
+    int (*probe)(void *) = addresses[2];
+    void *(*copy)(void *, const void *, size_t) = addresses[3];
+    uint64_t (*counter)(unsigned) = addresses[4];
+    int (*ready)(void) = addresses[5];
+
+    const char *names[16];
+    int passed[16], count = 0;
+#define CANARY_CHECK(name, outcome) do { names[count] = (name); passed[count++] = !!(outcome); } while (0)
+    CANARY_CHECK("runtime_ready", ready());
+
+    size_t capacity = 32;
+    unsigned char *p = allocate(capacity);
+    CANARY_CHECK("allocation_non_null", p != NULL);
+    uint64_t gen = 0, sz = 0, hash = 0, canary_word = 0, expected_canary = 0, legacy_canary = 0;
+    uint64_t clamp_before = 0, clamp_after = 0;
+    int mprobe_initial = -1, mprobe_mutated = -1, mprobe_freed = -1;
+
+    if (p) {
+        for (size_t i = 0; i < capacity; i++) ((volatile unsigned char *)p)[i] = (unsigned char)(0xA0 + i);
+        mprobe_initial = probe(p);
+        CANARY_CHECK("mprobe_initial_ok", mprobe_initial == 0);
+
+        if (hardened) {
+            /* Direct volatile byte reads bypass interposed memcpy, which would
+             * clamp redzone reads at p - 24 and p + capacity to 0 bytes. */
+            hash = raw_read_u64_le((const volatile unsigned char *)(p - 24));
+            gen = raw_read_u64_le((const volatile unsigned char *)(p - 16));
+            sz = raw_read_u64_le((const volatile unsigned char *)(p - 8));
+            canary_word = raw_read_u64_le((const volatile unsigned char *)(p + capacity));
+            expected_canary = hash ^ 0xDEADBEEFCAFEBABEULL;
+            uint64_t rot = (hash << 32) | (hash >> 32);
+            legacy_canary = (hash ^ rot) ^ 0xDEADBEEFCAFEBABEULL;
+
+            CANARY_CHECK("header_layout_24b", gen > 0 && sz == capacity && hash != 0);
+            CANARY_CHECK("tail_full_width_8b", canary_word == expected_canary);
+            CANARY_CHECK("tail_not_legacy_fold", rot == 0 || canary_word != legacy_canary);
+
+            if (kind == 1) {
+                clamp_before = counter(1);
+                copy(p, "ABCDEFGH", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("memcpy_intact_allowed",
+                    clamp_after == clamp_before && ((volatile unsigned char *)p)[0] == 'A');
+            } else if (kind == 2) {
+                uint64_t replacement = (rot != 0) ? legacy_canary : (canary_word ^ 1ULL);
+                raw_write_u64_le((volatile unsigned char *)(p + capacity), replacement);
+                mprobe_mutated = probe(p);
+                CANARY_CHECK("mprobe_detects_legacy_fold_tail", mprobe_mutated == 3);
+                clamp_before = counter(1);
+                copy(p, "ZZZZZZZZ", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("membrane_rejects_legacy_fold_canary",
+                    clamp_after > clamp_before && ((volatile unsigned char *)p)[0] == 0xA0);
+            } else if (kind == 3) {
+                uint64_t mask = (1ULL << 7) | (1ULL << 39);
+                uint64_t replacement = canary_word ^ mask;
+                raw_write_u64_le((volatile unsigned char *)(p + capacity), replacement);
+                mprobe_mutated = probe(p);
+                CANARY_CHECK("mprobe_detects_symmetric_pair_tail", mprobe_mutated == 3);
+                clamp_before = counter(1);
+                copy(p, "ZZZZZZZZ", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("membrane_rejects_symmetric_pair_canary",
+                    clamp_after > clamp_before && ((volatile unsigned char *)p)[0] == 0xA0);
+            } else if (kind == 4) {
+                volatile unsigned char *hdr_byte = (volatile unsigned char *)(p - 24);
+                unsigned char saved = *hdr_byte;
+                *hdr_byte = (unsigned char)(saved ^ 0x80U);
+                mprobe_mutated = probe(p);
+                CANARY_CHECK("mprobe_detects_header_corruption", mprobe_mutated == 2);
+                clamp_before = counter(1);
+                copy(p, "ZZZZZZZZ", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("membrane_rejects_corrupted_header",
+                    clamp_after > clamp_before && ((volatile unsigned char *)p)[0] == 0xA0);
+                *hdr_byte = saved;
+                CANARY_CHECK("mprobe_restored_ok", probe(p) == 0);
+            }
+        }
+
+        release(p);
+        mprobe_freed = probe(p);
+        CANARY_CHECK("mprobe_after_free", mprobe_freed == 1);
+    }
+
+    int ok = 1;
+    for (int i = 0; i < count; i++) if (!passed[i]) ok = 0;
+    printf("{\"case_id\":"); ws8_json_string(id);
+    printf(",\"mode\":"); ws8_json_string(mode);
+    printf(",\"header_generation\":%llu,\"header_size\":%llu",
+           (unsigned long long)gen, (unsigned long long)sz);
+    printf(",\"mprobe_initial\":%d,\"mprobe_mutated\":%d,\"mprobe_freed\":%d",
+           mprobe_initial, mprobe_mutated, mprobe_freed);
+    printf(",\"checks\":[");
+    for (int i = 0; i < count; i++) {
+        printf("%s{\"name\":", i ? "," : ""); ws8_json_string(names[i]);
+        printf(",\"passed\":%s}", passed[i] ? "true" : "false");
+    }
+    printf("],\"providers\":[");
+    for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
+        printf("%s{\"symbol\":", i ? "," : ""); ws8_json_string(symbols[i]);
+        printf(",\"address\":\"%p\"}", addresses[i]);
+    }
+    printf("],\"status\":\"%s\",\"executed\":%d}\n", ok ? "pass" : "fail", count);
+#undef CANARY_CHECK
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     if (argc == 4 && !strcmp(argv[1], "--ws8-case")) {
         return ws8_probe(argv[2], argv[3]);
     }
     if (argc == 4 && !strcmp(argv[1], "--healing-case")) {
         return healing_probe(argv[2], argv[3]);
+    }
+    if (argc == 4 && !strcmp(argv[1], "--canary-case")) {
+        return canary_probe(argv[2], argv[3]);
     }
     if (argc != 1) return 2;
     int fails = 0;

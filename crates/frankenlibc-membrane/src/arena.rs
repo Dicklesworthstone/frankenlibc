@@ -677,9 +677,12 @@ impl AllocationArena {
             (canary_ok, user_size, drained)
         }; // shard lock is released here!
 
+        let metrics = crate::metrics::global_metrics();
         if canary_ok {
+            crate::metrics::MembraneMetrics::inc(&metrics.canary_passes);
             (FreeResult::Freed, user_size, drained)
         } else {
+            crate::metrics::MembraneMetrics::inc(&metrics.canary_failures);
             (FreeResult::FreedWithCanaryCorruption, user_size, drained)
         }
     }
@@ -1862,5 +1865,174 @@ mod tests {
             AllocationArena::deallocate_drained(&drained);
         }
         assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn arena_layout_and_full_width_canary_derivation() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        assert_eq!(FINGERPRINT_SIZE, 24);
+        assert_eq!(CANARY_SIZE, 8);
+
+        let arena = AllocationArena::new();
+        let metrics = global_metrics();
+        let passes_before = MembraneMetrics::get(&metrics.canary_passes);
+
+        let user_size = 48usize;
+        let alloc = arena
+            .allocate(user_size)
+            .expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        assert_eq!(slot.user_base, alloc.user_base);
+        assert_eq!(slot.user_size, user_size);
+        assert!(slot.user_base >= slot.raw_base + FINGERPRINT_SIZE);
+
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        let mut canary_bytes = [0u8; CANARY_SIZE];
+        // SAFETY: `[user_base - FINGERPRINT_SIZE .. user_base]` and
+        // `[user_base + user_size .. user_base + user_size + CANARY_SIZE]` lie
+        // inside the owned backing block while the allocation is live.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (slot.user_base - FINGERPRINT_SIZE) as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+            std::ptr::copy_nonoverlapping(
+                (slot.user_base + slot.user_size) as *const u8,
+                canary_bytes.as_mut_ptr(),
+                CANARY_SIZE,
+            );
+        }
+
+        let fp = AllocationFingerprint::from_bytes(&header_bytes);
+        assert_eq!(fp.generation, slot.generation);
+        assert_eq!(fp.size, user_size as u64);
+        assert!(fp.verify(slot.user_base));
+
+        let expected_canary = (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+        assert_eq!(canary_bytes, expected_canary);
+        assert_eq!(canary_bytes, fp.canary().to_bytes());
+        assert!(arena.verify_canary_for_slot(&slot));
+
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::Freed);
+        assert!(MembraneMetrics::get(&metrics.canary_passes) > passes_before);
+    }
+
+    #[test]
+    fn arena_rejects_legacy_rank32_folded_canary_and_records_failure_metric() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        let arena = AllocationArena::new();
+        let metrics = global_metrics();
+        let user_size = 32usize;
+
+        // Allocate until the fingerprint hash has non-zero 32-bit halves so the
+        // legacy rank-32 fold `h ^ h.rotate_left(32) ^ C` is strictly distinct
+        // from the full-width canary `h ^ C`.
+        let mut target_alloc = None;
+        let mut legacy_bytes = [0u8; CANARY_SIZE];
+        let mut cleanup = Vec::new();
+        for _ in 0..8 {
+            let alloc = arena
+                .allocate(user_size)
+                .expect("allocation should succeed");
+            let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+            // SAFETY: live allocation header at `user_base - FINGERPRINT_SIZE`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    (alloc.user_base - FINGERPRINT_SIZE) as *const u8,
+                    header_bytes.as_mut_ptr(),
+                    FINGERPRINT_SIZE,
+                );
+            }
+            let fp = AllocationFingerprint::from_bytes(&header_bytes);
+            if fp.hash.rotate_left(32) != 0 {
+                legacy_bytes =
+                    ((fp.hash ^ fp.hash.rotate_left(32)) ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+                assert_ne!(legacy_bytes, fp.canary().to_bytes());
+                target_alloc = Some(alloc);
+                break;
+            }
+            cleanup.push(alloc);
+        }
+
+        for extra in cleanup {
+            let (_, drained) = arena.free(extra.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+        }
+
+        let alloc = target_alloc.expect("expected non-zero fingerprint hash");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+
+        // Overwrite the trailing canary with the legacy rank-32 folded value.
+        // SAFETY: `[user_base + user_size .. + CANARY_SIZE]` is the trailing canary slot.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                legacy_bytes.as_ptr(),
+                (alloc.user_base + user_size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        assert!(
+            !arena.verify_canary_for_slot(&slot),
+            "arena must reject the pre-fix rank-32 folded canary"
+        );
+
+        let failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+        assert!(
+            MembraneMetrics::get(&metrics.canary_failures) > failures_before,
+            "FreedWithCanaryCorruption must increment canary_failures metric"
+        );
+    }
+
+    #[test]
+    fn arena_detects_symmetric_half_bit_flip_in_trailing_canary() {
+        let arena = AllocationArena::new();
+        let user_size = 40usize;
+        let alloc = arena
+            .allocate(user_size)
+            .expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        let canary_ptr = (alloc.user_base + user_size) as *mut u8;
+
+        let mut intact = [0u8; CANARY_SIZE];
+        // SAFETY: trailing canary lies inside the live allocation's backing block.
+        unsafe {
+            std::ptr::copy_nonoverlapping(canary_ptr, intact.as_mut_ptr(), CANARY_SIZE);
+        }
+        let intact_word = u64::from_le_bytes(intact);
+
+        // Every symmetric bit pair `(1 << bit) | (1 << (bit + 32))` was in the
+        // kernel of the legacy fold; verify `verify_canary_for_slot` rejects all 32.
+        for bit in 0..32u32 {
+            let mask = (1u64 << bit) | (1u64 << (bit + 32));
+            let corrupted = (intact_word ^ mask).to_le_bytes();
+            unsafe {
+                std::ptr::copy_nonoverlapping(corrupted.as_ptr(), canary_ptr, CANARY_SIZE);
+            }
+            assert!(
+                !arena.verify_canary_for_slot(&slot),
+                "symmetric bit-pair mask {mask:#018x} at bit {bit} must be rejected"
+            );
+        }
+
+        // Leave the last symmetric corruption in place and verify `free` reports it.
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
     }
 }
