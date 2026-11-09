@@ -325,3 +325,106 @@ fn rwlock_read_then_write_interleaved_cycle() {
         free_rwlock_ptr(rwlock);
     }
 }
+
+#[test]
+fn rwlock_static_initializer_adoption_survives_concurrent_acquire() {
+    use frankenlibc_abi::pthread_abi::pthread_rwlock_is_managed_observed_for_tests;
+    use std::sync::mpsc;
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct Outcome {
+        write_owner: bool,
+        paused_after_zero_magic: bool,
+        acquisition: i32,
+        resumed: bool,
+        recognition: Option<(bool, usize)>,
+        unlock: i32,
+        destroy: i32,
+    }
+
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let mut outcomes = Vec::new();
+    for write_owner in [false, true] {
+        // Use the public static initializer. The test never writes internal
+        // lock state; a real read/write acquisition performs the adoption.
+        let mut rwlock = Box::new(libc::PTHREAD_RWLOCK_INITIALIZER);
+        let address = (&mut *rwlock as *mut libc::pthread_rwlock_t) as usize;
+        let (paused_tx, paused_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let validator = std::thread::spawn(move || {
+            let mut observations = 0;
+            // SAFETY: the caller retains this aligned static-initializer
+            // storage until the validator joins. The observer only schedules
+            // threads; it cannot read or mutate the rwlock's internal state.
+            let recognized = unsafe {
+                pthread_rwlock_is_managed_observed_for_tests(
+                    address as *mut libc::pthread_rwlock_t,
+                    || {
+                        observations += 1;
+                        if observations == 1 {
+                            let _ = paused_tx.send(());
+                            let _ = resume_rx.recv();
+                        }
+                    },
+                )
+            };
+            (recognized, observations)
+        });
+
+        let paused = paused_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        // SAFETY: the validator is paused after observing zero magic, before
+        // its owner-word load. This thread adopts the same live rwlock and
+        // keeps its read/write ownership until validation has finished.
+        let acquisition = if paused {
+            unsafe {
+                if write_owner {
+                    pthread_rwlock_wrlock(address as *mut libc::pthread_rwlock_t)
+                } else {
+                    pthread_rwlock_rdlock(address as *mut libc::pthread_rwlock_t)
+                }
+            }
+        } else {
+            libc::EINVAL
+        };
+        // Always release the scheduling pause and join before asserting, even
+        // when the old validator incorrectly rejects the now-owned lock.
+        let resumed = resume_tx.send(()).is_ok();
+        let recognition = validator.join().ok();
+        // SAFETY: the validator has joined; release any acquired ownership
+        // before destruction and before the Box can free its storage.
+        let (unlock, destroy) = unsafe {
+            let unlock = if acquisition == 0 {
+                pthread_rwlock_unlock(address as *mut libc::pthread_rwlock_t)
+            } else {
+                libc::EINVAL
+            };
+            let destroy = pthread_rwlock_destroy(address as *mut libc::pthread_rwlock_t);
+            (unlock, destroy)
+        };
+        outcomes.push(Outcome {
+            write_owner,
+            paused_after_zero_magic: paused,
+            acquisition,
+            resumed,
+            recognition,
+            unlock,
+            destroy,
+        });
+    }
+
+    // Both schedules have run and every worker/owner has been cleaned up
+    // before a red assertion can stop the test.
+    let expected: Vec<_> = [false, true]
+        .into_iter()
+        .map(|write_owner| Outcome {
+            write_owner,
+            paused_after_zero_magic: true,
+            acquisition: 0,
+            resumed: true,
+            recognition: Some((true, 1)),
+            unlock: 0,
+            destroy: 0,
+        })
+        .collect();
+    assert_eq!(outcomes, expected);
+}

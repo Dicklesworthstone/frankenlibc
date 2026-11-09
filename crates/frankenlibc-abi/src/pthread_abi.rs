@@ -1164,6 +1164,13 @@ fn rwlock_magic_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicU3
 }
 
 fn is_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) -> bool {
+    is_managed_rwlock_observed(rwlock, || {})
+}
+
+fn is_managed_rwlock_observed(
+    rwlock: *mut libc::pthread_rwlock_t,
+    mut after_zero_magic: impl FnMut(),
+) -> bool {
     let Some(magic_ptr) = rwlock_magic_ptr(rwlock) else {
         return false;
     };
@@ -1176,12 +1183,18 @@ fn is_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) -> bool {
         // pthread_rwlock_init, so adopt it on first use (every lock on a
         // statically initialized rwlock used to return EINVAL).
         0 => {
+            after_zero_magic();
             let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
                 return false;
             };
             // SAFETY: alignment and non-null checked in `rwlock_word_ptr`.
             if unsafe { &*word_ptr }.load(Ordering::Acquire) != 0 {
-                return false;
+                // A concurrent first user can publish the magic and acquire
+                // the lock after our initial zero-magic observation.
+                return matches!(
+                    magic.load(Ordering::Acquire),
+                    MANAGED_RWLOCK_MAGIC | MANAGED_RWLOCK_PSHARED_MAGIC
+                );
             }
             match magic.compare_exchange(
                 0,
@@ -1197,6 +1210,20 @@ fn is_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) -> bool {
         }
         _ => false,
     }
+}
+
+/// Observe the initial zero-magic read during native static-rwlock adoption.
+///
+/// # Safety
+/// Any non-null `rwlock` must point to live, aligned `pthread_rwlock_t` storage.
+/// The observer may coordinate concurrent lock calls, but must not destroy or
+/// directly modify that storage.
+#[doc(hidden)]
+pub unsafe fn pthread_rwlock_is_managed_observed_for_tests(
+    rwlock: *mut libc::pthread_rwlock_t,
+    after_zero_magic: impl FnMut(),
+) -> bool {
+    is_managed_rwlock_observed(rwlock, after_zero_magic)
 }
 
 /// Whether a managed rwlock's futexes are process-private.
@@ -3507,13 +3534,26 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
     0
 }
 
-fn futex_rwlock_rdlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32>) -> c_int {
+fn futex_rwlock_rdlock(
+    word: &AtomicI32,
+    private: bool,
+    wpref: Option<&AtomicI32>,
+    mut before_wait: impl FnMut(usize, c_int),
+) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
-        // Writer preference: with a writer waiting, wait like a blocked reader.
-        // The waiting writer changes `word` when it acquires, and every unlock
-        // that frees the lock wakes all waiters, so this sleep always ends.
-        if state >= 0 && !wpref.is_some_and(|w| w.load(Ordering::Acquire) > 0) {
+        // A queued writer can time out without changing the owner word. Wait
+        // on the counter that excluded us, using that same positive snapshot
+        // so a dequeue before FUTEX_WAIT cannot leave us asleep on an empty queue.
+        let writer_wait = if state >= 0 {
+            wpref.and_then(|waiting| {
+                let count = waiting.load(Ordering::Acquire);
+                (count > 0).then_some((waiting, count))
+            })
+        } else {
+            None
+        };
+        if state >= 0 && writer_wait.is_none() {
             if state == i32::MAX {
                 return libc::EAGAIN;
             }
@@ -3528,7 +3568,9 @@ fn futex_rwlock_rdlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32
 
         #[cfg(target_os = "linux")]
         {
-            let rc = futex_wait_word(word, state, private);
+            let (wait_word, expected) = writer_wait.unwrap_or((word, state));
+            before_wait(wait_word.as_ptr() as usize, expected);
+            let rc = futex_wait_word(wait_word, expected, private);
             if rc == 0 {
                 continue;
             }
@@ -3547,22 +3589,19 @@ fn futex_rwlock_rdlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32
 }
 
 /// A writer counted in a writer-preferring lock's waiting count for as long as
-/// it waits. Dropping it uncounts the writer; if it gives up without the lock
-/// (timeout, error), readers it was holding back are woken.
+/// it waits. The last writer to leave the queue wakes excluded readers, whether
+/// it acquires the lock or gives up. After acquisition they wait on the owner
+/// word until the active writer unlocks.
 struct WaitingWriter<'a> {
     waiting: Option<&'a AtomicI32>,
-    word: &'a AtomicI32,
     private: bool,
-    acquired: bool,
 }
 
 impl<'a> WaitingWriter<'a> {
-    fn new(word: &'a AtomicI32, private: bool) -> Self {
+    fn new(private: bool) -> Self {
         Self {
             waiting: None,
-            word,
             private,
-            acquired: false,
         }
     }
 
@@ -3579,24 +3618,24 @@ impl<'a> WaitingWriter<'a> {
 
 impl Drop for WaitingWriter<'_> {
     fn drop(&mut self) {
-        if let Some(w) = self.waiting {
-            w.fetch_sub(1, Ordering::AcqRel);
+        if let Some(w) = self.waiting
+            && w.fetch_sub(1, Ordering::AcqRel) == 1
+        {
             #[cfg(target_os = "linux")]
-            if !self.acquired {
-                let _ = futex_wake_word(self.word, i32::MAX, self.private);
+            {
+                let _ = futex_wake_word(w, i32::MAX, self.private);
             }
         }
     }
 }
 
 fn futex_rwlock_wrlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32>) -> c_int {
-    let mut waiter = WaitingWriter::new(word, private);
+    let mut waiter = WaitingWriter::new(private);
     loop {
         if word
             .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            waiter.acquired = true;
             return 0;
         }
 
@@ -3697,11 +3736,20 @@ fn futex_rwlock_timed_rdlock(
     clockid: c_int,
     private: bool,
     wpref: Option<&AtomicI32>,
+    mut before_wait: impl FnMut(usize, c_int),
 ) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
         // Writer preference: see futex_rwlock_rdlock.
-        if state >= 0 && !wpref.is_some_and(|w| w.load(Ordering::Acquire) > 0) {
+        let writer_wait = if state >= 0 {
+            wpref.and_then(|waiting| {
+                let count = waiting.load(Ordering::Acquire);
+                (count > 0).then_some((waiting, count))
+            })
+        } else {
+            None
+        };
+        if state >= 0 && writer_wait.is_none() {
             if state == i32::MAX {
                 return libc::EAGAIN;
             }
@@ -3713,8 +3761,11 @@ fn futex_rwlock_timed_rdlock(
             }
             continue;
         }
+        let (wait_word, expected) = writer_wait.unwrap_or((word, state));
+        before_wait(wait_word.as_ptr() as usize, expected);
         // SAFETY: the common ABI path validated this live deadline.
-        let rc = futex_wait_absolute_clock(word, state, unsafe { &*abstime }, clockid, private);
+        let rc =
+            futex_wait_absolute_clock(wait_word, expected, unsafe { &*abstime }, clockid, private);
         if rc == 0 {
             continue;
         }
@@ -3738,13 +3789,12 @@ fn futex_rwlock_timed_wrlock(
     private: bool,
     wpref: Option<&AtomicI32>,
 ) -> c_int {
-    let mut waiter = WaitingWriter::new(word, private);
+    let mut waiter = WaitingWriter::new(private);
     loop {
         if word
             .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            waiter.acquired = true;
             return 0;
         }
         let state = word.load(Ordering::Acquire);
@@ -4998,6 +5048,14 @@ pub unsafe extern "C" fn pthread_rwlock_destroy(rwlock: *mut libc::pthread_rwloc
 /// POSIX `pthread_rwlock_rdlock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    // SAFETY: the public ABI requires live caller-owned rwlock storage.
+    unsafe { pthread_rwlock_rdlock_observed(rwlock, |_, _| {}) }
+}
+
+unsafe fn pthread_rwlock_rdlock_observed(
+    rwlock: *mut libc::pthread_rwlock_t,
+    before_wait: impl FnMut(usize, c_int),
+) -> c_int {
     if rwlock.is_null() {
         return libc::EINVAL;
     }
@@ -5009,7 +5067,37 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_rdlock(word, rwlock_is_private(rwlock), rwlock_writer_pref(rwlock))
+    futex_rwlock_rdlock(
+        word,
+        rwlock_is_private(rwlock),
+        rwlock_writer_pref(rwlock),
+        before_wait,
+    )
+}
+
+/// Exercise the production read-lock path with a controlled wait schedule.
+/// The observer receives the actual futex address and its expected value after
+/// the reader has decided to block, immediately before entering the kernel.
+///
+/// # Safety
+/// `rwlock` must remain live and initialized until all users finish. The
+/// observer may pause its caller but must not mutate or destroy the rwlock.
+#[doc(hidden)]
+pub unsafe fn pthread_rwlock_read_wait_observed_for_tests(
+    rwlock: *mut libc::pthread_rwlock_t,
+    deadline: Option<(c_int, libc::timespec)>,
+    before_wait: impl FnMut(usize, c_int),
+) -> c_int {
+    // SAFETY: the caller supplies the normal rwlock lifetime. An optional
+    // deadline is owned by this frame throughout validation and waiting.
+    unsafe {
+        match deadline {
+            Some((clock, deadline)) => {
+                pthread_rwlock_wait_common(rwlock, clock, &deadline, false, before_wait)
+            }
+            None => pthread_rwlock_rdlock_observed(rwlock, before_wait),
+        }
+    }
 }
 
 /// POSIX `pthread_rwlock_wrlock`.
@@ -9500,6 +9588,7 @@ unsafe fn pthread_rwlock_wait_common(
     clockid: c_int,
     abstime: *const libc::timespec,
     write: bool,
+    before_wait: impl FnMut(usize, c_int),
 ) -> c_int {
     if rwlock.is_null() || abstime.is_null() {
         return libc::EINVAL;
@@ -9524,7 +9613,7 @@ unsafe fn pthread_rwlock_wait_common(
     if write {
         futex_rwlock_timed_wrlock(word, abstime, clockid, private, preference)
     } else {
-        futex_rwlock_timed_rdlock(word, abstime, clockid, private, preference)
+        futex_rwlock_timed_rdlock(word, abstime, clockid, private, preference, before_wait)
     }
 }
 
@@ -9534,7 +9623,7 @@ pub unsafe extern "C" fn pthread_rwlock_timedrdlock(
     rwlock: *mut libc::pthread_rwlock_t,
     abstime: *const libc::timespec,
 ) -> c_int {
-    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, false) }
+    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, false, |_, _| {}) }
 }
 
 /// POSIX `pthread_rwlock_timedwrlock` — write lock with an absolute realtime deadline.
@@ -9543,7 +9632,7 @@ pub unsafe extern "C" fn pthread_rwlock_timedwrlock(
     rwlock: *mut libc::pthread_rwlock_t,
     abstime: *const libc::timespec,
 ) -> c_int {
-    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, true) }
+    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, true, |_, _| {}) }
 }
 
 /// GNU `pthread_rwlock_clockrdlock` — clock-specific timed read lock.
@@ -9555,7 +9644,7 @@ pub unsafe extern "C" fn pthread_rwlock_clockrdlock(
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
-    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, false) }
+    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, false, |_, _| {}) }
 }
 
 /// GNU `pthread_rwlock_clockwrlock` — clock-specific timed write lock.
@@ -9567,7 +9656,7 @@ pub unsafe extern "C" fn pthread_rwlock_clockwrlock(
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
-    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, true) }
+    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, true, |_, _| {}) }
 }
 
 /// GNU `pthread_cond_clockwait` — clock-specific timed condvar wait.

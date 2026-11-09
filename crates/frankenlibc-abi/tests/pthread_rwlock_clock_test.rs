@@ -2,8 +2,8 @@
 #![cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use frankenlibc_abi::{glibc_internal_abi, pthread_abi as p};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 const OPERATIONS: [(usize, libc::clockid_t); 6] = [
@@ -314,4 +314,239 @@ fn rwclock_writer_timeout_releases_queued_readers() {
             assert_eq!(unsafe { p::pthread_rwlock_destroy(&mut *rw) }, 0);
         }
     });
+}
+
+#[test]
+fn rwclock_reader_registration_cannot_miss_writer_timeout() {
+    isolated(
+        "rwclock_reader_registration_cannot_miss_writer_timeout",
+        || {
+            let mut failures = Vec::new();
+            for shared in [false, true] {
+                for clock in [
+                    None,
+                    Some(libc::CLOCK_REALTIME),
+                    Some(libc::CLOCK_MONOTONIC),
+                ] {
+                    let mut rw = lock(shared, true);
+                    // SAFETY: the original reader retains this lock until the
+                    // completion observation, then every worker is joined.
+                    assert_eq!(unsafe { p::pthread_rwlock_rdlock(&mut *rw) }, 0);
+                    let address = (&mut *rw as *mut libc::pthread_rwlock_t) as usize;
+                    let writer = std::thread::spawn(move || {
+                        let ts = future(libc::CLOCK_MONOTONIC, 1_000_000_000);
+                        // SAFETY: the test retains initialized storage.
+                        unsafe { wait(3, libc::CLOCK_MONOTONIC, address as *mut _, &ts) }
+                    });
+                    // SAFETY: this native-only layout observation is read-only;
+                    // the counter is atomic and the rwlock remains initialized.
+                    let queued = unsafe { &*((address + 8) as *const AtomicI32) };
+                    let until = Instant::now() + Duration::from_millis(900);
+                    while queued.load(Ordering::Acquire) == 0 {
+                        assert!(Instant::now() < until, "writer never registered");
+                        std::thread::yield_now();
+                    }
+                    let (observed_tx, observed_rx) = mpsc::channel();
+                    let (resume_tx, resume_rx) = mpsc::channel();
+                    let (finished_tx, finished_rx) = mpsc::channel();
+                    let reader = std::thread::spawn(move || {
+                        let deadline = clock.map(|clock| (clock, future(clock, 10_000_000_000)));
+                        let mut observed = false;
+                        // SAFETY: only this caller's scheduling is paused. The
+                        // real read-lock implementation chooses its wait word.
+                        let rc = unsafe {
+                            p::pthread_rwlock_read_wait_observed_for_tests(
+                                address as *mut _,
+                                deadline,
+                                |word, expected| {
+                                    if !observed {
+                                        observed = true;
+                                        observed_tx.send((word, expected)).unwrap();
+                                        resume_rx.recv().unwrap();
+                                    }
+                                },
+                            )
+                        };
+                        if rc == 0 {
+                            // SAFETY: this thread acquired its own read lock.
+                            assert_eq!(unsafe { p::pthread_rwlock_unlock(address as *mut _) }, 0);
+                        }
+                        finished_tx.send(rc).unwrap();
+                        rc
+                    });
+                    let (_, expected) = observed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                    assert!(
+                        expected > 0,
+                        "reader did not observe an exclusion predicate"
+                    );
+                    let writer_rc = writer.join().unwrap();
+                    assert_eq!(queued.load(Ordering::Acquire), 0);
+                    resume_tx.send(()).unwrap();
+
+                    // This is a positive progress requirement, not a sleep
+                    // followed by an assertion that a thread stayed blocked.
+                    // Keep the original reader locked while awaiting success.
+                    let before_owner_unlock = finished_rx.recv_timeout(Duration::from_secs(2));
+                    // Rescue a stranded old-algorithm reader, then join before
+                    // asserting. Success after this unlock cannot satisfy the test.
+                    assert_eq!(unsafe { p::pthread_rwlock_unlock(&mut *rw) }, 0);
+                    let reader_rc = reader.join().unwrap();
+                    assert_eq!(unsafe { p::pthread_rwlock_destroy(&mut *rw) }, 0);
+                    if writer_rc != libc::ETIMEDOUT
+                        || before_owner_unlock != Ok(0)
+                        || reader_rc != 0
+                    {
+                        failures.push(format!(
+                            "shared={shared}, clock={clock:?}: writer={writer_rc}, before_owner_unlock={before_owner_unlock:?}, reader={reader_rc}"
+                        ));
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "{}", failures.join("\n"));
+        },
+    );
+}
+
+fn observe_kernel_futex(path: &std::path::Path, address: usize, expected: Option<i32>) -> bool {
+    let until = Instant::now() + Duration::from_secs(2);
+    let mut last_snapshot = String::new();
+    while Instant::now() < until {
+        let snapshot = std::fs::read_to_string(path).expect("read live worker syscall snapshot");
+        let fields: Vec<_> = snapshot.split_whitespace().collect();
+        let hex = |index: usize| {
+            fields
+                .get(index)
+                .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+        };
+        if fields.first().and_then(|value| value.parse::<i64>().ok()) == Some(libc::SYS_futex)
+            && hex(1) == Some(address as u64)
+            && matches!(hex(2).map(|op| op & 0x7f), Some(0 | 9))
+            && expected.is_none_or(|value| hex(3) == Some(u64::from(value as u32)))
+        {
+            return true;
+        }
+        last_snapshot = snapshot;
+        std::thread::yield_now();
+    }
+    eprintln!(
+        "futex observation expired: path={}, address={address:#x}, expected={expected:?}, last={last_snapshot:?}",
+        path.display(),
+    );
+    false
+}
+
+#[test]
+fn rwclock_last_writer_acquisition_transfers_reader_waits() {
+    isolated(
+        "rwclock_last_writer_acquisition_transfers_reader_waits",
+        || {
+            for shared in [false, true] {
+                for clock in [
+                    None,
+                    Some(libc::CLOCK_REALTIME),
+                    Some(libc::CLOCK_MONOTONIC),
+                ] {
+                    let mut rw = lock(shared, true);
+                    // SAFETY: all worker accesses finish before destruction.
+                    assert_eq!(unsafe { p::pthread_rwlock_rdlock(&mut *rw) }, 0);
+                    let address = (&mut *rw as *mut libc::pthread_rwlock_t) as usize;
+                    let (acquired_tx, acquired_rx) = mpsc::channel();
+                    let (release_tx, release_rx) = mpsc::channel();
+                    let writer = std::thread::spawn(move || {
+                        // SAFETY: this worker receives live initialized storage.
+                        let rc = unsafe { p::pthread_rwlock_wrlock(address as *mut _) };
+                        acquired_tx.send(rc).unwrap();
+                        if rc == 0 {
+                            release_rx.recv().unwrap();
+                            // SAFETY: this thread owns the write lock.
+                            assert_eq!(unsafe { p::pthread_rwlock_unlock(address as *mut _) }, 0);
+                        }
+                        rc
+                    });
+                    // SAFETY: native-layout atomic observation only; no state mutation.
+                    let queued = unsafe { &*((address + 8) as *const AtomicI32) };
+                    let until = Instant::now() + Duration::from_secs(2);
+                    while queued.load(Ordering::Acquire) == 0 {
+                        assert!(Instant::now() < until, "writer never registered");
+                        std::thread::yield_now();
+                    }
+                    let (observed_tx, observed_rx) = mpsc::channel();
+                    let (finished_tx, finished_rx) = mpsc::channel();
+                    let reader = std::thread::spawn(move || {
+                        // procfs may expose a different PID namespace from gettid.
+                        let task = std::fs::read_link("/proc/thread-self").unwrap();
+                        let syscall_path = std::path::Path::new("/proc").join(task).join("syscall");
+                        let deadline = clock.map(|clock| (clock, future(clock, 20_000_000_000)));
+                        let mut observed = false;
+                        // SAFETY: the observer reports scheduling and addresses
+                        // only; the production algorithm performs the actual wait.
+                        let rc = unsafe {
+                            p::pthread_rwlock_read_wait_observed_for_tests(
+                                address as *mut _,
+                                deadline,
+                                |word, expected| {
+                                    if !observed {
+                                        observed = true;
+                                        observed_tx
+                                            .send((syscall_path.clone(), word, expected))
+                                            .unwrap();
+                                    }
+                                },
+                            )
+                        };
+                        if rc == 0 {
+                            // SAFETY: this thread owns a read lock.
+                            assert_eq!(unsafe { p::pthread_rwlock_unlock(address as *mut _) }, 0);
+                        }
+                        finished_tx.send(rc).unwrap();
+                        rc
+                    });
+                    let (path, first_word, expected) =
+                        observed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                    let queued_reader_parked =
+                        observe_kernel_futex(&path, first_word, Some(expected));
+                    // SAFETY: release only this thread's original read ownership.
+                    assert_eq!(unsafe { p::pthread_rwlock_unlock(&mut *rw) }, 0);
+                    let acquired = acquired_rx.recv_timeout(Duration::from_secs(2));
+                    // A successful last-writer dequeue must wake the queued reader
+                    // so it can move to the active writer's owner-word wait.
+                    // The syscall retains its historical expected value if the
+                    // writer acquired after the reader entered the owner wait.
+                    let moved_to_owner = observe_kernel_futex(&path, address, None);
+                    release_tx.send(()).unwrap();
+                    let before_rescue = finished_rx.recv_timeout(Duration::from_secs(2));
+                    if before_rescue != Ok(0) {
+                        // SAFETY: cleanup-only wake on a still-live observed futex.
+                        // Its necessity was already recorded as a failure above.
+                        unsafe {
+                            libc::syscall(
+                                libc::SYS_futex,
+                                first_word as *const u32,
+                                libc::FUTEX_WAKE
+                                    | if shared { 0 } else { libc::FUTEX_PRIVATE_FLAG },
+                                i32::MAX,
+                            );
+                        }
+                    }
+                    let writer_rc = writer.join().unwrap();
+                    let reader_rc = reader.join().unwrap();
+                    assert_eq!(queued.load(Ordering::Acquire), 0);
+                    // SAFETY: both workers have joined and every lock is released.
+                    assert_eq!(unsafe { p::pthread_rwlock_destroy(&mut *rw) }, 0);
+                    assert!(queued_reader_parked, "reader never parked before handoff");
+                    assert!(
+                        moved_to_owner,
+                        "last writer did not transfer the reader wait"
+                    );
+                    assert_eq!(acquired, Ok(0));
+                    assert_eq!(
+                        before_rescue,
+                        Ok(0),
+                        "reader needed an external rescue wake"
+                    );
+                    assert_eq!((writer_rc, reader_rc), (0, 0));
+                }
+            }
+        },
+    );
 }
