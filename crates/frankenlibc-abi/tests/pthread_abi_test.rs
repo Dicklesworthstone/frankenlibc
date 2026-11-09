@@ -1763,6 +1763,256 @@ fn barrier_single_thread_wait() {
     }
 }
 
+mod barrier_generations {
+    use super::*;
+    use std::sync::mpsc::{self, Receiver, Sender};
+    use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
+
+    // A synchronization regression must fail within a bounded time even when
+    // the broken implementation strands a waiter. Each child runs one test.
+    fn isolated_child(name: &str) -> bool {
+        if std::env::var("FL_BARRIER_CHILD").as_deref() == Ok(name) {
+            return true;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture", "--test-threads=1"])
+            .env("FL_BARRIER_CHILD", name)
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "barrier child failed: {status}");
+                return false;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let _ = child.wait();
+                panic!("barrier waits did not complete");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn new_barrier(shared: bool, count: u32) -> Box<libc::pthread_barrier_t> {
+        // SAFETY: both opaque objects are valid writable storage; only the
+        // barrier is shared, after initialization and until all users join.
+        unsafe {
+            let mut attr: libc::pthread_barrierattr_t = std::mem::zeroed();
+            let mut barrier: Box<libc::pthread_barrier_t> = Box::new(std::mem::zeroed());
+            assert_eq!(pthread_barrierattr_init(&mut attr), 0);
+            assert_eq!(
+                pthread_barrierattr_setpshared(
+                    &mut attr,
+                    if shared {
+                        libc::PTHREAD_PROCESS_SHARED
+                    } else {
+                        libc::PTHREAD_PROCESS_PRIVATE
+                    },
+                ),
+                0
+            );
+            assert_eq!(
+                pthread_barrier_init(
+                    (&mut *barrier as *mut libc::pthread_barrier_t).cast(),
+                    (&attr as *const libc::pthread_barrierattr_t).cast(),
+                    count,
+                ),
+                0
+            );
+            assert_eq!(pthread_barrierattr_destroy(&mut attr), 0);
+            barrier
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Progress {
+        Paused(PthreadBarrierTestEvent),
+        Returned(c_int),
+    }
+
+    fn paused_wait(
+        address: usize,
+        completing: bool,
+    ) -> (JoinHandle<c_int>, Receiver<Progress>, Sender<()>) {
+        let (progress_tx, progress_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let mut paused = false;
+            // SAFETY: the test retains the barrier until this thread joins.
+            // The observer controls scheduling only; it never changes state.
+            let result = unsafe {
+                pthread_barrier_wait_observed_for_tests(address as *mut c_void, |event| {
+                    let pause_here = if completing {
+                        matches!(event, PthreadBarrierTestEvent::Arrived { last: true, .. })
+                    } else {
+                        matches!(event, PthreadBarrierTestEvent::BeforeWait { .. })
+                    };
+                    if pause_here && !paused {
+                        paused = true;
+                        progress_tx.send(Progress::Paused(event)).unwrap();
+                        resume_rx.recv().unwrap();
+                    }
+                })
+            };
+            progress_tx.send(Progress::Returned(result)).unwrap();
+            result
+        });
+        (thread, progress_rx, resume_tx)
+    }
+
+    fn next_progress(receiver: &Receiver<Progress>) -> Progress {
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("waiter did not reach its next scheduling observation")
+    }
+
+    #[test]
+    fn delayed_notifier_cannot_release_later_cohorts() {
+        if !isolated_child("barrier_generations::delayed_notifier_cannot_release_later_cohorts") {
+            return;
+        }
+        for shared in [false, true] {
+            for initial_phase in [0, u32::MAX] {
+                let mut barrier = new_barrier(shared, 2);
+                let address = (&mut *barrier as *mut libc::pthread_barrier_t) as usize;
+                // SAFETY: no thread has received the initialized barrier yet.
+                unsafe {
+                    pthread_barrier_set_phase_for_tests(address as *mut c_void, initial_phase)
+                };
+
+                let (first, first_progress, first_resume) = paused_wait(address, false);
+                assert_eq!(
+                    next_progress(&first_progress),
+                    Progress::Paused(PthreadBarrierTestEvent::BeforeWait {
+                        phase: initial_phase,
+                    })
+                );
+                let (delayed, delayed_progress, delayed_resume) = paused_wait(address, true);
+                assert_eq!(
+                    next_progress(&delayed_progress),
+                    Progress::Paused(PthreadBarrierTestEvent::Arrived {
+                        phase: initial_phase,
+                        last: true,
+                    })
+                );
+
+                // The first round is complete, but its final caller has not
+                // published any separate wake state. A third caller belongs
+                // to the next round and must take the waiting branch.
+                let (second, second_progress, second_resume) = paused_wait(address, false);
+                let before_delayed_wake = next_progress(&second_progress);
+                // SAFETY: the second round has one arrival; this supplies its
+                // final arrival while the first round's notifier stays paused.
+                let second_serial = unsafe { pthread_barrier_wait(address as *mut c_void) };
+
+                delayed_resume.send(()).unwrap();
+                let first_serial = delayed.join().unwrap();
+                // A delayed first-round notifier must not regress completion
+                // and release a third-round caller before its partner arrives.
+                let (third, third_progress, third_resume) = paused_wait(address, false);
+                let after_delayed_wake = next_progress(&third_progress);
+                // SAFETY: all users retain the initialized barrier.
+                let third_serial = unsafe { pthread_barrier_wait(address as *mut c_void) };
+
+                // Resume and join before making assertions, including on the
+                // old algorithm where the later callers have already returned.
+                first_resume.send(()).unwrap();
+                let _ = second_resume.send(());
+                let _ = third_resume.send(());
+                let results = [
+                    first.join().unwrap(),
+                    second.join().unwrap(),
+                    third.join().unwrap(),
+                ];
+                // SAFETY: every wait has returned and no other user exists.
+                assert_eq!(
+                    unsafe { pthread_barrier_destroy(address as *mut c_void) },
+                    0
+                );
+
+                assert_eq!(results, [0; 3]);
+                assert_eq!(
+                    [first_serial, second_serial, third_serial],
+                    [libc::PTHREAD_BARRIER_SERIAL_THREAD; 3]
+                );
+                assert_eq!(
+                    before_delayed_wake,
+                    Progress::Paused(PthreadBarrierTestEvent::BeforeWait {
+                        phase: initial_phase.wrapping_add(1),
+                    }),
+                    "a later cohort escaped before its partner: shared={shared}, initial_phase={initial_phase}"
+                );
+                assert_eq!(
+                    after_delayed_wake,
+                    Progress::Paused(PthreadBarrierTestEvent::BeforeWait {
+                        phase: initial_phase.wrapping_add(2),
+                    }),
+                    "an old notifier regressed completion: shared={shared}, initial_phase={initial_phase}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reuse_publishes_memory_with_one_serial_return_per_round() {
+        if !isolated_child(
+            "barrier_generations::reuse_publishes_memory_with_one_serial_return_per_round",
+        ) {
+            return;
+        }
+        const THREADS: usize = 4;
+        const ROUNDS: usize = 256;
+        for shared in [false, true] {
+            let mut barrier = new_barrier(shared, THREADS as u32);
+            let address = (&mut *barrier as *mut libc::pthread_barrier_t) as usize;
+            let values = std::array::from_fn::<_, THREADS, _>(|_| AtomicUsize::new(0));
+            let serials = std::array::from_fn::<_, { ROUNDS * 2 }, _>(|_| AtomicUsize::new(0));
+            let failures = AtomicUsize::new(0);
+            std::thread::scope(|scope| {
+                for index in 0..THREADS {
+                    let (values, serials, failures) = (&values, &serials, &failures);
+                    scope.spawn(move || {
+                        for round in 1..=ROUNDS {
+                            values[index].store(round, Ordering::Relaxed);
+                            for half in 0..2 {
+                                // SAFETY: the initialized barrier outlives the
+                                // scope and all concurrent wait invocations.
+                                let result =
+                                    unsafe { pthread_barrier_wait(address as *mut c_void) };
+                                if result == libc::PTHREAD_BARRIER_SERIAL_THREAD {
+                                    serials[(round - 1) * 2 + half].fetch_add(1, Ordering::Relaxed);
+                                } else if result != 0 {
+                                    failures.fetch_add(1, Ordering::Relaxed);
+                                }
+                                if half == 0 {
+                                    for value in values {
+                                        if value.load(Ordering::Relaxed) != round {
+                                            failures.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            // SAFETY: the scope joined every user before destruction.
+            assert_eq!(
+                unsafe { pthread_barrier_destroy(address as *mut c_void) },
+                0
+            );
+            assert_eq!(failures.load(Ordering::Relaxed), 0);
+            assert!(
+                serials
+                    .iter()
+                    .all(|value| value.load(Ordering::Relaxed) == 1)
+            );
+        }
+    }
+}
+
 // ===========================================================================
 // Barrier attributes
 // ===========================================================================

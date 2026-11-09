@@ -7592,7 +7592,6 @@ pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
 //   word 0: magic (AtomicU32, validity sentinel)
 //   word 1: count (total threads needed)
 //   word 2-3: phase_arrived (AtomicU64, phase in upper 32 bits, arrived in lower 32)
-//   word 4: futex_phase (AtomicU32, notification channel for futex wake/wait)
 //
 // The phase and arrival count are packed into a single AtomicU64 so that the
 // last arriving thread can reset the counter and advance the phase in one
@@ -7601,8 +7600,11 @@ pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
 // counter reset and the phase advance, increment the reset counter, read the
 // stale phase, and then exit prematurely when the phase finally advanced.
 //
-// The separate `futex_phase` word mirrors the phase portion and is used
-// solely as the futex notification address (futex requires a 32-bit word).
+// The kernel waits directly on the phase half of that packed word. A separate
+// phase mirror can lag behind a completed round or regress when an earlier
+// notifier resumes late, releasing later callers before their round is full.
+// Every user-space access remains a full-width AtomicU64 operation; only the
+// kernel reads the aligned 32-bit phase subword for its futex comparison.
 // ---------------------------------------------------------------------------
 
 const BARRIER_MAGIC: u32 = 0x4742_4152; // "GBAR"
@@ -7636,8 +7638,6 @@ struct BarrierData {
     count: u32,
     /// Packed: phase (upper 32) | arrived (lower 32).
     phase_arrived: AtomicU64,
-    /// Mirrors the phase portion of `phase_arrived`; used as the futex address.
-    futex_phase: AtomicU32,
 }
 
 fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
@@ -7651,11 +7651,11 @@ fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
     Some(ptr)
 }
 
-fn futex_wait_u32(addr: &AtomicU32, expected: u32, private: bool) -> c_int {
+unsafe fn futex_wait_u32(addr: *const u32, expected: u32, private: bool) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address and null timeout.
     match unsafe {
         raw_syscall::sys_futex(
-            addr as *const AtomicU32 as *const u32,
+            addr,
             libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             expected,
             0, // null timeout
@@ -7671,11 +7671,11 @@ fn futex_wait_u32(addr: &AtomicU32, expected: u32, private: bool) -> c_int {
     }
 }
 
-fn futex_wake_u32(addr: &AtomicU32, count: i32, private: bool) -> c_int {
+unsafe fn futex_wake_u32(addr: *const u32, count: i32, private: bool) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address.
     match unsafe {
         raw_syscall::sys_futex(
-            addr as *const AtomicU32 as *const u32,
+            addr,
             libc::FUTEX_WAKE | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             count as u32,
             0,
@@ -7732,7 +7732,6 @@ pub unsafe extern "C" fn pthread_barrier_init(
         (*data)
             .phase_arrived
             .store(barrier_pack(0, 0), Ordering::Release);
-        (*data).futex_phase.store(0, Ordering::Release);
     }
     0
 }
@@ -7758,6 +7757,52 @@ pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
+    // SAFETY: the public ABI requires a live, initialized barrier. The no-op
+    // observer disappears from this monomorphization.
+    unsafe { barrier_wait_observed(barrier, |_| {}) }
+}
+
+/// Scheduling observations for deterministic barrier interleaving tests.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PthreadBarrierTestEvent {
+    Arrived { phase: u32, last: bool },
+    BeforeWait { phase: u32 },
+}
+
+/// Exercise the production wait algorithm with a caller-controlled schedule.
+///
+/// # Safety
+/// `barrier` must remain live and initialized until every wait has returned.
+/// The observer may pause its caller but must not mutate or destroy the barrier.
+#[doc(hidden)]
+pub unsafe fn pthread_barrier_wait_observed_for_tests(
+    barrier: *mut c_void,
+    observer: impl FnMut(PthreadBarrierTestEvent),
+) -> c_int {
+    // SAFETY: the caller supplies the same barrier lifetime as the public ABI.
+    unsafe { barrier_wait_observed(barrier, observer) }
+}
+
+/// Start a quiescent test barrier near phase wrap without billions of waits.
+///
+/// # Safety
+/// `barrier` must be initialized, with no concurrent or blocked users.
+#[doc(hidden)]
+pub unsafe fn pthread_barrier_set_phase_for_tests(barrier: *mut c_void, phase: u32) {
+    let data = barrier_data_ptr(barrier).expect("aligned test barrier");
+    // SAFETY: the caller owns this initialized barrier exclusively.
+    let bd = unsafe { &*data };
+    assert_eq!(barrier_arrived(bd.phase_arrived.load(Ordering::Relaxed)), 0);
+    bd.phase_arrived
+        .store(barrier_pack(phase, 0), Ordering::Relaxed);
+}
+
+#[inline(always)]
+unsafe fn barrier_wait_observed(
+    barrier: *mut c_void,
+    mut observer: impl FnMut(PthreadBarrierTestEvent),
+) -> c_int {
     let Some(data) = barrier_data_ptr(barrier) else {
         return libc::EINVAL;
     };
@@ -7765,6 +7810,14 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
     let bd = unsafe { &*data };
     let private = bd.magic.load(Ordering::Acquire) != BARRIER_PSHARED_MAGIC;
     let count = bd.count;
+    // Cache the address before publishing completion. The kernel can compare
+    // the phase half without creating mixed-width Rust atomic accesses. Its
+    // offset is one word on little-endian targets and zero on big-endian ones.
+    let phase_word = bd
+        .phase_arrived
+        .as_ptr()
+        .cast::<u32>()
+        .wrapping_add(usize::from(cfg!(target_endian = "little")));
 
     // Atomically increment the arrival count via CAS on the packed u64.
     // This also captures the phase at the time of our arrival.
@@ -7788,9 +7841,12 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    // Update the futex notification word and wake all waiters.
-                    bd.futex_phase.store(new_phase, Ordering::Release);
-                    futex_wake_u32(&bd.futex_phase, i32::MAX, private);
+                    observer(PthreadBarrierTestEvent::Arrived { phase, last: true });
+                    // The CAS already published the phase that the kernel
+                    // compares. A delayed wake cannot overwrite a newer one.
+                    // SAFETY: phase_word is the aligned phase subword of the
+                    // caller-owned barrier, retained until all waits return.
+                    unsafe { futex_wake_u32(phase_word, i32::MAX, private) };
                     return PTHREAD_BARRIER_SERIAL_THREAD;
                 }
                 Err(actual) => {
@@ -7810,6 +7866,7 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
             ) {
                 Ok(_) => {
                     my_phase = phase;
+                    observer(PthreadBarrierTestEvent::Arrived { phase, last: false });
                     break;
                 }
                 Err(actual) => {
@@ -7822,11 +7879,14 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
 
     // Wait until the phase advances past our arrival phase.
     loop {
-        let fp = bd.futex_phase.load(Ordering::Acquire);
-        if fp != my_phase {
+        let phase = barrier_phase(bd.phase_arrived.load(Ordering::Acquire));
+        if phase != my_phase {
             break;
         }
-        futex_wait_u32(&bd.futex_phase, my_phase, private);
+        observer(PthreadBarrierTestEvent::BeforeWait { phase: my_phase });
+        // SAFETY: phase_word is aligned and live. If completion races this
+        // syscall, the kernel observes the changed phase and refuses to sleep.
+        unsafe { futex_wait_u32(phase_word, my_phase, private) };
     }
     0
 }
