@@ -129,6 +129,84 @@ fn nss_files_group_lookup_packs_members_and_preserves_miss_errnop() {
 }
 
 #[test]
+fn nss_files_group_erange_errno_tracks_reader_and_member_vector() {
+    with_group_file(b"root:x:0:\n", || {
+        let mut group: libc::group = unsafe { std::mem::zeroed() };
+        let mut words = [0usize; 32];
+        let pointer_size = std::mem::size_of::<*mut c_char>();
+        // SAFETY: the aligned allocation has ample space for every tested
+        // offset; all result and error slots remain live throughout the call.
+        unsafe {
+            for offset in 0..pointer_size {
+                let buffer = words.as_mut_ptr().cast::<c_char>().add(offset);
+                // GNU reserves two member pointers after the raw line's NUL.
+                let required =
+                    (11 + offset).next_multiple_of(pointer_size) - offset + 2 * pointer_size;
+                for capacity in [0, 1, 2, 11, 12, required - 1, required, 64] {
+                    for kind in 0..5 {
+                        if kind == 4 {
+                            assert_eq!(_nss_files_setgrent(0), 1);
+                        }
+                        let mut err = 717;
+                        *__errno_location() = 718;
+                        let status = match kind {
+                            0 | 1 => _nss_files_getgrnam_r(
+                                if kind == 0 { c"root" } else { c"absent" }.as_ptr(),
+                                (&raw mut group).cast(),
+                                buffer,
+                                capacity,
+                                &mut err,
+                            ),
+                            2 | 3 => _nss_files_getgrgid_r(
+                                if kind == 2 { 0 } else { libc::gid_t::MAX },
+                                (&raw mut group).cast(),
+                                buffer,
+                                capacity,
+                                &mut err,
+                            ),
+                            _ => _nss_files_getgrent_r(
+                                (&raw mut group).cast(),
+                                buffer,
+                                capacity,
+                                &mut err,
+                            ),
+                        };
+                        let actual_errno = *__errno_location();
+                        let expected = if capacity < required {
+                            (
+                                -2,
+                                libc::ERANGE,
+                                if capacity < 2 { 718 } else { libc::ERANGE },
+                            )
+                        } else {
+                            (if kind == 1 || kind == 3 { 0 } else { 1 }, 717, 718)
+                        };
+                        assert_eq!(
+                            (status, err, actual_errno),
+                            expected,
+                            "group kind={kind} capacity={capacity} offset={offset}"
+                        );
+                    }
+                }
+            }
+            *__errno_location() = 718;
+            assert_eq!(
+                _nss_files_getgrgid_r(
+                    0,
+                    (&raw mut group).cast(),
+                    words.as_mut_ptr().cast(),
+                    1,
+                    __errno_location()
+                ),
+                -2
+            );
+            assert_eq!(*__errno_location(), libc::ERANGE);
+            _nss_files_endgrent();
+        }
+    });
+}
+
+#[test]
 fn nss_files_group_enumeration_retries_and_rewinds() {
     with_group_file(
         b"# ignored\nmalformed\nstaff:x:3100:alice,bob\nempty:x:3101:\n",
@@ -218,10 +296,17 @@ fn nss_files_group_enumeration_preserves_nis_fields_and_scanned_lines() {
                 );
             }
             assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), b"u");
-            for (capacity, expected) in [(1, -2), (512, 0), (1, 0)] {
+            for (capacity, expected) in [(1, -2), (512, 0), (0, -2), (1, -2), (2, -2), (3, 0)] {
+                err = 717;
+                *__errno_location() = 718;
                 assert_eq!(
                     _nss_files_getgrent_r((&raw mut group).cast(), buffer, capacity, &mut err),
                     expected
+                );
+                assert_eq!(err, if expected == -2 { libc::ERANGE } else { 717 });
+                assert_eq!(
+                    *__errno_location(),
+                    if capacity == 2 { libc::ERANGE } else { 718 }
                 );
             }
             _nss_files_endgrent();

@@ -163,6 +163,80 @@ fn nss_files_passwd_lookup_returns_records_and_preserves_miss_errnop() {
 }
 
 #[test]
+fn nss_files_passwd_erange_errno_tracks_reader_stage() {
+    with_passwd_file(b"root:x:0:0:root:/root:/bin/bash\n", || {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut bytes = [0u8; 128];
+        // SAFETY: all record, string and error slots are live caller storage.
+        unsafe {
+            for offset in [0, 1, 7] {
+                let buffer = bytes.as_mut_ptr().add(offset).cast();
+                for capacity in [0, 1, 2, 31, 32, 33, 34, 64] {
+                    for kind in 0..5 {
+                        if kind == 4 {
+                            assert_eq!(_nss_files_setpwent(0), 1);
+                        }
+                        let mut err = 717;
+                        *__errno_location() = 718;
+                        let status = match kind {
+                            0 | 1 => _nss_files_getpwnam_r(
+                                if kind == 0 { c"root" } else { c"absent" }.as_ptr(),
+                                (&raw mut pwd).cast(),
+                                buffer,
+                                capacity,
+                                &mut err,
+                            ),
+                            2 | 3 => _nss_files_getpwuid_r(
+                                if kind == 2 { 0 } else { libc::uid_t::MAX },
+                                (&raw mut pwd).cast(),
+                                buffer,
+                                capacity,
+                                &mut err,
+                            ),
+                            _ => _nss_files_getpwent_r(
+                                (&raw mut pwd).cast(),
+                                buffer,
+                                capacity,
+                                &mut err,
+                            ),
+                        };
+                        let actual_errno = *__errno_location();
+                        let expected = if capacity < 34 {
+                            (
+                                -2,
+                                libc::ERANGE,
+                                if capacity < 2 { 718 } else { libc::ERANGE },
+                            )
+                        } else {
+                            (if kind == 1 || kind == 3 { 0 } else { 1 }, 717, 718)
+                        };
+                        assert_eq!(
+                            (status, err, actual_errno),
+                            expected,
+                            "passwd kind={kind} capacity={capacity} offset={offset}"
+                        );
+                    }
+                }
+            }
+            // Publishing errnop must still work when it aliases global errno.
+            *__errno_location() = 718;
+            assert_eq!(
+                _nss_files_getpwuid_r(
+                    0,
+                    (&raw mut pwd).cast(),
+                    bytes.as_mut_ptr().cast(),
+                    1,
+                    __errno_location()
+                ),
+                -2
+            );
+            assert_eq!(*__errno_location(), libc::ERANGE);
+            _nss_files_endpwent();
+        }
+    });
+}
+
+#[test]
 fn nss_files_passwd_enumeration_retries_and_rewinds() {
     with_passwd_file(FIXTURE, || {
         let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
@@ -281,7 +355,9 @@ fn nss_files_passwd_enumeration_preserves_nis_null_fields_and_scanned_lines() {
                 );
             }
             assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"u");
-            for (capacity, expected) in [(1, -2), (512, 0), (1, 0)] {
+            for (capacity, expected) in [(1, -2), (512, 0), (0, -2), (1, -2), (2, -2), (3, 0)] {
+                err = 717;
+                *__errno_location() = 718;
                 assert_eq!(
                     _nss_files_getpwent_r(
                         (&raw mut pwd).cast(),
@@ -290,7 +366,12 @@ fn nss_files_passwd_enumeration_preserves_nis_null_fields_and_scanned_lines() {
                         &mut err,
                     ),
                     expected,
-                    "trailing comments are checked once, then EOF stays consumed"
+                    "consumed EOF still requires the files reader's minimum buffer"
+                );
+                assert_eq!(err, if expected == -2 { libc::ERANGE } else { 717 });
+                assert_eq!(
+                    *__errno_location(),
+                    if capacity == 2 { libc::ERANGE } else { 718 }
                 );
             }
             _nss_files_endpwent();

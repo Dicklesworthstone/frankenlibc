@@ -11958,14 +11958,29 @@ unsafe fn nss_finish_plain_lookup(rc: c_int, resolved: *mut c_void, errnop: *mut
 /// nsswitch.conf can assign different fallback actions to these statuses.
 unsafe fn nss_identity_lookup<T>(
     errnop: *mut c_int,
+    buffer: *mut c_char,
+    buflen: usize,
     lookup: impl FnOnce(*mut *mut T) -> c_int,
 ) -> c_int {
     // SAFETY: errno is the current thread's initialized cell.
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let capacity = tracked_output_capacity(buffer, buflen);
     let mut resolved = std::ptr::null_mut();
-    let rc = lookup(&mut resolved);
-    // Restore before publishing errnop, which is allowed to alias errno.
-    unsafe { set_abi_errno(saved_errno) };
+    let mut rc = lookup(&mut resolved);
+    // GNU's files reader checks its minimum buffer size before checking EOF.
+    // A cached empty file or exhausted enumeration still needs that check.
+    if rc == 0 && capacity < 3 {
+        rc = libc::ERANGE;
+    }
+    // The initial size check (< 2 bytes) only updates errnop. Once the line
+    // reader or group pointer parser runs, ERANGE also becomes global errno.
+    // Publish errno first because the caller's errnop may alias its cell.
+    let reported_errno = if rc == libc::ERANGE && capacity >= 2 {
+        libc::ERANGE
+    } else {
+        saved_errno
+    };
+    unsafe { set_abi_errno(reported_errno) };
     if rc == 0 {
         return if resolved.is_null() {
             NSS_STATUS_NOTFOUND
@@ -12191,7 +12206,7 @@ pub unsafe extern "C" fn _nss_files_getpwent_r(
 ) -> c_int {
     // SAFETY: the NSS ABI supplies a passwd and caller-owned string storage.
     unsafe {
-        nss_identity_lookup(errnop, |resolved| {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
             crate::pwd_abi::files_getpwent_r(result.cast(), buffer, buflen, resolved)
         })
     }
@@ -12207,7 +12222,7 @@ pub unsafe extern "C" fn _nss_files_getgrent_r(
 ) -> c_int {
     // SAFETY: the NSS ABI supplies a group and caller-owned string storage.
     unsafe {
-        nss_identity_lookup(errnop, |resolved| {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
             crate::grp_abi::files_getgrent_r(result.cast(), buffer, buflen, resolved)
         })
     }
@@ -12314,7 +12329,7 @@ pub unsafe extern "C" fn _nss_files_getpwnam_r(
 ) -> c_int {
     // SAFETY: forward the NSS caller's name, passwd and bounded output buffer.
     unsafe {
-        nss_identity_lookup(errnop, |resolved| {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
             crate::pwd_abi::files_getpwnam_r(name, result.cast(), buffer, buflen, resolved)
         })
     }
@@ -12331,7 +12346,7 @@ pub unsafe extern "C" fn _nss_files_getpwuid_r(
 ) -> c_int {
     // SAFETY: forward the NSS caller's passwd and bounded output buffer.
     unsafe {
-        nss_identity_lookup(errnop, |resolved| {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
             crate::pwd_abi::files_getpwuid_r(uid, result.cast(), buffer, buflen, resolved)
         })
     }
@@ -12348,7 +12363,7 @@ pub unsafe extern "C" fn _nss_files_getgrnam_r(
 ) -> c_int {
     // SAFETY: forward the NSS caller's name, group and bounded output buffer.
     unsafe {
-        nss_identity_lookup(errnop, |resolved| {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
             crate::grp_abi::files_getgrnam_r(name, result.cast(), buffer, buflen, resolved)
         })
     }
@@ -12365,7 +12380,7 @@ pub unsafe extern "C" fn _nss_files_getgrgid_r(
 ) -> c_int {
     // SAFETY: forward the NSS caller's group and bounded output buffer.
     unsafe {
-        nss_identity_lookup(errnop, |resolved| {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
             crate::grp_abi::files_getgrgid_r(gid, result.cast(), buffer, buflen, resolved)
         })
     }
