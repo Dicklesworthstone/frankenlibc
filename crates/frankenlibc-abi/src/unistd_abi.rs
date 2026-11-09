@@ -11699,13 +11699,25 @@ macro_rules! nss_files_end_stub {
 
 nss_files_end_stub!(_nss_files_endaliasent);
 nss_files_end_stub!(_nss_files_endetherent);
-nss_files_end_stub!(_nss_files_endgrent);
 nss_files_end_stub!(_nss_files_endhostent);
 nss_files_end_stub!(_nss_files_endnetent);
-nss_files_end_stub!(_nss_files_endpwent);
 nss_files_end_stub!(_nss_files_endrpcent);
 nss_files_end_stub!(_nss_files_endsgent);
 nss_files_end_stub!(_nss_files_endspent);
+
+/// Close the native files passwd cursor without entering other NSS modules.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endpwent() -> c_int {
+    crate::pwd_abi::files_endpwent();
+    NSS_STATUS_SUCCESS
+}
+
+/// Close the native files group cursor without entering other NSS modules.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endgrent() -> c_int {
+    crate::grp_abi::files_endgrent();
+    NSS_STATUS_SUCCESS
+}
 
 /// `_nss_files_endprotoent()` — close/reset protocol database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -11759,13 +11771,41 @@ macro_rules! nss_files_set_stayopen_stub {
 
 nss_files_set_void_stub!(_nss_files_setaliasent);
 nss_files_set_stayopen_stub!(_nss_files_setetherent);
-nss_files_set_stayopen_stub!(_nss_files_setgrent);
 nss_files_set_stayopen_stub!(_nss_files_sethostent);
 nss_files_set_stayopen_stub!(_nss_files_setnetent);
-nss_files_set_stayopen_stub!(_nss_files_setpwent);
 nss_files_set_stayopen_stub!(_nss_files_setrpcent);
 nss_files_set_stayopen_stub!(_nss_files_setsgent);
 nss_files_set_stayopen_stub!(_nss_files_setspent);
+
+fn nss_identity_setent(open: fn() -> c_int) -> c_int {
+    // SAFETY: the errno accessor returns the current thread's writable cell.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let rc = open();
+    if rc == 0 {
+        // Successful cache population must not leak an internal probe's errno.
+        unsafe { set_abi_errno(saved_errno) };
+        NSS_STATUS_SUCCESS
+    } else {
+        unsafe { set_abi_errno(rc) };
+        if rc == libc::EAGAIN {
+            NSS_STATUS_TRYAGAIN
+        } else {
+            NSS_STATUS_UNAVAIL
+        }
+    }
+}
+
+/// Rewind the files passwd database; report an unavailable backing file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setpwent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(crate::pwd_abi::files_setpwent)
+}
+
+/// Rewind the files group database; report an unavailable backing file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setgrent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(crate::grp_abi::files_setgrent)
+}
 
 /// `_nss_files_setprotoent(stayopen)` — reset protocol database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -11910,6 +11950,35 @@ unsafe fn nss_finish_plain_lookup(rc: c_int, resolved: *mut c_void, errnop: *mut
             unsafe { nss_set_errnop(errnop, code) };
             NSS_STATUS_UNAVAIL
         }
+    }
+}
+
+/// The files identity providers report errors through `errnop`, preserving it
+/// on success and ordinary misses. A missing file is UNAVAIL, not NOTFOUND:
+/// nsswitch.conf can assign different fallback actions to these statuses.
+unsafe fn nss_identity_lookup<T>(
+    errnop: *mut c_int,
+    lookup: impl FnOnce(*mut *mut T) -> c_int,
+) -> c_int {
+    // SAFETY: errno is the current thread's initialized cell.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let mut resolved = std::ptr::null_mut();
+    let rc = lookup(&mut resolved);
+    // Restore before publishing errnop, which is allowed to alias errno.
+    unsafe { set_abi_errno(saved_errno) };
+    if rc == 0 {
+        return if resolved.is_null() {
+            NSS_STATUS_NOTFOUND
+        } else {
+            NSS_STATUS_SUCCESS
+        };
+    }
+    // SAFETY: the NSS caller supplies a writable error slot when non-null.
+    unsafe { nss_set_errnop(errnop, rc) };
+    if rc == libc::ERANGE || rc == libc::EAGAIN {
+        NSS_STATUS_TRYAGAIN
+    } else {
+        NSS_STATUS_UNAVAIL
     }
 }
 
@@ -12105,14 +12174,44 @@ macro_rules! nss_files_get_by_int_stub {
     };
 }
 
-// 12 plain getent_r stubs.
+// Remaining unsupported plain getent_r providers.
 nss_files_get_ent_stub!(_nss_files_getaliasent_r);
 nss_files_get_ent_stub!(_nss_files_getetherent_r);
-nss_files_get_ent_stub!(_nss_files_getgrent_r);
-nss_files_get_ent_stub!(_nss_files_getpwent_r);
 nss_files_get_ent_stub!(_nss_files_getrpcent_r);
 nss_files_get_ent_stub!(_nss_files_getsgent_r);
 nss_files_get_ent_stub!(_nss_files_getspent_r);
+
+/// Enumerate native passwd records, retaining the current record on ERANGE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getpwent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: the NSS ABI supplies a passwd and caller-owned string storage.
+    unsafe {
+        nss_identity_lookup(errnop, |resolved| {
+            crate::pwd_abi::files_getpwent_r(result.cast(), buffer, buflen, resolved)
+        })
+    }
+}
+
+/// Enumerate native group records, retaining the current record on ERANGE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getgrent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: the NSS ABI supplies a group and caller-owned string storage.
+    unsafe {
+        nss_identity_lookup(errnop, |resolved| {
+            crate::grp_abi::files_getgrent_r(result.cast(), buffer, buflen, resolved)
+        })
+    }
+}
 
 /// `_nss_files_getprotoent_r(*result, *buf, buflen, *errnop)` —
 /// protocol database iteration through the native /etc/protocols backend.
@@ -12192,10 +12291,8 @@ pub unsafe extern "C" fn _nss_files_getnetent_r(
 // dereference it).
 nss_files_get_ent_stub!(_nss_files_getnetgrent_r);
 
-// 9 single-key string lookup stubs.
+// Remaining unsupported single-key string providers.
 nss_files_get_by_str_stub!(_nss_files_getaliasbyname_r);
-nss_files_get_by_str_stub!(_nss_files_getgrnam_r);
-nss_files_get_by_str_stub!(_nss_files_getpwnam_r);
 nss_files_get_by_str_stub!(_nss_files_getrpcbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getsgnam_r);
 nss_files_get_by_str_stub!(_nss_files_getspnam_r);
@@ -12203,10 +12300,76 @@ nss_files_get_by_str_stub!(_nss_files_getspnam_r);
 nss_files_get_by_str_stub!(_nss_files_gethostton_r);
 nss_files_get_by_str_stub!(_nss_files_getntohost_r);
 
-// 4 single-int lookup stubs (gid_t / uid_t / int).
-nss_files_get_by_int_stub!(_nss_files_getgrgid_r, libc::gid_t);
-nss_files_get_by_int_stub!(_nss_files_getpwuid_r, libc::uid_t);
+// Remaining unsupported single-int provider.
 nss_files_get_by_int_stub!(_nss_files_getrpcbynumber_r, c_int);
+
+/// Resolve a login name from the files source, independent of nsswitch.conf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getpwnam_r(
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: forward the NSS caller's name, passwd and bounded output buffer.
+    unsafe {
+        nss_identity_lookup(errnop, |resolved| {
+            crate::pwd_abi::files_getpwnam_r(name, result.cast(), buffer, buflen, resolved)
+        })
+    }
+}
+
+/// Resolve a uid from the native files source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getpwuid_r(
+    uid: libc::uid_t,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: forward the NSS caller's passwd and bounded output buffer.
+    unsafe {
+        nss_identity_lookup(errnop, |resolved| {
+            crate::pwd_abi::files_getpwuid_r(uid, result.cast(), buffer, buflen, resolved)
+        })
+    }
+}
+
+/// Resolve a group name from the files source, independent of nsswitch.conf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getgrnam_r(
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: forward the NSS caller's name, group and bounded output buffer.
+    unsafe {
+        nss_identity_lookup(errnop, |resolved| {
+            crate::grp_abi::files_getgrnam_r(name, result.cast(), buffer, buflen, resolved)
+        })
+    }
+}
+
+/// Resolve a gid from the native files source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getgrgid_r(
+    gid: libc::gid_t,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: forward the NSS caller's group and bounded output buffer.
+    unsafe {
+        nss_identity_lookup(errnop, |resolved| {
+            crate::grp_abi::files_getgrgid_r(gid, result.cast(), buffer, buflen, resolved)
+        })
+    }
+}
 
 /// `_nss_files_getprotobyname_r(name, *result, *buf, buflen,
 /// *errnop)` — protocol lookup through the native /etc/protocols backend.

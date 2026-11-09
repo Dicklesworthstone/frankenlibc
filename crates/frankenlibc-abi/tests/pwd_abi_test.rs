@@ -15,6 +15,10 @@ use frankenlibc_abi::malloc_abi::{free, malloc, malloc_known_remaining_for_tests
 use frankenlibc_abi::pwd_abi::{
     endpwent, getpwent, getpwnam, getpwnam_r, getpwuid, getpwuid_r, setpwent,
 };
+use frankenlibc_abi::unistd_abi::{
+    _nss_files_endpwent, _nss_files_getpwent_r, _nss_files_getpwnam_r, _nss_files_getpwuid_r,
+    _nss_files_setpwent,
+};
 use frankenlibc_core::errno;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -92,6 +96,246 @@ fn with_passwd_path(path: &std::path::Path, f: impl FnOnce()) {
 
 const FIXTURE: &[u8] =
     b"root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/sh\nbob:x:1001:1001:Bob:/home/bob:/bin/zsh\n";
+
+#[test]
+fn nss_files_passwd_lookup_returns_records_and_preserves_miss_errnop() {
+    with_passwd_file(FIXTURE, || {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buffer = [0u8; 512];
+        let mut err = 717;
+        // SAFETY: each output is writable and the buffer remains live while
+        // its borrowed passwd strings are inspected.
+        unsafe {
+            assert_eq!(
+                _nss_files_getpwnam_r(
+                    c"alice".as_ptr(),
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(err, 717);
+            assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"alice");
+            assert_eq!(pwd.pw_uid, 1000);
+            assert_eq!(CStr::from_ptr(pwd.pw_dir).to_bytes(), b"/home/alice");
+            assert_eq!(
+                _nss_files_getpwuid_r(
+                    1001,
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(err, 717);
+            assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"bob");
+            assert_eq!(
+                _nss_files_getpwnam_r(
+                    c"absent".as_ptr(),
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                0
+            );
+            assert_eq!(err, 717, "a plain miss must not manufacture ENOENT");
+            buffer.fill(0xa5);
+            assert_eq!(
+                _nss_files_getpwuid_r(
+                    9999,
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    1,
+                    &mut err,
+                ),
+                -2,
+                "scanned records can require ERANGE even before a key matches"
+            );
+            assert_eq!(err, libc::ERANGE);
+            assert!(buffer.iter().all(|&byte| byte == 0xa5));
+            _nss_files_endpwent();
+        }
+    });
+}
+
+#[test]
+fn nss_files_passwd_enumeration_retries_and_rewinds() {
+    with_passwd_file(FIXTURE, || {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buffer = [0u8; 512];
+        let mut err = 717;
+        // SAFETY: result, buffer and errno pointers are live writable storage.
+        unsafe {
+            assert_eq!(_nss_files_setpwent(0), 1);
+            assert_eq!(
+                _nss_files_getpwent_r(
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    1,
+                    &mut err,
+                ),
+                -2
+            );
+            assert_eq!(err, libc::ERANGE);
+            assert_eq!(
+                _nss_files_getpwent_r(
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    33,
+                    &mut err,
+                ),
+                -2,
+                "the first raw passwd record requires 34 bytes, not just its packed strings"
+            );
+            for name in [b"root".as_slice(), b"alice", b"bob"] {
+                err = 717;
+                assert_eq!(
+                    _nss_files_getpwent_r(
+                        (&raw mut pwd).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        if name == b"root" { 34 } else { buffer.len() },
+                        &mut err,
+                    ),
+                    1
+                );
+                assert_eq!(err, 717);
+                assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), name);
+            }
+            assert_eq!(
+                _nss_files_getpwent_r(
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                0
+            );
+            assert_eq!(err, 717, "EOF is not a backend I/O error");
+            assert_eq!(_nss_files_setpwent(1), 1);
+            assert_eq!(
+                _nss_files_getpwent_r(
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"root");
+            assert_eq!(_nss_files_endpwent(), 1);
+            assert_eq!(
+                _nss_files_getpwent_r(
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"root");
+            _nss_files_endpwent();
+        }
+    });
+}
+
+#[test]
+fn nss_files_passwd_enumeration_preserves_nis_null_fields_and_scanned_lines() {
+    let records = b"+only\n# a long skipped comment\nu:x:7:8:g:d:s\n# tail\n";
+    with_passwd_file(records, || {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buffer = [0u8; 512];
+        let mut err = 717;
+        // SAFETY: all results stay within the live caller buffer.
+        unsafe {
+            assert_eq!(_nss_files_setpwent(0), 1);
+            for (capacity, expected) in [(7, -2), (8, 1)] {
+                assert_eq!(
+                    _nss_files_getpwent_r(
+                        (&raw mut pwd).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        capacity,
+                        &mut err,
+                    ),
+                    expected
+                );
+            }
+            assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"+only");
+            assert!(pwd.pw_passwd.is_null());
+            assert!(pwd.pw_gecos.is_null());
+            assert!(pwd.pw_dir.is_null());
+            assert!(pwd.pw_shell.is_null());
+            for (capacity, expected) in [(16, -2), (512, 1)] {
+                assert_eq!(
+                    _nss_files_getpwent_r(
+                        (&raw mut pwd).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        capacity,
+                        &mut err,
+                    ),
+                    expected,
+                    "even skipped lines must fit the files parser's input buffer"
+                );
+            }
+            assert_eq!(CStr::from_ptr(pwd.pw_name).to_bytes(), b"u");
+            for (capacity, expected) in [(1, -2), (512, 0), (1, 0)] {
+                assert_eq!(
+                    _nss_files_getpwent_r(
+                        (&raw mut pwd).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        capacity,
+                        &mut err,
+                    ),
+                    expected,
+                    "trailing comments are checked once, then EOF stays consumed"
+                );
+            }
+            _nss_files_endpwent();
+        }
+    });
+}
+
+#[test]
+fn nss_files_passwd_reports_unavailable_backend_separately_from_miss() {
+    let path = temp_passwd_path();
+    assert!(!path.exists());
+    with_passwd_path(&path, || {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buffer = [0u8; 512];
+        let mut err = 717;
+        // SAFETY: output pointers are valid, and the fixture deliberately
+        // names a nonexistent private file, never a system database.
+        unsafe {
+            assert_eq!(_nss_files_setpwent(0), -1);
+            assert_eq!(
+                _nss_files_getpwnam_r(
+                    c"root".as_ptr(),
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                -1
+            );
+            assert_eq!(err, libc::ENOENT);
+            err = 717;
+            assert_eq!(
+                _nss_files_getpwent_r(
+                    (&raw mut pwd).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                -1
+            );
+            assert_eq!(err, libc::ENOENT);
+            _nss_files_endpwent();
+        }
+    });
+}
 
 unsafe fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
     assert!(len > 0);

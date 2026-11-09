@@ -14,6 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::grp_abi::*;
 use frankenlibc_abi::malloc_abi::{free, malloc, malloc_known_remaining_for_tests};
+use frankenlibc_abi::unistd_abi::{
+    _nss_files_endgrent, _nss_files_getgrent_r, _nss_files_getgrgid_r, _nss_files_getgrnam_r,
+    _nss_files_setgrent,
+};
 use frankenlibc_core::errno;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -51,6 +55,216 @@ fn with_group_file(content: &[u8], f: impl FnOnce()) {
 fn with_group_lock<T>(f: impl FnOnce() -> T) -> T {
     let _guard = GROUP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()
+}
+
+#[test]
+fn nss_files_group_lookup_packs_members_and_preserves_miss_errnop() {
+    with_group_file(b"staff:x:3100:alice,bob\nempty:x:3101:\n", || {
+        let mut group: libc::group = unsafe { std::mem::zeroed() };
+        let mut buffer = [0u8; 513];
+        let mut err = 717;
+        // SAFETY: writable caller storage, deliberately using an unaligned
+        // byte-buffer base to exercise alignment of the member-pointer array.
+        unsafe {
+            assert_eq!(
+                _nss_files_getgrnam_r(
+                    c"staff".as_ptr(),
+                    (&raw mut group).cast(),
+                    buffer.as_mut_ptr().add(1).cast(),
+                    buffer.len() - 1,
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(err, 717);
+            assert_eq!(group.gr_gid, 3100);
+            assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), b"staff");
+            assert_eq!(CStr::from_ptr(*group.gr_mem).to_bytes(), b"alice");
+            assert_eq!(CStr::from_ptr(*group.gr_mem.add(1)).to_bytes(), b"bob");
+            assert!((*group.gr_mem.add(2)).is_null());
+            assert_eq!(
+                (group.gr_mem as usize) % std::mem::align_of::<*mut c_char>(),
+                0
+            );
+            assert_eq!(
+                _nss_files_getgrgid_r(
+                    3101,
+                    (&raw mut group).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(err, 717);
+            assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), b"empty");
+            assert!((*group.gr_mem).is_null());
+            assert_eq!(
+                _nss_files_getgrnam_r(
+                    c"absent".as_ptr(),
+                    (&raw mut group).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                0
+            );
+            assert_eq!(err, 717);
+            buffer.fill(0xa5);
+            assert_eq!(
+                _nss_files_getgrgid_r(
+                    9999,
+                    (&raw mut group).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    1,
+                    &mut err,
+                ),
+                -2
+            );
+            assert_eq!(err, libc::ERANGE);
+            assert!(buffer.iter().all(|&byte| byte == 0xa5));
+            _nss_files_endgrent();
+        }
+    });
+}
+
+#[test]
+fn nss_files_group_enumeration_retries_and_rewinds() {
+    with_group_file(
+        b"# ignored\nmalformed\nstaff:x:3100:alice,bob\nempty:x:3101:\n",
+        || {
+            let mut group: libc::group = unsafe { std::mem::zeroed() };
+            let mut buffer = [0u8; 512];
+            let mut err = 717;
+            // SAFETY: result, byte buffer and errno pointers are writable.
+            unsafe {
+                assert_eq!(_nss_files_setgrent(0), 1);
+                assert_eq!(
+                    _nss_files_getgrent_r(
+                        (&raw mut group).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        1,
+                        &mut err,
+                    ),
+                    -2
+                );
+                assert_eq!(err, libc::ERANGE);
+                for name in [b"staff".as_slice(), b"empty"] {
+                    err = 717;
+                    assert_eq!(
+                        _nss_files_getgrent_r(
+                            (&raw mut group).cast(),
+                            buffer.as_mut_ptr().cast(),
+                            buffer.len(),
+                            &mut err,
+                        ),
+                        1
+                    );
+                    assert_eq!(err, 717);
+                    assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), name);
+                }
+                assert_eq!(
+                    _nss_files_getgrent_r(
+                        (&raw mut group).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut err,
+                    ),
+                    0
+                );
+                assert_eq!(err, 717, "EOF must preserve the caller's errnop");
+                assert_eq!(_nss_files_setgrent(1), 1);
+                assert_eq!(
+                    _nss_files_getgrent_r(
+                        (&raw mut group).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut err,
+                    ),
+                    1
+                );
+                assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), b"staff");
+                assert_eq!(_nss_files_endgrent(), 1);
+            }
+        },
+    );
+}
+
+#[test]
+fn nss_files_group_enumeration_preserves_nis_fields_and_scanned_lines() {
+    let records = b"+only\n# a long skipped comment exceeding 24 bytes\nu:x:7:\n# tail\n";
+    with_group_file(records, || {
+        let mut group: libc::group = unsafe { std::mem::zeroed() };
+        let mut words = [0usize; 64];
+        let buffer = words.as_mut_ptr().cast::<c_char>();
+        let mut err = 717;
+        // SAFETY: `words` gives a pointer-aligned, live writable byte buffer.
+        unsafe {
+            assert_eq!(_nss_files_setgrent(0), 1);
+            for (capacity, expected) in [(23, -2), (24, 1)] {
+                assert_eq!(
+                    _nss_files_getgrent_r((&raw mut group).cast(), buffer, capacity, &mut err),
+                    expected
+                );
+            }
+            assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), b"+only");
+            assert!(group.gr_passwd.is_null());
+            assert!(!group.gr_mem.is_null());
+            assert!((*group.gr_mem).is_null());
+            for (capacity, expected) in [(24, -2), (512, 1)] {
+                assert_eq!(
+                    _nss_files_getgrent_r((&raw mut group).cast(), buffer, capacity, &mut err),
+                    expected
+                );
+            }
+            assert_eq!(CStr::from_ptr(group.gr_name).to_bytes(), b"u");
+            for (capacity, expected) in [(1, -2), (512, 0), (1, 0)] {
+                assert_eq!(
+                    _nss_files_getgrent_r((&raw mut group).cast(), buffer, capacity, &mut err),
+                    expected
+                );
+            }
+            _nss_files_endgrent();
+        }
+    });
+}
+
+#[test]
+fn nss_files_group_reports_unavailable_backend_separately_from_miss() {
+    let path = temp_group_path();
+    assert!(!path.exists());
+    with_group_path(&path, || {
+        let mut group: libc::group = unsafe { std::mem::zeroed() };
+        let mut buffer = [0u8; 512];
+        let mut err = 717;
+        // SAFETY: fixture path is private and all result slots are writable.
+        unsafe {
+            assert_eq!(_nss_files_setgrent(0), -1);
+            assert_eq!(
+                _nss_files_getgrnam_r(
+                    c"root".as_ptr(),
+                    (&raw mut group).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                -1
+            );
+            assert_eq!(err, libc::ENOENT);
+            err = 717;
+            assert_eq!(
+                _nss_files_getgrent_r(
+                    (&raw mut group).cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                -1
+            );
+            assert_eq!(err, libc::ENOENT);
+            _nss_files_endgrent();
+        }
+    });
 }
 
 unsafe fn tracked_zeroed_bytes(len: usize) -> *mut c_void {

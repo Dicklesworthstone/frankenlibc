@@ -52,6 +52,9 @@ fn effective_buffer_len(ptr: *const c_char, requested: libc::size_t) -> libc::si
 }
 
 fn passwd_buffer_needed(entry: &frankenlibc_core::pwd::Passwd) -> Option<usize> {
+    if entry.nis_compat_null_fields {
+        return entry.pw_name.len().checked_add(1);
+    }
     entry
         .pw_name
         .len()
@@ -107,11 +110,17 @@ struct PwdStorage {
     entries_generation: u64,
     /// Parsed entries for iteration.
     entries: Vec<frankenlibc_core::pwd::Passwd>,
+    /// Physical line ends corresponding to `entries`, including skipped lines
+    /// before each record. Reentrant files enumeration sizes the source line,
+    /// not only the packed string fields.
+    entry_line_ends: Vec<usize>,
     /// Parse accounting from the most recent `entries` build.
     #[allow(dead_code)]
     last_parse_stats: frankenlibc_core::pwd::ParseStats,
     /// Current iteration index for getpwent.
     iter_idx: usize,
+    /// Successfully skipped physical lines within the current entry/EOF span.
+    iter_scan_offset: usize,
     /// Cache hit/miss/reload/invalidation counters.
     cache_metrics: CacheMetrics,
     /// Most recent backend I/O error encountered while refreshing the cache.
@@ -148,8 +157,10 @@ impl PwdStorage {
             cache_generation: 0,
             entries_generation: 0,
             entries: Vec::new(),
+            entry_line_ends: Vec::new(),
             last_parse_stats: frankenlibc_core::pwd::ParseStats::default(),
             iter_idx: 0,
+            iter_scan_offset: 0,
             cache_metrics: CacheMetrics::default(),
             last_io_error: None,
             last_uid_lookup: None,
@@ -182,8 +193,10 @@ impl PwdStorage {
         self.file_cache = None;
         self.cache_fingerprint = None;
         self.entries.clear();
+        self.entry_line_ends.clear();
         self.clear_lookup_cache();
         self.iter_idx = 0;
+        self.iter_scan_offset = 0;
         self.entries_generation = 0;
         self.last_parse_stats = frankenlibc_core::pwd::ParseStats::default();
         self.last_io_error = None;
@@ -297,8 +310,10 @@ impl PwdStorage {
 
                 if had_cache {
                     self.entries.clear();
+                    self.entry_line_ends.clear();
                     self.clear_lookup_cache();
                     self.iter_idx = 0;
+                    self.iter_scan_offset = 0;
                     self.entries_generation = 0;
                     self.last_parse_stats = frankenlibc_core::pwd::ParseStats::default();
                     self.cache_metrics.invalidations += 1;
@@ -311,8 +326,10 @@ impl PwdStorage {
                 self.file_cache = None;
                 self.cache_fingerprint = None;
                 self.entries.clear();
+                self.entry_line_ends.clear();
                 self.clear_lookup_cache();
                 self.iter_idx = 0;
+                self.iter_scan_offset = 0;
                 self.entries_generation = 0;
                 self.last_parse_stats = frankenlibc_core::pwd::ParseStats::default();
                 self.last_io_error = Some(err.raw_os_error().unwrap_or(errno::EIO));
@@ -334,10 +351,51 @@ impl PwdStorage {
 
     fn rebuild_entries(&mut self) {
         let (entries, stats) = frankenlibc_core::pwd::parse_all_with_stats(self.current_content());
+        let mut end = 0;
+        let entry_line_ends = self
+            .current_content()
+            .split_inclusive(|&byte| byte == b'\n')
+            .filter_map(|line| {
+                end += line.len();
+                frankenlibc_core::pwd::parse_passwd_line(line).map(|_| end)
+            })
+            .collect();
         self.entries = entries;
+        self.entry_line_ends = entry_line_ends;
         self.last_parse_stats = stats;
         self.iter_idx = 0;
+        self.iter_scan_offset = 0;
         self.entries_generation = self.cache_generation;
+    }
+
+    fn enumeration_exceeds_buffer(&mut self, buflen: usize) -> bool {
+        let content = self.current_content();
+        let start = self
+            .iter_idx
+            .checked_sub(1)
+            .and_then(|idx| self.entry_line_ends.get(idx))
+            .copied()
+            .unwrap_or(0)
+            .max(self.iter_scan_offset);
+        let entry_end = self.entry_line_ends.get(self.iter_idx).copied();
+        let end = entry_end.unwrap_or(content.len());
+        let mut consumed = start;
+        let mut too_small = false;
+        for line in content[start..end].split_inclusive(|&byte| byte == b'\n') {
+            if frankenlibc_core::pwd::files_lookup_exceeds_buffer(line, buflen, |_| false) {
+                too_small = true;
+                break;
+            }
+            // Retain the actual record until its caller-buffer copy succeeds.
+            // Skipped comments/invalid lines and an observed EOF stay consumed
+            // when a caller retries later using a smaller buffer.
+            if Some(consumed + line.len()) == entry_end {
+                break;
+            }
+            consumed += line.len();
+        }
+        self.iter_scan_offset = consumed;
+        too_small
     }
 
     fn clear_lookup_cache(&mut self) {
@@ -748,10 +806,16 @@ pub unsafe extern "C" fn getpwuid(uid: libc::uid_t) -> *mut libc::passwd {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpwent() {
     reset_passwd_enumeration();
+    let _ = files_setpwent();
+}
+
+/// Rewind only the native files source, without invoking NSS modules.
+pub(crate) fn files_setpwent() -> c_int {
     with_pwd_storage(|storage| {
         storage.refresh_cache();
         storage.rebuild_entries();
-    });
+        storage.backend_io_error().unwrap_or(0)
+    })
 }
 
 /// POSIX `endpwent` — close the passwd enumeration and free cached data.
@@ -761,13 +825,20 @@ pub unsafe extern "C" fn endpwent() {
     if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
         nss_module::ent_end(EntDb::Passwd);
     }
+    files_endpwent();
+}
+
+/// Release only the files source's snapshot and enumeration state.
+pub(crate) fn files_endpwent() {
     with_pwd_storage(|storage| {
         if storage.file_cache.is_some() || !storage.entries.is_empty() {
             storage.cache_metrics.invalidations += 1;
         }
         storage.entries.clear();
+        storage.entry_line_ends.clear();
         storage.clear_lookup_cache();
         storage.iter_idx = 0;
+        storage.iter_scan_offset = 0;
         storage.file_cache = None;
         storage.cache_fingerprint = None;
         storage.entries_generation = 0;
@@ -824,6 +895,30 @@ pub unsafe extern "C" fn getpwnam_r(
     buflen: libc::size_t,
     result: *mut *mut libc::passwd,
 ) -> c_int {
+    // SAFETY: forward the public reentrant lookup contract.
+    unsafe { getpwnam_r_impl(name, pwd, buf, buflen, result, false) }
+}
+
+/// Files-module lookup: never re-enter the configured NSS service chain.
+pub(crate) unsafe fn files_getpwnam_r(
+    name: *const c_char,
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+) -> c_int {
+    // SAFETY: caller supplies the same buffers as getpwnam_r.
+    unsafe { getpwnam_r_impl(name, pwd, buf, buflen, result, true) }
+}
+
+unsafe fn getpwnam_r_impl(
+    name: *const c_char,
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+    files_only: bool,
+) -> c_int {
     if name.is_null() || pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
@@ -850,10 +945,13 @@ pub unsafe extern "C" fn getpwnam_r(
     };
 
     // A miss leaves *result NULL and returns 0.
-    let answer = passwd_answer(
-        PwKey::Name(name_bytes),
-        Some(effective_buffer_len(buf, buflen)),
-    );
+    let key = PwKey::Name(name_bytes);
+    let capacity = Some(effective_buffer_len(buf, buflen));
+    let answer = if files_only {
+        files_passwd_answer(key, capacity)
+    } else {
+        passwd_answer(key, capacity)
+    };
     let rc = unsafe { reentrant_passwd(answer, pwd, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
@@ -867,6 +965,30 @@ pub unsafe extern "C" fn getpwuid_r(
     buf: *mut c_char,
     buflen: libc::size_t,
     result: *mut *mut libc::passwd,
+) -> c_int {
+    // SAFETY: forward the public reentrant lookup contract.
+    unsafe { getpwuid_r_impl(uid, pwd, buf, buflen, result, false) }
+}
+
+/// Files-module lookup by uid, independent of nsswitch.conf.
+pub(crate) unsafe fn files_getpwuid_r(
+    uid: libc::uid_t,
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+) -> c_int {
+    // SAFETY: caller supplies the same buffers as getpwuid_r.
+    unsafe { getpwuid_r_impl(uid, pwd, buf, buflen, result, true) }
+}
+
+unsafe fn getpwuid_r_impl(
+    uid: libc::uid_t,
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+    files_only: bool,
 ) -> c_int {
     if pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
@@ -887,7 +1009,12 @@ pub unsafe extern "C" fn getpwuid_r(
         return libc::EACCES;
     }
 
-    let answer = passwd_answer(PwKey::Uid(uid), Some(effective_buffer_len(buf, buflen)));
+    let capacity = Some(effective_buffer_len(buf, buflen));
+    let answer = if files_only {
+        files_passwd_answer(PwKey::Uid(uid), capacity)
+    } else {
+        passwd_answer(PwKey::Uid(uid), capacity)
+    };
     let rc = unsafe { reentrant_passwd(answer, pwd, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
@@ -913,6 +1040,30 @@ unsafe fn fill_passwd_r(
 
     if buflen < needed {
         return libc::ERANGE;
+    }
+
+    if entry.nis_compat_null_fields {
+        // SAFETY: `needed` covers the name and terminator; the remaining
+        // fields of a colon-less NIS directive are null by the GNU contract.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                entry.pw_name.as_ptr().cast::<c_char>(),
+                buf,
+                entry.pw_name.len(),
+            );
+            *buf.add(entry.pw_name.len()) = 0;
+            *pwd = libc::passwd {
+                pw_name: buf,
+                pw_passwd: ptr::null_mut(),
+                pw_uid: entry.pw_uid,
+                pw_gid: entry.pw_gid,
+                pw_gecos: ptr::null_mut(),
+                pw_dir: ptr::null_mut(),
+                pw_shell: ptr::null_mut(),
+            };
+            *result = pwd;
+        }
+        return 0;
     }
 
     let mut off = 0usize;
@@ -996,6 +1147,29 @@ pub unsafe extern "C" fn getpwent_r(
     buflen: libc::size_t,
     result: *mut *mut libc::passwd,
 ) -> c_int {
+    // SAFETY: forward the public reentrant enumeration contract.
+    unsafe { getpwent_r_impl(pwd, buf, buflen, result, false) }
+}
+
+/// Enumerate the files source without consulting other NSS services.
+/// EOF is a successful null result; real backend errors retain their errno.
+pub(crate) unsafe fn files_getpwent_r(
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+) -> c_int {
+    // SAFETY: caller supplies the same buffers as getpwent_r.
+    unsafe { getpwent_r_impl(pwd, buf, buflen, result, true) }
+}
+
+unsafe fn getpwent_r_impl(
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+    files_only: bool,
+) -> c_int {
     if pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
@@ -1008,7 +1182,7 @@ pub unsafe extern "C" fn getpwent_r(
         return libc::EINVAL;
     }
 
-    if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
+    if !files_only && !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
         return match next_passwd_entry() {
             Ok(entry) => {
                 let rc = unsafe {
@@ -1027,17 +1201,19 @@ pub unsafe extern "C" fn getpwent_r(
     with_pwd_storage(|storage| {
         storage.refresh_cache();
 
-        if (storage.entries.is_empty() && storage.iter_idx == 0)
-            || storage.entries_generation != storage.cache_generation
-        {
+        if storage.entries_generation != storage.cache_generation {
             storage.rebuild_entries();
+        }
+
+        if storage.enumeration_exceeds_buffer(effective_buffer_len(buf, buflen)) {
+            return libc::ERANGE;
         }
 
         if storage.iter_idx >= storage.entries.len() {
             if let Some(err) = storage.backend_io_error() {
                 return err;
             }
-            return libc::ENOENT;
+            return if files_only { 0 } else { libc::ENOENT };
         }
 
         let entry = storage.entries[storage.iter_idx].clone();

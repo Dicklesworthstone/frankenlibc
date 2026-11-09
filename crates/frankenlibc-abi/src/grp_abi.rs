@@ -109,11 +109,16 @@ struct GrpStorage {
     entries_generation: u64,
     /// Parsed entries for iteration.
     entries: Vec<frankenlibc_core::grp::Group>,
+    /// Physical line ends corresponding to `entries`; reentrant files
+    /// enumeration must also fit the original line and parser pointer slots.
+    entry_line_ends: Vec<usize>,
     /// Parse accounting from the most recent `entries` build.
     #[allow(dead_code)]
     last_parse_stats: frankenlibc_core::grp::ParseStats,
     /// Current iteration index for getgrent.
     iter_idx: usize,
+    /// Successfully skipped physical lines within the current entry/EOF span.
+    iter_scan_offset: usize,
     /// Cache hit/miss/reload/invalidation counters.
     cache_metrics: CacheMetrics,
     /// Most recent backend I/O error encountered while refreshing the cache.
@@ -151,8 +156,10 @@ impl GrpStorage {
             cache_generation: 0,
             entries_generation: 0,
             entries: Vec::new(),
+            entry_line_ends: Vec::new(),
             last_parse_stats: frankenlibc_core::grp::ParseStats::default(),
             iter_idx: 0,
+            iter_scan_offset: 0,
             cache_metrics: CacheMetrics::default(),
             last_io_error: None,
             last_gid_lookup: None,
@@ -185,8 +192,10 @@ impl GrpStorage {
         self.file_cache = None;
         self.cache_fingerprint = None;
         self.entries.clear();
+        self.entry_line_ends.clear();
         self.clear_lookup_cache();
         self.iter_idx = 0;
+        self.iter_scan_offset = 0;
         self.entries_generation = 0;
         self.last_parse_stats = frankenlibc_core::grp::ParseStats::default();
         self.last_io_error = None;
@@ -300,8 +309,10 @@ impl GrpStorage {
 
                 if had_cache {
                     self.entries.clear();
+                    self.entry_line_ends.clear();
                     self.clear_lookup_cache();
                     self.iter_idx = 0;
+                    self.iter_scan_offset = 0;
                     self.entries_generation = 0;
                     self.last_parse_stats = frankenlibc_core::grp::ParseStats::default();
                     self.cache_metrics.invalidations += 1;
@@ -314,8 +325,10 @@ impl GrpStorage {
                 self.file_cache = None;
                 self.cache_fingerprint = None;
                 self.entries.clear();
+                self.entry_line_ends.clear();
                 self.clear_lookup_cache();
                 self.iter_idx = 0;
+                self.iter_scan_offset = 0;
                 self.entries_generation = 0;
                 self.last_parse_stats = frankenlibc_core::grp::ParseStats::default();
                 self.last_io_error = Some(err.raw_os_error().unwrap_or(errno::EIO));
@@ -337,10 +350,55 @@ impl GrpStorage {
 
     fn rebuild_entries(&mut self) {
         let (entries, stats) = frankenlibc_core::grp::parse_all_with_stats(self.current_content());
+        let mut end = 0;
+        let entry_line_ends = self
+            .current_content()
+            .split_inclusive(|&byte| byte == b'\n')
+            .filter_map(|line| {
+                end += line.len();
+                frankenlibc_core::grp::parse_group_line(line).map(|_| end)
+            })
+            .collect();
         self.entries = entries;
+        self.entry_line_ends = entry_line_ends;
         self.last_parse_stats = stats;
         self.iter_idx = 0;
+        self.iter_scan_offset = 0;
         self.entries_generation = self.cache_generation;
+    }
+
+    fn enumeration_exceeds_buffer(&mut self, buffer: *const c_char, buflen: usize) -> bool {
+        let content = self.current_content();
+        let start = self
+            .iter_idx
+            .checked_sub(1)
+            .and_then(|idx| self.entry_line_ends.get(idx))
+            .copied()
+            .unwrap_or(0)
+            .max(self.iter_scan_offset);
+        let entry_end = self.entry_line_ends.get(self.iter_idx).copied();
+        let end = entry_end.unwrap_or(content.len());
+        let mut consumed = start;
+        let mut too_small = false;
+        for line in content[start..end].split_inclusive(|&byte| byte == b'\n') {
+            if frankenlibc_core::grp::files_lookup_exceeds_buffer(
+                line,
+                buffer as usize,
+                buflen,
+                |_| false,
+            ) {
+                too_small = true;
+                break;
+            }
+            // Leave a valid record in place for an ERANGE retry; only skipped
+            // lines and an observed EOF can advance without producing a row.
+            if Some(consumed + line.len()) == entry_end {
+                break;
+            }
+            consumed += line.len();
+        }
+        self.iter_scan_offset = consumed;
+        too_small
     }
 
     fn clear_lookup_cache(&mut self) {
@@ -811,10 +869,16 @@ pub unsafe extern "C" fn getgrgid(gid: libc::gid_t) -> *mut libc::group {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setgrent() {
     reset_group_enumeration();
+    let _ = files_setgrent();
+}
+
+/// Rewind only the native files source, without invoking NSS modules.
+pub(crate) fn files_setgrent() -> c_int {
     with_grp_storage(|storage| {
         storage.refresh_cache();
         storage.rebuild_entries();
-    });
+        storage.backend_io_error().unwrap_or(0)
+    })
 }
 
 /// POSIX `endgrent` — close group enumeration and free cached data.
@@ -824,13 +888,20 @@ pub unsafe extern "C" fn endgrent() {
     if !nss_module::is_files_only(&nss_module::services(Database::Group)) {
         nss_module::ent_end(EntDb::Group);
     }
+    files_endgrent();
+}
+
+/// Release only the files source's snapshot and enumeration state.
+pub(crate) fn files_endgrent() {
     with_grp_storage(|storage| {
         if storage.file_cache.is_some() || !storage.entries.is_empty() {
             storage.cache_metrics.invalidations += 1;
         }
         storage.entries.clear();
+        storage.entry_line_ends.clear();
         storage.clear_lookup_cache();
         storage.iter_idx = 0;
+        storage.iter_scan_offset = 0;
         storage.file_cache = None;
         storage.cache_fingerprint = None;
         storage.entries_generation = 0;
@@ -883,6 +954,30 @@ pub unsafe extern "C" fn getgrnam_r(
     buflen: libc::size_t,
     result: *mut *mut libc::group,
 ) -> c_int {
+    // SAFETY: forward the public reentrant lookup contract.
+    unsafe { getgrnam_r_impl(name, grp, buf, buflen, result, false) }
+}
+
+/// Files-module lookup: never re-enter the configured NSS service chain.
+pub(crate) unsafe fn files_getgrnam_r(
+    name: *const c_char,
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+) -> c_int {
+    // SAFETY: caller supplies the same buffers as getgrnam_r.
+    unsafe { getgrnam_r_impl(name, grp, buf, buflen, result, true) }
+}
+
+unsafe fn getgrnam_r_impl(
+    name: *const c_char,
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+    files_only: bool,
+) -> c_int {
     if name.is_null() || grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
@@ -909,7 +1004,11 @@ pub unsafe extern "C" fn getgrnam_r(
     };
     // A miss leaves *result NULL and returns 0.
     let buffer = Some((buf as usize, effective_buffer_len(buf, buflen)));
-    let answer = group_answer(GrKey::Name(name_bytes), buffer);
+    let answer = if files_only {
+        files_group_answer(GrKey::Name(name_bytes), buffer)
+    } else {
+        group_answer(GrKey::Name(name_bytes), buffer)
+    };
     let rc = unsafe { reentrant_group(answer, grp, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
@@ -923,6 +1022,30 @@ pub unsafe extern "C" fn getgrgid_r(
     buf: *mut c_char,
     buflen: libc::size_t,
     result: *mut *mut libc::group,
+) -> c_int {
+    // SAFETY: forward the public reentrant lookup contract.
+    unsafe { getgrgid_r_impl(gid, grp, buf, buflen, result, false) }
+}
+
+/// Files-module lookup by gid, independent of nsswitch.conf.
+pub(crate) unsafe fn files_getgrgid_r(
+    gid: libc::gid_t,
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+) -> c_int {
+    // SAFETY: caller supplies the same buffers as getgrgid_r.
+    unsafe { getgrgid_r_impl(gid, grp, buf, buflen, result, true) }
+}
+
+unsafe fn getgrgid_r_impl(
+    gid: libc::gid_t,
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+    files_only: bool,
 ) -> c_int {
     if grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
@@ -944,7 +1067,11 @@ pub unsafe extern "C" fn getgrgid_r(
     }
 
     let buffer = Some((buf as usize, effective_buffer_len(buf, buflen)));
-    let answer = group_answer(GrKey::Gid(gid), buffer);
+    let answer = if files_only {
+        files_group_answer(GrKey::Gid(gid), buffer)
+    } else {
+        group_answer(GrKey::Gid(gid), buffer)
+    };
     let rc = unsafe { reentrant_group(answer, grp, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
@@ -1033,7 +1160,11 @@ unsafe fn fill_group_r(
 
         (*grp) = libc::group {
             gr_name: name_ptr,
-            gr_passwd: passwd_ptr,
+            gr_passwd: if entry.nis_compat_null_fields {
+                ptr::null_mut()
+            } else {
+                passwd_ptr
+            },
             gr_gid: entry.gr_gid,
             gr_mem: ptr_array,
         };
@@ -1055,6 +1186,29 @@ pub unsafe extern "C" fn getgrent_r(
     buflen: libc::size_t,
     result: *mut *mut libc::group,
 ) -> c_int {
+    // SAFETY: forward the public reentrant enumeration contract.
+    unsafe { getgrent_r_impl(grp, buf, buflen, result, false) }
+}
+
+/// Enumerate the files source without consulting other NSS services.
+/// EOF is a successful null result; real backend errors retain their errno.
+pub(crate) unsafe fn files_getgrent_r(
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+) -> c_int {
+    // SAFETY: caller supplies the same buffers as getgrent_r.
+    unsafe { getgrent_r_impl(grp, buf, buflen, result, true) }
+}
+
+unsafe fn getgrent_r_impl(
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+    files_only: bool,
+) -> c_int {
     if grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
@@ -1067,7 +1221,7 @@ pub unsafe extern "C" fn getgrent_r(
         return libc::EINVAL;
     }
 
-    if !nss_module::is_files_only(&nss_module::services(Database::Group)) {
+    if !files_only && !nss_module::is_files_only(&nss_module::services(Database::Group)) {
         return match next_group_entry() {
             Ok(entry) => {
                 let rc = unsafe {
@@ -1086,17 +1240,19 @@ pub unsafe extern "C" fn getgrent_r(
     with_grp_storage(|storage| {
         storage.refresh_cache();
 
-        if (storage.entries.is_empty() && storage.iter_idx == 0)
-            || storage.entries_generation != storage.cache_generation
-        {
+        if storage.entries_generation != storage.cache_generation {
             storage.rebuild_entries();
+        }
+
+        if storage.enumeration_exceeds_buffer(buf, effective_buffer_len(buf, buflen)) {
+            return libc::ERANGE;
         }
 
         if storage.iter_idx >= storage.entries.len() {
             if let Some(err) = storage.backend_io_error() {
                 return err;
             }
-            return libc::ENOENT;
+            return if files_only { 0 } else { libc::ENOENT };
         }
 
         let entry = storage.entries[storage.iter_idx].clone();

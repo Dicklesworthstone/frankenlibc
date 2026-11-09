@@ -14743,9 +14743,8 @@ fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
 #[test]
 fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
-        _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getgrent_r,
-        _nss_files_getnetgrent_r, _nss_files_getpwent_r, _nss_files_getrpcent_r,
-        _nss_files_getsgent_r, _nss_files_getspent_r,
+        _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getnetgrent_r,
+        _nss_files_getrpcent_r, _nss_files_getsgent_r, _nss_files_getspent_r,
     };
 
     macro_rules! check {
@@ -14774,9 +14773,7 @@ fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
 
     check!(_nss_files_getaliasent_r);
     check!(_nss_files_getetherent_r);
-    check!(_nss_files_getgrent_r);
     check!(_nss_files_getnetgrent_r);
-    check!(_nss_files_getpwent_r);
     check!(_nss_files_getrpcent_r);
     check!(_nss_files_getsgent_r);
     check!(_nss_files_getspent_r);
@@ -14815,9 +14812,8 @@ fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
 #[test]
 fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
-        _nss_files_getaliasbyname_r, _nss_files_getgrnam_r, _nss_files_gethostton_r,
-        _nss_files_getntohost_r, _nss_files_getpwnam_r, _nss_files_getrpcbyname_r,
-        _nss_files_getsgnam_r, _nss_files_getspnam_r,
+        _nss_files_getaliasbyname_r, _nss_files_gethostton_r, _nss_files_getntohost_r,
+        _nss_files_getrpcbyname_r, _nss_files_getsgnam_r, _nss_files_getspnam_r,
     };
 
     let key = CString::new("missing").unwrap();
@@ -14855,10 +14851,8 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     }
 
     check!(_nss_files_getaliasbyname_r);
-    check!(_nss_files_getgrnam_r);
     check!(_nss_files_gethostton_r);
     check!(_nss_files_getntohost_r);
-    check!(_nss_files_getpwnam_r);
     check!(_nss_files_getrpcbyname_r);
     check!(_nss_files_getsgnam_r);
     check!(_nss_files_getspnam_r);
@@ -14866,9 +14860,7 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
 
 #[test]
 fn nss_files_get_by_int_stubs_return_notfound_and_set_errno() {
-    use frankenlibc_abi::unistd_abi::{
-        _nss_files_getgrgid_r, _nss_files_getpwuid_r, _nss_files_getrpcbynumber_r,
-    };
+    use frankenlibc_abi::unistd_abi::_nss_files_getrpcbynumber_r;
 
     macro_rules! check {
         ($f:ident, $key:expr) => {{
@@ -14890,9 +14882,45 @@ fn nss_files_get_by_int_stubs_return_notfound_and_set_errno() {
         }};
     }
 
-    check!(_nss_files_getgrgid_r, 0 as libc::gid_t);
-    check!(_nss_files_getpwuid_r, 0 as libc::uid_t);
     check!(_nss_files_getrpcbynumber_r, 9999);
+}
+
+#[test]
+fn nss_files_identity_rejects_invalid_output_without_claiming_a_miss() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getgrent_r, _nss_files_getgrgid_r, _nss_files_getgrnam_r, _nss_files_getpwent_r,
+        _nss_files_getpwnam_r, _nss_files_getpwuid_r,
+    };
+    use std::ptr;
+    let mut err = 717;
+    // SAFETY: null inputs are rejected before dereference by these providers.
+    unsafe {
+        for call in [_nss_files_getpwent_r, _nss_files_getgrent_r] {
+            assert_eq!(call(ptr::null_mut(), ptr::null_mut(), 0, &mut err), -1);
+            assert_eq!(err, libc::EINVAL);
+            assert_eq!(
+                call(ptr::null_mut(), ptr::null_mut(), 0, ptr::null_mut()),
+                -1
+            );
+        }
+        for call in [_nss_files_getpwnam_r, _nss_files_getgrnam_r] {
+            assert_eq!(
+                call(
+                    c"root".as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    &mut err
+                ),
+                -1
+            );
+            assert_eq!(err, libc::EINVAL);
+        }
+        for call in [_nss_files_getpwuid_r, _nss_files_getgrgid_r] {
+            assert_eq!(call(0, ptr::null_mut(), ptr::null_mut(), 0, &mut err), -1);
+            assert_eq!(err, libc::EINVAL);
+        }
+    }
 }
 
 #[test]

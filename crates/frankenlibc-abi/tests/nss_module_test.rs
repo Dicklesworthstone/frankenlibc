@@ -407,6 +407,171 @@ fn module_sources_answer_through_fl() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn files_identity_providers_bypass_configured_nss_modules() {
+    use frankenlibc_abi::unistd_abi as files;
+
+    if let Some(scenario) = std::env::var_os(CHILD_ENV) {
+        let api = fl_api();
+        let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut gr: libc::group = unsafe { std::mem::zeroed() };
+        let mut buffer = [0 as c_char; 1024];
+        let mut err = 717;
+        // SAFETY: all input strings are terminated and output buffers are
+        // live, writable, and retained while their borrowed fields are read.
+        unsafe {
+            assert!((api.getpwnam)(c"files-user".as_ptr()).is_null());
+            assert!((api.getpwuid)(8301).is_null());
+            assert!((api.getgrnam)(c"files-group".as_ptr()).is_null());
+            assert!((api.getgrgid)(8401).is_null());
+            if scenario == "module" {
+                assert!(pw_line((api.getpwnam)(c"fltest1".as_ptr())).starts_with("fltest1:"));
+                assert!(gr_line((api.getgrnam)(c"fltestgrp".as_ptr())).starts_with("fltestgrp:"));
+            }
+
+            assert_eq!(
+                files::_nss_files_getpwnam_r(
+                    c"files-user".as_ptr(),
+                    (&raw mut pw).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(
+                pw_line(&mut pw),
+                "files-user:x:8301:8401:Local:/local:/bin/sh"
+            );
+            assert_eq!(err, 717);
+            assert_eq!(
+                files::_nss_files_getpwuid_r(
+                    8301,
+                    (&raw mut pw).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(cstr(pw.pw_name), b"files-user");
+            assert_eq!(
+                files::_nss_files_getgrnam_r(
+                    c"files-group".as_ptr(),
+                    (&raw mut gr).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(gr_line(&mut gr), "files-group:x:8401:files-user");
+            assert_eq!(err, 717);
+            assert_eq!(
+                files::_nss_files_getgrgid_r(
+                    8401,
+                    (&raw mut gr).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                1
+            );
+            assert_eq!(cstr(gr.gr_name), b"files-group");
+            assert_eq!(
+                files::_nss_files_getpwnam_r(
+                    c"fltest1".as_ptr(),
+                    (&raw mut pw).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                0,
+                "a files provider must not expose a record from another module"
+            );
+            assert_eq!(
+                files::_nss_files_getgrnam_r(
+                    c"fltestgrp".as_ptr(),
+                    (&raw mut gr).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                ),
+                0
+            );
+            assert_eq!(err, 717);
+
+            assert_eq!(files::_nss_files_setpwent(0), 1);
+            for expected in [1, 0] {
+                assert_eq!(
+                    files::_nss_files_getpwent_r(
+                        (&raw mut pw).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut err,
+                    ),
+                    expected
+                );
+                if expected == 1 {
+                    assert_eq!(cstr(pw.pw_name), b"files-user");
+                }
+            }
+            assert_eq!(files::_nss_files_endpwent(), 1);
+            assert_eq!(files::_nss_files_setgrent(0), 1);
+            for expected in [1, 0] {
+                assert_eq!(
+                    files::_nss_files_getgrent_r(
+                        (&raw mut gr).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut err,
+                    ),
+                    expected
+                );
+                if expected == 1 {
+                    assert_eq!(cstr(gr.gr_name), b"files-group");
+                }
+            }
+            assert_eq!(files::_nss_files_endgrent(), 1);
+            assert_eq!(err, 717);
+            // Files lifecycle calls must not rewrite the configured public
+            // service chain or make its previously unavailable user visible.
+            assert!((api.getpwnam)(c"files-user".as_ptr()).is_null());
+            assert!((api.getgrnam)(c"files-group".as_ptr()).is_null());
+        }
+        return;
+    }
+
+    let dir = scratch_dir("files-identity");
+    build_modules(&dir);
+    std::fs::write(
+        dir.join("passwd"),
+        "files-user:x:8301:8401:Local:/local:/bin/sh\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("group"), "files-group:x:8401:files-user\n").unwrap();
+    for (scenario, services) in [
+        ("module", "fltest [NOTFOUND=return]"),
+        ("missing", "fltestmissing [UNAVAIL=return] files"),
+    ] {
+        let config = dir.join(format!("{scenario}.conf"));
+        std::fs::write(&config, format!("passwd: {services}\ngroup: {services}\n")).unwrap();
+        for mode in ["strict", "hardened"] {
+            let mut child =
+                child_test_command("files_identity_providers_bypass_configured_nss_modules");
+            child
+                .env(CHILD_ENV, scenario)
+                .env("LD_LIBRARY_PATH", &dir)
+                .env("FLTEST_STATUS", "")
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FRANKENLIBC_NSSWITCH_CONF", &config)
+                .env("FRANKENLIBC_PASSWD_PATH", dir.join("passwd"))
+                .env("FRANKENLIBC_GROUP_PATH", dir.join("group"));
+            run_child(child, &format!("files identity {scenario} {mode}"));
+        }
+    }
+}
+
 /// Configurations for the side-by-side gate: source order, actions, merge,
 /// unloadable modules and the initgroups rules.
 const DIFF_CONFIGS: &[&str] = &[
