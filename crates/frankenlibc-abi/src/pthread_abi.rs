@@ -10116,8 +10116,11 @@ pub(crate) unsafe fn native_legacy_cleanup_pop(buf: *mut c_void, execute: c_int,
     // a handler which reenters libc or initiates an unwind.
     let frame = unsafe { buf.cast::<NativeLegacyCleanupBuffer>().read() };
     set_native_cleanup_head(frame.previous);
-    if restore {
-        // A pending request can act while restoring ASYNCHRONOUS, after this
+    if restore && frame.cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
+        // GNU's C cleanup entrypoints reinstate a saved ASYNCHRONOUS type;
+        // they do not overwrite a deliberate type change in a region that
+        // started DEFERRED. This differs from the explicit setcanceltype call
+        // in the C++ cleanup class. A pending request can act here, after this
         // buffer is removed and before an explicitly requested callback runs.
         unsafe { pthread_setcanceltype(frame.cancel_type, std::ptr::null_mut()) };
     }
@@ -10152,7 +10155,11 @@ unsafe fn unregister_native_cleanup(buf: *mut c_void, restore: bool) {
         let previous = unsafe { private.add(1).read() } as c_int;
         // Remove the frame before restoring ASYNCHRONOUS: a pending request
         // acts inside setcanceltype and must see only the enclosing handlers.
-        unsafe { pthread_setcanceltype(previous, std::ptr::null_mut()) };
+        // As with the legacy GNU C cleanup pair, a saved DEFERRED type must
+        // leave a later explicit change to ASYNCHRONOUS intact.
+        if previous == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
+            unsafe { pthread_setcanceltype(previous, std::ptr::null_mut()) };
+        }
     }
 }
 

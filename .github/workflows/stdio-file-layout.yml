@@ -210,7 +210,7 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
               --test glibc_internal_abi_test pthread_cleanup -- --test-threads=1 --nocapture \
               2>&1 | tee "artifacts/stdio-layout/legacy-cleanup-$mode.log"
-            grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+            grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' \
               "artifacts/stdio-layout/legacy-cleanup-$mode.log"
           done
       - name: Run legacy cleanup handlers on cancellation and thread exit

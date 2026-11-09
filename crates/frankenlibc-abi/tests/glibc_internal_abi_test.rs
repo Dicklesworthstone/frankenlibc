@@ -3505,8 +3505,10 @@ fn check_legacy_cleanup_cancellation_types() {
             record_type as *mut std::ffi::c_void,
             std::ptr::from_mut(&mut inner_probe).cast(),
         );
-        // A change inside the nested region must not overwrite its saved type.
-        let change_inner = pthread_setcanceltype(ASYNCHRONOUS, &mut in_inner);
+        // Ordinary nested deferred regions restore the outer asynchronous
+        // setting. Deliberate type changes inside a region are checked against
+        // the actual GNU C cleanup entrypoints in the differential test below.
+        let change_inner = pthread_setcanceltype(DEFERRED, &mut in_inner);
         _pthread_cleanup_pop_restore(inner.as_mut_ptr().cast(), 1);
         let observe_inner = pthread_setcanceltype(DEFERRED, &mut after_inner);
         _pthread_cleanup_pop_restore(outer.as_mut_ptr().cast(), 1);
@@ -3555,6 +3557,271 @@ fn pthread_cleanup_native_defer_restores_nested_cancellation_types() {
     }
     let _restore = RestoreBackend(pthread_threading_swap_force_native_for_tests());
     check_legacy_cleanup_cancellation_types();
+}
+
+type CleanupSetCancel = unsafe extern "C-unwind" fn(c_int, *mut c_int) -> c_int;
+type CleanupPush = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void, *mut c_void);
+type CleanupPop = unsafe extern "C-unwind" fn(*mut c_void, c_int);
+type CleanupRegister = unsafe extern "C-unwind" fn(*mut c_void);
+
+#[derive(Clone, Copy)]
+struct CleanupFunctions {
+    set_state: CleanupSetCancel,
+    set_type: CleanupSetCancel,
+    push_defer: CleanupPush,
+    pop_restore: CleanupPop,
+    register_defer: CleanupRegister,
+    unregister_restore: CleanupRegister,
+}
+
+impl CleanupFunctions {
+    fn candidate() -> Self {
+        use frankenlibc_abi::pthread_abi::{
+            __pthread_register_cancel_defer, __pthread_unregister_cancel_restore,
+            pthread_setcancelstate, pthread_setcanceltype,
+        };
+        Self {
+            set_state: pthread_setcancelstate,
+            set_type: pthread_setcanceltype,
+            push_defer: _pthread_cleanup_push_defer,
+            pop_restore: _pthread_cleanup_pop_restore,
+            register_defer: __pthread_register_cancel_defer,
+            unregister_restore: __pthread_unregister_cancel_restore,
+        }
+    }
+}
+
+struct HostCleanupFunctions {
+    handle: *mut c_void,
+    functions: CleanupFunctions,
+}
+
+impl HostCleanupFunctions {
+    fn new() -> Self {
+        // Open the independent GNU provider explicitly. The legacy defer pair
+        // can be compat-only, so a missing default version is not a skip.
+        // SAFETY: the library name is terminated and RTLD_NOW is a valid mode.
+        let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW) };
+        assert!(!handle.is_null(), "GNU cleanup oracle must be available");
+        let symbol = |name: &CStr| {
+            // SAFETY: this handle remains open and the symbol is terminated.
+            let mut address = unsafe { libc::dlsym(handle, name.as_ptr()) };
+            if address.is_null() {
+                let version = if cfg!(target_arch = "aarch64") {
+                    c"GLIBC_2.17"
+                } else {
+                    c"GLIBC_2.2.5"
+                };
+                // SAFETY: both names remain live and the handle is still open.
+                address = unsafe { dlvsym(handle, name.as_ptr(), version.as_ptr()) };
+            }
+            assert!(!address.is_null(), "GNU cleanup oracle lacks {name:?}");
+            let mut info = std::mem::MaybeUninit::<libc::Dl_info>::uninit();
+            // SAFETY: address belongs to a loaded object and info is writable.
+            assert_ne!(unsafe { libc::dladdr(address, info.as_mut_ptr()) }, 0);
+            // SAFETY: successful dladdr initialized info, including its name.
+            let info = unsafe { info.assume_init() };
+            assert!(!info.dli_fname.is_null());
+            // SAFETY: dladdr's name remains terminated and live with the handle.
+            let provider = unsafe { CStr::from_ptr(info.dli_fname) }.to_bytes();
+            assert!(
+                provider.ends_with(b"/libc.so.6") || provider == b"libc.so.6",
+                "{name:?} resolved outside GNU libc: {provider:?}"
+            );
+            address
+        };
+        // SAFETY: each provider-checked symbol has the corresponding GNU ABI.
+        let functions = unsafe {
+            CleanupFunctions {
+                set_state: std::mem::transmute::<*mut c_void, CleanupSetCancel>(symbol(
+                    c"pthread_setcancelstate",
+                )),
+                set_type: std::mem::transmute::<*mut c_void, CleanupSetCancel>(symbol(
+                    c"pthread_setcanceltype",
+                )),
+                push_defer: std::mem::transmute::<*mut c_void, CleanupPush>(symbol(
+                    c"_pthread_cleanup_push_defer",
+                )),
+                pop_restore: std::mem::transmute::<*mut c_void, CleanupPop>(symbol(
+                    c"_pthread_cleanup_pop_restore",
+                )),
+                register_defer: std::mem::transmute::<*mut c_void, CleanupRegister>(symbol(
+                    c"__pthread_register_cancel_defer",
+                )),
+                unregister_restore: std::mem::transmute::<*mut c_void, CleanupRegister>(symbol(
+                    c"__pthread_unregister_cancel_restore",
+                )),
+            }
+        };
+        Self { handle, functions }
+    }
+}
+
+impl Drop for HostCleanupFunctions {
+    fn drop(&mut self) {
+        // SAFETY: every registered buffer was popped before the oracle leaves
+        // scope, and no copied function pointer is used after this point.
+        unsafe { libc::dlclose(self.handle) };
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CleanupRegistration {
+    Legacy,
+    JumpBuffer,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CleanupTypeObservation {
+    results: [c_int; 5],
+    after_push: c_int,
+    after_pop: c_int,
+    callback_calls: usize,
+    callback_type: c_int,
+    callback_result: c_int,
+}
+
+fn observe_cleanup_types(
+    functions: CleanupFunctions,
+    registration: CleanupRegistration,
+    initial_type: c_int,
+    body_type: c_int,
+    execute: c_int,
+) -> CleanupTypeObservation {
+    struct Probe {
+        set_type: CleanupSetCancel,
+        calls: usize,
+        cancel_type: c_int,
+        result: c_int,
+    }
+    unsafe extern "C-unwind" fn record_type(argument: *mut c_void) {
+        // SAFETY: the case keeps this probe live and cancellation disabled
+        // until its matching pop. No assertion or allocation runs in a frame.
+        let probe = unsafe { &mut *argument.cast::<Probe>() };
+        probe.calls += 1;
+        // SAFETY: the selected provider accepts this live output slot; disabled
+        // cancellation prevents either setting change from unwinding.
+        probe.result = unsafe { (probe.set_type)(0, &mut probe.cancel_type) };
+        // SAFETY: restore the just-observed valid type without an output slot.
+        probe.result |= unsafe { (probe.set_type)(probe.cancel_type, ptr::null_mut()) };
+    }
+
+    // Large enough for the GNU C jump-buffer/private words on x86_64 and
+    // aarch64, as well as the smaller legacy cleanup buffer. Cancellation is
+    // disabled: these cases register/unregister, never perform a longjmp.
+    #[repr(align(16))]
+    struct Buffer([usize; 32]);
+    let mut buffer = Buffer([0; 32]);
+    let buffer = buffer.0.as_mut_ptr().cast::<c_void>();
+    let mut probe = Probe {
+        set_type: functions.set_type,
+        calls: 0,
+        cancel_type: -1,
+        result: 0,
+    };
+    let argument = std::ptr::from_mut(&mut probe).cast::<c_void>();
+    let (mut saved_state, mut saved_type, mut after_push, mut after_pop) = (0, 0, -1, -1);
+    // SAFETY: both providers use these live, aligned buffers and signatures.
+    // Cancellation remains disabled while a buffer is registered. Restore both
+    // settings and pop the buffer before assertions can unwind.
+    let results = unsafe {
+        let disable = (functions.set_state)(1, &mut saved_state);
+        let enter = (functions.set_type)(initial_type, &mut saved_type);
+        match registration {
+            CleanupRegistration::Legacy => {
+                (functions.push_defer)(buffer, record_type as *mut c_void, argument);
+            }
+            CleanupRegistration::JumpBuffer => (functions.register_defer)(buffer),
+        }
+        let change = (functions.set_type)(body_type, &mut after_push);
+        match registration {
+            CleanupRegistration::Legacy => (functions.pop_restore)(buffer, execute),
+            CleanupRegistration::JumpBuffer => {
+                (functions.unregister_restore)(buffer);
+                // The modern C macro invokes the callback itself after the
+                // unregister returns. Its observed cancellation type matters.
+                if execute != 0 {
+                    record_type(argument);
+                }
+            }
+        }
+        let restore_type = (functions.set_type)(saved_type, &mut after_pop);
+        let restore_state = (functions.set_state)(saved_state, ptr::null_mut());
+        [disable, enter, change, restore_type, restore_state]
+    };
+    CleanupTypeObservation {
+        results,
+        after_push,
+        after_pop,
+        callback_calls: probe.calls,
+        callback_type: probe.cancel_type,
+        callback_result: probe.result,
+    }
+}
+
+fn check_cleanup_type_changes_against_gnu() {
+    let host = HostCleanupFunctions::new();
+    let candidate = CleanupFunctions::candidate();
+    let mut mismatches = Vec::new();
+    let mut cases = 0;
+    for registration in [CleanupRegistration::Legacy, CleanupRegistration::JumpBuffer] {
+        for initial_type in [0, 1] {
+            for body_type in [0, 1] {
+                for execute in [0, 1] {
+                    let expected = observe_cleanup_types(
+                        host.functions,
+                        registration,
+                        initial_type,
+                        body_type,
+                        execute,
+                    );
+                    let actual = observe_cleanup_types(
+                        candidate,
+                        registration,
+                        initial_type,
+                        body_type,
+                        execute,
+                    );
+                    cases += 1;
+                    assert_eq!(expected.results, [0; 5]);
+                    assert_eq!(expected.after_push, 0, "push must defer cancellation");
+                    assert_eq!(expected.callback_calls, execute as usize);
+                    assert_eq!(expected.callback_result, 0);
+                    if actual != expected {
+                        mismatches.push(format!(
+                            "{registration:?} initial={initial_type} body={body_type} execute={execute}: GNU={expected:?}, native={actual:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 16);
+    eprintln!(
+        "GNU cleanup type comparisons: {cases} executed, {} mismatches",
+        mismatches.len()
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn pthread_cleanup_type_changes_match_gnu() {
+    check_cleanup_type_changes_against_gnu();
+}
+
+#[test]
+fn pthread_cleanup_native_type_changes_match_gnu() {
+    use frankenlibc_abi::pthread_abi::{
+        pthread_threading_restore_for_tests, pthread_threading_swap_force_native_for_tests,
+    };
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(pthread_threading_swap_force_native_for_tests());
+    check_cleanup_type_changes_against_gnu();
 }
 
 // ===========================================================================
