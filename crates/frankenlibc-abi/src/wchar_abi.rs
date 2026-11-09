@@ -5925,15 +5925,16 @@ impl Drop for WideScanPendingText {
 /// One assignment path for plain, va_list, and ISO-dialect wide scanf calls.
 /// Values are written as the scanner reaches them; an encoding error must not
 /// assign a later field or leave a stream past the failing wide character.
-struct WideScanWriter {
+pub(crate) struct WideScanWriter {
     ap: *mut c_void,
     codec: crate::locale_abi::MultibyteCodec,
     arguments: InlineVec<*mut c_void, 4>,
     sequential: usize,
     allocations: InlineVec<WideScanAllocation, 4>,
     pending_text: Option<WideScanPendingText>,
-    error: Option<c_int>,
-    allocation_failure: bool,
+    pub(crate) error: Option<c_int>,
+    pub(crate) allocation_failure: bool,
+    narrow_input: bool,
 }
 
 impl WideScanWriter {
@@ -5947,6 +5948,16 @@ impl WideScanWriter {
             pending_text: None,
             error: None,
             allocation_failure: false,
+            narrow_input: false,
+        }
+    }
+
+    /// Narrow FILE scans share the destination and `%m` lifecycle. Their
+    /// ordinary text events are bytes, while `l` events are already decoded.
+    pub(crate) fn new_narrow(ap: *mut c_void) -> Self {
+        Self {
+            narrow_input: true,
+            ..Self::new(ap)
         }
     }
 
@@ -6090,6 +6101,9 @@ impl WideScanWriter {
         let mut encoded = [0u8; 6];
         let width = if text.wide {
             size_of::<libc::wchar_t>()
+        } else if self.narrow_input {
+            encoded[0] = wc as u8;
+            1
         } else if let Some(width) = self.codec.encode(wc, &mut encoded) {
             width
         } else {
@@ -6184,7 +6198,7 @@ impl WideScanWriter {
         Ok(())
     }
 
-    unsafe fn write_stream_event(
+    pub(crate) unsafe fn write_stream_event(
         &mut self,
         spec: &ScanSpec,
         event: WideScanEvent,

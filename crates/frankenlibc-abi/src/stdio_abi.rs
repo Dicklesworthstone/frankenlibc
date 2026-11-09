@@ -14366,242 +14366,117 @@ fn scanf_directives(
     Some(directives)
 }
 
-/// Origin metadata for a bulk scanf read.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ScanfReadState {
-    /// Memory-backed stream; unread suffix is restored by rewinding backing.
-    Memory,
-    /// Seekable fd; unread suffix remains in the kernel after an `lseek`.
-    SeekableFd { base: i64 },
-    /// Non-seekable fd; unread suffix must be staged back into the stream.
-    BufferedFd { base: i64 },
-}
-
-thread_local! {
-    /// Reusable scanf read buffer, one per thread.
-    ///
-    /// The stream scanf path used to `vec![0u8; cap]` per call — an 8 KiB
-    /// allocation AND an 8 KiB zeroing to hold bytes that are immediately
-    /// overwritten by `read`. glibc parses out of the stream's own buffer and
-    /// allocates nothing, and an allocation-count gate put fl at one allocation
-    /// per `fscanf` after the engine's own containers were removed. This is that
-    /// last one.
-    static SCANF_READ_POOL: std::cell::RefCell<Option<Vec<u8>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// A scanf input buffer that returns itself to the per-thread pool when dropped.
-///
-/// Dropping is the only way it goes back, which is what makes the early returns
-/// in the readers safe: every path that builds one — EOF, lseek failure, a short
-/// read — releases it without needing its own bookkeeping.
-pub(crate) struct ScanfReadBuf {
-    buf: Vec<u8>,
-}
-
-impl ScanfReadBuf {
-    /// Take the pooled buffer, or a fresh one if this thread's is already out.
-    ///
-    /// "Already out" means a reentrant scanf on this thread (a signal handler,
-    /// say). It gets its own buffer rather than aliasing the outer call's, and
-    /// whichever drops last leaves a buffer in the pool.
-    fn take() -> Self {
-        let buf = SCANF_READ_POOL
-            .try_with(|pool| pool.borrow_mut().take())
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        Self { buf }
-    }
-
-    /// Wrap a buffer produced elsewhere (memory streams, buffered drains) so it
-    /// joins the pool when it drops.
-    fn from_vec(buf: Vec<u8>) -> Self {
-        Self { buf }
-    }
-}
-
-impl std::ops::Deref for ScanfReadBuf {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.buf
-    }
-}
-
-impl Drop for ScanfReadBuf {
-    fn drop(&mut self) {
-        let mut buf = std::mem::take(&mut self.buf);
-        buf.clear();
-        let _ = SCANF_READ_POOL.try_with(|pool| {
-            let mut slot = pool.borrow_mut();
-            // Keep whichever buffer has the larger capacity: a reentrant call
-            // would otherwise leave the pool holding the smaller one.
-            if slot
-                .as_ref()
-                .is_none_or(|held| held.capacity() < buf.capacity())
-            {
-                *slot = Some(buf);
-            }
-        });
-    }
-}
-
-/// Read stream content into a byte buffer for scanf parsing.
-///
-/// Returns the bytes plus read-state metadata. Seekable fds are read from their
-/// true logical offset so finalization can `lseek` to the parsed prefix. Memory
-/// streams and non-seekable fds over-read into memory and finalize by restoring
-/// the unread suffix to the backing or stream read queue.
-pub(crate) unsafe fn read_stream_for_scanf_for_caller(
+/// Read only when the active directive needs input. A short read is not EOF,
+/// and the FILE's read buffer is not a limit on a token or a whole scanf call.
+/// Assignments happen once, before any later directive requests another byte.
+unsafe fn scan_narrow_stream(
+    stream: *mut c_void,
     id: usize,
-    limit: usize,
+    format: *const c_char,
+    ap: *mut c_void,
     caller: usize,
-) -> (ScanfReadBuf, ScanfReadState) {
-    let Some(cell) = stream_cell(id) else {
-        return (ScanfReadBuf::take(), ScanfReadState::Memory);
+    dialect: ScanfDialect,
+) -> c_int {
+    use frankenlibc_core::stdio::scanf::{
+        InlineVec, WideScanInput, WideScanProgress, WideScanReadPurpose, WideScanSession,
     };
-    let mut s_guard = cell.lock();
-    let s = &mut *s_guard;
-    let caller = stream_io_caller(s, caller);
-    if !wide_io_active() {
-        if s.effective_orientation() > 0 {
-            s.set_error();
-            unsafe { set_abi_errno(errno::EBADF) };
-            return (ScanfReadBuf::take(), ScanfReadState::Memory);
-        }
-        let _ = s.set_orientation(-1);
-    }
 
-    // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
-    if s.is_mem_backed() {
-        sync_and_unregister_fast_fixed_mem_read(id, s);
-        return (
-            ScanfReadBuf::from_vec(s.mem_read(limit)),
-            ScanfReadState::Memory,
-        );
-    }
-
-    let fd = s.fd();
-    let cap = limit.min(8192);
-    let cookie = is_cookie_stream(id);
-    if cookie {
-        // Scanf stages unconsumed input in StdioStream. Retire the direct
-        // reader first so the next read cannot skip that pushback queue.
-        sync_and_unregister_fast_fixed_mem_read(id, s);
-    }
-
-    // Seekable read streams (regular files): read from the true logical
-    // position so the post-parse lseek can leave the unparsed tail in place.
-    // Gated on no pending writes — otherwise prepare_seek would discard them
-    // (write-mixed streams keep the legacy raw-read path, see bd-2g7oyh.180).
-    if !cookie
-        && s.pending_flush().is_empty()
-        && raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).is_ok()
+    // The recursive FILE lock covers parsing, assignments, and pushback, and
+    // is released if a read or cookie callback unwinds through cancellation.
+    unsafe { flockfile(stream) };
+    let _lock = ExtensionStreamLock(stream);
+    if let Some(cell) = stream_cell(id)
+        && !cell.lock().is_readable()
     {
-        let base = s.offset();
-        // Discard any read-ahead buffer + ungetc and align the fd to `base`.
-        let _ = s.prepare_seek();
-        if raw_syscall::sys_lseek(fd, base, libc::SEEK_SET).is_ok() {
-            // Read into the pooled buffer's SPARE CAPACITY: no allocation when
-            // the pool already holds one, and no zero-fill of bytes `read` is
-            // about to overwrite. `set_len` only ever grows to what read(2)
-            // reported it wrote.
-            let mut held = ScanfReadBuf::take();
-            held.buf.clear();
-            held.buf.reserve(cap);
-            // SAFETY: `cap` bytes of spare capacity were just reserved, and the
-            // length is set only to the count read(2) reports.
-            let rc = unsafe { stream_read_fd(caller, fd, held.buf.as_mut_ptr().cast(), cap) };
-            if rc > 0 {
-                // SAFETY: read(2) wrote `rc` bytes into the reserved capacity.
-                unsafe { held.buf.set_len(rc as usize) };
-                return (held, ScanfReadState::SeekableFd { base });
-            }
-            if rc == 0 {
-                s.set_eof();
-            } else if rc < 0 {
-                // A read error (e.g. EISDIR) sets the error indicator, as
-                // glibc's fscanf does; it used to look like plain EOF.
-                s.set_error();
-            }
-            return (ScanfReadBuf::take(), ScanfReadState::SeekableFd { base });
+        // GNU rejects a write-only FILE before interpreting even an empty
+        // format or %n. This is a bad-mode rejection, not a failed read, so it
+        // does not set the stream error indicator.
+        unsafe { set_abi_errno(errno::EBADF) };
+        return libc::EOF;
+    }
+    if !orient_stream_byte_by_id(id) {
+        if let Some(cell) = stream_cell(id) {
+            cell.lock().set_error();
         }
-        // lseek-back failed unexpectedly; fall through to the raw-read path.
+        unsafe { set_abi_errno(errno::EBADF) };
+        return libc::EOF;
     }
-
-    // Non-seekable (pipe/socket) or write-mixed: read in logical stream order.
-    // Drain existing buffered/ungetc bytes first, then bulk-read the fd. The
-    // finalizer stages any unread suffix back into the stream read queue.
-    let base = s.offset();
-    let mut buf = s.buffered_read(cap);
-    if buf.len() >= cap || s.is_eof() || s.is_error() {
-        return (
-            ScanfReadBuf::from_vec(buf),
-            ScanfReadState::BufferedFd { base },
-        );
-    }
-
-    let mut tmp = vec![0u8; cap - buf.len()];
-    // SAFETY: tmp is writable for its entire length. Cookie streams have no fd;
-    // invoke their registered read callback rather than issuing read(-1).
-    let rc = if cookie {
-        unsafe { cookie_stream_read(id, tmp.as_mut_ptr(), tmp.len()) }
-    } else {
-        unsafe { stream_read_fd(caller, fd, tmp.as_mut_ptr().cast(), tmp.len()) }
+    let Some(directives) = scanf_directives(format, None, dialect) else {
+        return libc::EOF;
     };
-    if rc > 0 {
-        tmp.truncate(rc as usize);
-        buf.extend_from_slice(&tmp);
-        (
-            ScanfReadBuf::from_vec(buf),
-            ScanfReadState::BufferedFd { base },
-        )
-    } else {
-        if rc == 0 {
-            s.set_eof();
-        }
-        if rc < 0 {
-            s.set_error();
-        }
-        (
-            ScanfReadBuf::from_vec(buf),
-            ScanfReadState::BufferedFd { base },
-        )
-    }
-}
-
-/// Finalize a scanf read: leave the unparsed remainder available to the next
-/// read on the same stream (glibc consumes exactly the parsed prefix).
-///
-/// Seekable fds use `lseek(base + consumed)`. Memory-backed streams rewind the
-/// backing by the unconsumed count. Non-seekable fds stage the unread suffix in
-/// the stream so the next `fgetc`/`fread` observes it byte-for-byte.
-pub(crate) fn scanf_finish_consume(
-    id: usize,
-    read_state: ScanfReadState,
-    input: &[u8],
-    consumed: usize,
-) {
-    let consumed = consumed.min(input.len());
-    match read_state {
-        ScanfReadState::SeekableFd { base } => {
-            if let Some(cell) = stream_cell(id) {
-                let mut s = cell.lock();
-                let target = base.saturating_add(consumed as i64);
-                let fd = s.fd();
-                if raw_syscall::sys_lseek(fd, target, libc::SEEK_SET).is_ok() {
-                    s.set_offset(target);
+    let locale = NumericLocale::current();
+    let radix = frankenlibc_core::stdio::printf::numeric_radix_byte().unwrap_or(b'.');
+    let mut session = WideScanSession::new_narrow(
+        directives.as_slice(),
+        radix,
+        crate::locale_abi::active_multibyte_codec(),
+    );
+    let mut writer = crate::wchar_abi::WideScanWriter::new_narrow(ap);
+    let mut input = None;
+    let mut scan_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let summary = loop {
+        let progress = session.resume(
+            input.take(),
+            &mut |spec, event, context| {
+                // SAFETY: every event belongs to a reached conversion whose
+                // destination type is described by the caller's live format.
+                unsafe { writer.write_stream_event(spec, event, context) }
+            },
+            &|byte| locale.byte_is_space(byte as u8),
+        );
+        match progress {
+            WideScanProgress::Complete(summary) => break summary,
+            WideScanProgress::NeedInput(purpose) => {
+                let before_read = unsafe { *crate::errno_abi::__errno_location() };
+                // SAFETY: the FILE remains live and locked, and the original
+                // caller is retained for cancellation-aware descriptor reads.
+                let byte = unsafe { fgetc_for_caller(stream, caller) };
+                input = Some(if byte != libc::EOF {
+                    WideScanInput::Character(byte as u32)
+                } else if unsafe { feof(stream) } != 0 {
+                    WideScanInput::Eof
+                } else {
+                    WideScanInput::Error
+                });
+                if matches!(purpose, WideScanReadPurpose::FormatWhitespace) {
+                    unsafe { set_abi_errno(before_read) };
                 }
+                scan_errno = unsafe { *crate::errno_abi::__errno_location() };
             }
         }
-        ScanfReadState::Memory => {
-            rewind_unconsumed_scanf_mem(id, input.len().saturating_sub(consumed));
-        }
-        ScanfReadState::BufferedFd { base } => {
-            stage_unconsumed_scanf_fd(id, base, input, consumed);
+    };
+    let mut input_failure = summary.input_failure;
+    let mut error = writer.error.unwrap_or(if session.encoding_error() {
+        errno::EILSEQ
+    } else {
+        scan_errno
+    });
+    let mut unread = InlineVec::<u8, 8>::default();
+    for byte in session.unread() {
+        unread.push(byte as u8);
+    }
+    if !unread.is_empty() {
+        if let Some(cell) = stream_cell(id) {
+            let mut state = cell.lock();
+            sync_and_unregister_fast_fixed_mem_read(id, &mut state);
+            // A numeric suffix can span more than ungetc's in-buffer space,
+            // especially on cookies and at a refill boundary. The ordinary
+            // FILE pushback queue preserves every byte and its logical offset.
+            state.unread_bytes(unread.as_slice(), false);
+        } else {
+            input_failure = true;
+            error = errno::EBADF;
         }
     }
+    let result = if writer.allocation_failure || (input_failure && summary.count == 0) {
+        libc::EOF
+    } else {
+        summary.count
+    };
+    drop(writer);
+    // SAFETY: preserve the scan's errno across allocation and cursor cleanup.
+    unsafe { set_abi_errno(error) };
+    result
 }
 
 /// Match exactly one narrow `%c` conversion.
@@ -14637,29 +14512,6 @@ unsafe fn strict_scan_stream_single_char(
     // one writable `char`; the general scanf engine has the same precondition.
     unsafe { *destination = byte as u8 as c_char };
     1
-}
-
-/// Rewind a memory-backed bulk scanf read by the unparsed count.
-fn rewind_unconsumed_scanf_mem(id: usize, unconsumed: usize) {
-    if unconsumed == 0 {
-        return;
-    }
-    let cell_opt = stream_cell(id);
-    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
-    if let Some(s) = s_guard.as_deref_mut() {
-        s.scanf_rewind_mem(unconsumed);
-    }
-}
-
-/// Stage unread bytes from a non-seekable fd bulk scanf read.
-fn stage_unconsumed_scanf_fd(id: usize, base: i64, input: &[u8], consumed: usize) {
-    let consumed = consumed.min(input.len());
-    let cell_opt = stream_cell(id);
-    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
-    if let Some(s) = s_guard.as_deref_mut() {
-        s.pushback_read_bytes(&input[consumed..]);
-        s.set_offset(base.saturating_add(consumed as i64));
-    }
 }
 
 /// POSIX `sscanf` — scan formatted input from string.
@@ -14785,33 +14637,20 @@ pub unsafe extern "C-unwind" fn fscanf(
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) =
-        unsafe { read_stream_for_scanf_for_caller(id, 8192, caller) };
-    if input_buf.is_empty() {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    let Some((result, directives)) = scanf_core(&input_buf, format, ScanfDialect::Legacy) else {
-        scanf_finish_consume(id, scanf_seek_base, &input_buf, 0);
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
+    // SAFETY: this frame's variadic state has the C va_list layout used by the
+    // shared scanner, and no argument has been extracted on this path.
+    let result = unsafe {
+        scan_narrow_stream(
+            stream,
+            id,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            caller,
+            ScanfDialect::Legacy,
+        )
     };
-
-    // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    scanf_finish_consume(id, scanf_seek_base, &input_buf, result.consumed);
-
-    // Stores happen even when the call returns EOF: glibc has already written
-    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
-    scanf_write_values!(
-        result.values.as_slice(),
-        directives.as_slice(),
-        args,
-        result.failed_alloc
-    );
-    let eof = result.input_failure && result.count == 0;
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
-    if eof { libc::EOF } else { result.count }
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+    result
 }
 
 /// POSIX `scanf` — scan formatted input from stdin.
@@ -14849,33 +14688,19 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) =
-        unsafe { read_stream_for_scanf_for_caller(stdin_id, 8192, caller) };
-    if input_buf.is_empty() {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    let Some((result, directives)) = scanf_core(&input_buf, format, ScanfDialect::Legacy) else {
-        scanf_finish_consume(stdin_id, scanf_seek_base, &input_buf, 0);
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
+    // SAFETY: stdin and this frame's unconsumed va_list remain live throughout.
+    let result = unsafe {
+        scan_narrow_stream(
+            stdin_ptr,
+            stdin_id,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            caller,
+            ScanfDialect::Legacy,
+        )
     };
-
-    // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    scanf_finish_consume(stdin_id, scanf_seek_base, &input_buf, result.consumed);
-
-    // Stores happen even when the call returns EOF: glibc has already written
-    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
-    scanf_write_values!(
-        result.values.as_slice(),
-        directives.as_slice(),
-        args,
-        result.failed_alloc
-    );
-    let eof = result.input_failure && result.count == 0;
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
-    if eof { libc::EOF } else { result.count }
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+    result
 }
 
 /// POSIX `vsscanf` — scan formatted input from string with va_list.
@@ -15048,36 +14873,10 @@ pub(crate) unsafe fn vfscanf_with_dialect(
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) =
-        unsafe { read_stream_for_scanf_for_caller(id, 8192, caller) };
-    if input_buf.is_empty() {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    let Some((result, directives)) = scanf_core(&input_buf, format, dialect) else {
-        scanf_finish_consume(id, scanf_seek_base, &input_buf, 0);
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    };
-
-    // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    scanf_finish_consume(id, scanf_seek_base, &input_buf, result.consumed);
-
-    // Stores happen even when the call returns EOF: glibc has already written
-    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
-    unsafe {
-        vscanf_write_values(
-            result.values.as_slice(),
-            directives.as_slice(),
-            ap,
-            result.failed_alloc,
-        );
-    }
-
-    let eof = result.input_failure && result.count == 0;
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
-    if eof { libc::EOF } else { result.count }
+    // SAFETY: ap points to the caller's unconsumed va_list for this format.
+    let result = unsafe { scan_narrow_stream(stream, id, format, ap, caller, dialect) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+    result
 }
 
 /// POSIX `vscanf` — scan formatted input from stdin with va_list.

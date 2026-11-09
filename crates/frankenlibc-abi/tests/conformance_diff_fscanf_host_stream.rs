@@ -857,3 +857,635 @@ fn scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams() {
     println!("scanf dialect matrix: {comparisons} exact-symbol GNU comparisons");
     assert_eq!(unsafe { close(handle) }, 0);
 }
+
+/// These streams are owned by the provider under test. In particular, the
+/// native arm cannot silently delegate its FILE to the independent GNU oracle.
+mod streaming_narrow {
+    use super::{FcloseFn, FscanfFn, host_fn};
+    use frankenlibc_abi::{errno_abi, isoc_abi, malloc_abi, stdio_abi as fl};
+    use std::ffi::{CStr, c_char, c_int, c_long, c_void};
+
+    type ErrnoFn = unsafe extern "C" fn() -> *mut c_int;
+    type CookieOpen =
+        unsafe extern "C" fn(*mut c_void, *const c_char, fl::CookieIoFuncs) -> *mut c_void;
+
+    struct Api {
+        mem: unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void,
+        fd: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void,
+        cookie: CookieOpen,
+        close: FcloseFn,
+        getc: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+        tell: unsafe extern "C-unwind" fn(*mut c_void) -> c_long,
+        eof: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+        error: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+        errno: ErrnoFn,
+        free: unsafe extern "C" fn(*mut c_void),
+    }
+
+    impl Api {
+        fn native() -> Self {
+            Self {
+                mem: fl::fmemopen,
+                fd: fl::fdopen,
+                cookie: fl::fopencookie,
+                close: fl::fclose,
+                getc: fl::fgetc,
+                tell: fl::ftell,
+                eof: fl::feof,
+                error: fl::ferror,
+                errno: errno_abi::__errno_location,
+                free: malloc_abi::free,
+            }
+        }
+
+        fn host() -> Self {
+            // SAFETY: each signature matches its C symbol, and host_fn rejects
+            // addresses equal to the native implementation being tested.
+            unsafe {
+                Self {
+                    mem: host_fn(c"fmemopen", fl::fmemopen as *const ()),
+                    fd: host_fn(c"fdopen", fl::fdopen as *const ()),
+                    cookie: host_fn(c"fopencookie", fl::fopencookie as *const ()),
+                    close: host_fn(c"fclose", fl::fclose as *const ()),
+                    getc: host_fn(c"fgetc", fl::fgetc as *const ()),
+                    tell: host_fn(c"ftell", fl::ftell as *const ()),
+                    eof: host_fn(c"feof", fl::feof as *const ()),
+                    error: host_fn(c"ferror", fl::ferror as *const ()),
+                    errno: host_fn(
+                        c"__errno_location",
+                        errno_abi::__errno_location as *const (),
+                    ),
+                    free: host_fn(c"free", malloc_abi::free as *const ()),
+                }
+            }
+        }
+
+        fn status(&self, stream: *mut c_void) -> (c_int, bool, bool) {
+            // SAFETY: callers retain this provider's live FILE for the query.
+            unsafe {
+                (
+                    *(self.errno)(),
+                    (self.eof)(stream) != 0,
+                    (self.error)(stream) != 0,
+                )
+            }
+        }
+    }
+
+    fn arms() -> [(&'static CStr, FscanfFn, FscanfFn); 3] {
+        [
+            (c"fscanf", fl::fscanf as FscanfFn),
+            (c"__isoc99_fscanf", fl::__isoc99_fscanf as FscanfFn),
+            (c"__isoc23_fscanf", isoc_abi::__isoc23_fscanf as FscanfFn),
+        ]
+        .map(|(name, native)| {
+            // SAFETY: all three symbols have the fscanf variadic signature.
+            (name, native, unsafe { host_fn(name, native as *const ()) })
+        })
+    }
+
+    #[test]
+    fn long_fields_and_leading_whitespace_cross_refills_without_losing_bytes() {
+        let (native, host) = (Api::native(), Api::host());
+        for (name, native_scan, host_scan) in arms() {
+            let run = |api: &Api, scan: FscanfFn| {
+                let mut input = vec![b' '; 9_000];
+                input.extend_from_slice(&vec![0xff; 20_000]);
+                input.push(b' ');
+                input.extend_from_slice(&vec![b'a'; 12_000]);
+                input.push(b'!');
+                // SAFETY: input's allocation stays live through fclose.
+                let stream =
+                    unsafe { (api.mem)(input.as_mut_ptr().cast(), input.len(), c"r".as_ptr()) };
+                assert!(!stream.is_null());
+                let mut fixed = vec![0xa5u8; 20_001];
+                let mut allocated: *mut u8 = std::ptr::null_mut();
+                let (mut first_count, mut second_count, mut tail) = (-1, -1, 0u8);
+                // SAFETY: destinations match %s, %n, %m[, %n, and %c and have
+                // enough capacity for their known input, including terminators.
+                let rc = unsafe {
+                    *(api.errno)() = 0;
+                    scan(
+                        stream,
+                        c"%s%n %m[^!]%n%c".as_ptr(),
+                        fixed.as_mut_ptr(),
+                        &mut first_count,
+                        &mut allocated,
+                        &mut second_count,
+                        &mut tail,
+                    )
+                };
+                let state = api.status(stream);
+                assert!(
+                    !allocated.is_null(),
+                    "{name:?} did not allocate its scanset"
+                );
+                // SAFETY: a published %m[ field is NUL-terminated. Reading to
+                // that terminator also keeps a truncation regression bounded
+                // by its actual allocation before the length assertions fail.
+                let allocated_bytes = unsafe {
+                    CStr::from_ptr(allocated.cast())
+                        .to_bytes_with_nul()
+                        .to_vec()
+                };
+                let position = unsafe { (api.tell)(stream) };
+                unsafe { (api.free)(allocated.cast()) };
+                assert_eq!(unsafe { (api.close)(stream) }, 0);
+                (
+                    rc,
+                    first_count,
+                    second_count,
+                    tail,
+                    position,
+                    fixed,
+                    allocated_bytes,
+                    state,
+                )
+            };
+            let expected = run(&host, host_scan);
+            assert_eq!(
+                (expected.0, expected.1, expected.2, expected.3, expected.4),
+                (3, 29_000, 41_001, b'!', 41_002)
+            );
+            assert_eq!(&expected.5[..20_000], vec![0xff; 20_000]);
+            assert_eq!(expected.5[20_000], 0);
+            assert_eq!(&expected.6[..12_000], vec![b'a'; 12_000]);
+            assert_eq!(expected.6[12_000], 0);
+            assert_eq!(expected.7, (0, false, false));
+            assert_eq!(run(&native, native_scan), expected, "{name:?}");
+
+            for format in [c"%20000c%n%c", c"%20000s%n%c", c"%20000[^Z]%n%c"] {
+                let bounded = |api: &Api, scan: FscanfFn| {
+                    let mut input = vec![0xfe; 20_000];
+                    input.push(b'Z');
+                    let stream =
+                        unsafe { (api.mem)(input.as_mut_ptr().cast(), input.len(), c"r".as_ptr()) };
+                    assert!(!stream.is_null());
+                    let (mut output, mut count, mut tail) = (vec![0xa5u8; 20_001], -1, 0u8);
+                    // SAFETY: all three formats have a char buffer, int*, char*.
+                    let rc = unsafe {
+                        scan(
+                            stream,
+                            format.as_ptr(),
+                            output.as_mut_ptr(),
+                            &mut count,
+                            &mut tail,
+                        )
+                    };
+                    let position = unsafe { (api.tell)(stream) };
+                    assert_eq!(unsafe { (api.close)(stream) }, 0);
+                    (rc, count, tail, position, output)
+                };
+                let expected = bounded(&host, host_scan);
+                assert_eq!(
+                    (expected.0, expected.1, expected.2, expected.3),
+                    (2, 20_000, b'Z', 20_001)
+                );
+                assert_eq!(
+                    bounded(&native, native_scan),
+                    expected,
+                    "{name:?} {format:?}"
+                );
+            }
+        }
+    }
+
+    struct ShortRead {
+        input: Vec<u8>,
+        position: usize,
+        maximum: usize,
+        end_error: bool,
+        errno: ErrnoFn,
+    }
+
+    unsafe extern "C-unwind" fn short_read(
+        cookie: *mut c_void,
+        out: *mut c_char,
+        len: usize,
+    ) -> isize {
+        // SAFETY: each FILE borrows a live ShortRead until it is closed, and
+        // its callback destination is writable for len bytes.
+        let source = unsafe { &mut *cookie.cast::<ShortRead>() };
+        let count = len
+            .min(source.maximum)
+            .min(source.input.len() - source.position);
+        if count == 0 && source.end_error {
+            unsafe { *(source.errno)() = libc::EIO };
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                source.input.as_ptr().add(source.position),
+                out.cast(),
+                count,
+            )
+        };
+        source.position += count;
+        count as isize
+    }
+
+    fn open_short(api: &Api, source: &mut ShortRead) -> *mut c_void {
+        // SAFETY: the caller keeps source live and closes the FILE before it
+        // leaves scope; the callback never assumes a seekable backing.
+        let stream = unsafe {
+            (api.cookie)(
+                (source as *mut ShortRead).cast(),
+                c"r".as_ptr(),
+                fl::CookieIoFuncs {
+                    read: Some(short_read),
+                    ..fl::CookieIoFuncs::default()
+                },
+            )
+        };
+        assert!(!stream.is_null());
+        stream
+    }
+
+    #[test]
+    fn short_cookie_reads_do_not_end_numbers_or_text_fields() {
+        let (native, host) = (Api::native(), Api::host());
+        for (name, native_scan, host_scan) in arms() {
+            for maximum in [1, 3, 7] {
+                let run = |api: &Api, scan: FscanfFn| {
+                    let mut source = ShortRead {
+                        input: b"123 456 abcdef!".to_vec(),
+                        position: 0,
+                        maximum,
+                        end_error: false,
+                        errno: api.errno,
+                    };
+                    let stream = open_short(api, &mut source);
+                    let (mut first, mut second, mut count, mut tail) = (-1, -1, -1, 0u8);
+                    let mut allocated: *mut u8 = std::ptr::null_mut();
+                    // SAFETY: each argument matches the format's destination.
+                    let rc = unsafe {
+                        *(api.errno)() = 0;
+                        scan(
+                            stream,
+                            c"%d %d %m[^!]%n%c".as_ptr(),
+                            &mut first,
+                            &mut second,
+                            &mut allocated,
+                            &mut count,
+                            &mut tail,
+                        )
+                    };
+                    assert!(!allocated.is_null());
+                    let text = unsafe { CStr::from_ptr(allocated.cast()).to_bytes().to_vec() };
+                    let state = api.status(stream);
+                    unsafe { (api.free)(allocated.cast()) };
+                    assert_eq!(unsafe { (api.close)(stream) }, 0);
+                    (rc, first, second, count, tail, text, state)
+                };
+                let expected = run(&host, host_scan);
+                assert_eq!(
+                    expected,
+                    (4, 123, 456, 14, b'!', b"abcdef".to_vec(), (0, false, false))
+                );
+                assert_eq!(
+                    run(&native, native_scan),
+                    expected,
+                    "{name:?} short read {maximum}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn open_pipe_uses_buffered_tokens_and_count_only_formats_without_refilling() {
+        let (native, host) = (Api::native(), Api::host());
+        for (name, native_scan, host_scan) in arms() {
+            let run = |api: &Api, scan: FscanfFn| {
+                let mut descriptors = [-1; 2];
+                // O_NONBLOCK turns a speculative refill into a visible EAGAIN
+                // instead of hanging the test with its writer deliberately open.
+                assert_eq!(
+                    unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_NONBLOCK) },
+                    0
+                );
+                let stream = unsafe { (api.fd)(descriptors[0], c"r".as_ptr()) };
+                assert!(!stream.is_null());
+                let mut observations = Vec::new();
+                for format in [c"", c"%n"] {
+                    let mut value = -1;
+                    let rc = unsafe {
+                        *(api.errno)() = 0;
+                        scan(stream, format.as_ptr(), &mut value)
+                    };
+                    observations.push((rc, value, api.status(stream)));
+                }
+                assert_eq!(
+                    unsafe { libc::write(descriptors[1], b"12 34 tail".as_ptr().cast(), 10) },
+                    10
+                );
+                for _ in 0..2 {
+                    let mut value = -1;
+                    let rc = unsafe {
+                        *(api.errno)() = 0;
+                        scan(stream, c"%d".as_ptr(), &mut value)
+                    };
+                    observations.push((rc, value, api.status(stream)));
+                }
+                let remaining: Vec<_> = (0..5).map(|_| unsafe { (api.getc)(stream) }).collect();
+                assert_eq!(unsafe { (api.close)(stream) }, 0);
+                assert_eq!(unsafe { libc::close(descriptors[1]) }, 0);
+                (observations, remaining)
+            };
+            let expected = run(&host, host_scan);
+            assert_eq!(
+                expected.0,
+                [
+                    (0, -1, (0, false, false)),
+                    (0, 0, (0, false, false)),
+                    (1, 12, (0, false, false)),
+                    (1, 34, (0, false, false))
+                ]
+            );
+            assert_eq!(
+                expected.1,
+                b" tail".iter().map(|&b| c_int::from(b)).collect::<Vec<_>>()
+            );
+            assert_eq!(run(&native, native_scan), expected, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn count_only_formats_reject_write_only_streams_before_assigning() {
+        let (native, host) = (Api::native(), Api::host());
+        for (name, native_scan, host_scan) in arms() {
+            for mode in [c"w", c"a"] {
+                for format in [c"", c"%n", c"%*n", c"%"] {
+                    let run = |api: &Api, scan: FscanfFn| {
+                        let mut input = [0u8; 4];
+                        let stream = unsafe {
+                            (api.mem)(input.as_mut_ptr().cast(), input.len(), mode.as_ptr())
+                        };
+                        assert!(!stream.is_null());
+                        let mut count = -777;
+                        // SAFETY: only %n uses the one live int*; all other
+                        // formats ignore it and must reject the FILE first.
+                        let rc = unsafe {
+                            *(api.errno)() = 0;
+                            scan(stream, format.as_ptr(), &mut count)
+                        };
+                        let state = api.status(stream);
+                        assert_eq!(unsafe { (api.close)(stream) }, 0);
+                        (rc, count, state)
+                    };
+                    let expected = run(&host, host_scan);
+                    assert_eq!(expected, (libc::EOF, -777, (libc::EBADF, false, false)));
+                    assert_eq!(
+                        run(&native, native_scan),
+                        expected,
+                        "{name:?} {mode:?} {format:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_character_fields_fail_and_release_allocations_on_eof_or_error() {
+        // The repository targets GNU's corrected full-width %c contract.
+        // Older host glibc releases accepted partial fields, so this regression
+        // checks that existing contract directly instead of using an old oracle.
+        let native = Api::native();
+        for (name, native_scan, _) in arms() {
+            for end_error in [false, true] {
+                for allocated in [false, true] {
+                    let run = |api: &Api, scan: FscanfFn| {
+                        let mut source = ShortRead {
+                            input: b"ab".to_vec(),
+                            position: 0,
+                            maximum: 1,
+                            end_error,
+                            errno: api.errno,
+                        };
+                        let stream = open_short(api, &mut source);
+                        let (mut output, mut pointer, mut count) =
+                            ([0xa5u8; 3], std::ptr::null_mut::<u8>(), -1);
+                        let (format, destination) = if allocated {
+                            (c"%3mc%n", (&mut pointer as *mut *mut u8).cast::<c_void>())
+                        } else {
+                            (c"%3c%n", output.as_mut_ptr().cast::<c_void>())
+                        };
+                        // SAFETY: destination is char** only for %mc, char* for
+                        // %c; failed partial conversions must not reach %n.
+                        let rc = unsafe {
+                            *(api.errno)() = 0;
+                            scan(stream, format.as_ptr(), destination, &mut count)
+                        };
+                        let state = api.status(stream);
+                        let bytes = if allocated {
+                            assert!(
+                                pointer.is_null(),
+                                "an incomplete %mc must not publish storage"
+                            );
+                            Vec::new()
+                        } else {
+                            assert_eq!(output[2], 0xa5, "%c must not append a terminator");
+                            output[..2].to_vec()
+                        };
+                        assert_eq!(unsafe { (api.close)(stream) }, 0);
+                        (rc, count, bytes, state)
+                    };
+                    let expected = (
+                        libc::EOF,
+                        -1,
+                        if allocated {
+                            Vec::new()
+                        } else {
+                            b"ab".to_vec()
+                        },
+                        (if end_error { libc::EIO } else { 0 }, !end_error, end_error),
+                    );
+                    assert_eq!(
+                        run(&native, native_scan),
+                        expected,
+                        "{name:?} allocated={allocated} error={end_error}"
+                    );
+                }
+            }
+        }
+    }
+
+    struct Utf8Locale {
+        native: *mut c_void,
+        native_previous: *mut c_void,
+        host: *mut c_void,
+        host_previous: *mut c_void,
+        host_use: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        host_free: unsafe extern "C" fn(*mut c_void),
+    }
+
+    impl Utf8Locale {
+        fn select() -> Self {
+            use frankenlibc_abi::locale_abi as locale;
+            type NewLocale = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
+            // SAFETY: both locale implementations own separate thread-local
+            // selections; every resolved signature matches its POSIX symbol.
+            unsafe {
+                let host_new: NewLocale = host_fn(c"newlocale", locale::newlocale as *const ());
+                let host_use: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                    host_fn(c"uselocale", locale::uselocale as *const ());
+                let host_free = host_fn(c"freelocale", locale::freelocale as *const ());
+                let native =
+                    locale::newlocale(libc::LC_ALL_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut());
+                let host = host_new(libc::LC_ALL_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut());
+                assert!(
+                    !native.is_null() && !host.is_null(),
+                    "C.UTF-8 locale required"
+                );
+                let native_previous = locale::uselocale(native);
+                let host_previous = host_use(host);
+                assert!(!native_previous.is_null() && !host_previous.is_null());
+                Self {
+                    native,
+                    native_previous,
+                    host,
+                    host_previous,
+                    host_use,
+                    host_free,
+                }
+            }
+        }
+    }
+
+    impl Drop for Utf8Locale {
+        fn drop(&mut self) {
+            // SAFETY: restore each provider's live previous selection before
+            // freeing the locale object this guard allocated with it.
+            unsafe {
+                frankenlibc_abi::locale_abi::uselocale(self.native_previous);
+                (self.host_use)(self.host_previous);
+                frankenlibc_abi::locale_abi::freelocale(self.native);
+                (self.host_free)(self.host);
+            }
+        }
+    }
+
+    #[test]
+    fn byte_stream_wide_fields_decode_characters_but_count_and_restore_bytes() {
+        let _locale = Utf8Locale::select();
+        let (native, host) = (Api::native(), Api::host());
+        for (name, native_scan, host_scan) in arms() {
+            let run = |api: &Api, scan: FscanfFn| {
+                let mut input = "7é中日本!".as_bytes().to_vec();
+                let stream =
+                    unsafe { (api.mem)(input.as_mut_ptr().cast(), input.len(), c"r".as_ptr()) };
+                assert!(!stream.is_null());
+                let (mut number, mut chars, mut text) = (-1, [-777i32; 3], [-777i32; 4]);
+                let (mut first_count, mut second_count, mut tail) = (-1, -1, 0u8);
+                // SAFETY: narrow %lc/%ls require wchar_t destinations; all
+                // fields have their format's capacity, with string terminator.
+                let rc = unsafe {
+                    *(api.errno)() = 0;
+                    scan(
+                        stream,
+                        c"%d%2lc%n%2ls%n%c".as_ptr(),
+                        &mut number,
+                        chars.as_mut_ptr(),
+                        &mut first_count,
+                        text.as_mut_ptr(),
+                        &mut second_count,
+                        &mut tail,
+                    )
+                };
+                let state = api.status(stream);
+                let position = unsafe { (api.tell)(stream) };
+                assert_eq!(unsafe { (api.close)(stream) }, 0);
+                (
+                    rc,
+                    number,
+                    chars,
+                    text,
+                    first_count,
+                    second_count,
+                    tail,
+                    position,
+                    state,
+                )
+            };
+            let expected = run(&host, host_scan);
+            assert_eq!(
+                expected,
+                (
+                    4,
+                    7,
+                    [0xe9, 0x4e2d, -777],
+                    [0x65e5, 0x672c, 0, -777],
+                    6,
+                    12,
+                    b'!',
+                    13,
+                    (0, false, false)
+                )
+            );
+            assert_eq!(run(&native, native_scan), expected, "{name:?} UTF-8 fields");
+
+            for (
+                bytes,
+                format,
+                expected_rc,
+                expected_count,
+                expected_position,
+                expected_next,
+                expected_errno,
+            ) in [
+                (&"é中".as_bytes()[..], c"%2lc%n", 1, 5, 5, libc::EOF, 0),
+                (
+                    &b"a\xffZ"[..],
+                    c"%2lc%n",
+                    0,
+                    -1,
+                    2,
+                    c_int::from(b'Z'),
+                    libc::EILSEQ,
+                ),
+                (&b"a\xc3"[..], c"%2lc%n", 0, -1, 2, libc::EOF, libc::EILSEQ),
+                (
+                    &"êZ".as_bytes()[..],
+                    c"%l[é]%n",
+                    0,
+                    -1,
+                    1,
+                    0xaa,
+                    libc::EILSEQ,
+                ),
+            ] {
+                let run = |api: &Api, scan: FscanfFn| {
+                    let mut input = bytes.to_vec();
+                    let stream =
+                        unsafe { (api.mem)(input.as_mut_ptr().cast(), input.len(), c"r".as_ptr()) };
+                    assert!(!stream.is_null());
+                    let (mut output, mut count) = ([-777i32; 4], -1);
+                    let rc = unsafe {
+                        *(api.errno)() = 0;
+                        scan(stream, format.as_ptr(), output.as_mut_ptr(), &mut count)
+                    };
+                    let state = api.status(stream);
+                    let position = unsafe { (api.tell)(stream) };
+                    let next = unsafe { (api.getc)(stream) };
+                    assert_eq!(unsafe { (api.close)(stream) }, 0);
+                    (rc, count, output, position, next, state)
+                };
+                let expected = run(&host, host_scan);
+                assert_eq!(
+                    (expected.0, expected.1, expected.3, expected.4, expected.5.0),
+                    (
+                        expected_rc,
+                        expected_count,
+                        expected_position,
+                        expected_next,
+                        expected_errno
+                    )
+                );
+                assert_eq!(
+                    run(&native, native_scan),
+                    expected,
+                    "{name:?} {format:?} {bytes:?}"
+                );
+            }
+        }
+    }
+}

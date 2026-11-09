@@ -1290,7 +1290,7 @@ enum WideScanPhase {
     Number(WideScanNumber),
 }
 
-/// Resumable wide FILE scanning, with no whole-input buffer or replayed stores.
+/// Resumable FILE scanning, with no whole-input buffer or replayed stores.
 ///
 /// Start with `resume(None, ...)`, then supply exactly one input result after
 /// each NeedInput. Text is delivered before asking for its next character, so
@@ -1298,6 +1298,9 @@ enum WideScanPhase {
 /// Numeric tokens alone retain their spelling until the existing value parser
 /// runs once; ordinary tokens fit inline. The locale radix and whitespace
 /// predicate must describe the same immutable locale snapshot for the call.
+/// [`Self::new`] consumes wide characters; [`Self::new_narrow`] consumes raw
+/// bytes and decodes only `l`-qualified text destinations. Narrow `%n` therefore
+/// counts bytes even when a text field's width counts decoded characters.
 pub struct WideScanSession<'a> {
     directives: &'a [ScanDirective],
     directive_index: usize,
@@ -1310,6 +1313,10 @@ pub struct WideScanSession<'a> {
     terminal: Option<WideScanInput>,
     waiting: bool,
     complete: Option<WideScanSummary>,
+    narrow_codec: Option<crate::iconv::MultibyteCodec>,
+    multibyte: [u8; 6],
+    multibyte_len: usize,
+    encoding_error: bool,
 }
 
 impl<'a> WideScanSession<'a> {
@@ -1327,7 +1334,32 @@ impl<'a> WideScanSession<'a> {
             terminal: None,
             waiting: false,
             complete: None,
+            narrow_codec: None,
+            multibyte: [0; 6],
+            multibyte_len: 0,
+            encoding_error: false,
         }
+    }
+
+    /// Scan a byte-oriented FILE. Every supplied Character must contain one
+    /// unsigned byte, including invalid multibyte bytes in ordinary `%s/%[`.
+    #[must_use]
+    pub fn new_narrow(
+        directives: &'a [ScanDirective],
+        radix: u8,
+        codec: crate::iconv::MultibyteCodec,
+    ) -> Self {
+        Self {
+            narrow_codec: Some(codec),
+            ..Self::new(directives, u32::from(radix))
+        }
+    }
+
+    /// An incomplete or invalid external character stopped a narrow `%l`
+    /// text conversion. The ABI publishes EILSEQ after restoring lookahead.
+    #[must_use]
+    pub fn encoding_error(&self) -> bool {
+        self.encoding_error
     }
 
     /// Characters fetched but not consumed, in original input order. After
@@ -1395,6 +1427,9 @@ impl<'a> WideScanSession<'a> {
     where
         F: FnMut(&ScanSpec, WideScanEvent, WideScanContext) -> Result<(), WideScanWriteError>,
     {
+        if self.multibyte_len != 0 {
+            return Some(self.fail_encoding(spec, matched, writer));
+        }
         if !spec.suppress {
             let event = if successful {
                 WideScanEvent::EndText
@@ -1413,6 +1448,47 @@ impl<'a> WideScanSession<'a> {
         }
         self.directive_index += 1;
         None
+    }
+
+    fn fail_encoding<F>(
+        &mut self,
+        spec: &ScanSpec,
+        matched: usize,
+        writer: &mut F,
+    ) -> WideScanProgress
+    where
+        F: FnMut(&ScanSpec, WideScanEvent, WideScanContext) -> Result<(), WideScanWriteError>,
+    {
+        self.encoding_error = true;
+        self.multibyte_len = 0;
+        if !spec.suppress {
+            // Abort releases an unpublished `%m` allocation while preserving
+            // a fixed destination's successfully decoded prefix.
+            let _ = writer(spec, WideScanEvent::AbortText, self.context(matched));
+        }
+        self.finish(false)
+    }
+
+    fn text_character(&mut self, spec: &ScanSpec, input: u32) -> Result<Option<u32>, ()> {
+        let Some(codec) = self
+            .narrow_codec
+            .filter(|_| spec.length == LengthMod::L && !(spec.suppress && spec.conversion == b'['))
+        else {
+            return Ok(Some(input));
+        };
+        let Some(slot) = self.multibyte.get_mut(self.multibyte_len) else {
+            return Err(());
+        };
+        *slot = u8::try_from(input).map_err(|_| ())?;
+        self.multibyte_len += 1;
+        match codec.decode(&self.multibyte[..self.multibyte_len]) {
+            crate::string::wchar::Utf8Step::Char { wc, .. } => {
+                self.multibyte_len = 0;
+                Ok(Some(wc))
+            }
+            crate::string::wchar::Utf8Step::Incomplete => Ok(None),
+            crate::string::wchar::Utf8Step::Invalid => Err(()),
+        }
     }
 
     fn end_number<F>(
@@ -1619,7 +1695,13 @@ impl<'a> WideScanSession<'a> {
                         Some(WideScanInput::Character(character)) => {
                             let accepted = match kind {
                                 ScanOperationKind::Character => true,
-                                ScanOperationKind::String => !is_space(character),
+                                ScanOperationKind::String => {
+                                    self.multibyte_len != 0 || !is_space(character)
+                                }
+                                // A narrow %l[ still tests each external byte
+                                // against its format's byte set. Rejecting a
+                                // continuation leaves it unread and makes the
+                                // consumed prefix an incomplete character.
                                 ScanOperationKind::Scanset => wide_scanset_accepts(spec, character),
                                 _ => unreachable!(),
                             };
@@ -1632,6 +1714,14 @@ impl<'a> WideScanSession<'a> {
                                 continue;
                             }
                             self.consume();
+                            let character = match self.text_character(spec, character) {
+                                Ok(Some(character)) => character,
+                                Ok(None) => {
+                                    self.phase = WideScanPhase::Text { kind, matched };
+                                    continue;
+                                }
+                                Err(()) => return self.fail_encoding(spec, matched, writer),
+                            };
                             let matched = matched + 1;
                             self.phase = WideScanPhase::Text { kind, matched };
                             if !spec.suppress
@@ -4911,6 +5001,199 @@ mod wide_stream_scan_tests {
             u32::from(b'.'),
             &crate::string::wchar::iswspace,
         )
+    }
+
+    fn run_narrow(format: &str, input: &[u8], terminal: Option<WideScanInput>) -> (Trace, bool) {
+        let directives = parse_scanf_format(format.as_bytes());
+        let mut session =
+            WideScanSession::new_narrow(&directives, b'.', crate::iconv::MultibyteCodec::Utf8);
+        let mut source = input.iter().copied();
+        let mut texts: Vec<Vec<u32>> = Vec::new();
+        let mut values = Vec::new();
+        let mut ends = 0;
+        let mut aborts = 0;
+        let mut requests = Vec::new();
+        let mut supplied = None;
+        let summary = loop {
+            let progress = session.resume(
+                supplied,
+                &mut |_: &ScanSpec, event, _: WideScanContext| {
+                    match event {
+                        WideScanEvent::BeginText => texts.push(Vec::new()),
+                        WideScanEvent::Character(byte) => texts.last_mut().unwrap().push(byte),
+                        WideScanEvent::EndText => ends += 1,
+                        WideScanEvent::AbortText => aborts += 1,
+                        WideScanEvent::Value(value) => values.push(value),
+                    }
+                    Ok(())
+                },
+                &|byte| is_c_space(byte as u8),
+            );
+            match progress {
+                WideScanProgress::Complete(summary) => break summary,
+                WideScanProgress::NeedInput(purpose) => {
+                    requests.push(purpose);
+                    supplied = Some(source.next().map_or_else(
+                        || terminal.expect("the completed byte directive must not read again"),
+                        |byte| WideScanInput::Character(u32::from(byte)),
+                    ));
+                }
+            }
+        };
+        (
+            Trace {
+                summary,
+                unread: session.unread().collect(),
+                requests,
+                texts,
+                values,
+                ends,
+                aborts,
+            },
+            session.encoding_error(),
+        )
+    }
+
+    #[test]
+    fn narrow_stream_long_text_preserves_arbitrary_bytes_and_counts() {
+        let mut input = vec![0xff; 20_000];
+        input.push(b' ');
+        input.extend_from_slice(&vec![b'a'; 6_000]);
+        input.push(b'!');
+        let (trace, encoding_error) = run_narrow("%s%n %m[^!]%n", &input, None);
+        assert!(
+            !encoding_error,
+            "ordinary byte fields must not decode UTF-8"
+        );
+        assert_eq!(trace.summary.count, 2);
+        assert_eq!(trace.summary.consumed, 26_001);
+        assert_eq!(trace.texts, [vec![255; 20_000], vec![97; 6_000]]);
+        assert_eq!((trace.ends, trace.aborts), (2, 0));
+        assert!(matches!(
+            trace.values.as_slice(),
+            [
+                ScanValue::CharsConsumed(20_000),
+                ScanValue::CharsConsumed(26_001)
+            ]
+        ));
+        assert_eq!(trace.unread, [u32::from(b'!')]);
+    }
+
+    #[test]
+    fn narrow_stream_finite_fields_and_count_only_do_not_read_a_suffix() {
+        for format in ["%1c%n", "%1s%n", "%1[^X]%n", "%1m[^X]%n"] {
+            let (trace, encoding_error) = run_narrow(format, &[0xff], None);
+            assert!(!encoding_error);
+            assert_eq!(trace.summary.count, 1, "{format}");
+            assert_eq!(trace.requests.len(), 1, "{format}");
+            assert_eq!(trace.texts, [vec![255]], "{format}");
+            assert!(matches!(
+                trace.values.as_slice(),
+                [ScanValue::CharsConsumed(1)]
+            ));
+        }
+        for format in ["", "%n"] {
+            let (trace, _) = run_narrow(format, &[], None);
+            assert_eq!(trace.summary.count, 0);
+            assert!(trace.requests.is_empty());
+        }
+    }
+
+    #[test]
+    fn narrow_stream_wide_fields_decode_incrementally_and_count_source_bytes() {
+        let (trace, encoding_error) = run_narrow("%2lc%n%2ls%n%c", "é中日本!".as_bytes(), None);
+        assert!(!encoding_error);
+        assert_eq!(trace.summary.count, 3);
+        assert_eq!(
+            trace.texts,
+            [vec![0xe9, 0x4e2d], vec![0x65e5, 0x672c], vec![33]]
+        );
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(5), ScanValue::CharsConsumed(11)]
+        ));
+
+        // The first UTF-8 byte was already fetched as numeric lookahead. It
+        // must still join the following byte when the next field is wide.
+        let (trace, encoding_error) = run_narrow("%d%lc%n%c", "7éZ".as_bytes(), None);
+        assert!(!encoding_error);
+        assert_eq!(trace.summary.count, 3);
+        assert_eq!(trace.texts, [vec![0xe9], vec![90]]);
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::SignedInt(7), ScanValue::CharsConsumed(3)]
+        ));
+
+        let (trace, encoding_error) = run_narrow("%*2lc%n%c", "é中Z".as_bytes(), None);
+        assert!(!encoding_error);
+        assert_eq!(trace.texts, [vec![90]]);
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(5)]
+        ));
+    }
+
+    #[test]
+    fn narrow_stream_encoding_failure_stops_before_later_reads_and_assignments() {
+        for (input, terminal) in [
+            (&b"a\xffZ"[..], None),
+            (&b"a\xc3"[..], Some(WideScanInput::Eof)),
+        ] {
+            let (trace, encoding_error) = run_narrow("%2lc%n%c", input, terminal);
+            assert!(encoding_error);
+            assert_eq!(trace.summary.count, 0);
+            assert_eq!(trace.summary.consumed, 2);
+            assert_eq!(trace.texts, [vec![97]]);
+            assert!(trace.values.is_empty());
+            assert_eq!((trace.ends, trace.aborts), (0, 1));
+        }
+    }
+
+    #[test]
+    fn narrow_stream_incomplete_character_fields_abort_at_eof_and_read_error() {
+        for terminal in [WideScanInput::Eof, WideScanInput::Error] {
+            for format in ["%3c%n", "%3mc%n"] {
+                let (trace, encoding_error) = run_narrow(format, b"ab", Some(terminal));
+                assert!(!encoding_error);
+                assert_eq!(trace.summary.count, 0, "{format}/{terminal:?}");
+                assert!(trace.summary.input_failure);
+                assert_eq!(trace.texts, [vec![97, 98]]);
+                assert_eq!((trace.ends, trace.aborts), (0, 1));
+                assert!(trace.values.is_empty());
+            }
+            let (trace, encoding_error) = run_narrow("%3lc%n", "é中".as_bytes(), Some(terminal));
+            assert!(!encoding_error);
+            assert_eq!(trace.summary.count, 0);
+            assert!(trace.summary.input_failure);
+            assert_eq!(trace.summary.consumed, 5);
+            assert_eq!(trace.texts, [vec![0xe9, 0x4e2d]]);
+            assert_eq!((trace.ends, trace.aborts), (0, 1));
+            assert!(trace.values.is_empty());
+        }
+    }
+
+    #[test]
+    fn narrow_wide_scanset_checks_each_byte_before_decoding() {
+        let (trace, encoding_error) = run_narrow("%l[é]%n", "êZ".as_bytes(), None);
+        assert!(encoding_error);
+        assert_eq!(trace.summary.count, 0);
+        assert_eq!(trace.summary.consumed, 1);
+        assert_eq!(trace.unread, [0xaa]);
+        assert_eq!(trace.texts, [Vec::<u32>::new()]);
+        assert_eq!((trace.ends, trace.aborts), (0, 1));
+        assert!(trace.values.is_empty());
+
+        // GNU suppressed narrow %l[ never decodes. Its width is a byte
+        // budget, even when the last consumed byte splits a character.
+        let (trace, encoding_error) = run_narrow("%*2l[^X]%n", "中Z".as_bytes(), None);
+        assert!(!encoding_error);
+        assert_eq!(trace.summary.count, 0);
+        assert_eq!(trace.summary.consumed, 2);
+        assert!(trace.texts.is_empty());
+        assert!(matches!(
+            trace.values.as_slice(),
+            [ScanValue::CharsConsumed(2)]
+        ));
     }
 
     #[test]
