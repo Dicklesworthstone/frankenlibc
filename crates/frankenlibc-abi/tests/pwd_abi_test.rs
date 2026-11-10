@@ -1690,10 +1690,10 @@ fn getspent_r_clears_result_before_rejecting_tracked_misaligned_spwd_slot() {
 #[test]
 fn getsgent_r_returns_enoent_for_missing_backend() {
     use frankenlibc_abi::pwd_abi::getsgent_r;
-    // sgrp is not in libc crate; use raw bytes
+    // sgrp is not in the libc crate; use the local C-layout type.
     let mut buf = vec![0u8; 512];
     // getsgent_r takes (struct sgrp*, char*, size_t, struct sgrp**) → int.
-    let mut sgrp_storage = [0u8; 128];
+    let mut sgrp_storage = std::mem::MaybeUninit::<TestSgrp>::uninit();
     let mut result_ptr: *mut u8 = ptr::null_mut();
 
     with_missing_gshadow_file(|| {
@@ -1717,7 +1717,7 @@ fn getsgent_r_returns_enoent_for_missing_backend() {
 fn getsgnam_r_returns_enoent_for_missing_backend() {
     use frankenlibc_abi::pwd_abi::getsgnam_r;
     let name = CString::new("root").unwrap();
-    let mut sgrp_storage = [0u8; 128];
+    let mut sgrp_storage = std::mem::MaybeUninit::<TestSgrp>::uninit();
     let mut buf = vec![0u8; 512];
     let mut result_ptr: *mut u8 = ptr::null_mut();
 
@@ -1749,7 +1749,7 @@ fn fgetsgent_null_stream_returns_null() {
 #[test]
 fn fgetsgent_r_null_stream_returns_error() {
     use frankenlibc_abi::pwd_abi::fgetsgent_r;
-    let mut sgrp_storage = [0u8; 128];
+    let mut sgrp_storage = std::mem::MaybeUninit::<TestSgrp>::uninit();
     let mut buf = vec![0u8; 512];
     let mut result_ptr: *mut u8 = ptr::null_mut();
 
@@ -1779,6 +1779,259 @@ struct TestSgrp {
     sg_passwd: *mut c_char,
     sg_adm: *mut *mut c_char,
     sg_mem: *mut *mut c_char,
+}
+
+
+fn assert_gshadow_caller_storage(entry: &TestSgrp, buffer: *mut c_char, capacity: usize) {
+    let start = buffer as usize;
+    let end = start + capacity;
+    let check_string = |value: *mut c_char| {
+        let address = value as usize;
+        assert!(address >= start && address < end, "string escapes caller buffer");
+        let remaining = unsafe {
+            std::slice::from_raw_parts(value.cast::<u8>(), end - address)
+        };
+        assert!(remaining.contains(&0), "string lacks a bounded terminator");
+    };
+    check_string(entry.sg_namp);
+    check_string(entry.sg_passwd);
+    for table in [entry.sg_adm, entry.sg_mem] {
+        let address = table as usize;
+        assert_eq!(address % std::mem::align_of::<*mut c_char>(), 0);
+        assert!(address >= start && address < end, "list escapes caller buffer");
+        let slots = (end - address) / std::mem::size_of::<*mut c_char>();
+        let mut terminated = false;
+        for index in 0..slots {
+            let value = unsafe { *table.add(index) };
+            if value.is_null() {
+                terminated = true;
+                break;
+            }
+            check_string(value);
+        }
+        assert!(terminated, "list lacks a bounded NULL terminator");
+    }
+}
+
+#[test]
+fn gshadow_string_result_ownership_alignment_and_retry_boundaries() {
+    use frankenlibc_abi::pwd_abi::sgetsgent_r;
+
+    let line = c"team:!:a,b:m,n";
+    for offset in 0..8 {
+        let mut bytes = [0xa5u8; 256];
+        let buffer = unsafe { bytes.as_mut_ptr().add(16 + offset).cast::<c_char>() };
+        let text_end = line.to_bytes_with_nul().len();
+        let alignment = std::mem::align_of::<*mut c_char>();
+        let padding = (buffer as usize + text_end).wrapping_neg() & (alignment - 1);
+        let minimum = text_end + padding + 7 * std::mem::size_of::<*mut c_char>();
+        for capacity in [1, minimum - 1, minimum] {
+            bytes.fill(0xa5);
+            let mut entry = std::mem::MaybeUninit::<TestSgrp>::uninit();
+            let sentinel = ptr::dangling_mut::<c_void>();
+            let mut result = sentinel;
+            unsafe { *__errno_location() = 717 };
+            let rc = unsafe {
+                sgetsgent_r(
+                    line.as_ptr(),
+                    entry.as_mut_ptr().cast(),
+                    buffer,
+                    capacity,
+                    &mut result,
+                )
+            };
+            assert!(bytes[..16 + offset].iter().all(|&byte| byte == 0xa5));
+            assert!(bytes[16 + offset + capacity..].iter().all(|&byte| byte == 0xa5));
+            if capacity < minimum {
+                assert_eq!(rc, libc::ERANGE);
+                assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
+                assert_eq!(result, if capacity == 1 { sentinel } else { ptr::null_mut() });
+                continue;
+            }
+            assert_eq!(rc, 0);
+            assert_eq!(unsafe { *__errno_location() }, 717);
+            assert_eq!(result, entry.as_mut_ptr().cast(), "must return the supplied sgrp");
+            let entry = unsafe { entry.assume_init() };
+            assert_gshadow_caller_storage(&entry, buffer, capacity);
+            unsafe {
+                assert_eq!(CStr::from_ptr(entry.sg_namp).to_bytes(), b"team");
+                assert_eq!(CStr::from_ptr(*entry.sg_adm.add(1)).to_bytes(), b"b");
+                assert_eq!(CStr::from_ptr(*entry.sg_mem.add(1)).to_bytes(), b"n");
+            }
+        }
+    }
+    for line in [c"", c":::", c"g"] {
+        let mut entry = std::mem::MaybeUninit::<TestSgrp>::uninit();
+        let mut buffer = [0u8; 128];
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                sgetsgent_r(
+                    line.as_ptr(),
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut result,
+                )
+            },
+            0
+        );
+        let entry = unsafe { entry.assume_init() };
+        assert_gshadow_caller_storage(&entry, buffer.as_mut_ptr().cast(), buffer.len());
+        assert!(unsafe { CStr::from_ptr(entry.sg_passwd) }.to_bytes().is_empty());
+        assert!(unsafe { *entry.sg_adm }.is_null());
+        assert!(unsafe { *entry.sg_mem }.is_null());
+    }
+}
+
+#[test]
+fn gshadow_stream_long_records_retry_and_eof() {
+    use frankenlibc_abi::pwd_abi::{fgetsgent, fgetsgent_r};
+    use frankenlibc_abi::stdio_abi::{fclose, feof, fmemopen, fseeko, ftello};
+
+    let name = "g".repeat(5000);
+    let mut image = format!("# comment\n{name}:!:alice,bob:carol,dave\nlast:!::\n").into_bytes();
+    let stream = unsafe {
+        fmemopen(image.as_mut_ptr().cast(), image.len(), c"r".as_ptr())
+    };
+    assert!(!stream.is_null());
+    struct Close(*mut c_void);
+    impl Drop for Close {
+        fn drop(&mut self) {
+            unsafe { fclose(self.0) };
+        }
+    }
+    let _close = Close(stream);
+    let mut entry = std::mem::MaybeUninit::<TestSgrp>::uninit();
+    let mut buffer = vec![0u8; 16384];
+    let mut result = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            fgetsgent_r(stream, entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), 64, &mut result)
+        },
+        libc::ERANGE
+    );
+    assert!(result.is_null());
+    assert_eq!(unsafe { ftello(stream) }, 10, "retry must retain the long record");
+    unsafe { *__errno_location() = 717 };
+    assert_eq!(
+        unsafe {
+            fgetsgent_r(
+                stream, entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(),
+                buffer.len(), &mut result,
+            )
+        },
+        0
+    );
+    assert_eq!(unsafe { *__errno_location() }, 717);
+    assert_eq!(result, entry.as_mut_ptr().cast());
+    let value = unsafe { entry.assume_init_ref() };
+    assert_gshadow_caller_storage(value, buffer.as_mut_ptr().cast(), buffer.len());
+    assert_eq!(unsafe { CStr::from_ptr(value.sg_namp) }.to_bytes(), name.as_bytes());
+    assert_eq!(unsafe { fseeko(stream, 0, libc::SEEK_SET) }, 0);
+    let answer = unsafe { fgetsgent(stream).cast::<TestSgrp>() };
+    assert!(!answer.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr((*answer).sg_namp) }.to_bytes(),
+        name.as_bytes(),
+        "nonreentrant answers must grow beyond 4096 bytes"
+    );
+    let last = unsafe { fgetsgent(stream).cast::<TestSgrp>() };
+    assert!(!last.is_null());
+    assert_eq!(unsafe { CStr::from_ptr((*last).sg_namp) }.to_bytes(), b"last");
+    assert!(unsafe { fgetsgent(stream) }.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+    assert_ne!(unsafe { feof(stream) }, 0);
+}
+
+#[test]
+fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
+    use frankenlibc_abi::pwd_abi::getsgent_r;
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getsgent_r, _nss_files_getsgnam_r, _nss_files_setsgent,
+    };
+
+    with_mode_and_gshadow_fixture("strict", || {
+        let mut entry = std::mem::MaybeUninit::<TestSgrp>::uninit();
+        let mut buffer = [0u8; 512];
+        let mut result = ptr::null_mut();
+        let mut error = 717;
+        assert_eq!(
+            unsafe {
+                getsgent_r(entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), 1, &mut result)
+            },
+            libc::ERANGE
+        );
+        assert!(result.is_null());
+        assert_eq!(
+            unsafe {
+                _nss_files_getsgent_r(
+                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                )
+            },
+            1
+        );
+        assert_eq!(error, 717);
+        assert_eq!(
+            unsafe { CStr::from_ptr(entry.assume_init_ref().sg_namp) }.to_bytes(),
+            b"wheel"
+        );
+        assert_eq!(
+            unsafe {
+                _nss_files_getsgnam_r(
+                    c"ops".as_ptr(), entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                )
+            },
+            1
+        );
+        assert_eq!(error, 717);
+        assert_eq!(
+            unsafe {
+                getsgent_r(
+                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut result,
+                )
+            },
+            0
+        );
+        assert_eq!(result, entry.as_mut_ptr().cast());
+        assert_eq!(
+            unsafe { CStr::from_ptr(entry.assume_init_ref().sg_namp) }.to_bytes(),
+            b"ops",
+            "keyed lookup must not advance enumeration"
+        );
+        assert_eq!(
+            unsafe {
+                getsgent_r(
+                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut result,
+                )
+            },
+            libc::ENOENT
+        );
+        assert!(result.is_null());
+        assert_eq!(
+            unsafe {
+                _nss_files_getsgent_r(
+                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                )
+            },
+            0
+        );
+        assert_eq!(error, 717);
+        assert_eq!(unsafe { _nss_files_setsgent(0) }, 1);
+        assert_eq!(
+            unsafe {
+                _nss_files_getsgent_r(
+                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                )
+            },
+            1
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(entry.assume_init_ref().sg_namp) }.to_bytes(),
+            b"wheel"
+        );
+    });
 }
 
 fn assert_gshadow_files_backend_iterates_and_looks_up(mode: &str) {
@@ -1852,7 +2105,7 @@ fn sgetsgent_valid_line_returns_static_sgrp() {
 #[test]
 fn sgetsgent_r_null_returns_error() {
     use frankenlibc_abi::pwd_abi::sgetsgent_r;
-    let mut sgrp_storage = [0u8; 128];
+    let mut sgrp_storage = std::mem::MaybeUninit::<TestSgrp>::uninit();
     let mut buf = vec![0u8; 512];
     let mut result_ptr: *mut u8 = ptr::null_mut();
 
@@ -1878,7 +2131,7 @@ fn sgetsgent_r_rejects_unterminated_string() {
         let unterminated = malloc(line.len()).cast::<u8>();
         assert!(!unterminated.is_null());
         std::ptr::copy_nonoverlapping(line.as_ptr(), unterminated, line.len());
-        let mut sgrp_storage = [0u8; 128];
+        let mut sgrp_storage = std::mem::MaybeUninit::<TestSgrp>::uninit();
         let mut buf = vec![0u8; 512];
         let mut result_ptr: *mut u8 = ptr::null_mut();
 

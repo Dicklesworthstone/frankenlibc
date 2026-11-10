@@ -1790,7 +1790,7 @@ unsafe fn getspent_r_impl(
 // frankenlibc_core::pwd::gshadow.
 
 use frankenlibc_core::pwd::gshadow::{
-    Gshadow, lookup_gshadow_by_name, parse_gshadow_file_line, parse_gshadow_line,
+    Gshadow, parse_gshadow_file_line, parse_gshadow_line,
 };
 
 /// C-compatible struct sgrp layout (matches glibc <gshadow.h>).
@@ -1802,23 +1802,109 @@ struct Sgrp {
     sg_mem: *mut *mut c_char,
 }
 
-/// Thread-local buffer for non-reentrant gshadow functions.
-/// Stores the sgrp struct + all strings + pointer arrays.
-const GSHADOW_BUF_SIZE: usize = 4096;
+struct GshadowRecord {
+    entry: Gshadow,
+    input_len: usize,
+}
 
+/// Thread-local answer storage and an independently owned files cursor.
+/// Reentrant results never borrow this scratch storage.
 struct GshadowTlsStorage {
     buf: Vec<u8>,
-    enum_offset: usize,
+    entry: Sgrp,
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line: Vec<u8>,
+    pending: Option<GshadowRecord>,
+    line_pending: bool,
 }
 
 impl GshadowTlsStorage {
     fn new() -> Self {
         Self {
             buf: Vec::new(),
-            enum_offset: 0,
+            entry: Sgrp {
+                sg_namp: ptr::null_mut(),
+                sg_passwd: ptr::null_mut(),
+                sg_adm: ptr::null_mut(),
+                sg_mem: ptr::null_mut(),
+            },
+            reader: None,
+            line: Vec::new(),
+            pending: None,
+            line_pending: false,
+        }
+    }
+
+    fn open_files(&mut self) -> Result<(), c_int> {
+        if self.reader.is_none() {
+            let file = std::fs::File::open(gshadow_source_path())
+                .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+            self.reader = Some(std::io::BufReader::new(file));
+        }
+        Ok(())
+    }
+
+    fn close_files(&mut self) {
+        self.reader = None;
+        self.line.clear();
+        self.pending = None;
+        self.line_pending = false;
+    }
+
+    fn next_files_entry(
+        &mut self,
+        capacity: Option<usize>,
+    ) -> Result<Option<GshadowRecord>, c_int> {
+        use std::io::BufRead;
+
+        if let Some(entry) = self.pending.take() {
+            return Ok(Some(entry));
+        }
+        self.open_files()?;
+        if capacity.is_some_and(|capacity| capacity < 3) {
+            return Err(libc::ERANGE);
+        }
+        loop {
+            if !self.line_pending {
+                self.line.clear();
+                let count = self
+                    .reader
+                    .as_mut()
+                    .ok_or(libc::EIO)?
+                    .read_until(b'\n', &mut self.line)
+                    .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+                if count == 0 {
+                    return Ok(None);
+                }
+                self.line_pending = true;
+            }
+            // GNU checks physical line capacity before skipping a comment or
+            // malformed row. Keep that row for a larger-buffer retry.
+            if capacity.is_some_and(|capacity| {
+                self.line.len().checked_add(2).is_none_or(|needed| needed > capacity)
+            }) {
+                return Err(libc::ERANGE);
+            }
+            self.line_pending = false;
+            let line = self
+                .line
+                .split(|&byte| byte == 0)
+                .next()
+                .unwrap_or_default();
+            if let Some(entry) = parse_gshadow_file_line(line) {
+                return Ok(Some(GshadowRecord {
+                    entry,
+                    input_len: self.line.len(),
+                }));
+            }
         }
     }
 }
+
+// SAFETY: owned TLS keeps this state boxed per thread. Answer pointers refer
+// only to its own allocation and are rebuilt after any growth.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for GshadowTlsStorage {}
 
 #[cfg(feature = "owned-tls-cache")]
 static GSHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GshadowTlsStorage> =
@@ -1836,316 +1922,643 @@ fn with_gshadow_storage<R>(callback: impl FnOnce(&mut GshadowTlsStorage) -> R) -
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GSHADOW_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
-        })
+        GSHADOW_TLS.with(|cell| callback(&mut cell.borrow_mut()))
     }
 }
 
-/// Read configured gshadow content. Returns None if the file doesn't exist.
 const GSHADOW_PATH: &str = "/etc/gshadow";
 const GSHADOW_PATH_ENV: &str = "FRANKENLIBC_GSHADOW_PATH";
 
-fn read_gshadow_file() -> Option<Vec<u8>> {
-    let path = std::env::var_os(GSHADOW_PATH_ENV)
+fn gshadow_source_path() -> PathBuf {
+    std::env::var_os(GSHADOW_PATH_ENV)
+        .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(GSHADOW_PATH));
-    std::fs::read(path).ok()
+        .unwrap_or_else(|| PathBuf::from(GSHADOW_PATH))
 }
 
-/// Pack a Gshadow entry into a buffer, returning a pointer to the sgrp struct.
-/// Returns null if the buffer is too small.
-///
-/// Buffer layout: [Sgrp] [name\0] [passwd\0] [adm_ptrs... NULL] [mem_ptrs... NULL] [adm_strs\0...] [mem_strs\0...]
-unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) -> *mut Sgrp {
-    // Align the struct to pointer alignment (8 bytes on x86_64).
-    let align = core::mem::align_of::<Sgrp>();
-    let buf_addr = buf as usize;
-    let align_offset = buf_addr.wrapping_neg() & (align - 1);
-    if align_offset >= buflen {
-        return ptr::null_mut();
+enum GshadowReadError {
+    Open(c_int),
+    Read(c_int),
+}
+
+impl GshadowReadError {
+    fn code(&self) -> c_int {
+        match self {
+            Self::Open(error) | Self::Read(error) => *error,
+        }
     }
-    let aligned_buf = unsafe { buf.add(align_offset) };
-    let effective_buflen = buflen - align_offset;
+}
 
-    let sgrp_size = core::mem::size_of::<Sgrp>();
+fn read_gshadow_file() -> Result<Vec<u8>, GshadowReadError> {
+    use std::io::Read;
 
-    // Split comma-separated lists, dropping empty tokens — glibc never yields an
-    // empty admin/member name, so trailing/leading/doubled commas collapse away.
-    let adm_list: Vec<&[u8]> = entry
+    let mut file = std::fs::File::open(gshadow_source_path())
+        .map_err(|error| GshadowReadError::Open(error.raw_os_error().unwrap_or(libc::EIO)))?;
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)
+        .map_err(|error| GshadowReadError::Read(error.raw_os_error().unwrap_or(libc::EIO)))?;
+    Ok(content)
+}
+
+fn lookup_gshadow_record(
+    name: &[u8],
+    capacity: Option<usize>,
+) -> Result<Option<GshadowRecord>, GshadowReadError> {
+    let content = read_gshadow_file()?;
+    if capacity.is_some_and(|capacity| capacity < 3) {
+        return Err(GshadowReadError::Read(libc::ERANGE));
+    }
+    for physical_line in content.split_inclusive(|&byte| byte == b'\n') {
+        if capacity.is_some_and(|capacity| {
+            physical_line.len().checked_add(2).is_none_or(|needed| needed > capacity)
+        }) {
+            return Err(GshadowReadError::Read(libc::ERANGE));
+        }
+        let line = physical_line
+            .split(|&byte| byte == 0)
+            .next()
+            .unwrap_or_default();
+        if let Some(entry) = parse_gshadow_file_line(line)
+            && entry.sg_namp == name
+        {
+            return Ok(Some(GshadowRecord {
+                entry,
+                input_len: physical_line.len(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn gshadow_errno() -> c_int {
+    // SAFETY: the accessor returns the calling thread's initialized errno cell.
+    unsafe { *crate::errno_abi::__errno_location() }
+}
+
+fn gshadow_error(error: c_int) -> c_int {
+    // SAFETY: only the calling thread's errno is changed.
+    unsafe { set_abi_errno(error) };
+    error
+}
+
+/// Validate the two output objects before touching the caller's result slot.
+unsafe fn prepare_gshadow_output(
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<usize, c_int> {
+    if result.is_null() || !tracked_object_fits(result) {
+        return Err(libc::EINVAL);
+    }
+    // SAFETY: result is a checked writable caller-provided pointer slot.
+    unsafe { *result = ptr::null_mut() };
+    if result_buf.is_null()
+        || buffer.is_null()
+        || !tracked_object_fits(result_buf.cast::<Sgrp>())
+    {
+        return Err(libc::EINVAL);
+    }
+    Ok(effective_buffer_len(buffer, buflen))
+}
+
+/// Pack all strings and both pointer lists in caller-owned storage, then
+/// publish the separately supplied sgrp. No field is published on ERANGE.
+unsafe fn pack_gshadow_caller(
+    record: &GshadowRecord,
+    result_buf: *mut Sgrp,
+    buffer: *mut c_char,
+    capacity: usize,
+) -> c_int {
+    let entry = &record.entry;
+    let admins: Vec<&[u8]> = entry
         .sg_adm
-        .split(|&b| b == b',')
-        .filter(|m| !m.is_empty())
+        .split(|&byte| byte == b',')
+        .filter(|name| !name.is_empty())
         .collect();
-    let mem_list: Vec<&[u8]> = entry
+    let members: Vec<&[u8]> = entry
         .sg_mem
-        .split(|&b| b == b',')
-        .filter(|m| !m.is_empty())
+        .split(|&byte| byte == b',')
+        .filter(|name| !name.is_empty())
         .collect();
-
-    // Calculate total space needed.
-    // Pointer arrays need alignment, so account for worst-case padding.
-    let ptr_align = core::mem::align_of::<*mut c_char>();
-    let name_len = entry.sg_namp.len() + 1;
-    let passwd_len = entry.sg_passwd.len() + 1;
-    let adm_ptrs_size = (adm_list.len() + 1) * core::mem::size_of::<*mut c_char>();
-    let mem_ptrs_size = (mem_list.len() + 1) * core::mem::size_of::<*mut c_char>();
-    let adm_strs_size: usize = adm_list.iter().map(|s| s.len() + 1).sum();
-    let mem_strs_size: usize = mem_list.iter().map(|s| s.len() + 1).sum();
-    // Add worst-case alignment padding (ptr_align - 1 bytes) before each pointer array
-    let total = sgrp_size
-        + name_len
-        + passwd_len
-        + (ptr_align - 1) // padding before admin pointer array
-        + adm_ptrs_size
-        + adm_strs_size
-        + (ptr_align - 1) // padding before member pointer array
-        + mem_ptrs_size
-        + mem_strs_size;
-
-    if total > effective_buflen {
-        return ptr::null_mut();
+    let pointer_size = std::mem::size_of::<*mut c_char>();
+    let pointer_align = std::mem::align_of::<*mut c_char>();
+    let layout = (|| {
+        let name_end = entry.sg_namp.len().checked_add(1)?;
+        let password_bytes = if entry.sg_passwd.is_empty() {
+            0
+        } else {
+            entry.sg_passwd.len().checked_add(1)?
+        };
+        let names_offset = name_end.checked_add(password_bytes)?;
+        let strings_end = admins
+            .iter()
+            .chain(&members)
+            .try_fold(names_offset, |offset, name| {
+                offset.checked_add(name.len())?.checked_add(1)
+            })?;
+        // GNU reserves the original input spelling, including delimiters and
+        // any trailing newline, before its aligned pointer lists.
+        let text_end = strings_end.max(record.input_len.checked_add(1)?);
+        let address = (buffer as usize).checked_add(text_end)?;
+        let padding = address.wrapping_neg() & (pointer_align - 1);
+        let admins_offset = text_end.checked_add(padding)?;
+        let admins_bytes = admins.len().checked_add(1)?.checked_mul(pointer_size)?;
+        let members_offset = admins_offset.checked_add(admins_bytes)?;
+        // The GNU parser also requires one spare, unwritten pointer after the
+        // two terminating NULL slots. Preserve its ERANGE boundary.
+        let members_bytes = members.len().checked_add(2)?.checked_mul(pointer_size)?;
+        let needed = members_offset.checked_add(members_bytes)?;
+        Some((name_end, names_offset, admins_offset, members_offset, needed))
+    })();
+    let Some((name_end, mut cursor, admins_offset, members_offset, needed)) = layout else {
+        return libc::ERANGE;
+    };
+    if needed > capacity {
+        return libc::ERANGE;
     }
 
-    let sgrp = aligned_buf as *mut Sgrp;
-    let mut cursor = unsafe { aligned_buf.add(sgrp_size) };
-
-    // Write name string.
-    let name_ptr = cursor as *mut c_char;
+    // SAFETY: the complete checked layout fits capacity. All pointer tables
+    // are aligned relative to the actual caller buffer, including offsets.
     unsafe {
-        ptr::copy_nonoverlapping(entry.sg_namp.as_ptr(), cursor, entry.sg_namp.len());
-        *cursor.add(entry.sg_namp.len()) = 0;
-        cursor = cursor.add(name_len);
-    }
-
-    // Write passwd string.
-    let passwd_ptr = cursor as *mut c_char;
-    unsafe {
-        ptr::copy_nonoverlapping(entry.sg_passwd.as_ptr(), cursor, entry.sg_passwd.len());
-        *cursor.add(entry.sg_passwd.len()) = 0;
-        cursor = cursor.add(passwd_len);
-    }
-
-    // Align cursor for pointer arrays.
-    let cursor_addr = cursor as usize;
-    let ptr_align_padding = cursor_addr.wrapping_neg() & (ptr_align - 1);
-    cursor = unsafe { cursor.add(ptr_align_padding) };
-
-    // Write admin pointer array.
-    let adm_ptrs = cursor as *mut *mut c_char;
-    unsafe { cursor = cursor.add(adm_ptrs_size) };
-    // Write admin strings and fill pointers.
-    for (i, adm) in adm_list.iter().enumerate() {
-        unsafe {
-            *(adm_ptrs.add(i)) = cursor as *mut c_char;
-            ptr::copy_nonoverlapping(adm.as_ptr(), cursor, adm.len());
-            *cursor.add(adm.len()) = 0;
-            cursor = cursor.add(adm.len() + 1);
+        ptr::copy_nonoverlapping(entry.sg_namp.as_ptr().cast(), buffer, entry.sg_namp.len());
+        *buffer.add(entry.sg_namp.len()) = 0;
+        let password = if entry.sg_passwd.is_empty() {
+            buffer.add(entry.sg_namp.len())
+        } else {
+            let password = buffer.add(name_end);
+            ptr::copy_nonoverlapping(
+                entry.sg_passwd.as_ptr().cast(),
+                password,
+                entry.sg_passwd.len(),
+            );
+            *password.add(entry.sg_passwd.len()) = 0;
+            password
+        };
+        let admin_slots = buffer.add(admins_offset).cast::<*mut c_char>();
+        let member_slots = buffer.add(members_offset).cast::<*mut c_char>();
+        for (list, slots) in [(&admins, admin_slots), (&members, member_slots)] {
+            for (index, name) in list.iter().enumerate() {
+                let destination = buffer.add(cursor);
+                ptr::copy_nonoverlapping(name.as_ptr().cast(), destination, name.len());
+                *destination.add(name.len()) = 0;
+                slots.add(index).write(destination);
+                cursor += name.len() + 1;
+            }
+            slots.add(list.len()).write(ptr::null_mut());
         }
+        result_buf.write(Sgrp {
+            sg_namp: buffer,
+            sg_passwd: password,
+            sg_adm: admin_slots,
+            sg_mem: member_slots,
+        });
     }
-    unsafe { *(adm_ptrs.add(adm_list.len())) = ptr::null_mut() };
-
-    // Align cursor for member pointer array.
-    let cursor_addr = cursor as usize;
-    let ptr_align_padding = cursor_addr.wrapping_neg() & (ptr_align - 1);
-    cursor = unsafe { cursor.add(ptr_align_padding) };
-
-    // Write member pointer array.
-    let mem_ptrs = cursor as *mut *mut c_char;
-    unsafe { cursor = cursor.add(mem_ptrs_size) };
-    for (i, mem) in mem_list.iter().enumerate() {
-        unsafe {
-            *(mem_ptrs.add(i)) = cursor as *mut c_char;
-            ptr::copy_nonoverlapping(mem.as_ptr(), cursor, mem.len());
-            *cursor.add(mem.len()) = 0;
-            cursor = cursor.add(mem.len() + 1);
-        }
-    }
-    unsafe { *(mem_ptrs.add(mem_list.len())) = ptr::null_mut() };
-
-    // Fill sgrp struct.
-    unsafe {
-        (*sgrp).sg_namp = name_ptr;
-        (*sgrp).sg_passwd = passwd_ptr;
-        (*sgrp).sg_adm = adm_ptrs;
-        (*sgrp).sg_mem = mem_ptrs;
-    }
-
-    sgrp
-}
-
-/// Pack into thread-local buffer and return pointer (for non-_r functions).
-fn gshadow_to_static_sgrp(entry: &Gshadow) -> *mut c_void {
-    with_gshadow_storage(|storage| pack_gshadow_into_static_storage(storage, entry))
+    0
 }
 
 fn pack_gshadow_into_static_storage(
     storage: &mut GshadowTlsStorage,
-    entry: &Gshadow,
-) -> *mut c_void {
-    storage.buf.resize(GSHADOW_BUF_SIZE, 0);
-    let ptr = unsafe { pack_gshadow_into_buf(entry, storage.buf.as_mut_ptr(), GSHADOW_BUF_SIZE) };
-    ptr as *mut c_void
+    entry: &GshadowRecord,
+) -> Result<*mut c_void, c_int> {
+    loop {
+        if storage.buf.is_empty() {
+            storage.buf.try_reserve(1024).map_err(|_| libc::ENOMEM)?;
+            storage.buf.resize(1024, 0);
+        }
+        // SAFETY: entry is typed storage; the owned allocation stays live when
+        // the TLS borrow ends. All pointers are rebuilt after each growth.
+        let rc = unsafe {
+            pack_gshadow_caller(
+                entry,
+                &raw mut storage.entry,
+                storage.buf.as_mut_ptr().cast(),
+                storage.buf.len(),
+            )
+        };
+        if rc == 0 {
+            return Ok((&raw mut storage.entry).cast());
+        }
+        if rc != libc::ERANGE {
+            return Err(rc);
+        }
+        gshadow_error(libc::ERANGE);
+        let next = storage.buf.len().checked_mul(2).ok_or(libc::ENOMEM)?;
+        storage
+            .buf
+            .try_reserve(next - storage.buf.len())
+            .map_err(|_| libc::ENOMEM)?;
+        storage.buf.resize(next, 0);
+    }
+}
+
+fn gshadow_to_static_sgrp(entry: &GshadowRecord) -> *mut c_void {
+    match with_gshadow_storage(|storage| pack_gshadow_into_static_storage(storage, entry)) {
+        Ok(result) => result,
+        Err(error) => {
+            gshadow_error(error);
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Open or rewind only the native files database, with an observable open error.
+pub(crate) fn files_setsgent() -> c_int {
+    with_gshadow_storage(|storage| {
+        storage.close_files();
+        storage.open_files().err().unwrap_or(0)
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setsgent() {
-    with_gshadow_storage(|storage| storage.enum_offset = 0);
+    let saved_errno = gshadow_errno();
+    let error = files_setsgent();
+    // SAFETY: preserve errno on a successful rewind.
+    unsafe { set_abi_errno(if error == 0 { saved_errno } else { error }) };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endsgent() {
-    with_gshadow_storage(|storage| storage.enum_offset = 0);
+    let saved_errno = gshadow_errno();
+    with_gshadow_storage(GshadowTlsStorage::close_files);
+    // SAFETY: closing the iterator does not alter the caller's errno.
+    unsafe { set_abi_errno(saved_errno) };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgent() -> *mut c_void {
-    let content = match read_gshadow_file() {
-        Some(c) => c,
-        None => return ptr::null_mut(),
-    };
-    with_gshadow_storage(|storage| {
-        let remaining = if storage.enum_offset < content.len() {
-            &content[storage.enum_offset..]
-        } else {
-            return ptr::null_mut();
-        };
-        for line in remaining.split(|&b| b == b'\n') {
-            storage.enum_offset += line.len() + 1; // +1 for the newline
-            // FILE rule: comments/blanks skipped, leading blanks stripped.
-            if let Some(entry) = parse_gshadow_file_line(line) {
-                return pack_gshadow_into_static_storage(storage, &entry);
-            }
+    let saved_errno = gshadow_errno();
+    let outcome = with_gshadow_storage(|storage| {
+        if storage.open_files().is_err() {
+            // GNU public enumeration maps an unavailable database to EOF.
+            return Ok(ptr::null_mut());
         }
-        ptr::null_mut()
-    })
+        let Some(entry) = storage.next_files_entry(None)? else {
+            return Ok(ptr::null_mut());
+        };
+        let answer = pack_gshadow_into_static_storage(storage, &entry);
+        if answer.is_err() {
+            storage.pending = Some(entry);
+        }
+        answer
+    });
+    match outcome {
+        Ok(result) => {
+            // SAFETY: success and ordinary EOF preserve the caller's errno.
+            unsafe { set_abi_errno(saved_errno) };
+            result
+        }
+        Err(error) => {
+            gshadow_error(error);
+            ptr::null_mut()
+        }
+    }
+}
+
+/// The NSS files contract represents ordinary EOF as zero with a null result,
+/// leaving a missing or unreadable database distinguishable from exhaustion.
+pub(crate) unsafe fn files_getsgent_r(
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    open_failure: &mut bool,
+) -> c_int {
+    *open_failure = false;
+    let saved_errno = gshadow_errno();
+    // SAFETY: forwarded reentrant output-storage contract.
+    let capacity = match unsafe { prepare_gshadow_output(result_buf, buffer, buflen, result) } {
+        Ok(capacity) => capacity,
+        Err(error) => return gshadow_error(error),
+    };
+    let outcome = with_gshadow_storage(|storage| {
+        if let Err(error) = storage.open_files() {
+            *open_failure = true;
+            return Err(error);
+        }
+        let Some(entry) = storage.next_files_entry(Some(capacity))? else {
+            return Ok(());
+        };
+        // SAFETY: output objects are validated and the full pack is bounded.
+        let rc = unsafe { pack_gshadow_caller(&entry, result_buf.cast(), buffer, capacity) };
+        if rc != 0 {
+            storage.pending = Some(entry);
+            return Err(rc);
+        }
+        // SAFETY: publish the exact caller object only after complete packing.
+        unsafe { *result = result_buf };
+        Ok(())
+    });
+    match outcome {
+        Ok(()) => {
+            // SAFETY: internal reads/allocations do not change success errno.
+            unsafe { set_abi_errno(saved_errno) };
+            0
+        }
+        Err(error) => gshadow_error(error),
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgent_r(
-    _result_buf: *mut c_void,
+    result_buf: *mut c_void,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = ptr::null_mut() };
-    }
-    let content = match read_gshadow_file() {
-        Some(c) => c,
-        None => return libc::ENOENT,
+    let saved_errno = gshadow_errno();
+    let mut open_failure = false;
+    // SAFETY: forward the same reentrant caller-storage contract.
+    let rc = unsafe {
+        files_getsgent_r(result_buf, buffer, buflen, result, &mut open_failure)
     };
-    with_gshadow_storage(|storage| {
-        let remaining = if storage.enum_offset < content.len() {
-            &content[storage.enum_offset..]
-        } else {
-            return libc::ENOENT;
-        };
-        for line in remaining.split(|&b| b == b'\n') {
-            storage.enum_offset += line.len() + 1;
-            // FILE rule, same as the non-reentrant scanner above.
-            if let Some(entry) = parse_gshadow_file_line(line) {
-                let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
-                if sgrp.is_null() {
-                    return libc::ERANGE;
-                }
-                if !result.is_null() {
-                    unsafe { *result = sgrp as *mut c_void };
-                }
-                return 0;
-            }
-        }
+    if open_failure {
+        unsafe { set_abi_errno(saved_errno) };
         libc::ENOENT
-    })
+    } else if rc == 0 && unsafe { (*result).is_null() } {
+        libc::ENOENT
+    } else {
+        rc
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgnam(name: *const c_char) -> *mut c_void {
-    if name.is_null() {
-        return ptr::null_mut();
-    }
     let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        gshadow_error(libc::EINVAL);
         return ptr::null_mut();
     };
-    let content = match read_gshadow_file() {
-        Some(c) => c,
-        None => return ptr::null_mut(),
+    let saved_errno = gshadow_errno();
+    let entry = match lookup_gshadow_record(name_bytes, None) {
+        Ok(entry) => entry,
+        Err(error) => {
+            gshadow_error(error.code());
+            return ptr::null_mut();
+        }
     };
-    match lookup_gshadow_by_name(&content, name_bytes) {
-        Some(entry) => gshadow_to_static_sgrp(&entry),
-        None => ptr::null_mut(),
-    }
+    unsafe { set_abi_errno(saved_errno) };
+    entry
+        .as_ref()
+        .map_or(ptr::null_mut(), gshadow_to_static_sgrp)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgnam_r(
     name: *const c_char,
-    _result_buf: *mut c_void,
+    result_buf: *mut c_void,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = ptr::null_mut() };
+    let mut open_failure = false;
+    // SAFETY: the public and files-provider callers use the same output ABI.
+    unsafe {
+        files_getsgnam_r(name, result_buf, buffer, buflen, result, &mut open_failure)
     }
-    if name.is_null() {
-        return libc::EINVAL;
-    }
+}
+
+pub(crate) unsafe fn files_getsgnam_r(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    open_failure: &mut bool,
+) -> c_int {
+    *open_failure = false;
+    let saved_errno = gshadow_errno();
+    // SAFETY: forwarded reentrant output-storage contract.
+    let capacity = match unsafe { prepare_gshadow_output(result_buf, buffer, buflen, result) } {
+        Ok(capacity) => capacity,
+        Err(error) => return gshadow_error(error),
+    };
     let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
-        return libc::EINVAL;
+        return gshadow_error(libc::EINVAL);
     };
-    let content = match read_gshadow_file() {
-        Some(c) => c,
-        None => return libc::ENOENT,
-    };
-    match lookup_gshadow_by_name(&content, name_bytes) {
-        Some(entry) => {
-            let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
-            if sgrp.is_null() {
-                return libc::ERANGE;
-            }
-            if !result.is_null() {
-                unsafe { *result = sgrp as *mut c_void };
-            }
-            0
+    let entry = match lookup_gshadow_record(name_bytes, Some(capacity)) {
+        Ok(entry) => entry,
+        Err(error) => {
+            *open_failure = matches!(error, GshadowReadError::Open(_));
+            return gshadow_error(error.code());
         }
-        None => libc::ENOENT,
+    };
+    if let Some(entry) = entry {
+        // SAFETY: the validated output objects remain live during packing.
+        let rc = unsafe { pack_gshadow_caller(&entry, result_buf.cast(), buffer, capacity) };
+        if rc != 0 {
+            return gshadow_error(rc);
+        }
+        // SAFETY: result_buf is now completely initialized.
+        unsafe { *result = result_buf };
+    }
+    // SAFETY: a normal key miss is zero/null and preserves errno.
+    unsafe { set_abi_errno(saved_errno) };
+    0
+}
+
+/// Own the line allocation and stream lock across callbacks and foreign unwind.
+/// No gshadow TLS borrow is held while a FILE operation can invoke user code.
+struct GshadowStreamReader {
+    stream: *mut c_void,
+    line: *mut c_char,
+    capacity: usize,
+}
+
+impl Drop for GshadowStreamReader {
+    fn drop(&mut self) {
+        let saved_errno = gshadow_errno();
+        // SAFETY: getdelim supplies malloc-compatible storage, and this guard
+        // owns one matching flockfile acquisition until the caller returns.
+        unsafe {
+            crate::malloc_abi::free(self.line.cast());
+            crate::stdio_abi::funlockfile(self.stream);
+            set_abi_errno(saved_errno);
+        }
+    }
+}
+
+impl GshadowStreamReader {
+    unsafe fn new(stream: *mut c_void) -> Self {
+        // SAFETY: the caller keeps a valid FILE alive for this entire guard.
+        unsafe { crate::stdio_abi::flockfile(stream) };
+        Self {
+            stream,
+            line: ptr::null_mut(),
+            capacity: 0,
+        }
+    }
+
+    unsafe fn rewind_error(&self, position: i64, error: c_int) -> c_int {
+        if position >= 0
+            && unsafe { crate::stdio_abi::fseeko(self.stream, position, libc::SEEK_SET) } == 0
+        {
+            error
+        } else {
+            let error = if position < 0 {
+                libc::ESPIPE
+            } else {
+                let error = gshadow_errno();
+                if error == 0 { libc::ESPIPE } else { error }
+            };
+            // A consumed record that cannot be retried is a stream error.
+            unsafe { crate::stdio_abi::set_stream_error(self.stream) };
+            error
+        }
+    }
+
+    unsafe fn next(
+        &mut self,
+        save_position: bool,
+        capacity: Option<usize>,
+    ) -> Result<Option<(GshadowRecord, i64, c_int)>, c_int> {
+        if capacity.is_some_and(|capacity| capacity < 3) {
+            return Err(libc::ERANGE);
+        }
+        loop {
+            let saved_errno = gshadow_errno();
+            let position = if save_position {
+                // SAFETY: the stream is live and locked by this guard.
+                unsafe { crate::stdio_abi::ftello(self.stream) }
+            } else {
+                -1
+            };
+            // GNU permits reentrant reads from pipes, retaining the position
+            // query's error on success. A seekable query preserves errno.
+            let success_errno = if save_position && position < 0 {
+                gshadow_errno()
+            } else {
+                saved_errno
+            };
+            unsafe { set_abi_errno(success_errno) };
+            let length = unsafe {
+                crate::stdio_abi::getdelim_for_caller(
+                    &mut self.line,
+                    &mut self.capacity,
+                    b'\n' as c_int,
+                    self.stream,
+                    0,
+                )
+            };
+            let read_errno = gshadow_errno();
+            // getdelim may return positive partial bytes and still set ferror.
+            // Such bytes are not a complete security-database record.
+            if unsafe { crate::stdio_abi::ferror(self.stream) } != 0 {
+                return Err(if read_errno == 0 { libc::EIO } else { read_errno });
+            }
+            if length < 0 {
+                // Allocation failures are errors even if no stream flag was set.
+                return if unsafe { crate::stdio_abi::feof(self.stream) } != 0 {
+                    Ok(None)
+                } else {
+                    Err(if read_errno == 0 { libc::EIO } else { read_errno })
+                };
+            }
+            if capacity.is_some_and(|capacity| {
+                (length as usize).checked_add(2).is_none_or(|needed| needed > capacity)
+            }) {
+                return Err(unsafe { self.rewind_error(position, libc::ERANGE) });
+            }
+            // SAFETY: getdelim returned this many initialized bytes.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(self.line.cast::<u8>(), length as usize)
+            };
+            let bytes = bytes.split(|&byte| byte == 0).next().unwrap_or_default();
+            if let Some(entry) = parse_gshadow_file_line(bytes) {
+                return Ok(Some((
+                    GshadowRecord {
+                        entry,
+                        input_len: length as usize,
+                    },
+                    position,
+                    success_errno,
+                )));
+            }
+            unsafe { set_abi_errno(success_errno) };
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetsgent(_stream: *mut c_void) -> *mut c_void {
-    // fgetsgent reads a single gshadow line from a FILE* stream.
-    // Since we don't have a way to safely read a line from an arbitrary
-    // FILE* in the interpose model, return null (not found).
-    ptr::null_mut()
+pub unsafe extern "C-unwind" fn fgetsgent(stream: *mut c_void) -> *mut c_void {
+    if stream.is_null() {
+        gshadow_error(libc::EINVAL);
+        return ptr::null_mut();
+    }
+    let saved_errno = gshadow_errno();
+    // SAFETY: a nonnull valid FILE is required by the public API.
+    let mut reader = unsafe { GshadowStreamReader::new(stream) };
+    // GNU's nonreentrant helper needs a seekable stream before consuming data.
+    if unsafe { crate::stdio_abi::ftello(stream) } < 0 {
+        return ptr::null_mut();
+    }
+    unsafe { set_abi_errno(saved_errno) };
+    match unsafe { reader.next(false, None) } {
+        Ok(Some((entry, _, success_errno))) => {
+            unsafe { set_abi_errno(success_errno) };
+            gshadow_to_static_sgrp(&entry)
+        }
+        Ok(None) => {
+            gshadow_error(libc::ENOENT);
+            ptr::null_mut()
+        }
+        Err(error) => {
+            gshadow_error(error);
+            ptr::null_mut()
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetsgent_r(
-    _stream: *mut c_void,
-    _result_buf: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+pub unsafe extern "C-unwind" fn fgetsgent_r(
+    stream: *mut c_void,
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = ptr::null_mut() };
+    let saved_errno = gshadow_errno();
+    // SAFETY: forwarded reentrant output-storage contract.
+    let capacity = match unsafe { prepare_gshadow_output(result_buf, buffer, buflen, result) } {
+        Ok(capacity) => capacity,
+        Err(error) => return gshadow_error(error),
+    };
+    if stream.is_null() {
+        return gshadow_error(libc::EINVAL);
     }
-    libc::ENOENT
+    unsafe { set_abi_errno(saved_errno) };
+    // SAFETY: a nonnull valid FILE is required by the public API.
+    let mut reader = unsafe { GshadowStreamReader::new(stream) };
+    let (entry, position, success_errno) = match unsafe { reader.next(true, Some(capacity)) } {
+        Ok(Some(record)) => record,
+        Ok(None) => return gshadow_error(libc::ENOENT),
+        Err(error) => return gshadow_error(error),
+    };
+    // SAFETY: output objects passed validation and are kept live by the caller.
+    let rc = unsafe { pack_gshadow_caller(&entry, result_buf.cast(), buffer, capacity) };
+    if rc != 0 {
+        let error = unsafe { reader.rewind_error(position, rc) };
+        return gshadow_error(error);
+    }
+    // SAFETY: publish the caller's structure after all strings/lists are ready.
+    unsafe {
+        *result = result_buf;
+        set_abi_errno(success_errno);
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sgetsgent(string: *const c_char) -> *mut c_void {
-    if string.is_null() {
-        return ptr::null_mut();
-    }
     let Some(line_bytes) = (unsafe { bounded_cstr_bytes(string) }) else {
+        gshadow_error(libc::EINVAL);
         return ptr::null_mut();
     };
     match parse_gshadow_line(line_bytes) {
-        Some(entry) => gshadow_to_static_sgrp(&entry),
+        Some(entry) => gshadow_to_static_sgrp(&GshadowRecord {
+            entry,
+            input_len: line_bytes.len(),
+        }),
         None => ptr::null_mut(),
     }
 }
@@ -2153,33 +2566,57 @@ pub unsafe extern "C" fn sgetsgent(string: *const c_char) -> *mut c_void {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sgetsgent_r(
     string: *const c_char,
-    _result_buf: *mut c_void,
+    result_buf: *mut c_void,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = ptr::null_mut() };
-    }
-    if string.is_null() {
-        return libc::EINVAL;
+    let saved_errno = gshadow_errno();
+    // Unlike a files lookup, GNU's initial string-copy ERANGE leaves the
+    // result pointer untouched. Validate its object before preserving it.
+    if result.is_null()
+        || !tracked_object_fits(result)
+        || result_buf.is_null()
+        || !tracked_object_fits(result_buf.cast::<Sgrp>())
+        || buffer.is_null()
+    {
+        return gshadow_error(libc::EINVAL);
     }
     let Some(line_bytes) = (unsafe { bounded_cstr_bytes(string) }) else {
-        return libc::EINVAL;
+        unsafe { *result = ptr::null_mut() };
+        return gshadow_error(libc::EINVAL);
     };
-    match parse_gshadow_line(line_bytes) {
-        Some(entry) => {
-            let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
-            if sgrp.is_null() {
-                return libc::ERANGE;
-            }
-            if !result.is_null() {
-                unsafe { *result = sgrp as *mut c_void };
-            }
-            0
-        }
-        None => libc::ENOENT,
+    let capacity = effective_buffer_len(buffer, buflen);
+    if line_bytes
+        .len()
+        .checked_add(1)
+        .is_none_or(|needed| needed > capacity)
+    {
+        return gshadow_error(libc::ERANGE);
     }
+    // SAFETY: forwarded reentrant output-storage contract.
+    let capacity = match unsafe { prepare_gshadow_output(result_buf, buffer, buflen, result) } {
+        Ok(capacity) => capacity,
+        Err(error) => return gshadow_error(error),
+    };
+    let Some(entry) = parse_gshadow_line(line_bytes) else {
+        return libc::ENOENT;
+    };
+    let entry = GshadowRecord {
+        entry,
+        input_len: line_bytes.len(),
+    };
+    // SAFETY: output objects are validated and the complete pack is bounded.
+    let rc = unsafe { pack_gshadow_caller(&entry, result_buf.cast(), buffer, capacity) };
+    if rc != 0 {
+        return gshadow_error(rc);
+    }
+    // SAFETY: publish only the exact caller object, after complete initialization.
+    unsafe {
+        *result = result_buf;
+        set_abi_errno(saved_errno);
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

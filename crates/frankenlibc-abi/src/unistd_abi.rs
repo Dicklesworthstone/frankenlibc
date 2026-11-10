@@ -11706,7 +11706,12 @@ pub unsafe extern "C" fn _nss_files_endrpcent() -> c_int {
     unsafe { endrpcent() };
     NSS_STATUS_SUCCESS
 }
-nss_files_end_stub!(_nss_files_endsgent);
+/// Close the native group-security database cursor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endsgent() -> c_int {
+    unsafe { crate::pwd_abi::endsgent() };
+    NSS_STATUS_SUCCESS
+}
 /// Close the native hosts cursor, including any record pending a buffer retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endhostent() -> c_int {
@@ -11793,7 +11798,11 @@ nss_files_set_stayopen_stub!(_nss_files_setnetent);
 pub unsafe extern "C" fn _nss_files_setrpcent(_stayopen: c_int) -> c_int {
     nss_identity_setent(files_setrpcent)
 }
-nss_files_set_stayopen_stub!(_nss_files_setsgent);
+/// Open or rewind the native group-security database.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setsgent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(crate::pwd_abi::files_setsgent)
+}
 /// Open or rewind the native hosts source without consulting other modules.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_sethostent(_stayopen: c_int) -> c_int {
@@ -12311,7 +12320,65 @@ pub unsafe extern "C" fn _nss_files_getrpcent_r(
     let outcome = unsafe { rpc_next_result(result, buffer, buflen, &mut resolved) };
     unsafe { rpc_nss_status(outcome, errnop, saved_errno, capacity, true) }
 }
-nss_files_get_ent_stub!(_nss_files_getsgent_r);
+/// Enumerate group-security records without losing short-buffer retries.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getsgent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    let saved_errno = current_abi_errno();
+    let mut resolved = std::ptr::null_mut();
+    let mut open_failure = false;
+    let rc = unsafe {
+        crate::pwd_abi::files_getsgent_r(
+            result, buffer, buflen, &mut resolved, &mut open_failure,
+        )
+    };
+    if open_failure {
+        // GNU enumeration leaves both error cells alone on an open failure.
+        unsafe { set_abi_errno(saved_errno) };
+        return if rc == libc::EAGAIN {
+            NSS_STATUS_TRYAGAIN
+        } else {
+            NSS_STATUS_UNAVAIL
+        };
+    }
+    unsafe {
+        nss_gshadow_result(
+            rc, resolved, errnop, saved_errno, tracked_output_capacity(buffer, buflen),
+        )
+    }
+}
+
+/// The group-security files parser preserves errnop on success and a key
+/// miss. Its early buffer rejection changes only errnop, as in GNU libc.
+unsafe fn nss_gshadow_result(
+    rc: c_int,
+    resolved: *mut c_void,
+    errnop: *mut c_int,
+    saved_errno: c_int,
+    capacity: usize,
+) -> c_int {
+    if rc == 0 {
+        unsafe { set_abi_errno(saved_errno) };
+        return if resolved.is_null() {
+            NSS_STATUS_NOTFOUND
+        } else {
+            NSS_STATUS_SUCCESS
+        };
+    }
+    if rc == libc::ERANGE && capacity < 2 {
+        unsafe { set_abi_errno(saved_errno) };
+    }
+    unsafe { nss_set_errnop(errnop, rc) };
+    if rc == libc::ERANGE || rc == libc::EAGAIN {
+        NSS_STATUS_TRYAGAIN
+    } else {
+        NSS_STATUS_UNAVAIL
+    }
+}
 /// Enumerate shadow records, retaining the current line on ERANGE.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getspent_r(
@@ -12484,7 +12551,37 @@ pub unsafe extern "C" fn _nss_files_getrpcbyname_r(
     let outcome = unsafe { rpc_name_result(name, result, buffer, buflen, &mut resolved) };
     unsafe { rpc_nss_status(outcome, errnop, saved_errno, capacity, false) }
 }
-nss_files_get_by_str_stub!(_nss_files_getsgnam_r);
+/// Resolve a group-security record from the native files source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getsgnam_r(
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    let saved_errno = current_abi_errno();
+    let mut resolved = std::ptr::null_mut();
+    let mut open_failure = false;
+    let rc = unsafe {
+        crate::pwd_abi::files_getsgnam_r(
+            name, result, buffer, buflen, &mut resolved, &mut open_failure,
+        )
+    };
+    if open_failure {
+        // A keyed open failure changes errno but preserves the error slot.
+        return if rc == libc::EAGAIN {
+            NSS_STATUS_TRYAGAIN
+        } else {
+            NSS_STATUS_UNAVAIL
+        };
+    }
+    unsafe {
+        nss_gshadow_result(
+            rc, resolved, errnop, saved_errno, tracked_output_capacity(buffer, buflen),
+        )
+    }
+}
 /// Look up a login name in the shadow files source only.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getspnam_r(

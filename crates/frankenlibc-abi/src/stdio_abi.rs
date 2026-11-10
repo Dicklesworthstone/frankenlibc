@@ -6675,6 +6675,27 @@ fn header_err_seen(stream: *mut c_void) -> bool {
     word.load(Ordering::Relaxed) & ERR_SEEN != 0
 }
 
+/// Mark a live, explicitly locked FILE after a higher-level reader consumes
+/// an unretryable record. Keep native stream state and the ABI flag in sync.
+///
+/// # Safety
+/// The caller must keep a valid FILE alive and hold its explicit stream lock.
+pub(crate) unsafe fn set_stream_error(stream: *mut c_void) {
+    use io_internal_abi::glibc_flag_bits::ERR_SEEN;
+
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        cell.lock().set_error();
+    }
+    let handle = stream as usize;
+    if handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+        // SAFETY: a non-sentinel FILE has the aligned glibc-compatible flags
+        // word, as in header_err_seen and clear_header_eof_err.
+        let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+        word.fetch_or(ERR_SEEN, Ordering::Relaxed);
+    }
+}
+
 /// Clear `_IO_EOF_SEEN | _IO_ERR_SEEN` in a live handle's `_flags` (clearerr).
 #[inline]
 fn clear_header_eof_err(stream: *mut c_void) {
