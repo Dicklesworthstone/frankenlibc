@@ -420,6 +420,14 @@ fn current_thread_key() -> Option<usize> {
 }
 
 #[inline]
+pub(crate) fn fast_thread_owner_key() -> Option<usize> {
+    if NATIVE_THREAD_BACKEND.load(Ordering::Relaxed) {
+        return None;
+    }
+    current_thread_key().map(|key| key | 1)
+}
+
+#[inline]
 fn slot_matches_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize>) -> bool {
     let Some(thread_key) = thread_key else {
         return false;

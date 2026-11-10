@@ -7,7 +7,7 @@ use std::ffi::{c_char, c_void};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 #[cfg(feature = "owned-tls-cache")]
 #[derive(Clone)]
@@ -75,7 +75,7 @@ pub(crate) fn artifact_hash_set<T>() -> ArtifactHashSet<T> {
 /// recursion plus mutual exclusion, so this lock tracks ownership with the
 /// kernel TID and backs off with `sched_yield` under contention.
 pub(crate) struct AbiReentrantMutex<T> {
-    owner_tid: AtomicI32,
+    owner_tid: AtomicUsize,
     recursion_depth: AtomicU32,
     value: UnsafeCell<T>,
 }
@@ -89,7 +89,7 @@ unsafe impl<T: Send> Send for AbiReentrantMutex<T> {}
 impl<T> AbiReentrantMutex<T> {
     pub(crate) const fn new(value: T) -> Self {
         Self {
-            owner_tid: AtomicI32::new(0),
+            owner_tid: AtomicUsize::new(0),
             recursion_depth: AtomicU32::new(0),
             value: UnsafeCell::new(value),
         }
@@ -108,7 +108,7 @@ impl<T> AbiReentrantMutex<T> {
             }
 
             spins = spins.wrapping_add(1);
-            if spins & 0x3f == 0 {
+            if spins & 0x3ff == 0 {
                 frankenlibc_core::syscall::sys_sched_yield();
             } else {
                 std::hint::spin_loop();
@@ -163,7 +163,7 @@ impl<T> AbiReentrantMutex<T> {
     /// exists, with `parent_tid` read by the forking thread before the clone.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) unsafe fn adopt_in_fork_child(&self, parent_tid: i32) {
+    pub(crate) unsafe fn adopt_in_fork_child(&self, parent_tid: usize) {
         let _ = self.owner_tid.compare_exchange(
             parent_tid,
             current_tid(),
@@ -172,15 +172,15 @@ impl<T> AbiReentrantMutex<T> {
         );
     }
 
-    /// TID used for ownership, exposed so fork paths can record the parent's.
+    /// Owner key used for ownership, exposed so fork paths can record the parent's.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn current_owner_tid() -> i32 {
+    pub(crate) fn current_owner_tid() -> usize {
         current_tid()
     }
 
     #[inline]
-    fn try_lock_for_tid(&self, tid: i32) -> bool {
+    fn try_lock_for_tid(&self, tid: usize) -> bool {
         if self.owner_tid.load(Ordering::Acquire) == tid {
             let previous = self.recursion_depth.fetch_add(1, Ordering::Relaxed);
             debug_assert!(previous > 0);
@@ -200,7 +200,7 @@ impl<T> AbiReentrantMutex<T> {
     }
 
     #[inline]
-    fn unlock_for_tid(&self, tid: i32) {
+    fn unlock_for_tid(&self, tid: usize) {
         if self.owner_tid.load(Ordering::Acquire) != tid {
             return;
         }
@@ -217,8 +217,11 @@ impl<T> AbiReentrantMutex<T> {
 }
 
 #[inline]
-fn current_tid() -> i32 {
-    frankenlibc_core::syscall::sys_gettid().max(1)
+fn current_tid() -> usize {
+    if let Some(owner_key) = crate::malloc_abi::fast_thread_owner_key() {
+        return owner_key;
+    }
+    (frankenlibc_core::syscall::sys_gettid().max(1) as usize) << 1
 }
 
 /// An acquisition belongs to the current kernel thread, not just to the lock.
