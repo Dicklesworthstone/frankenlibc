@@ -629,10 +629,13 @@ fn heal_logging_env_enabled() -> bool {
 
 fn heal_logging_enabled_by_default() -> bool {
     match std::env::var("FRANKENLIBC_HEAL_LOG") {
-        Ok(value) => !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "off" | "no"
-        ),
+        Ok(value) => {
+            let trimmed = value.trim();
+            !(trimmed.eq_ignore_ascii_case("0")
+                || trimmed.eq_ignore_ascii_case("false")
+                || trimmed.eq_ignore_ascii_case("off")
+                || trimmed.eq_ignore_ascii_case("no"))
+        }
         Err(_) => true,
     }
 }
@@ -644,6 +647,25 @@ const RUNTIME_LOG_DISABLED: i32 = -1;
 /// Owned process-wide `FRANKENLIBC_LOG` descriptor. Non-negative values are
 /// live descriptors; negative values are explicit initialization states.
 static RUNTIME_LOG_FD: AtomicI32 = AtomicI32::new(RUNTIME_LOG_UNINITIALIZED);
+
+/// Seed the heal-logging toggle and runtime log fd if not yet initialized,
+/// avoiding `std::env::var` heap allocations during `.init_array` startup.
+pub fn seed_runtime_log_if_unset(heal_log_enabled: bool, disable_log_fd: bool) {
+    let _ = HEALING_LOG_STATE.compare_exchange(
+        0,
+        if heal_log_enabled { 3 } else { 2 },
+        Ordering::Release,
+        Ordering::Relaxed,
+    );
+    if disable_log_fd {
+        let _ = RUNTIME_LOG_FD.compare_exchange(
+            RUNTIME_LOG_UNINITIALIZED,
+            RUNTIME_LOG_DISABLED,
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
+    }
+}
 
 /// Resolve logging controls and open the runtime sink before user code can
 /// install a signal handler. Safe to call repeatedly.

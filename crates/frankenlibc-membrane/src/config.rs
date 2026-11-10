@@ -31,11 +31,24 @@ impl SafetyLevel {
     /// Parse from string (case-insensitive).
     #[must_use]
     pub fn from_str_loose(s: &str) -> Self {
-        match s.to_ascii_lowercase().as_str() {
-            "strict" | "default" | "abi" => Self::Strict,
-            "hardened" | "repair" | "tsm" | "full" => Self::Hardened,
-            "off" | "none" | "disabled" => Self::Off,
-            _ => Self::Strict,
+        if s.eq_ignore_ascii_case("strict")
+            || s.eq_ignore_ascii_case("default")
+            || s.eq_ignore_ascii_case("abi")
+        {
+            Self::Strict
+        } else if s.eq_ignore_ascii_case("hardened")
+            || s.eq_ignore_ascii_case("repair")
+            || s.eq_ignore_ascii_case("tsm")
+            || s.eq_ignore_ascii_case("full")
+        {
+            Self::Hardened
+        } else if s.eq_ignore_ascii_case("off")
+            || s.eq_ignore_ascii_case("none")
+            || s.eq_ignore_ascii_case("disabled")
+        {
+            Self::Off
+        } else {
+            Self::Strict
         }
     }
 
@@ -67,13 +80,28 @@ const LEVEL_OFF: u8 = 3;
 const LEVEL_RESOLVING: u8 = 255;
 
 fn parse_runtime_mode_env(raw: &str) -> SafetyLevel {
-    match raw.to_ascii_lowercase().as_str() {
-        "strict" | "default" | "abi" => SafetyLevel::Strict,
-        "hardened" | "repair" | "tsm" | "full" => SafetyLevel::Hardened,
+    if raw.eq_ignore_ascii_case("hardened")
+        || raw.eq_ignore_ascii_case("repair")
+        || raw.eq_ignore_ascii_case("tsm")
+        || raw.eq_ignore_ascii_case("full")
+    {
+        SafetyLevel::Hardened
+    } else {
         // Runtime contract is strict|hardened only. Keep benchmark-only `Off`
         // reachable via direct API use in tests/bench code, not env parsing.
-        _ => SafetyLevel::Strict,
+        SafetyLevel::Strict
     }
+}
+
+/// Seed the cached safety level if not yet resolved (used by the ABI layer's
+/// allocation-free `environ` scanner during early process startup).
+pub fn seed_safety_level_if_unset(level: SafetyLevel) {
+    let _ = CACHED_LEVEL.compare_exchange(
+        LEVEL_UNRESOLVED,
+        level_to_u8(level),
+        Ordering::Release,
+        Ordering::Relaxed,
+    );
 }
 
 fn level_to_u8(level: SafetyLevel) -> u8 {

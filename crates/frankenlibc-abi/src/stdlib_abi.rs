@@ -5042,6 +5042,7 @@ pub unsafe extern "C" fn abort() -> ! {
 }
 
 /// Exit handler entry for `on_exit` — stores function pointer + arg.
+#[derive(Clone, Copy)]
 struct OnExitEntry {
     func: unsafe extern "C" fn(c_int, *mut c_void),
     arg: *mut c_void,
@@ -5054,6 +5055,7 @@ unsafe impl Sync for OnExitEntry {}
 
 /// A `__cxa_atexit` registration: `func(arg)`, owned by the object `dso`
 /// (finalized early by `__cxa_finalize(dso)` when that object is unloaded).
+#[derive(Clone, Copy)]
 struct CxaEntry {
     func: unsafe extern "C" fn(*mut c_void),
     arg: *mut c_void,
@@ -5066,6 +5068,7 @@ unsafe impl Sync for CxaEntry {}
 
 /// One exit-function list for atexit, on_exit and __cxa_atexit, as glibc
 /// keeps: exit runs them all in reverse registration order, interleaved.
+#[derive(Clone, Copy)]
 enum ExitHandler {
     Atexit(extern "C" fn()),
     OnExit(OnExitEntry),
@@ -5877,6 +5880,111 @@ fn cached_auxv_value(type_: c_ulong) -> Option<c_ulong> {
     (present & bit != 0).then(|| {
         AUXV_CACHE_VALUES[type_ as usize].load(std::sync::atomic::Ordering::Relaxed) as c_ulong
     })
+}
+
+/// Fast-path lookup into the cached auxiliary vector without touching `errno`
+/// or issuing syscalls. Returns `Some(Some(val))` if present, `Some(None)` if
+/// the cache is ready and the key is absent, or `None` if uninitialized/out of
+/// range.
+#[inline]
+pub(crate) fn try_cached_auxv_value(type_: c_ulong) -> Option<Option<c_ulong>> {
+    if type_ < AUXV_CACHE_SLOTS as c_ulong
+        && AUXV_CACHE_STATE.load(std::sync::atomic::Ordering::Acquire) == AUXV_CACHE_READY
+    {
+        Some(cached_auxv_value(type_))
+    } else {
+        None
+    }
+}
+
+/// Seed the process-wide `getauxval` cache from a validated kernel `auxv` slice
+/// (terminated by `(0, _)`), avoiding `/proc/self/auxv` syscalls during startup.
+pub(crate) fn seed_auxv_cache_from_pairs(pairs: &[(usize, usize)]) {
+    if AUXV_CACHE_STATE.load(std::sync::atomic::Ordering::Acquire) != AUXV_CACHE_EMPTY {
+        return;
+    }
+    if AUXV_CACHE_STATE
+        .compare_exchange(
+            AUXV_CACHE_EMPTY,
+            AUXV_CACHE_INITIALIZING,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    let mut present = 0u64;
+    let mut complete = false;
+    for &(at, av) in pairs {
+        if at == 0 {
+            complete = true;
+            break;
+        }
+        if at < AUXV_CACHE_SLOTS {
+            let bit = 1u64 << at;
+            if present & bit == 0 {
+                AUXV_CACHE_VALUES[at].store(av, std::sync::atomic::Ordering::Relaxed);
+                present |= bit;
+            }
+        }
+    }
+
+    if complete {
+        AUXV_CACHE_PRESENT.store(present, std::sync::atomic::Ordering::Relaxed);
+        AUXV_CACHE_STATE.store(AUXV_CACHE_READY, std::sync::atomic::Ordering::Release);
+    } else {
+        AUXV_CACHE_STATE.store(AUXV_CACHE_EMPTY, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Seed the process-wide `getauxval` cache directly from the kernel's raw stack
+/// `auxv` pointer before `Instant::now()` / vDSO lookup runs.
+pub(crate) unsafe fn seed_auxv_cache_from_raw_ptr(auxv_ptr: *const usize, max_pairs: usize) {
+    if auxv_ptr.is_null()
+        || AUXV_CACHE_STATE.load(std::sync::atomic::Ordering::Acquire) != AUXV_CACHE_EMPTY
+    {
+        return;
+    }
+    if AUXV_CACHE_STATE
+        .compare_exchange(
+            AUXV_CACHE_EMPTY,
+            AUXV_CACHE_INITIALIZING,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    let mut present = 0u64;
+    let mut complete = false;
+    for idx in 0..max_pairs {
+        let off = idx.saturating_mul(2);
+        // SAFETY: caller supplies the kernel auxv vector on the initial stack.
+        let at = unsafe { *auxv_ptr.add(off) };
+        let av = unsafe { *auxv_ptr.add(off + 1) };
+        if at == 0 {
+            complete = true;
+            break;
+        }
+        if at < AUXV_CACHE_SLOTS {
+            let bit = 1u64 << at;
+            if present & bit == 0 {
+                AUXV_CACHE_VALUES[at].store(av, std::sync::atomic::Ordering::Relaxed);
+                present |= bit;
+            }
+        }
+    }
+
+    if complete {
+        AUXV_CACHE_PRESENT.store(present, std::sync::atomic::Ordering::Relaxed);
+        AUXV_CACHE_STATE.store(AUXV_CACHE_READY, std::sync::atomic::Ordering::Release);
+    } else {
+        AUXV_CACHE_STATE.store(AUXV_CACHE_EMPTY, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// `getauxval` — retrieve a value from the auxiliary vector.

@@ -599,12 +599,13 @@ unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_voi
     let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
         return std::ptr::null_mut();
     };
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol) {
+        return addr as *mut c_void;
+    }
     if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
         return addr as *mut c_void;
     }
-    crate::host_resolve::resolve_host_symbol_raw(symbol)
-        .map(|addr| addr as *mut c_void)
-        .unwrap_or_default()
+    std::ptr::null_mut()
 }
 
 unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {
@@ -804,17 +805,14 @@ pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
 pub(crate) fn prewarm_host_thread_symbols() {
     prewarm_host_thread_lifecycle_symbols();
 
-    // Check for explicit thread-backend env vars. Host delegation is the
-    // preload-compatible default; native remains available for focused tests
-    // and standalone-style validation.
-    if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_NATIVE")
-        && val == "1"
-    {
+    // Check for explicit thread-backend env vars without std::env::var heap
+    // allocations during process startup. Host delegation is the preload-compatible
+    // default; native remains available for focused tests and standalone-style
+    // validation.
+    if crate::startup_abi::startup_env_var_equals_one(b"FRANKENLIBC_THREAD_NATIVE=") {
         FORCE_NATIVE_THREADING.store(true, Ordering::Release);
     }
-    if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_DELEGATE")
-        && val == "1"
-    {
+    if crate::startup_abi::startup_env_var_equals_one(b"FRANKENLIBC_THREAD_DELEGATE=") {
         FORCE_NATIVE_THREADING.store(false, Ordering::Release);
     }
     // Startup runs on the main thread.
@@ -6501,7 +6499,12 @@ static MAIN_THREAD_FL_NAME: AtomicUsize = AtomicUsize::new(0);
 
 /// Record the calling thread's glibc handle when it is the main thread.
 pub(crate) fn remember_main_thread_host_handle() {
-    if force_native_threading_enabled() || core_self_tid() != raw_syscall::sys_getpid() {
+    if force_native_threading_enabled() {
+        return;
+    }
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        && core_self_tid() != raw_syscall::sys_getpid()
+    {
         return;
     }
     if let Some(host_self) = resolved_thread_self_raw() {
@@ -8704,6 +8707,11 @@ impl Drop for AtforkRegistryGuard {
 }
 
 fn unregister_atfork_matching(matches: impl Fn(&AtforkEntry) -> bool) {
+    if ATFORK_HANDLERS.next_id.load(Ordering::Acquire) == 1
+        && ATFORK_GATE_OWNER.load(Ordering::Acquire) == 0
+    {
+        return;
+    }
     loop {
         let removed = {
             let _guard = lock_atfork_registry();
@@ -8742,6 +8750,11 @@ pub(crate) fn unregister_atfork_range(start: usize, length: usize) {
 // non-recursive Mutex otherwise (bd-sq7ae).
 #[allow(dead_code)]
 pub(crate) fn run_atfork_prepare() -> AtforkSnapshot {
+    if ATFORK_HANDLERS.next_id.load(Ordering::Acquire) == 1
+        && ATFORK_GATE_OWNER.load(Ordering::Acquire) == 0
+    {
+        return AtforkSnapshot(Vec::new());
+    }
     let mut snapshot = Vec::new();
     loop {
         let needed = {

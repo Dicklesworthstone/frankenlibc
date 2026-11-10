@@ -749,7 +749,10 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/config.rs",
         domain: "tsm",
-        expected_sites: 15,
+        // 15 -> 17: seed_safety_level_if_unset compare_exchange (Release/Relaxed)
+        // allows the ABI layer's allocation-free environ scan to pre-seed
+        // CACHED_LEVEL during .init_array startup.
+        expected_sites: 17,
         stop_at_cfg_test: false,
         optional: false,
     },

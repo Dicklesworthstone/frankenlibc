@@ -364,7 +364,11 @@ or OS does not provide (needs:";
 #[cfg(all(not(test), target_os = "linux"))]
 #[used]
 #[unsafe(link_section = ".init_array")]
-static FRANKENLIBC_ABI_INIT_ARRAY: extern "C" fn() = frankenlibc_abi_stdio_init_entry;
+static FRANKENLIBC_ABI_INIT_ARRAY: unsafe extern "C" fn(
+    std::ffi::c_int,
+    *mut *mut std::ffi::c_char,
+    *mut *mut std::ffi::c_char,
+) = frankenlibc_abi_stdio_init_entry;
 
 #[cfg(all(not(test), target_os = "linux"))]
 fn runtime_log_signal_context() -> frankenlibc_membrane::heal::RuntimeSignalContext {
@@ -377,7 +381,12 @@ fn runtime_log_signal_context() -> frankenlibc_membrane::heal::RuntimeSignalCont
 
 #[cfg(all(not(test), target_os = "linux"))]
 #[inline(never)]
-extern "C" fn frankenlibc_abi_stdio_init_entry() {
+unsafe extern "C" fn frankenlibc_abi_stdio_init_entry(
+    argc: std::ffi::c_int,
+    argv: *mut *mut std::ffi::c_char,
+    envp: *mut *mut std::ffi::c_char,
+) {
+    unsafe { startup_abi::preseed_auxv_from_init_array(argc, argv, envp) };
     // SAFETY: this runs during process initialization before user code and
     // publishes the stdio globals/aliases onto stable NativeFile storage while
     // patching host libio exit handling for the exported _IO symbols.
@@ -386,6 +395,7 @@ extern "C" fn frankenlibc_abi_stdio_init_entry() {
     // open files, or touch global-dynamic TLS. Connect it to the ABI's fixed
     // atomic signal marker and open the configured sink before user code.
     frankenlibc_membrane::heal::install_signal_context_probe(runtime_log_signal_context);
+    runtime_policy::seed_membrane_runtime_log_from_environ();
     frankenlibc_membrane::heal::initialize_runtime_log();
     // aarch64: seed the pointer guard the native setjmp/longjmp asm reads (and
     // the stack canary) from AT_RANDOM here. The loader runs this constructor

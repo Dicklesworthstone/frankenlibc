@@ -715,6 +715,9 @@ unsafe fn parse_vdso(base: usize) -> VdsoResolvedSymbolTuple {
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
+    if let Some(cached) = crate::stdlib_abi::try_cached_auxv_value(typ) {
+        return cached;
+    }
     let fd = unsafe {
         raw_syscall::sys_openat(
             libc::AT_FDCWD,

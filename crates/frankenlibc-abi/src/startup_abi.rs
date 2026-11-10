@@ -448,12 +448,11 @@ pub unsafe fn __frankenlibc_startup_phase0_value_enabled_for_tests(ptr: *const c
     unsafe { cstr_eq_bytes(ptr, b"1") }
 }
 
-fn startup_phase0_env_enabled() -> bool {
-    const KEY_EQ: &[u8] = b"FRANKENLIBC_STARTUP_PHASE0=";
+pub(crate) fn startup_env_var_equals_one(key_eq: &[u8]) -> bool {
     const MAX_SCAN: usize = 4096;
 
     // Read process environment directly from `environ` to avoid calling any
-    // interposed ABI symbol (notably getenv/strlen/memcpy) during startup.
+    // interposed ABI symbol or allocating on the heap during startup.
     let mut envp = unsafe { environ };
     if envp.is_null() {
         return false;
@@ -467,10 +466,10 @@ fn startup_phase0_env_enabled() -> bool {
         }
 
         // SAFETY: `entry` points to a NUL-terminated env string.
-        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
+        if unsafe { cstr_has_byte_prefix(entry, key_eq) } {
             // Accept only exact value `1`.
-            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
-            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // SAFETY: key_eq matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(key_eq.len()) };
             // SAFETY: value is a valid C string tail of entry.
             return unsafe { cstr_eq_bytes(value, b"1") };
         }
@@ -482,30 +481,12 @@ fn startup_phase0_env_enabled() -> bool {
     false
 }
 
+fn startup_phase0_env_enabled() -> bool {
+    startup_env_var_equals_one(b"FRANKENLIBC_STARTUP_PHASE0=")
+}
+
 fn startup_delegate_env_requested() -> bool {
-    const KEY_EQ: &[u8] = b"FRANKENLIBC_STARTUP_DELEGATE=";
-    const MAX_SCAN: usize = 4096;
-
-    let mut envp = unsafe { environ };
-    if envp.is_null() {
-        return false;
-    }
-
-    for _ in 0..MAX_SCAN {
-        let entry = unsafe { *envp };
-        if entry.is_null() {
-            return false;
-        }
-
-        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
-            let value = unsafe { entry.add(KEY_EQ.len()) };
-            return unsafe { cstr_eq_bytes(value, b"1") };
-        }
-
-        envp = unsafe { envp.add(1) };
-    }
-
-    false
+    startup_env_var_equals_one(b"FRANKENLIBC_STARTUP_DELEGATE=")
 }
 
 #[cfg(debug_assertions)]
@@ -802,15 +783,98 @@ unsafe fn count_c_string_vector(base: *mut *mut c_char, max_entries: usize) -> O
     None
 }
 
-unsafe fn read_auxv_pairs(stack_end: *mut c_void, max_pairs: usize) -> Vec<(usize, usize)> {
-    if stack_end.is_null() {
-        return Vec::new();
+const INLINE_AUXV_CAPACITY: usize = 64;
+
+enum AuxvPairs {
+    Inline {
+        buf: [(usize, usize); INLINE_AUXV_CAPACITY],
+        len: usize,
+    },
+    Heap(Vec<(usize, usize)>),
+}
+
+impl std::ops::Deref for AuxvPairs {
+    type Target = [(usize, usize)];
+
+    #[inline]
+    fn deref(&self) -> &[(usize, usize)] {
+        match self {
+            Self::Inline { buf, len } => &buf[..*len],
+            Self::Heap(vec) => vec.as_slice(),
+        }
+    }
+}
+
+struct StartupCheckpointPath {
+    buf: [StartupCheckpoint; 32],
+    len: usize,
+}
+
+impl StartupCheckpointPath {
+    const fn new() -> Self {
+        Self {
+            buf: [StartupCheckpoint::Entry; 32],
+            len: 0,
+        }
     }
 
-    let mut out = Vec::new();
-    let auxv_ptr = stack_end.cast::<usize>();
+    #[inline]
+    fn push(&mut self, checkpoint: StartupCheckpoint) {
+        if self.len < self.buf.len() {
+            self.buf[self.len] = checkpoint;
+            self.len += 1;
+        }
+    }
+}
 
-    for idx in 0..max_pairs {
+impl std::ops::Deref for StartupCheckpointPath {
+    type Target = [StartupCheckpoint];
+
+    #[inline]
+    fn deref(&self) -> &[StartupCheckpoint] {
+        &self.buf[..self.len]
+    }
+}
+
+unsafe fn read_auxv_pairs(stack_end: *mut c_void, max_pairs: usize) -> AuxvPairs {
+    if stack_end.is_null() {
+        return AuxvPairs::Inline {
+            buf: [(0, 0); INLINE_AUXV_CAPACITY],
+            len: 0,
+        };
+    }
+
+    let mut inline_buf = [(0usize, 0usize); INLINE_AUXV_CAPACITY];
+    let mut inline_len = 0usize;
+    let auxv_ptr = stack_end.cast::<usize>();
+    let inline_limit = max_pairs.min(INLINE_AUXV_CAPACITY);
+
+    for idx in 0..inline_limit {
+        let off = idx.saturating_mul(2);
+        // SAFETY: caller provides a readable kernel or fixture auxv key/value array.
+        let key = unsafe { *auxv_ptr.add(off) };
+        // SAFETY: same as above; key/value pairs are adjacent entries.
+        let value = unsafe { *auxv_ptr.add(off + 1) };
+        inline_buf[inline_len] = (key, value);
+        inline_len += 1;
+        if key == AT_NULL {
+            return AuxvPairs::Inline {
+                buf: inline_buf,
+                len: inline_len,
+            };
+        }
+    }
+
+    if max_pairs <= INLINE_AUXV_CAPACITY {
+        return AuxvPairs::Inline {
+            buf: inline_buf,
+            len: inline_len,
+        };
+    }
+
+    let mut out = Vec::with_capacity(INLINE_AUXV_CAPACITY * 2);
+    out.extend_from_slice(&inline_buf[..inline_len]);
+    for idx in INLINE_AUXV_CAPACITY..max_pairs {
         let off = idx.saturating_mul(2);
         // SAFETY: caller provides a readable kernel or fixture auxv key/value array.
         let key = unsafe { *auxv_ptr.add(off) };
@@ -822,7 +886,7 @@ unsafe fn read_auxv_pairs(stack_end: *mut c_void, max_pairs: usize) -> Vec<(usiz
         }
     }
 
-    out
+    AuxvPairs::Heap(out)
 }
 
 /// Invoke the main ELF64 executable's constructors after relocation and runtime
@@ -977,7 +1041,7 @@ unsafe fn startup_phase0_impl(
     publish_environment: bool,
 ) -> Result<c_int, ()> {
     let started = Instant::now();
-    let mut path = Vec::with_capacity(16);
+    let mut path = StartupCheckpointPath::new();
     path.push(StartupCheckpoint::Entry);
     let normalized_argc = normalize_argc(argc);
     path.push(StartupCheckpoint::MembraneGate);
@@ -1131,6 +1195,9 @@ unsafe fn startup_phase0_impl(
         return Err(());
     }
     path.push(StartupCheckpoint::ClassifySecureMode);
+    if publish_environment {
+        crate::stdlib_abi::seed_auxv_cache_from_pairs(&auxv_pairs);
+    }
 
     let auxv_count = secure_evidence.scanned_pairs;
     let secure_mode = secure_evidence.state.is_secure();
@@ -1216,14 +1283,15 @@ unsafe fn startup_phase0_impl(
     }
 
     path.push(StartupCheckpoint::CallMain);
-    scrub_stack_for_main();
     let rc = if let Some(host) = host_main_runner {
         // SAFETY: real startup with host-backed threads; owned initialization
-        // is complete, while the host supplies the root thread's unwind frame.
+        // is complete, while the host supplies the root thread's unwind frame
+        // and `owned_host_main_wrapper` scrubs the stack immediately before `main`.
         unsafe {
             run_owned_main_on_host(host, main_fn, normalized_argc as c_int, ubp_av, stack_end)
         }
     } else {
+        scrub_stack_for_main();
         // SAFETY: callback + vectors are validated for the native/fixture path.
         unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) }
     };
@@ -1259,6 +1327,26 @@ unsafe fn startup_phase0_impl(
     Ok(rc)
 }
 
+/// Seed the `getauxval` cache from `.init_array`'s `(argc, argv, envp)` arguments
+/// when `envp` still sits immediately after `argv` on the initial kernel stack.
+pub(crate) unsafe fn preseed_auxv_from_init_array(
+    argc: c_int,
+    argv: *mut *mut c_char,
+    envp: *mut *mut c_char,
+) {
+    if argc < 0 || argv.is_null() || envp.is_null() {
+        return;
+    }
+    let normalized_argc = normalize_argc(argc);
+    if unsafe { argv.add(normalized_argc.saturating_add(1)) } != envp {
+        return;
+    }
+    if let Some(env_count) = unsafe { count_c_string_vector(envp, MAX_STARTUP_SCAN) } {
+        let auxv_ptr = unsafe { envp.add(env_count + 1).cast::<usize>() };
+        unsafe { crate::stdlib_abi::seed_auxv_cache_from_raw_ptr(auxv_ptr, MAX_STARTUP_SCAN) };
+    }
+}
+
 /// libc-compatible startup symbol. Uses owned startup by default (bd-73h55.1).
 /// Set `FRANKENLIBC_STARTUP_DELEGATE=1` to delegate to host libc instead.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1275,6 +1363,20 @@ pub unsafe extern "C" fn __libc_start_main(
     // the wrapped `main` boundary after host libc initialization completes.
 
     if use_owned_startup() {
+        if !ubp_av.is_null() && argc >= 0 {
+            let normalized_argc = normalize_argc(argc);
+            if let Some(argv_count) = unsafe { count_c_string_vector(ubp_av, MAX_STARTUP_SCAN) }
+                && argv_count >= normalized_argc
+            {
+                let envp = unsafe { ubp_av.add(normalized_argc.saturating_add(1)) };
+                if let Some(env_count) = unsafe { count_c_string_vector(envp, MAX_STARTUP_SCAN) } {
+                    let auxv_ptr = unsafe { envp.add(env_count + 1).cast::<usize>() };
+                    unsafe {
+                        crate::stdlib_abi::seed_auxv_cache_from_raw_ptr(auxv_ptr, MAX_STARTUP_SCAN)
+                    };
+                }
+            }
+        }
         // SAFETY: owned startup path (default since bd-73h55.1).
         // Ok carries main's status, which may be negative: main returning -105
         // is exit status 151, not a startup failure. Reading `rc >= 0` as

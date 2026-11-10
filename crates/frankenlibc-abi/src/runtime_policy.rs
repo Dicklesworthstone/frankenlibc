@@ -233,6 +233,55 @@ fn mode_name(level: SafetyLevel) -> &'static str {
     }
 }
 
+/// Seed `frankenlibc_membrane`'s mode and runtime-log caches directly from
+/// `environ` without `std::env::var` heap allocations during `.init_array`.
+pub(crate) fn seed_membrane_runtime_log_from_environ() {
+    const HEAL_LOG_KEY: &[u8] = b"FRANKENLIBC_HEAL_LOG=";
+    const LOG_PATH_KEY: &[u8] = b"FRANKENLIBC_LOG=";
+    const MAX_SCAN: usize = 4096;
+
+    // SAFETY: reading process-owned environment pointer table.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return;
+    }
+
+    frankenlibc_membrane::config::seed_safety_level_if_unset(mode());
+
+    let mut heal_log_enabled = true;
+    let mut has_log_path = false;
+    for _ in 0..MAX_SCAN {
+        // SAFETY: `envp` is a null-terminated vector of C string pointers.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            break;
+        }
+        // SAFETY: `entry` is a NUL-terminated C string.
+        if unsafe { cstr_has_byte_prefix(entry, HEAL_LOG_KEY) } {
+            let mut value = unsafe { entry.add(HEAL_LOG_KEY.len()) };
+            while unsafe { matches!(*value as u8, b' ' | b'\t' | b'\r' | b'\n') } {
+                value = unsafe { value.add(1) };
+            }
+            if unsafe {
+                cstr_eq_ignore_ascii_case(value, b"0")
+                    || cstr_eq_ignore_ascii_case(value, b"false")
+                    || cstr_eq_ignore_ascii_case(value, b"off")
+                    || cstr_eq_ignore_ascii_case(value, b"no")
+            } {
+                heal_log_enabled = false;
+            }
+        } else if unsafe { cstr_has_byte_prefix(entry, LOG_PATH_KEY) } {
+            let value = unsafe { entry.add(LOG_PATH_KEY.len()) };
+            if unsafe { *value != 0 } {
+                has_log_path = true;
+            }
+        }
+        envp = unsafe { envp.add(1) };
+    }
+
+    frankenlibc_membrane::heal::seed_runtime_log_if_unset(heal_log_enabled, !has_log_path);
+}
+
 /// Parse FRANKENLIBC_RUNTIME_MATH from environ (bd-06bxm.9).
 /// Returns Ok(true) for "on" or absent (default), Ok(false) for "off".
 /// Invalid values log a warning and fall back to on.

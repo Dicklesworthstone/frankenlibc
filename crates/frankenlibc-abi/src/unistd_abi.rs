@@ -186,8 +186,11 @@ fn aligned_output_offset(base: *const c_char, min_offset: usize, align: usize) -
 /// the page size while initialising that malloc, holding its init lock, and
 /// fl's allocation re-entered it -- `rustc --version` hung forever.
 fn auxv_entry(kind: libc::c_ulong) -> Option<usize> {
+    if let Some(cached) = crate::stdlib_abi::try_cached_auxv_value(kind) {
+        return cached.filter(|&v| v != 0).map(|v| v as usize);
+    }
     // SAFETY: getauxval only reads the process auxiliary vector.
-    let value = unsafe { libc::getauxval(kind) };
+    let value = unsafe { crate::stdlib_abi::getauxval(kind) };
     (value != 0).then_some(value as usize)
 }
 
