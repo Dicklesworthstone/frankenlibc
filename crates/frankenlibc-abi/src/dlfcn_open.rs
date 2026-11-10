@@ -11,6 +11,8 @@ use std::sync::Arc;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use super::super as abi;
+#[cfg(not(feature = "standalone"))]
+use super::RootParseOutcome;
 use super::{
     NativeReopen, OPERATIONS, PreparedDso, ResidentPin, SearchContext, SearchPaths, absolute_path,
     dlfcn_core, ifunc, initialize, lookup, native_dso_id_from_handle, open_file, prepare_file,
@@ -206,24 +208,41 @@ unsafe fn dispatch(
     result
 }
 
-/// Retain the exact selected regular file for fallback classification. The
-/// native preparation consumes a cloned descriptor with a shared offset, so
-/// classification rewinds only after the failed native transaction has ended.
-pub(super) struct Declined {
+/// Retain the exact selected regular file and its parsed root metadata (if any)
+/// for fallback classification without re-reading or re-parsing the image.
+pub(in crate::dlfcn_abi) struct Declined {
     #[cfg(not(feature = "standalone"))]
     path: PathBuf,
-    #[cfg(not(feature = "standalone"))]
-    file: std::fs::File,
     #[cfg(not(feature = "standalone"))]
     device: u64,
     #[cfg(not(feature = "standalone"))]
     inode: u64,
+    #[cfg(not(feature = "standalone"))]
+    parsed: RootParseOutcome,
 }
 
 #[cfg(not(feature = "standalone"))]
 impl Declined {
-    fn host_path(mut self) -> Option<std::ffi::CString> {
-        use std::io::{Read, Seek, SeekFrom};
+    pub(in crate::dlfcn_abi) fn device(&self) -> u64 {
+        self.device
+    }
+
+    pub(in crate::dlfcn_abi) fn inode(&self) -> u64 {
+        self.inode
+    }
+
+    pub(in crate::dlfcn_abi) fn parsed_host_verdict(&self) -> Option<bool> {
+        if ifunc::active() || process_exit::unloading() {
+            return Some(false);
+        }
+        match &self.parsed {
+            RootParseOutcome::Parsed(object) => Some(super::host_may_load_parsed_object(object)),
+            RootParseOutcome::InvalidElf => Some(false),
+            RootParseOutcome::NotAttempted => None,
+        }
+    }
+
+    fn host_path(self) -> Option<std::ffi::CString> {
         use std::os::unix::ffi::OsStrExt;
         if ifunc::active() || process_exit::unloading() {
             return None;
@@ -235,13 +254,10 @@ impl Declined {
         if (device, inode) != (self.device, self.inode) {
             return None;
         }
-        self.file.seek(SeekFrom::Start(0)).ok()?;
-        let mut bytes = Vec::new();
-        self.file.read_to_end(&mut bytes).ok()?;
-        let object = frankenlibc_core::elf::ElfLoader::new(0)
-            .parse(&bytes)
-            .ok()?;
-        if !super::host_may_load_parsed_object(&object) {
+        let allowed = self.parsed_host_verdict().unwrap_or_else(|| {
+            super::host_may_load_declined_object(self.path.as_os_str().as_bytes())
+        });
+        if !allowed {
             return None;
         }
         std::ffi::CString::new(self.path.as_os_str().as_bytes()).ok()
@@ -275,12 +291,18 @@ pub(super) fn load(
             .search
             .candidates(name, &caller.origin, &caller.inherited, &context)?
     } else {
-        let executable = std::fs::read_link("/proc/self/exe").ok();
-        let origin = executable.as_deref().and_then(Path::parent);
-        if origin.is_none() && SearchPaths::requires_origin(name) {
-            return None;
-        }
-        SearchPaths::default().candidates(name, origin.unwrap_or(Path::new("/")), &[], &context)?
+        let origin = if SearchPaths::requires_origin(name) {
+            let executable = std::fs::read_link("/proc/self/exe").ok()?;
+            Some(executable.parent()?.to_owned())
+        } else {
+            None
+        };
+        SearchPaths::default().candidates(
+            name,
+            origin.as_deref().unwrap_or(Path::new("/")),
+            &[],
+            &context,
+        )?
     };
     let (path, file, device, inode) = candidates.into_iter().find_map(|candidate| {
         let path = absolute_path(&candidate)?;
@@ -303,27 +325,36 @@ pub(super) fn load(
             return Some(handle);
         }
     }
-    // Public opens retain their existing fallback path. Only the private
-    // caller-relative entry needs this exact selected pathname and descriptor.
     #[cfg(not(feature = "standalone"))]
-    if caller.is_some() {
-        *declined = file.try_clone().ok().map(|file| Declined {
+    {
+        *declined = Some(Declined {
             path: path.clone(),
-            file,
             device,
             inode,
+            parsed: RootParseOutcome::NotAttempted,
         });
     }
     if caller.is_none() && flags & dlfcn_core::RTLD_NOLOAD != 0 {
         return None;
     }
-    let root = prepare_file(file, device, inode, &path, &context)?;
+    let root = prepare_file(
+        file,
+        device,
+        inode,
+        &path,
+        &context,
+        #[cfg(not(feature = "standalone"))]
+        declined.as_mut().map(|d| &mut d.parsed),
+    )?;
     if flags & dlfcn_core::RTLD_NOLOAD != 0 {
         // A valid but absent native object is an error-free NULL result. A
         // host-coupled object must still consult host NOLOAD; it may already
         // be resident in that separate namespace. Never map either here.
         #[cfg(not(feature = "standalone"))]
         if super::host_may_load_parsed_object(&root.object) {
+            if let Some(declined) = declined.as_mut() {
+                declined.parsed = RootParseOutcome::Parsed(root.object);
+            }
             return None;
         }
         *declined = None;
@@ -332,14 +363,35 @@ pub(super) fn load(
     // dlopen creates an independent load group. Caller RPATH locates its root
     // but must NOT leak into that new root's transitive dependency search.
     // The new object's own RPATH/RUNPATH still govern ordinary DT_NEEDED.
-    let group = prepare_group(root, &context)?;
+    let mut group = prepare_group(
+        root,
+        &context,
+        #[cfg(not(feature = "standalone"))]
+        declined.as_mut().map(|d| &mut d.parsed),
+    )?;
     let _operation = OPERATIONS.lock();
     if process_exit::unloading() {
+        #[cfg(not(feature = "standalone"))]
+        if let Some(declined) = declined.as_mut() {
+            declined.parsed = RootParseOutcome::Parsed(group.swap_remove(0).object);
+        }
         return None;
     }
-    process_exit::install()?;
+    if process_exit::install().is_none() {
+        #[cfg(not(feature = "standalone"))]
+        if let Some(declined) = declined.as_mut() {
+            declined.parsed = RootParseOutcome::Parsed(group.swap_remove(0).object);
+        }
+        return None;
+    }
     {
-        let dsos = registry().lock().ok()?;
+        let Ok(dsos) = registry().lock() else {
+            #[cfg(not(feature = "standalone"))]
+            if let Some(declined) = declined.as_mut() {
+                declined.parsed = RootParseOutcome::Parsed(group.swap_remove(0).object);
+            }
+            return None;
+        };
         if dsos
             .iter()
             .any(|dso| dso.device == device && dso.inode == inode)
@@ -349,7 +401,13 @@ pub(super) fn load(
             *declined = None;
         }
     }
-    let result = publish_group(&group, flags)?;
+    let Some(result) = publish_group(&group, flags) else {
+        #[cfg(not(feature = "standalone"))]
+        if let Some(declined) = declined.as_mut() {
+            declined.parsed = RootParseOutcome::Parsed(group.swap_remove(0).object);
+        }
+        return None;
+    };
     // Publication has selected the sole native owner. Any later failure must
     // not be rescued by publishing a second copy through the host loader.
     *declined = None;

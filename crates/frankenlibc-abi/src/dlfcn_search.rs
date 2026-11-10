@@ -55,7 +55,7 @@ pub(super) struct SearchPaths {
 pub(super) struct SearchContext {
     pub(super) secure: bool,
     environment: Vec<PathBuf>,
-    cache: Option<cache::Cache>,
+    cache: std::cell::OnceCell<Option<cache::Cache>>,
     capabilities: Capabilities,
     tokens: DynamicTokens,
 }
@@ -64,6 +64,7 @@ pub(super) struct SearchContext {
 /// referencing object, while LIB and PLATFORM cannot come from an environment
 /// variable or the name being expanded. A missing platform affects only paths
 /// that actually contain a recognized PLATFORM token.
+#[derive(Clone)]
 struct DynamicTokens {
     library: &'static [u8],
     platform: Option<Vec<u8>>,
@@ -144,46 +145,70 @@ fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
     (bytes.len() <= limit).then_some(bytes)
 }
 
+struct ProcessSearchState {
+    secure: bool,
+    environment: Vec<PathBuf>,
+    capabilities: Capabilities,
+    tokens: DynamicTokens,
+}
+
 impl SearchContext {
     #[allow(dead_code)]
     pub(super) fn process() -> Self {
-        // Unknown security state is secure, never permission to use LD_*.
-        let auxv = bounded_file("/proc/self/auxv", 65536);
-        let secure = auxv
-            .as_deref()
-            .and_then(|bytes| auxiliary_value(bytes, 23)) // AT_SECURE
-            .map(|value| value != 0)
-            .unwrap_or(true);
-        let tokens = DynamicTokens {
-            library: library_token(),
-            platform: auxv.as_deref().and_then(platform_token),
-        };
-        let mut environment = Vec::new();
-        if !secure {
-            // /proc exposes the initial environment, not later setenv edits.
-            // Do not consult mutable process environment during concurrent loads.
-            if let Some(bytes) = bounded_file("/proc/self/environ", 1 << 20)
-                && let Some(value) = bytes
-                    .split(|byte| *byte == 0)
-                    .find_map(|entry| entry.strip_prefix(b"LD_LIBRARY_PATH="))
-            {
-                let executable = std::fs::read_link("/proc/self/exe").ok();
-                let origin = executable.as_deref().and_then(Path::parent);
-                environment = split_paths(value, origin, true, &tokens);
+        static PROCESS_STATE: std::sync::OnceLock<ProcessSearchState> =
+            std::sync::OnceLock::new();
+        let state = PROCESS_STATE.get_or_init(|| {
+            // Unknown security state is secure, never permission to use LD_*.
+            let auxv = bounded_file("/proc/self/auxv", 65536);
+            let secure = auxv
+                .as_deref()
+                .and_then(|bytes| auxiliary_value(bytes, 23)) // AT_SECURE
+                .map(|value| value != 0)
+                .unwrap_or(true);
+            let tokens = DynamicTokens {
+                library: library_token(),
+                platform: auxv.as_deref().and_then(platform_token),
+            };
+            let mut environment = Vec::new();
+            if !secure {
+                // /proc exposes the initial environment, not later setenv edits.
+                // Do not consult mutable process environment during concurrent loads.
+                if let Some(bytes) = bounded_file("/proc/self/environ", 1 << 20)
+                    && let Some(value) = bytes
+                        .split(|byte| *byte == 0)
+                        .find_map(|entry| entry.strip_prefix(b"LD_LIBRARY_PATH="))
+                {
+                    let executable = std::fs::read_link("/proc/self/exe").ok();
+                    let origin = executable.as_deref().and_then(Path::parent);
+                    environment = split_paths(value, origin, true, &tokens);
+                }
             }
+            ProcessSearchState {
+                secure,
+                environment,
+                capabilities: Capabilities::detect(),
+                tokens,
+            }
+        });
+        Self {
+            secure: state.secure,
+            environment: state.environment.clone(),
+            cache: std::cell::OnceCell::new(),
+            capabilities: state.capabilities,
+            tokens: state.tokens.clone(),
         }
+    }
+
+    fn cache(&self) -> Option<&cache::Cache> {
         // A load group sees one immutable snapshot, including in secure mode:
         // the administrator-maintained cache is independent of LD_* variables.
         // Missing, oversized, or malformed files leave ordinary search intact.
-        let cache = bounded_file("/etc/ld.so.cache", cache::MAX_CACHE_BYTES)
-            .and_then(cache::Cache::from_bytes);
-        Self {
-            secure,
-            environment,
-            cache,
-            capabilities: Capabilities::detect(),
-            tokens,
-        }
+        self.cache
+            .get_or_init(|| {
+                bounded_file("/etc/ld.so.cache", cache::MAX_CACHE_BYTES)
+                    .and_then(cache::Cache::from_bytes)
+            })
+            .as_ref()
     }
 }
 
@@ -298,7 +323,7 @@ impl SearchPaths {
         }
         // Cache entries are complete pathnames, not additional directories.
         // They rank after RUNPATH and before the default directory fallback.
-        if let Some(cache) = &context.cache {
+        if let Some(cache) = context.cache() {
             for path in cache
                 .candidates_with_capabilities(name.as_os_str().as_bytes(), context.capabilities)
             {
@@ -588,7 +613,7 @@ mod tests {
         let context = SearchContext {
             secure: false,
             environment: vec!["/environment".into()],
-            cache: None,
+            cache: std::cell::OnceCell::from(None),
             capabilities: Capabilities::default(),
             tokens: tokens(),
         };
@@ -615,7 +640,7 @@ mod tests {
         let context = SearchContext {
             secure: false,
             environment: vec!["/environment".into()],
-            cache: None,
+            cache: std::cell::OnceCell::from(None),
             capabilities: Capabilities::default(),
             tokens: tokens(),
         };
@@ -688,7 +713,9 @@ mod tests {
         SearchContext {
             secure,
             environment: vec!["/environment".into()],
-            cache: Some(cache::Cache::from_bytes(cache_fixture(paths, None)).unwrap()),
+            cache: std::cell::OnceCell::from(Some(
+                cache::Cache::from_bytes(cache_fixture(paths, None)).unwrap(),
+            )),
             capabilities: Capabilities::default(),
             tokens: tokens(),
         }
@@ -810,7 +837,7 @@ mod tests {
             1
         );
         let mut missing = context;
-        missing.cache = None;
+        missing.cache = std::cell::OnceCell::from(None);
         let without_cache = paths
             .candidates(b"libx.so", Path::new("/origin"), &[], &missing)
             .unwrap();
@@ -827,7 +854,7 @@ mod tests {
         SearchContext {
             secure: false,
             environment: Vec::new(),
-            cache: None,
+            cache: std::cell::OnceCell::from(None),
             capabilities: Capabilities::for_x86_level(level),
             tokens: tokens(),
         }
@@ -983,7 +1010,7 @@ mod tests {
         let context = SearchContext {
             secure: true,
             environment: Vec::new(),
-            cache: Some(cache::Cache::from_bytes(bytes).unwrap()),
+            cache: std::cell::OnceCell::from(Some(cache::Cache::from_bytes(bytes).unwrap())),
             capabilities: Capabilities::for_x86_level(2),
             tokens: tokens(),
         };

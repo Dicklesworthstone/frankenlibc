@@ -423,33 +423,79 @@ fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
     None
 }
 
+#[cfg(not(feature = "standalone"))]
+pub(super) enum RootParseOutcome {
+    NotAttempted,
+    InvalidElf,
+    Parsed(LoadedObject),
+}
+
+#[cfg(not(feature = "standalone"))]
+struct ParsedOnDrop<'a> {
+    slot: Option<&'a mut RootParseOutcome>,
+    object: Option<LoadedObject>,
+}
+
+#[cfg(not(feature = "standalone"))]
+impl Drop for ParsedOnDrop<'_> {
+    fn drop(&mut self) {
+        if let (Some(slot), Some(object)) = (self.slot.take(), self.object.take()) {
+            *slot = RootParseOutcome::Parsed(object);
+        }
+    }
+}
+
 fn prepare_file(
     mut file: File,
     device: u64,
     inode: u64,
     requested_path: &Path,
     context: &SearchContext,
+    #[cfg(not(feature = "standalone"))] parsed_out: Option<&mut RootParseOutcome>,
 ) -> Option<PreparedDso> {
+    #[cfg(not(feature = "standalone"))]
+    let mut parsed_out = parsed_out;
+    #[cfg(not(feature = "standalone"))]
+    if let Some(slot) = parsed_out.as_deref_mut() {
+        *slot = RootParseOutcome::InvalidElf;
+    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
+    let loader = ElfLoader::new(0);
+    let object = loader.parse(&bytes).ok()?;
+    #[cfg(not(feature = "standalone"))]
+    let mut parsed_guard = ParsedOnDrop {
+        slot: parsed_out,
+        object: Some(object),
+    };
+    #[cfg(not(feature = "standalone"))]
+    let object_ref = parsed_guard.object.as_ref().unwrap();
+    #[cfg(feature = "standalone")]
+    let object_ref = &object;
+    #[cfg(not(feature = "standalone"))]
+    if object_ref
+        .needed_libraries
+        .iter()
+        .any(|needed| HOST_RUNTIME_SONAMES.contains(&needed.as_str()))
+    {
+        return None;
+    }
     // The metadata reader alone does not reject unsupported ELF versions.
     if !candidate::versions_supported(&bytes) {
         return None;
     }
-    let loader = ElfLoader::new(0);
-    let object = loader.parse(&bytes).ok()?;
     // ET_EXEC cannot be safely relocated as an ordinary shared library.
-    if bytes.get(16..18)? != [3, 0].as_slice() || tls::validate(&object, &bytes).is_none() {
+    if bytes.get(16..18)? != [3, 0].as_slice() || tls::validate(object_ref, &bytes).is_none() {
         return None;
     }
-    let flags = dynamic_flags(&bytes, &object)?;
+    let flags = dynamic_flags(&bytes, object_ref)?;
     // PIE also has ET_DYN, but is not a dlopen-able shared library. NOOPEN
     // applies to dependencies as well as the explicitly requested root.
     if flags & (DF_1_NOOPEN | DF_1_PIE) != 0 {
         return None;
     }
-    let lifecycle = lifecycle::Layout::parse(&bytes, &object)?;
-    let image = loader.materialize_load_image(&bytes, &object).ok()?;
+    let lifecycle = lifecycle::Layout::parse(&bytes, object_ref)?;
+    let image = loader.materialize_load_image(&bytes, object_ref).ok()?;
     if image.low_vaddr != 0 || image.memory.is_empty() {
         return None;
     }
@@ -460,10 +506,12 @@ fn prepare_file(
     let path = requested_path.to_owned();
     let search = Arc::new(SearchPaths::parse(
         &bytes,
-        &object,
+        object_ref,
         path.parent()?,
         context,
     )?);
+    #[cfg(not(feature = "standalone"))]
+    let object = parsed_guard.object.take().unwrap();
     Some(PreparedDso {
         file,
         device,
@@ -519,7 +567,36 @@ fn pin_resident_dependency(
     Some(Some(ResidentPin { id: dso.id }))
 }
 
-fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<PreparedDso>> {
+#[cfg(not(feature = "standalone"))]
+struct GroupRootOnDrop<'a> {
+    slot: Option<&'a mut RootParseOutcome>,
+    group: Vec<PreparedDso>,
+}
+
+#[cfg(not(feature = "standalone"))]
+impl Drop for GroupRootOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot.take()
+            && !self.group.is_empty()
+        {
+            *slot = RootParseOutcome::Parsed(self.group.swap_remove(0).object);
+        }
+    }
+}
+
+fn prepare_group(
+    root: PreparedDso,
+    context: &SearchContext,
+    #[cfg(not(feature = "standalone"))] parsed_out: Option<&mut RootParseOutcome>,
+) -> Option<Vec<PreparedDso>> {
+    #[cfg(not(feature = "standalone"))]
+    let mut group_guard = GroupRootOnDrop {
+        slot: parsed_out,
+        group: vec![root],
+    };
+    #[cfg(not(feature = "standalone"))]
+    let group = &mut group_guard.group;
+    #[cfg(feature = "standalone")]
     let mut group = vec![root];
     let mut cursor = 0;
     while cursor < group.len() {
@@ -579,7 +656,15 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
                 if group.len() == MAX_GROUP_OBJECTS {
                     return None;
                 }
-                let mut dso = prepare_file(file, device, inode, &path, context)?;
+                let mut dso = prepare_file(
+                    file,
+                    device,
+                    inode,
+                    &path,
+                    context,
+                    #[cfg(not(feature = "standalone"))]
+                    None,
+                )?;
                 dso.inherited_rpaths = inherited;
                 group.push(dso);
                 group.len() - 1
@@ -594,6 +679,12 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
         group[cursor].needed_by_name = needed_by_name;
         cursor += 1;
     }
+    #[cfg(not(feature = "standalone"))]
+    {
+        group_guard.slot = None;
+        Some(std::mem::take(&mut group_guard.group))
+    }
+    #[cfg(feature = "standalone")]
     Some(group)
 }
 
@@ -1108,8 +1199,18 @@ pub(super) fn reopen_native_soname(name: &[u8], flags: c_int) -> NativeReopen {
     NativeReopen::Opened(handle)
 }
 
+#[allow(dead_code)]
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     open::load(name, flags, None, &mut None)
+}
+
+#[cfg(not(feature = "standalone"))]
+pub(super) fn load_native_dso_with_declined(
+    name: &[u8],
+    flags: c_int,
+    declined: &mut Option<open::Declined>,
+) -> Option<*mut c_void> {
+    open::load(name, flags, None, declined)
 }
 
 /// Libraries owned by the host dynamic linker in an interpose (L0/L1)

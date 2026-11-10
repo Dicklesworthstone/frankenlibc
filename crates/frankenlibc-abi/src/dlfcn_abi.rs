@@ -120,7 +120,8 @@ unsafe fn host_dlopen_with_error(filename: *const c_char, flags: c_int) -> *mut 
 /// (bd-rc0923-epic-eeuy4f.3). Standalone builds never reach this function.
 #[cfg(not(feature = "standalone"))]
 unsafe fn dlopen_pathname(name: &[u8], filename: *const c_char, flags: c_int) -> *mut c_void {
-    if let Some(handle) = load_native_dso(name, flags) {
+    let mut declined = None;
+    if let Some(handle) = native::load_native_dso_with_declined(name, flags, &mut declined) {
         clear_dlerror();
         return handle;
     }
@@ -141,7 +142,17 @@ unsafe fn dlopen_pathname(name: &[u8], filename: *const c_char, flags: c_int) ->
     };
     let host_may_try = match stat_rc {
         Ok(()) => {
-            (st.st_mode & libc::S_IFMT) == libc::S_IFREG && host_may_load_declined_object(name)
+            (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+                && match declined {
+                    Some(declined)
+                        if (st.st_dev, st.st_ino) == (declined.device(), declined.inode()) =>
+                    {
+                        declined
+                            .parsed_host_verdict()
+                            .unwrap_or_else(|| host_may_load_declined_object(name))
+                    }
+                    _ => host_may_load_declined_object(name),
+                }
         }
         Err(e) => e == libc::ENOENT || e == libc::ENOTDIR,
     };
