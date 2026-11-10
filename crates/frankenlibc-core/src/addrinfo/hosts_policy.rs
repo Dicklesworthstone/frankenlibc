@@ -165,6 +165,12 @@ impl HostsPolicy {
         let Some(line) = selected else {
             return Ok(Self::default());
         };
+        Self::from_service_line(line)
+    }
+
+    /// Parse a runtime hosts override with the same source/status semantics
+    /// as a hosts line, without treating embedded database text as a config.
+    pub fn from_service_line(line: &[u8]) -> Result<Self, ParseError> {
         let mut input = Scanner {
             bytes: line,
             position: 0,

@@ -218,7 +218,10 @@ fn parse_database(config: &[u8], database: &[u8]) -> Option<Vec<Service>> {
     selected
 }
 
-fn parse_sources(line: &[u8]) -> Result<Vec<Service>, ParseError> {
+/// Parse one service list, without a database name or configuration-file
+/// framing. Runtime NSS overrides use the same source and action grammar as
+/// nsswitch.conf, and must reject malformed actions before publishing them.
+pub fn parse_sources(line: &[u8]) -> Result<Vec<Service>, ParseError> {
     let mut input = Scanner {
         bytes: line,
         pos: 0,

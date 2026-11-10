@@ -54,6 +54,15 @@ struct ConfigCache {
     parsed: [Option<Arc<Vec<Service>>>; 7],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
+    /// Process-local overrides are independent of the on-disk image. A
+    /// fingerprint or path change must never erase an explicit selection.
+    overrides: [Option<Arc<Vec<Service>>>; 7],
+    hosts_override: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
+    hosts_parsed: Option<Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy>>,
+    /// GNU freezes the whole configuration on the first successful runtime
+    /// override, even for databases that have not been queried yet.
+    frozen: bool,
+    snapshot: Option<Vec<u8>>,
 }
 
 static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
@@ -62,7 +71,86 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     loaded: false,
     parsed: [None, None, None, None, None, None, None],
     initgroups_explicit: None,
+    overrides: [None, None, None, None, None, None, None],
+    hosts_override: None,
+    hosts_parsed: None,
+    frozen: false,
+    snapshot: None,
 });
+
+pub(crate) enum ConfigureError {
+    UnknownDatabase,
+    InvalidServiceLine,
+}
+
+/// Install an immutable service-list snapshot for a supported database.
+/// Parse before taking the cache lock: a rejected replacement leaves the old
+/// selection intact, and lookups already holding an Arc finish on that image.
+pub(crate) fn configure_lookup(database: &[u8], line: &[u8]) -> Result<(), ConfigureError> {
+    if database == b"hosts" {
+        let policy = frankenlibc_core::addrinfo::hosts_policy::HostsPolicy::from_service_line(line)
+            .map_err(|_| ConfigureError::InvalidServiceLine)?;
+        with_current_config(|cache, read| {
+            freeze_config(cache, read);
+            cache.hosts_override = Some(Arc::new(policy));
+        });
+        return Ok(());
+    }
+    let database = match database {
+        b"passwd" => Database::Passwd,
+        b"group" => Database::Group,
+        b"shadow" => Database::Shadow,
+        b"initgroups" => Database::Initgroups,
+        b"publickey" => Database::Publickey,
+        b"services" => Database::Services,
+        b"netgroup" => Database::Netgroup,
+        _ => return Err(ConfigureError::UnknownDatabase),
+    };
+    let services = frankenlibc_core::nss::parse_sources(line)
+        .map_err(|_| ConfigureError::InvalidServiceLine)?;
+    with_current_config(|cache, read| {
+        freeze_config(cache, read);
+        cache.overrides[database_slot(database)] = Some(Arc::new(services));
+        // Implicit initgroups follows later group overrides. Shadow's fallback
+        // comes from the configuration file, not a runtime passwd override.
+        if database == Database::Group {
+            cache.parsed[database_slot(Database::Initgroups)] = None;
+        }
+    });
+    Ok(())
+}
+
+fn freeze_config(cache: &mut ConfigCache, read: fn(&ConfigCache) -> Option<Vec<u8>>) {
+    if !cache.frozen {
+        cache.snapshot = read(cache);
+        cache.frozen = true;
+        cache.parsed = [None, None, None, None, None, None, None];
+        cache.initgroups_explicit = None;
+        cache.hosts_parsed = None;
+    }
+}
+
+/// Hosts and accounts share one configuration image and override lifetime.
+pub(crate) fn hosts_policy() -> Arc<frankenlibc_core::addrinfo::hosts_policy::HostsPolicy> {
+    with_current_config(|cache, read| {
+        if let Some(policy) = cache
+            .hosts_override
+            .as_ref()
+            .or(cache.hosts_parsed.as_ref())
+        {
+            return Arc::clone(policy);
+        }
+        let policy = Arc::new(
+            read(cache)
+                .and_then(|content| {
+                    frankenlibc_core::addrinfo::hosts_policy::HostsPolicy::parse(&content).ok()
+                })
+                .unwrap_or_default(),
+        );
+        cache.hosts_parsed = Some(Arc::clone(&policy));
+        policy
+    })
+}
 
 fn database_slot(database: Database) -> usize {
     match database {
@@ -109,37 +197,63 @@ fn fingerprint(path: &[u8]) -> Option<Fingerprint> {
 }
 
 /// The configured sources for `database`. nsswitch.conf is re-read and
-/// re-parsed whenever its fingerprint changes; a missing or unreadable file
-/// means the database's built-in default (`nis nisplus` for publickey and
-/// `files` for the account databases).
+/// re-parsed whenever its fingerprint changes until the first successful
+/// runtime override freezes the image. A missing or unreadable file means the
+/// built-in default (`nis nisplus` for publickey and `files` for accounts).
 pub(crate) fn services(database: Database) -> Arc<Vec<Service>> {
-    let slot = database_slot(database);
-    with_current_config(|cache, read| {
-        if let Some(parsed) = &cache.parsed[slot] {
-            return Arc::clone(parsed);
-        }
-        let content = read(cache);
-        let parsed = Arc::new(frankenlibc_core::nss::services_for(
-            content.as_deref(),
-            database,
-        ));
-        cache.parsed[slot] = Some(Arc::clone(&parsed));
-        parsed
-    })
+    with_current_config(|cache, read| configured_services(cache, read, database))
 }
 
-/// Whether nsswitch.conf has its own `initgroups:` line, which changes how
-/// SUCCESS is treated (see `frankenlibc_core::nss::initgroups_stops`).
-pub(crate) fn initgroups_line_explicit() -> bool {
-    with_current_config(|cache, read| {
-        if let Some(explicit) = cache.initgroups_explicit {
-            return explicit;
+fn configured_services(
+    cache: &mut ConfigCache,
+    read: fn(&ConfigCache) -> Option<Vec<u8>>,
+    database: Database,
+) -> Arc<Vec<Service>> {
+    let slot = database_slot(database);
+    if let Some(selected) = &cache.overrides[slot] {
+        return Arc::clone(selected);
+    }
+    if let Some(parsed) = &cache.parsed[slot] {
+        return Arc::clone(parsed);
+    }
+    let content = read(cache);
+    let fallback = match database {
+        Database::Initgroups => {
+            // Derive sources and the SUCCESS rule from the same file read,
+            // including before a runtime override freezes the image.
+            let explicit = frankenlibc_core::nss::has_database_line(content.as_deref(), database);
+            cache.initgroups_explicit = Some(explicit);
+            (!explicit).then_some(Database::Group)
         }
-        let content = read(cache);
-        let explicit =
-            frankenlibc_core::nss::has_database_line(content.as_deref(), Database::Initgroups);
-        cache.initgroups_explicit = Some(explicit);
-        explicit
+        _ => None,
+    };
+    if let Some(fallback) = fallback
+        && let Some(selected) = &cache.overrides[database_slot(fallback)]
+    {
+        let selected = Arc::clone(selected);
+        cache.parsed[slot] = Some(Arc::clone(&selected));
+        return selected;
+    }
+    let parsed = Arc::new(frankenlibc_core::nss::services_for(
+        content.as_deref(),
+        database,
+    ));
+    cache.parsed[slot] = Some(Arc::clone(&parsed));
+    parsed
+}
+
+/// Snapshot the initgroups sources and their SUCCESS-action rule together.
+/// A concurrent override must not combine an old source list with the new
+/// list's explicit/implicit policy.
+pub(crate) fn initgroups_policy() -> (Arc<Vec<Service>>, bool) {
+    with_current_config(|cache, read| {
+        let services = configured_services(cache, read, Database::Initgroups);
+        if cache.overrides[database_slot(Database::Initgroups)].is_some() {
+            return (services, true);
+        }
+        // configured_services publishes this flag alongside a parsed list.
+        let explicit = cache.initgroups_explicit.unwrap_or(false);
+        (services, explicit)
     })
 }
 
@@ -151,15 +265,19 @@ fn with_current_config<R>(
     let path = config_path();
     let now = fingerprint(&path);
     let mut cache = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
-    if !(cache.loaded && cache.path == path && cache.fingerprint == now) {
+    if !cache.frozen && !(cache.loaded && cache.path == path && cache.fingerprint == now) {
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
         cache.parsed = [None, None, None, None, None, None, None];
         cache.initgroups_explicit = None;
+        cache.hosts_parsed = None;
     }
     fn read(cache: &ConfigCache) -> Option<Vec<u8>> {
         use std::os::unix::ffi::OsStrExt;
+        if cache.frozen {
+            return cache.snapshot.clone();
+        }
         cache.fingerprint?;
         std::fs::read(std::ffi::OsStr::from_bytes(&cache.path)).ok()
     }

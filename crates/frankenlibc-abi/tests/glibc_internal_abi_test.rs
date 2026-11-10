@@ -3308,10 +3308,27 @@ fn argz_internals_reject_tracked_short_buffers() {
 
 #[test]
 fn nss_configure_lookup_returns_zero() {
+    const CHILD: &str = "FRANKENLIBC_NSS_CONFIGURE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // Runtime configuration now has process-wide effects. Keep this
+        // smoke test from freezing the configuration used by sibling tests.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "nss_configure_lookup_returns_zero",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
     let db = CString::new("passwd").unwrap();
     let service = CString::new("files").unwrap();
     let r = unsafe { __nss_configure_lookup(db.as_ptr(), service.as_ptr()) };
-    assert_eq!(r, 0); // success (no-op)
+    assert_eq!(r, 0);
 }
 
 #[test]

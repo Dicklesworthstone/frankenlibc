@@ -896,8 +896,7 @@ pub(crate) unsafe fn files_initgroups_dyn(
 /// else `group:`), de-duplicated against earlier sources. `limit` is passed
 /// to modules (`-1` for none).
 pub(crate) fn initgroups_list(user: &[u8], base: u32, limit: i64) -> Vec<u32> {
-    let services = nss_module::services(Database::Initgroups);
-    let explicit_line = nss_module::initgroups_line_explicit();
+    let (services, explicit_line) = nss_module::initgroups_policy();
     let mut groups = vec![base];
     for service in services.iter() {
         let (status, segment) = match service.kind() {

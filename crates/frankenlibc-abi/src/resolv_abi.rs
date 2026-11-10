@@ -2855,13 +2855,7 @@ fn observe_module_hosts_result<T>(
 /// unparseable file means glibc's default, files then dns
 /// (bd-rc0923-epic-eeuy4f.19).
 fn nsswitch_hosts_policy() -> frankenlibc_core::addrinfo::hosts_policy::HostsPolicy {
-    std::fs::read(configured_backend_path(
-        "/etc/nsswitch.conf",
-        "FRANKENLIBC_NSSWITCH_CONF",
-    ))
-    .ok()
-    .and_then(|content| frankenlibc_core::addrinfo::hosts_policy::HostsPolicy::parse(&content).ok())
-    .unwrap_or_default()
+    crate::nss_module::hosts_policy().as_ref().clone()
 }
 
 /// The `hosts:` sources a lookup consults: nsswitch.conf's policy, or the

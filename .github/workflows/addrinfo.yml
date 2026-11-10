@@ -128,11 +128,24 @@ jobs:
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/nss-services/build.log
           cp target/release/libfrankenlibc_abi.so artifacts/nss-services/libfrankenlibc_abi.so
-      - name: Compare installed services modules through the deployed ABI
+      - name: Exercise runtime source replacement during concurrent lookup
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/check_nss_services.py \
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          cargo test -p frankenlibc-abi --test nss_module_test "${args[@]}" \
+            runtime_configure_lookup_replaces_concurrent_source_snapshots \
+            -- --exact --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/nss-services/runtime-configure.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed;' artifacts/nss-services/runtime-configure.log
+      - name: Compare installed services and runtime configuration through the deployed ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 scripts/check_nss_services.py \
             --candidate "$PWD/artifacts/nss-services/libfrankenlibc_abi.so" \
             --output "$PWD/artifacts/nss-services/cases" \
             2>&1 | tee artifacts/nss-services/differential.log

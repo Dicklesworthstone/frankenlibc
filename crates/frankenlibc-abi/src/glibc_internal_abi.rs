@@ -1727,17 +1727,47 @@ pub unsafe extern "C" fn res_send(
 // ==========================================================================
 // __nss_* public symbols (7)
 // ==========================================================================
-// NSS internal functions: FrankenLibC uses native /etc/passwd|group|hosts parsing
-// instead of glibc's NSS module system. These stubs return "unavailable" so callers
-// fall back to our native implementations (pwd_abi, grp_abi, resolv_abi).
+// Runtime source selection feeds the native files/DNS and loaded NSS module
+// dispatchers. The legacy private service_user pointer interfaces below remain
+// unavailable; they do not share the Rust-owned policy representation.
 // NSS_STATUS_TRYAGAIN = -2, NSS_STATUS_UNAVAIL = -1, NSS_STATUS_NOTFOUND = 0
-// __nss_configure_lookup: configure NSS database — no-op, we parse files directly
+// __nss_configure_lookup: process-local source selection for live dispatchers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __nss_configure_lookup(
-    _db: *const c_char,
-    _service_line: *const c_char,
+    db: *const c_char,
+    service_line: *const c_char,
 ) -> c_int {
-    0 // success (ignored, we use native file parsing)
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    if db.is_null() || service_line.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: callers supply terminated database and service-list strings.
+    // Tracked allocations retain their exact bounds during the scans.
+    let (db_len, db_terminated) = unsafe { scan_c_string(db, known_remaining(db as usize)) };
+    let (line_len, line_terminated) =
+        unsafe { scan_c_string(service_line, known_remaining(service_line as usize)) };
+    if !db_terminated || !line_terminated {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: the preceding scans established readable byte spans.
+    let database = unsafe { std::slice::from_raw_parts(db.cast::<u8>(), db_len) };
+    let line = unsafe { std::slice::from_raw_parts(service_line.cast::<u8>(), line_len) };
+    match crate::nss_module::configure_lookup(database, line) {
+        Ok(()) => {
+            unsafe { set_abi_errno(saved_errno) };
+            0
+        }
+        Err(crate::nss_module::ConfigureError::UnknownDatabase) => {
+            unsafe { set_abi_errno(saved_errno) };
+            -1
+        }
+        Err(crate::nss_module::ConfigureError::InvalidServiceLine) => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            -1
+        }
+    }
 }
 // __nss_database_lookup: look up NSS database — return UNAVAIL
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

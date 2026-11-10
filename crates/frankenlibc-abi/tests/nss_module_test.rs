@@ -408,6 +408,112 @@ fn module_sources_answer_through_fl() {
 }
 
 #[test]
+fn runtime_configure_lookup_replaces_concurrent_source_snapshots() {
+    use frankenlibc_abi::{errno_abi, glibc_internal_abi, pwd_abi};
+
+    fn configure(line: &CStr) {
+        // SAFETY: both arguments are live terminated strings. Successful
+        // runtime configuration must preserve the caller's errno.
+        unsafe {
+            *errno_abi::__errno_location() = 73;
+            assert_eq!(
+                glibc_internal_abi::__nss_configure_lookup(c"passwd".as_ptr(), line.as_ptr()),
+                0
+            );
+            assert_eq!(*errno_abi::__errno_location(), 73);
+        }
+    }
+
+    fn lookup() -> bool {
+        let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        let mut buffer = [0 as c_char; 1024];
+        // SAFETY: caller-owned storage remains live through the reentrant
+        // lookup and copying of every returned field. No shared TLS result.
+        unsafe {
+            let rc = pwd_abi::getpwnam_r(
+                c"fltest1".as_ptr(),
+                record.as_mut_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+            );
+            assert_eq!(rc, 0);
+            if result.is_null() {
+                return false;
+            }
+            assert_eq!(result, record.as_mut_ptr());
+            let record = &*result;
+            assert_eq!(CStr::from_ptr(record.pw_name), c"fltest1");
+            assert_eq!((record.pw_uid, record.pw_gid), (4201, 4301));
+            assert_eq!(CStr::from_ptr(record.pw_dir), c"/home/fltest1");
+            true
+        }
+    }
+
+    if std::env::var_os(CHILD_ENV).is_some_and(|v| v == "configure-concurrent") {
+        assert!(!lookup(), "the configured files backend has no module user");
+        configure(c"fltest");
+        assert!(
+            lookup(),
+            "a successful override must actually change lookup"
+        );
+        // A failed replacement must leave the last complete snapshot live.
+        unsafe {
+            assert_eq!(
+                glibc_internal_abi::__nss_configure_lookup(
+                    c"passwd".as_ptr(),
+                    c"files [SUCCESS=invalid]".as_ptr(),
+                ),
+                -1
+            );
+            assert_eq!(*errno_abi::__errno_location(), libc::EINVAL);
+        }
+        assert!(lookup());
+        let barrier = std::sync::Barrier::new(5);
+        std::thread::scope(|scope| {
+            let barrier = &barrier;
+            for _ in 0..4 {
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..128 {
+                        // Either complete policy may win this race. A result
+                        // may never retain pointers into a retired snapshot.
+                        let _ = lookup();
+                    }
+                });
+            }
+            barrier.wait();
+            for _ in 0..64 {
+                configure(c"files");
+                configure(c"fltest");
+            }
+        });
+        configure(c"files");
+        assert!(!lookup());
+        configure(c"fltest");
+        assert!(lookup());
+        return;
+    }
+    let dir = scratch_dir("configure-concurrent");
+    build_modules(&dir);
+    std::fs::write(dir.join("passwd"), PASSWD).unwrap();
+    std::fs::write(dir.join("nsswitch.conf"), "passwd: files\n").unwrap();
+    for mode in ["strict", "hardened"] {
+        let mut child =
+            child_test_command("runtime_configure_lookup_replaces_concurrent_source_snapshots");
+        child
+            .env(CHILD_ENV, "configure-concurrent")
+            .env("FRANKENLIBC_MODE", mode)
+            .env("LD_LIBRARY_PATH", &dir)
+            .env("FRANKENLIBC_NSSWITCH_CONF", dir.join("nsswitch.conf"))
+            .env("FRANKENLIBC_PASSWD_PATH", dir.join("passwd"))
+            .env_remove("FLTEST_STATUS");
+        run_child(child, &format!("runtime-configure {mode}"));
+    }
+}
+
+#[test]
 fn files_identity_providers_bypass_configured_nss_modules() {
     use frankenlibc_abi::unistd_abi as files;
 

@@ -122,7 +122,8 @@ unsafe fn create_unix(path: *const c_char, program: c_ulong, version: c_ulong) -
         // GNU rejects paths that leave no room for the terminating NUL before
         // creating a socket. Only cf_stat and re_errno replace prior TLS state.
         rpc_udp::creation_status_preserving_details(12, Some(libc::EINVAL));
-        set_abi_errno(libc::EINVAL);
+        // SAFETY: the native errno accessor owns this thread's writable slot.
+        unsafe { set_abi_errno(libc::EINVAL) };
         return std::ptr::null_mut();
     }
     address.sun_family = libc::AF_UNIX as libc::sa_family_t;
@@ -150,9 +151,12 @@ unsafe fn create_unix(path: *const c_char, program: c_ulong, version: c_ulong) -
             // Raw transport syscalls return errors without writing libc errno.
             // Publish the Unix constructor's system error through both APIs.
             let bytes = details[0].to_ne_bytes();
-            set_abi_errno(c_int::from_ne_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3],
-            ]));
+            // SAFETY: the native errno accessor owns this thread's writable slot.
+            unsafe {
+                set_abi_errno(c_int::from_ne_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3],
+                ]))
+            };
         }
     }
     client

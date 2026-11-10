@@ -382,8 +382,264 @@ static int service_probe(int argc, char **argv) {
   return 0;
 }
 
+/* Runtime NSS configuration must affect real lookups through the selected
+ * provider. Run each case in a fresh process; snapshot cases additionally use
+ * a writable private nsswitch.conf bind mount (GNU) or path override (fl). */
+struct configure_api {
+  int (*configure)(const char *, const char *);
+  struct passwd *(*passwd)(const char *);
+  struct group *(*group)(const char *);
+  struct spwd *(*shadow)(const char *);
+  int (*groups)(const char *, gid_t, gid_t *, int *);
+  struct hostent *(*host)(const char *, int);
+  struct servent *(*service)(const char *, const char *);
+  int (*addr)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
+  void (*free_addr)(struct addrinfo *);
+  int *(*error)(void);
+};
+
+static struct configure_api configure_api;
+static unsigned configure_reentry_calls;
+
+static void configure_sources(const char *database, const char *sources) {
+  *configure_api.error() = 731;
+  int result = configure_api.configure(database, sources);
+  int error = *configure_api.error();
+  printf("configure %s [%s] rc=%d errno=%d\n", database, sources, result, error);
+}
+
+static void configure_passwd(void) {
+  struct passwd *entry = configure_api.passwd("fltest1");
+  printf("passwd %s uid=%u\n", entry ? s(entry->pw_name) : "NULL",
+         entry ? (unsigned)entry->pw_uid : 0);
+}
+
+static void configure_group(void) {
+  struct group *entry = configure_api.group("fltestgrp");
+  printf("group %s gid=%u\n", entry ? s(entry->gr_name) : "NULL",
+         entry ? (unsigned)entry->gr_gid : 0);
+}
+
+static void configure_shadow(void) {
+  struct spwd *entry = configure_api.shadow("fltest1");
+  printf("shadow %s changed=%ld\n", entry ? s(entry->sp_namp) : "NULL",
+         entry ? entry->sp_lstchg : 0);
+}
+
+static void configure_groups(void) {
+  gid_t groups[32];
+  int count = 32;
+  int result = configure_api.groups("fltest1", 4301, groups, &count);
+  if (count < 0 || count > 32) exit(93);
+  printf("initgroups rc=%d n=%d", result, count);
+  if (result >= 0)
+    for (int i = 0; i < count; ++i) printf(" %u", (unsigned)groups[i]);
+  putchar('\n');
+}
+
+static void configure_host(void) {
+  struct hostent *entry = configure_api.host("shared-host", AF_INET);
+  printf("hosts %s", entry ? s(entry->h_name) : "NULL");
+  if (entry) {
+    if (entry->h_addrtype != AF_INET || entry->h_length != 4) exit(93);
+    for (char **address = entry->h_addr_list; address && *address; ++address) {
+      unsigned char *bytes = (unsigned char *)*address;
+      printf(" %u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
+    }
+  }
+  putchar('\n');
+}
+
+static void configure_service(const char *name) {
+  struct servent *entry = configure_api.service(name, "tcp");
+  printf("service %s -> %s/%u\n", name, entry ? s(entry->s_name) : "NULL",
+         entry ? ntohs((uint16_t)entry->s_port) : 0);
+}
+
+static void configure_address_service(void) {
+  struct addrinfo hints = {.ai_family = AF_INET, .ai_socktype = SOCK_STREAM};
+  struct addrinfo *result = NULL;
+  int error = configure_api.addr("127.0.0.1", "fltest-service", &hints, &result);
+  printf("address-service rc=%d", error);
+  if (!error) {
+    for (struct addrinfo *entry = result; entry; entry = entry->ai_next) {
+      if (entry->ai_family != AF_INET || entry->ai_socktype != SOCK_STREAM ||
+          entry->ai_addrlen < sizeof(struct sockaddr_in)) exit(93);
+      printf(" %u", ntohs(((struct sockaddr_in *)entry->ai_addr)->sin_port));
+    }
+    configure_api.free_addr(result);
+  }
+  putchar('\n');
+}
+
+static void configure_private_image(const char *contents) {
+  const char *path = getenv("NSS_CONFIGURE_PRIVATE_FILE");
+  /* The harness must supply scratch storage, never the host's /etc path.
+   * Its GNU process sees this same file through a private bind mount. */
+  if (!path || path[0] != '/' || !strncmp(path, "/etc/", 5)) exit(94);
+  FILE *file = fopen(path, "w");
+  if (!file || fputs(contents, file) == EOF || fclose(file) != 0) exit(94);
+  puts("private-image replaced");
+}
+
+static int configure_from_callback(void) {
+  ++configure_reentry_calls;
+  return configure_api.configure("services", "files");
+}
+
+static int configure_probe(int argc, char **argv) {
+  if (argc != 4) return 90;
+  alarm(8);
+  int host = !strcmp(argv[2], "host");
+  void *gnu = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+  Dl_info info;
+  if (!gnu || !dladdr(dlsym(gnu, "__nss_configure_lookup"), &info)) return 91;
+  const char *path = host ? info.dli_fname : argv[2];
+  if (!host && same_provider(path, dlsym(gnu, "__nss_configure_lookup"))) return 91;
+  void *provider = host ? gnu : dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  if (!provider) return 91;
+#define CONFIGURE_LOAD(field, symbol) \
+  *(void **)(&configure_api.field) = service_symbol(provider, path, symbol, host)
+  CONFIGURE_LOAD(configure, "__nss_configure_lookup");
+  CONFIGURE_LOAD(passwd, "getpwnam");
+  CONFIGURE_LOAD(group, "getgrnam");
+  CONFIGURE_LOAD(shadow, "getspnam");
+  CONFIGURE_LOAD(groups, "getgrouplist");
+  CONFIGURE_LOAD(host, "gethostbyname2");
+  CONFIGURE_LOAD(service, "getservbyname");
+  CONFIGURE_LOAD(addr, "getaddrinfo");
+  CONFIGURE_LOAD(free_addr, "freeaddrinfo");
+  CONFIGURE_LOAD(error, "__errno_location");
+#undef CONFIGURE_LOAD
+
+  const char *which = argv[3];
+  if (!strcmp(which, "accounts")) {
+    configure_sources("passwd", "fltest");
+    configure_passwd();
+    configure_sources("passwd", "files");
+    configure_passwd();
+    configure_sources("passwd", "fltest [SUCCESS=continue] files");
+    configure_passwd();
+    char sources[16] = "fltest";
+    configure_sources("passwd", sources);
+    strcpy(sources, "files");
+    configure_passwd();
+    configure_sources("shadow", "fltest");
+    configure_shadow();
+    configure_sources("shadow", "");
+    configure_shadow();
+    configure_sources("shadow", "fltest");
+    configure_shadow();
+    configure_sources("group", "fltest");
+    configure_group();
+    configure_sources("group", "");
+    configure_group();
+  } else if (!strcmp(which, "initgroups")) {
+    configure_sources("group", "fltest");
+    configure_group();
+    configure_groups();
+    configure_sources("group", "files");
+    configure_groups();
+    configure_sources("initgroups", "fltest");
+    configure_groups();
+    configure_sources("group", "files");
+    configure_groups();
+    configure_sources("initgroups", "files");
+    configure_sources("group", "fltest");
+    configure_groups();
+    configure_sources("initgroups", "");
+    configure_groups();
+  } else if (!strcmp(which, "hosts")) {
+    configure_sources("hosts", "fltest");
+    configure_host();
+    configure_sources("hosts", "files");
+    configure_host();
+    configure_sources("hosts", "fltest [SUCCESS=continue] files");
+    configure_host();
+    configure_sources("hosts", "");
+    configure_host();
+    configure_sources("hosts", "fltest");
+    configure_host();
+  } else if (!strcmp(which, "services")) {
+    configure_sources("services", "fltest");
+    configure_service("http");
+    configure_service("fltest-service");
+    configure_address_service();
+    configure_sources("services", "files");
+    configure_service("http");
+    configure_service("fltest-service");
+    configure_address_service();
+    configure_sources("services", "fltest [SUCCESS=continue] files");
+    configure_service("http");
+    configure_sources("services", "");
+    configure_service("http");
+  } else if (!strcmp(which, "errors")) {
+    configure_sources("passwd", "fltest");
+    const char *invalid[] = {"fltest []", "fltest [BAD=return]", "fltest [SUCCESS=bad]",
+                             "fltest [SUCCESS=return", "fltest [!BAD=return]"};
+    for (size_t i = 0; i < sizeof invalid / sizeof *invalid; ++i) {
+      configure_sources("passwd", invalid[i]);
+      configure_passwd();
+    }
+    const char *unknown[] = {"", "PASSWD", " passwd", "passwd ", "fl_no_such_database"};
+    for (size_t i = 0; i < sizeof unknown / sizeof *unknown; ++i)
+      configure_sources(unknown[i], "files");
+    configure_passwd();
+    configure_sources("passwd", " ");
+    configure_passwd();
+  } else if (!strcmp(which, "snapshot") || !strcmp(which, "snapshot-hosts")) {
+    configure_private_image("passwd: files\ngroup: files\nhosts: files\n");
+    configure_passwd();
+    configure_private_image("passwd: fltest\ngroup: files\nhosts: files\n");
+    configure_passwd();
+    configure_sources("passwd", "fltest []");
+    configure_private_image("passwd: files\ngroup: fltest\nhosts: files\n");
+    configure_passwd();
+    configure_group();
+    configure_sources("fl_no_such_database", "files");
+    configure_private_image("passwd: fltest\ngroup: files\nhosts: files\n");
+    configure_passwd();
+    configure_group();
+    configure_sources(!strcmp(which, "snapshot-hosts") ? "hosts" : "passwd", "files");
+    configure_private_image("passwd: files\ngroup: fltest\nhosts: fltest\n");
+    configure_passwd();
+    configure_group();
+    configure_host();
+    configure_shadow();
+  } else if (!strcmp(which, "shadow-snapshot")) {
+    configure_private_image("passwd: fltest\ngroup: files\nhosts: files\n");
+    configure_sources("passwd", "files");
+    configure_passwd();
+    configure_shadow();
+    configure_sources("shadow", "");
+    configure_shadow();
+    configure_sources("passwd", "fltest");
+    configure_passwd();
+    configure_shadow();
+    configure_sources("shadow", "fltest");
+    configure_shadow();
+  } else if (!strcmp(which, "callback")) {
+    void *module = dlopen("libnss_fltest.so.2", RTLD_NOW | RTLD_LOCAL);
+    void (*install)(int (*)(void)) = module ? dlsym(module, "_nss_fltest_set_service_reentry") : NULL;
+    if (!install) return 97;
+    configure_sources("services", "fltest");
+    /* Grow GNU's public buffer before the callback changes the source list.
+     * A first-call ERANGE retry may restart lookup under the new list. The
+     * callback count itself is not prescribed by the NSS scratch-buffer ABI. */
+    configure_service("fltest-large-service");
+    install(configure_from_callback);
+    configure_service("fltest-reentry");
+    install(NULL);
+    if (!configure_reentry_calls) return 98;
+    puts("configure callback observed=1");
+    configure_service("http");
+  } else return 90;
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc > 1 && !strcmp(argv[1], "services")) return service_probe(argc, argv);
+  if (argc > 1 && !strcmp(argv[1], "configure")) return configure_probe(argc, argv);
   setvbuf(stdout, NULL, _IOLBF, 0);
   const char *only = argc > 1 ? argv[1] : NULL;
   if (!only || !strcmp(only, "pw")) section_pw();

@@ -138,17 +138,20 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 1731,
-      "line_marker": "instead of glibc's NSS module system",
+      "source_line": 1736,
+      "line_marker": "__nss_configure_lookup: process-local source selection",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "native_files_bootstrap",
-      "current_behavior": "NSS dispatch internals are collapsed into native file parsing and UNAVAIL/null fallbacks rather than glibc's module chain.",
-      "user_risk": "Programs relying on nsswitch module ordering, dynamic services, or fallback-name dispatch can observe divergence.",
-      "required_followup": "Gate NSS maturity on nsswitch ordering, module loading, backend fallthrough, concurrency, and cache-coherence fixtures. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7.",
+      "current_behavior": "__nss_configure_lookup publishes owned runtime policies for passwd, group, shadow, initgroups, hosts, services, publickey and netgroup across the existing native/module dispatchers. The first successful override freezes the shared file image; invalid replacements preserve the prior policy. Private service_user traversal remains unavailable. The GNU configuration oracle and core policy tests have executed; deployed candidate comparison remains required.",
+      "user_risk": "GNU database names outside the eight live dispatchers, broader service-token syntax, private traversal and standalone module loading remain incomplete.",
+      "required_followup": "Execute scripts/check_nss_services.py against the deployed candidate and the concurrent runtime replacement test in both modes. Qualify remaining database names, GNU tokenizer breadth, private traversal and standalone module loading under bd-reality-202609-lx578q.7; this mixed family remains semantically incomplete.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json",
-        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "crates/frankenlibc-abi/src/nss_module.rs",
+        "scripts/check_nss_services.py",
+        "crates/frankenlibc-abi/tests/nss_module_test.rs"
       ],
       "review_status": "source_observed_semantics_unqualified"
     },
