@@ -14690,7 +14690,7 @@ fn nss_files_set_void_stubs_return_success() {
 fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_setetherent, _nss_files_setgrent, _nss_files_sethostent, _nss_files_setnetent,
-        _nss_files_setprotoent, _nss_files_setpwent, _nss_files_setrpcent, _nss_files_setservent,
+        _nss_files_setprotoent, _nss_files_setpwent, _nss_files_setservent,
         _nss_files_setsgent,
     };
 
@@ -14715,7 +14715,6 @@ fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
     check!(_nss_files_setnetent);
     check!(_nss_files_setprotoent);
     check!(_nss_files_setpwent);
-    check!(_nss_files_setrpcent);
     check!(_nss_files_setservent);
     check!(_nss_files_setsgent);
 }
@@ -14743,7 +14742,7 @@ fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
 fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getnetgrent_r,
-        _nss_files_getrpcent_r, _nss_files_getsgent_r,
+        _nss_files_getsgent_r,
     };
 
     macro_rules! check {
@@ -14773,7 +14772,6 @@ fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getaliasent_r);
     check!(_nss_files_getetherent_r);
     check!(_nss_files_getnetgrent_r);
-    check!(_nss_files_getrpcent_r);
     check!(_nss_files_getsgent_r);
 }
 
@@ -14811,7 +14809,7 @@ fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
 fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasbyname_r, _nss_files_gethostton_r, _nss_files_getntohost_r,
-        _nss_files_getrpcbyname_r, _nss_files_getsgnam_r,
+        _nss_files_getsgnam_r,
     };
 
     let key = CString::new("missing").unwrap();
@@ -14851,35 +14849,49 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getaliasbyname_r);
     check!(_nss_files_gethostton_r);
     check!(_nss_files_getntohost_r);
-    check!(_nss_files_getrpcbyname_r);
     check!(_nss_files_getsgnam_r);
 }
 
 #[test]
-fn nss_files_get_by_int_stubs_return_notfound_and_set_errno() {
-    use frankenlibc_abi::unistd_abi::_nss_files_getrpcbynumber_r;
-
-    macro_rules! check {
-        ($f:ident, $key:expr) => {{
-            let mut err = 0;
-            assert_eq!(
-                unsafe {
-                    $f(
-                        $key,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        0,
-                        &mut err,
-                    )
-                },
+fn nss_files_rpc_rejects_invalid_output_without_claiming_a_miss() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getrpcbyname_r, _nss_files_getrpcbynumber_r, _nss_files_getrpcent_r,
+    };
+    use std::ptr;
+    let mut error = 717;
+    // Native providers reject invalid output before opening a source or
+    // consuming a record. A malformed call is not a successful database miss.
+    unsafe {
+        assert_eq!(
+            _nss_files_getrpcent_r(ptr::null_mut(), ptr::null_mut(), 0, &mut error),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getrpcbyname_r(
+                c"missing".as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
                 0,
-                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
-            );
-            assert_eq!(err, libc::ENOENT);
-        }};
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getrpcbynumber_r(
+                9999,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
     }
-
-    check!(_nss_files_getrpcbynumber_r, 9999);
 }
 
 #[test]

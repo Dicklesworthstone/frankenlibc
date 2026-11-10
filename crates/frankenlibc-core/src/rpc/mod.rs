@@ -157,18 +157,13 @@ pub fn parse_rpc_line(line: &[u8]) -> Option<RpcEntry> {
 }
 
 fn rpc_name_matches(entry: &RpcEntry, name: &[u8]) -> bool {
-    eq_ignore_ascii_case(&entry.name, name)
-        || entry
-            .aliases
-            .iter()
-            .any(|alias| eq_ignore_ascii_case(alias, name))
+    entry.name == name || entry.aliases.iter().any(|alias| alias == name)
 }
 
 /// Look up an RPC entry by name (or alias) in /etc/rpc content.
 ///
-/// Name matching is case-insensitive (matches the glibc files-backend
-/// behavior — the canonical `nfsd`/`portmapper`-style names are
-/// lowercase but distros vary).
+/// GNU's files provider matches canonical names and aliases byte-for-byte.
+/// In particular, an uppercase query must not select a lowercase record.
 pub fn lookup_rpc_by_name(content: &[u8], name: &[u8]) -> Option<RpcEntry> {
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_rpc_line(line)
@@ -190,15 +185,6 @@ pub fn lookup_rpc_by_number(content: &[u8], number: i32) -> Option<RpcEntry> {
         }
     }
     None
-}
-
-fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .all(|(x, y)| x.eq_ignore_ascii_case(y))
 }
 
 /// Map an RPC `clnt_stat` (`rpc/clnt_stat.h`) status code to the
@@ -554,11 +540,16 @@ mod tests {
     }
 
     #[test]
-    fn lookup_by_name_case_insensitive() {
-        let content = b"nfs 100003\nmountd 100005\n";
-        assert_eq!(lookup_rpc_by_name(content, b"NFS").unwrap().number, 100003);
+    fn lookup_by_name_preserves_case_distinctions() {
+        // A private /etc/rpc GNU oracle returns NOTFOUND for "NFS" when
+        // only "nfs" exists; differently cased records are separate names.
+        let content = b"nfs 100003\nNFS 200003\nmountd 100005\n";
+        assert_eq!(lookup_rpc_by_name(content, b"nfs").unwrap().number, 100003);
+        assert_eq!(lookup_rpc_by_name(content, b"NFS").unwrap().number, 200003);
+        assert!(lookup_rpc_by_name(content, b"Nfs").is_none());
+        assert!(lookup_rpc_by_name(content, b"MoUnTd").is_none());
         assert_eq!(
-            lookup_rpc_by_name(content, b"MoUnTd").unwrap().number,
+            lookup_rpc_by_name(content, b"mountd").unwrap().number,
             100005
         );
     }
@@ -574,10 +565,16 @@ mod tests {
     }
 
     #[test]
-    fn lookup_by_alias_case_insensitive() {
-        let content = b"portmapper 100000 portmap\n";
-        let e = lookup_rpc_by_name(content, b"PORTMAP").unwrap();
+    fn lookup_by_alias_preserves_case_distinctions() {
+        let content = b"portmapper 100000 portmap SunRPC\n";
+        assert!(lookup_rpc_by_name(content, b"PORTMAP").is_none());
+        assert!(lookup_rpc_by_name(content, b"sunrpc").is_none());
+        let e = lookup_rpc_by_name(content, b"portmap").unwrap();
         assert_eq!(e.name, b"portmapper");
+        assert_eq!(
+            lookup_rpc_by_name(content, b"SunRPC").unwrap().number,
+            100000
+        );
     }
 
     #[test]
