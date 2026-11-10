@@ -9,7 +9,7 @@
     "reality_report": "tests/conformance/reality_report.v1.json"
   },
   "reality_snapshot": {
-    "generated_at_utc": "2026-11-03T03:41:29Z",
+    "generated_at_utc": "2026-11-10T01:55:00Z",
     "total_exported": 4119,
     "counts": {
       "implemented": 2414,

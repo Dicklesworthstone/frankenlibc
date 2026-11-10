@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-03, bound to ABI source `d94f7ebf0`; its counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-10, bound to ABI source `2349f6c25`; its counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
 Reality snapshot: total_exported=4119, implemented=2414, raw_syscall=408, wraps_host_libc=1279, glibc_call_through=0, stub=18.
 
 Declared replacement level: **L0 — Interpose**.

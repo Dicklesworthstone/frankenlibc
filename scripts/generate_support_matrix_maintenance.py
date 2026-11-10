@@ -503,7 +503,7 @@ def scan_stub_contract_annotations(abi_source_dir: Path):
     annotations = {}
     errors = []
     sources = {}
-    for path in sorted(abi_source_dir.glob("*.rs")):
+    for path in sorted(abi_source_dir.rglob("*.rs")):
         try:
             raw = path.read_text(encoding="utf-8")
         except OSError as error:
@@ -691,7 +691,7 @@ def validate_host_delegation_census(path: Path, repo_root: Path, abi_source_dir:
 
     expected_paths = {
         str(path.relative_to(repo_root))
-        for path in abi_source_dir.glob("*.rs")
+        for path in abi_source_dir.rglob("*.rs")
         if path.is_file()
     }
     if seen_paths != expected_paths:
@@ -2728,6 +2728,41 @@ def test_downgrade_only_evidence():
         ):
             raise AssertionError(f"ambiguous census body was not rejected: {duplicate_census}")
         passed += 1
+
+        nested_dir = source_dir / "resolv_state"
+        nested_dir.mkdir(parents=True)
+        nested_file = nested_dir / "global.rs"
+        nested_file.write_text("pub fn helper() {}\n", encoding="utf-8")
+        relative_nested = "crates/frankenlibc-abi/src/resolv_state/global.rs"
+        missing_nested = validate_host_delegation_census(
+            missing_body_path, tmp / "repo", source_dir
+        )
+        if missing_nested["usable"] or not any(
+            "census source file set mismatch" in error
+            for error in missing_nested["errors"]
+        ):
+            raise AssertionError(
+                f"census omitting nested ABI source file was not rejected: {missing_nested}"
+            )
+
+        nested_census_path = tmp / "nested-valid.json"
+        nested_census_body = json.loads(
+            write_census("nested-base.json", digest=sha256_file(source_file), rows=[valid_row]).read_text(
+                encoding="utf-8"
+            )
+        )
+        nested_census_body["detector"]["source_file_count"] = 2
+        nested_census_body["source_file_hashes"].append(
+            {"path": relative_nested, "sha256": sha256_file(nested_file)}
+        )
+        nested_census_path.write_text(json.dumps(nested_census_body), encoding="utf-8")
+        nested_valid = validate_host_delegation_census(
+            nested_census_path, tmp / "repo", source_dir
+        )
+        if not nested_valid["usable"] or nested_valid["errors"]:
+            raise AssertionError(
+                f"valid census including nested ABI source file was rejected: {nested_valid}"
+            )
 
     absent = build_downgrade_derivation(
         [{"symbol": "native", "module": "demo", "status": "Implemented"}],

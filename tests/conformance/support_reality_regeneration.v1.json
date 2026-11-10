@@ -21,13 +21,13 @@
       "id": "support_matrix",
       "kind": "canonical_support_matrix",
       "path": "support_matrix.json",
-      "sha256": "c204a3b503a74e09be99840159b0e1c8af384f85e7ad06cae10d16918bccf308"
+      "sha256": "48d1c3d7fc18f7457f43a9713942d5ec1b1514b52fcb71ad7b7327925f825a05"
     },
     {
       "id": "reality_report",
       "kind": "canonical_reality_report",
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "db74d02454f6a284f43bebd7f75a8517cda908c311f3867cac34b7fefd6f4c4d"
+      "sha256": "0bd0a6821683db204f47c1ab31c6b1b6cd71ba09a1114747e8cd595708dfd40b"
     }
   ],
   "mode": "validate_only",
@@ -41,13 +41,13 @@
       "id": "support_matrix",
       "kind": "canonical_support_matrix",
       "path": "support_matrix.json",
-      "sha256": "c204a3b503a74e09be99840159b0e1c8af384f85e7ad06cae10d16918bccf308"
+      "sha256": "48d1c3d7fc18f7457f43a9713942d5ec1b1514b52fcb71ad7b7327925f825a05"
     },
     {
       "id": "reality_report",
       "kind": "canonical_reality_report",
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "db74d02454f6a284f43bebd7f75a8517cda908c311f3867cac34b7fefd6f4c4d"
+      "sha256": "0bd0a6821683db204f47c1ab31c6b1b6cd71ba09a1114747e8cd595708dfd40b"
     }
   ],
   "paired_update_policy": {
@@ -66,7 +66,7 @@
     "report_json": "target/conformance/support_reality_regeneration.report.json"
   },
   "schema_version": "support_reality_regeneration.v1",
-  "source_commit": "d94f7ebf03a550850b07d18fbf871864b2adaf1b",
+  "source_commit": "2349f6c25e6e3b3fd9e6d3c7884d2a8ee67cc113",
   "source_commit_policy": {
     "checker_records_git_head": true,
     "committed_contract_token": "full_git_oid",
