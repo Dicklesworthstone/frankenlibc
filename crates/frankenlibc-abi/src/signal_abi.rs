@@ -1489,9 +1489,10 @@ pub(crate) unsafe fn pause_cp() -> c_int {
         return -1;
     }
 
-    // pause always returns -1 with EINTR when interrupted.
-    let _ = unsafe { crate::pthread_abi::at_cancellation_point(raw_syscall::sys_pause) };
-    unsafe { set_abi_errno(errno::EINTR) };
+    // A handled signal produces EINTR even with SA_RESTART. Preserve other
+    // kernel errors instead of reporting a signal that never arrived.
+    let result = unsafe { crate::pthread_abi::cancellation_point_pause() };
+    unsafe { set_abi_errno(result.err().unwrap_or(errno::EINTR)) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
     -1
 }
@@ -1522,13 +1523,12 @@ pub(crate) unsafe fn sigsuspend_cp(mask: *const libc::sigset_t) -> c_int {
     }
 
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    // sigsuspend always returns -1 with EINTR.
-    let _ = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_rt_sigsuspend(mask as *const u8, kernel_sigset_size)
-        })
+    // A handled signal produces EINTR; unreadable non-null mask storage must
+    // preserve the kernel's EFAULT and leave the caller's original mask intact.
+    let result = unsafe {
+        crate::pthread_abi::cancellation_point_sigsuspend(mask.cast(), kernel_sigset_size)
     };
-    unsafe { set_abi_errno(errno::EINTR) };
+    unsafe { set_abi_errno(result.err().unwrap_or(errno::EINTR)) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
     -1
 }

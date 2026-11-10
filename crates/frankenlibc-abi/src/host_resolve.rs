@@ -16,6 +16,7 @@ static HOST_PTHREAD_CANCEL: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SETCANCELSTATE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SETCANCELTYPE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_TESTCANCEL: AtomicUsize = AtomicUsize::new(0);
+static HOST_SIGSUSPEND: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_REGISTER_CANCEL: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_UNREGISTER_CANCEL: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_REGISTER_CANCEL_DEFER: AtomicUsize = AtomicUsize::new(0);
@@ -815,6 +816,7 @@ pub(crate) fn bootstrap_host_symbols() {
         ("pthread_setcancelstate", &HOST_PTHREAD_SETCANCELSTATE),
         ("pthread_setcanceltype", &HOST_PTHREAD_SETCANCELTYPE),
         ("pthread_testcancel", &HOST_PTHREAD_TESTCANCEL),
+        ("sigsuspend", &HOST_SIGSUSPEND),
         ("__pthread_register_cancel", &HOST_PTHREAD_REGISTER_CANCEL),
         (
             "__pthread_unregister_cancel",
@@ -978,6 +980,17 @@ pub(crate) fn host_pthread_setcanceltype_raw()
 
 pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern "C-unwind" fn()> {
     load_host_symbol(&HOST_PTHREAD_TESTCANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+/// The host's signal-suspension cancellation wrapper. Calling it directly
+/// preserves the host runtime's signal-mask behavior during forced unwind.
+pub(crate) fn host_sigsuspend_raw()
+-> Option<unsafe extern "C-unwind" fn(*const libc::sigset_t) -> c_int> {
+    load_host_symbol(&HOST_SIGSUSPEND).map(|addr| {
+        // SAFETY: the cache contains the host ELF symbol with this GNU ABI;
+        // cancellation and application signal handlers can unwind through it.
+        unsafe { core::mem::transmute(addr) }
+    })
 }
 
 /// glibc's C cleanup-handler registration (`pthread_cleanup_push` without

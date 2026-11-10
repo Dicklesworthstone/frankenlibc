@@ -740,7 +740,37 @@ pub(super) unsafe fn wait(
             mask,
             cancel,
             on_cancel,
+            CancellationMask::Wait,
         )
+    }
+}
+
+/// Suspend for signal delivery without descriptors or a deadline. Restore the
+/// original mask before cancellation cleanup, as observed with GNU sigsuspend.
+/// Keep this explicit without changing the existing descriptor-wait policy.
+///
+/// # Safety
+/// The mask and callback have the same requirements as [`wait`]. No Rust
+/// reference is formed to caller signal-set storage; the kernel validates it.
+pub(super) unsafe fn wait_signal(
+    mask: *const u8,
+    cancel: CancellationWait,
+    on_cancel: unsafe extern "C-unwind" fn(),
+) -> Result<(), c_int> {
+    // SAFETY: the caller retains the mask and owned cancellation descriptor.
+    unsafe {
+        wait_operation(
+            Operation::Poll {
+                fds: core::ptr::null_mut(),
+                nfds: 0,
+            },
+            core::ptr::null(),
+            mask,
+            cancel,
+            on_cancel,
+            CancellationMask::Original,
+        )
+        .map(|_| ())
     }
 }
 
@@ -782,6 +812,7 @@ pub(super) unsafe fn wait_epoll(
             mask,
             cancel,
             on_cancel,
+            CancellationMask::Wait,
         )
     }
 }
@@ -815,8 +846,14 @@ pub(super) unsafe fn wait_epoll2(
             mask,
             cancel,
             on_cancel,
+            CancellationMask::Wait,
         )
     }
+}
+
+enum CancellationMask {
+    Wait,
+    Original,
 }
 
 unsafe fn wait_operation(
@@ -825,6 +862,7 @@ unsafe fn wait_operation(
     mask: *const u8,
     cancel: CancellationWait,
     on_cancel: unsafe extern "C-unwind" fn(),
+    cancellation_mask: CancellationMask,
 ) -> Result<c_int, c_int> {
     let mut duration = if timeout.is_null() {
         None
@@ -867,10 +905,14 @@ unsafe fn wait_operation(
         Ok(WaitResult::Completed(ready)) => Ok(ready),
         Ok(WaitResult::Cancel) => {
             // The guard has not moved while wait_mask could point into it.
-            // Install the temporary mask directly from the all-blocked state:
-            // restoring the original first could run a temporarily blocked
-            // signal handler before cancellation cleanup.
-            unsafe { guard.deliver_cancel(mask, on_cancel) }.and(Err(libc::EINTR))
+            // Poll/epoll install the temporary mask directly from the blocked
+            // state. Signal suspension instead restores the original mask,
+            // including any handlers that must run before its cleanup.
+            let cleanup_mask = match cancellation_mask {
+                CancellationMask::Wait => mask,
+                CancellationMask::Original => core::ptr::null(),
+            };
+            unsafe { guard.deliver_cancel(cleanup_mask, on_cancel) }.and(Err(libc::EINTR))
         }
         Err(error) => Err(error),
     };

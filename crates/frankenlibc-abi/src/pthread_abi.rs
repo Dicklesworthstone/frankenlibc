@@ -7078,6 +7078,81 @@ unsafe fn cancellation_sleep_window(
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// Suspend until a signal is handled, including cancellation arriving after a
+/// native thread parks. Capture the public caller before the shared wait frame.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_pause() -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_signal_window(caller, std::ptr::null(), raw_syscall::sys_pause) }
+}
+
+/// Like pause, with sigsuspend's temporary signal mask. Keep every frame before
+/// the shared window inlined so aliases retain the same caller admission.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sigsuspend(
+    mask: *const u8,
+    sigset_size: usize,
+) -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_signal_window(caller, mask, || {
+            raw_syscall::sys_rt_sigsuspend(mask, sigset_size)
+        })
+    }
+}
+
+/// Signal suspension restores the original mask before cancellation cleanup,
+/// as observed with GNU sigsuspend. Reuse the atomic mask installation between
+/// bounded waits with an explicit original-mask policy. This frame owns no
+/// drop state across the hosted asynchronous-cancellation fallback.
+#[inline(never)]
+unsafe fn cancellation_signal_window(
+    caller: usize,
+    mask: *const u8,
+    blocking_syscall: impl FnOnce() -> Result<(), c_int>,
+) -> Result<(), c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            // SAFETY: cancellation acts before entering the temporary mask.
+            unsafe { pthread_testcancel() };
+        }
+        // SAFETY: the originating entry retains the kernel-validated mask;
+        // cancellation cleanup runs only after the original mask is restored.
+        let result = unsafe { cancel_poll::wait_signal(mask, cancel, pthread_testcancel) };
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if !mask.is_null()
+        && caller != 0
+        && core_current_thread_handle().is_none()
+        && !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && !address_is_inside_this_object(caller)
+        && let Some(host_suspend) = crate::host_resolve::host_sigsuspend_raw()
+        && crate::host_resolve::host_errno_location_raw().is_some()
+    {
+        // SAFETY: this is an external call on a hosted thread, with the original
+        // caller's kernel-validated mask. GNU owns both cancellation and signal-
+        // mask restoration. An ASYNC window around raw rt_sigsuspend instead
+        // leaves the temporary mask active during cleanup. No guard, TLS borrow
+        // or lock spans this C-unwind call; errno resolution is already warm.
+        return if unsafe { host_suspend(mask.cast()) } == 0 {
+            Ok(())
+        } else {
+            Err(crate::host_resolve::host_errno(libc::EINTR))
+        };
+    }
+    // Internal, disabled/native and unresolvable hosted paths retain their
+    // original syscall. Hosted pause does not install a temporary signal mask.
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
 /// Poll cancellation point, including requests arriving after a native thread
 /// has entered the kernel. Keep the caller capture in the exported ABI entry.
 #[inline(always)]
@@ -7529,7 +7604,7 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex, poll, epoll, sigwait, child and supported sleep points use
+    // Native futex, poll, epoll, signal, child and supported sleep points use
     // their windows to observe a request arriving while parked; other syscalls
     // remain pending-request cancellation points until they gain an interruptible
     // native path.

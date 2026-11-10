@@ -1,4 +1,4 @@
-/* Real blocked poll/select/epoll/sleep cancellation and signal behavior, with a GNU oracle.
+/* Real blocked poll/select/epoll/sleep/suspend cancellation and signal behavior, with a GNU oracle.
  * Successful blocked cases require a sleeping syscall and a kernel snapshot of
  * its pollfd array. Missing procfs evidence is an explicit, non-passing SKIP.
  */
@@ -1252,12 +1252,291 @@ static int select_contract_main(char **argv) {
     return 0;
 }
 
+enum suspend_kind {
+    SUSPEND_PENDING, SUSPEND_BLOCKED, SUSPEND_DISABLED, SUSPEND_SIGNAL,
+    SUSPEND_SIGNAL_RESTART, SUSPEND_MASK_BLOCK, SUSPEND_MASK_UNBLOCK,
+    SUSPEND_MASK_CANCEL, SUSPEND_MASK_CANCEL_BLOCK, SUSPEND_ERRORS, SUSPEND_GUARDED
+};
+static int (*selected_pause)(void);
+static int (*selected_sigsuspend)(const sigset_t *);
+static _Atomic int suspend_usr1, suspend_usr2;
+
+struct suspend_probe {
+    struct state observed;
+    enum suspend_kind kind;
+    int use_mask, original_usr1, temporary_usr1;
+    sigset_t original, temporary;
+    const sigset_t *argument;
+};
+
+static void suspend_signal(int signo) {
+    if (signo == SIGUSR1)
+        atomic_fetch_add_explicit(&suspend_usr1, 1, memory_order_relaxed);
+    else if (signo == SIGUSR2)
+        atomic_fetch_add_explicit(&suspend_usr2, 1, memory_order_relaxed);
+}
+
+static int pin_suspend_provider(const char *expected, int use_mask, int alias) {
+    int rc = pin_providers(expected, 0, EVENT_NONE);
+    if (rc != 0) return rc;
+    const char *name = use_mask ? (alias ? "__sigsuspend" : "sigsuspend") :
+                                 (alias ? "__pause" : "pause");
+    void *address = dlsym(RTLD_DEFAULT, name);
+    struct stat wanted, actual;
+    Dl_info info = {0};
+    if (stat(expected, &wanted) != 0 || address == NULL || !dladdr(address, &info) ||
+        info.dli_fname == NULL || stat(info.dli_fname, &actual) != 0 ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
+        return 86;
+    }
+    if (use_mask) selected_sigsuspend = (int (*)(const sigset_t *))address;
+    else selected_pause = (int (*)(void))address;
+    return 0;
+}
+
+static void suspend_check_mask(int usr1, const char *message) {
+    sigset_t current;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &current) == 0, "query suspend signal mask");
+    if (sigismember(&current, SIGUSR1) != usr1 || sigismember(&current, SIGUSR2) != 0 ||
+        sigismember(&current, SIGTERM) != 1)
+        fprintf(stderr, "suspend-mask:USR1=%d expected=%d USR2=%d TERM=%d handlers=%d/%d\n",
+                sigismember(&current, SIGUSR1), usr1, sigismember(&current, SIGUSR2),
+                sigismember(&current, SIGTERM),
+                atomic_load_explicit(&suspend_usr1, memory_order_relaxed),
+                atomic_load_explicit(&suspend_usr2, memory_order_relaxed));
+    REQUIRE(sigismember(&current, SIGUSR1) == usr1 &&
+                sigismember(&current, SIGUSR2) == 0 && sigismember(&current, SIGTERM) == 1,
+            message);
+}
+
+static void suspend_cleanup(void *argument) {
+    struct suspend_probe *probe = argument;
+    /* Observed GNU 2.41 restores the entry mask before sigsuspend cancellation
+       cleanup, including delivery of a signal blocked only by the wait mask. */
+    suspend_check_mask(probe->original_usr1, "suspend cleanup restores the original mask");
+    if (probe->kind == SUSPEND_MASK_CANCEL_BLOCK)
+        REQUIRE(atomic_load_explicit(&suspend_usr1, memory_order_relaxed) == 1,
+                "suspend cancellation delivers a signal unblocked by the restored original mask");
+    REQUIRE(atomic_fetch_add_explicit(&probe->observed.cleaned, 1, memory_order_release) == 0,
+            "suspend cleanup runs exactly once");
+}
+
+static void *suspend_worker(void *argument) {
+    struct suspend_probe *probe = argument;
+    struct state *state = &probe->observed;
+    capture_identity(state);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0, "suspend deferred cancellation");
+    if (probe->kind == SUSPEND_DISABLED)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0, "disable suspend cancellation");
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &probe->original, NULL) == 0, "install suspend entry mask");
+    pthread_cleanup_push(suspend_cleanup, probe);
+    atomic_store_explicit(&state->ready, 1, memory_order_release);
+    while (!atomic_load_explicit(&state->release, memory_order_acquire))
+        (void)syscall(SYS_sched_yield);
+    errno = EDOM;
+    if (probe->kind == SUSPEND_ERRORS) {
+        const sigset_t *invalid[] = {
+            NULL, (const sigset_t *)(uintptr_t)1,
+            (const sigset_t *)((const unsigned char *)probe->argument + 1)
+        };
+        for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+            errno = EDOM;
+            REQUIRE(selected_sigsuspend(invalid[i]) == -1 && errno == EFAULT,
+                    "sigsuspend reports EFAULT for null, unreadable and truncated kernel masks");
+            suspend_check_mask(probe->original_usr1, "sigsuspend mask faults preserve the entry mask");
+        }
+        state->result = 0;
+    } else {
+        state->result = probe->use_mask ? selected_sigsuspend(probe->argument) : selected_pause();
+    }
+    state->error = errno;
+    suspend_check_mask(probe->original_usr1, "suspend ordinary return restores the original mask");
+    atomic_store_explicit(&state->returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (probe->kind == SUSPEND_DISABLED) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0, "reenable suspend cancellation");
+        pthread_testcancel();
+        fail("disabled suspend lost its pending cancellation");
+    }
+    return state;
+}
+
+static void observe_suspend_parked(struct suspend_probe *probe, int memory) {
+    struct state *state = &probe->observed;
+    const int sliced = expect_native && probe->kind != SUSPEND_DISABLED;
+    int64_t deadline = monotonic_ns() + 2000000000;
+    while (monotonic_ns() < deadline) {
+        REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
+                "suspend returned before its intended blocked syscall");
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long args[6] = {0};
+        if (!read_proc(state, "syscall", call, sizeof(call)) ||
+            sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
+                   &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 3)
+            goto retry_suspend;
+        uint64_t mask = 0;
+        if (sliced) {
+            struct timespec quantum;
+            if (number != SYS_ppoll || args[0] != 0 || args[1] != 0 ||
+                args[2] == 0 || args[3] == 0 ||
+                !snapshot(memory, args[2], &quantum, sizeof(quantum)) ||
+                !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_suspend;
+            REQUIRE(args[4] == sizeof(mask), "native suspend uses the kernel signal-mask width");
+            REQUIRE(quantum.tv_sec == 0 && quantum.tv_nsec > 0 && quantum.tv_nsec <= 50000000,
+                    "native suspend uses a bounded nonzero no-descriptor ppoll quantum");
+        } else if (probe->use_mask) {
+            if (number != SYS_rt_sigsuspend || args[0] == 0 || args[1] != sizeof(mask) ||
+                !snapshot(memory, args[0], &mask, sizeof(mask))) goto retry_suspend;
+        } else {
+#ifdef SYS_pause
+            if (number != SYS_pause) goto retry_suspend;
+#else
+            if (number != SYS_ppoll || args[0] != 0 || args[1] != 0 || args[2] != 0 || args[3] != 0)
+                goto retry_suspend;
+#endif
+        }
+        if (sliced || probe->use_mask)
+            REQUIRE(((mask >> (SIGUSR1 - 1)) & 1) == (uint64_t)probe->temporary_usr1 &&
+                    ((mask >> (SIGUSR2 - 1)) & 1) == 0 && ((mask >> (SIGTERM - 1)) & 1) == 1,
+                    "suspend atomically submits the intended signal mask");
+        if (!read_proc(state, "stat", status, sizeof(status))) goto retry_suspend;
+        char *end = strrchr(status, ')');
+        if (end != NULL && end[1] == ' ' && end[2] == 'S') return;
+retry_suspend:
+        pause_briefly();
+    }
+    fail("no observed sleeping pause/sigsuspend syscall with the intended mask");
+}
+
+static int suspend_contract_main(char **argv) {
+    const int use_mask = strncmp(case_name, "sigsuspend-", 11) == 0;
+    const char *suffix = case_name + (use_mask ? 11 : 6);
+    const int alias = strncmp(suffix, "alias-", 6) == 0;
+    if (alias) suffix += 6;
+    const char *names[] = {"pending", "blocked", "disabled", "signal", "signal-restart", "mask-block",
+                          "mask-unblock", "mask-cancel", "mask-cancel-block", "errors", "guarded-mask"};
+    int kind = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(suffix, names[i]) == 0) kind = (int)i;
+    if (kind < 0 || (!use_mask && kind > SUSPEND_MASK_BLOCK)) return 2;
+    int pin = pin_suspend_provider(argv[2], use_mask, alias);
+    if (pin != 0) return pin;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    struct sigaction action = {0};
+    action.sa_handler = suspend_signal;
+    action.sa_flags = kind == SUSPEND_SIGNAL_RESTART ? SA_RESTART : 0;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0 && sigaction(SIGUSR2, &action, NULL) == 0,
+            "install suspend signal handlers");
+    sigset_t empty;
+    sigemptyset(&empty);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &empty, NULL) == 0, "suspend creator signal mask");
+    alarm(12);
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("suspend-kernel-snapshot-unavailable");
+    struct suspend_probe probe = {0};
+    probe.use_mask = use_mask;
+    probe.kind = (enum suspend_kind)kind;
+    probe.original_usr1 = use_mask ? kind != SUSPEND_MASK_BLOCK && kind != SUSPEND_MASK_CANCEL_BLOCK :
+                                   kind == SUSPEND_MASK_BLOCK;
+    probe.temporary_usr1 = kind == SUSPEND_MASK_BLOCK || kind == SUSPEND_MASK_CANCEL_BLOCK;
+    sigemptyset(&probe.original);
+    sigemptyset(&probe.temporary);
+    sigaddset(&probe.original, SIGTERM);
+    sigaddset(&probe.temporary, SIGTERM);
+    if (probe.original_usr1) sigaddset(&probe.original, SIGUSR1);
+    if (probe.temporary_usr1) sigaddset(&probe.temporary, SIGUSR1);
+    probe.argument = &probe.temporary;
+    unsigned char *storage = NULL;
+    long page = 0;
+    uint64_t expected_mask = 0;
+    if (kind == SUSPEND_ERRORS || kind == SUSPEND_GUARDED) {
+        page = sysconf(_SC_PAGESIZE);
+        REQUIRE(page > 0, "suspend mask page size");
+        storage = mmap(NULL, 2 * (size_t)page, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        REQUIRE(storage != MAP_FAILED, "map suspend kernel-width signal mask");
+        memcpy(&expected_mask, &probe.temporary, sizeof(expected_mask));
+        memcpy(storage + page - sizeof(expected_mask), &expected_mask, sizeof(expected_mask));
+        REQUIRE(mprotect(storage, (size_t)page, PROT_READ) == 0 &&
+                mprotect(storage + page, (size_t)page, PROT_NONE) == 0,
+                "protect exact eight-byte suspend mask and following guard page");
+        probe.argument = (const sigset_t *)(storage + page - sizeof(expected_mask));
+    }
+    struct state *state = &probe.observed;
+    REQUIRE(pthread_create(&state->thread, NULL, suspend_worker, &probe) == 0, "create suspend worker");
+    wait_ready(state);
+    if (kind == SUSPEND_PENDING)
+        REQUIRE(pthread_cancel(state->thread) == 0, "queue pending suspend cancellation");
+    const int immediate_signal = kind == SUSPEND_MASK_UNBLOCK || kind == SUSPEND_GUARDED;
+    if (immediate_signal)
+        REQUIRE(pthread_kill(state->thread, SIGUSR1) == 0, "queue signal blocked before atomic suspend");
+    atomic_store_explicit(&state->release, 1, memory_order_release);
+    if (kind != SUSPEND_PENDING && kind != SUSPEND_ERRORS && !immediate_signal)
+        observe_suspend_parked(&probe, memory);
+    if (kind == SUSPEND_MASK_BLOCK || kind == SUSPEND_MASK_CANCEL_BLOCK) {
+        REQUIRE(pthread_kill(state->thread, SIGUSR1) == 0, "queue signal blocked by suspend mask");
+        int64_t held_until = monotonic_ns() + 220000000;
+        do {
+            observe_suspend_parked(&probe, memory);
+            REQUIRE(atomic_load_explicit(&suspend_usr1, memory_order_relaxed) == 0,
+                    "suspend holds a blocked signal across successive wait quanta");
+            pause_briefly();
+        } while (monotonic_ns() < held_until);
+    }
+    if (kind == SUSPEND_BLOCKED || kind == SUSPEND_DISABLED || kind == SUSPEND_MASK_CANCEL ||
+        kind == SUSPEND_MASK_CANCEL_BLOCK) {
+        REQUIRE(pthread_cancel(state->thread) == 0, "cancel an observed blocked suspend");
+        if (kind == SUSPEND_DISABLED) {
+            observe_suspend_parked(&probe, memory);
+            REQUIRE(atomic_load_explicit(&state->cleaned, memory_order_acquire) == 0,
+                    "disabled suspend cancellation does not run cleanup");
+            REQUIRE(pthread_kill(state->thread, SIGUSR1) == 0, "interrupt disabled suspend with a caught signal");
+        }
+    } else if (kind == SUSPEND_SIGNAL || kind == SUSPEND_SIGNAL_RESTART || kind == SUSPEND_MASK_BLOCK) {
+        REQUIRE(pthread_kill(state->thread, kind == SUSPEND_MASK_BLOCK ? SIGUSR2 : SIGUSR1) == 0,
+                "interrupt observed suspend with an unblocked signal");
+    }
+    void *result = join_bounded(state);
+    const int canceled = kind == SUSPEND_PENDING || kind == SUSPEND_BLOCKED || kind == SUSPEND_DISABLED ||
+                         kind == SUSPEND_MASK_CANCEL || kind == SUSPEND_MASK_CANCEL_BLOCK;
+    REQUIRE(result == (canceled ? PTHREAD_CANCELED : (void *)state), "suspend thread result");
+    REQUIRE(atomic_load_explicit(&state->cleaned, memory_order_acquire) == 1, "one suspend cleanup");
+    REQUIRE(atomic_load_explicit(&state->returned, memory_order_acquire) == (!canceled || kind == SUSPEND_DISABLED),
+            "suspend return versus cancellation");
+    if (kind != SUSPEND_ERRORS && (!canceled || kind == SUSPEND_DISABLED))
+        REQUIRE(state->result == -1 && state->error == EINTR,
+                "caught signals interrupt pause/sigsuspend even with SA_RESTART");
+    const int usr1 = kind == SUSPEND_DISABLED || kind == SUSPEND_SIGNAL || kind == SUSPEND_SIGNAL_RESTART ||
+                     immediate_signal || (use_mask && kind == SUSPEND_MASK_BLOCK) ||
+                     kind == SUSPEND_MASK_CANCEL_BLOCK;
+    REQUIRE(atomic_load_explicit(&suspend_usr1, memory_order_relaxed) == usr1 &&
+            atomic_load_explicit(&suspend_usr2, memory_order_relaxed) == (kind == SUSPEND_MASK_BLOCK),
+            "suspend invokes exactly the expected unblocked signal handlers");
+    if (storage != NULL) {
+        REQUIRE(memcmp(storage + page - sizeof(expected_mask), &expected_mask, sizeof(expected_mask)) == 0,
+                "sigsuspend preserves its const eight-byte input mask");
+        REQUIRE(munmap(storage, 2 * (size_t)page) == 0, "release suspend signal-mask mapping");
+    }
+    REQUIRE(close(memory) == 0, "close suspend kernel observation descriptor");
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
     if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);
     if (strncmp(case_name, "select-", 7) == 0 || strncmp(case_name, "pselect-", 8) == 0)
         return select_contract_main(argv);
+    if (strncmp(case_name, "pause-", 6) == 0 || strncmp(case_name, "sigsuspend-", 11) == 0)
+        return suspend_contract_main(argv);
     int use_ppoll = strncmp(case_name, "ppoll-", 6) == 0;
     int alias = strncmp(case_name, "ppoll-alias-", 12) == 0;
     enum event_api event_api = EVENT_NONE;
