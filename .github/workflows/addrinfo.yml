@@ -17,6 +17,7 @@ on:
       - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
       - 'crates/frankenlibc-abi/tests/grp_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/getnameinfo_differential_fuzz.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'tests/integration/fixture_nss_module_lib.c'
@@ -157,8 +158,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
-          components: rustfmt
-      - name: Check the touched identity and local socket surfaces
+          components: rustfmt, clippy
+      - name: Check formatting of the touched identity and local socket surfaces
         shell: bash
         run: |
           set -euo pipefail
@@ -170,16 +171,37 @@ jobs:
             crates/frankenlibc-abi/src/resolv_abi.rs \
             crates/frankenlibc-abi/tests/grp_abi_test.rs \
             crates/frankenlibc-abi/tests/pwd_abi_test.rs \
+            crates/frankenlibc-abi/tests/unistd_abi_test.rs \
             crates/frankenlibc-abi/tests/getnameinfo_differential_fuzz.rs \
             2>&1 | tee artifacts/identity/format.log
+      - name: Compile the identity and local socket targets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/identity
           args=()
           if [[ '${{ matrix.feature }}' != default ]]; then
             args+=(--features '${{ matrix.feature }}')
           fi
           cargo check -p frankenlibc-abi --lib --keep-going \
-            --test grp_abi_test --test pwd_abi_test \
+            --test grp_abi_test --test pwd_abi_test --test unistd_abi_test \
             --test getnameinfo_differential_fuzz "${args[@]}" \
             2>&1 | tee artifacts/identity/check.log
+      - name: Lint the identity and local socket targets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/identity
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          cargo clippy -p frankenlibc-abi --lib --keep-going \
+            --test grp_abi_test --test pwd_abi_test --test unistd_abi_test \
+            --test getnameinfo_differential_fuzz "${args[@]}" -- -D warnings \
+            2>&1 | tee artifacts/identity/clippy.log
       - name: Exercise native NSS identity and getnameinfo in both runtime modes
         if: always()
         shell: bash
@@ -192,7 +214,7 @@ jobs:
           fi
           status=0
           for mode in strict hardened; do
-            for spec in grp_abi_test:nss_files_ pwd_abi_test:nss_files_ getnameinfo_differential_fuzz:getnameinfo_; do
+            for spec in grp_abi_test:nss_files_ pwd_abi_test:nss_files_ unistd_abi_test:nss_files_ getnameinfo_differential_fuzz:getnameinfo_; do
               target="${spec%%:*}"
               filter="${spec#*:}"
               log="artifacts/identity/${target}-${mode}.log"
@@ -201,6 +223,39 @@ jobs:
                 2>&1 | tee "$log"; then status=1; fi
               if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' "$log"; then status=1; fi
             done
+          done
+          exit "$status"
+      - name: Compare local socket names with a dotted hostname in an isolated UTS namespace
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/identity
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          cargo test -p frankenlibc-abi --test getnameinfo_differential_fuzz \
+            "${args[@]}" --no-run --message-format=json > artifacts/identity/local-test-build.json
+          test_binary="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          candidates = set()
+          for line in Path("artifacts/identity/local-test-build.json").read_text().splitlines():
+              entry = json.loads(line)
+              if entry.get("reason") == "compiler-artifact" and entry.get("target", {}).get("name") == "getnameinfo_differential_fuzz" and entry.get("executable"):
+                  candidates.add(entry["executable"])
+          assert len(candidates) == 1, candidates
+          print(candidates.pop())
+          PY
+          )"
+          status=0
+          for mode in strict hardened; do
+            log="artifacts/identity/local-uts-${mode}.log"
+            if ! timeout 60s sudo -n unshare --uts -- bash -euc \
+              'hostname frankenlibc.example.test; exec env FRANKENLIBC_MODE="$1" "$2" getnameinfo_local_ --nocapture --test-threads=1' \
+              bash "$mode" "$test_binary" 2>&1 | tee "$log"; then status=1; fi
+            if ! grep -Eq '^test result: ok\. 3 passed; 0 failed;' "$log"; then status=1; fi
           done
           exit "$status"
       - uses: actions/upload-artifact@v4

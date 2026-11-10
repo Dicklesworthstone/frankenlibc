@@ -1235,6 +1235,24 @@ unsafe fn getpwent_r_impl(
 
 const SHADOW_PATH: &str = "/etc/shadow";
 
+fn read_shadow_file() -> std::io::Result<Vec<u8>> {
+    // SAFETY: the key is static and NUL-terminated. secure_getenv ignores the
+    // fixture/backend override in a privileged execution context.
+    let configured = unsafe { crate::stdlib_abi::secure_getenv(c"FRANKENLIBC_SHADOW_PATH".as_ptr()) };
+    let path = if configured.is_null() {
+        PathBuf::from(SHADOW_PATH)
+    } else {
+        // SAFETY: secure_getenv returns a NUL-terminated environment value.
+        let bytes = unsafe { std::ffi::CStr::from_ptr(configured) }.to_bytes();
+        if bytes.is_empty() {
+            PathBuf::from(SHADOW_PATH)
+        } else {
+            PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+        }
+    };
+    std::fs::read(path)
+}
+
 /// Parsed shadow entry stored in thread-local static storage.
 #[repr(C)]
 struct SpwdEntry {
@@ -1269,7 +1287,8 @@ struct ShadowTlsStorage {
     buf: Vec<u8>,
     entry: SpwdEntry,
     iter_idx: usize,
-    cache: Vec<String>,
+    cache: Vec<u8>,
+    files_loaded: bool,
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -1286,6 +1305,7 @@ impl ShadowTlsStorage {
             entry: SpwdEntry::empty(),
             iter_idx: 0,
             cache: Vec::new(),
+            files_loaded: false,
         }
     }
 }
@@ -1385,7 +1405,7 @@ pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
     let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
         return ptr::null_mut();
     };
-    match shadow_answer(name_bytes) {
+    match shadow_answer(name_bytes, None) {
         Answer::Found(entry) => with_shadow_storage(|storage| {
             fill_shadow_parsed(&entry, &mut storage.buf, &mut storage.entry);
             &mut storage.entry as *mut SpwdEntry as *mut c_void
@@ -1404,23 +1424,42 @@ pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
 
 /// The files source of the shadow database: an unreadable /etc/shadow (the
 /// usual case for unprivileged callers) is an unavailable source.
-fn files_shadow_answer(name: &[u8]) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
-    match std::fs::read(SHADOW_PATH) {
-        Ok(content) => match frankenlibc_core::pwd::shadow::lookup_shadow_by_name(&content, name) {
-            Some(entry) => Answer::Found(entry),
-            None => Answer::NotFound,
-        },
-        Err(err) => Answer::Unavailable(err.raw_os_error().unwrap_or(libc::EACCES)),
+fn files_shadow_answer(
+    name: &[u8],
+    capacity: Option<usize>,
+) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
+    let content = match read_shadow_file() {
+        Ok(content) => content,
+        Err(err) => return Answer::Unavailable(err.raw_os_error().unwrap_or(libc::EACCES)),
+    };
+    if capacity.is_some_and(|len| len < 3) {
+        return Answer::BufferTooSmall;
     }
+    for line in content.split_inclusive(|&byte| byte == b'\n') {
+        // The files reader must fit every scanned physical line, including
+        // comments and malformed entries, before it can test the login name.
+        if capacity.is_some_and(|len| line.len().saturating_add(2) > len) {
+            return Answer::BufferTooSmall;
+        }
+        if let Some(entry) = frankenlibc_core::pwd::shadow::parse_shadow_line(line)
+            && entry.name == name
+        {
+            return Answer::Found(entry);
+        }
+    }
+    Answer::NotFound
 }
 
 /// The shadow entry for `name` from the sources nsswitch.conf's `shadow:`
 /// line configures.
-fn shadow_answer(name: &[u8]) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
+fn shadow_answer(
+    name: &[u8],
+    capacity: Option<usize>,
+) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
     frankenlibc_core::nss::lookup(
         &nss_module::services(Database::Shadow),
         |service| match service.kind() {
-            SourceKind::Files => files_shadow_answer(name),
+            SourceKind::Files => files_shadow_answer(name, capacity),
             SourceKind::Module => nss_module::getspnam(service.name(), name),
         },
         None,
@@ -1435,6 +1474,30 @@ pub unsafe extern "C" fn getspnam_r(
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
+) -> c_int {
+    // SAFETY: forward the public reentrant lookup contract.
+    unsafe { getspnam_r_impl(name, spbuf, buf, buflen, result, false) }
+}
+
+/// Files-module lookup, independent of the configured NSS service chain.
+pub(crate) unsafe fn files_getspnam_r(
+    name: *const c_char,
+    spbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    // SAFETY: the NSS caller supplies the same storage as getspnam_r.
+    unsafe { getspnam_r_impl(name, spbuf, buf, buflen, result, true) }
+}
+
+unsafe fn getspnam_r_impl(
+    name: *const c_char,
+    spbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    files_only: bool,
 ) -> c_int {
     if name.is_null() || spbuf.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
@@ -1452,7 +1515,13 @@ pub unsafe extern "C" fn getspnam_r(
         return libc::EINVAL;
     };
 
-    match shadow_answer(name_bytes) {
+    let capacity = effective_buffer_len(buf, buflen);
+    let answer = if files_only {
+        files_shadow_answer(name_bytes, Some(capacity))
+    } else {
+        shadow_answer(name_bytes, Some(capacity))
+    };
+    match answer {
         Answer::Found(entry) => {
             let rc = unsafe {
                 fill_shadow_parsed_caller(
@@ -1487,30 +1556,61 @@ pub extern "C" fn endspent() {
     if !nss_module::is_files_only(&nss_module::services(Database::Shadow)) {
         nss_module::ent_end(EntDb::Shadow);
     }
+    files_endspent();
+}
+
+/// Rewind only the native files source and report an unreadable backend.
+pub(crate) fn files_setspent() -> c_int {
+    with_shadow_storage(|storage| storage.load_files().err().unwrap_or(0))
+}
+
+/// Release only the files cursor, without invoking installed NSS modules.
+pub(crate) fn files_endspent() {
     with_shadow_storage(|storage| {
         storage.iter_idx = 0;
         storage.cache.clear();
+        storage.files_loaded = false;
     });
 }
 
 impl ShadowTlsStorage {
-    /// The next well-formed entry of the files source; `restart` takes a
-    /// fresh snapshot of /etc/shadow. Malformed lines are skipped.
+    fn load_files(&mut self) -> Result<(), c_int> {
+        self.iter_idx = 0;
+        self.cache.clear();
+        self.files_loaded = false;
+        self.cache = read_shadow_file()
+            .map_err(|err| err.raw_os_error().unwrap_or(libc::EACCES))?;
+        self.files_loaded = true;
+        Ok(())
+    }
+
+    /// Read byte-oriented records so non-UTF-8 account data stays intact.
+    /// A short caller buffer leaves the current physical line unconsumed.
     fn next_files_entry(
         &mut self,
         restart: bool,
+        capacity: Option<usize>,
     ) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
-        if restart {
-            self.iter_idx = 0;
-            self.cache.clear();
-            match std::fs::read_to_string(SHADOW_PATH) {
-                Ok(content) => self.cache.extend(content.lines().map(str::to_owned)),
-                Err(err) => return Answer::Unavailable(err.raw_os_error().unwrap_or(libc::EACCES)),
-            }
+        if (restart || !self.files_loaded)
+            && let Err(err) = self.load_files()
+        {
+            return Answer::Unavailable(err);
         }
-        while let Some(line) = self.cache.get(self.iter_idx) {
-            self.iter_idx += 1;
-            if let Some(entry) = frankenlibc_core::pwd::shadow::parse_shadow_line(line.as_bytes()) {
+        if capacity.is_some_and(|len| len < 3) {
+            return Answer::BufferTooSmall;
+        }
+        while self.iter_idx < self.cache.len() {
+            let remaining = &self.cache[self.iter_idx..];
+            let len = remaining
+                .iter()
+                .position(|&byte| byte == b'\n')
+                .map_or(remaining.len(), |offset| offset + 1);
+            let line = &remaining[..len];
+            if capacity.is_some_and(|available| len.saturating_add(2) > available) {
+                return Answer::BufferTooSmall;
+            }
+            self.iter_idx += len;
+            if let Some(entry) = frankenlibc_core::pwd::shadow::parse_shadow_line(line) {
                 return Answer::Found(entry);
             }
         }
@@ -1540,7 +1640,7 @@ fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Opt
         SP_ENT.with(|c| c.set(cursor));
         let answer = match step {
             EntStep::Done => return Err(None),
-            EntStep::Files { restart } => with_shadow_storage(|s| s.next_files_entry(restart)),
+            EntStep::Files { restart } => with_shadow_storage(|s| s.next_files_entry(restart, None)),
             EntStep::Module(answer) => answer,
         };
         let (status, err) = match answer {
@@ -1592,6 +1692,28 @@ pub unsafe extern "C" fn getspent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
+    // SAFETY: forward the public reentrant enumeration contract.
+    unsafe { getspent_r_impl(spbuf, buf, buflen, result, false) }
+}
+
+/// Enumerate only the files source. EOF is a successful null result.
+pub(crate) unsafe fn files_getspent_r(
+    spbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    // SAFETY: the NSS caller supplies the same storage as getspent_r.
+    unsafe { getspent_r_impl(spbuf, buf, buflen, result, true) }
+}
+
+unsafe fn getspent_r_impl(
+    spbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    files_only: bool,
+) -> c_int {
     if spbuf.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
@@ -1602,6 +1724,29 @@ pub unsafe extern "C" fn getspent_r(
     unsafe { *result = ptr::null_mut() };
     if !tracked_object_fits(spbuf.cast::<SpwdEntry>()) {
         return libc::EINVAL;
+    }
+
+    let capacity = effective_buffer_len(buf, buflen);
+    if files_only {
+        return with_shadow_storage(|storage| {
+            match storage.next_files_entry(false, Some(capacity)) {
+                Answer::Found(entry) => {
+                    // The physical-line bound also covers both packed strings.
+                    // SAFETY: output alignment and tracked extents were checked above.
+                    let rc = unsafe {
+                        fill_shadow_parsed_caller(&entry, spbuf.cast(), buf, capacity)
+                    };
+                    if rc == 0 {
+                        // SAFETY: result is checked writable caller storage.
+                        unsafe { *result = spbuf };
+                    }
+                    rc
+                }
+                Answer::NotFound => 0,
+                Answer::Unavailable(err) | Answer::TryAgain(err) => err,
+                Answer::BufferTooSmall => libc::ERANGE,
+            }
+        });
     }
 
     match next_shadow_entry() {

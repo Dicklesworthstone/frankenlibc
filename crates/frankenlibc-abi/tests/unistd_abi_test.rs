@@ -14691,7 +14691,7 @@ fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_setetherent, _nss_files_setgrent, _nss_files_sethostent, _nss_files_setnetent,
         _nss_files_setprotoent, _nss_files_setpwent, _nss_files_setrpcent, _nss_files_setservent,
-        _nss_files_setsgent, _nss_files_setspent,
+        _nss_files_setsgent,
     };
 
     macro_rules! check {
@@ -14718,7 +14718,6 @@ fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
     check!(_nss_files_setrpcent);
     check!(_nss_files_setservent);
     check!(_nss_files_setsgent);
-    check!(_nss_files_setspent);
 }
 
 #[test]
@@ -14744,7 +14743,7 @@ fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
 fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getnetgrent_r,
-        _nss_files_getrpcent_r, _nss_files_getsgent_r, _nss_files_getspent_r,
+        _nss_files_getrpcent_r, _nss_files_getsgent_r,
     };
 
     macro_rules! check {
@@ -14776,7 +14775,6 @@ fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getnetgrent_r);
     check!(_nss_files_getrpcent_r);
     check!(_nss_files_getsgent_r);
-    check!(_nss_files_getspent_r);
 }
 
 #[test]
@@ -14813,7 +14811,7 @@ fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
 fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasbyname_r, _nss_files_gethostton_r, _nss_files_getntohost_r,
-        _nss_files_getrpcbyname_r, _nss_files_getsgnam_r, _nss_files_getspnam_r,
+        _nss_files_getrpcbyname_r, _nss_files_getsgnam_r,
     };
 
     let key = CString::new("missing").unwrap();
@@ -14855,7 +14853,6 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getntohost_r);
     check!(_nss_files_getrpcbyname_r);
     check!(_nss_files_getsgnam_r);
-    check!(_nss_files_getspnam_r);
 }
 
 #[test]
@@ -17944,6 +17941,37 @@ fn getifaddrs_syscall_errors_are_not_successful_snapshots() {
             String::from_utf8_lossy(&output.stdout)
                 .contains("test result: ok. 1 passed; 0 failed;"),
             "{mode} probe did not execute its named test"
+        );
+    }
+}
+
+
+#[test]
+fn nss_files_shadow_rejects_missing_output_storage() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getspent_r, _nss_files_getspnam_r,
+    };
+    // SAFETY: invalid required outputs must be rejected before dereferencing.
+    unsafe {
+        let mut error = 717;
+        assert_eq!(
+            _nss_files_getspent_r(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut error),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getspnam_r(
+                c"missing".as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        assert_eq!(
+            _nss_files_getspent_r(
+                std::ptr::null_mut(), std::ptr::null_mut(), 0, std::ptr::null_mut(),
+            ),
+            -1
         );
     }
 }

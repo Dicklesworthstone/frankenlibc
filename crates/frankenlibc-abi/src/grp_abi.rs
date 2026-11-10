@@ -814,7 +814,8 @@ pub(crate) unsafe fn files_initgroups_dyn(
             let Some(group) = frankenlibc_core::grp::parse_group_line(line) else {
                 continue;
             };
-            if group.gr_gid == base || !group.gr_mem.iter().any(|member| member.as_slice() == user) {
+            if group.gr_gid == base || !group.gr_mem.iter().any(|member| member.as_slice() == user)
+            {
                 continue;
             }
             if limit > 0 && count >= limit {
@@ -830,11 +831,42 @@ pub(crate) unsafe fn files_initgroups_dyn(
                 let Some(bytes) = bytes.filter(|_| next > capacity) else {
                     return Err(libc::ENOMEM);
                 };
-                // SAFETY: the caller owns a realloc-compatible allocation.
-                // On failure realloc leaves it intact; publish new metadata
-                // only after the resize succeeds.
-                let resized = unsafe { crate::malloc_abi::realloc(groups.cast(), bytes) }
-                    .cast::<libc::gid_t>();
+                let resized = if groups.is_null() || known_remaining(groups as usize).is_some() {
+                    // SAFETY: the public allocator handles both native and
+                    // fallback-tracked arrays, preserving their live prefix.
+                    unsafe { crate::malloc_abi::realloc(groups.cast(), bytes) }
+                } else {
+                    // An untracked caller allocation may belong to host libc.
+                    // Hardened public realloc intentionally does not copy
+                    // unknown pointers, so normalize ownership before a host
+                    // resize. The preparation helper also handles native
+                    // allocations hidden by bootstrap/reentry lookup limits.
+                    let old_bytes = (capacity as usize)
+                        .checked_mul(std::mem::size_of::<libc::gid_t>())
+                        .ok_or(libc::ENOMEM)?;
+                    // SAFETY: capacity describes the caller's live allocation.
+                    let Some(prepared) = (unsafe {
+                        crate::malloc_abi::prepare_host_realloc_buffer(groups.cast(), old_bytes)
+                    }) else {
+                        return Err(libc::ENOMEM);
+                    };
+                    groups = prepared.cast();
+                    // Preparation can move and retire a native allocation.
+                    // Publish its still-live replacement before host realloc,
+                    // including when the subsequent resize fails.
+                    unsafe { *groupsp = groups };
+                    // SAFETY: preparation established host-compatible ownership.
+                    let resized =
+                        unsafe { crate::malloc_abi::host_passthrough_realloc(prepared, bytes) };
+                    let (live, live_bytes) = if resized.is_null() {
+                        (prepared, old_bytes)
+                    } else {
+                        (resized, bytes)
+                    };
+                    crate::malloc_abi::finish_host_realloc_buffer(live, live_bytes);
+                    resized
+                };
+                let resized = resized.cast::<libc::gid_t>();
                 if resized.is_null() {
                     return Err(libc::ENOMEM);
                 }

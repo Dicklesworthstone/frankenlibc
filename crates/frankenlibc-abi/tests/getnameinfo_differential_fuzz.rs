@@ -11,19 +11,16 @@
 use std::ffi::{CStr, c_char, c_int};
 use std::mem::size_of;
 
-unsafe extern "C" {
-    fn getnameinfo(
-        sa: *const libc::sockaddr,
-        salen: libc::socklen_t,
-        host: *mut c_char,
-        hostlen: libc::socklen_t,
-        serv: *mut c_char,
-        servlen: libc::socklen_t,
-        flags: c_int,
-    ) -> c_int;
-}
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
 
 use frankenlibc_abi::resolv_abi::getnameinfo as fl_getnameinfo;
+
+fn host_getnameinfo() -> NameInfoFn {
+    // SAFETY: NameInfoFn is exactly getnameinfo's C ABI. The shared resolver
+    // opens host libc explicitly and rejects FrankenLibC's own definition.
+    unsafe { dlsym_oracle::host_fn(c"getnameinfo", fl_getnameinfo as *const ()) }
+}
 
 struct Lcg(u64);
 impl Lcg {
@@ -92,6 +89,7 @@ unsafe fn call(
 
 #[test]
 fn getnameinfo_numeric_differential_fuzz_vs_glibc() {
+    let getnameinfo = host_getnameinfo();
     let mut r = Lcg(0x1234_dead_beef_5678);
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
@@ -183,4 +181,213 @@ fn getnameinfo_numeric_differential_fuzz_vs_glibc() {
     eprintln!(
         "getnameinfo numeric differential fuzz: {compared} comparisons, 0 divergences vs host glibc"
     );
+}
+
+
+type NameInfoFn = unsafe extern "C" fn(
+    *const libc::sockaddr,
+    libc::socklen_t,
+    *mut c_char,
+    libc::socklen_t,
+    *mut c_char,
+    libc::socklen_t,
+    c_int,
+) -> c_int;
+
+#[derive(Debug, PartialEq, Eq)]
+struct LocalOut {
+    ret: c_int,
+    errno: c_int,
+    host: [u8; 256],
+    serv: [u8; 256],
+}
+
+/// Compare complete buffers, including unchanged sentinels after the output
+/// and on failure. Output pointers and lengths are independent: NULL with a
+/// nonzero length and non-NULL with a zero length both omit an output.
+unsafe fn call_local(
+    function: NameInfoFn,
+    address: &libc::sockaddr_un,
+    address_len: usize,
+    flags: c_int,
+    host_len: Option<usize>,
+    serv_len: Option<usize>,
+) -> LocalOut {
+    let mut host = [0xa5; 256];
+    let mut serv = [0x5a; 256];
+    assert!(host_len.is_none_or(|length| length <= host.len()));
+    assert!(serv_len.is_none_or(|length| length <= serv.len()));
+    let host_pointer = host_len.map_or(std::ptr::null_mut(), |_| host.as_mut_ptr().cast());
+    let serv_pointer = serv_len.map_or(std::ptr::null_mut(), |_| serv.as_mut_ptr().cast());
+    // SAFETY: errno is this test thread's host TLS slot. Both implementations
+    // share it in the interpose build; no other thread changes its value.
+    unsafe { *libc::__errno_location() = libc::EINTR };
+    // SAFETY: the live address and buffers cover every advertised extent.
+    let ret = unsafe {
+        function(
+            (address as *const libc::sockaddr_un).cast(),
+            address_len as libc::socklen_t,
+            host_pointer,
+            host_len.unwrap_or(256) as libc::socklen_t,
+            serv_pointer,
+            serv_len.unwrap_or(256) as libc::socklen_t,
+            flags,
+        )
+    };
+    LocalOut {
+        ret,
+        errno: unsafe { *libc::__errno_location() },
+        host,
+        serv,
+    }
+}
+
+fn local_address(path: &[u8]) -> libc::sockaddr_un {
+    // SAFETY: every field is an integer or integer array; zero is valid.
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    assert!(path.len() <= address.sun_path.len());
+    for (slot, &byte) in address.sun_path.iter_mut().zip(path) {
+        *slot = byte as c_char;
+    }
+    address
+}
+
+#[test]
+fn getnameinfo_local_differential_vs_glibc() {
+    let getnameinfo = host_getnameinfo();
+    let paths = [
+        Vec::new(),
+        b"/tmp/frankenlibc-local.sock".to_vec(),
+        b"\0abstract-socket".to_vec(),
+        b"/tmp/non-utf8-\xff\xfe.sock".to_vec(),
+        vec![b'x'; 107],
+    ];
+    let flag_sets = [
+        0,
+        libc::NI_NUMERICHOST,
+        libc::NI_NUMERICSERV,
+        libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        libc::NI_DGRAM,
+        libc::NI_NOFQDN,
+        libc::NI_NAMEREQD,
+        libc::NI_NAMEREQD | libc::NI_NUMERICHOST,
+        libc::NI_NAMEREQD | libc::NI_NOFQDN,
+    ];
+    let outputs = [
+        (Some(256), Some(256)),
+        (Some(256), None),
+        (None, Some(256)),
+        (None, None),
+        (Some(0), Some(256)),
+        (Some(256), Some(0)),
+        (Some(0), Some(0)),
+    ];
+    let offset = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    let mut compared = 0;
+    for path in paths {
+        let address = local_address(&path);
+        // SUN_LEN excludes the terminating NUL. The backing struct is fully
+        // initialized, so the independent host oracle has valid string input.
+        for address_len in [size_of::<libc::sockaddr_un>(), offset + path.len()] {
+            for flags in flag_sets {
+                for (host_len, serv_len) in outputs {
+                    let expected = unsafe {
+                        call_local(getnameinfo, &address, address_len, flags, host_len, serv_len)
+                    };
+                    let actual = unsafe {
+                        call_local(fl_getnameinfo, &address, address_len, flags, host_len, serv_len)
+                    };
+                    assert_eq!(
+                        actual, expected,
+                        "local path={path:?} salen={address_len} flags={flags:#x} \
+                         host={host_len:?} service={serv_len:?}"
+                    );
+                    compared += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(compared, 630);
+    eprintln!("getnameinfo local differential: {compared} host comparisons");
+}
+
+#[test]
+fn getnameinfo_local_bounds_flags_and_errno_match_glibc() {
+    let getnameinfo = host_getnameinfo();
+    let path = b"/tmp/local.sock";
+    let address = local_address(path);
+    let address_len = size_of::<libc::sockaddr_un>();
+    let mut compared = 0;
+    for flags in [
+        0,
+        libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        libc::NI_NOFQDN,
+        libc::NI_NAMEREQD,
+    ] {
+        for host_len in [0, 1, 8, 9, 10, 64, 256] {
+            for serv_len in [0, 1, path.len(), path.len() + 1, 256] {
+                let expected = unsafe {
+                    call_local(
+                        getnameinfo, &address, address_len, flags,
+                        Some(host_len), Some(serv_len),
+                    )
+                };
+                let actual = unsafe {
+                    call_local(
+                        fl_getnameinfo, &address, address_len, flags,
+                        Some(host_len), Some(serv_len),
+                    )
+                };
+                assert_eq!(
+                    actual, expected,
+                    "local overflow flags={flags:#x} host={host_len} service={serv_len}"
+                );
+                compared += 1;
+            }
+        }
+    }
+    for address_len in [0, 1, size_of::<libc::sockaddr_un>()] {
+        for flags in [0, 0x100, -1] {
+            let expected = unsafe {
+                call_local(getnameinfo, &address, address_len, flags, Some(256), Some(256))
+            };
+            let actual = unsafe {
+                call_local(fl_getnameinfo, &address, address_len, flags, Some(256), Some(256))
+            };
+            assert_eq!(
+                actual, expected,
+                "local malformed header salen={address_len} flags={flags:#x}"
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, 149);
+    eprintln!("getnameinfo local bounds differential: {compared} host comparisons");
+}
+
+#[test]
+fn getnameinfo_local_bounds_unterminated_path_without_host_overread() {
+    let address = local_address(&[b'x'; 108]);
+    let offset = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    // These objects deliberately lack a C-string terminator. Do not pass them
+    // to the host oracle: check FrankenLibC's bounded extension independently.
+    for length in [0, 1, 17, 108] {
+        let output = unsafe {
+            call_local(
+                fl_getnameinfo,
+                &address,
+                offset + length,
+                libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+                Some(256),
+                Some(256),
+            )
+        };
+        assert_eq!(output.ret, 0, "unterminated path extent={length}");
+        assert_eq!(output.errno, libc::EINTR);
+        assert_eq!(&output.host[..10], b"localhost\0");
+        assert!(output.serv[..length].iter().all(|&byte| byte == b'x'));
+        assert_eq!(output.serv[length], 0);
+        assert!(output.serv[length + 1..].iter().all(|&byte| byte == 0x5a));
+    }
 }

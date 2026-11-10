@@ -2732,6 +2732,17 @@ unsafe fn write_c_buffer(
     text: &str,
     repair: bool,
 ) -> Result<bool, c_int> {
+    // SAFETY: the byte writer enforces the same advertised and tracked bounds.
+    unsafe { write_c_buffer_bytes(symbol, out, out_len, text.as_bytes(), repair) }
+}
+
+unsafe fn write_c_buffer_bytes(
+    symbol: &'static str,
+    out: *mut c_char,
+    out_len: libc::socklen_t,
+    bytes: &[u8],
+    repair: bool,
+) -> Result<bool, c_int> {
     if out.is_null() || out_len == 0 {
         return Ok(false);
     }
@@ -2741,7 +2752,6 @@ unsafe fn write_c_buffer(
     if capacity == 0 {
         return Err(libc::EAI_OVERFLOW);
     }
-    let bytes = text.as_bytes();
 
     if bytes.len() + 1 <= capacity {
         // SAFETY: output buffer capacity is validated above.
@@ -4167,7 +4177,105 @@ unsafe fn getnameinfo_named(
     code
 }
 
-/// POSIX `getnameinfo`: native numeric, files and DNS reverse lookup.
+/// GNU local-domain address rendering. No DNS, NSS, service database or host
+/// libc is involved: the node comes from uname and the service is sun_path.
+/// Paths and UTS node names are byte strings, not necessarily UTF-8.
+unsafe fn getnameinfo_local(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    // getnameinfo reports its own EAI_* codes. Preserve the caller's errno
+    // across successful local rendering and non-system errors.
+    let saved_errno = unsafe { ptr::read_volatile(crate::errno_abi::__errno_location()) };
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        sa as usize,
+        (hostlen as usize).saturating_add(servlen as usize),
+        true,
+        false,
+        0,
+    );
+    let result = if matches!(decision.action, MembraneAction::Deny) {
+        Err(libc::EAI_FAIL)
+    } else {
+        (|| -> Result<(), c_int> {
+            if !host.is_null() && hostlen != 0 {
+                let mut uts = std::mem::MaybeUninit::<libc::utsname>::uninit();
+                let hostname = if flags & libc::NI_NUMERICHOST == 0 {
+                    // SAFETY: sys_uname initializes the caller-owned Linux
+                    // utsname on success; no field is read after a failure.
+                    if unsafe {
+                        frankenlibc_core::syscall::sys_uname(uts.as_mut_ptr().cast())
+                    }
+                    .is_ok()
+                    {
+                        // SAFETY: the successful syscall initialized nodename.
+                        let node = unsafe { &(*uts.as_ptr()).nodename };
+                        let mut len = node.iter().position(|&byte| byte == 0).unwrap_or(node.len());
+                        if flags & libc::NI_NOFQDN != 0 {
+                            len = node[..len]
+                                .iter()
+                                .position(|&byte| byte == b'.' as c_char)
+                                .unwrap_or(len);
+                        }
+                        // SAFETY: len is bounded by the initialized field and
+                        // c_char/u8 have identical byte layout.
+                        Some(unsafe {
+                            std::slice::from_raw_parts(node.as_ptr().cast::<u8>(), len)
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let hostname = match hostname {
+                    Some(name) => name,
+                    None if flags & libc::NI_NAMEREQD != 0 => return Err(libc::EAI_NONAME),
+                    None => b"localhost",
+                };
+                // Insufficient output space is EAI_OVERFLOW in both modes.
+                // SAFETY: the shared writer checks advertised/tracked bounds.
+                unsafe { write_c_buffer_bytes("getnameinfo", host, hostlen, hostname, false) }?;
+            }
+            if !serv.is_null() && servlen != 0 {
+                const PATH_OFFSET: usize = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+                let path_capacity = size_of::<libc::sockaddr_un>() - PATH_OFFSET;
+                let path_len = (salen as usize - PATH_OFFSET).min(path_capacity);
+                if !tracked_region_fits(sa.cast(), PATH_OFFSET + path_len) {
+                    return Err(libc::EAI_FAMILY);
+                }
+                // SAFETY: the public entrypoint checked the family extent,
+                // and the advertised/tracked path extent was checked above.
+                // A SUN_LEN address may omit the trailing NUL from salen;
+                // copying its bounded bytes must not scan past the address.
+                let path = unsafe {
+                    std::slice::from_raw_parts(sa.cast::<u8>().add(PATH_OFFSET), path_len)
+                };
+                let end = path.iter().position(|&byte| byte == 0).unwrap_or(path.len());
+                // Abstract and unnamed sockets start with NUL and therefore
+                // have an empty service string in this GNU string interface.
+                // SAFETY: the shared writer checks advertised/tracked bounds.
+                unsafe {
+                    write_c_buffer_bytes("getnameinfo", serv, servlen, &path[..end], false)
+                }?;
+            }
+            Ok(())
+        })()
+    };
+    let code = result.err().unwrap_or(0);
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, code != 0);
+    // SAFETY: restore this thread's canonical errno slot.
+    unsafe { set_abi_errno(saved_errno) };
+    code
+}
+
+/// POSIX/GNU getnameinfo: native IP reverse lookup and local-domain names.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnameinfo(
     sa: *const libc::sockaddr,
@@ -4195,6 +4303,7 @@ pub unsafe extern "C" fn getnameinfo(
     let required = match family {
         libc::AF_INET => size_of::<libc::sockaddr_in>(),
         libc::AF_INET6 => size_of::<libc::sockaddr_in6>(),
+        libc::AF_UNIX => std::mem::offset_of!(libc::sockaddr_un, sun_path),
         _ => return libc::EAI_FAMILY,
     };
     if (salen as usize) < required || !tracked_region_fits(sa.cast(), required) {
@@ -4206,6 +4315,11 @@ pub unsafe extern "C" fn getnameinfo(
         && ((want_host && flags & libc::NI_NUMERICHOST != 0) || (host.is_null() && serv.is_null()))
     {
         return libc::EAI_NONAME;
+    }
+    if family == libc::AF_UNIX {
+        // SAFETY: the local address header is readable; the helper checks the
+        // path extent only when a service output was requested.
+        return unsafe { getnameinfo_local(sa, salen, host, hostlen, serv, servlen, flags) };
     }
     if (want_host && flags & libc::NI_NUMERICHOST == 0)
         || (want_serv && flags & libc::NI_NUMERICSERV == 0)

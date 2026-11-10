@@ -16,8 +16,9 @@ use frankenlibc_abi::pwd_abi::{
     endpwent, getpwent, getpwnam, getpwnam_r, getpwuid, getpwuid_r, setpwent,
 };
 use frankenlibc_abi::unistd_abi::{
-    _nss_files_endpwent, _nss_files_getpwent_r, _nss_files_getpwnam_r, _nss_files_getpwuid_r,
-    _nss_files_setpwent,
+    _nss_files_endpwent, _nss_files_endspent, _nss_files_getpwent_r, _nss_files_getpwnam_r,
+    _nss_files_getpwuid_r, _nss_files_getspent_r, _nss_files_getspnam_r, _nss_files_setpwent,
+    _nss_files_setspent,
 };
 use frankenlibc_core::errno;
 
@@ -2037,4 +2038,274 @@ fn user_from_uid_zero_with_nouser_renders_zero() {
         let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
         assert_eq!(bytes, b"0");
     });
+}
+
+
+// Shadow fixtures run in a fresh process so their backend override cannot
+// change another test's host-shadow oracle or process-level runtime mode.
+fn with_shadow_fixture(test: &str, content: Option<&[u8]>, run: impl FnOnce()) {
+    if std::env::var("FRANKENLIBC_SHADOW_TEST_CHILD").as_deref() == Ok(test) {
+        run();
+        return;
+    }
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-shadow-test-{}-{seq}-{test}",
+        std::process::id()
+    ));
+    assert!(!path.exists());
+    if let Some(content) = content {
+        std::fs::write(&path, content).expect("write isolated shadow fixture");
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env("FRANKENLIBC_SHADOW_TEST_CHILD", test)
+        .env("FRANKENLIBC_SHADOW_PATH", &path)
+        .output()
+        .expect("run isolated shadow test");
+    assert!(
+        output.status.success(),
+        "shadow child failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("test result: ok. 1 passed; 0 failed;"),
+        "the shadow child must execute exactly one test"
+    );
+}
+
+const SHADOW_FIXTURE: &[u8] =
+    b"# comment\nmalformed\nalpha:!:19000:0:99999:7:::\nbeta:\xffhash:1:2:3:4:5:6:7\n";
+
+#[test]
+fn nss_files_shadow_lookup_preserves_fields_and_error_contracts() {
+    with_shadow_fixture(
+        "nss_files_shadow_lookup_preserves_fields_and_error_contracts",
+        Some(SHADOW_FIXTURE),
+        || {
+            // SAFETY: every output slot is live, aligned caller storage.
+            unsafe {
+                let mut entry: libc::spwd = std::mem::zeroed();
+                let mut buffer = [0xa5u8; 256];
+                let mut error = 717;
+                *__errno_location() = 718;
+                assert_eq!(
+                    _nss_files_getspnam_r(
+                        c"beta".as_ptr(), (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    ),
+                    1
+                );
+                assert_eq!((error, *__errno_location()), (717, 718));
+                assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"beta");
+                assert_eq!(CStr::from_ptr(entry.sp_pwdp).to_bytes(), b"\xffhash");
+                assert_eq!(
+                    (entry.sp_lstchg, entry.sp_min, entry.sp_max, entry.sp_warn,
+                     entry.sp_inact, entry.sp_expire, entry.sp_flag),
+                    (1, 2, 3, 4, 5, 6, 7)
+                );
+                assert_eq!(
+                    _nss_files_getspnam_r(
+                        c"missing".as_ptr(), (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    ),
+                    0
+                );
+                assert_eq!((error, *__errno_location()), (717, 718));
+                for capacity in [0, 1, 2, 8] {
+                    buffer.fill(0xa5);
+                    error = 717;
+                    *__errno_location() = 718;
+                    assert_eq!(
+                        _nss_files_getspnam_r(
+                            c"missing".as_ptr(), (&raw mut entry).cast(),
+                            buffer.as_mut_ptr().cast(), capacity, &mut error,
+                        ),
+                        -2
+                    );
+                    assert_eq!(error, libc::ERANGE);
+                    assert_eq!(*__errno_location(), if capacity < 2 { 718 } else { libc::ERANGE });
+                    assert!(buffer.iter().all(|&byte| byte == 0xa5));
+                }
+                assert_eq!(
+                    _nss_files_getspnam_r(
+                        c"alpha".as_ptr(), (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(), 1, __errno_location(),
+                    ),
+                    -2
+                );
+                assert_eq!(*__errno_location(), libc::ERANGE);
+                _nss_files_endspent();
+            }
+        },
+    );
+}
+
+#[test]
+fn nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate() {
+    const RECORDS: &[u8] = b"alpha:!:1:2:3:4:5:6:7\nbeta:*:::::::\n";
+    const FIRST: &[u8] = b"alpha:!:1:2:3:4:5:6:7\n";
+    with_shadow_fixture(
+        "nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate",
+        Some(RECORDS),
+        || {
+            // SAFETY: all record, buffer and errno pointers remain valid.
+            unsafe {
+                let mut entry: libc::spwd = std::mem::zeroed();
+                let mut buffer = [0xa5u8; 256];
+                let mut error = 717;
+                *__errno_location() = 718;
+                assert_eq!(_nss_files_setspent(1), 1);
+                assert_eq!(*__errno_location(), 718);
+                for capacity in [0, 1, 2, FIRST.len() + 1] {
+                    assert_eq!(
+                        _nss_files_getspent_r(
+                            (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                            capacity, &mut error,
+                        ),
+                        -2
+                    );
+                    assert_eq!(error, libc::ERANGE);
+                    assert!(buffer.iter().all(|&byte| byte == 0xa5));
+                }
+                assert_eq!(
+                    _nss_files_getspent_r(
+                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                        FIRST.len() + 2, &mut error,
+                    ),
+                    1
+                );
+                assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"alpha");
+                assert_eq!(
+                    _nss_files_getspnam_r(
+                        c"alpha".as_ptr(), (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    ),
+                    1
+                );
+                assert_eq!(
+                    _nss_files_getspent_r(
+                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                        buffer.len(), &mut error,
+                    ),
+                    1
+                );
+                assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"beta");
+                assert_eq!(entry.sp_flag, libc::c_ulong::MAX);
+                error = 717;
+                *__errno_location() = 718;
+                assert_eq!(
+                    _nss_files_getspent_r(
+                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                        buffer.len(), &mut error,
+                    ),
+                    0
+                );
+                assert_eq!((error, *__errno_location()), (717, 718));
+                // The minimum reader capacity is checked even at EOF.
+                assert_eq!(
+                    _nss_files_getspent_r(
+                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(), 1, &mut error,
+                    ),
+                    -2
+                );
+                for explicit_rewind in [true, false] {
+                    if explicit_rewind {
+                        assert_eq!(_nss_files_setspent(0), 1);
+                    } else {
+                        assert_eq!(_nss_files_endspent(), 1);
+                    }
+                    assert_eq!(
+                        _nss_files_getspent_r(
+                            (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                            buffer.len(), &mut error,
+                        ),
+                        1
+                    );
+                    assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"alpha");
+                }
+                _nss_files_endspent();
+            }
+        },
+    );
+}
+
+#[test]
+fn nss_files_shadow_backend_failure_retries_after_file_appears() {
+    with_shadow_fixture(
+        "nss_files_shadow_backend_failure_retries_after_file_appears",
+        None,
+        || {
+            // SAFETY: outputs are valid even while the backend is unavailable.
+            unsafe {
+                let mut entry: libc::spwd = std::mem::zeroed();
+                let mut buffer = [0u8; 256];
+                let mut error = 717;
+                assert_eq!(_nss_files_setspent(0), -1);
+                assert_eq!(*__errno_location(), libc::ENOENT);
+                assert_eq!(
+                    _nss_files_getspnam_r(
+                        c"alpha".as_ptr(), (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    ),
+                    -1
+                );
+                assert_eq!(error, libc::ENOENT);
+                assert_eq!(
+                    _nss_files_getspent_r(
+                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                        buffer.len(), &mut error,
+                    ),
+                    -1
+                );
+                assert_eq!(error, libc::ENOENT);
+                let path = std::env::var_os("FRANKENLIBC_SHADOW_PATH").unwrap();
+                std::fs::write(path, SHADOW_FIXTURE).unwrap();
+                assert_eq!(
+                    _nss_files_getspent_r(
+                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                        buffer.len(), &mut error,
+                    ),
+                    1
+                );
+                assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"alpha");
+                _nss_files_endspent();
+            }
+        },
+    );
+}
+
+#[test]
+fn nss_files_shadow_public_enumeration_preserves_non_utf8_records() {
+    with_shadow_fixture(
+        "nss_files_shadow_public_enumeration_preserves_non_utf8_records",
+        Some(SHADOW_FIXTURE),
+        || {
+            use frankenlibc_abi::pwd_abi::{endspent, getspent_r, setspent};
+            setspent();
+            for expected_name in [b"alpha".as_slice(), b"beta"] {
+                // SAFETY: caller-provided record, string and result storage.
+                unsafe {
+                    let mut entry: libc::spwd = std::mem::zeroed();
+                    let mut buffer = [0u8; 256];
+                    let mut result = ptr::null_mut();
+                    assert_eq!(
+                        getspent_r(
+                            (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
+                            buffer.len(), &mut result,
+                        ),
+                        0
+                    );
+                    assert_eq!(result, (&raw mut entry).cast());
+                    assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), expected_name);
+                    if expected_name == b"beta" {
+                        assert_eq!(CStr::from_ptr(entry.sp_pwdp).to_bytes(), b"\xffhash");
+                    }
+                }
+            }
+            endspent();
+        },
+    );
 }

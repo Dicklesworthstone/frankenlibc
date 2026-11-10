@@ -11703,7 +11703,12 @@ nss_files_end_stub!(_nss_files_endhostent);
 nss_files_end_stub!(_nss_files_endnetent);
 nss_files_end_stub!(_nss_files_endrpcent);
 nss_files_end_stub!(_nss_files_endsgent);
-nss_files_end_stub!(_nss_files_endspent);
+/// Close the shadow files cursor without invoking other NSS modules.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endspent() -> c_int {
+    crate::pwd_abi::files_endspent();
+    NSS_STATUS_SUCCESS
+}
 
 /// Close the native files passwd cursor without entering other NSS modules.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -11775,7 +11780,11 @@ nss_files_set_stayopen_stub!(_nss_files_sethostent);
 nss_files_set_stayopen_stub!(_nss_files_setnetent);
 nss_files_set_stayopen_stub!(_nss_files_setrpcent);
 nss_files_set_stayopen_stub!(_nss_files_setsgent);
-nss_files_set_stayopen_stub!(_nss_files_setspent);
+/// Rewind native shadow records and report an unavailable backing file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setspent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(crate::pwd_abi::files_setspent)
+}
 
 fn nss_identity_setent(open: fn() -> c_int) -> c_int {
     // SAFETY: the errno accessor returns the current thread's writable cell.
@@ -12194,7 +12203,21 @@ nss_files_get_ent_stub!(_nss_files_getaliasent_r);
 nss_files_get_ent_stub!(_nss_files_getetherent_r);
 nss_files_get_ent_stub!(_nss_files_getrpcent_r);
 nss_files_get_ent_stub!(_nss_files_getsgent_r);
-nss_files_get_ent_stub!(_nss_files_getspent_r);
+/// Enumerate shadow records, retaining the current line on ERANGE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getspent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: the NSS caller supplies a shadow record and writable buffers.
+    unsafe {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
+            crate::pwd_abi::files_getspent_r(result, buffer, buflen, resolved)
+        })
+    }
+}
 
 /// Enumerate native passwd records, retaining the current record on ERANGE.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -12310,7 +12333,22 @@ nss_files_get_ent_stub!(_nss_files_getnetgrent_r);
 nss_files_get_by_str_stub!(_nss_files_getaliasbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getrpcbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getsgnam_r);
-nss_files_get_by_str_stub!(_nss_files_getspnam_r);
+/// Look up a login name in the shadow files source only.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getspnam_r(
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    // SAFETY: the NSS caller supplies a name and writable record/string slots.
+    unsafe {
+        nss_identity_lookup(errnop, buffer, buflen, |resolved| {
+            crate::pwd_abi::files_getspnam_r(name, result, buffer, buflen, resolved)
+        })
+    }
+}
 // gethostton/getntohost have the *_by_str shape under the hood.
 nss_files_get_by_str_stub!(_nss_files_gethostton_r);
 nss_files_get_by_str_stub!(_nss_files_getntohost_r);
@@ -12746,9 +12784,8 @@ pub unsafe extern "C" fn _nss_files_initgroups_dyn(
     // SAFETY: errno is the current thread's initialized cell.
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     // SAFETY: forward the NSS caller's C string and growable-array contract.
-    let result = unsafe {
-        crate::grp_abi::files_initgroups_dyn(user, gid, start, size, groupsp, limit)
-    };
+    let result =
+        unsafe { crate::grp_abi::files_initgroups_dyn(user, gid, start, size, groupsp, limit) };
     // Publish errno first because errnop may alias the thread's errno slot.
     unsafe { set_abi_errno(saved_errno) };
     match result {
