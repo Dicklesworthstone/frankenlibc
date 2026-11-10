@@ -1432,7 +1432,7 @@ mod streaming_narrow {
                 expected_next,
                 expected_errno,
             ) in [
-                (&"é中".as_bytes()[..], c"%2lc%n", 1, 5, 5, libc::EOF, 0),
+                ("é中".as_bytes(), c"%2lc%n", 1, 5, 5, libc::EOF, 0),
                 (
                     &b"a\xffZ"[..],
                     c"%2lc%n",
@@ -1443,15 +1443,7 @@ mod streaming_narrow {
                     libc::EILSEQ,
                 ),
                 (&b"a\xc3"[..], c"%2lc%n", 0, -1, 2, libc::EOF, libc::EILSEQ),
-                (
-                    &"êZ".as_bytes()[..],
-                    c"%l[é]%n",
-                    0,
-                    -1,
-                    1,
-                    0xaa,
-                    libc::EILSEQ,
-                ),
+                ("êZ".as_bytes(), c"%l[é]%n", 0, -1, 1, 0xaa, libc::EILSEQ),
             ] {
                 let run = |api: &Api, scan: FscanfFn| {
                     let mut input = bytes.to_vec();

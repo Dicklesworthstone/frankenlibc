@@ -578,7 +578,7 @@ mod contracts {
     fn again_file(api: Api) -> (i64, i64) {
         let tree = Tree(make_tree());
         let path = tree.0.join("a.txt");
-        let stream = Stream::new(api, &[path.clone()], FTS_PHYSICAL, None);
+        let stream = Stream::new(api, std::slice::from_ref(&path), FTS_PHYSICAL, None);
         let entry = stream.read();
         assert!(!entry.is_null());
         let mut marker = 0u8;
@@ -657,7 +657,12 @@ mod contracts {
 
     fn nameonly_restat(api: Api) -> Vec<Visit> {
         let tree = Tree(make_tree());
-        let stream = Stream::new(api, &[tree.0.clone()], FTS_PHYSICAL, Some(reverse_name));
+        let stream = Stream::new(
+            api,
+            std::slice::from_ref(&tree.0),
+            FTS_PHYSICAL,
+            Some(reverse_name),
+        );
         assert!(!stream.read().is_null());
         let names: Vec<_> = stream
             .children(FTS_NAMEONLY)

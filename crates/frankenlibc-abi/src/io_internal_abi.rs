@@ -1689,9 +1689,7 @@ pub(crate) fn native_stdio_slot_addr_lockfree(fd: usize) -> usize {
 ///
 /// On first access, initializes the stdio chain links and bloom filter.
 pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRegistry> {
-    let mut guard = NATIVE_STREAM_REGISTRY
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(&NATIVE_STREAM_REGISTRY);
 
     if !STD_STREAMS_INSTALLED.load(std::sync::atomic::Ordering::Acquire) {
         guard.install_std_streams();
@@ -1992,9 +1990,7 @@ pub fn lookup_adopted_foreign(foreign_ptr: *mut c_void) -> Option<usize> {
     if foreign_ptr.is_null() {
         return None;
     }
-    let map = FOREIGN_ADOPTION_MAP
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let map = crate::runtime_policy::lock_std_mutex_preserving_errno(&FOREIGN_ADOPTION_MAP);
     map.get(&(foreign_ptr as usize)).copied()
 }
 
@@ -2122,9 +2118,9 @@ pub mod conformance_testing {
                 let _ = registry.unregister(slot);
             }
             {
-                let mut map = super::FOREIGN_ADOPTION_MAP
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                let mut map = crate::runtime_policy::lock_std_mutex_preserving_errno(
+                    &super::FOREIGN_ADOPTION_MAP,
+                );
                 map.remove(&(foreign as usize));
             }
             let _ = host_fclose(foreign);
@@ -2157,9 +2153,7 @@ pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
             return file as *mut NativeFile;
         }
         // Slot was freed, remove stale mapping
-        let mut map = FOREIGN_ADOPTION_MAP
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut map = crate::runtime_policy::lock_std_mutex_preserving_errno(&FOREIGN_ADOPTION_MAP);
         map.remove(&(foreign_fp as usize));
     }
 
@@ -2206,9 +2200,7 @@ pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
 
     // Record the foreign -> native mapping
     {
-        let mut map = FOREIGN_ADOPTION_MAP
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut map = crate::runtime_policy::lock_std_mutex_preserving_errno(&FOREIGN_ADOPTION_MAP);
         map.insert(foreign_fp as usize, slot);
     }
     let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;

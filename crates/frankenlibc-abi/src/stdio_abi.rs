@@ -1084,7 +1084,7 @@ impl<T> FastRegistryMutex<T> {
 
     fn lock(&self) -> FastRegistryLockResult<parking_lot::MutexGuard<'_, T>> {
         FastRegistryLockResult {
-            guard: self.inner.lock(),
+            guard: crate::runtime_policy::lock_parking_lot_preserving_errno(&self.inner),
         }
     }
 
@@ -1195,7 +1195,7 @@ impl FastFixedMemRead {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
-        let next = self.memory.inner.lock().cursor.seek(offset, whence)?;
+        let next = self.memory.lock_inner().cursor.seek(offset, whence)?;
         self.set_eof(false);
         Some(next)
     }
@@ -1204,7 +1204,7 @@ impl FastFixedMemRead {
     fn sync_to_stream(&self, stream: &mut StdioStream) {
         // Fast and generic reads share storage and position. Only the generic
         // stream's observable offset/EOF need catching up after a fast read.
-        stream.set_offset(self.memory.inner.lock().cursor.position() as i64);
+        stream.set_offset(self.memory.lock_inner().cursor.position() as i64);
         if self.eof.load(Ordering::Acquire) {
             stream.set_eof();
         }
@@ -1421,7 +1421,7 @@ impl StreamCellInner {
     /// the published read window.
     #[inline]
     fn lock(&self) -> StreamGuard<'_> {
-        let mut guard = self.stream.lock();
+        let mut guard = crate::runtime_policy::lock_parking_lot_preserving_errno(&self.stream);
         absorb_read_window(&mut guard);
         StreamGuard {
             guard,
@@ -2657,9 +2657,7 @@ fn register_host_stream(stream: *mut c_void) {
     if registry_contains_stream(id) {
         return;
     }
-    let mut guard = host_stream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
     guard
         .entry(id)
         .or_insert(HostStreamState { io_started: false });
@@ -2674,9 +2672,7 @@ fn mark_host_io_started(stream: *mut c_void) {
     if registry_contains_stream(id) {
         return;
     }
-    let mut guard = host_stream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
     guard
         .entry(id)
         .and_modify(|state| state.io_started = true)
@@ -2685,9 +2681,7 @@ fn mark_host_io_started(stream: *mut c_void) {
 
 #[allow(dead_code)]
 fn host_stream_io_started(id: usize) -> bool {
-    let guard = host_stream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
     guard
         .get(&id)
         .map(|state| state.io_started)
@@ -2700,9 +2694,7 @@ fn unregister_host_stream(stream: *mut c_void) {
         return;
     }
     let id = canonical_stream_id(stream);
-    let mut guard = host_stream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
     guard.remove(&id);
 }
 
@@ -14460,6 +14452,8 @@ unsafe fn scan_narrow_stream(
         InlineVec, WideScanInput, WideScanProgress, WideScanReadPurpose, WideScanSession,
     };
 
+    let mut scan_errno = unsafe { *crate::errno_abi::__errno_location() };
+
     // The recursive FILE lock covers parsing, assignments, and pushback, and
     // is released if a read or cookie callback unwinds through cancellation.
     unsafe { flockfile(stream) };
@@ -14470,6 +14464,7 @@ unsafe fn scan_narrow_stream(
         // GNU rejects a write-only FILE before interpreting even an empty
         // format or %n. This is a bad-mode rejection, not a failed read, so it
         // does not set the stream error indicator.
+        drop(_lock);
         unsafe { set_abi_errno(errno::EBADF) };
         return libc::EOF;
     }
@@ -14477,10 +14472,13 @@ unsafe fn scan_narrow_stream(
         if let Some(cell) = stream_cell(id) {
             cell.lock().set_error();
         }
+        drop(_lock);
         unsafe { set_abi_errno(errno::EBADF) };
         return libc::EOF;
     }
     let Some(directives) = scanf_directives(format, None, dialect) else {
+        drop(_lock);
+        unsafe { set_abi_errno(scan_errno) };
         return libc::EOF;
     };
     let locale = NumericLocale::current();
@@ -14492,7 +14490,6 @@ unsafe fn scan_narrow_stream(
     );
     let mut writer = crate::wchar_abi::WideScanWriter::new_narrow(ap);
     let mut input = None;
-    let mut scan_errno = unsafe { *crate::errno_abi::__errno_location() };
     let summary = loop {
         let progress = session.resume(
             input.take(),
@@ -14553,7 +14550,8 @@ unsafe fn scan_narrow_stream(
         summary.count
     };
     drop(writer);
-    // SAFETY: preserve the scan's errno across allocation and cursor cleanup.
+    drop(_lock);
+    // SAFETY: preserve the scan's errno across allocation, cursor cleanup, and unlock.
     unsafe { set_abi_errno(error) };
     result
 }
@@ -15521,9 +15519,7 @@ pub unsafe extern "C-unwind" fn freopen(
                 sync_memstream_to_caller(id, old, true);
                 crate::wchar_abi::sync_open_wmemstream_to_caller(id, old);
             }
-            let mut sync_guard = mem_sync_registry()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut sync_guard = lock_mem_sync_registry();
             if let Some(ref mut map) = *sync_guard {
                 map.remove(&id);
             }
@@ -16693,9 +16689,14 @@ struct FixedMemCookieInner {
 }
 
 impl FixedMemCookie {
+    #[inline]
+    fn lock_inner(&self) -> parking_lot::MutexGuard<'_, FixedMemCookieInner> {
+        crate::runtime_policy::lock_parking_lot_preserving_errno(&self.inner)
+    }
+
     fn read_into(&self, dst: &mut [u8], delimiter: Option<u8>) -> usize {
         let prefetch = self.read_capacity.load(Ordering::Acquire);
-        let mut inner = self.inner.lock();
+        let mut inner = self.lock_inner();
         let FixedMemCookieInner {
             cursor,
             borrowed,
@@ -16753,7 +16754,7 @@ unsafe extern "C-unwind" fn fixed_mem_cookie_write(
             std::slice::from_raw_parts(src.cast(), count),
         )
     };
-    let mut inner = memory.inner.lock();
+    let mut inner = memory.lock_inner();
     let FixedMemCookieInner {
         cursor,
         borrowed,
@@ -16789,7 +16790,7 @@ unsafe extern "C-unwind" fn fixed_mem_cookie_seek(
     // SAFETY: the cookie registry owns the state and stdio supplies a live
     // offset slot for the duration of the callback.
     let (memory, offset) = unsafe { (&*cookie.cast::<FixedMemCookie>(), &mut *offset) };
-    if let Some(position) = memory.inner.lock().cursor.seek(*offset, whence) {
+    if let Some(position) = memory.lock_inner().cursor.seek(*offset, whence) {
         *offset = position as i64;
         0
     } else {
@@ -16826,9 +16827,15 @@ fn cookie_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, CookieStrea
     &COOKIE_REGISTRY
 }
 
+#[inline]
+fn lock_cookie_registry()
+-> std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&COOKIE_REGISTRY)
+}
+
 /// Read from a cookie-backed stream. Called by fread/fgetc for cookie streams.
 pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -> isize {
-    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = lock_cookie_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
     {
@@ -16853,7 +16860,7 @@ pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -
 
 /// Write to a cookie-backed stream. Called by fwrite/fputc for cookie streams.
 pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize) -> isize {
-    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = lock_cookie_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
     {
@@ -16917,7 +16924,7 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     if stream.is_appending()
         && let Some(memory) = &fixed_memory
     {
-        let end = memory.inner.lock().cursor.content_end();
+        let end = memory.lock_inner().cursor.content_end();
         stream.set_offset(end.saturating_add(stream.pending_flush().len()) as i64);
     }
     let Some(result) = stream.buffer_write(bytes) else {
@@ -16958,7 +16965,7 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     let current = flushed.saturating_sub(flushed_from_buffer).min(bytes.len());
     if let Some(memory) = fixed_memory {
         stream.mark_flushed();
-        stream.set_offset(memory.inner.lock().cursor.position() as i64);
+        stream.set_offset(memory.lock_inner().cursor.position() as i64);
         return current;
     }
     stream.set_offset(
@@ -16986,7 +16993,7 @@ unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
     if let Some(memory) = fixed_mem_cookie(id) {
         // A short fixed-buffer flush consumes its available prefix. Discard
         // staged overflow and expose the resulting position, never replay it.
-        stream.set_offset(memory.inner.lock().cursor.position() as i64);
+        stream.set_offset(memory.lock_inner().cursor.position() as i64);
     }
     if written == expected as isize {
         true
@@ -17000,9 +17007,7 @@ fn fixed_mem_cookie(id: usize) -> Option<Arc<FixedMemCookie>> {
     if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
         return None;
     }
-    cookie_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+    lock_cookie_registry()
         .as_ref()?
         .get(&id)?
         .fixed_memory
@@ -17012,7 +17017,7 @@ fn fixed_mem_cookie(id: usize) -> Option<Arc<FixedMemCookie>> {
 fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
     if let Some(memory) = fixed_mem_cookie(id) {
         let _ = sync_fast_fixed_mem_read_to_stream(id, stream);
-        let mut inner = memory.inner.lock();
+        let mut inner = memory.lock_inner();
         if !stream.last_was_write() {
             let _ = inner.cursor.seek(stream.offset(), libc::SEEK_SET);
             let eof = stream.is_eof();
@@ -17027,7 +17032,7 @@ fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
 
 /// Seek a cookie-backed stream.
 pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_int) -> c_int {
-    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = lock_cookie_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
     {
@@ -17073,7 +17078,7 @@ unsafe fn cookie_stream_position(id: usize, whence: c_int) -> Option<i64> {
 
 /// Close a cookie-backed stream: call the close callback and remove from registry.
 pub(crate) unsafe fn cookie_stream_close(id: usize) -> c_int {
-    let mut guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_cookie_registry();
     if let Some(ref mut map) = *guard
         && let Some(info) = map.remove(&id)
         && let Some(close_fn) = info.funcs.close
@@ -17094,7 +17099,7 @@ pub(crate) fn is_cookie_stream(id: usize) -> bool {
     if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
         return false;
     }
-    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = lock_cookie_registry();
     if let Some(ref map) = *guard {
         return map.contains_key(&id);
     }
@@ -17128,6 +17133,12 @@ fn mem_sync_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemStream
     &MEM_STREAM_SYNC
 }
 
+#[inline]
+fn lock_mem_sync_registry()
+-> std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, MemStreamSync>>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(mem_sync_registry())
+}
+
 /// Synchronize open_memstream data to the C caller's pointers.
 /// Called after fflush and fclose for open_memstream streams.
 unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream, closing: bool) {
@@ -17137,9 +17148,7 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream, closing: boo
     if !MEM_STREAM_SYNC_PRESENT.load(Ordering::Acquire) {
         return;
     }
-    let sync_guard = mem_sync_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let sync_guard = lock_mem_sync_registry();
     if let Some(ref map) = *sync_guard
         && let Some(info) = map.get(&id)
         && let Some(data) = stream.mem_data()
@@ -17465,9 +17474,7 @@ pub unsafe extern "C" fn fmemopen(
         seek: Some(fixed_mem_cookie_seek),
         close: None,
     };
-    cookie_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+    lock_cookie_registry()
         .get_or_insert_with(artifact_hash_map)
         .insert(
             id,
@@ -17532,9 +17539,7 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
     let id = canonical_stream_id(handle);
 
     // Register sync metadata so fflush/fclose can update the C caller's pointers.
-    let mut sync_guard = mem_sync_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut sync_guard = lock_mem_sync_registry();
     let map = sync_guard.get_or_insert_with(artifact_hash_map);
     map.insert(
         id,
@@ -17599,7 +17604,7 @@ pub unsafe extern "C" fn fopencookie(
     drop(reg);
 
     // Register the cookie info
-    let mut cookie_guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut cookie_guard = lock_cookie_registry();
     let map = cookie_guard.get_or_insert_with(artifact_hash_map);
     map.insert(
         id,

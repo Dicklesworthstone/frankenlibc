@@ -3131,6 +3131,7 @@ pub(crate) fn decide(
         return (mode, decision);
     };
 
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
     ensure_minimal_panic_hook();
     let Some(k) = kernel() else {
         let decision = passthrough_decision();
@@ -3578,6 +3579,7 @@ fn decide_strict_observation(
         return (mode, decision);
     };
 
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
     ensure_minimal_panic_hook();
     let Some(k) = kernel() else {
         let decision = passthrough_decision();
@@ -3621,7 +3623,7 @@ fn decide_strict_observation(
 ///
 /// Restores on unwind too: [`observe`] runs a panic-catching guard, and an errno
 /// left over from a caught panic is exactly as wrong as one left by a futex.
-struct ErrnoTransparencyGuard {
+pub(crate) struct ErrnoTransparencyGuard {
     fl_slot: *mut std::ffi::c_int,
     fl_value: std::ffi::c_int,
     /// Null when the host `__errno_location` is not resolvable — in which case
@@ -3633,7 +3635,7 @@ struct ErrnoTransparencyGuard {
 
 impl ErrnoTransparencyGuard {
     #[inline]
-    fn capture() -> Self {
+    pub(crate) fn capture() -> Self {
         // SAFETY: `__errno_location` returns this thread's slot, valid for the
         // life of the thread and therefore for this guard's scope.
         let fl_slot = unsafe { crate::errno_abi::__errno_location() };
@@ -3689,6 +3691,49 @@ impl Drop for ErrnoTransparencyGuard {
         if !self.host_slot.is_null() {
             // SAFETY: captured from the host errno slot for this thread.
             unsafe { std::ptr::write_volatile(self.host_slot, self.host_value) };
+        }
+    }
+}
+
+/// Lock a `parking_lot::Mutex` without letting a contended futex wait clobber
+/// caller `errno` (e.g. `EAGAIN` when the lock word changes before sleeping).
+///
+/// The uncontended fast path is a pure user-space atomic CAS (`try_lock`) with
+/// zero TLS `errno` traffic; only the `#[cold]` contended fallback snapshots
+/// and restores `errno` around the blocking `lock()` acquisition.
+#[inline]
+pub(crate) fn lock_parking_lot_preserving_errno<T>(
+    mutex: &parking_lot::Mutex<T>,
+) -> parking_lot::MutexGuard<'_, T> {
+    if let Some(guard) = mutex.try_lock() {
+        return guard;
+    }
+    #[cold]
+    #[inline(never)]
+    fn lock_contended<T>(mutex: &parking_lot::Mutex<T>) -> parking_lot::MutexGuard<'_, T> {
+        let _errno_guard = ErrnoTransparencyGuard::capture();
+        mutex.lock()
+    }
+    lock_contended(mutex)
+}
+
+/// Lock a `std::sync::Mutex` (recovering from poison) without letting a
+/// contended futex wait clobber caller `errno`.
+#[inline]
+pub(crate) fn lock_std_mutex_preserving_errno<T>(
+    mutex: &std::sync::Mutex<T>,
+) -> std::sync::MutexGuard<'_, T> {
+    match mutex.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(err)) => err.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            #[cold]
+            #[inline(never)]
+            fn lock_contended<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+                let _errno_guard = ErrnoTransparencyGuard::capture();
+                mutex.lock().unwrap_or_else(|err| err.into_inner())
+            }
+            lock_contended(mutex)
         }
     }
 }

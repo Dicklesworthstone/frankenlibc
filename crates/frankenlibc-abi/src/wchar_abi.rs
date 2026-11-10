@@ -8062,6 +8062,7 @@ pub(crate) unsafe fn vfwscanf_with_dialect(
     else {
         return libc::EOF;
     };
+    drop(_lock);
     outcome.return_value()
 }
 
