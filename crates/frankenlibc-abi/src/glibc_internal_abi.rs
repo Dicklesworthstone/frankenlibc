@@ -8904,13 +8904,17 @@ pub unsafe extern "C" fn __fstat64(fd: c_int, buf: *mut c_void) -> c_int {
 
 /// `__fseeko64` — internal fseeko64 alias routed through native stdio.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn __fseeko64(
+    stream: *mut c_void,
+    offset: i64,
+    whence: c_int,
+) -> c_int {
     unsafe { crate::stdio_abi::fseeko64(stream, offset, whence) }
 }
 
 /// `__ftello64` — internal ftello64 alias routed through native stdio.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __ftello64(stream: *mut c_void) -> i64 {
+pub unsafe extern "C-unwind" fn __ftello64(stream: *mut c_void) -> i64 {
     unsafe { crate::stdio_abi::ftello64(stream) }
 }
 

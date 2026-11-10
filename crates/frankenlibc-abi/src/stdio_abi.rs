@@ -46,8 +46,8 @@ type HostFgetcFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 type HostFgetsFn = unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
 type HostFreadFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type HostUngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
-type HostFseekFn = unsafe extern "C" fn(*mut c_void, c_long, c_int) -> c_int;
-type HostFtellFn = unsafe extern "C" fn(*mut c_void) -> c_long;
+type HostFseekFn = unsafe extern "C-unwind" fn(*mut c_void, c_long, c_int) -> c_int;
+type HostFtellFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_long;
 type HostFflushFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 type HostSetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
 type HostGetdelimFn =
@@ -58,8 +58,8 @@ type HostVfscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, *mu
 #[cfg(not(feature = "standalone"))]
 type HostVfwscanfFn =
     unsafe extern "C-unwind" fn(*mut c_void, *const libc::wchar_t, *mut c_void) -> c_int;
-type HostFgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
-type HostFsetposFn = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
+type HostFgetposFn = unsafe extern "C-unwind" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
+type HostFsetposFn = unsafe extern "C-unwind" fn(*mut c_void, *const libc::fpos_t) -> c_int;
 type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
 type HostFlockfileFn = unsafe extern "C" fn(*mut c_void);
 type HostFunlockfileFn = unsafe extern "C" fn(*mut c_void);
@@ -6273,9 +6273,6 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
             let s = &mut *s_guard;
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
             if !unsafe { flush_cookie_stream(id, s) } {
-                if fixed_mem_cookie(id).is_none() {
-                    unsafe { set_abi_errno(errno::EIO) };
-                }
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
                 return -1;
             }
@@ -6283,15 +6280,30 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
 
         let mut cookie_off = offset;
         let mut cookie_whence = whence;
-        if fixed_mem_cookie(id).is_some() && whence == libc::SEEK_CUR {
+        if whence == libc::SEEK_CUR {
             let mut s = cell.lock();
             let _ = sync_fast_fixed_mem_read_to_stream(id, &mut s);
-            let Some(target) = s.offset().checked_add(offset) else {
-                unsafe { set_abi_errno(errno::EINVAL) };
-                return -1;
-            };
-            cookie_off = target;
-            cookie_whence = libc::SEEK_SET;
+            if fixed_mem_cookie(id).is_some() {
+                // The fixed-memory cursor owns its own read-ahead window;
+                // its synchronized logical position already excludes it.
+                let Some(target) = s.offset().checked_add(offset) else {
+                    unsafe { set_abi_errno(errno::EINVAL) };
+                    return -1;
+                };
+                cookie_off = target;
+                cookie_whence = libc::SEEK_SET;
+            } else {
+                // A generic cookie's cursor is ahead of the stream by any
+                // bytes returned to stdio's input buffer (ungetc/scanf).
+                // SEEK_CUR is relative to the logical stream position,
+                // not to the callback's last read position.
+                let unread = i64::try_from(s.readable_buffered()).ok();
+                let Some(target) = unread.and_then(|n| offset.checked_sub(n)) else {
+                    unsafe { set_abi_errno(errno::EOVERFLOW) };
+                    return -1;
+                };
+                cookie_off = target;
+            }
         }
         let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, cookie_whence) };
 
@@ -6299,9 +6311,8 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
         let s = &mut *s_guard;
 
         if rc != 0 {
-            if fixed_mem_cookie(id).is_none() {
-                s.set_error();
-            }
+            // A positioning failure alone is not an input/output error.
+            // Leave the buffered input, EOF and callback's errno unchanged.
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return -1;
         }
@@ -6427,6 +6438,45 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
         return -1;
     }
 
+    if is_cookie_stream(id) && fixed_mem_cookie(id).is_none() {
+        let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        };
+        let (pending, unread, appending) = {
+            let s = cell.lock();
+            (
+                s.pending_flush().len(),
+                s.readable_buffered(),
+                s.is_appending(),
+            )
+        };
+        // Query the backend outside registry/stream locks: a user seek
+        // callback may inspect the stream or unwind through this boundary.
+        // Position queries do not flush output or discard buffered input.
+        let whence = if appending && pending != 0 {
+            libc::SEEK_END
+        } else {
+            libc::SEEK_CUR
+        };
+        let Some(position) = (unsafe { cookie_stream_position(id, whence) }) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        };
+        return match buffered_stream_position(position, pending, unread) {
+            Ok(position) => {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+                position as c_long
+            }
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                -1
+            }
+        };
+    }
+
     let Some(cell) = stream_cell(id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -6459,14 +6509,43 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
             return -1;
         }
     }
-    // glibc's ftell on an appending stream flushes pending output first: its
-    // position is where the kernel put it, the end of the file.
+    // GNU position queries account for pending append output without writing
+    // it. Seeking the descriptor to EOF discovers where O_APPEND will place
+    // those bytes, while the buffer remains pending for fflush/fclose.
     if s.is_appending() && s.fd() >= 0 && !s.pending_flush().is_empty() {
-        let _ = unsafe { flush_stream(s) };
+        let position = raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_END)
+            .and_then(|end| buffered_stream_position(end, s.pending_flush().len(), 0));
+        match position {
+            Ok(position) => s.set_offset(position),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return -1;
+            }
+        }
     }
     let off = s.offset();
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     off as c_long
+}
+
+/// Reconcile a backend cursor with bytes still owned by stdio. Checked
+/// arithmetic prevents a large cookie offset from wrapping into a plausible
+/// position. This changes no buffering or input/output status.
+fn buffered_stream_position(backend: i64, pending: usize, unread: usize) -> Result<i64, c_int> {
+    let pending = i64::try_from(pending).map_err(|_| errno::EOVERFLOW)?;
+    let unread = i64::try_from(unread).map_err(|_| errno::EOVERFLOW)?;
+    let position = backend
+        .checked_add(pending)
+        .and_then(|position| position.checked_sub(unread))
+        // GNU position queries reject an impossible reconciled cursor with
+        // EINVAL, even if its backend offset alone was representable.
+        .ok_or(errno::EINVAL)?;
+    if position < 0 {
+        Err(errno::EINVAL)
+    } else {
+        Ok(position)
+    }
 }
 
 /// POSIX `fseeko` — fseek with off_t offset (identical on LP64).
@@ -15121,30 +15200,23 @@ pub unsafe extern "C-unwind" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpo
         return -1;
     }
 
-    // MT-safe cell-cache fast path (see ftell — fgetpos is ftell with an out-param): a threaded
-    // backtracking-parser save loop otherwise pays the registry map lock per call. A gen-valid hit
-    // is a non-mem fd stream (sync_fast_fixed_mem_read_to_stream is a no-op), so writing `s.offset()`
-    // into `*pos` (the __pos field) is byte-identical to the slow path (decide/observe elided as the
-    // other cached fast paths elide them). (fsetpos delegates to fseek ⇒ already cell-cached.)
-    if let Some(cell) = stream_cell_cache_lookup(stream) {
-        let off = cell.lock().offset();
-        // SAFETY: pos is non-null (checked) and points to a valid fpos_t; the first 8 bytes are __pos.
-        unsafe { std::ptr::write(pos as *mut i64, off) };
-        return 0;
-    }
-
-    let id = canonical_stream_id(stream);
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
-        return -1;
-    }
-
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if may_delegate_to_host(stream, id)
+    if may_delegate_to_host(stream, canonical_stream_id(stream))
         && let Some(host_fgetpos) = unsafe { host_fgetpos_fn() }
     {
+        let (_, decision) = runtime_policy::decide(
+            ApiFamily::Stdio,
+            canonical_stream_id(stream),
+            0,
+            false,
+            false,
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        }
         let rc = unsafe { host_fgetpos(stream, pos) };
         if rc != 0 {
             unsafe { sync_host_errno(errno::EINVAL) };
@@ -15153,25 +15225,24 @@ pub unsafe extern "C-unwind" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpo
         return rc;
     }
 
-    let Some(cell) = stream_cell(id) else {
-        unsafe { set_abi_errno(errno::EBADF) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+    // Native streams use stateless codecs and return incomplete multibyte
+    // input to their byte buffer. Their saved position is therefore the same
+    // logical offset as ftell, including pipe errors, append output and cookie
+    // callbacks. Host-owned conversion state is preserved by the route above.
+    // Do not write any part of the caller's fpos_t if querying the position fails.
+    let offset = unsafe { ftell(stream) };
+    if offset < 0 {
         return -1;
-    };
-    let mut s_guard = cell.lock();
-    let s = &mut *s_guard;
-    let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+    }
 
     // fpos_t is opaque; we store the offset as i64 at the start of the struct.
     // On Linux x86_64, fpos_t starts with __pos: i64.
-    let offset = s.offset();
     // SAFETY: pos is non-null and points to a valid fpos_t; we write the
     // offset into the first 8 bytes which correspond to the __pos field.
     unsafe {
-        std::ptr::write(pos as *mut i64, offset);
+        std::ptr::write(pos as *mut i64, offset as i64);
     }
 
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     0
 }
 
@@ -16970,6 +17041,34 @@ pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_i
     }
     unsafe { set_abi_errno(errno::EBADF) };
     -1
+}
+
+/// Query a custom backend without inventing a byte-counter position for an
+/// unseekable stream. GNU tell/getpos retain a callback's errno (including a
+/// pre-existing value); when no error was supplied they report EIO.
+unsafe fn cookie_stream_position(id: usize, whence: c_int) -> Option<i64> {
+    let (cookie, seek) = {
+        let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(info) = guard.as_ref().and_then(|map| map.get(&id)) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return None;
+        };
+        (info.cookie, info.funcs.seek)
+    };
+    let mut position = 0i64;
+    if let Some(seek) = seek
+        // SAFETY: the live stream owns cookie; position is initialized local
+        // storage and no registry or stream-state lock spans the callback.
+        && unsafe { seek(cookie, &mut position, whence) } == 0
+        && position >= 0
+    {
+        return Some(position);
+    }
+    // SAFETY: access only the calling thread's canonical errno slot.
+    if unsafe { *crate::errno_abi::__errno_location() } == 0 {
+        unsafe { set_abi_errno(errno::EIO) };
+    }
+    None
 }
 
 /// Close a cookie-backed stream: call the close callback and remove from registry.

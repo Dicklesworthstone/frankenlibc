@@ -2969,13 +2969,13 @@ pub unsafe extern "C-unwind" fn _IO_fflush(fp: *mut c_void) -> c_int {
 
 /// `_IO_fgetpos` — internal fgetpos.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fgetpos(fp: *mut c_void, pos: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fgetpos(fp: *mut c_void, pos: *mut c_void) -> c_int {
     unsafe { stdio_abi::fgetpos(fp, pos.cast::<libc::fpos_t>()) }
 }
 
 /// `_IO_fgetpos64` — internal fgetpos64.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fgetpos64(fp: *mut c_void, pos: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fgetpos64(fp: *mut c_void, pos: *mut c_void) -> c_int {
     unsafe { stdio_abi::fgetpos64(fp, pos) }
 }
 
@@ -3022,19 +3022,19 @@ pub unsafe extern "C-unwind" fn _IO_fread(
 
 /// `_IO_fsetpos` — internal fsetpos.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fsetpos(fp: *mut c_void, pos: *const c_void) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fsetpos(fp: *mut c_void, pos: *const c_void) -> c_int {
     unsafe { stdio_abi::fsetpos(fp, pos.cast::<libc::fpos_t>()) }
 }
 
 /// `_IO_fsetpos64` — internal fsetpos64.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fsetpos64(fp: *mut c_void, pos: *const c_void) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fsetpos64(fp: *mut c_void, pos: *const c_void) -> c_int {
     unsafe { stdio_abi::fsetpos64(fp, pos) }
 }
 
 /// `_IO_ftell` — internal ftell.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_ftell(fp: *mut c_void) -> i64 {
+pub unsafe extern "C-unwind" fn _IO_ftell(fp: *mut c_void) -> i64 {
     unsafe { stdio_abi::ftell(fp) as i64 }
 }
 
