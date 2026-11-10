@@ -236,6 +236,7 @@ impl Declined {
             return Some(false);
         }
         match &self.parsed {
+            RootParseOutcome::HostCoupled => Some(true),
             RootParseOutcome::Parsed(object) => Some(super::host_may_load_parsed_object(object)),
             RootParseOutcome::InvalidElf => Some(false),
             RootParseOutcome::NotAttempted => None,

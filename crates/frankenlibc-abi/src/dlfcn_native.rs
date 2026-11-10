@@ -427,6 +427,7 @@ fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
 pub(super) enum RootParseOutcome {
     NotAttempted,
     InvalidElf,
+    HostCoupled,
     Parsed(LoadedObject),
 }
 
@@ -445,6 +446,192 @@ impl Drop for ParsedOnDrop<'_> {
     }
 }
 
+#[cfg(not(feature = "standalone"))]
+fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> bool {
+    use std::os::unix::fs::FileExt;
+    while !buf.is_empty() {
+        match file.read_at(buf, offset) {
+            Ok(0) => return false,
+            Ok(n) => {
+                buf = &mut buf[n..];
+                offset = match offset.checked_add(n as u64) {
+                    Some(next) => next,
+                    None => return false,
+                };
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+#[cfg(not(feature = "standalone"))]
+fn vaddr_to_file_offset_raw(phdrs: &[u8], vaddr: u64, size: u64) -> Option<u64> {
+    let mut resolved = None;
+    for ph in phdrs.as_chunks::<56>().0 {
+        let p_type = u32::from_le_bytes(ph[0..4].try_into().ok()?);
+        if p_type != 1 {
+            continue;
+        }
+        let p_offset = u64::from_le_bytes(ph[8..16].try_into().ok()?);
+        let p_vaddr = u64::from_le_bytes(ph[16..24].try_into().ok()?);
+        let p_filesz = u64::from_le_bytes(ph[32..40].try_into().ok()?);
+        let delta = match vaddr.checked_sub(p_vaddr) {
+            Some(d) if d < p_filesz => d,
+            _ => continue,
+        };
+        if delta.checked_add(size)? > p_filesz {
+            continue;
+        }
+        let file_off = p_offset.checked_add(delta)?;
+        if let Some(prev) = resolved
+            && prev != file_off
+        {
+            return None;
+        }
+        resolved = Some(file_off);
+    }
+    resolved
+}
+
+/// Fast positional check for normal glibc-linked shared objects whose
+/// `PT_DYNAMIC` `DT_NEEDED` table names a library in `HOST_RUNTIME_SONAMES`.
+/// Avoids reading multi-megabyte `.text`/`.rodata` sections and parsing tens of
+/// thousands of symbols/relocations when the native loader will immediately
+/// decline the object and hand it to host `dlopen`.
+#[cfg(not(feature = "standalone"))]
+fn file_needs_host_runtime(file: &File) -> bool {
+    const NATIVE_MACHINE: u16 = if cfg!(target_arch = "x86_64") {
+        62
+    } else if cfg!(target_arch = "aarch64") {
+        183
+    } else {
+        0
+    };
+    let mut hdr = [0u8; 64];
+    if !read_exact_at(file, &mut hdr, 0) {
+        return false;
+    }
+    if &hdr[..7] != b"\x7fELF\x02\x01\x01"
+        || hdr[16..18] != [3, 0]
+        || u16::from_le_bytes([hdr[18], hdr[19]]) != NATIVE_MACHINE
+        || hdr[20..24] != [1, 0, 0, 0]
+    {
+        return false;
+    }
+    let e_phoff = u64::from_le_bytes(hdr[32..40].try_into().unwrap());
+    let e_phentsize = u16::from_le_bytes([hdr[54], hdr[55]]);
+    let e_phnum = u16::from_le_bytes([hdr[56], hdr[57]]) as usize;
+    if e_phentsize != 56 || e_phnum == 0 || e_phnum > 64 {
+        return false;
+    }
+    let mut phdrs_buf = [0u8; 56 * 64];
+    let phdrs = &mut phdrs_buf[..56 * e_phnum];
+    if !read_exact_at(file, phdrs, e_phoff) {
+        return false;
+    }
+    let mut dyn_phdr = None;
+    for ph in phdrs.as_chunks::<56>().0 {
+        let p_type = u32::from_le_bytes(ph[0..4].try_into().unwrap());
+        if p_type == 2 {
+            if dyn_phdr.is_some() {
+                return false;
+            }
+            let p_offset = u64::from_le_bytes(ph[8..16].try_into().unwrap());
+            let p_vaddr = u64::from_le_bytes(ph[16..24].try_into().unwrap());
+            let p_filesz = u64::from_le_bytes(ph[32..40].try_into().unwrap());
+            let p_memsz = u64::from_le_bytes(ph[40..48].try_into().unwrap());
+            dyn_phdr = Some((p_offset, p_vaddr, p_filesz, p_memsz));
+        }
+    }
+    let Some((dyn_offset, dyn_vaddr, dyn_filesz, dyn_memsz)) = dyn_phdr else {
+        return false;
+    };
+    if dyn_filesz > dyn_memsz
+        || dyn_filesz == 0
+        || dyn_filesz % 16 != 0
+        || dyn_filesz > 8192
+        || vaddr_to_file_offset_raw(phdrs, dyn_vaddr, dyn_filesz) != Some(dyn_offset)
+    {
+        return false;
+    }
+    let mut dyn_buf = [0u8; 8192];
+    let dyn_slice = &mut dyn_buf[..dyn_filesz as usize];
+    if !read_exact_at(file, dyn_slice, dyn_offset) {
+        return false;
+    }
+    let mut strtab_vaddr = None;
+    let mut strsz = None;
+    let mut needed = [0u64; 32];
+    let mut needed_len = 0usize;
+    let mut terminated = false;
+    for entry in dyn_slice.as_chunks::<16>().0 {
+        let tag = i64::from_le_bytes(entry[..8].try_into().unwrap());
+        let val = u64::from_le_bytes(entry[8..].try_into().unwrap());
+        if tag == 0 {
+            terminated = true;
+            break;
+        }
+        match tag {
+            1 => {
+                if needed_len >= needed.len() {
+                    return false;
+                }
+                needed[needed_len] = val;
+                needed_len += 1;
+            }
+            5 => {
+                if strtab_vaddr.replace(val).is_some_and(|prev| prev != val) {
+                    return false;
+                }
+            }
+            10 => {
+                if strsz.replace(val).is_some_and(|prev| prev != val) {
+                    return false;
+                }
+            }
+            17 => return false,
+            18 if val != 0 => return false,
+            _ => {}
+        }
+    }
+    if !terminated || needed_len == 0 {
+        return false;
+    }
+    let (Some(strtab_vaddr), Some(strsz)) = (strtab_vaddr, strsz) else {
+        return false;
+    };
+    if strsz == 0 {
+        return false;
+    }
+    let Some(strtab_offset) = vaddr_to_file_offset_raw(phdrs, strtab_vaddr, strsz) else {
+        return false;
+    };
+    for &off in &needed[..needed_len] {
+        if off >= strsz {
+            return false;
+        }
+        let max_read = (strsz - off).min(32) as usize;
+        let mut name_buf = [0u8; 32];
+        let Some(read_off) = strtab_offset.checked_add(off) else {
+            return false;
+        };
+        if !read_exact_at(file, &mut name_buf[..max_read], read_off) {
+            return false;
+        }
+        let Some(nul) = name_buf[..max_read].iter().position(|&b| b == 0) else {
+            continue;
+        };
+        if let Ok(name) = std::str::from_utf8(&name_buf[..nul])
+            && HOST_RUNTIME_SONAMES.contains(&name)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn prepare_file(
     mut file: File,
     device: u64,
@@ -458,6 +645,13 @@ fn prepare_file(
     #[cfg(not(feature = "standalone"))]
     if let Some(slot) = parsed_out.as_deref_mut() {
         *slot = RootParseOutcome::InvalidElf;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if file_needs_host_runtime(&file) {
+        if let Some(slot) = parsed_out {
+            *slot = RootParseOutcome::HostCoupled;
+        }
+        return None;
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
