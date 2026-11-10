@@ -115,9 +115,32 @@ impl LiteralFormatCacheEntry {
     }
 }
 
+const MAX_READ_ONLY_MAPPINGS: usize = 128;
+const RO_MAP_UNINIT: u8 = 0;
+const RO_MAP_INIT: u8 = 1;
+const RO_MAP_READY: u8 = 2;
+
+struct ReadOnlyMappingSlot {
+    start: AtomicUsize,
+    end: AtomicUsize,
+}
+
+impl ReadOnlyMappingSlot {
+    const fn new() -> Self {
+        Self {
+            start: AtomicUsize::new(0),
+            end: AtomicUsize::new(0),
+        }
+    }
+}
+
 static LITERAL_FORMAT_CACHE: [LiteralFormatCacheEntry; LITERAL_FORMAT_CACHE_SIZE] =
     [const { LiteralFormatCacheEntry::new() }; LITERAL_FORMAT_CACHE_SIZE];
-static READ_ONLY_MAPPINGS: OnceLock<Vec<(usize, usize)>> = OnceLock::new();
+static READ_ONLY_MAPPING_STATE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(RO_MAP_UNINIT);
+static READ_ONLY_MAPPING_LEN: AtomicUsize = AtomicUsize::new(0);
+static READ_ONLY_MAPPING_SLOTS: [ReadOnlyMappingSlot; MAX_READ_ONLY_MAPPINGS] =
+    [const { ReadOnlyMappingSlot::new() }; MAX_READ_ONLY_MAPPINGS];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1561,12 +1584,15 @@ fn absorb_read_window(stream: &mut StdioStream) {
         return;
     };
     let start = window.as_ptr() as usize;
+    if ptr <= start {
+        return;
+    }
     let end = start + window.len();
     // SAFETY: as above.
     let published_end = unsafe { read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET) }
         .load(Ordering::Relaxed);
     // Only a window that still describes this buffer counts.
-    if published_end == end && ptr > start && ptr <= end {
+    if published_end == end && ptr <= end {
         stream.consume_window(ptr - start);
     }
 }
@@ -1582,9 +1608,12 @@ fn absorb_write_window(stream: &mut StdioStream, handle: usize) {
     if ptr == 0 {
         return;
     }
-    let Some((base, _, capacity)) = stream.write_window() else {
+    let Some((base, used, capacity)) = stream.write_window() else {
         return;
     };
+    if ptr <= base + used {
+        return;
+    }
     // SAFETY: as above.
     let (published_base, published_end) = unsafe {
         (
@@ -1595,7 +1624,7 @@ fn absorb_write_window(stream: &mut StdioStream, handle: usize) {
     // Only a window that still describes this buffer counts. `_IO_buf_end`,
     // not `_IO_write_end`: a line-buffered window publishes the latter at the
     // staged end, and {fmt} fills up to the former.
-    if published_base == base && published_end == base + capacity && ptr > base {
+    if published_base == base && published_end == base + capacity && ptr <= base + capacity {
         stream.commit_write_window(ptr - base);
     }
 }
@@ -1606,17 +1635,50 @@ fn absorb_write_window(stream: &mut StdioStream, handle: usize) {
 /// does, so every inline `putc` reaches `__overflow` and its newline flush.
 #[inline]
 fn store_write_window(handle: usize, window: Option<(usize, usize, usize)>, line: bool) {
-    let (base, ptr, end) = window.map_or((0, 0, 0), |(b, used, cap)| (b, b + used, b + cap));
+    let Some((base, used, cap)) = window else {
+        // SAFETY: `handle` is a registered header.
+        unsafe {
+            if read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+                .load(Ordering::Relaxed)
+                != 0
+            {
+                read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+                    .store(0, Ordering::Relaxed);
+            }
+        }
+        return;
+    };
+    let ptr = base + used;
+    let end = base + cap;
     let write_end = if line { ptr } else { end };
     // SAFETY: `handle` is a registered header.
     unsafe {
-        read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
-            .store(base, Ordering::Relaxed);
-        read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
-            .store(write_end, Ordering::Relaxed);
-        read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
-            .store(base, Ordering::Relaxed);
-        read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).store(end, Ordering::Relaxed);
+        if read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET).load(Ordering::Relaxed)
+            != base
+            || read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).load(Ordering::Relaxed)
+                != end
+        {
+            read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
+                .store(base, Ordering::Relaxed);
+            read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
+                .store(base, Ordering::Relaxed);
+            read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET)
+                .store(end, Ordering::Relaxed);
+        }
+        if read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET).load(Ordering::Relaxed)
+            != write_end
+        {
+            read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
+                .store(write_end, Ordering::Relaxed);
+        }
         read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
             .store(ptr, Ordering::Relaxed);
     }
@@ -1625,14 +1687,34 @@ fn store_write_window(handle: usize, window: Option<(usize, usize, usize)>, line
 /// Publish `window` (or an empty one) at `handle`.
 #[inline]
 fn store_read_window(handle: usize, window: Option<&[u8]>) {
-    let (start, end) = window.map_or((0, 0), |w| {
-        (w.as_ptr() as usize, w.as_ptr() as usize + w.len())
-    });
+    let Some(w) = window else {
+        // SAFETY: `handle` is a registered header.
+        unsafe {
+            if read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET).load(Ordering::Relaxed)
+                != 0
+            {
+                read_window_word(handle, io_internal_abi::IO_READ_BASE_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET)
+                    .store(0, Ordering::Relaxed);
+            }
+        }
+        return;
+    };
+    let start = w.as_ptr() as usize;
+    let end = start + w.len();
     // SAFETY: `handle` is a registered header.
     unsafe {
         read_window_word(handle, io_internal_abi::IO_READ_BASE_OFFSET)
             .store(start, Ordering::Relaxed);
-        read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET).store(end, Ordering::Relaxed);
+        if read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET).load(Ordering::Relaxed)
+            != end
+        {
+            read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET)
+                .store(end, Ordering::Relaxed);
+        }
         read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET)
             .store(start, Ordering::Relaxed);
     }
@@ -1827,11 +1909,7 @@ impl StreamRegistry {
         streams.insert(
             STDIN_SENTINEL,
             new_stream_cell_with_handle(
-                at_fd_offset(fd_stream(
-                    libc::STDIN_FILENO,
-                    stdin_flags,
-                    std_stream_buf_mode(libc::STDIN_FILENO),
-                )),
+                std_buffered_stream(libc::STDIN_FILENO, stdin_flags),
                 std_handle(libc::STDIN_FILENO),
             ),
         );
@@ -1844,11 +1922,7 @@ impl StreamRegistry {
         streams.insert(
             STDOUT_SENTINEL,
             new_stream_cell_with_handle(
-                at_fd_offset(fd_stream(
-                    libc::STDOUT_FILENO,
-                    stdout_flags,
-                    std_stream_buf_mode(libc::STDOUT_FILENO),
-                )),
+                std_buffered_stream(libc::STDOUT_FILENO, stdout_flags),
                 std_handle(libc::STDOUT_FILENO),
             ),
         );
@@ -2417,10 +2491,11 @@ fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamSta
 
 pub(crate) struct StdioForkGuard {
     _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
-    _streams: parking_lot::MutexGuard<'static, StreamRegistry>,
-    _cookies: std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>>,
-    _foreign: std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>,
-    _host_streams: std::sync::MutexGuard<'static, ArtifactHashMap<usize, HostStreamState>>,
+    _streams: Option<parking_lot::MutexGuard<'static, StreamRegistry>>,
+    _cookies:
+        Option<std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>>>,
+    _foreign: Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>>,
+    _host_streams: Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, HostStreamState>>>,
 }
 
 impl StdioForkGuard {
@@ -2446,17 +2521,21 @@ impl StdioForkGuard {
         // SAFETY: the child is single-threaded and the old mutex (with the
         // value inside it) is never used again, so reading the value out is a
         // move, not a copy.
-        let streams = unsafe { std::ptr::read(&*_streams as *const StreamRegistry) };
-        std::mem::forget(_streams);
-        let fresh = Box::into_raw(Box::new(FastRegistryMutex::new(streams)));
-        REGISTRY_PTR.store(fresh, std::sync::atomic::Ordering::Release);
+        if let Some(_streams) = _streams {
+            let streams = unsafe { std::ptr::read(&*_streams as *const StreamRegistry) };
+            std::mem::forget(_streams);
+            let fresh = Box::into_raw(Box::new(FastRegistryMutex::new(streams)));
+            REGISTRY_PTR.store(fresh, std::sync::atomic::Ordering::Release);
+        }
 
-        let host_streams = unsafe {
-            std::ptr::read(&*_host_streams as *const ArtifactHashMap<usize, HostStreamState>)
-        };
-        std::mem::forget(_host_streams);
-        let fresh_host = Box::into_raw(Box::new(Mutex::new(host_streams)));
-        HOST_STREAMS_PTR.store(fresh_host, std::sync::atomic::Ordering::Release);
+        if let Some(_host_streams) = _host_streams {
+            let host_streams = unsafe {
+                std::ptr::read(&*_host_streams as *const ArtifactHashMap<usize, HostStreamState>)
+            };
+            std::mem::forget(_host_streams);
+            let fresh_host = Box::into_raw(Box::new(Mutex::new(host_streams)));
+            HOST_STREAMS_PTR.store(fresh_host, std::sync::atomic::Ordering::Release);
+        }
 
         drop(_native);
         drop(_cookies);
@@ -2468,35 +2547,48 @@ impl StdioForkGuard {
 /// so they are taken all-or-nothing with try-locks and the attempt backs off
 /// instead of blocking while holding one.
 pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
-    // Eagerly ensure read_only_mappings are cached before fork so the child never
-    // races on OnceLock futex.
-    let _ = read_only_mappings();
-
     loop {
-        if let Some(native) = crate::io_internal_abi::try_lock_native_stream_registry()
-            && let Ok(streams) = registry().try_lock()
-        {
-            let cookies = match cookie_registry().try_lock() {
-                Ok(guard) => Some(guard),
-                Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-                Err(std::sync::TryLockError::WouldBlock) => None,
+        let single_threaded =
+            crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
+        if let Some(native) = crate::io_internal_abi::try_lock_native_stream_registry() {
+            let streams = if single_threaded && REGISTRY_PTR.load(Ordering::Acquire).is_null() {
+                Ok(None)
+            } else {
+                registry().try_lock().map(Some)
             };
-            let host_streams = match host_stream_registry().try_lock() {
-                Ok(guard) => Some(guard),
-                Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-                Err(std::sync::TryLockError::WouldBlock) => None,
-            };
-            if let Some(cookies) = cookies
-                && let Some(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
-                && let Some(host_streams) = host_streams
-            {
-                return StdioForkGuard {
-                    _native: native,
-                    _streams: streams,
-                    _cookies: cookies,
-                    _foreign: foreign,
-                    _host_streams: host_streams,
+            if let Ok(streams) = streams {
+                let cookies = if single_threaded && !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire)
+                {
+                    Ok(None)
+                } else {
+                    match cookie_registry().try_lock() {
+                        Ok(guard) => Ok(Some(guard)),
+                        Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
+                        Err(std::sync::TryLockError::WouldBlock) => Err(()),
+                    }
                 };
+                let host_streams =
+                    if single_threaded && HOST_STREAMS_PTR.load(Ordering::Acquire).is_null() {
+                        Ok(None)
+                    } else {
+                        match host_stream_registry().try_lock() {
+                            Ok(guard) => Ok(Some(guard)),
+                            Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
+                            Err(std::sync::TryLockError::WouldBlock) => Err(()),
+                        }
+                    };
+                if let Ok(cookies) = cookies
+                    && let Ok(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
+                    && let Ok(host_streams) = host_streams
+                {
+                    return StdioForkGuard {
+                        _native: native,
+                        _streams: streams,
+                        _cookies: cookies,
+                        _foreign: foreign,
+                        _host_streams: host_streams,
+                    };
+                }
             }
         }
         std::thread::yield_now();
@@ -4330,6 +4422,40 @@ fn glibc_stream_bufsize(fd: c_int) -> usize {
     }
 }
 
+fn std_buffered_stream(fd: c_int, open_flags: OpenFlags) -> StdioStream {
+    const GLIBC_BUFSIZ: usize = 8192;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `st` is a writable, correctly sized stat buffer.
+    let fstat_ok = fd >= 0 && unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_ok();
+    let (buf_mode, buf_size, seekable) = if fstat_ok {
+        // SAFETY: fstat succeeded and filled the buffer.
+        let st = unsafe { st.assume_init() };
+        let file_type = st.st_mode & libc::S_IFMT;
+        let is_tty = file_type == libc::S_IFCHR && raw_isatty(fd);
+        let mode = if is_tty { BufMode::Line } else { BufMode::Full };
+        let size = match usize::try_from(st.st_blksize) {
+            Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
+            _ => GLIBC_BUFSIZ,
+        };
+        let seekable = matches!(file_type, libc::S_IFREG | libc::S_IFBLK);
+        (mode, size, seekable)
+    } else {
+        let mode = if raw_isatty(fd) {
+            BufMode::Line
+        } else {
+            BufMode::Full
+        };
+        (mode, GLIBC_BUFSIZ, false)
+    };
+    let mut stream = StdioStream::with_mode(fd, open_flags, buf_mode);
+    stream.set_buffering(buf_mode, buf_size);
+    if seekable && let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR) {
+        stream.set_offset(cur);
+    }
+    stream
+}
+
+#[allow(dead_code)]
 fn std_stream_buf_mode(fd: c_int) -> BufMode {
     if fd == libc::STDERR_FILENO {
         BufMode::None
@@ -4561,6 +4687,15 @@ pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_
                 host_fail = true;
                 unsafe { sync_host_errno(errno::EBADF) };
             }
+        }
+        // Fast path: if `REGISTRY_PTR` has never been initialized, no
+        // FrankenLibC `StdioStream` has ever been created or buffered, so avoid
+        // forcing `StreamRegistry::new()` (`fstat`/`ioctl`/`lseek`/allocations)
+        // during `fflush(NULL)` or `exit()`.
+        if REGISTRY_PTR.load(Ordering::Acquire).is_null() {
+            let failed = host_fail;
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, failed);
+            return if failed { libc::EOF } else { 0 };
         }
         // Snapshot cells under one short try-lock, then flush per stream. Streams
         // opened AFTER the snapshot are not flushed — same semantics as the old
@@ -9133,9 +9268,7 @@ fn is_valid_printf_string_ptr(ptr_val: usize, wide: bool) -> bool {
         return false;
     }
     if known_remaining(ptr_val).is_some()
-        || read_only_mappings()
-            .iter()
-            .any(|&(start, stop)| ptr_val >= start && ptr_val < stop)
+        || is_in_read_only_mapping(ptr_val, ptr_val.saturating_add(1))
     {
         return true;
     }
@@ -9151,10 +9284,7 @@ fn is_valid_printf_writeback_ptr(ptr_val: usize, align_size: usize) -> bool {
     if align_size > 1 && (ptr_val & (align_size - 1) != 0) {
         return false;
     }
-    if read_only_mappings()
-        .iter()
-        .any(|&(start, stop)| ptr_val >= start && ptr_val < stop)
-    {
+    if is_in_read_only_mapping(ptr_val, ptr_val.saturating_add(1)) {
         return false;
     }
     if known_remaining(ptr_val).is_some() {
@@ -10693,35 +10823,243 @@ unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     unsafe { *f == b'%' && *f.add(1) == b'p' && *f.add(2) == 0 }
 }
 
-fn read_only_mappings() -> &'static [(usize, usize)] {
-    READ_ONLY_MAPPINGS
-        .get_or_init(|| {
-            let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
-                return Vec::new();
-            };
-            maps.lines()
-                .filter_map(|line| {
-                    let mut fields = line.split_whitespace();
-                    let range = fields.next()?;
-                    let perms = fields.next()?;
-                    let mut endpoints = range.split('-');
-                    let start = usize::from_str_radix(endpoints.next()?, 16).ok()?;
-                    let end = usize::from_str_radix(endpoints.next()?, 16).ok()?;
-                    let bytes = perms.as_bytes();
-                    if bytes.first() == Some(&b'r') && bytes.get(1) != Some(&b'w') {
-                        Some((start, end))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
-        .as_slice()
+#[repr(C)]
+struct RoMappingCollector {
+    ranges: [(usize, usize); MAX_READ_ONLY_MAPPINGS],
+    len: usize,
+}
+
+#[cfg(not(test))]
+unsafe extern "C-unwind" fn collect_ro_mappings_phdr_cb(
+    info: *mut libc::dl_phdr_info,
+    _size: usize,
+    data: *mut c_void,
+) -> c_int {
+    if info.is_null() || data.is_null() {
+        return 0;
+    }
+    // SAFETY: `data` points to our stack-owned `RoMappingCollector` for the
+    // synchronous duration of `dl_iterate_phdr`.
+    let collector = unsafe { &mut *data.cast::<RoMappingCollector>() };
+    // SAFETY: `info` is valid for the duration of the callback.
+    let info = unsafe { &*info };
+    let base = info.dlpi_addr as usize;
+    let phnum = usize::from(info.dlpi_phnum).min(64);
+    if info.dlpi_phdr.is_null() || phnum == 0 {
+        return 0;
+    }
+    for idx in 0..phnum {
+        if collector.len >= MAX_READ_ONLY_MAPPINGS {
+            break;
+        }
+        // SAFETY: `dlpi_phdr` has `dlpi_phnum` entries.
+        let phdr = unsafe { *info.dlpi_phdr.add(idx) };
+        let memsz = phdr.p_memsz as usize;
+        if memsz == 0 {
+            continue;
+        }
+        if phdr.p_type == libc::PT_LOAD
+            && (phdr.p_flags & libc::PF_R != 0)
+            && (phdr.p_flags & libc::PF_W == 0)
+        {
+            let vaddr = base.wrapping_add(phdr.p_vaddr as usize);
+            let start = vaddr & !0xfffusize;
+            let end = vaddr.saturating_add(memsz).saturating_add(0xfff) & !0xfffusize;
+            if end > start {
+                collector.ranges[collector.len] = (start, end);
+                collector.len += 1;
+            }
+        } else if phdr.p_type == libc::PT_GNU_RELRO {
+            let vaddr = base.wrapping_add(phdr.p_vaddr as usize);
+            let start = vaddr & !0xfffusize;
+            let end = vaddr.saturating_add(memsz) & !0xfffusize;
+            if end > start {
+                collector.ranges[collector.len] = (start, end);
+                collector.len += 1;
+            }
+        }
+    }
+    0
+}
+
+fn parse_proc_maps_ro_line(line: &[u8]) -> Option<(usize, usize)> {
+    let mut i = 0;
+    while i < line.len() && line[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let mut start = 0usize;
+    let mut start_digits = 0usize;
+    while i < line.len() {
+        let d = match line[i] {
+            b'0'..=b'9' => (line[i] - b'0') as usize,
+            b'a'..=b'f' => (line[i] - b'a' + 10) as usize,
+            b'A'..=b'F' => (line[i] - b'A' + 10) as usize,
+            b'-' => {
+                i += 1;
+                break;
+            }
+            _ => return None,
+        };
+        start = start.checked_mul(16)?.checked_add(d)?;
+        start_digits += 1;
+        i += 1;
+    }
+    if start_digits == 0 {
+        return None;
+    }
+    let mut end = 0usize;
+    let mut end_digits = 0usize;
+    while i < line.len() {
+        let d = match line[i] {
+            b'0'..=b'9' => (line[i] - b'0') as usize,
+            b'a'..=b'f' => (line[i] - b'a' + 10) as usize,
+            b'A'..=b'F' => (line[i] - b'A' + 10) as usize,
+            b' ' | b'\t' => {
+                i += 1;
+                break;
+            }
+            _ => return None,
+        };
+        end = end.checked_mul(16)?.checked_add(d)?;
+        end_digits += 1;
+        i += 1;
+    }
+    if end_digits == 0 || end <= start {
+        return None;
+    }
+    while i < line.len() && (line[i] == b' ' || line[i] == b'\t') {
+        i += 1;
+    }
+    if i + 1 < line.len() && line[i] == b'r' && line[i + 1] != b'w' {
+        Some((start, end))
+    } else {
+        None
+    }
+}
+
+fn populate_ro_mappings_from_proc_maps(collector: &mut RoMappingCollector) {
+    let Ok(fd) = (unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/maps".as_ptr().cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
+    }) else {
+        return;
+    };
+    let fd = fd as c_int;
+    let mut buf = [0u8; 4096];
+    let mut line = [0u8; 512];
+    let mut line_len = 0usize;
+    loop {
+        let Ok(n) = (unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) }) else {
+            break;
+        };
+        if n == 0 {
+            break;
+        }
+        for &b in &buf[..n] {
+            if b == b'\n' {
+                if collector.len < MAX_READ_ONLY_MAPPINGS
+                    && let Some(range) = parse_proc_maps_ro_line(&line[..line_len])
+                {
+                    collector.ranges[collector.len] = range;
+                    collector.len += 1;
+                }
+                line_len = 0;
+            } else if line_len < line.len() {
+                line[line_len] = b;
+                line_len += 1;
+            }
+        }
+        if collector.len >= MAX_READ_ONLY_MAPPINGS {
+            break;
+        }
+    }
+    if line_len > 0
+        && collector.len < MAX_READ_ONLY_MAPPINGS
+        && let Some(range) = parse_proc_maps_ro_line(&line[..line_len])
+    {
+        collector.ranges[collector.len] = range;
+        collector.len += 1;
+    }
+    let _ = raw_syscall::sys_close(fd);
+}
+
+#[cold]
+fn ensure_read_only_mappings_populated() -> bool {
+    match READ_ONLY_MAPPING_STATE.load(Ordering::Acquire) {
+        RO_MAP_READY => return true,
+        RO_MAP_INIT => return false,
+        _ => {}
+    }
+    if READ_ONLY_MAPPING_STATE
+        .compare_exchange(
+            RO_MAP_UNINIT,
+            RO_MAP_INIT,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return READ_ONLY_MAPPING_STATE.load(Ordering::Acquire) == RO_MAP_READY;
+    }
+
+    let mut collector = RoMappingCollector {
+        ranges: [(0, 0); MAX_READ_ONLY_MAPPINGS],
+        len: 0,
+    };
+    #[cfg(not(test))]
+    unsafe {
+        crate::dlfcn_abi::dl_iterate_phdr(
+            Some(collect_ro_mappings_phdr_cb),
+            (&mut collector as *mut RoMappingCollector).cast::<c_void>(),
+        );
+    }
+    if collector.len == 0 {
+        populate_ro_mappings_from_proc_maps(&mut collector);
+    }
+    if collector.len == 0 {
+        READ_ONLY_MAPPING_STATE.store(RO_MAP_UNINIT, Ordering::Release);
+        return false;
+    }
+    for (idx, &(start, end)) in collector.ranges[..collector.len].iter().enumerate() {
+        READ_ONLY_MAPPING_SLOTS[idx]
+            .start
+            .store(start, Ordering::Relaxed);
+        READ_ONLY_MAPPING_SLOTS[idx]
+            .end
+            .store(end, Ordering::Relaxed);
+    }
+    READ_ONLY_MAPPING_LEN.store(collector.len, Ordering::Release);
+    READ_ONLY_MAPPING_STATE.store(RO_MAP_READY, Ordering::Release);
+    true
+}
+
+#[inline]
+fn is_in_read_only_mapping(start_addr: usize, end_addr: usize) -> bool {
+    if READ_ONLY_MAPPING_STATE.load(Ordering::Acquire) != RO_MAP_READY
+        && !ensure_read_only_mappings_populated()
+    {
+        return false;
+    }
+    let count = READ_ONLY_MAPPING_LEN
+        .load(Ordering::Acquire)
+        .min(MAX_READ_ONLY_MAPPINGS);
+    for slot in &READ_ONLY_MAPPING_SLOTS[..count] {
+        let start = slot.start.load(Ordering::Relaxed);
+        let stop = slot.end.load(Ordering::Relaxed);
+        if start_addr >= start && end_addr <= stop {
+            return true;
+        }
+    }
+    false
 }
 
 #[doc(hidden)]
 pub fn ensure_read_only_mappings_cached() {
-    let _ = read_only_mappings();
+    let _ = ensure_read_only_mappings_populated();
 }
 
 #[inline]
@@ -10751,10 +11089,7 @@ fn cache_literal_format_len(format: *const c_char, len: usize) {
     let Some(end) = ptr.checked_add(len.saturating_add(1)) else {
         return;
     };
-    if !read_only_mappings()
-        .iter()
-        .any(|&(start, stop)| ptr >= start && end <= stop)
-    {
+    if !is_in_read_only_mapping(ptr, end) {
         return;
     }
 
@@ -16424,11 +16759,106 @@ struct PopenChild {
 /// Every active process stream's parent descriptor must be closed in a new
 /// popen child. Publication, fork and descriptor removal share this lock so a
 /// child cannot inherit an untracked writer or close a reused descriptor.
-static POPEN_PIDS: Mutex<Option<ArtifactHashMap<usize, PopenChild>>> = Mutex::new(None);
+const POPEN_INLINE_SLOTS: usize = 16;
+
+struct PopenPidTable {
+    inline: [Option<(usize, PopenChild)>; POPEN_INLINE_SLOTS],
+    overflow: Vec<(usize, PopenChild)>,
+}
+
+impl PopenPidTable {
+    const fn new() -> Self {
+        Self {
+            inline: [const { None }; POPEN_INLINE_SLOTS],
+            overflow: Vec::new(),
+        }
+    }
+
+    fn insert(&mut self, id: usize, child: PopenChild) {
+        for slot in &mut self.inline {
+            if let Some((slot_id, slot_child)) = slot
+                && *slot_id == id
+            {
+                *slot_child = child;
+                return;
+            }
+        }
+        for (slot_id, slot_child) in &mut self.overflow {
+            if *slot_id == id {
+                *slot_child = child;
+                return;
+            }
+        }
+        ACTIVE_POPEN_COUNT.fetch_add(1, Ordering::Release);
+        for slot in &mut self.inline {
+            if slot.is_none() {
+                *slot = Some((id, child));
+                return;
+            }
+        }
+        self.overflow.push((id, child));
+    }
+
+    fn remove(&mut self, id: usize) -> Option<PopenChild> {
+        for slot in &mut self.inline {
+            if slot.as_ref().is_some_and(|(slot_id, _)| *slot_id == id) {
+                let (_, child) = slot.take()?;
+                ACTIVE_POPEN_COUNT.fetch_sub(1, Ordering::Release);
+                return Some(child);
+            }
+        }
+        if let Some(pos) = self.overflow.iter().position(|(slot_id, _)| *slot_id == id) {
+            let (_, child) = self.overflow.swap_remove(pos);
+            ACTIVE_POPEN_COUNT.fetch_sub(1, Ordering::Release);
+            return Some(child);
+        }
+        None
+    }
+
+    fn contains_key(&self, id: usize) -> bool {
+        self.inline
+            .iter()
+            .any(|slot| slot.as_ref().is_some_and(|(slot_id, _)| *slot_id == id))
+            || self.overflow.iter().any(|(slot_id, _)| *slot_id == id)
+    }
+
+    fn iter_children(&self) -> impl Iterator<Item = &PopenChild> {
+        self.inline
+            .iter()
+            .filter_map(|slot| slot.as_ref().map(|(_, child)| child))
+            .chain(self.overflow.iter().map(|(_, child)| child))
+    }
+}
+
+static ACTIVE_POPEN_COUNT: AtomicUsize = AtomicUsize::new(0);
+static POPEN_PIDS: Mutex<PopenPidTable> = Mutex::new(PopenPidTable::new());
+
+fn popen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
+    let buf_mode = BufMode::Full;
+    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    stream.set_buffering(buf_mode, 4096);
+    stream.set_orientation(-1);
+    let Some((id, handle)) = alloc_stream_handle(fd, open_flags, buf_mode) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if reg.streams.contains_key(&id) {
+        drop(reg);
+        maybe_unregister_dynamic_native_stream(id as *mut c_void);
+        unsafe { set_abi_errno(errno::EMFILE) };
+        return std::ptr::null_mut();
+    }
+    reg.insert_stream_with_handle(id, stream, handle);
+    id as *mut c_void
+}
 
 fn close_stream_descriptor(id: usize, fd: c_int) -> (Option<i32>, Result<(), c_int>) {
+    if ACTIVE_POPEN_COUNT.load(Ordering::Acquire) == 0 {
+        return (None, raw_syscall::sys_close(fd));
+    }
     let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-    let child = guard.as_mut().and_then(|map| map.remove(&id));
+    let child = guard.remove(id);
     if child.is_none() {
         // An ordinary descriptor can have a blocking close (e.g. SO_LINGER).
         // Only process pipes need to serialize their close with popen forks.
@@ -16544,7 +16974,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
     };
     // Allocate/register before starting a child. Failure must not run the
     // command, and no stream-registry or stream-cell lock nests under POPEN_PIDS.
-    let fp = fdopen_native_impl(our_fd, &open_flags);
+    let fp = popen_native_impl(our_fd, &open_flags);
     if fp.is_null() {
         let saved_errno = std::io::Error::last_os_error()
             .raw_os_error()
@@ -16556,16 +16986,12 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         return std::ptr::null_mut();
     }
     let id = canonical_stream_id(fp);
-    if let Some(cell) = stream_cell(id) {
-        cell.lock().set_orientation(-1);
-    }
     let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-    let map = guard.get_or_insert_with(artifact_hash_map);
     // Reserve the entry before forking so the parent publication cannot
     // allocate after a child has started. pid 0 denotes this unpublished child.
-    map.insert(id, PopenChild { pid: 0, fd: our_fd });
+    guard.insert(id, PopenChild { pid: 0, fd: our_fd });
     if !close_on_exec && let Err(e) = unsafe { raw_syscall::sys_fcntl(our_fd, libc::F_SETFD, 0) } {
-        map.remove(&id);
+        guard.remove(id);
         drop(guard);
         let _ = raw_syscall::sys_close(child_fd);
         unsafe { fclose(fp) };
@@ -16578,7 +17004,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
     let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(p) => p,
         Err(e) => {
-            map.remove(&id);
+            guard.remove(id);
             drop(guard);
             let _ = raw_syscall::sys_close(child_fd);
             unsafe { fclose(fp) };
@@ -16595,7 +17021,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         // The child only reads the fork snapshot: no allocation, locking or
         // destructors before exec. Close old pipes before installing stdio,
         // because an older popen descriptor can itself occupy fd 0 or fd 1.
-        for child in map.values() {
+        for child in guard.iter_children() {
             if child.pid != 0 {
                 let _ = raw_syscall::sys_close(child.fd);
             }
@@ -16652,7 +17078,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
     }
 
     let _ = raw_syscall::sys_close(child_fd);
-    map.insert(id, PopenChild { pid, fd: our_fd });
+    guard.insert(id, PopenChild { pid, fd: our_fd });
     drop(guard);
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, false);
@@ -16664,7 +17090,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
 /// Returns the child's exit status, or -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pclose(stream: *mut c_void) -> c_int {
-    if stream.is_null() {
+    if stream.is_null() || ACTIVE_POPEN_COUNT.load(Ordering::Acquire) == 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -16672,7 +17098,7 @@ pub unsafe extern "C-unwind" fn pclose(stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
     let is_process_stream = {
         let pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-        pids.as_ref().is_some_and(|map| map.contains_key(&id))
+        pids.contains_key(id)
     };
     if !is_process_stream {
         unsafe { set_abi_errno(errno::EINVAL) };
