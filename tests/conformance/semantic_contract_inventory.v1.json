@@ -143,9 +143,9 @@
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "native_files_bootstrap",
-      "current_behavior": "__nss_configure_lookup publishes owned runtime policies for passwd, group, shadow, initgroups, hosts, services, publickey and netgroup across the existing native/module dispatchers. The first successful override freezes the shared file image; invalid replacements preserve the prior policy. Private service_user traversal remains unavailable. The GNU configuration oracle and core policy tests have executed; deployed candidate comparison remains required.",
+      "current_behavior": "__nss_configure_lookup publishes owned runtime policies for passwd, group, shadow, initgroups, hosts, services, publickey and netgroup across the existing native/module dispatchers. The first successful override freezes the shared file image; invalid replacements preserve the prior policy. Private service_user traversal remains unavailable. The default-feature release DSO at d9d13977 passed the 106-case provider-pinned GNU differential in strict and hardened modes, and the concurrent replacement regression executed. Publickey/netgroup positive-provider and alternate-feature qualification remain open.",
       "user_risk": "GNU database names outside the eight live dispatchers, broader service-token syntax, private traversal and standalone module loading remain incomplete.",
-      "required_followup": "Execute scripts/check_nss_services.py against the deployed candidate and the concurrent runtime replacement test in both modes. Qualify remaining database names, GNU tokenizer breadth, private traversal and standalone module loading under bd-reality-202609-lx578q.7; this mixed family remains semantically incomplete.",
+      "required_followup": "Run the owned-TLS feature matrix and extend positive runtime provider coverage to publickey/netgroup. Qualify remaining GNU database names, service-token syntax, private traversal and standalone module loading under bd-reality-202609-lx578q.7; this mixed family remains semantically incomplete.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json",
         "crates/frankenlibc-abi/src/glibc_internal_abi.rs",

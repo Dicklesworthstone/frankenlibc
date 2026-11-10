@@ -323,7 +323,7 @@ fn unix_providers() -> Vec<UnixProvider> {
             panic!("missing GNU RPC oracle: {name:?}");
         };
         let create = symbol(c"clnt_create");
-        assert_ne!(create as usize, rpc_abi::clnt_create as usize);
+        assert_ne!(create as usize, rpc_abi::clnt_create as *const () as usize);
         // SAFETY: these versioned public symbols have the declared C signatures.
         providers.push(unsafe {
             UnixProvider {
