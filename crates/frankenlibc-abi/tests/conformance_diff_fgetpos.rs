@@ -469,7 +469,7 @@ struct PositionCookie {
     data: [u8; 32],
     writes: usize,
     seek_error: c_int,
-    panic_on_seek: bool,
+    panic_on_seek: std::cell::Cell<bool>,
 }
 
 impl PositionCookie {
@@ -482,7 +482,7 @@ impl PositionCookie {
             data,
             writes: 0,
             seek_error: 0,
-            panic_on_seek: false,
+            panic_on_seek: std::cell::Cell::new(false),
         }
     }
 }
@@ -532,7 +532,7 @@ unsafe extern "C-unwind" fn position_seek(
 ) -> c_int {
     // SAFETY: the test supplies its live cookie and stdio supplies an offset.
     let cookie = unsafe { &mut *cookie.cast::<PositionCookie>() };
-    assert!(!cookie.panic_on_seek, "position callback unwind");
+    assert!(!cookie.panic_on_seek.get(), "position callback unwind");
     if cookie.seek_error != 0 {
         unsafe { *libc::__errno_location() = cookie.seek_error };
         return -1;
@@ -777,7 +777,7 @@ fn native_cookie_position_unwind_releases_locks_and_preserves_the_stream() {
         let mut saved = std::mem::MaybeUninit::<libc::fpos_t>::zeroed();
         assert_eq!(fl::fgetpos(f, saved.as_mut_ptr()), 0);
         for operation in 0..15 {
-            cookie.panic_on_seek = true;
+            cookie.panic_on_seek.set(true);
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
                     0 => {
@@ -830,7 +830,7 @@ fn native_cookie_position_unwind_releases_locks_and_preserves_the_stream() {
                 result.is_err(),
                 "operation {operation} did not invoke its seek callback"
             );
-            cookie.panic_on_seek = false;
+            cookie.panic_on_seek.set(false);
             assert_eq!(fl::ftell(f), 4);
             assert_eq!(fl::ferror(f), 0);
         }

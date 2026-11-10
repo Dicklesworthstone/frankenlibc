@@ -737,7 +737,9 @@ fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
 /// Borrowing sibling of [`read_hosts_backend`], mirroring `with_services_backend_snapshot` /
 /// `with_protocols_backend_snapshot`. `read_hosts_backend` hands back an OWNED clone of the whole
 /// `/etc/hosts`; every hot hosts lookup paid that clone per call.
-fn with_hosts_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> std::io::Result<R> {
+pub(crate) fn with_hosts_backend_snapshot<R>(
+    callback: impl FnOnce(&[u8], u64) -> R,
+) -> std::io::Result<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
         HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback))

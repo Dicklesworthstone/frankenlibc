@@ -11940,6 +11940,34 @@ unsafe fn nss_hostent_notfound(errnop: *mut c_int, h_errnop: *mut c_int) -> c_in
     NSS_STATUS_NOTFOUND
 }
 
+/// Files-provider outcomes keep the caller's error slots on success. An
+/// unreadable database is UNAVAIL, distinct from a searched-but-missing name;
+/// callers use that distinction to apply nsswitch.conf's fallback policy.
+unsafe fn nss_files_host_status(
+    outcome: Result<bool, c_int>,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    match outcome {
+        Ok(true) => NSS_STATUS_SUCCESS,
+        Ok(false) => {
+            unsafe { nss_set_herr_host_not_found(h_errnop) };
+            NSS_STATUS_NOTFOUND
+        }
+        Err(error) => {
+            unsafe {
+                nss_set_errnop(errnop, error);
+                nss_set_herr(h_errnop, NSS_NETDB_INTERNAL);
+            }
+            if matches!(error, libc::ERANGE | libc::EAGAIN | libc::ENOMEM) {
+                NSS_STATUS_TRYAGAIN
+            } else {
+                NSS_STATUS_UNAVAIL
+            }
+        }
+    }
+}
+
 unsafe fn nss_finish_plain_lookup(rc: c_int, resolved: *mut c_void, errnop: *mut c_int) -> c_int {
     if rc == 0 && !resolved.is_null() {
         unsafe { nss_set_errnop(errnop, 0) };
@@ -12006,98 +12034,138 @@ unsafe fn nss_identity_lookup<T>(
     }
 }
 
-unsafe fn nss_pack_gaih_addrtuples_from_hostent(
-    hostent: &libc::hostent,
+/// The hosts-file `multi` switch defaults to off; its documented environment
+/// override takes precedence over host.conf. Read it alongside the file source
+/// so a native provider does not depend on a host libc's private resolver state.
+fn nss_files_hosts_multi() -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    let boolean = |value: &[u8]| {
+        if value.eq_ignore_ascii_case(b"on") {
+            Some(true)
+        } else if value.eq_ignore_ascii_case(b"off") {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let mut multi = false;
+    let path = std::env::var_os("RESOLV_HOST_CONF")
+        .unwrap_or_else(|| std::ffi::OsString::from("/etc/host.conf"));
+    if let Ok(content) = std::fs::read(path) {
+        for line in content.split(|&byte| byte == b'\n') {
+            let line = line.split(|&byte| byte == b'#').next().unwrap_or_default();
+            let mut fields = line
+                .split(|byte| byte.is_ascii_whitespace())
+                .filter(|field| !field.is_empty());
+            if fields
+                .next()
+                .is_some_and(|field| field.eq_ignore_ascii_case(b"multi"))
+                && let Some(value) = fields.next().and_then(boolean)
+            {
+                multi = value;
+            }
+        }
+    }
+    if let Some(value) = std::env::var_os("RESOLV_MULTI")
+        && let Some(value) = boolean(value.as_os_str().as_bytes())
+    {
+        multi = value;
+    }
+    multi
+}
+
+/// Pack the complete files-source answer without projecting it through the
+/// IPv4-only legacy hostent API. Keep file order, native IPv6 addresses, and
+/// every requested row; a short buffer requests a retry instead of truncation.
+unsafe fn nss_pack_gaih_addrtuples(
+    content: &[u8],
+    name: &[u8],
+    multi: bool,
     pat: *mut *mut c_void,
     buffer: *mut c_char,
     buflen: usize,
-    errnop: *mut c_int,
-) -> c_int {
-    if hostent.h_name.is_null()
-        || hostent.h_addr_list.is_null()
-        || (hostent.h_addrtype != libc::AF_INET && hostent.h_addrtype != libc::AF_INET6)
-    {
-        return unsafe { nss_hostent_notfound(errnop, std::ptr::null_mut()) };
-    }
-
-    let addr_len = match usize::try_from(hostent.h_length) {
-        Ok(4) if hostent.h_addrtype == libc::AF_INET => 4,
-        Ok(16) if hostent.h_addrtype == libc::AF_INET6 => 16,
-        _ => return unsafe { nss_hostent_notfound(errnop, std::ptr::null_mut()) },
-    };
-
-    let mut addrs = Vec::new();
-    let mut cursor = hostent.h_addr_list;
-    while !cursor.is_null() {
-        // SAFETY: hostent address lists are NULL-terminated by the reentrant resolver.
-        let addr = unsafe { *cursor };
-        if addr.is_null() {
-            break;
+) -> Result<bool, c_int> {
+    let mut addresses = Vec::new();
+    let mut canonical = Vec::new();
+    let mut allocation_failed = false;
+    frankenlibc_core::resolv::for_each_hosts_match_entry(content, name, |entry| {
+        let Some(address) = core::str::from_utf8(entry.address())
+            .ok()
+            .and_then(|text| text.parse::<std::net::IpAddr>().ok())
+        else {
+            return false;
+        };
+        if addresses.try_reserve(1).is_err() {
+            allocation_failed = true;
+            return true;
         }
-        addrs.push(addr);
-        if addrs.len() == 64 {
-            break;
+        if addresses.is_empty() {
+            if canonical.try_reserve(entry.canonical_name().len()).is_err() {
+                allocation_failed = true;
+                return true;
+            }
+            canonical.extend_from_slice(entry.canonical_name());
         }
-        // SAFETY: cursor walks the NULL-terminated pointer array.
-        cursor = unsafe { cursor.add(1) };
+        addresses.push(address);
+        !multi
+    });
+    if allocation_failed {
+        return Err(libc::ENOMEM);
     }
-    if addrs.is_empty() {
-        return unsafe { nss_hostent_notfound(errnop, std::ptr::null_mut()) };
+    if addresses.is_empty() {
+        return Ok(false);
     }
 
-    // SAFETY: hostent.h_name is populated by the resolver and points to a NUL-terminated string.
-    let name_bytes = unsafe { std::ffi::CStr::from_ptr(hostent.h_name) }.to_bytes_with_nul();
     let capacity = tracked_output_capacity(buffer, buflen);
     let tuple_align = core::mem::align_of::<GaihAddrtuple>();
     let tuple_size = core::mem::size_of::<GaihAddrtuple>();
-    let tuple_off = match aligned_output_offset(buffer, 0, tuple_align) {
-        Some(offset) => offset,
-        None => {
-            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
-            return NSS_STATUS_TRYAGAIN;
-        }
-    };
-    let tuple_bytes = match addrs.len().checked_mul(tuple_size) {
-        Some(bytes) => bytes,
-        None => {
-            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
-            return NSS_STATUS_TRYAGAIN;
-        }
-    };
-    let name_off = match tuple_off.checked_add(tuple_bytes) {
-        Some(offset) => offset,
-        None => {
-            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
-            return NSS_STATUS_TRYAGAIN;
-        }
-    };
-    let total = match name_off.checked_add(name_bytes.len()) {
-        Some(total) => total,
-        None => {
-            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
-            return NSS_STATUS_TRYAGAIN;
-        }
-    };
+    let tuple_off = aligned_output_offset(buffer, 0, tuple_align).ok_or(libc::ERANGE)?;
+    let tuple_bytes = addresses
+        .len()
+        .checked_mul(tuple_size)
+        .ok_or(libc::ERANGE)?;
+    let name_off = tuple_off.checked_add(tuple_bytes).ok_or(libc::ERANGE)?;
+    let total = name_off
+        .checked_add(canonical.len())
+        .and_then(|end| end.checked_add(1))
+        .ok_or(libc::ERANGE)?;
     if buffer.is_null() || total > capacity {
-        unsafe { nss_set_errnop(errnop, libc::ERANGE) };
-        return NSS_STATUS_TRYAGAIN;
+        return Err(libc::ERANGE);
+    }
+
+    // GNU callers may supply the first tuple themselves. Preserve that head
+    // and publish into it only after the complete result fits in the buffer.
+    // SAFETY: the caller validated the aligned, writable pat slot.
+    let supplied = unsafe { *pat }.cast::<GaihAddrtuple>();
+    if !supplied.is_null() && !tracked_object_fits(supplied) {
+        return Err(libc::EINVAL);
     }
 
     // SAFETY: capacity check above covers tuple and copied name storage.
     let name_ptr = unsafe { buffer.add(name_off) };
     unsafe {
         std::ptr::copy_nonoverlapping(
-            name_bytes.as_ptr().cast::<c_char>(),
+            canonical.as_ptr().cast::<c_char>(),
             name_ptr,
-            name_bytes.len(),
-        )
+            canonical.len(),
+        );
+        *name_ptr.add(canonical.len()) = 0;
     };
 
-    for (idx, addr) in addrs.iter().copied().enumerate() {
+    for (idx, address) in addresses.iter().enumerate() {
         let mut words = [0u32; 4];
         let mut bytes = [0u8; 16];
-        // SAFETY: hostent address entries are at least h_length bytes long.
-        unsafe { std::ptr::copy_nonoverlapping(addr.cast::<u8>(), bytes.as_mut_ptr(), addr_len) };
+        let family = match address {
+            std::net::IpAddr::V4(address) => {
+                bytes[..4].copy_from_slice(&address.octets());
+                libc::AF_INET
+            }
+            std::net::IpAddr::V6(address) => {
+                bytes = address.octets();
+                libc::AF_INET6
+            }
+        };
         for (word_idx, word) in words.iter_mut().enumerate() {
             let start = word_idx * 4;
             *word = u32::from_ne_bytes([
@@ -12109,12 +12177,17 @@ unsafe fn nss_pack_gaih_addrtuples_from_hostent(
         }
 
         // SAFETY: tuple slots are within the checked caller buffer.
-        let tuple_ptr = unsafe {
-            buffer
-                .add(tuple_off + idx * tuple_size)
-                .cast::<GaihAddrtuple>()
+        let tuple_ptr = if idx == 0 && !supplied.is_null() {
+            supplied
+        } else {
+            // SAFETY: all buffer slots were reserved and aligned above.
+            unsafe {
+                buffer
+                    .add(tuple_off + idx * tuple_size)
+                    .cast::<GaihAddrtuple>()
+            }
         };
-        let next = if idx + 1 == addrs.len() {
+        let next = if idx + 1 == addresses.len() {
             std::ptr::null_mut()
         } else {
             // SAFETY: the next tuple slot is within the checked caller buffer.
@@ -12129,8 +12202,12 @@ unsafe fn nss_pack_gaih_addrtuples_from_hostent(
                 tuple_ptr,
                 GaihAddrtuple {
                     next,
-                    name: name_ptr,
-                    family: hostent.h_addrtype,
+                    name: if idx == 0 {
+                        name_ptr
+                    } else {
+                        std::ptr::null_mut()
+                    },
+                    family,
                     addr: words,
                     scopeid: 0,
                 },
@@ -12138,12 +12215,11 @@ unsafe fn nss_pack_gaih_addrtuples_from_hostent(
         }
     }
 
-    if !pat.is_null() {
-        // SAFETY: caller-provided output slot per NSS gethostbyname4_r contract.
+    if supplied.is_null() {
+        // SAFETY: caller-provided output slot, published after complete packing.
         unsafe { *pat = buffer.add(tuple_off).cast::<c_void>() };
     }
-    unsafe { nss_set_errnop(errnop, 0) };
-    NSS_STATUS_SUCCESS
+    Ok(true)
 }
 
 /// Plain `getXXent_r(*result, *buf, buflen, *errnop)` shape.
@@ -12458,20 +12534,51 @@ pub unsafe extern "C" fn _nss_files_getprotobynumber_r(
 /// *errnop, *h_errnop)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getcanonname_r(
-    _name: *const c_char,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    buffer: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_char,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    if !result.is_null() {
-        // SAFETY: caller-supplied output slot per NSS contract.
-        unsafe { *result = std::ptr::null_mut() };
+    let saved_errno = current_abi_errno();
+    if !tracked_object_fits(result) {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     }
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    // SAFETY: result is an aligned caller-owned output slot.
+    unsafe { *result = std::ptr::null_mut() };
+    let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    };
+    let outcome = crate::resolv_abi::with_hosts_backend_snapshot(|content, _| {
+        let mut outcome = Ok(false);
+        frankenlibc_core::resolv::for_each_hosts_match_entry(content, &name, |entry| {
+            let canonical = entry.canonical_name();
+            if buffer.is_null() || canonical.len() >= tracked_output_capacity(buffer, buflen) {
+                outcome = Err(libc::ERANGE);
+            } else {
+                // SAFETY: the complete NUL-terminated name fits the caller's buffer.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        canonical.as_ptr().cast::<c_char>(),
+                        buffer,
+                        canonical.len(),
+                    );
+                    *buffer.add(canonical.len()) = 0;
+                    *result = buffer;
+                }
+                outcome = Ok(true);
+            }
+            true
+        });
+        outcome
+    })
+    .unwrap_or_else(|error| Err(error.raw_os_error().unwrap_or(libc::EIO)));
+    // Internal file-cache probes must not change the application's errno.
+    unsafe {
+        set_abi_errno(saved_errno);
+        nss_files_host_status(outcome, errnop, h_errnop)
+    }
 }
 
 /// `_nss_files_gethostbyname_r(name, *result, *buf, buflen,
@@ -12579,56 +12686,33 @@ pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
     buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    ttlp: *mut i32,
+    _ttlp: *mut i32,
 ) -> c_int {
-    if !pat.is_null() {
-        // SAFETY: caller-provided output slot per NSS gethostbyname4_r contract.
-        unsafe { *pat = std::ptr::null_mut() };
-    }
-    if !ttlp.is_null() {
-        // SAFETY: optional NSS TTL output slot.
-        unsafe { *ttlp = 0 };
-    }
-    if name.is_null() || pat.is_null() || buffer.is_null() {
+    let saved_errno = current_abi_errno();
+    if name.is_null() || !tracked_object_fits(pat) || buffer.is_null() {
         return unsafe { nss_hostent_notfound(errnop, h_errnop) };
     }
-
-    let mut hostent = libc::hostent {
-        h_name: std::ptr::null_mut(),
-        h_aliases: std::ptr::null_mut(),
-        h_addrtype: 0,
-        h_length: 0,
-        h_addr_list: std::ptr::null_mut(),
+    // Copy the key before packing, since the caller may reuse its name buffer
+    // for the answer. The files source never treats numeric text as an address.
+    let Some(name) = (unsafe { read_c_string_bytes(name) }) else {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     };
-    let scratch_len = buflen.clamp(1024, 64 * 1024);
-    let mut scratch = vec![0 as c_char; scratch_len];
-    let mut resolved = std::ptr::null_mut();
-    let rc = unsafe {
-        crate::resolv_abi::gethostbyname_r_impl(
-            name,
-            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
-            scratch.as_mut_ptr(),
-            scratch.len(),
-            &mut resolved,
-            h_errnop,
-            true,
-        )
-    };
-    if rc != 0 || resolved.is_null() {
-        return unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) };
+    let multi = nss_files_hosts_multi();
+    let outcome = crate::resolv_abi::with_hosts_backend_snapshot(|content, _| {
+        // SAFETY: output pointers retain the public NSS lifetime contract.
+        unsafe { nss_pack_gaih_addrtuples(content, &name, multi, pat, buffer, buflen) }
+    })
+    .unwrap_or_else(|error| Err(error.raw_os_error().unwrap_or(libc::EIO)));
+    // Files entries do not have a TTL. GNU leaves ttlp and errnop untouched on
+    // success. A multi scan reaches EOF after finding its last address, leaving
+    // HOST_NOT_FOUND in h_errnop even though the complete answer is successful.
+    unsafe {
+        set_abi_errno(saved_errno);
+        if multi && outcome == Ok(true) {
+            nss_set_herr_host_not_found(h_errnop);
+        }
+        nss_files_host_status(outcome, errnop, h_errnop)
     }
-
-    let status =
-        unsafe { nss_pack_gaih_addrtuples_from_hostent(&hostent, pat, buffer, buflen, errnop) };
-    if status == NSS_STATUS_SUCCESS {
-        unsafe { nss_set_herr(h_errnop, 0) };
-    } else if status == NSS_STATUS_TRYAGAIN {
-        // The only TRYAGAIN here is a short caller buffer (ERANGE).
-        unsafe { nss_set_herr(h_errnop, NSS_NETDB_INTERNAL) };
-    } else {
-        unsafe { nss_set_herr_host_not_found(h_errnop) };
-    }
-    status
 }
 
 /// `_nss_files_gethostbyaddr_r(addr, len, type, *result, *buf,

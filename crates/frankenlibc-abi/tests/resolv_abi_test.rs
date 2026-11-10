@@ -6043,62 +6043,364 @@ fn nss_files_gethostbyaddr_uses_hosts_backend() {
     );
 }
 
+#[repr(C)]
+struct TestGaihAddrtuple {
+    next: *mut TestGaihAddrtuple,
+    name: *mut c_char,
+    family: c_int,
+    addr: [u32; 4],
+    scopeid: u32,
+}
+
+fn with_nss_hosts_backend<T>(hosts: &[u8], f: impl FnOnce(&ResolverFixturePaths) -> T) -> T {
+    with_resolver_backends(Some(hosts), None, |paths| {
+        struct HostConfEnv([Option<std::ffi::OsString>; 2]);
+        impl Drop for HostConfEnv {
+            fn drop(&mut self) {
+                for (key, old) in ["RESOLV_MULTI", "RESOLV_HOST_CONF"]
+                    .into_iter()
+                    .zip(&self.0)
+                {
+                    // SAFETY: the enclosing resolver fixture holds RESOLVER_ENV_LOCK.
+                    unsafe {
+                        if let Some(old) = old {
+                            std::env::set_var(key, old);
+                        } else {
+                            std::env::remove_var(key);
+                        }
+                    }
+                }
+            }
+        }
+        let _guard = HostConfEnv([
+            std::env::var_os("RESOLV_MULTI"),
+            std::env::var_os("RESOLV_HOST_CONF"),
+        ]);
+        // SAFETY: the enclosing resolver fixture holds RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("RESOLV_MULTI", "on") };
+        f(paths)
+    })
+}
+
 #[test]
 fn nss_files_gethostbyname4_uses_gaih_addrtuple_backend() {
     use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
 
-    #[repr(C)]
-    struct TestGaihAddrtuple {
-        next: *mut TestGaihAddrtuple,
-        name: *mut c_char,
-        family: c_int,
-        addr: [u32; 4],
-        scopeid: u32,
-    }
+    with_nss_hosts_backend(b"203.0.113.55 nss-name4 nss-name4-alias\n", |_| {
+        let name = c"nss-name4-alias";
+        let mut tuple_head: *mut c_void = ptr::null_mut();
+        let mut buf = [0 as c_char; 512];
+        let mut err = -1;
+        let mut h_err = -1;
+        let mut ttl = -1;
 
-    with_resolver_backends(
-        Some(b"203.0.113.55 nss-name4 nss-name4-alias\n"),
-        None,
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                name.as_ptr(),
+                &mut tuple_head,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+
+        assert_eq!(status, 1);
+        assert_eq!(err, -1);
+        assert_eq!(h_err, 1);
+        assert_eq!(ttl, -1);
+        assert!(!tuple_head.is_null());
+
+        let tuple = unsafe { &*(tuple_head.cast::<TestGaihAddrtuple>()) };
+        assert!(tuple.next.is_null());
+        assert_eq!(tuple.family, libc::AF_INET);
+        assert_eq!(tuple.scopeid, 0);
+        assert_eq!(
+            unsafe { CStr::from_ptr(tuple.name) }.to_bytes(),
+            b"nss-name4"
+        );
+        assert_eq!(tuple.addr[0].to_ne_bytes(), [203, 0, 113, 55]);
+        assert_eq!(tuple.addr[1], 0);
+        assert_eq!(tuple.addr[2], 0);
+        assert_eq!(tuple.addr[3], 0);
+    });
+}
+
+#[test]
+fn nss_files_gethostbyname4_preserves_ipv6_file_order_and_supplied_head() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(
+        b"2001:db8::42 first dual-alias\n192.0.2.9 second dual-alias\n::ffff:198.51.100.7 third dual-alias\n",
         |_| {
-            let name = c"nss-name4-alias";
-            let mut tuple_head: *mut c_void = ptr::null_mut();
-            let mut buf = [0 as c_char; 512];
-            let mut err = -1;
-            let mut h_err = -1;
-            let mut ttl = -1;
+            let mut supplied = TestGaihAddrtuple {
+                next: ptr::null_mut(),
+                name: ptr::null_mut(),
+                family: -7,
+                addr: [0; 4],
+                scopeid: 99,
+            };
+            let supplied_ptr = (&mut supplied as *mut TestGaihAddrtuple).cast::<c_void>();
+            let mut head = supplied_ptr;
+            let mut storage = [0 as c_char; 1024];
+            let (buffer, capacity) =
+                misaligned_c_char_buffer(&mut storage, mem::align_of::<TestGaihAddrtuple>());
+            let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+            unsafe { *__errno_location() = 780 };
+            let status = unsafe {
+                _nss_files_gethostbyname4_r(
+                    c"DUAL-ALIAS".as_ptr(), &mut head, buffer, capacity,
+                    &mut err, &mut h_err, &mut ttl,
+                )
+            };
+            assert_eq!(status, 1);
+            assert_eq!(head, supplied_ptr);
+            assert_eq!((err, h_err, ttl), (777, 1, 779));
+            assert_eq!(unsafe { *__errno_location() }, 780);
+            let expected = [
+                "2001:db8::42".parse::<std::net::IpAddr>().unwrap(),
+                "192.0.2.9".parse().unwrap(),
+                "::ffff:198.51.100.7".parse().unwrap(),
+            ];
+            let mut node = head.cast::<TestGaihAddrtuple>();
+            for (index, address) in expected.iter().enumerate() {
+                assert!(!node.is_null(), "missing tuple {index}");
+                assert!((node as usize).is_multiple_of(mem::align_of::<TestGaihAddrtuple>()));
+                let tuple = unsafe { &*node };
+                if index == 0 {
+                    assert_eq!(unsafe { CStr::from_ptr(tuple.name) }.to_bytes(), b"first");
+                } else {
+                    assert!(tuple.name.is_null(), "only the first tuple owns the canonical name");
+                    let address = node as usize;
+                    assert!(address >= buffer as usize);
+                    assert!(address + mem::size_of::<TestGaihAddrtuple>() <= buffer as usize + capacity);
+                }
+                assert_eq!(tuple.scopeid, 0);
+                let bytes = unsafe { std::slice::from_raw_parts(tuple.addr.as_ptr().cast::<u8>(), 16) };
+                match address {
+                    std::net::IpAddr::V4(address) => {
+                        assert_eq!(tuple.family, libc::AF_INET);
+                        assert_eq!(&bytes[..4], &address.octets());
+                        assert_eq!(&bytes[4..], &[0; 12]);
+                    }
+                    std::net::IpAddr::V6(address) => {
+                        assert_eq!(tuple.family, libc::AF_INET6);
+                        assert_eq!(bytes, &address.octets());
+                    }
+                }
+                node = tuple.next;
+            }
+            assert!(node.is_null());
+        },
+    );
+}
 
+#[test]
+fn nss_files_gethostbyname4_returns_all_rows_and_retries_without_publication() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    let mut hosts = String::new();
+    for index in 1..=80 {
+        hosts.push_str(&format!("192.0.2.{index} many many-alias\n"));
+    }
+    with_nss_hosts_backend(hosts.as_bytes(), |_| {
+        let mut head = ptr::null_mut();
+        let mut buffer = [0x5a as c_char; 8192];
+        let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                c"many-alias".as_ptr(),
+                &mut head,
+                buffer.as_mut_ptr(),
+                16,
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+        assert_eq!(status, -2);
+        assert_eq!((err, h_err, ttl), (libc::ERANGE, -1, 779));
+        assert!(head.is_null());
+        assert!(buffer.iter().all(|&byte| byte == 0x5a));
+        err = 777;
+        h_err = 778;
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                c"many-alias".as_ptr(),
+                &mut head,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+        assert_eq!(status, 1);
+        assert_eq!((err, h_err, ttl), (777, 1, 779));
+        let mut node = head.cast::<TestGaihAddrtuple>();
+        for index in 1..=80 {
+            assert!(!node.is_null(), "truncated after {} rows", index - 1);
+            let tuple = unsafe { &*node };
+            assert_eq!(tuple.family, libc::AF_INET);
+            assert_eq!(tuple.addr[0].to_ne_bytes(), [192, 0, 2, index]);
+            node = tuple.next;
+        }
+        assert!(node.is_null());
+    });
+}
+
+#[test]
+fn nss_files_gethostbyname4_handles_ipv6_only_misses_and_unavailable_source() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(b"2001:db8::1 ipv6-only\n", |paths| {
+        let mut buffer = [0 as c_char; 512];
+        for (name, expected_status, expected_error, expected_herror) in [
+            (c"ipv6-only", 1, 777, 1),
+            (c"missing", 0, 777, 1),
+            // The files module searches hostnames; numeric synthesis belongs
+            // to the public resolver, not to this backend.
+            (c"192.0.2.1", 0, 777, 1),
+        ] {
+            let mut head = ptr::null_mut();
+            let (mut err, mut h_err, mut ttl) = (777, 778, 779);
             let status = unsafe {
                 _nss_files_gethostbyname4_r(
                     name.as_ptr(),
-                    &mut tuple_head,
-                    buf.as_mut_ptr(),
-                    buf.len(),
+                    &mut head,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
                     &mut err,
                     &mut h_err,
                     &mut ttl,
                 )
             };
-
-            assert_eq!(status, 1);
-            assert_eq!(err, 0);
-            assert_eq!(h_err, 0);
-            assert_eq!(ttl, 0);
-            assert!(!tuple_head.is_null());
-
-            let tuple = unsafe { &*(tuple_head.cast::<TestGaihAddrtuple>()) };
-            assert!(tuple.next.is_null());
-            assert_eq!(tuple.family, libc::AF_INET);
-            assert_eq!(tuple.scopeid, 0);
             assert_eq!(
-                unsafe { CStr::from_ptr(tuple.name) }.to_bytes(),
-                b"nss-name4"
+                (status, err, h_err, ttl),
+                (expected_status, expected_error, expected_herror, 779)
             );
-            assert_eq!(tuple.addr[0].to_ne_bytes(), [203, 0, 113, 55]);
-            assert_eq!(tuple.addr[1], 0);
-            assert_eq!(tuple.addr[2], 0);
-            assert_eq!(tuple.addr[3], 0);
+            assert_eq!(!head.is_null(), expected_status == 1);
+        }
+        // This nonexistent path is private to the fixture; no database is removed.
+        unsafe { std::env::set_var(HOSTS_PATH_ENV, paths.hosts.with_extension("missing")) };
+        let mut head = ptr::null_mut();
+        let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                c"ipv6-only".as_ptr(),
+                &mut head,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+        assert_eq!((status, err, h_err, ttl), (-1, libc::ENOENT, -1, 779));
+        assert!(head.is_null());
+    });
+}
+
+#[test]
+fn nss_files_gethostbyname4_obeys_host_conf_and_multi_override() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(
+        b"2001:db8::1 first shared\n192.0.2.1 second shared\n",
+        |paths| {
+            let check = |expected_count, expected_herror| {
+                let mut head = ptr::null_mut();
+                let mut buffer = [0 as c_char; 1024];
+                let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+                let status = unsafe {
+                    _nss_files_gethostbyname4_r(
+                        c"shared".as_ptr(),
+                        &mut head,
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut err,
+                        &mut h_err,
+                        &mut ttl,
+                    )
+                };
+                assert_eq!((status, err, h_err, ttl), (1, 777, expected_herror, 779));
+                let mut node = head.cast::<TestGaihAddrtuple>();
+                for _ in 0..expected_count {
+                    assert!(!node.is_null());
+                    node = unsafe { (*node).next };
+                }
+                assert!(node.is_null());
+            };
+            check(2, 1);
+            // SAFETY: the fixture serializes and restores both environment variables.
+            unsafe { std::env::set_var("RESOLV_MULTI", "off") };
+            check(1, 778);
+            let conf = paths.hosts.with_extension("host.conf");
+            std::fs::write(&conf, b"  multi off # use the first row\n").unwrap();
+            unsafe {
+                std::env::set_var("RESOLV_HOST_CONF", &conf);
+                std::env::remove_var("RESOLV_MULTI");
+            }
+            check(1, 778);
+            std::fs::write(&conf, b"multi on\n").unwrap();
+            check(2, 1);
+            unsafe { std::env::set_var("RESOLV_MULTI", "off") };
+            check(1, 778);
         },
     );
+}
+
+#[test]
+fn nss_files_getcanonname_resolves_alias_and_preserves_retry_contract() {
+    use frankenlibc_abi::unistd_abi::_nss_files_getcanonname_r;
+
+    with_resolver_backends(Some(b"2001:db8::1 canonical alias\n"), None, |_| {
+        let mut result = ptr::null_mut();
+        let mut buffer = [0x5a as c_char; 64];
+        let (mut err, mut h_err) = (777, 778);
+        let status = unsafe {
+            _nss_files_getcanonname_r(
+                c"ALIAS".as_ptr(),
+                buffer.as_mut_ptr(),
+                4,
+                &mut result,
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!((status, err, h_err), (-2, libc::ERANGE, -1));
+        assert!(result.is_null());
+        assert!(buffer.iter().all(|&byte| byte == 0x5a));
+        err = 777;
+        h_err = 778;
+        let status = unsafe {
+            _nss_files_getcanonname_r(
+                c"ALIAS".as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!((status, err, h_err), (1, 777, 778));
+        assert_eq!(result, buffer.as_mut_ptr());
+        assert_eq!(unsafe { CStr::from_ptr(result) }.to_bytes(), b"canonical");
+        let status = unsafe {
+            _nss_files_getcanonname_r(
+                c"missing".as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!((status, err, h_err), (0, 777, 1));
+        assert!(result.is_null());
+    });
 }
 
 /// The strict-passthrough `getnameinfo` fast path (deployed default) must be byte-identical to the
