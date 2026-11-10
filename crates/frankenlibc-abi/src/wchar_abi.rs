@@ -4554,7 +4554,7 @@ pub unsafe extern "C" fn wctob(c: u32) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn btowc(c: c_int) -> u32 {
-    if !(0..=u8::MAX as c_int).contains(&c) {
+    if !(c_int::from(i8::MIN)..=c_int::from(u8::MAX)).contains(&c) || c == libc::EOF {
         return u32::MAX;
     }
     match codec::mbtowc(&[c as u8]) {

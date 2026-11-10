@@ -158,13 +158,39 @@ mod locale_scanning {
         if std::env::var(CHILD).as_deref() == Ok(test) {
             return true;
         }
-        let locale_path =
+        let mut locale_path =
             std::env::var_os("FRANKENLIBC_TEST_LOCALE_PATH").map(std::path::PathBuf::from);
         if let Some(path) = &locale_path {
             assert!(
                 path.is_absolute() && path.is_dir(),
                 "FRANKENLIBC_TEST_LOCALE_PATH must name an existing absolute directory: {path:?}"
             );
+        } else if !std::path::Path::new("/usr/lib/locale/fr_FR/LC_CTYPE").is_file() {
+            static COMPILED_LOCALE_PATH: std::sync::OnceLock<std::path::PathBuf> =
+                std::sync::OnceLock::new();
+            let compiled = COMPILED_LOCALE_PATH.get_or_init(|| {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let dir = std::env::temp_dir().join(format!(
+                    "frankenlibc-swscanf-localedef-{}-{stamp}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&dir).expect("create swscanf localedef directory");
+                let output = std::process::Command::new("localedef")
+                    .args(["--no-archive", "-i", "fr_FR", "-f", "ISO-8859-1"])
+                    .arg(dir.join("fr_FR"))
+                    .output()
+                    .expect("swscanf locale gate requires localedef");
+                assert!(
+                    output.status.success(),
+                    "localedef fr_FR (ISO-8859-1) failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                dir
+            });
+            locale_path = Some(compiled.clone());
         }
         for mode in ["strict", "hardened"] {
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());

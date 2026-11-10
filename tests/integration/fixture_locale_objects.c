@@ -81,8 +81,10 @@ static void category_matrix(void) {
         locale_t changed = newlocale(LC_NUMERIC_MASK, "C", copy);
         CHECK(changed);
         category_names(changed, mask & ~LC_NUMERIC_MASK);
+        char missing[64];
+        CHECK((size_t)snprintf(missing, sizeof missing, "fl_missing_locale_%u", subset) < sizeof missing);
         errno = 0;
-        CHECK(!newlocale(LC_TIME_MASK, "fl_missing_locale_4937", changed));
+        CHECK(!newlocale(LC_TIME_MASK, missing, changed));
         CHECK(errno == ENOENT);
         category_names(changed, mask & ~LC_NUMERIC_MASK);
         freelocale(changed);

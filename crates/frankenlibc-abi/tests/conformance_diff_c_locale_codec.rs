@@ -751,7 +751,44 @@ mod single_byte_named_locales {
     }
 
     fn read_ctype(name: &str, expected_codeset: &[u8]) -> Vec<u8> {
-        let path = Path::new("/usr/lib/locale").join(name).join("LC_CTYPE");
+        let mut path = std::env::var_os("FRANKENLIBC_TEST_LOCALE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/usr/lib/locale"))
+            .join(name)
+            .join("LC_CTYPE");
+        if !path.is_file() && std::env::var_os("FRANKENLIBC_TEST_LOCALE_PATH").is_none() {
+            static COMPILED_ROOT: OnceLock<PathBuf> = OnceLock::new();
+            let root = COMPILED_ROOT.get_or_init(|| {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let dir = std::env::temp_dir().join(format!(
+                    "frankenlibc-localedef-ctype-{}-{stamp}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&dir).expect("create localedef directory");
+                for (loc_name, charset) in [
+                    ("fr_FR", "ISO-8859-1"),
+                    ("bg_BG", "CP1251"),
+                    ("ru_UA", "KOI8-U"),
+                    ("zh_CN", "GB2312"),
+                ] {
+                    let output = std::process::Command::new("localedef")
+                        .args(["--no-archive", "-i", loc_name, "-f", charset])
+                        .arg(dir.join(loc_name))
+                        .output()
+                        .expect("single-byte locale gate requires localedef");
+                    assert!(
+                        output.status.success(),
+                        "localedef {loc_name} ({charset}) failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                dir
+            });
+            path = root.join(name).join("LC_CTYPE");
+        }
         let bytes = std::fs::read(&path).unwrap_or_else(|error| {
             panic!(
                 "required host locale fixture {} is unavailable: {error}",
@@ -1141,7 +1178,7 @@ mod single_byte_named_locales {
                 "fixture {:?} exercised too few valid bytes",
                 case.name
             );
-            for input in [libc::EOF, -2, 256] {
+            for input in [libc::EOF, -2, -129, 256] {
                 assert_eq!(unsafe { (ours.btowc)(input) }, unsafe {
                     (gnu.btowc)(input)
                 });
