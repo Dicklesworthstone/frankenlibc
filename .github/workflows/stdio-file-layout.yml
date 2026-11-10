@@ -11,6 +11,7 @@ on:
       - 'crates/frankenlibc-abi/src/isoc_abi.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
@@ -21,6 +22,7 @@ on:
       - 'crates/frankenlibc-core/src/mntent/**'
       - 'tests/integration/fixture_stdio.c'
       - 'tests/integration/fixture_stdio_file_layout.c'
+      - 'tests/integration/fixture_stdio_positions.c'
       - 'tests/integration/fixture_stdio_lifetime.c'
       - 'tests/integration/fixture_callback_unwind.cpp'
       - 'tests/integration/fixture_stdio_printf.c'
@@ -88,6 +90,25 @@ jobs:
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Preserve saved positions and buffered output against live host stdio
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_positions.c -o target/stdio-positions
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$library"
+          prefix=artifacts/stdio-layout/saved-positions
+          env -u LD_PRELOAD -u FRANKENLIBC_MODE timeout 20 target/stdio-positions \
+            > "$prefix-host.out" 2> "$prefix-host.err"
+          grep -qx 'saved position contracts: 85 passed' "$prefix-host.out"
+          test ! -s "$prefix-host.err"
+          for mode in strict hardened; do
+            timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+              target/stdio-positions > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+            cmp "$prefix-host.out" "$prefix-$mode.out"
+            cmp "$prefix-host.err" "$prefix-$mode.err"
+          done
       - name: Preserve stdio errors for interrupted and nonblocking reads
         if: always()
         shell: bash
@@ -152,18 +173,22 @@ jobs:
                 2> "artifacts/stdio-layout/lifetime-$model-$mode-preload.err"
             done
           done
-      - name: Preserve every narrow and wide printf argument
+      - name: Preserve printf arguments and saved stream positions
         if: always()
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
           for mode in strict hardened; do
-            for target in conformance_diff_stdio_printf conformance_diff_swprintf; do
+            for target in conformance_diff_stdio_printf conformance_diff_swprintf conformance_diff_fgetpos; do
               FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
                 --test "$target" -- --test-threads=1 --nocapture \
                 2>&1 | tee "artifacts/stdio-layout/$target-$mode.log"
               grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' \
                 "artifacts/stdio-layout/$target-$mode.log"
+              if [[ "$target" == conformance_diff_fgetpos ]]; then
+                grep -Eq '^test result: ok\. 13 passed; 0 failed; 0 ignored;' \
+                  "artifacts/stdio-layout/$target-$mode.log"
+              fi
             done
           done
       - name: Exercise more than 32 arguments through all 18 C frontends
