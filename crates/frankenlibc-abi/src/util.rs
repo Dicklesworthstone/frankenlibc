@@ -218,6 +218,7 @@ impl<T> AbiReentrantMutex<T> {
 
 #[inline]
 fn current_tid() -> usize {
+    #[cfg(not(test))]
     if let Some(owner_key) = crate::malloc_abi::fast_thread_owner_key() {
         return owner_key;
     }

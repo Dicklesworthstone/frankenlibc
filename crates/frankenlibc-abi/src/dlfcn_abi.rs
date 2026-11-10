@@ -506,9 +506,9 @@ fn close_main_program_handle() -> c_int {
 mod native;
 #[cfg(not(feature = "standalone"))]
 use native::host_may_load_declined_object;
-use native::{
-    close_native_dso, load_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol,
-};
+#[cfg(feature = "standalone")]
+use native::load_native_dso;
+use native::{close_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol};
 pub(crate) use native::{native_address_info_extra, query_object_info};
 
 #[doc(hidden)]
