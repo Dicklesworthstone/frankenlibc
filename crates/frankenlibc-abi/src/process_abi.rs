@@ -569,9 +569,7 @@ pub(crate) unsafe fn waitpid_cp(
     let mut repaired = false;
     let rc = loop {
         let rc = unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
-            })
+            crate::pthread_abi::cancellation_point_wait4(pid, wstatus, opts, std::ptr::null_mut())
         };
         if !repaired
             && mode.heals_enabled()
@@ -666,9 +664,7 @@ pub(crate) unsafe fn wait4_cp(
     }
 
     let rc = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_wait4(pid, wstatus, options, rusage as *mut u8)
-        })
+        crate::pthread_abi::cancellation_point_wait4(pid, wstatus, options, rusage as *mut u8)
     };
 
     match rc {
@@ -716,15 +712,7 @@ pub(crate) unsafe fn waitid_cp(
     }
 
     let rc = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_waitid(
-                idtype,
-                id,
-                infop as *mut u8,
-                options,
-                std::ptr::null_mut(), // rusage (5th arg)
-            )
-        })
+        crate::pthread_abi::cancellation_point_waitid(idtype, id, infop as *mut u8, options)
     };
 
     match rc {

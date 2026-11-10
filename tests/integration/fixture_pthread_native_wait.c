@@ -1,5 +1,5 @@
-/* Already-parked semaphore/condition cancellation, with a live GNU oracle.
- * Every successful case observes a real sleeping futex syscall before cancel.
+/* Already-parked native wait cancellation, with a live GNU oracle.
+ * Cancellation cases observe a real sleeping syscall before requesting it.
  * Missing procfs/seccomp evidence is exit 77 with an explicit SKIP transcript.
  */
 #define _GNU_SOURCE
@@ -11,6 +11,7 @@
 #include <linux/seccomp.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -18,8 +19,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -73,6 +76,7 @@ static int pin_providers(const char *expected) {
         "pthread_cond_wait", "pthread_cond_timedwait", "pthread_cond_clockwait",
         "pthread_cond_signal", "sem_wait", "sem_timedwait", "sem_clockwait",
         "sem_post", "sem_trywait", "sem_getvalue", "__errno_location",
+        "wait", "waitpid", "wait3", "wait4", "waitid", "sigaction", "pthread_kill",
         "__pthread_register_cancel", "__pthread_unregister_cancel", "__pthread_unwind_next",
         strstr(case_name, "join-alias") ? "__pthread_join" : "pthread_join"
     };
@@ -406,11 +410,337 @@ static void force_waitv_enosys(void) {
             "futex_waitv ENOSYS filter is active");
 }
 
+enum child_operation { CHILD_WAIT, CHILD_WAITPID, CHILD_WAIT3, CHILD_WAIT4, CHILD_WAITID };
+
+struct child_state {
+    struct state worker;
+    enum child_operation operation;
+    pid_t child;
+    uid_t uid;
+    int gate;
+    int disabled, nohang, nowait, completes, interrupted, restart, nested, siginfo, foreign;
+    int pidfd_nonblock, pidfd, current_group;
+    int result, status, error;
+    struct rusage usage;
+    siginfo_t info;
+    _Atomic int signals;
+};
+
+static struct child_state *signal_child;
+
+static int all_bytes(const void *pointer, size_t length, unsigned char value) {
+    const unsigned char *bytes = pointer;
+    for (size_t i = 0; i < length; ++i)
+        if (bytes[i] != value) return 0;
+    return 1;
+}
+
+static int child_outputs_untouched(const struct child_state *state) {
+    return state->status == 0x5a5a5a5a && all_bytes(&state->usage, sizeof(state->usage), 0xa5) &&
+           all_bytes(&state->info, sizeof(state->info), 0xa5);
+}
+
+static void initialize_child_outputs(struct child_state *state) {
+    state->status = 0x5a5a5a5a;
+    memset(&state->usage, 0xa5, sizeof(state->usage));
+    memset(&state->info, 0xa5, sizeof(state->info));
+}
+
+static void check_child_info(const struct child_state *state, int ready) {
+    siginfo_t expected;
+    memset(&expected, 0xa5, sizeof(expected));
+    expected.si_signo = ready ? SIGCHLD : 0;
+    expected.si_errno = 0;
+    expected.si_code = ready ? CLD_EXITED : 0;
+    expected.si_pid = ready ? state->child : 0;
+    expected.si_uid = ready ? state->uid : 0;
+    expected.si_status = ready ? 37 : 0;
+    REQUIRE(!memcmp(&state->info, &expected, sizeof(expected)),
+            "waitid preserves padding and publishes exactly the child fields");
+}
+
+static void check_interrupted_child_outputs(const struct child_state *state) {
+    if (state->operation == CHILD_WAITID) {
+        check_child_info(state, 0);
+        REQUIRE(state->status == 0x5a5a5a5a &&
+                all_bytes(&state->usage, sizeof(state->usage), 0xa5),
+                "waitid does not modify unrelated status or usage storage");
+    } else {
+        REQUIRE(child_outputs_untouched(state), "interrupted wait preserves status and usage");
+    }
+}
+
+static int call_child_wait(struct child_state *state) {
+    int options = state->nohang ? WNOHANG : 0;
+    if (state->operation == CHILD_WAITID)
+        return waitid(state->pidfd_nonblock ? P_PIDFD : state->current_group ? P_PGID : P_PID,
+                      (id_t)(state->pidfd_nonblock ? state->pidfd : state->current_group ? 0 : state->child),
+                      &state->info,
+                      options | WEXITED | (state->nowait ? WNOWAIT : 0));
+    if (state->operation == CHILD_WAIT) return wait(&state->status);
+    if (state->operation == CHILD_WAITPID)
+        return waitpid(state->current_group ? 0 : state->child, &state->status, options);
+    if (state->operation == CHILD_WAIT3) return wait3(&state->status, options, &state->usage);
+    return wait4(state->current_group ? 0 : state->child, &state->status, options, &state->usage);
+}
+
+static void child_cleanup(void *argument) {
+    struct child_state *state = argument;
+    sigset_t mask;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0, "cleanup reads signal mask");
+    REQUIRE(sigismember(&mask, SIGUSR1) == 0 && sigismember(&mask, SIGUSR2) == 0 &&
+            sigismember(&mask, SIGALRM) == 0, "cancellation restores the wait's original mask");
+    REQUIRE(atomic_fetch_add(&state->worker.cleaned, 1) == 0, "one child-wait cleanup");
+}
+
+static void *child_worker(void *argument) {
+    struct child_state *state = argument;
+    capture_worker_identity(&state->worker);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0, "child wait deferred type");
+    if (state->disabled)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0,
+                "disable child-wait cancellation");
+    pthread_cleanup_push(child_cleanup, state);
+    atomic_store_explicit(&state->worker.ready, 1, memory_order_release);
+    errno = ENOTTY;
+    state->result = call_child_wait(state);
+    state->error = errno;
+    if (state->nohang) {
+        REQUIRE(state->result == 0 && state->error == ENOTTY, "empty WNOHANG preserves errno");
+        if (state->operation == CHILD_WAITID) check_child_info(state, 0);
+        else REQUIRE(child_outputs_untouched(state), "empty WNOHANG leaves status and usage alone");
+        initialize_child_outputs(state);
+        REQUIRE(pthread_cancel(pthread_self()) == 0, "make cancellation pending before WNOHANG");
+        (void)call_child_wait(state);
+        fail("WNOHANG did not deliver already-pending cancellation");
+    }
+    atomic_store_explicit(&state->worker.returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (state->disabled) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0,
+                "reenable child-wait cancellation");
+        pthread_testcancel();
+        fail("disabled child wait lost its pending cancellation");
+    }
+    return state;
+}
+
+static void child_signal(int signum) {
+    int saved = errno;
+    struct child_state *state = signal_child;
+    check_interrupted_child_outputs(state);
+    atomic_fetch_add(&state->signals, 1);
+    if (signum == SIGUSR1 && state->nested)
+        REQUIRE(syscall(SYS_tgkill, getpid(), syscall(SYS_gettid), SIGUSR2) == 0,
+                "deliver nested signal to the interrupted waiter");
+    errno = saved;
+}
+
+static void child_siginfo_signal(int signum, siginfo_t *info, void *context) {
+    REQUIRE(info != NULL && context != NULL && info->si_signo == signum,
+            "SA_SIGINFO receives the kernel signal frame");
+    child_signal(signum);
+}
+
+static void observe_child_parked(const struct child_state *state) {
+    const int64_t limit = monotonic_ns() + 2000000000;
+    while (!atomic_load_explicit(&state->worker.ready, memory_order_acquire)) {
+        REQUIRE(monotonic_ns() < limit, "child waiter publishes readiness");
+        pause_briefly();
+    }
+    for (;;) {
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long first = 0, second = 0;
+        read_proc(&state->worker, "syscall", call, sizeof(call));
+        int parsed = sscanf(call, "%ld %llx %llx", &number, &first, &second);
+        int native_slice = expect_native && !state->disabled &&
+                           !state->interrupted && !state->restart && !state->current_group;
+        int waiting = parsed >= 3 &&
+            (native_slice ? number == SYS_ppoll && first == 0 && second == 0 :
+             state->operation == CHILD_WAITID ? number == SYS_waitid &&
+                 first == (unsigned long long)(state->current_group ? P_PGID : P_PID) &&
+                 second == (unsigned long long)(state->current_group ? 0 : state->child) :
+             number == SYS_wait4 &&
+                 (state->operation == CHILD_WAIT || state->operation == CHILD_WAIT3 ||
+                  (pid_t)first == (state->current_group ? 0 : state->child)));
+        if (waiting) {
+            read_proc(&state->worker, "stat", status, sizeof(status));
+            char *end = strrchr(status, ')');
+            REQUIRE(end != NULL && end[1] == ' ', "parse child waiter state");
+            if (end[2] == 'S') return;
+        }
+        REQUIRE(!atomic_load(&state->worker.returned), "child wait returned before its gated event");
+        REQUIRE(monotonic_ns() < limit, "no sleeping child wait observed");
+        pause_briefly();
+    }
+}
+
+static void release_child(struct child_state *state) {
+    REQUIRE(write(state->gate, "x", 1) == 1, "release child only after the wait witness");
+    REQUIRE(close(state->gate) == 0, "close child gate");
+}
+
+static int child_case(void) {
+    static const char *names[] = {"child-wait", "child-waitpid", "child-wait3",
+                                  "child-wait4", "child-waitid"};
+    struct child_state state = {0};
+    const char *suffix = NULL;
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        size_t length = strlen(names[i]);
+        if (!strncmp(case_name, names[i], length) &&
+            (case_name[length] == 0 || case_name[length] == '-')) {
+            state.operation = (enum child_operation)i;
+            suffix = case_name + length;
+            break;
+        }
+    }
+    if (suffix == NULL) return 2;
+    state.disabled = !strcmp(suffix, "-disabled");
+    state.nohang = !strcmp(suffix, "-nohang");
+    state.nowait = !strcmp(suffix, "-nowait");
+    state.pidfd_nonblock = !strcmp(suffix, "-pidfd-nonblock");
+    state.current_group = !strcmp(suffix, "-pgrp-ready");
+    state.siginfo = strstr(suffix, "-siginfo") != NULL;
+    state.nested = strstr(suffix, "-nested") != NULL;
+    state.foreign = !strcmp(suffix, "-foreign-restart");
+    state.interrupted = strstr(suffix, "-eintr") != NULL;
+    state.restart = strstr(suffix, "-restart") != NULL;
+    state.completes = !strcmp(suffix, "-ready") || state.nowait || state.restart || state.current_group;
+    if (*suffix && !state.disabled && !state.nohang && !state.completes && !state.interrupted &&
+        !state.pidfd_nonblock)
+        return 2;
+    if ((state.nohang && state.operation == CHILD_WAIT) ||
+        ((state.nowait || state.pidfd_nonblock) && state.operation != CHILD_WAITID)) return 2;
+    initialize_child_outputs(&state);
+    state.uid = getuid();
+    signal_child = &state;
+    if (state.interrupted || state.restart) {
+        struct sigaction action = {0};
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = (state.restart ? SA_RESTART : 0) | (state.siginfo ? SA_SIGINFO : 0);
+        if (state.siginfo) action.sa_sigaction = child_siginfo_signal;
+        else action.sa_handler = child_signal;
+        int (*install)(int, const struct sigaction *, struct sigaction *) = sigaction;
+        if (state.foreign) {
+            /* Install through the actual host provider before the wait, to
+             * exercise the explicit foreign-handler fallback, not its adapter. */
+            void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+            REQUIRE(host != NULL, "open GNU signal provider");
+            install = (int (*)(int, const struct sigaction *, struct sigaction *))
+                dlsym(host, "sigaction");
+            REQUIRE(install != NULL, "resolve GNU sigaction");
+        }
+        REQUIRE(install(SIGUSR1, &action, NULL) == 0, "install child wait signal");
+        if (state.nested) {
+            action.sa_flags = (state.restart ? 0 : SA_RESTART) |
+                              (state.siginfo ? SA_SIGINFO : 0);
+            REQUIRE(sigaction(SIGUSR2, &action, NULL) == 0, "install opposite nested restart action");
+        }
+    }
+    int gate[2];
+    REQUIRE(pipe2(gate, O_CLOEXEC) == 0, "create gated child pipe");
+    state.child = fork();
+    REQUIRE(state.child >= 0, "fork gated child");
+    if (state.child == 0) {
+        close(gate[1]);
+        char byte;
+        /* Parent failure/timeout closes the only writer, so the child also
+         * exits on EOF. No failed probe can leave a permanently parked child. */
+        while (read(gate[0], &byte, 1) < 0 && errno == EINTR) {}
+        _exit(37);
+    }
+    REQUIRE(close(gate[0]) == 0, "close parent's child-read descriptor");
+    state.gate = gate[1];
+    if (state.pidfd_nonblock) {
+        state.pidfd = (int)syscall(SYS_pidfd_open, state.child, O_NONBLOCK);
+        if (state.pidfd < 0 && (errno == ENOSYS || errno == EINVAL || errno == EPERM))
+            skip("nonblocking-pidfd-unavailable");
+        REQUIRE(state.pidfd >= 0, "open nonblocking pidfd");
+    }
+    REQUIRE(pthread_create(&state.worker.thread, NULL, child_worker, &state) == 0,
+            "create native child waiter");
+    if (!state.nohang && !state.pidfd_nonblock) observe_child_parked(&state);
+    if (state.interrupted || state.restart) {
+        REQUIRE(pthread_kill(state.worker.thread, SIGUSR1) == 0, "interrupt parked child wait");
+        if (state.restart) {
+            const int64_t limit = monotonic_ns() + 2000000000;
+            while (atomic_load(&state.signals) != (state.nested ? 2 : 1)) {
+                REQUIRE(monotonic_ns() < limit, "signal handlers completed");
+                pause_briefly();
+            }
+            observe_child_parked(&state);
+        }
+    } else if (!state.completes && !state.nohang && !state.pidfd_nonblock) {
+        REQUIRE(pthread_cancel(state.worker.thread) == 0, "cancel already-parked child wait");
+    }
+    if (state.disabled) {
+        observe_child_parked(&state);
+        REQUIRE(!atomic_load(&state.worker.cleaned), "disabled child wait remains parked");
+    }
+    if (state.completes || state.disabled) release_child(&state);
+    void *result = join_bounded(state.worker.thread, "child waiter did not finish without a rescue");
+    int canceled = !state.completes && !state.interrupted && !state.pidfd_nonblock;
+    REQUIRE(result == (canceled ? PTHREAD_CANCELED : &state), "child waiter completion kind");
+    REQUIRE(atomic_load(&state.worker.cleaned) == 1, "child waiter cleanup completed once");
+    REQUIRE(atomic_load(&state.worker.returned) ==
+            (state.completes || state.interrupted || state.disabled || state.pidfd_nonblock),
+            "only completed or interrupted waits publish a return");
+    if (state.pidfd_nonblock) {
+        REQUIRE(state.result == -1 && state.error == EAGAIN,
+                "nonblocking pidfd wait reports EAGAIN without parking");
+        check_interrupted_child_outputs(&state);
+    } else if (state.interrupted) {
+        REQUIRE(state.result == -1 && state.error == EINTR, "nonrestarting signal interrupts wait");
+        REQUIRE(atomic_load(&state.signals) == (state.nested ? 2 : 1), "expected handler deliveries");
+        check_interrupted_child_outputs(&state);
+    } else if (state.completes || state.disabled) {
+        REQUIRE(state.error == ENOTTY, "completed child wait preserves caller errno");
+        if (state.operation == CHILD_WAITID) {
+            REQUIRE(state.result == 0, "completed waitid result");
+            check_child_info(&state, 1);
+        } else {
+            REQUIRE(state.result == state.child && WIFEXITED(state.status) &&
+                    WEXITSTATUS(state.status) == 37, "completed child pid and exit status");
+            if (state.operation == CHILD_WAIT3 || state.operation == CHILD_WAIT4)
+                REQUIRE(state.usage.ru_utime.tv_sec >= 0 && state.usage.ru_stime.tv_sec >= 0,
+                        "completed wait publishes resource usage");
+        }
+    } else {
+        if (state.nohang)
+            REQUIRE(child_outputs_untouched(&state), "pending cancellation precedes WNOHANG output");
+        else
+            check_interrupted_child_outputs(&state);
+    }
+    int status = -1;
+    if ((!state.completes && !state.disabled) || state.nowait) {
+        if (!state.nowait) {
+            REQUIRE(waitpid(state.child, &status, WNOHANG) == 0 && status == -1,
+                    "cancellation or interruption did not reap the live child");
+            release_child(&state);
+        }
+        REQUIRE(waitpid(state.child, &status, 0) == state.child && WIFEXITED(status) &&
+                WEXITSTATUS(status) == 37, "another wait retains the child's exit result");
+    }
+    errno = 0;
+    REQUIRE(waitpid(state.child, &status, WNOHANG) == -1 && errno == ECHILD,
+            "each child is reaped exactly once");
+    if (state.pidfd_nonblock) REQUIRE(close(state.pidfd) == 0, "close child pidfd");
+    printf("pthread-native-wait:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
     int pinned = pin_providers(argv[2]);
     if (pinned) return pinned;
+    const char *native = getenv("FRANKENLIBC_THREAD_NATIVE");
+    expect_native = native != NULL && !strcmp(native, "1");
+    creator_tp = thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    if (!strncmp(case_name, "child-", 6)) return child_case();
     const char *names[] = {"sem-wait", "sem-timed", "sem-clock-real", "sem-clock-mono",
                            "cond-wait", "cond-timed", "cond-clock-real", "cond-clock-mono",
                            "join", "join-alias", "join-timed", "join-clock-real", "join-clock-mono",
@@ -434,11 +764,6 @@ int main(int argc, char **argv) {
     }
     if (!found) return 2;
     if (state.peers && state.operation != COND_WAIT) return 2;
-    const char *native = getenv("FRANKENLIBC_THREAD_NATIVE");
-    expect_native = native != NULL && !strcmp(native, "1");
-    creator_tp = thread_pointer();
-    creator_tid = (pid_t)syscall(SYS_gettid);
-    creator_thread = pthread_self();
     if (strstr(case_name, "-enosys")) force_waitv_enosys();
     if (is_join(&state)) {
         if (state.operation == JOIN_ALIAS) {

@@ -551,6 +551,35 @@ fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
 
+/// Child waits can use bounded native cancellation only without deliverable
+/// caught signals. The kernel must retain control of wait's SA_RESTART rules
+/// when any unblocked handler is installed, including preinstalled handlers.
+/// Called with signals blocked; `original_mask` is the wait's entry mask.
+pub(crate) fn supports_native_child_wait(original_mask: u64) -> bool {
+    for signum in 1..=64 {
+        if original_mask & (1u64 << (signum - 1)) != 0 {
+            continue;
+        }
+        let mut action = KernelSigaction::zeroed();
+        // SAFETY: query only, into owned kernel-layout storage. This does not
+        // resolve host symbols, allocate, or change any signal disposition.
+        if unsafe {
+            raw_syscall::sys_rt_sigaction(
+                signum,
+                std::ptr::null(),
+                std::ptr::from_mut(&mut action).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_err()
+            || !is_default_or_ignore_handler(action.sa_handler)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// The HJI reachability verdict for entering a `kind` critical section, not
 /// nested and nested (`depth > 1`): the state a freshly built
 /// `HjiReachabilityController` settles on after `HJI_WARMUP_OBSERVATIONS`

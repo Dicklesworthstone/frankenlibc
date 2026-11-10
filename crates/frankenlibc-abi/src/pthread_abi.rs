@@ -6820,6 +6820,85 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// Child-process cancellation points, including cancellation arriving while a
+/// native wait is parked. Capture the public caller before any shared frame.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_wait4(
+    pid: c_int,
+    status: *mut c_int,
+    options: c_int,
+    usage: *mut u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_child_window(
+            caller,
+            cancel_poll::ChildWait::Wait4 {
+                pid,
+                status,
+                options,
+                usage,
+            },
+        )
+    }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_waitid(
+    idtype: c_int,
+    id: u32,
+    info: *mut u8,
+    options: c_int,
+) -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_child_window(
+            caller,
+            cancel_poll::ChildWait::WaitId {
+                idtype,
+                id,
+                info,
+                options,
+            },
+        )
+        .map(|_| ())
+    }
+}
+
+#[inline(never)]
+unsafe fn cancellation_child_window(
+    caller: usize,
+    operation: cancel_poll::ChildWait,
+) -> Result<c_int, c_int> {
+    if operation.supports_slices()
+        && caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        match unsafe {
+            cancel_poll::wait_child(
+                operation,
+                cancel,
+                crate::signal_abi::supports_native_child_wait,
+            )
+        }? {
+            // Do not discard an acquired child event or reap it twice when a
+            // cancellation races the completed probe. Its output is committed.
+            cancel_poll::ChildWaitResult::Ready(result) => return Ok(result),
+            cancel_poll::ChildWaitResult::Cancel => unsafe { pthread_testcancel() },
+            cancel_poll::ChildWaitResult::Unsupported => {}
+        }
+    }
+    // Disabled cancellation, WNOHANG, pidfds, current-group selectors and
+    // deliverable signal handlers retain their original kernel behavior.
+    // A handler disabling cancellation may
+    // also make testcancel return; continue the original wait in that case.
+    unsafe { cancellation_window(caller, || operation.blocking()) }
+}
+
 /// Sleep cancellation point. Capture the exported entry's caller before the
 /// shared window, including aliases and C11's different result convention.
 #[inline(always)]
@@ -7375,7 +7454,7 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex, poll, epoll and supported sleep points use their windows to
+    // Native futex, poll, epoll, child and supported sleep points use their windows to
     // observe a request arriving while parked; other syscalls remain pending-
     // request cancellation points until they gain an interruptible native path.
     // With no native threads, current_thread_handle exits at its atomic flag

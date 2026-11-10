@@ -1,4 +1,4 @@
-//! Bounded native cancellation for poll, select, epoll and monotonic sleep waits.
+//! Bounded native cancellation for descriptor, sleep and child-process waits.
 //!
 //! A native request does not send a signal. Recheck its stable cancellation
 //! word between at most 50 ms of kernel waiting. Block signals between slices
@@ -440,6 +440,196 @@ unsafe fn sleep_slices(
                     Timespec::default()
                 };
                 return Ok(SleepResult::Interrupted(remainder));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Child waits use WNOHANG probes without changing the caller's child selector
+/// or event options. An acquired event belongs to the caller, even when a
+/// cancellation request races its acquisition.
+#[derive(Clone, Copy)]
+pub(super) enum ChildWait {
+    Wait4 {
+        pid: c_int,
+        status: *mut c_int,
+        options: c_int,
+        usage: *mut u8,
+    },
+    WaitId {
+        idtype: c_int,
+        id: u32,
+        info: *mut u8,
+        options: c_int,
+    },
+}
+
+impl ChildWait {
+    pub(super) fn supports_slices(self) -> bool {
+        match self {
+            // A single wait snapshots the current process group. Repeating
+            // pid=0 probes could follow another thread's later setpgid call.
+            Self::Wait4 { pid, options, .. } => pid != 0 && options & libc::WNOHANG == 0,
+            // P_PIDFD is 3 on Linux. Its descriptor may be O_NONBLOCK (which
+            // requires EAGAIN, not an empty WNOHANG result), and a concurrent
+            // close/reuse must not redirect an ongoing wait to another child.
+            // Keep that descriptor-identity contract on the original syscall.
+            Self::WaitId {
+                idtype,
+                id,
+                options,
+                ..
+            } => {
+                matches!(idtype, 0..=2)
+                    && !(idtype == libc::P_PGID as c_int && id == 0)
+                    && options & libc::WNOHANG == 0
+            }
+        }
+    }
+
+    /// Issue the original operation. Hosted/disabled/internal and unsupported
+    /// native paths retain the exact original syscall and pointer semantics.
+    pub(super) unsafe fn blocking(self) -> Result<c_int, c_int> {
+        match self {
+            Self::Wait4 {
+                pid,
+                status,
+                options,
+                usage,
+            } => unsafe { syscall::sys_wait4(pid, status, options, usage) },
+            Self::WaitId {
+                idtype,
+                id,
+                info,
+                options,
+            } => unsafe {
+                syscall::sys_waitid(idtype, id, info, options, core::ptr::null_mut()).map(|()| 0)
+            },
+        }
+    }
+
+    unsafe fn probe(self) -> Result<Option<c_int>, c_int> {
+        match self {
+            Self::Wait4 {
+                pid,
+                status,
+                options,
+                usage,
+            } => {
+                // A zero-result wait4 probe leaves both caller outputs alone.
+                let pid =
+                    unsafe { syscall::sys_wait4(pid, status, options | libc::WNOHANG, usage) }?;
+                Ok((pid != 0).then_some(pid))
+            }
+            Self::WaitId {
+                idtype,
+                id,
+                info,
+                options,
+            } => {
+                // Unlike wait4, waitid writes six zero fields on interruption,
+                // no event and even argument errors. Stage its exact output,
+                // then publish it before a handler or cancellation can run.
+                let mut event = syscall::WaitSigInfo::default();
+                let result = unsafe {
+                    syscall::sys_waitid_info(idtype, id, &mut event, options | libc::WNOHANG)
+                };
+                if !info.is_null() {
+                    // Linux writes exactly these six 32-bit fields; the
+                    // alignment padding and unused union tail stay untouched.
+                    // Preserve that byte contract, including unaligned output,
+                    // and report EFAULT through the kernel-backed copier.
+                    let source = core::ptr::from_ref(&event).cast::<u8>();
+                    unsafe {
+                        copy_user_bytes(source, info, 12)?;
+                        copy_user_bytes(source.add(16), info.add(16), 12)?;
+                    }
+                }
+                result?;
+                Ok((event.child_pid() != 0).then_some(0))
+            }
+        }
+    }
+}
+
+pub(super) enum ChildWaitResult {
+    Ready(c_int),
+    Cancel,
+    Unsupported,
+}
+
+/// Check cancellation every 50 ms when no caught signal is deliverable. With
+/// an unblocked handler, retain the original syscall: ppoll always interrupts,
+/// but child waits honor SA_RESTART, including nested signal deliveries.
+///
+/// Signal dispositions must stay free of deliverable caught handlers while a
+/// slice is in progress. Recheck between slices and fall back if that changes;
+/// installing and delivering a new handler concurrently within one slice is
+/// outside this cooperative path's supported scope. A future native syscall
+/// interruption mechanism is needed to remove this restriction atomically.
+///
+/// # Safety
+/// The ABI supplies an enabled native cancellation descriptor belonging to the
+/// caller, and valid raw wait arguments. `supports_handlers` inspects the actual
+/// unblocked kernel handlers while signals are blocked without changing them.
+pub(super) unsafe fn wait_child(
+    operation: ChildWait,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<ChildWaitResult, c_int> {
+    let mut mask = SignalMaskGuard::block_all()?;
+    let result = unsafe { child_slices(operation, cancel, supports_handlers, &mut mask) };
+    mask.restore().and(result)
+}
+
+// This syscall frame owns no Drop state. Signal handlers can unwind through
+// it with their current signal mask; the parent disarms restoration before
+// ppoll and rearms it only after a normal return with all signals blocked.
+#[inline(never)]
+unsafe fn child_slices(
+    operation: ChildWait,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+    mask: &mut SignalMaskGuard,
+) -> Result<ChildWaitResult, c_int> {
+    loop {
+        if cancel.pending() {
+            return Ok(ChildWaitResult::Cancel);
+        }
+        if !supports_handlers(mask.original) {
+            return Ok(ChildWaitResult::Unsupported);
+        }
+        if let Some(result) = unsafe { operation.probe() }? {
+            return Ok(ChildWaitResult::Ready(result));
+        }
+        let mut slice = Timespec {
+            tv_sec: 0,
+            tv_nsec: SLICE_NS,
+        };
+        mask.armed = false;
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::null_mut(),
+                0,
+                core::ptr::from_mut(&mut slice).cast(),
+                core::ptr::from_ref(&mask.original).cast(),
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        mask.armed = true;
+        if cancel.pending() && matches!(result, Ok(_) | Err(libc::EINTR)) {
+            return Ok(ChildWaitResult::Cancel);
+        }
+        match result {
+            Ok(_) => {}
+            Err(libc::EINTR) => {
+                // A child may become waitable along with SIGCHLD. Just as a
+                // kernel wait, prefer an available event over interruption.
+                return match unsafe { operation.probe() }? {
+                    Some(result) => Ok(ChildWaitResult::Ready(result)),
+                    None => Err(libc::EINTR),
+                };
             }
             Err(error) => return Err(error),
         }

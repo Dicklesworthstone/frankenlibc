@@ -55,6 +55,18 @@ WAIT_CASES = (
     "join", "join-alias", "join-timed", "join-clock-real", "join-clock-mono",
     "join-timed-null", "join-clock-null", "join-disabled", "join-clock-mono-disabled",
     "join-enosys", "join-disabled-enosys",
+    "child-wait", "child-waitpid", "child-wait3", "child-wait4", "child-waitid",
+    "child-waitpid-disabled", "child-wait4-disabled", "child-waitid-disabled",
+    "child-wait-ready", "child-waitpid-ready", "child-wait3-ready", "child-wait4-ready",
+    "child-waitid-ready", "child-waitid-nowait",
+    "child-waitpid-nohang", "child-wait4-nohang", "child-waitid-nohang",
+    "child-waitpid-eintr", "child-wait4-eintr", "child-waitid-eintr",
+    "child-waitpid-restart", "child-wait4-restart", "child-waitid-restart",
+    "child-waitpid-nested-eintr", "child-waitpid-nested-restart",
+    "child-waitid-siginfo-eintr", "child-waitid-siginfo-restart",
+    "child-waitid-siginfo-nested-restart", "child-waitpid-foreign-restart",
+    "child-waitid-pidfd-nonblock",
+    "child-waitpid-pgrp-ready", "child-wait4-pgrp-ready", "child-waitid-pgrp-ready",
 )
 
 
