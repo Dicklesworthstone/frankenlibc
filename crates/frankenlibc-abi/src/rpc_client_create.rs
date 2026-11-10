@@ -1,4 +1,4 @@
-//! Native hostname-based RPC client creation and one-shot calls.
+//! Native hostname/pathname-based RPC client creation and one-shot calls.
 //! Reuse the native resolver, portmapper, transport and codec ownership paths.
 //! No host RPC delegation or process-global client cache.
 
@@ -7,9 +7,9 @@ use super::{
     read_bounded_cstr, rpc_udp, set_abi_errno,
 };
 
-/// Create an IPv4 RPC client using the native resolver and UDP/TCP transports.
-/// The transport owns portmapper discovery and publishes its detailed creation
-/// error. Neither a host RPC constructor nor a borrowed address list is used.
+/// Create a native RPC client using UDP/TCP host lookup or a Unix socket path.
+/// IP transports own portmapper discovery; Unix clients connect directly to the
+/// supplied pathname. Clients own their sockets and publish detailed creation errors.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_create(
     host: *const c_char,
@@ -20,6 +20,7 @@ pub unsafe extern "C" fn clnt_create(
     let protocol = match unsafe { read_bounded_cstr(proto) } {
         Some(name) if name == b"udp" => libc::IPPROTO_UDP,
         Some(name) if name == b"tcp" => libc::IPPROTO_TCP,
+        Some(name) if name == b"unix" => return unsafe { create_unix(host, prog, vers) },
         _ => {
             rpc_udp::creation_status(17, libc::EPFNOSUPPORT); // RPC_UNKNOWNPROTO
             return std::ptr::null_mut();
@@ -105,6 +106,56 @@ pub unsafe extern "C" fn clnt_create(
     }
     rpc_udp::creation_status(13, 0);
     std::ptr::null_mut()
+}
+
+unsafe fn create_unix(path: *const c_char, program: c_ulong, version: c_ulong) -> *mut c_void {
+    // SAFETY: every field in sockaddr_un admits zero, including its path terminator.
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let (length, terminated) = if path.is_null() {
+        (0, false)
+    } else {
+        // SAFETY: the caller supplies a C pathname. Inspect at most sun_path's
+        // capacity, byte by byte, so rejection never reads beyond that bound.
+        unsafe { crate::util::scan_c_string(path, Some(address.sun_path.len())) }
+    };
+    if !terminated {
+        // GNU rejects paths that leave no room for the terminating NUL before
+        // creating a socket. Only cf_stat and re_errno replace prior TLS state.
+        rpc_udp::creation_status_preserving_details(12, Some(libc::EINVAL));
+        set_abi_errno(libc::EINVAL);
+        return std::ptr::null_mut();
+    }
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    // SAFETY: the bounded scan established exactly length readable path bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(path.cast::<u8>(), length) };
+    for (destination, byte) in address.sun_path.iter_mut().zip(bytes) {
+        *destination = *byte as c_char;
+    }
+    let mut descriptor = -1;
+    // SAFETY: the transport imports this fully initialized local address and
+    // descriptor, then owns the socket it creates. Neither pointer escapes.
+    let client = unsafe {
+        rpc_udp::create_unix(
+            (&mut address as *mut libc::sockaddr_un).cast(),
+            program,
+            version,
+            &mut descriptor,
+            0,
+            0,
+        )
+    };
+    if client.is_null() {
+        let (status, _, details) = rpc_udp::creation_error_details();
+        if status == 12 {
+            // Raw transport syscalls return errors without writing libc errno.
+            // Publish the Unix constructor's system error through both APIs.
+            let bytes = details[0].to_ne_bytes();
+            set_abi_errno(c_int::from_ne_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3],
+            ]));
+        }
+    }
+    client
 }
 
 /// Resolve the first legacy IPv4 host address and query its native portmapper.
