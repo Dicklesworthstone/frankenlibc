@@ -2945,6 +2945,60 @@ pub(crate) fn orient_stream_wide(stream: *mut c_void) -> bool {
     next > 0
 }
 
+/// Run one wide-memory output operation under both its recursive FILE lock
+/// and its stream-cell lock. The former honors flockfile; the latter excludes
+/// seeks and flushes between chunks. The internal writer must not call an ABI
+/// entrypoint or user callback: those can acquire the nonrecursive cell again.
+pub(crate) fn with_wide_memstream_write(
+    stream: *mut c_void,
+    write: impl FnOnce(&mut StdioStream) -> bool,
+) -> bool {
+    // SAFETY: the caller supplies the live wide stream for this operation.
+    // No registry or cell lock is held while waiting for the recursive lock.
+    unsafe { flockfile(stream) };
+    let _file_lock = ExtensionStreamLock(stream);
+    let Some(cell) = stream_cell(canonical_stream_id(stream)) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    };
+    let mut destination = cell.lock();
+    if destination.mem_wide_data().is_none() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    }
+    write(&mut destination)
+}
+
+/// Store one chunk while the enclosing wide-memory operation holds its locks.
+/// Ordinary wide files still use their bound codec and descriptor buffering.
+pub(crate) fn write_wide_memstream_chunk(destination: &mut StdioStream, data: &[u32]) -> bool {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        destination.c_handle(),
+        data.len().saturating_mul(std::mem::size_of::<u32>()),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        return false;
+    }
+    let result = destination.mem_write_wide(data);
+    let success = result == Some(data.len());
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !success);
+    if !success {
+        unsafe {
+            set_abi_errno(if result.is_none() {
+                errno::EBADF
+            } else {
+                errno::ENOMEM
+            })
+        };
+    }
+    success
+}
+
 /// Orient `stream` for `ungetwc`: fixes an unoriented stream to wide (`> 0`),
 /// and returns `false` (without setting `ferror`) if the stream is already
 /// byte-oriented (`< 0`).
@@ -4362,10 +4416,10 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
         retire_read_window(s);
         let flush_ok = s.mem_flush();
         sync_and_unregister_fast_fixed_mem_read(id, s);
-        unsafe {
+        let wide_ok = unsafe {
             sync_memstream_to_caller(id, s, true);
-            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
-        }
+            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, true)
+        };
         // Remove sync metadata for open_memstream.
         let mut sync_guard = mem_sync_registry()
             .lock()
@@ -4381,7 +4435,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
             .unwrap_or_else(|e| e.into_inner())
             .remove_stream(id);
         maybe_unregister_dynamic_native_stream(stream);
-        return if flush_ok { 0 } else { libc::EOF };
+        return if flush_ok && wide_ok { 0 } else { libc::EOF };
     }
 
     let fd = s.fd();
@@ -4531,11 +4585,11 @@ pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_
             } else if s.is_mem_backed() {
                 let flush_ok = s.mem_flush();
                 let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-                unsafe {
+                let wide_ok = unsafe {
                     sync_memstream_to_caller(id, s, false);
-                    crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
-                }
-                flush_ok
+                    crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
+                };
+                flush_ok && wide_ok
             } else {
                 unsafe { flush_stream_for_caller(s, caller) }
             };
@@ -4569,12 +4623,13 @@ pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_
         if s.is_mem_backed() {
             let flush_ok = s.mem_flush();
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-            unsafe {
+            let wide_ok = unsafe {
                 sync_memstream_to_caller(id, s, false);
-                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
-            }
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !flush_ok);
-            return if flush_ok { 0 } else { libc::EOF };
+                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
+            };
+            let ok = flush_ok && wide_ok;
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
+            return if ok { 0 } else { libc::EOF };
         }
         // Cache this non-cookie non-mem fd stream so subsequent fflush/read/write hit the MT fast
         // path — a pure fflush loop otherwise never populates the cache. Mirrors fgets/fseek.
@@ -6343,8 +6398,9 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
         let flush_ok = s.mem_flush();
         unsafe {
             sync_memstream_to_caller(id, s, false);
-            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
         }
+        // open_wmemstream publishes bufp/sizeloc only on fflush or fclose;
+        // seeking changes its wchar cursor without publishing a new buffer.
         if !flush_ok {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return -1;
@@ -15542,7 +15598,7 @@ pub unsafe extern "C-unwind" fn freopen(
             sync_and_unregister_fast_fixed_mem_read(id, old);
             unsafe {
                 sync_memstream_to_caller(id, old, true);
-                crate::wchar_abi::sync_open_wmemstream_to_caller(id, old);
+                let _ = crate::wchar_abi::sync_open_wmemstream_to_caller(id, old, true);
             }
             let mut sync_guard = lock_mem_sync_registry();
             if let Some(ref mut map) = *sync_guard {

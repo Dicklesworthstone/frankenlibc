@@ -278,7 +278,7 @@ impl FixedMemCursor {
 /// Memory backing for memory-based stdio streams.
 ///
 /// `Fixed` is for `fmemopen`: a position-tracked buffer with a fixed maximum
-/// size. `Dynamic` is for `open_memstream`: a growable write buffer.
+/// size. `Dynamic` and `WideDynamic` are growable byte/wide write buffers.
 #[derive(Debug)]
 pub enum MemBacking {
     /// `fmemopen`: position-tracked fixed-size buffer.
@@ -297,6 +297,9 @@ pub enum MemBacking {
         /// Current write position.
         pos: usize,
     },
+    /// `open_wmemstream`: positions and storage are wchar_t elements, not
+    /// bytes in a multibyte encoding. Retain the tail across backward seeks.
+    WideDynamic { data: Vec<u32>, pos: usize },
 }
 
 impl MemBacking {
@@ -333,6 +336,8 @@ impl MemBacking {
                 *pos = end;
                 src.len()
             }
+            // Byte I/O is not admitted on a wide-oriented memory stream.
+            MemBacking::WideDynamic { .. } => 0,
         }
     }
 
@@ -363,6 +368,7 @@ impl MemBacking {
                 *pos += n;
                 result
             }
+            MemBacking::WideDynamic { .. } => Vec::new(),
         }
     }
 
@@ -382,6 +388,7 @@ impl MemBacking {
                 let start = (*pos).min(data.len());
                 &data[start..]
             }
+            MemBacking::WideDynamic { .. } => &[],
         }
     }
 
@@ -396,12 +403,30 @@ impl MemBacking {
             MemBacking::Dynamic { data, pos } => {
                 *pos = (*pos + n).min(data.len());
             }
+            MemBacking::WideDynamic { .. } => {}
         }
     }
 
     /// Seek to a new position. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
     /// Returns the new position on success, or `None` on invalid seek.
     pub fn seek(&mut self, offset: i64, whence: i32) -> Option<i64> {
+        if let MemBacking::WideDynamic { data, pos } = self {
+            // GNU wide memory streams use the current write position for
+            // SEEK_END, even when a backward seek left an older tail intact.
+            let base = match whence {
+                0 => 0,
+                1 | 2 => i64::try_from(*pos).ok()?,
+                _ => return None,
+            };
+            let next = base.checked_add(offset)?;
+            let next = usize::try_from(next).ok()?;
+            if next > data.len() {
+                data.try_reserve(next - data.len()).ok()?;
+                data.resize(next, 0);
+            }
+            *pos = next;
+            return i64::try_from(next).ok();
+        }
         let (size, pos) = match self {
             MemBacking::Fixed {
                 content_end, pos, ..
@@ -413,6 +438,7 @@ impl MemBacking {
                 (*content_end, pos)
             }
             MemBacking::Dynamic { data, pos } => (data.len(), pos),
+            MemBacking::WideDynamic { .. } => unreachable!(),
         };
 
         let base = match whence {
@@ -440,11 +466,13 @@ impl MemBacking {
             MemBacking::Dynamic { .. } => {
                 // Allow seeking beyond end; open_memstream semantics grow on write.
             }
+            MemBacking::WideDynamic { .. } => unreachable!(),
         }
 
         match self {
             MemBacking::Fixed { pos: p, .. } => *p = new_pos,
             MemBacking::Dynamic { pos: p, .. } => *p = new_pos,
+            MemBacking::WideDynamic { .. } => unreachable!(),
         }
         Some(new_pos as i64)
     }
@@ -452,7 +480,9 @@ impl MemBacking {
     /// Current position.
     pub fn position(&self) -> usize {
         match self {
-            MemBacking::Fixed { pos, .. } | MemBacking::Dynamic { pos, .. } => *pos,
+            MemBacking::Fixed { pos, .. }
+            | MemBacking::Dynamic { pos, .. }
+            | MemBacking::WideDynamic { pos, .. } => *pos,
         }
     }
 
@@ -463,6 +493,7 @@ impl MemBacking {
                 data, content_end, ..
             } => &data[..*content_end],
             MemBacking::Dynamic { data, .. } => data.as_slice(),
+            MemBacking::WideDynamic { .. } => &[],
         }
     }
 
@@ -714,6 +745,18 @@ impl StdioStream {
             mem_pending_write: 0,
             mem_pending_overflow: 0,
         }
+    }
+
+    /// Create a wide memory stream whose seek/tell offsets count wchar_t
+    /// elements. Values are stored verbatim, independently of LC_CTYPE.
+    pub fn new_mem_wide_dynamic() -> Self {
+        let mut stream = Self::new_mem_dynamic();
+        stream.mem_backing = Some(MemBacking::WideDynamic {
+            data: Vec::new(),
+            pos: 0,
+        });
+        stream.flags.orientation = 1;
+        stream
     }
 
     /// Create a dynamic memory-backed stream with custom open flags.
@@ -1732,6 +1775,40 @@ impl StdioStream {
         }
     }
 
+    /// Write complete wide elements without an intermediate byte encoding.
+    /// None identifies a different stream kind; a short result is an output
+    /// failure. Allocation failure preserves the prior contents and position.
+    pub fn mem_write_wide(&mut self, source: &[u32]) -> Option<usize> {
+        let Some(MemBacking::WideDynamic { data, pos }) = &mut self.mem_backing else {
+            return None;
+        };
+        if !self.open_flags.writable {
+            self.flags.error = true;
+            return Some(0);
+        }
+        if source.is_empty() {
+            return Some(0);
+        }
+        let Some(end) = pos.checked_add(source.len()) else {
+            self.flags.error = true;
+            return Some(0);
+        };
+        if end > data.len() {
+            if data.try_reserve(end - data.len()).is_err() {
+                self.flags.error = true;
+                return Some(0);
+            }
+            data.resize(end, 0);
+        }
+        data[*pos..end].copy_from_slice(source);
+        *pos = end;
+        self.offset = end as i64;
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        Some(source.len())
+    }
+
     /// Flush staged writes on a memory-backed stream (`bd-lamxlj`).
     ///
     /// Returns `false` (and sets `error` + clamps `offset` to the backing
@@ -1891,6 +1968,15 @@ impl StdioStream {
     /// Get a reference to the memory backing data (for open_memstream sync).
     pub fn mem_data(&self) -> Option<&[u8]> {
         self.mem_backing.as_ref().map(|b| b.data())
+    }
+
+    /// Wide storage for publication by open_wmemstream's ABI owner. The
+    /// current position may precede its retained tail after a backward seek.
+    pub fn mem_wide_data(&self) -> Option<&[u32]> {
+        match self.mem_backing.as_ref()? {
+            MemBacking::WideDynamic { data, .. } => Some(data),
+            _ => None,
+        }
     }
 
     /// Clone the memory backing data (for returning to C caller).

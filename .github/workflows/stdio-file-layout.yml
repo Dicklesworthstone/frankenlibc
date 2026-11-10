@@ -12,6 +12,7 @@ on:
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
+      - 'crates/frankenlibc-abi/tests/open_wmemstream_differential_test.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
@@ -173,13 +174,13 @@ jobs:
                 2> "artifacts/stdio-layout/lifetime-$model-$mode-preload.err"
             done
           done
-      - name: Preserve printf arguments and saved stream positions
+      - name: Preserve printf arguments, saved positions and wide memory streams
         if: always()
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
           for mode in strict hardened; do
-            for target in conformance_diff_stdio_printf conformance_diff_swprintf conformance_diff_fgetpos; do
+            for target in conformance_diff_stdio_printf conformance_diff_swprintf conformance_diff_fgetpos open_wmemstream_differential_test; do
               FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
                 --test "$target" -- --test-threads=1 --nocapture \
                 2>&1 | tee "artifacts/stdio-layout/$target-$mode.log"

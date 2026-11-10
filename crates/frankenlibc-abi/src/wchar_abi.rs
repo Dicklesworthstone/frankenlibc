@@ -130,62 +130,45 @@ pub(crate) fn reserve_wide_output(stream: *mut c_void, requested: usize) -> Opti
     Some((granted, true))
 }
 
-fn decode_wmemstream_bytes(data: &[u8]) -> Vec<u32> {
-    match std::str::from_utf8(data) {
-        Ok(s) => s.chars().map(|ch| ch as u32).collect(),
-        Err(_) => {
-            let mut wide = Vec::new();
-            let mut remaining = data;
-            while !remaining.is_empty() {
-                if let Some((wc, length)) = wchar_core::mbtowc(remaining) {
-                    wide.push(wc);
-                    remaining = &remaining[length..];
-                } else {
-                    // Preserve the former Rust lossy decoder's replacement
-                    // boundaries for malformed bytes, while retaining GNU's
-                    // valid extended wide values instead of replacing them.
-                    let length = std::str::from_utf8(remaining)
-                        .err()
-                        .and_then(|error| error.error_len())
-                        .unwrap_or(remaining.len());
-                    wide.push(wchar_core::REPLACEMENT_CODEPOINT);
-                    remaining = &remaining[length..];
-                }
-            }
-            wide
-        }
-    }
-}
-
-pub(crate) unsafe fn sync_open_wmemstream_to_caller(id: usize, stream: &StdioStream) {
+pub(crate) unsafe fn sync_open_wmemstream_to_caller(
+    id: usize,
+    stream: &mut StdioStream,
+    closing: bool,
+) -> bool {
     let guard = wide_memstream_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
     {
-        let Some(data) = stream.mem_data() else {
-            return;
+        let Some(data) = stream.mem_wide_data() else {
+            return true;
         };
-        let wchars = decode_wmemstream_bytes(data);
-        // POSIX: *sizeloc is the SMALLER of the content length and the current
-        // file position (both in wide characters). After a backward seek the
-        // reported size shrinks even though the tail wchars (and the NUL
-        // terminator at the max extent) remain in the buffer. The position is
-        // tracked in underlying (UTF-8) bytes, so convert the prefix to a wide
-        // count. (Forward-only writes leave position == content length, a no-op.)
-        let pos_bytes = (stream.offset().max(0) as usize).min(data.len());
-        let pos_wchars = decode_wmemstream_bytes(&data[..pos_bytes]).len();
-        let reported = wchars.len().min(pos_wchars);
-        let alloc_size = (wchars.len() + 1) * size_of::<u32>();
+        // A flush publishes the current wchar position while preserving an
+        // older tail. Closing terminates the returned buffer at that position.
+        // No locale conversion is involved, even for non-Unicode wchar values.
+        let reported = (stream.offset().max(0) as usize).min(data.len());
+        let length = if closing { reported } else { data.len() };
+        let Some(alloc_size) = length
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(size_of::<u32>()))
+        else {
+            stream.set_error();
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return false;
+        };
         let buf = unsafe { crate::malloc_abi::raw_alloc(alloc_size) } as *mut u32;
         if buf.is_null() {
-            return;
+            stream.set_error();
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return false;
         }
-        for (idx, wc) in wchars.iter().copied().enumerate() {
-            unsafe { *buf.add(idx) = wc };
+        // SAFETY: the private source and fresh allocation cannot overlap;
+        // both cover length initialized wchar elements plus the terminator.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), buf, length);
+            *buf.add(length) = 0;
         }
-        unsafe { *buf.add(wchars.len()) = 0 };
         let previous = unsafe { *info.buf_loc };
         unsafe {
             *info.buf_loc = buf;
@@ -195,6 +178,7 @@ pub(crate) unsafe fn sync_open_wmemstream_to_caller(id: usize, stream: &StdioStr
             unsafe { crate::malloc_abi::raw_free(previous.cast::<c_void>()) };
         }
     }
+    true
 }
 
 pub(crate) fn unregister_open_wmemstream(id: usize) {
@@ -6960,19 +6944,19 @@ pub(crate) unsafe fn fputwc_for_caller(
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
-    let memory_output = reserve_wide_output(stream, 1);
-    if memory_output == Some((0, true)) {
-        // SAFETY: exhaustion is local to this bounded formatting stream.
-        unsafe { set_abi_errno(libc::E2BIG) };
-        return WEOF_VALUE;
+    if reserve_wide_output(stream, 0).is_some() {
+        let written = super::stdio_abi::with_wide_memstream_write(stream, |destination| {
+            if reserve_wide_output(stream, 1) == Some((0, true)) {
+                // SAFETY: exhaustion is local to this bounded formatting stream.
+                unsafe { set_abi_errno(libc::E2BIG) };
+                return false;
+            }
+            super::stdio_abi::write_wide_memstream_chunk(destination, &[wc])
+        });
+        return if written { wc } else { WEOF_VALUE };
     }
-    // Wide memory output uses private UTF-8 storage; external files retain
-    // the codec selected when they first became wide oriented.
-    let codec = if memory_output.is_some() {
-        crate::locale_abi::MultibyteCodec::Utf8
-    } else {
-        super::stdio_abi::stream_wide_codec(stream)
-    };
+    // External files retain the codec selected at their first wide operation.
+    let codec = super::stdio_abi::stream_wide_codec(stream);
 
     super::stdio_abi::with_wide_io_active(|| {
         let mut bytes = [0u8; 6];
@@ -7185,11 +7169,41 @@ unsafe fn fputws_impl(
         return libc::EOF;
     }
     let memory_output = reserve_wide_output(stream, 0);
-    let codec = if memory_output.is_some() {
-        crate::locale_abi::MultibyteCodec::Utf8
-    } else {
-        super::stdio_abi::stream_wide_codec(stream)
-    };
+    if memory_output.is_some() {
+        // Wide memory output has no encoding step. In particular, writing a
+        // shorter encoding over a longer one must replace one wchar, without
+        // leaving bytes from the old character behind it.
+        let written = super::stdio_abi::with_wide_memstream_write(stream, |destination| {
+            let mut offset = 0;
+            loop {
+                let mut chunk = [0u32; 256];
+                let mut count = 0;
+                while count < chunk.len() {
+                    // SAFETY: ws denotes a live NUL-terminated wchar_t string.
+                    let value = unsafe { *ws.add(offset + count) } as u32;
+                    if value == 0 {
+                        break;
+                    }
+                    chunk[count] = value;
+                    count += 1;
+                }
+                let granted = reserve_wide_output(stream, count).map_or(0, |(granted, _)| granted);
+                if !super::stdio_abi::write_wide_memstream_chunk(destination, &chunk[..granted]) {
+                    return false;
+                }
+                if granted != count {
+                    unsafe { set_abi_errno(libc::E2BIG) };
+                    return false;
+                }
+                if count < chunk.len() {
+                    return true;
+                }
+                offset += count;
+            }
+        });
+        return if written { 0 } else { libc::EOF };
+    }
+    let codec = super::stdio_abi::stream_wide_codec(stream);
 
     super::stdio_abi::with_wide_io_active(|| {
         // Worst-case 6 bytes/wchar (wctomb RFC-2279), so a wlen<=CAP/6 string always fits without
@@ -7207,7 +7221,7 @@ unsafe fn fputws_impl(
         // Gate the bulk path on wlen >= 16: below the measured crossover the per-char loop is
         // faster (the stack-buffer + wcstombs setup exceeds a handful of fast fputc calls; wn=8
         // was 7% slower). At wlen>=16 bulk wins decisively (wn=64: 9.4x). Strict improvement.
-        if (16..=max_wchars).contains(&wlen) && !memory_output.is_some_and(|(_, bounded)| bounded) {
+        if (16..=max_wchars).contains(&wlen) {
             let mut buf = [0u8; CAP];
             // SAFETY: `ws` is valid for `wlen` wide chars (NUL found at `wlen`).
             let src = unsafe { std::slice::from_raw_parts(ws as *const u32, wlen) };
@@ -7414,13 +7428,37 @@ unsafe fn write_wprintf_rendered(
         unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     };
-    // Wide memory streams store private UTF-8, independent of LC_CTYPE.
+    if reserve_wide_output(stream, 0).is_some() {
+        let written = super::stdio_abi::with_wide_memstream_write(stream, |destination| {
+            let mut offset = 0;
+            while offset < rendered.len() {
+                let mut chunk = [0u32; 256];
+                let mut count = 0;
+                while count < chunk.len() && offset < rendered.len() {
+                    // The complete transport was validated before any output.
+                    let Some((wc, length)) = wchar_core::mbtowc(&rendered[offset..]) else {
+                        unsafe { set_abi_errno(libc::EILSEQ) };
+                        return false;
+                    };
+                    chunk[count] = wc;
+                    count += 1;
+                    offset += length;
+                }
+                let granted = reserve_wide_output(stream, count).map_or(0, |(granted, _)| granted);
+                if !super::stdio_abi::write_wide_memstream_chunk(destination, &chunk[..granted]) {
+                    return false;
+                }
+                if granted != count {
+                    unsafe { set_abi_errno(libc::E2BIG) };
+                    return false;
+                }
+            }
+            true
+        });
+        return if written { wide_count } else { -1 };
+    }
     // External streams keep the codec fixed by their first wide orientation.
-    let codec = if reserve_wide_output(stream, 0).is_some() {
-        crate::locale_abi::MultibyteCodec::Utf8
-    } else {
-        super::stdio_abi::stream_wide_codec(stream)
-    };
+    let codec = super::stdio_abi::stream_wide_codec(stream);
     super::stdio_abi::with_wide_io_active(|| {
         if matches!(codec, crate::locale_abi::MultibyteCodec::Utf8) {
             // SAFETY: rendered is initialized, and the caller oriented stream
@@ -10017,8 +10055,8 @@ pub unsafe extern "C" fn wcstoumax(nptr: *const u32, endptr: *mut *mut u32, base
 
 /// `open_wmemstream` — open wide memory stream.
 ///
-/// Native implementation: creates a memory-backed stream that stores wide characters.
-/// Internally uses our `open_memstream` and converts between wide/narrow on write.
+/// Native implementation: storage and positions both count wchar_t elements,
+/// with no intermediate locale or UTF-8 conversion.
 /// The buffer pointer (*bufp) is updated after each flush/close with the wide char contents.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize) -> *mut c_void {
@@ -10039,9 +10077,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         *sizep = 0;
     }
 
-    let mut stream = frankenlibc_core::stdio::StdioStream::new_mem_dynamic();
-    // POSIX/glibc: open_wmemstream creates a wide-oriented stream from creation (_mode > 0).
-    stream.set_orientation(1);
+    let stream = frankenlibc_core::stdio::StdioStream::new_mem_wide_dynamic();
     let handle = crate::stdio_abi::register_memory_stream_with_native_handle(
         stream,
         crate::io_internal_abi::NativeFileBacking::MemoryGrowing {
