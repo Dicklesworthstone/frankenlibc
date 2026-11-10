@@ -325,6 +325,8 @@ struct NamedCategory {
     /// For a supported single-byte LC_CTYPE: native byte/Unicode conversion.
     /// Classification tables alone do not describe the external encoding.
     single_byte_codec: Option<frankenlibc_core::iconv::SingleByteCodec>,
+    /// For LC_COLLATE: pre-parsed collation tables.
+    collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
 }
 
 /// A named LC_CTYPE's single-byte tables, glibc's `_NL_CTYPE_CLASS`,
@@ -561,36 +563,42 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     let file = category_file(category)?;
     let locpath = std::env::var_os("LOCPATH").filter(|v| !v.is_empty());
     let mut blob = None;
-    'search: for candidate in name_candidates(name) {
-        let dirs: Vec<Vec<u8>> = match &locpath {
+    let candidates = name_candidates(name);
+    if locpath.is_none()
+        && let Some(archive) = locale_archive()
+    {
+        for candidate in &candidates {
+            if let Some(blobs) = archive.find(candidate)
+                && let Some(b) = blobs[category as usize]
+            {
+                blob = Some(b);
+                break;
+            }
+        }
+    }
+    if blob.is_none() {
+        let dirs: Vec<&[u8]> = match &locpath {
             Some(paths) => paths
                 .as_bytes()
                 .split(|&b| b == b':')
                 .filter(|d| !d.is_empty())
-                .map(<[u8]>::to_vec)
                 .collect(),
-            None => {
-                if let Some(archive) = locale_archive()
-                    && let Some(blobs) = archive.find(&candidate)
-                    && let Some(b) = blobs[category as usize]
+            None => vec![b"/usr/lib/locale"],
+        };
+        'search: for dir in dirs {
+            for candidate in &candidates {
+                let mut path = Vec::with_capacity(dir.len() + candidate.len() + file.len() + 2);
+                path.extend_from_slice(dir);
+                path.push(b'/');
+                path.extend_from_slice(candidate);
+                path.push(b'/');
+                path.extend_from_slice(file);
+                if let Some(bytes) = map_file(&path)
+                    && let Some(b) = CategoryBlob::parse(category as usize, bytes)
                 {
                     blob = Some(b);
                     break 'search;
                 }
-                vec![b"/usr/lib/locale".to_vec()]
-            }
-        };
-        for dir in dirs {
-            let mut path = dir;
-            path.push(b'/');
-            path.extend_from_slice(&candidate);
-            path.push(b'/');
-            path.extend_from_slice(file);
-            if let Some(bytes) = map_file(&path)
-                && let Some(b) = CategoryBlob::parse(category as usize, bytes)
-            {
-                blob = Some(b);
-                break 'search;
             }
         }
     }
@@ -623,6 +631,11 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     } else {
         (None, None)
     };
+    let collate = if category == locale_core::LC_COLLATE {
+        frankenlibc_core::locale::collate::CollateTables::from_blob(&blob)
+    } else {
+        None
+    };
     let entry: &'static NamedCategory = Box::leak(Box::new(NamedCategory {
         category,
         name: stored.into_boxed_slice(),
@@ -630,6 +643,7 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         ctype,
         bytes,
         single_byte_codec,
+        collate,
     }));
     loaded.push(entry);
     Some(entry)
@@ -993,9 +1007,9 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 /// Collation tables when LC_COLLATE is on a named locale with rules
 /// (`None` for byte-order collation, including C and C.UTF-8).
 #[allow(dead_code)]
+#[inline]
 pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
-    let n = named(locale_core::LC_COLLATE)?;
-    frankenlibc_core::locale::collate::CollateTables::from_blob(&n.blob)
+    named(locale_core::LC_COLLATE)?.collate
 }
 
 /// LC_TIME strings for `strftime` when LC_TIME is on a named locale.
@@ -2955,14 +2969,21 @@ pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
     if locale.is_null() {
         return f();
     }
-    // SAFETY: uselocale validates the handle and only touches thread state.
-    let previous = unsafe { uselocale(locale) };
-    if previous.is_null() {
+    let next = if locale == GLOBAL_LOCALE_HANDLE {
+        None
+    } else if let Some(categories) = categories_for_handle(locale) {
+        THREAD_LOCALE_EVER_USED.store(true, Ordering::Release);
+        Some(LocaleSelection {
+            handle: locale,
+            categories,
+        })
+    } else {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return f();
-    }
+    };
+    let previous = THREAD_LOCALE.with(|selected| selected.replace(next));
     let result = f();
-    // SAFETY: `previous` is the handle uselocale reported for this thread.
-    unsafe { uselocale(previous) };
+    THREAD_LOCALE.with(|selected| selected.set(previous));
     result
 }
 
