@@ -1771,8 +1771,9 @@ pub(crate) unsafe fn sigwait_cp(set: *const libc::sigset_t, sig: *mut c_int) -> 
         return libc::EINVAL;
     }
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    // SAFETY: rt_sigtimedwait blocks until a signal from `set` is pending.
-    // With null timeout, it blocks indefinitely. Returns the signal number.
+    // SAFETY: the cancellation adapter keeps waiting until a signal from `set`
+    // is pending. Native enabled waits use bounded kernel slices so a request
+    // arriving after entry can act; other paths retain an indefinite syscall.
     //
     // POSIX/glibc sigwait does NOT report EINTR to the caller: if the wait is
     // interrupted by a signal not in `set` (a handler ran), the kernel returns
@@ -1781,14 +1782,7 @@ pub(crate) unsafe fn sigwait_cp(set: *const libc::sigset_t, sig: *mut c_int) -> 
     // SA_RESTART is set, so this loop is required for parity.)
     loop {
         match unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_rt_sigtimedwait(
-                    set as *const u8,
-                    std::ptr::null_mut(),
-                    std::ptr::null(),
-                    kernel_sigset_size,
-                )
-            })
+            crate::pthread_abi::cancellation_point_sigwait(set.cast(), kernel_sigset_size)
         } {
             Ok(signo) if signo > 0 => {
                 // SAFETY: sig is non-null; we checked above.

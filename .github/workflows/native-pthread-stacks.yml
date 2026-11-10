@@ -7,6 +7,7 @@ on:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_cancel_wait.rs'
       - 'crates/frankenlibc-abi/src/pthread_cancel_poll.rs'
+      - 'crates/frankenlibc-abi/src/signal_abi.rs'
       - 'crates/frankenlibc-abi/src/poll_abi.rs'
       - 'crates/frankenlibc-abi/src/time_abi.rs'
       - 'crates/frankenlibc-abi/src/c11threads_abi.rs'
@@ -49,6 +50,56 @@ permissions:
   contents: read
 
 jobs:
+  signal-waits:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Build actual signal-wait entrypoints
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/signal-waits
+          git rev-parse HEAD > artifacts/signal-waits/revision.txt
+          rustc --version --verbose > artifacts/signal-waits/rustc.txt
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
+            2>&1 | tee artifacts/signal-waits/build.log
+      # Keep these regressions independent of the broader native-poll gate:
+      # an unrelated failure there must not skip signal-wait execution.
+      - name: Compare parked sigwait cancellation with live GNU libc
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --sigwait-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/sigwait"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signal-waits-${{ matrix.feature }}
+          path: |
+            artifacts/signal-waits/
+            target/release/libfrankenlibc_abi.so
+          if-no-files-found: error
+          retention-days: 7
+
   runtime-startup:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

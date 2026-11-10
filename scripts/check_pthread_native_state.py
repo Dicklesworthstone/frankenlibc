@@ -67,6 +67,9 @@ WAIT_CASES = (
     "child-waitid-siginfo-nested-restart", "child-waitpid-foreign-restart",
     "child-waitid-pidfd-nonblock",
     "child-waitpid-pgrp-ready", "child-wait4-pgrp-ready", "child-waitid-pgrp-ready",
+    "sigwait", "sigwait-alias", "sigwait-disabled", "sigwait-alias-disabled",
+    "sigwait-ready", "sigwait-alias-ready", "sigwait-eintr", "sigwait-alias-eintr",
+    "sigwait-pending", "sigwait-alias-pending",
 )
 
 
@@ -83,6 +86,8 @@ def main():
                                                     root / "target/release/libfrankenlibc_abi.so")))
     parser.add_argument("--out-dir", type=Path,
                         default=root / "target/conformance/pthread_native_state")
+    parser.add_argument("--sigwait-only", action="store_true",
+                        help="Run the signal-wait regression cases and provider/backend controls")
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     output = args.out_dir.resolve()
@@ -183,12 +188,16 @@ def main():
                  # Already-blocked eventfd I/O interruption remains a separate
                  # backend feature; owned sem/cond/join waits are covered above.
                 ("cpp-blocked-", HOSTED_CPP_CASES, cpp_binary, "pthread-native-unwind", ("0",)))
+    if args.sigwait_only:
+        variants = (("wait-", tuple(case for case in WAIT_CASES if case.startswith("sigwait")),
+                     wait_binary, "pthread-native-wait", ("0", "1")),)
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
             # surface. Compare its behavior to the public GNU contract while
             # requiring the candidate alias's actual provider in the fixture.
-            oracle_case = case.replace("join-alias", "join") if prefix in ("cpp-", "wait-") else case
+            oracle_case = (case.replace("join-alias", "join").replace("sigwait-alias", "sigwait")
+                           if prefix in ("cpp-", "wait-") else case)
             reference = execute(f"{prefix}gnu", oracle_case, host, {}, executable,
                                 oracle_for=case if oracle_case != case else None)
             expected = f"{output_prefix}:{case}:PASS\n"
@@ -212,6 +221,7 @@ def main():
     gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
     candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
+              "scope": "sigwait" if args.sigwait_only else "all",
               "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
               "cpp_fixture_sha256": sha256(cpp_source), "cpp_binary_sha256": sha256(cpp_binary),
               "wait_fixture_sha256": sha256(wait_source), "wait_binary_sha256": sha256(wait_binary),

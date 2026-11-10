@@ -77,8 +77,10 @@ static int pin_providers(const char *expected) {
         "pthread_cond_signal", "sem_wait", "sem_timedwait", "sem_clockwait",
         "sem_post", "sem_trywait", "sem_getvalue", "__errno_location",
         "wait", "waitpid", "wait3", "wait4", "waitid", "sigaction", "pthread_kill",
+        "sigwait", "sigpending", "pthread_sigmask",
         "__pthread_register_cancel", "__pthread_unregister_cancel", "__pthread_unwind_next",
-        strstr(case_name, "join-alias") ? "__pthread_join" : "pthread_join"
+        strstr(case_name, "join-alias") ? "__pthread_join" : "pthread_join",
+        strstr(case_name, "sigwait-alias") ? "__sigwait" : "sigwait"
     };
     struct stat wanted;
     if (stat(expected, &wanted) != 0) return 86;
@@ -730,6 +732,161 @@ static int child_case(void) {
     return 0;
 }
 
+struct signal_wait_state {
+    struct state worker;
+    sigset_t set;
+    int disabled, completes, interrupted, pending, alias;
+    int result, signal, error;
+    _Atomic int handlers, retained;
+};
+
+static struct signal_wait_state *signal_waiter;
+
+static void signal_wait_handler(int signal) {
+    if (signal != SIGUSR2) _Exit(3);
+    atomic_fetch_add_explicit(&signal_waiter->handlers, 1, memory_order_release);
+}
+
+static void signal_wait_cleanup(void *argument) {
+    struct signal_wait_state *state = argument;
+    sigset_t mask;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0 &&
+            sigismember(&mask, SIGUSR1) == 1 && sigismember(&mask, SIGUSR2) == 0,
+            "sigwait cleanup preserves the caller's signal mask");
+    if (state->pending) {
+        sigset_t pending;
+        REQUIRE(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR1) == 1,
+                "pending cancellation must not consume an already-queued signal");
+        atomic_store_explicit(&state->retained, 1, memory_order_release);
+    }
+    REQUIRE(atomic_fetch_add_explicit(&state->worker.cleaned, 1, memory_order_release) == 0,
+            "sigwait cleanup ran exactly once");
+}
+
+static void *signal_wait_worker(void *argument) {
+    struct signal_wait_state *state = argument;
+    capture_worker_identity(&state->worker);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0,
+            "sigwait deferred cancellation type");
+    if (state->disabled)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0,
+                "disable sigwait cancellation");
+    typedef int (*sigwait_function)(const sigset_t *, int *);
+    sigwait_function wait = state->alias
+        ? (sigwait_function)dlsym(RTLD_DEFAULT, "__sigwait") : sigwait;
+    REQUIRE(wait != NULL, "sigwait entrypoint available");
+    pthread_cleanup_push(signal_wait_cleanup, state);
+    if (state->pending) {
+        REQUIRE(pthread_kill(pthread_self(), SIGUSR1) == 0, "queue signal before sigwait");
+        REQUIRE(pthread_cancel(pthread_self()) == 0, "queue cancellation before sigwait");
+    }
+    errno = ENOTTY;
+    atomic_store_explicit(&state->worker.ready, 1, memory_order_release);
+    state->result = wait(&state->set, &state->signal);
+    state->error = errno;
+    atomic_store_explicit(&state->worker.returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (state->disabled) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0,
+                "restore sigwait cancellation");
+        pthread_testcancel();
+        fail("disabled sigwait lost its pending cancellation");
+    }
+    return state;
+}
+
+static void observe_signal_wait_parked(const struct signal_wait_state *state) {
+    const int64_t limit = monotonic_ns() + 2000000000;
+    while (!atomic_load_explicit(&state->worker.ready, memory_order_acquire)) {
+        REQUIRE(monotonic_ns() < limit, "sigwait worker publishes readiness");
+        pause_briefly();
+    }
+    for (;;) {
+        char call[512], status[512];
+        long number = -1;
+        read_proc(&state->worker, "syscall", call, sizeof(call));
+        if (sscanf(call, "%ld", &number) == 1 && number == SYS_rt_sigtimedwait) {
+            read_proc(&state->worker, "stat", status, sizeof(status));
+            char *end = strrchr(status, ')');
+            REQUIRE(end != NULL && end[1] == ' ', "parse sigwait task state");
+            if (end[2] == 'S') return;
+        }
+        REQUIRE(!atomic_load_explicit(&state->worker.returned, memory_order_acquire),
+                "sigwait returned without a selected signal");
+        REQUIRE(monotonic_ns() < limit, "no sleeping rt_sigtimedwait observed");
+        pause_briefly();
+    }
+}
+
+static int signal_wait_case(void) {
+    struct signal_wait_state state = {0};
+    state.disabled = strstr(case_name, "-disabled") != NULL;
+    state.interrupted = strstr(case_name, "-eintr") != NULL;
+    state.completes = strstr(case_name, "-ready") != NULL || state.interrupted;
+    state.pending = strstr(case_name, "-pending") != NULL;
+    state.alias = strstr(case_name, "-alias") != NULL;
+    state.signal = 0x5a5a5a5a;
+    state.result = 0x5a5a5a5a;
+    REQUIRE(sigemptyset(&state.set) == 0 && sigaddset(&state.set, SIGUSR1) == 0,
+            "sigwait set");
+    sigset_t before, mask;
+    REQUIRE(pthread_sigmask(SIG_BLOCK, &state.set, &before) == 0, "block selected signal");
+    REQUIRE(sigemptyset(&mask) == 0 && sigaddset(&mask, SIGUSR2) == 0 &&
+            pthread_sigmask(SIG_UNBLOCK, &mask, NULL) == 0, "unblock unrelated handler");
+    signal_waiter = &state;
+    struct sigaction action = {0}, old_action;
+    action.sa_handler = signal_wait_handler;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR2, &action, &old_action) == 0, "install unrelated signal handler");
+    REQUIRE(pthread_create(&state.worker.thread, NULL, signal_wait_worker, &state) == 0,
+            "create native signal waiter");
+    if (!state.pending) {
+        observe_signal_wait_parked(&state);
+        if (state.interrupted) {
+            REQUIRE(pthread_kill(state.worker.thread, SIGUSR2) == 0,
+                    "interrupt sigwait with an unrelated handler");
+            const int64_t limit = monotonic_ns() + 2000000000;
+            while (!atomic_load_explicit(&state.handlers, memory_order_acquire)) {
+                REQUIRE(monotonic_ns() < limit, "unrelated handler ran");
+                pause_briefly();
+            }
+            observe_signal_wait_parked(&state);
+        }
+        if (!state.completes)
+            REQUIRE(pthread_cancel(state.worker.thread) == 0, "cancel already-parked sigwait");
+        if (state.disabled) {
+            /* Outlast several bounded slices: cancellation must stay pending. */
+            const int64_t limit = monotonic_ns() + 160000000;
+            while (monotonic_ns() < limit) pause_briefly();
+            observe_signal_wait_parked(&state);
+            REQUIRE(!atomic_load(&state.worker.cleaned), "disabled sigwait remains parked");
+        }
+        if (state.completes || state.disabled)
+            REQUIRE(pthread_kill(state.worker.thread, SIGUSR1) == 0, "deliver selected signal");
+    }
+    void *result = join_bounded(state.worker.thread, "sigwait cancellation did not wake the waiter");
+    REQUIRE(result == (state.completes ? &state : PTHREAD_CANCELED), "sigwait completion kind");
+    REQUIRE(atomic_load(&state.worker.cleaned) == 1, "sigwait cleanup completed once");
+    REQUIRE(atomic_load(&state.worker.returned) == (state.completes || state.disabled),
+            "sigwait only returns after consuming a selected signal");
+    if (state.completes || state.disabled) {
+        REQUIRE(state.result == 0 && state.signal == SIGUSR1, "sigwait publishes selected signal");
+        /* GNU may leave EINTR after retrying an unrelated handler. Neither
+         * implementation may leak the adapter's internal slice timeout. */
+        REQUIRE(state.error == ENOTTY || (state.interrupted && state.error == EINTR),
+                "sigwait does not publish an internal timeout errno");
+    } else {
+        REQUIRE(state.result == 0x5a5a5a5a && state.signal == 0x5a5a5a5a,
+                "cancellation leaves sigwait output untouched");
+    }
+    REQUIRE(atomic_load(&state.retained) == state.pending, "queued signal ownership retained");
+    REQUIRE(atomic_load(&state.handlers) == state.interrupted, "unrelated handler runs once");
+    REQUIRE(sigaction(SIGUSR2, &old_action, NULL) == 0 &&
+            pthread_sigmask(SIG_SETMASK, &before, NULL) == 0, "restore signal disposition and mask");
+    printf("pthread-native-wait:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
@@ -741,6 +898,7 @@ int main(int argc, char **argv) {
     creator_tid = (pid_t)syscall(SYS_gettid);
     creator_thread = pthread_self();
     if (!strncmp(case_name, "child-", 6)) return child_case();
+    if (!strncmp(case_name, "sigwait", 7)) return signal_wait_case();
     const char *names[] = {"sem-wait", "sem-timed", "sem-clock-real", "sem-clock-mono",
                            "cond-wait", "cond-timed", "cond-clock-real", "cond-clock-mono",
                            "join", "join-alias", "join-timed", "join-clock-real", "join-clock-mono",

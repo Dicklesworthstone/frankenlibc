@@ -6820,6 +6820,81 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
     unsafe { cancellation_window(caller, blocking_syscall) }
 }
 
+/// Wait for a signal with cancellation support for an already-parked native
+/// thread. Capture the exported entry's caller before the shared wait frame,
+/// including the reserved-namespace alias of `sigwait`.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sigwait(
+    set: *const u8,
+    sigset_size: usize,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_sigwait_window(caller, set, sigset_size) }
+}
+
+/// `sigwait` has no deadline and its caller retries EINTR. A bounded kernel
+/// wait can therefore observe native cancellation between slices without
+/// exposing a timeout or losing an interruption that the public API reports.
+/// This does not apply to sigwaitinfo/sigtimedwait, which do report EINTR.
+#[inline(never)]
+unsafe fn cancellation_sigwait_window(
+    caller: usize,
+    set: *const u8,
+    sigset_size: usize,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && core_current_thread_handle().is_some()
+        && !address_is_inside_this_object(caller)
+    {
+        let slice = raw_syscall::Timespec {
+            tv_sec: 0,
+            tv_nsec: 50_000_000,
+        };
+        // A signal handler may disable cancellation during a slice. Obtain a
+        // fresh descriptor before each wait, then retain the original indefinite
+        // syscall when cancellation is disabled or exit cleanup has started.
+        while let Some(cancel) = core_current_cancellation_wait() {
+            if cancel.pending() {
+                // SAFETY: the calling native thread owns the request. No signal
+                // has been consumed, output changed, or resource acquired.
+                unsafe { pthread_testcancel() };
+                // testcancel can return if a handler disabled cancellation;
+                // refresh admission instead of retaining the old descriptor.
+                continue;
+            }
+            // SAFETY: the originating sigwait entry retains the caller's set;
+            // the kernel validates it and the aligned, owned timeout. No Rust
+            // reference, allocation, lock or drop state spans this syscall.
+            match unsafe {
+                raw_syscall::sys_rt_sigtimedwait(
+                    set,
+                    std::ptr::null_mut(),
+                    std::ptr::from_ref(&slice).cast(),
+                    sigset_size,
+                )
+            } {
+                Err(libc::EAGAIN) => continue,
+                // An acquired signal is consumed: publish it even if a request
+                // raced completion. EINTR returns to sigwait's existing retry
+                // loop, which rechecks cancellation state after the handler.
+                result => return result,
+            }
+        }
+    }
+    // Hosted callers retain their asynchronous cancellation window. Internal
+    // and disabled/native callers retain the original single blocking syscall.
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_rt_sigtimedwait(
+                set,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                sigset_size,
+            )
+        })
+    }
+}
+
 /// Child-process cancellation points, including cancellation arriving while a
 /// native wait is parked. Capture the public caller before any shared frame.
 #[inline(always)]
@@ -7454,9 +7529,10 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex, poll, epoll, child and supported sleep points use their windows to
-    // observe a request arriving while parked; other syscalls remain pending-
-    // request cancellation points until they gain an interruptible native path.
+    // Native futex, poll, epoll, sigwait, child and supported sleep points use
+    // their windows to observe a request arriving while parked; other syscalls
+    // remain pending-request cancellation points until they gain an interruptible
+    // native path.
     // With no native threads, current_thread_handle exits at its atomic flag
     // without a TID syscall, allocation or TLS initialization.
     if core_current_thread_handle().is_some() {
