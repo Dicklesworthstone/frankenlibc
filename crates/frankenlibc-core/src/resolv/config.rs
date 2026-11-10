@@ -8,7 +8,7 @@
 //! - `domain <name>`: Local domain name
 //! - `search <name>...`: Search list for hostname lookup
 //! - `options <opt>...`: Various options (ndots, timeout, attempts, rotate,
-//!   use-vc, trust-ad)
+//!   use-vc, trust-ad, no-aaaa)
 //!
 //! # Default Behavior
 //!
@@ -75,6 +75,10 @@ pub struct ResolverConfig {
     /// bit ON, which matched every host on a systemd-resolved fleet (it writes
     /// `trust-ad`) and diverged on the default configuration (bd-b275vh).
     pub trust_ad: bool,
+    /// Suppress DNS AAAA lookups. IPv6 literals, hosts-file entries and IPv6
+    /// nameserver endpoints are unaffected. An IPv6-only DNS lookup still
+    /// sends A to distinguish a missing name from a transient server failure.
+    pub no_aaaa: bool,
 }
 
 impl Default for ResolverConfig {
@@ -89,6 +93,7 @@ impl Default for ResolverConfig {
             rotate: false,
             use_vc: false,
             trust_ad: false,
+            no_aaaa: false,
         }
     }
 }
@@ -106,6 +111,7 @@ impl ResolverConfig {
             rotate: false,
             use_vc: false,
             trust_ad: false,
+            no_aaaa: false,
         }
     }
 
@@ -247,6 +253,10 @@ impl ResolverConfig {
             self.use_vc = true;
         } else if opt == b"trust-ad" {
             self.trust_ad = true;
+        } else if opt.starts_with(b"no-aaaa") {
+            self.no_aaaa = true;
+        } else if opt.starts_with(b"-no-aaaa") {
+            self.no_aaaa = false;
         }
         // Other options are silently ignored
     }
@@ -333,6 +343,7 @@ mod tests {
         assert_eq!(config.ndots, 1);
         assert_eq!(config.timeout, 5);
         assert_eq!(config.attempts, 2);
+        assert!(!config.no_aaaa);
     }
 
     #[test]
@@ -397,6 +408,25 @@ mod tests {
         assert_eq!((config.ndots, config.timeout, config.attempts), (15, 30, 5));
         config.apply_overrides(None, Some(b"ndots:0 timeout:0 attempts:0"));
         assert_eq!((config.ndots, config.timeout, config.attempts), (0, 1, 1));
+    }
+
+    #[test]
+    fn no_aaaa_file_and_environment_options_use_the_last_setting() {
+        let mut config = ResolverConfig::parse(b"options no-aaaa\n");
+        assert!(config.no_aaaa);
+        config.apply_overrides(None, Some(b"-no-aaaa"));
+        assert!(!config.no_aaaa);
+        config.apply_overrides(None, Some(b"no-aaaa -no-aaaa no-aaaa"));
+        assert!(config.no_aaaa);
+        let config = ResolverConfig::parse(b"options no-aaaa\noptions -no-aaaa\n");
+        assert!(!config.no_aaaa);
+
+        // GNU resolver boolean options accept a matching prefix. Keep file
+        // and RES_OPTIONS parsing aligned, including the negated spelling.
+        let mut config = ResolverConfig::parse(b"options no-aaaa=true\n");
+        assert!(config.no_aaaa);
+        config.apply_overrides(None, Some(b"-no-aaaa-extra"));
+        assert!(!config.no_aaaa);
     }
 
     #[test]

@@ -448,13 +448,22 @@ pub fn query(
     timeout: Duration,
     trust_ad: bool,
     use_vc: bool,
+    no_aaaa: bool,
 ) -> Result<QueryReply, QueryError> {
     query_with_exchange(
         hostname,
         record_type,
         timeout,
         trust_ad,
-        |wire, deadline| exchange_until(server, wire, deadline, use_vc),
+        |wire, deadline| {
+            if no_aaaa && record_type == qtype::AAAA {
+                let translated = raw::no_aaaa_query(wire).ok_or(QueryError::InvalidQuery)?;
+                let packet = exchange_until(server, &translated, deadline, use_vc)?;
+                raw::no_aaaa_reply(&translated, packet)
+            } else {
+                exchange_until(server, wire, deadline, use_vc)
+            }
+        },
     )
 }
 
@@ -584,7 +593,10 @@ where
         }
         let mut result = DnsResolution::default();
         let mut canonical_name = None;
-        let mut done = [!want_v4, !want_v6];
+        // GNU's combined address lookup asks only for A under no-aaaa. An
+        // IPv6-only lookup still reaches the transport's AAAA-to-A projection
+        // so NXDOMAIN and temporary server failures retain their distinction.
+        let mut done = [!want_v4, !want_v6 || (config.no_aaaa && want_v4)];
         let mut failures = [None, None];
         let mut servfail = [false, false];
         // A refused endpoint is unavailable for this candidate, not proof
@@ -1142,6 +1154,7 @@ mod tests {
                 Duration::from_secs(2),
                 false,
                 false,
+                false,
             );
             assert!(matches!(result, Err(QueryError::RetryableResponse(value)) if value == code));
             worker.join().unwrap();
@@ -1165,6 +1178,7 @@ mod tests {
             Duration::from_secs(2),
             false,
             true,
+            false,
         );
         assert!(matches!(
             result,
@@ -1396,6 +1410,83 @@ mod tests {
         QueryReply {
             records: DnsMessage::decode(&answer(&query_wire())).unwrap().answers,
             rcode: 0,
+        }
+    }
+
+    #[test]
+    fn no_aaaa_combined_lookup_only_requests_ipv4_across_search_and_retries() {
+        let config = ResolverConfig {
+            no_aaaa: true,
+            search: vec!["missing.test".to_owned(), "found.test".to_owned()],
+            attempts: 2,
+            ..ResolverConfig::default()
+        };
+        let mut calls = Vec::new();
+        let result = resolve_with(b"host", true, true, &config, |name, kind, _, _, _, _| {
+            assert_eq!(kind, qtype::A, "no AAAA request may reach the transport");
+            calls.push(name.to_vec());
+            if name.ends_with(b"missing.test") {
+                Ok(QueryReply {
+                    records: vec![],
+                    rcode: rcode::NXDOMAIN,
+                })
+            } else if calls.len() == 2 {
+                Err(QueryError::RetryableResponse(rcode::SERVFAIL))
+            } else {
+                Ok(address_reply())
+            }
+        })
+        .unwrap();
+        assert_eq!(result.ipv4, [Ipv4Addr::new(192, 0, 2, 7)]);
+        assert!(result.ipv6.is_empty());
+        assert_eq!(
+            calls,
+            [
+                b"host.missing.test".to_vec(),
+                b"host.found.test".to_vec(),
+                b"host.found.test".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_aaaa_ipv6_only_lookup_still_checks_existence_and_temporary_failure() {
+        let config = ResolverConfig {
+            no_aaaa: true,
+            attempts: 1,
+            ..ResolverConfig::default()
+        };
+        for failure in [false, true] {
+            let mut calls = 0;
+            let result = resolve_with(
+                b"example.test.",
+                false,
+                true,
+                &config,
+                |_, kind, _, _, _, _| {
+                    calls += 1;
+                    assert_eq!(kind, qtype::AAAA);
+                    if failure {
+                        Err(QueryError::RetryableResponse(rcode::SERVFAIL))
+                    } else {
+                        // The native transport returns a projected AAAA
+                        // NODATA packet even when the server supplied A.
+                        Ok(QueryReply {
+                            records: vec![],
+                            rcode: rcode::NOERROR,
+                        })
+                    }
+                },
+            );
+            assert_eq!(calls, 1);
+            assert_eq!(
+                result.unwrap_err(),
+                if failure {
+                    ResolveError::Temporary
+                } else {
+                    ResolveError::NotFound
+                }
+            );
         }
     }
 
@@ -1954,6 +2045,7 @@ mod tests {
             qtype::AAAA,
             addr,
             Duration::from_secs(2),
+            false,
             false,
             false,
         )

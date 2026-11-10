@@ -11,9 +11,9 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::{QueryError, exchange_raw_until};
+use super::{QueryError, exchange_raw_until, question, response_matches};
 use crate::resolv::config::{DNS_PORT, ResolverConfig};
-use crate::resolv::dns::{DNS_HEADER_SIZE, DnsHeader, DnsMessage, rcode};
+use crate::resolv::dns::{DNS_HEADER_SIZE, DnsHeader, DnsMessage, qclass, qtype, rcode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -71,6 +71,7 @@ pub struct Config {
     pub use_vc: bool,
     pub ignore_truncation: bool,
     pub trust_ad: bool,
+    pub no_aaaa: bool,
 }
 
 impl From<&ResolverConfig> for Config {
@@ -87,8 +88,62 @@ impl From<&ResolverConfig> for Config {
             use_vc: config.use_vc,
             ignore_truncation: false,
             trust_ad: config.trust_ad,
+            no_aaaa: config.no_aaaa,
         }
     }
+}
+
+/// Project a standard IN/AAAA question onto A without changing the caller's
+/// bytes. Re-encode the validated name so a compression pointer cannot refer
+/// to the discarded additional section. Other opcodes/classes/types keep
+/// their existing transport contract; query construction itself stays AAAA.
+pub(super) fn no_aaaa_query(query: &[u8]) -> Option<Vec<u8>> {
+    if query.len() > u16::MAX as usize {
+        return None;
+    }
+    let header = DnsHeader::decode(query)?;
+    if header.is_response()
+        || header.flags & 0x780f != 0
+        || header.qdcount != 1
+        || header.ancount != 0
+        || header.nscount != 0
+    {
+        return None;
+    }
+    let (name, fields) = question(query)?;
+    if fields != [0, qtype::AAAA as u8, 0, qclass::IN as u8] {
+        return None;
+    }
+    let mut end = 0;
+    while name[end] != 0 {
+        end += usize::from(name[end]) + 1;
+    }
+    let mut replacement = query[..DNS_HEADER_SIZE].to_vec();
+    replacement[10..12].fill(0);
+    replacement.extend_from_slice(&name[..=end]);
+    replacement.extend_from_slice(&[0, qtype::A as u8, 0, qclass::IN as u8]);
+    Some(replacement)
+}
+
+/// Retain the validated server's RCODE while hiding every address/authority/
+/// additional record from the translated query. A positive A answer therefore
+/// becomes AAAA NODATA, whereas NXDOMAIN remains NXDOMAIN. No IPv4 answer can
+/// leak out as an IPv6 result. Rebuilding the question avoids dangling name
+/// compression pointers when the RR sections are removed.
+pub(super) fn no_aaaa_reply(sent: &[u8], mut packet: Vec<u8>) -> Result<Vec<u8>, QueryError> {
+    if !response_matches(sent, &packet) {
+        return Err(QueryError::InvalidResponse);
+    }
+    let (name, _) = question(&packet).ok_or(QueryError::InvalidResponse)?;
+    let mut end = 0;
+    while name[end] != 0 {
+        end += usize::from(name[end]) + 1;
+    }
+    packet.truncate(DNS_HEADER_SIZE);
+    packet[6..12].fill(0);
+    packet.extend_from_slice(&name[..=end]);
+    packet.extend_from_slice(&[0, qtype::AAAA as u8, 0, qclass::IN as u8]);
+    Ok(packet)
 }
 
 /// Exchange one preformatted, single-question QUERY, NOTIFY or UPDATE packet.
@@ -159,6 +214,8 @@ where
     if config.nameservers.is_empty() {
         return Err(QueryError::Io(io::ErrorKind::ConnectionRefused.into()));
     }
+    let replacement = config.no_aaaa.then(|| no_aaaa_query(query)).flatten();
+    let query = replacement.as_deref().unwrap_or(query);
     let count = config.nameservers.len();
     let mut refused = vec![false; count];
     let mut last_error = QueryError::Io(io::ErrorKind::TimedOut.into());
@@ -202,6 +259,9 @@ where
                     if !config.trust_ad {
                         reply.packet[3] &= !0x20;
                     }
+                    if replacement.is_some() {
+                        reply.packet = no_aaaa_reply(query, reply.packet)?;
+                    }
                     return Ok(reply);
                 }
                 Err(QueryError::InvalidQuery) => return Err(QueryError::InvalidQuery),
@@ -216,7 +276,10 @@ where
             break;
         }
     }
-    if let Some(reply) = last_rejection {
+    if let Some(mut reply) = last_rejection {
+        if replacement.is_some() {
+            reply.packet = no_aaaa_reply(query, reply.packet)?;
+        }
         Ok(reply)
     } else {
         Err(last_error)
@@ -239,6 +302,7 @@ mod tests {
             use_vc: false,
             ignore_truncation: false,
             trust_ad: false,
+            no_aaaa: false,
         }
     }
 

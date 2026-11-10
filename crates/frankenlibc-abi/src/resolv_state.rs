@@ -36,6 +36,7 @@ pub const RES_USE_EDNS0: c_ulong = 0x0010_0000;
 pub const RES_USE_DNSSEC: c_ulong = 0x0080_0000;
 pub const RES_NOTLDQUERY: c_ulong = 0x0100_0000;
 pub const RES_TRUSTAD: c_ulong = 0x0400_0000;
+pub const RES_NOAAAA: c_ulong = 0x0800_0000;
 const RES_DEFAULT: c_ulong = RES_RECURSE | RES_DEFNAMES | RES_DNSRCH;
 const MAXNS: usize = 3;
 const MAXDNSRCH: usize = 6;
@@ -208,7 +209,7 @@ fn random_id() -> Result<u16, c_int> {
     Ok(u16::from_ne_bytes(bytes))
 }
 
-fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
+fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2], bool) {
     let content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
     let localdomain = std::env::var_os("LOCALDOMAIN");
     let options = std::env::var_os("RES_OPTIONS");
@@ -222,8 +223,10 @@ fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
     // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
     let mut edns0 = false;
     let mut explicit_timing = [false; 2];
+    let mut explicit_no_aaaa = false;
     let mut observe_option = |word: &[u8]| {
         edns0 |= word.starts_with(b"edns0");
+        explicit_no_aaaa |= word.starts_with(b"no-aaaa") || word.starts_with(b"-no-aaaa");
         for (index, prefix) in [b"timeout:".as_slice(), b"attempts:".as_slice()]
             .into_iter()
             .enumerate()
@@ -272,6 +275,7 @@ fn initial_config() -> (ResolverConfig, c_ulong, [bool; 2]) {
         config,
         if edns0 { RES_USE_EDNS0 } else { 0 },
         explicit_timing,
+        explicit_no_aaaa,
     )
 }
 
@@ -291,7 +295,7 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
         Ok(state) => state,
         Err(error) => return fail(error),
     };
-    let (config, extended_options, explicit_timing) = initial_config();
+    let (config, extended_options, explicit_timing, explicit_no_aaaa) = initial_config();
     let id = if legacy_global || state.id == 0 {
         match random_id() {
             Ok(id) => id,
@@ -327,6 +331,12 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {
     }
     if config.trust_ad {
         next.options |= RES_TRUSTAD;
+    }
+    if explicit_no_aaaa {
+        next.options &= !RES_NOAAAA;
+    }
+    if config.no_aaaa {
+        next.options |= RES_NOAAAA;
     }
     next.ndots_nsort = if cfg!(target_endian = "little") {
         config.ndots.min(15)
@@ -496,6 +506,7 @@ unsafe fn transport_config(pointer: *mut c_void) -> Result<raw::Config, c_int> {
         use_vc: state.options & RES_USEVC != 0,
         ignore_truncation: state.options & RES_IGNTC != 0,
         trust_ad: state.options & RES_TRUSTAD != 0,
+        no_aaaa: state.options & RES_NOAAAA != 0,
     })
 }
 

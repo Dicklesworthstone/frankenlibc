@@ -2812,6 +2812,7 @@ fn native_dns_query(
     timeout: std::time::Duration,
     trust_ad: bool,
     use_vc: bool,
+    no_aaaa: bool,
 ) -> Result<frankenlibc_core::dns_transport::QueryReply, frankenlibc_core::dns_transport::QueryError>
 {
     use frankenlibc_core::dns_transport::QueryError;
@@ -2830,7 +2831,7 @@ fn native_dns_query(
     };
 
     let result = frankenlibc_core::dns_transport::query(
-        hostname, qtype_val, server, timeout, trust_ad, use_vc,
+        hostname, qtype_val, server, timeout, trust_ad, use_vc, no_aaaa,
     );
     let counter = match &result {
         Ok(reply) if reply.rcode == rcode::NXDOMAIN => &DNS_METRICS.queries_nxdomain,
@@ -2964,7 +2965,17 @@ fn native_dns_resolve(
                 want_v4,
                 want_v6,
                 &config,
-                native_dns_query,
+                |name, kind, server, timeout, trust_ad, use_vc| {
+                    native_dns_query(
+                        name,
+                        kind,
+                        server,
+                        timeout,
+                        trust_ad,
+                        use_vc,
+                        config.no_aaaa,
+                    )
+                },
             )?;
             // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
             // canonical owner when both families succeed, as glibc does.
@@ -3036,12 +3047,18 @@ fn reverse_hosts_lookup<T>(
 /// Resolve a files-only reverse miss through the validated native PTR engine.
 fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
     use frankenlibc_core::dns_transport::ResolveError;
-    frankenlibc_core::dns_transport::reverse_with(address, &native_dns_config(), native_dns_query)
-        .map_err(|error| match error {
-            ResolveError::NotFound => libc::EAI_NONAME,
-            ResolveError::Temporary => libc::EAI_AGAIN,
-            ResolveError::Failure => libc::EAI_FAIL,
-        })
+    frankenlibc_core::dns_transport::reverse_with(
+        address,
+        &native_dns_config(),
+        |name, kind, server, timeout, trust_ad, use_vc| {
+            native_dns_query(name, kind, server, timeout, trust_ad, use_vc, false)
+        },
+    )
+    .map_err(|error| match error {
+        ResolveError::NotFound => libc::EAI_NONAME,
+        ResolveError::Temporary => libc::EAI_AGAIN,
+        ResolveError::Failure => libc::EAI_FAIL,
+    })
 }
 
 /// Select the families requested by getaddrinfo using one NSS service.

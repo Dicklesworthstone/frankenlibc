@@ -6,7 +6,9 @@ use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use frankenlibc_core::dns_transport::{QueryError, exchange as address_exchange, raw};
+use frankenlibc_core::dns_transport::{
+    QueryError, exchange as address_exchange, query as address_query, raw,
+};
 use frankenlibc_core::resolv::dns::{DnsMessage, qtype, rcode};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
@@ -70,6 +72,156 @@ fn read_tcp_query(stream: &mut TcpStream) -> Vec<u8> {
     let mut packet = vec![0; usize::from(u16::from_be_bytes(length))];
     stream.read_exact(&mut packet).unwrap();
     packet
+}
+
+fn no_aaaa_config(server: std::net::SocketAddr) -> raw::Config {
+    raw::Config {
+        nameservers: vec![server],
+        timeout: TIMEOUT,
+        attempts: 1,
+        rotate: false,
+        use_vc: false,
+        ignore_truncation: false,
+        trust_ad: false,
+        no_aaaa: true,
+    }
+}
+
+#[test]
+fn no_aaaa_projects_validated_a_answers_and_nxdomain_without_edns() {
+    for code in [rcode::NOERROR, rcode::NXDOMAIN, rcode::SERVFAIL] {
+        let socket = udp();
+        let config = no_aaaa_config(socket.local_addr().unwrap());
+        let mut original = query();
+        let question_length = original.len();
+        original[question_length - 3] = 28;
+        original[11] = 1;
+        original.extend_from_slice(&[0, 0, 41, 4, 208, 0, 0, 128, 0, 0, 0]);
+        let preserved = original.clone();
+        let worker = thread::spawn(move || {
+            let (sent, peer) = receive(&socket);
+            assert_eq!(
+                sent,
+                query(),
+                "no-aaaa sends A and omits EDNS/DNSSEC options"
+            );
+            let mut forged = answer(&sent);
+            forged[question_length - 3] = 28;
+            socket.send_to(&forged, peer).unwrap();
+            let mut valid = answer(&sent);
+            valid[3] = 0xa0 | code;
+            socket.send_to(&valid, peer).unwrap();
+        });
+        let result = raw::send_for_query(&original, &config).unwrap();
+        worker.join().unwrap();
+        assert_eq!(original, preserved);
+        assert_eq!(result.transport, raw::Transport::Udp);
+        assert_eq!(result.packet.len(), question_length);
+        let message = DnsMessage::decode(&result.packet).unwrap();
+        assert_eq!(message.header.rcode(), code);
+        assert_eq!(message.header.flags & 0x20, 0, "untrusted AD stays masked");
+        assert_eq!(message.questions[0].qtype, qtype::AAAA);
+        assert_eq!(&result.packet[6..12], &[0; 6]);
+    }
+}
+
+#[test]
+fn no_aaaa_keeps_tcp_fallback_and_bounded_answer_copy() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let socket = UdpSocket::bind(endpoint).unwrap();
+    socket.set_read_timeout(Some(TIMEOUT)).unwrap();
+    let mut original = query();
+    let last = original.len() - 3;
+    original[last] = 28;
+    let worker = thread::spawn(move || {
+        let (sent, peer) = receive(&socket);
+        assert_eq!(sent, query());
+        let mut truncated = sent.clone();
+        truncated[2] |= 0x82;
+        socket.send_to(&truncated, peer).unwrap();
+        let mut stream = accept(&listener);
+        assert_eq!(read_tcp_query(&mut stream), sent);
+        let complete = answer(&sent);
+        stream
+            .write_all(&(complete.len() as u16).to_be_bytes())
+            .unwrap();
+        stream.write_all(&complete).unwrap();
+    });
+    let result = raw::send(&original, &no_aaaa_config(endpoint)).unwrap();
+    worker.join().unwrap();
+    assert_eq!(result.transport, raw::Transport::Tcp);
+    assert_eq!(result.packet.len(), original.len());
+    assert_eq!(
+        DnsMessage::decode(&result.packet).unwrap().questions[0].qtype,
+        qtype::AAAA
+    );
+    let mut output = [0xa5; 14];
+    assert_eq!(
+        result.copy_answer(&mut output[1..13]).unwrap(),
+        original.len()
+    );
+    assert_ne!(output[3] & 2, 0);
+    assert_eq!((output[0], output[13]), (0xa5, 0xa5));
+}
+
+#[test]
+fn no_aaaa_leaves_other_types_classes_and_opcodes_unchanged() {
+    for (kind, class, opcode) in [(1, 1, 0), (28, 3, 0), (12, 1, 0), (28, 1, 4)] {
+        let socket = udp();
+        let config = no_aaaa_config(socket.local_addr().unwrap());
+        let mut original = query();
+        let len = original.len();
+        original[len - 3] = kind;
+        original[len - 1] = class;
+        original[2] |= opcode << 3;
+        let expected = original.clone();
+        let worker = thread::spawn(move || {
+            let (mut sent, peer) = receive(&socket);
+            assert_eq!(sent, expected);
+            sent[2] |= 0x80;
+            socket.send_to(&sent, peer).unwrap();
+            sent
+        });
+        assert_eq!(
+            raw::send(&original, &config).unwrap().packet,
+            worker.join().unwrap()
+        );
+    }
+}
+
+#[test]
+fn no_aaaa_address_query_does_not_follow_a_cname_from_the_a_probe() {
+    let socket = udp();
+    let endpoint = socket.local_addr().unwrap();
+    let worker = thread::spawn(move || {
+        let (sent, peer) = receive(&socket);
+        assert_eq!(
+            DnsMessage::decode(&sent).unwrap().questions[0].qtype,
+            qtype::A
+        );
+        let mut packet = sent;
+        packet[2] |= 0x80;
+        packet[3] = 0x80;
+        packet[7] = 1;
+        let target = b"\x06target\x07invalid\0";
+        packet.extend_from_slice(&[0xc0, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, target.len() as u8]);
+        packet.extend_from_slice(target);
+        socket.send_to(&packet, peer).unwrap();
+    });
+    let response = address_query(
+        b"test.invalid",
+        qtype::AAAA,
+        endpoint,
+        TIMEOUT,
+        false,
+        false,
+        true,
+    )
+    .unwrap();
+    worker.join().unwrap();
+    assert_eq!(response.rcode, rcode::NOERROR);
+    assert!(response.records.is_empty());
 }
 
 #[test]
@@ -241,6 +393,7 @@ fn raw_send_fails_over_on_dns_refusal_and_keeps_the_negative_wire_answer() {
         use_vc: false,
         ignore_truncation: false,
         trust_ad: false,
+        no_aaaa: false,
     };
     let first = thread::spawn(move || {
         let (mut packet, peer) = receive(&primary);

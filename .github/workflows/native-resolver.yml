@@ -6,12 +6,15 @@ on:
     paths:
       - 'crates/frankenlibc-core/src/addrinfo.rs'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
+      - 'crates/frankenlibc-core/tests/raw_dns_transport.rs'
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/socket/**'
       - 'crates/frankenlibc-core/src/nss/**'
       - 'crates/frankenlibc-core/src/netgroup/**'
       - 'crates/frankenlibc-core/src/rpc/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'crates/frankenlibc-abi/src/resolv_state.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
@@ -19,6 +22,7 @@ on:
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/resolver_no_aaaa_test.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_getrpcent.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
@@ -58,6 +62,8 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/addrinfo.log
           cargo test -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/resolver/transport.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/transport.log
+          cargo test -p frankenlibc-core --test raw_dns_transport -- --nocapture 2>&1 | tee artifacts/resolver/raw-transport.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/raw-transport.log
           FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::dns:: -- --nocapture 2>&1 | tee artifacts/resolver/decoder.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/decoder.log
           FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::config:: -- --nocapture 2>&1 | tee artifacts/resolver/config.log
@@ -69,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/resolver/abi-check.log
-      - name: Verify GNU default hints and configured address families
+      - name: Verify GNU default hints, address families and AAAA suppression
         if: always()
         shell: bash
         run: |
@@ -77,6 +83,8 @@ jobs:
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo_default_hints -- --test-threads=1 --nocapture 2>&1 | tee "artifacts/resolver/default-hints-$mode.log"
             grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "artifacts/resolver/default-hints-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolver_no_aaaa_test -- --test-threads=1 --nocapture 2>&1 | tee "artifacts/resolver/no-aaaa-$mode.log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "artifacts/resolver/no-aaaa-$mode.log"
           done
       - name: Verify native files providers, RPC, gshadow and password locks
         if: always()
