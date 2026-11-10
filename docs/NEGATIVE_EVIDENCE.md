@@ -42293,4 +42293,45 @@ establish the original throughput targets or integrated L1 readiness.
 
 - **DISPOSITION.** KEEP. Clears both the `<= 2.0x strict` L3 contract (`1.596x` strict on `sort120k`, `1.854x` strict on `sort` 1.5M) and the `<= 200 ns/call` short string/memory target (`12.09 ns` `strlen`, `23.70 ns` `memcmp`, `24.84 ns` `memcpy`).
 
+## 2026-11-10 — `bd-rc0923-epic-eeuy4f.9`: Wave 3 — Page-Oracle L1 Presence Fast-Reject for Stack/Foreign Pointers & Inline `(r0, r1)` Two-Range Pair Lookup (`check_membrane_access.py --benchmark --incumbent` GREEN)
+
+- **LEVER (`bd-rc0923-epic-eeuy4f.9`, commits `56d0e2392` & `5785dc5e0`).** Resolved the remaining `scripts/check_membrane_access.py --benchmark` gate failures (`memcmp-stack` exceeding `<= 200 ns` at `271.9 ns` on 2026-11-03, and `sort100k-lexical` hardened/strict ratio at `2.129x` vs `<= 2.0x`):
+  1. **Page-Oracle L1 Presence Fast-Reject & Thread-Local `bloom_misses` Batching (`tls_cache.rs`, `ptr_validator.rs`, `metrics.rs`):** Every arena allocation is registered in both `bloom` and `page_oracle` (`l1_presence_filter`, an 8 KB L1-resident monotone bitmap over 16 MB virtual address chunks). `lookup_hit_remaining_with_oracle` and `lookup_hit_remaining_pair_with_oracle` now query `page_oracle.may_contain_addr_lockfree(addr)` when `ranges[0]` (and `ranges[1]` for pairs) misses: foreign/stack pointers (`0x7fff_...`) are rejected in ~1 ns without probing the 8 MB Bloom filter or constructing a 72-byte `ValidationOutcome`, and `bloom_misses` are batched in `TlsValidationCache` (`unflushed_bloom_misses`, flushed on batch threshold, cache teardown, or `MembraneMetrics::get(&GLOBAL_METRICS.bloom_misses)`), eliminating 2–4 global `lock xadd` instructions per stack string/memory call.
+  2. **Inline `(r0, r1)` Cross-Range Pair Hit & Slot-1 Promotion (`tls_cache.rs`):** `lookup_hit_remaining_pair_with_oracle` now checks whether `(lhs, rhs)` span `(ranges[0], ranges[1])` or `(ranges[1], ranges[0])` inline immediately after the single-range `ranges[0]` check, and `lookup_hit_remaining_pair_slow_with_oracle` promotes `rhs` hits to `ranges[1]` (`lookup_hit_remaining_promote(rhs, 1)`) when `lhs` already occupies `ranges[0]`, eliminating the ping-pong `ranges.swap(0, 1)` on two-buffer `memcmp` workloads.
+  3. **Batched `non_arena_remaining_pair` & Expanded Certified `StringMemory` FFI-PCC (`malloc_abi.rs`, `runtime_policy.rs`, `string_abi.rs`):** Added `non_arena_remaining` and `non_arena_remaining_pair` (loading `SEGMENT_ARENA_BASE`, `BUMP_OVERFLOW_ACTIVE`, `FALLBACK_ALLOC_MIN_ADDR`, and `FALLBACK_ALLOC_MAX_ADDR` once per foreign pointer pair) and wired `strcpy`, `strncpy`, `strchr`, `strrchr`, and `strstr` into `try_decide_certified_string_pcc`.
+- **OBJECTS (same-invocation `python3 scripts/check_membrane_access.py /data/tmp/cargo-target/release/libfrankenlibc_abi.so --benchmark --incumbent target/release/libfrankenlibc_abi.so --output /tmp/membrane_access_bench_ab`):**
+  - `candidate` (`5785dc5e0`): `/data/tmp/cargo-target/release/libfrankenlibc_abi.so`, SHA-256 `9a2f73fa850f3d6508de86aeab88091b3c04ba4b58331cdfff5d669aa871bc37`
+  - `incumbent`: `/data/projects/frankenlibc/target/release/libfrankenlibc_abi.so`, SHA-256 `563d7af7cf6c0d62f89580d0d919bf3938a273062aca4d7b3e1e26e4028acfe9`
+  - `glibc`: `/usr/lib/x86_64-linux-gnu/libc.so.6` (2.43)
+- **SAME-INVOCATION GATE RESULTS (`raw_records: 1430`, 9 measured rounds + 2 warmups, 200,000 iterations/sample, `passed: true`, `failures: []`):**
+  1. **Micro-benchmark medians (ns/call, same invocation):**
+
+     | operation | length | `glibc` | `strict` | `incumbent-hardened` | `hardened` (`candidate`) | speedup vs incumbent |
+     |---|---:|---:|---:|---:|---:|---:|
+     | `memcmp-stack` | 1 | `2.29` | `4.64` | `40.50` (`min 39.61`) | **`24.43`** (`max 38.41`) | **`1.66x`** (complete separation) |
+     | `memcmp-stack` | 7 | `2.20` | `4.46` | `40.25` (`min 39.58`) | **`24.15`** (`max 28.75`) | **`1.67x`** (complete separation) |
+     | `memcmp-stack` | 15 | `2.28` | `4.16` | `40.57` (`min 39.46`) | **`23.93`** (`max 24.89`) | **`1.70x`** (complete separation) |
+     | `memcmp-stack` | 31 | `2.20` | `4.46` | `40.59` (`min 39.81`) | **`24.40`** | **`1.66x`** |
+     | `memcmp-stack` | 63 | `2.56` | `5.28` | `42.45` (`min 41.17`) | **`25.57`** (`max 26.37`) | **`1.66x`** (complete separation) |
+     | `memcmp-heap` | 1 | `2.28` | `4.44` | `21.69` (`min 20.68`) | **`16.41`** (`max 17.76`) | **`1.32x`** (complete separation) |
+     | `memcmp-heap` | 7 | `2.29` | `4.51` | `20.31` (`min 20.07`) | **`15.82`** (`max 17.08`) | **`1.28x`** (complete separation) |
+     | `memcmp-heap` | 15 | `2.28` | `4.21` | `20.17` (`min 19.86`) | **`15.64`** (`max 16.39`) | **`1.29x`** (complete separation) |
+     | `memcmp-heap` | 31 | `2.23` | `4.45` | `20.92` (`min 20.40`) | **`15.95`** | **`1.31x`** |
+     | `memcmp-heap` | 63 | `2.48` | `5.27` | `22.42` (`min 22.19`) | **`17.69`** (`max 18.10`) | **`1.27x`** (complete separation) |
+     | `strlen-stack` | 0 | `2.25` | `3.69` | `24.05` (`min 23.36`) | **`15.18`** (`max 20.91`) | **`1.58x`** (complete separation) |
+     | `strlen-stack` | 15 | `2.28` | `3.71` | `23.84` | **`15.34`** | **`1.55x`** |
+     | `strlen-stack` | 31 | `2.31` | `3.66` | `23.85` (`min 23.24`) | **`16.56`** (`max 19.89`) | **`1.44x`** (complete separation) |
+     | `strlen-stack` | 63 | `2.56` | `5.38` | `25.02` | **`16.84`** | **`1.49x`** |
+     | `strlen-heap` | 15 | `2.30` | `3.65` | `13.03` | **`12.29`** | **`1.06x`** |
+     | `strlen-heap` | 63 | `2.48` | `3.63` | `13.54` (`min 13.33`) | **`12.93`** | **`1.05x`** |
+
+  2. **Macro `sort100k` ratios (`corpus_rows: 100000`, byte-exact output parity + symbol binding verification):**
+     - `sort100k-lexical`: `hardened_over_glibc = 2.236x` (budget `<= 3.0x`), `hardened_over_strict = 1.940x` (budget `<= 2.0x`) — **PASS**
+     - `sort100k-numeric`: `hardened_over_glibc = 1.866x` (budget `<= 3.0x`), `hardened_over_strict = 1.816x` (budget `<= 2.0x`) — **PASS**
+  3. **Safety & Fault-Injection Gate (`python3 scripts/check_membrane_access.py /data/tmp/cargo-target/release/libfrankenlibc_abi.so`):**
+     - `membrane access ABI: 98/98 passed; wrong provider rejected=True`
+     - `cargo test -p frankenlibc-membrane --lib`: `1474 passed; 0 failed`
+     - `cargo test -p frankenlibc-abi --test string_abi_test`: `205 passed; 0 failed`
+- **DISPOSITION.** KEEP. `scripts/check_membrane_access.py` passes both its 98/98 fault-injection suite and its `--benchmark --incumbent` gate with `failures: []`.
+
 
