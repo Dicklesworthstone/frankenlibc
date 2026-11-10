@@ -10,14 +10,17 @@ on:
       - 'crates/frankenlibc-core/src/socket/**'
       - 'crates/frankenlibc-core/src/nss/**'
       - 'crates/frankenlibc-core/src/netgroup/**'
+      - 'crates/frankenlibc-core/src/rpc/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'
+      - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_getrpcent.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
       - 'tests/integration/fixture_nss.c'
@@ -75,7 +78,7 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo_default_hints -- --test-threads=1 --nocapture 2>&1 | tee "artifacts/resolver/default-hints-$mode.log"
             grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "artifacts/resolver/default-hints-$mode.log"
           done
-      - name: Verify native files providers and password lock state
+      - name: Verify native files providers, RPC, gshadow and password locks
         if: always()
         shell: bash
         run: |
@@ -97,6 +100,16 @@ jobs:
             if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"; then status=1; fi
             if ! grep -Fxq 'test lckpwdf_creates_private_cloexec_lock_and_excludes_other_processes ... ok' "$log"; then status=1; fi
             if ! grep -Fxq 'test lckpwdf_open_failure_preserves_error_and_allows_retry ... ok' "$log"; then status=1; fi
+            log="artifacts/resolver/gshadow-unit-$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test --locked --no-fail-fast -p frankenlibc-abi \
+              --test pwd_abi_test gshadow -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"; then status=1; fi
+            if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"; then status=1; fi
+            log="artifacts/resolver/rpc-unit-$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test --locked --no-fail-fast -p frankenlibc-abi \
+              --test conformance_diff_getrpcent -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"; then status=1; fi
+            if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"; then status=1; fi
           done
           exit "$status"
       - name: Verify netgroup NSS policy and iterator recovery against GNU
@@ -193,7 +206,7 @@ jobs:
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
-      - name: Compare deployed files hosts and password locking with GNU
+      - name: Compare deployed hosts, gshadow, RPC and password locking with GNU
         if: always()
         shell: bash
         run: |
@@ -228,6 +241,42 @@ jobs:
             printf ' alias-%s-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' "$alias" >> "$hosts_etc/hosts"
           done
           printf '\n' >> "$hosts_etc/hosts"
+          python3 - "$scratch_root" <<'PY'
+          import pathlib, sys
+
+          root = pathlib.Path(sys.argv[1])
+          gshadow = root / "gshadow-etc"
+          gshadow.mkdir()
+          (gshadow / "nsswitch.conf").write_text("gshadow: files\n", encoding="ascii")
+          admins = ",".join(f"administrator-{i:03d}-abcdefghijklmnopqrstuvwxyz" for i in range(80))
+          members = ",".join(f"member-{i:03d}-abcdefghijklmnopqrstuvwxyz" for i in range(80))
+          (gshadow / "gshadow").write_text(
+              "frankenlibc-gshadow-first:!:alice,bob:carol,dave\n"
+              f"frankenlibc-gshadow-long:!:{admins}:{members}\n"
+              "frankenlibc-gshadow-last:!::last-member\n",
+              encoding="ascii",
+          )
+
+          for kind in ("records", "missing", "directory"):
+              private = root / f"rpc-{kind}"
+              private.mkdir()
+              (private / "nsswitch.conf").write_text("rpc: files\n", encoding="ascii")
+          prefix = "frankenlibc-rpc-long-"
+          canonical = prefix + "q" * (4096 - len(prefix))
+          aliases = " ".join(f"Alias{i:03d}-" + "x" * 32 for i in range(96))
+          (root / "rpc-records" / "rpc").write_text(
+              "# Complete RPC records with malformed rows between them.\n"
+              "\n"
+              "invalid-rpc-row\n"
+              "frankenlibc-rpc-first 700001 FirstAlias first-alt\n"
+              "invalid-rpc-number not-a-number discarded\n"
+              f"{canonical} 700002 {aliases}\n"
+              "invalid-rpc-number-after not-a-number discarded\n"
+              "frankenlibc-rpc-last 700003 LastAlias\n",
+              encoding="ascii",
+          )
+          (root / "rpc-directory" / "rpc").mkdir()
+          PY
           # Mount as root, then run the caller as the runner user. The private
           # /etc contains only fixtures, and dropping privileges keeps EACCES
           # observable when the password test makes its scratch lock read-only.
@@ -238,6 +287,7 @@ jobs:
               --bind "$private_etc" /etc --proc /proc -- \
               setpriv --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
               env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_HOSTS_PATH \
+                -u FRANKENLIBC_GSHADOW_PATH \
                 -u FRANKENLIBC_NSSWITCH_PATH -u RESOLV_HOST_CONF -u RESOLV_MULTI \
                 "$@" 2>&1 | tee "$log"
           }
@@ -262,6 +312,34 @@ jobs:
             if ! run_private "$hosts_etc" "$log" FRANKENLIBC_MODE="$mode" \
               "$caller" --hosts-enumeration-provider "$candidate" 82; then status=1; fi
             if ! grep -Eq '^fixture_nss: hosts enumeration provider PASS \([1-9][0-9]* differential observations, 82 records, 80 aliases, 4096-byte name\)$' "$log"; then status=1; fi
+          done
+          log=artifacts/resolver/gshadow-contract-host.log
+          if ! run_private "$scratch_root/gshadow-etc" "$log" timeout 20s \
+            "$caller" --gshadow-contract-provider "$host_libc"; then status=1; fi
+          if ! grep -Fxq 'fixture_nss: gshadow contract PASS (13 independent observations)' "$log"; then status=1; fi
+          for mode in strict hardened; do
+            log="artifacts/resolver/gshadow-contract-$mode.log"
+            if ! run_private "$scratch_root/gshadow-etc" "$log" FRANKENLIBC_MODE="$mode" \
+              timeout 20s "$caller" --gshadow-contract-provider "$candidate"; then status=1; fi
+            if ! grep -Fxq 'fixture_nss: gshadow contract PASS (13 independent observations)' "$log"; then status=1; fi
+            log="artifacts/resolver/gshadow-differential-$mode.log"
+            if ! run_private "$scratch_root/gshadow-etc" "$log" FRANKENLIBC_MODE="$mode" \
+              timeout 20s "$caller" --gshadow-provider "$candidate" 3; then status=1; fi
+            if ! grep -Fxq 'fixture_nss: gshadow provider PASS (221 differential observations, 3 database rows)' "$log"; then status=1; fi
+          done
+          for source_kind in records missing directory; do
+            if [[ "$source_kind" == records ]]; then expected=34; else expected=6; fi
+            private_etc="$scratch_root/rpc-$source_kind"
+            log="artifacts/resolver/rpc-$source_kind-host.log"
+            if ! run_private "$private_etc" "$log" timeout 20s \
+              "$caller" --rpc-provider "$host_libc" "$source_kind"; then status=1; fi
+            if ! grep -Fxq "fixture_nss: RPC provider PASS ($expected contract observations, $source_kind)" "$log"; then status=1; fi
+            for mode in strict hardened; do
+              log="artifacts/resolver/rpc-$source_kind-$mode.log"
+              if ! run_private "$private_etc" "$log" FRANKENLIBC_MODE="$mode" \
+                timeout 20s "$caller" --rpc-provider "$candidate" "$source_kind"; then status=1; fi
+              if ! grep -Fxq "fixture_nss: RPC provider PASS ($expected contract observations, $source_kind)" "$log"; then status=1; fi
+            done
           done
           log=artifacts/resolver/password-lock-host.log
           if ! run_private "$scratch_root/password-host" "$log" \

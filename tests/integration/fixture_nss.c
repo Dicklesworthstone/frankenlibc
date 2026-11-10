@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <gshadow.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <pwd.h>
@@ -1107,7 +1108,818 @@ static int test_password_lock_provider(const char *provider_path,
 
 #undef PASSWORD_CHECK
 
+
+/* gshadow contracts and live GNU comparisons. All database rows used by this
+ * mode must come from a private /etc/gshadow mounted by the caller. */
+struct gshadow_ops {
+    struct sgrp *(*string)(const char *);
+    int (*string_r)(const char *, struct sgrp *, char *, size_t, struct sgrp **);
+    struct sgrp *(*name)(const char *);
+    int (*name_r)(const char *, struct sgrp *, char *, size_t, struct sgrp **);
+    struct sgrp *(*next)(void);
+    int (*next_r)(struct sgrp *, char *, size_t, struct sgrp **);
+    struct sgrp *(*stream)(FILE *);
+    int (*stream_r)(FILE *, struct sgrp *, char *, size_t, struct sgrp **);
+    void (*start)(void);
+    void (*end)(void);
+    int (*files_name)(const char *, struct sgrp *, char *, size_t, int *);
+    int (*files_next)(struct sgrp *, char *, size_t, int *);
+    int (*files_start)(int);
+    int (*files_end)(void);
+    FILE *(*memory)(void *, size_t, const char *);
+    FILE *(*descriptor)(int, const char *);
+    FILE *(*cookie)(void *, const char *, cookie_io_functions_t);
+    int (*close)(FILE *);
+    long (*tell)(FILE *);
+    int (*eof)(FILE *);
+    int (*error)(FILE *);
+};
+
+static int gshadow_bind(void *handle, const struct stat *expected,
+                        struct gshadow_ops *ops) {
+#define GSHADOW_BIND(member, symbol) do { \
+    ops->member = (__typeof__(ops->member))identity_symbol(handle, symbol, expected); \
+    if (!ops->member) return 0; \
+} while (0)
+    GSHADOW_BIND(string, "sgetsgent");
+    GSHADOW_BIND(string_r, "sgetsgent_r");
+    GSHADOW_BIND(name, "getsgnam");
+    GSHADOW_BIND(name_r, "getsgnam_r");
+    GSHADOW_BIND(next, "getsgent");
+    GSHADOW_BIND(next_r, "getsgent_r");
+    GSHADOW_BIND(stream, "fgetsgent");
+    GSHADOW_BIND(stream_r, "fgetsgent_r");
+    GSHADOW_BIND(start, "setsgent");
+    GSHADOW_BIND(end, "endsgent");
+    GSHADOW_BIND(files_name, "_nss_files_getsgnam_r");
+    GSHADOW_BIND(files_next, "_nss_files_getsgent_r");
+    GSHADOW_BIND(files_start, "_nss_files_setsgent");
+    GSHADOW_BIND(files_end, "_nss_files_endsgent");
+    GSHADOW_BIND(memory, "fmemopen");
+    GSHADOW_BIND(descriptor, "fdopen");
+    GSHADOW_BIND(cookie, "fopencookie");
+    GSHADOW_BIND(close, "fclose");
+    GSHADOW_BIND(tell, "ftell");
+    GSHADOW_BIND(eof, "feof");
+    GSHADOW_BIND(error, "ferror");
+#undef GSHADOW_BIND
+    return 1;
+}
+
+enum gshadow_call_kind {
+    GSHADOW_STRING, GSHADOW_NAME, GSHADOW_NEXT, GSHADOW_STREAM,
+    GSHADOW_FILES_NAME, GSHADOW_FILES_NEXT
+};
+
+struct gshadow_result {
+    struct sgrp record;
+    struct sgrp *result;
+    _Alignas(void *) char buffer[65552];
+    size_t offset, capacity;
+    int rc, error, saved_errno;
+};
+
+static void gshadow_call(const struct gshadow_ops *ops, enum gshadow_call_kind kind,
+                         const void *subject, size_t capacity, size_t offset,
+                         struct gshadow_result *out) {
+    memset(&out->record, 0, sizeof(out->record));
+    memset(out->buffer, 0xa5, sizeof(out->buffer));
+    out->result = (struct sgrp *)(uintptr_t)1;
+    out->offset = offset;
+    out->capacity = capacity;
+    out->error = 731;
+    errno = 733;
+    char *buffer = out->buffer + offset;
+    switch (kind) {
+        case GSHADOW_STRING:
+            out->rc = ops->string_r(subject, &out->record, buffer, capacity, &out->result);
+            break;
+        case GSHADOW_NAME:
+            out->rc = ops->name_r(subject, &out->record, buffer, capacity, &out->result);
+            break;
+        case GSHADOW_NEXT:
+            out->rc = ops->next_r(&out->record, buffer, capacity, &out->result);
+            break;
+        case GSHADOW_STREAM:
+            out->rc = ops->stream_r((FILE *)subject, &out->record, buffer, capacity,
+                                    &out->result);
+            break;
+        case GSHADOW_FILES_NAME:
+            out->rc = ops->files_name(subject, &out->record, buffer, capacity, &out->error);
+            out->result = out->rc == 1 ? &out->record : NULL;
+            break;
+        case GSHADOW_FILES_NEXT:
+            out->rc = ops->files_next(&out->record, buffer, capacity, &out->error);
+            out->result = out->rc == 1 ? &out->record : NULL;
+            break;
+        default:
+            abort();
+    }
+    out->saved_errno = errno;
+}
+
+static int gshadow_string_inside(const char *text, uintptr_t begin, uintptr_t end) {
+    if (!text) return 1;
+    uintptr_t address = (uintptr_t)text;
+    return address >= begin && address < end &&
+        memchr(text, 0, (size_t)(end - address)) != NULL;
+}
+
+static int gshadow_list_inside(char *const *list, uintptr_t begin, uintptr_t end) {
+    uintptr_t address = (uintptr_t)list;
+    if (!list || address % _Alignof(char *) || address < begin || address > end)
+        return 0;
+    while (end - address >= sizeof(char *)) {
+        char *text;
+        memcpy(&text, (const void *)address, sizeof(text));
+        if (!text) return 1;
+        if (!gshadow_string_inside(text, begin, end)) return 0;
+        address += sizeof(char *);
+    }
+    return 0;
+}
+
+static int gshadow_output_valid(const struct gshadow_result *out) {
+    for (size_t i = 0; i < sizeof(out->buffer); ++i) {
+        if ((i < out->offset || i >= out->offset + out->capacity) &&
+            (unsigned char)out->buffer[i] != 0xa5)
+            return 0;
+    }
+    if (!out->result) return 1;
+    if (out->result == (struct sgrp *)(uintptr_t)1) return out->rc != 0;
+    if (out->result != &out->record) return 0;
+    uintptr_t begin = (uintptr_t)(out->buffer + out->offset);
+    uintptr_t end = begin + out->capacity;
+    return gshadow_string_inside(out->record.sg_namp, begin, end) &&
+        gshadow_string_inside(out->record.sg_passwd, begin, end) &&
+        gshadow_list_inside(out->record.sg_adm, begin, end) &&
+        gshadow_list_inside(out->record.sg_mem, begin, end);
+}
+
+static int gshadow_list_equal(char *const *a, char *const *b) {
+    if (!a || !b) return a == b;
+    for (size_t i = 0; i < 4096; ++i) {
+        if (!identity_string_equal(a[i], b[i])) return 0;
+        if (!a[i]) return 1;
+    }
+    return 0;
+}
+
+static int gshadow_record_equal(const struct sgrp *a, const struct sgrp *b) {
+    if (!a || !b) return a == b;
+    return identity_string_equal(a->sg_namp, b->sg_namp) &&
+        identity_string_equal(a->sg_passwd, b->sg_passwd) &&
+        gshadow_list_equal(a->sg_adm, b->sg_adm) &&
+        gshadow_list_equal(a->sg_mem, b->sg_mem);
+}
+
+static int gshadow_pair(const struct gshadow_ops *host, const struct gshadow_ops *candidate,
+                         enum gshadow_call_kind kind, const void *host_subject,
+                         const void *candidate_subject, size_t capacity, size_t offset,
+                         struct gshadow_result *a, struct gshadow_result *b,
+                         unsigned int *observations) {
+    gshadow_call(host, kind, host_subject, capacity, offset, a);
+    gshadow_call(candidate, kind, candidate_subject, capacity, offset, b);
+    ++*observations;
+    if (!gshadow_output_valid(a) || !gshadow_output_valid(b) ||
+        a->rc != b->rc || a->error != b->error || a->saved_errno != b->saved_errno ||
+        (a->result == (struct sgrp *)(uintptr_t)1) !=
+            (b->result == (struct sgrp *)(uintptr_t)1) ||
+        ((a->result != (struct sgrp *)(uintptr_t)1) &&
+            !gshadow_record_equal(a->result, b->result))) {
+        fprintf(stderr, "FAIL: gshadow kind=%d capacity=%zu offset=%zu "
+                "host=(%d,%d,%d) candidate=(%d,%d,%d)\n",
+                kind, capacity, offset, a->rc, a->error, a->saved_errno,
+                b->rc, b->error, b->saved_errno);
+        return 0;
+    }
+    return 1;
+}
+
+static int gshadow_static_pair(const struct gshadow_ops *host,
+                               const struct gshadow_ops *candidate, int kind,
+                               const void *a_subject, const void *b_subject,
+                               unsigned int *observations) {
+    errno = 739;
+    struct sgrp *a = kind == 0 ? host->string(a_subject) :
+        kind == 1 ? host->name(a_subject) :
+        kind == 2 ? host->next() : host->stream((FILE *)a_subject);
+    int a_errno = errno;
+    errno = 739;
+    struct sgrp *b = kind == 0 ? candidate->string(b_subject) :
+        kind == 1 ? candidate->name(b_subject) :
+        kind == 2 ? candidate->next() : candidate->stream((FILE *)b_subject);
+    int b_errno = errno;
+    ++*observations;
+    /* errno after a successful nonreentrant lookup can reflect internal
+     * buffer growth. Compare it when reporting failure, where it is useful. */
+    if (((!a || !b) && a_errno != b_errno) || !gshadow_record_equal(a, b)) {
+        fprintf(stderr, "FAIL: gshadow static kind=%d host_errno=%d candidate_errno=%d\n",
+                kind, a_errno, b_errno);
+        return -1;
+    }
+    return a != NULL;
+}
+
+static char *gshadow_long_line(void) {
+    char *line = malloc(32768);
+    if (!line) return NULL;
+    size_t used = (size_t)snprintf(line, 32768, "frankenlibc-gshadow-long:!:");
+    for (int field = 0; field < 2; ++field) {
+        for (unsigned int i = 0; i < 80; ++i) {
+            int written = snprintf(line + used, 32768 - used,
+                "%s%s-%03u-abcdefghijklmnopqrstuvwxyz",
+                i ? "," : "", field ? "member" : "administrator", i);
+            if (written < 0 || (size_t)written >= 32768 - used) {
+                free(line);
+                return NULL;
+            }
+            used += (size_t)written;
+        }
+        line[used++] = field ? '\n' : ':';
+        line[used] = 0;
+    }
+    return line;
+}
+
+static int gshadow_full_record(const struct sgrp *record, const char *name,
+                              size_t admins, size_t members) {
+    if (!record || !record->sg_namp || strcmp(record->sg_namp, name) ||
+        !record->sg_passwd || strcmp(record->sg_passwd, "!") ||
+        !record->sg_adm || !record->sg_mem)
+        return 0;
+    for (size_t i = 0; i < admins; ++i) if (!record->sg_adm[i]) return 0;
+    for (size_t i = 0; i < members; ++i) if (!record->sg_mem[i]) return 0;
+    return !record->sg_adm[admins] && !record->sg_mem[members];
+}
+
+/* This mode is an independent positive control. It accepts one explicitly
+ * identified provider, including GNU libc, and never claims a differential. */
+static int test_gshadow_contract_provider(const char *path) {
+    void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    struct stat expected;
+    struct gshadow_ops ops;
+    if (!handle || stat(path, &expected) || !gshadow_bind(handle, &expected, &ops))
+        return 42;
+    const char *line = "frankenlibc-gshadow-first:!:alice,bob:carol,dave\n";
+    struct gshadow_result result;
+    unsigned int observations = 0;
+    for (size_t offset = 0; offset < _Alignof(char *); ++offset) {
+        gshadow_call(&ops, GSHADOW_STRING, line, 65536, offset, &result);
+        if (result.rc || !gshadow_output_valid(&result) ||
+            !gshadow_full_record(result.result, "frankenlibc-gshadow-first", 2, 2)) {
+            fprintf(stderr, "FAIL: gshadow caller-result contract offset=%zu rc=%d identity=%d\n",
+                    offset, result.rc, result.result == &result.record);
+            return 1;
+        }
+        ++observations;
+    }
+    gshadow_call(&ops, GSHADOW_STRING, line, 1, 1, &result);
+    if (result.rc != ERANGE || result.result != (struct sgrp *)(uintptr_t)1 ||
+        !gshadow_output_valid(&result)) return 1;
+    ++observations;
+    char *long_line = gshadow_long_line();
+    if (!long_line || strlen(long_line) <= 4096) return 1;
+    gshadow_call(&ops, GSHADOW_STRING, long_line, 65536, 1, &result);
+    if (result.rc || !gshadow_output_valid(&result) ||
+        !gshadow_full_record(result.result, "frankenlibc-gshadow-long", 80, 80) ||
+        !gshadow_full_record(ops.string(long_line), "frankenlibc-gshadow-long", 80, 80))
+        return 1;
+    observations += 2;
+    for (int reentrant = 0; reentrant < 2; ++reentrant) {
+        FILE *stream = ops.memory(long_line, strlen(long_line), "r");
+        if (!stream) return 1;
+        struct sgrp *record;
+        if (reentrant) {
+            gshadow_call(&ops, GSHADOW_STREAM, stream, 65536, 1, &result);
+            if (result.rc || !gshadow_output_valid(&result)) return 1;
+            record = result.result;
+        } else {
+            record = ops.stream(stream);
+        }
+        if (!gshadow_full_record(record, "frankenlibc-gshadow-long", 80, 80)) return 1;
+        if (ops.close(stream)) return 1;
+        ++observations;
+    }
+    free(long_line);
+    dlclose(handle);
+    printf("fixture_nss: gshadow contract PASS (%u independent observations)\n", observations);
+    return 0;
+}
+
+static int gshadow_memory_comparison(const struct gshadow_ops *host,
+                                     const struct gshadow_ops *candidate,
+                                     const struct gshadow_ops *constructor,
+                                     const char *content, unsigned int rows,
+                                     int reentrant, int retry,
+                                     unsigned int *observations) {
+    FILE *a_stream = host->memory((void *)content, strlen(content), "r");
+    FILE *b_stream = constructor->memory((void *)content, strlen(content), "r");
+    if (!a_stream || !b_stream) return 0;
+    struct gshadow_result a, b;
+    if (retry) {
+        if (!gshadow_pair(host, candidate, GSHADOW_STREAM, a_stream, b_stream,
+                          16, 1, &a, &b, observations) || a.rc != ERANGE ||
+            host->tell(a_stream) != constructor->tell(b_stream))
+            return 0;
+    }
+    unsigned int read_rows = 0;
+    for (; read_rows <= rows; ++read_rows) {
+        int present;
+        if (reentrant) {
+            if (!gshadow_pair(host, candidate, GSHADOW_STREAM, a_stream, b_stream,
+                              65536, read_rows % _Alignof(char *), &a, &b, observations))
+                return 0;
+            present = a.result != NULL;
+        } else {
+            present = gshadow_static_pair(host, candidate, 3, a_stream, b_stream, observations);
+            if (present < 0) return 0;
+        }
+        if (host->tell(a_stream) != constructor->tell(b_stream) ||
+            !!host->eof(a_stream) != !!constructor->eof(b_stream) ||
+            !!host->error(a_stream) != !!constructor->error(b_stream))
+            return 0;
+        if (!present) break;
+    }
+    int close_a = host->close(a_stream);
+    int close_b = constructor->close(b_stream);
+    return read_rows == rows && !close_a && !close_b;
+}
+
+static ssize_t gshadow_error_read(void *cookie, char *buffer, size_t length) {
+    (void)buffer;
+    (void)length;
+    ++*(unsigned int *)cookie;
+    errno = EIO;
+    return -1;
+}
+
+
+struct gshadow_partial_input {
+    const char *text;
+    size_t offset;
+    unsigned int reads;
+};
+
+static ssize_t gshadow_partial_read(void *cookie, char *buffer, size_t length) {
+    struct gshadow_partial_input *input = cookie;
+    ++input->reads;
+    size_t remaining = strlen(input->text) - input->offset;
+    if (!remaining) {
+        errno = EIO;
+        return -1;
+    }
+    if (length > remaining) length = remaining;
+    memcpy(buffer, input->text + input->offset, length);
+    input->offset += length;
+    return (ssize_t)length;
+}
+
+static int gshadow_pipe_and_error_comparison(const struct gshadow_ops *host,
+                                             const struct gshadow_ops *candidate,
+                                             const struct gshadow_ops *constructor,
+                                             unsigned int *observations) {
+    const char content[] = "team:!:a,b:m,n\nlast:*::m\n";
+    for (int reentrant = 0; reentrant < 2; ++reentrant) {
+        int a_pipe[2], b_pipe[2];
+        if (pipe(a_pipe) || pipe(b_pipe) ||
+            write(a_pipe[1], content, sizeof(content) - 1) != (ssize_t)sizeof(content) - 1 ||
+            write(b_pipe[1], content, sizeof(content) - 1) != (ssize_t)sizeof(content) - 1 ||
+            close(a_pipe[1]) || close(b_pipe[1]))
+            return 0;
+        FILE *a_stream = host->descriptor(a_pipe[0], "r");
+        FILE *b_stream = constructor->descriptor(b_pipe[0], "r");
+        if (!a_stream || !b_stream) return 0;
+        struct gshadow_result a, b;
+        for (int call = 0; call < (reentrant ? 3 : 2); ++call) {
+            if (reentrant) {
+                if (!gshadow_pair(host, candidate, GSHADOW_STREAM, a_stream, b_stream,
+                                  65536, 1, &a, &b, observations))
+                    return 0;
+                if ((call < 2) != (a.result != NULL)) return 0;
+            } else if (gshadow_static_pair(host, candidate, 3, a_stream, b_stream,
+                                           observations) != 0) {
+                return 0;
+            }
+            if (!!host->eof(a_stream) != !!constructor->eof(b_stream) ||
+                !!host->error(a_stream) != !!constructor->error(b_stream))
+                return 0;
+        }
+        if (host->close(a_stream) || constructor->close(b_stream)) return 0;
+    }
+
+    unsigned int a_reads = 0, b_reads = 0;
+    cookie_io_functions_t functions = {.read = gshadow_error_read};
+    FILE *a_stream = host->cookie(&a_reads, "r", functions);
+    FILE *b_stream = constructor->cookie(&b_reads, "r", functions);
+    if (!a_stream || !b_stream) return 0;
+    struct gshadow_result a, b;
+    if (!gshadow_pair(host, candidate, GSHADOW_STREAM, a_stream, b_stream,
+                      65536, 1, &a, &b, observations) ||
+        a.result || !a_reads || !b_reads ||
+        !!host->error(a_stream) != !!constructor->error(b_stream))
+        return 0;
+    if (host->close(a_stream) || constructor->close(b_stream)) return 0;
+
+    /* getdelim can report positive bytes and ferror together. Such a partial
+     * physical record is an error, while a complete newline-terminated record
+     * must succeed before a later callback failure has been observed. */
+    for (int newline = 0; newline < 2; ++newline) {
+        const char *text = newline ? "team:!:a:m\n" : "team:!:a:m";
+        struct gshadow_partial_input a_input = {.text = text};
+        struct gshadow_partial_input b_input = {.text = text};
+        functions.read = gshadow_partial_read;
+        a_stream = host->cookie(&a_input, "r", functions);
+        b_stream = constructor->cookie(&b_input, "r", functions);
+        if (!a_stream || !b_stream) return 0;
+        if (!gshadow_pair(host, candidate, GSHADOW_STREAM, a_stream, b_stream,
+                          65536, 1, &a, &b, observations) ||
+            (newline ? (a.rc != 0 || !a.result) : (a.rc != EIO || a.result)) ||
+            !a_input.reads || !b_input.reads ||
+            !!host->error(a_stream) != !newline ||
+            !!host->error(a_stream) != !!constructor->error(b_stream))
+            return 0;
+        if (host->close(a_stream) || constructor->close(b_stream)) return 0;
+    }
+    return 1;
+}
+
+static int test_gshadow_provider(const char *candidate_path, unsigned int expected_rows) {
+    void *host_handle = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    void *candidate_handle = dlopen(candidate_path, RTLD_NOW | RTLD_LOCAL);
+    struct stat host_stat, candidate_stat;
+    Dl_info host_info;
+    struct gshadow_ops host, candidate;
+    if (!expected_rows || !host_handle || !candidate_handle ||
+        !dladdr(dlsym(host_handle, "getpid"), &host_info) ||
+        stat(host_info.dli_fname, &host_stat) || stat(candidate_path, &candidate_stat) ||
+        (host_stat.st_dev == candidate_stat.st_dev && host_stat.st_ino == candidate_stat.st_ino) ||
+        !gshadow_bind(host_handle, &host_stat, &host) ||
+        !gshadow_bind(candidate_handle, &candidate_stat, &candidate) ||
+        host.string_r == candidate.string_r || host.stream_r == candidate.stream_r ||
+        host.name_r == candidate.name_r || host.files_next == candidate.files_next) {
+        fprintf(stderr, "FAIL: distinct gshadow providers required\n");
+        return 42;
+    }
+    unsigned int observations = 0;
+    struct gshadow_result a, b;
+    const char *strings[] = {
+        "frankenlibc-gshadow-first:!:alice,bob:carol,dave\n",
+        "empty:::", "", "only-name", "# string comment", ":!:admin:member",
+        "  spaced:!:alice,bob:carol,dave", "commas:!:,alice,,bob,:carol,,dave,",
+        "tail:!:alice:carol:extra"
+    };
+    for (size_t line = 0; line < sizeof(strings) / sizeof(strings[0]); ++line) {
+        for (size_t offset = 0; offset < _Alignof(char *); ++offset) {
+            if (!gshadow_pair(&host, &candidate, GSHADOW_STRING, strings[line], strings[line],
+                              65536, offset, &a, &b, &observations))
+                return 1;
+        }
+        if (gshadow_static_pair(&host, &candidate, 0, strings[line], strings[line],
+                                 &observations) != 1)
+            return 1;
+    }
+    /* A whole line that does not fit differs from a line whose pointer arrays
+     * do not fit. Compare both, including the result-slot sentinel. */
+    const size_t capacities[] = {1, 8, 16, 32, 64, 71, 72, 79, 80};
+    for (size_t offset = 0; offset < _Alignof(char *); ++offset) {
+        for (size_t i = 0; i < sizeof(capacities) / sizeof(capacities[0]); ++i) {
+            if (!gshadow_pair(&host, &candidate, GSHADOW_STRING,
+                              "team:!:a,b:m,n", "team:!:a,b:m,n",
+                              capacities[i], offset, &a, &b, &observations))
+                return 1;
+        }
+    }
+    char *long_line = gshadow_long_line();
+    if (!long_line || strlen(long_line) <= 4096 ||
+        !gshadow_pair(&host, &candidate, GSHADOW_STRING, long_line, long_line,
+                      65536, 1, &a, &b, &observations) ||
+        !gshadow_full_record(a.result, "frankenlibc-gshadow-long", 80, 80) ||
+        gshadow_static_pair(&host, &candidate, 0, long_line, long_line, &observations) != 1)
+        return 1;
+
+    size_t stream_size = strlen(long_line) + 256;
+    char *content = malloc(stream_size);
+    if (!content) return 1;
+    int written = snprintf(content, stream_size, "%s\n# skipped file comment\n"
+        "  frankenlibc-gshadow-first:!:alice,bob:carol,dave\n"
+        "frankenlibc-gshadow-last:!::last-member\n", long_line);
+    if (written < 0 || (size_t)written >= stream_size) return 1;
+    for (int native_file = 0; native_file < 2; ++native_file) {
+        const struct gshadow_ops *constructor = native_file ? &candidate : &host;
+        for (int reentrant = 0; reentrant < 2; ++reentrant) {
+            if (!gshadow_memory_comparison(&host, &candidate, constructor, content,
+                                           3, reentrant, reentrant, &observations))
+                return 1;
+        }
+        if (!gshadow_pipe_and_error_comparison(&host, &candidate, constructor, &observations))
+            return 1;
+    }
+    free(content);
+    free(long_line);
+
+    /* The required marker prevents accidentally enumerating a system password
+     * database when the caller forgot to mount the private fixtures. */
+    const char *names[] = {"frankenlibc-gshadow-first", "frankenlibc-gshadow-long",
+                           "frankenlibc-gshadow-deliberately-absent"};
+    if (!gshadow_pair(&host, &candidate, GSHADOW_NAME, names[0], names[0],
+                      65536, 1, &a, &b, &observations) || !a.result)
+        return 1;
+    for (size_t name = 0; name < sizeof(names) / sizeof(names[0]); ++name) {
+        for (int files = 0; files < 2; ++files) {
+            enum gshadow_call_kind kind = files ? GSHADOW_FILES_NAME : GSHADOW_NAME;
+            for (int small = 0; small < 2; ++small) {
+                if (!gshadow_pair(&host, &candidate, kind, names[name], names[name],
+                                  small ? 16 : 65536, 1, &a, &b, &observations))
+                    return 1;
+            }
+        }
+        if (gshadow_static_pair(&host, &candidate, 1, names[name], names[name],
+                                 &observations) != (name != 2))
+            return 1;
+    }
+
+    for (int files = 0; files < 2; ++files) {
+        if (files) {
+            if (host.files_start(0) != 1 || candidate.files_start(0) != 1) return 1;
+        } else {
+            host.start();
+            candidate.start();
+        }
+        enum gshadow_call_kind kind = files ? GSHADOW_FILES_NEXT : GSHADOW_NEXT;
+        if (!gshadow_pair(&host, &candidate, kind, NULL, NULL,
+                          16, 1, &a, &b, &observations) || a.result)
+            return 1;
+        unsigned int rows = 0;
+        int saw_long = 0;
+        for (; rows <= expected_rows; ++rows) {
+            if (!gshadow_pair(&host, &candidate, kind, NULL, NULL, 65536,
+                              rows % _Alignof(char *), &a, &b, &observations))
+                return 1;
+            if (!a.result) break;
+            if (gshadow_full_record(a.result, "frankenlibc-gshadow-long", 80, 80))
+                saw_long = 1;
+        }
+        if (rows != expected_rows || !saw_long) return 1;
+        if (files) {
+            if (host.files_end() != 1 || candidate.files_end() != 1) return 1;
+        } else {
+            host.end();
+            candidate.end();
+        }
+        /* Closing the enumeration must allow the next call to reopen at row1. */
+        if (!gshadow_pair(&host, &candidate, kind, NULL, NULL,
+                          65536, 1, &a, &b, &observations) || !a.result ||
+            !a.result->sg_namp || strcmp(a.result->sg_namp, names[0]))
+            return 1;
+    }
+    host.start();
+    candidate.start();
+    unsigned int rows = 0;
+    for (; rows <= expected_rows; ++rows) {
+        int present = gshadow_static_pair(&host, &candidate, 2, NULL, NULL, &observations);
+        if (present < 0) return 1;
+        if (!present) break;
+    }
+    if (rows != expected_rows) return 1;
+    host.end();
+    candidate.end();
+    dlclose(candidate_handle);
+    dlclose(host_handle);
+    printf("fixture_nss: gshadow provider PASS (%u differential observations, %u database rows)\n",
+           observations, expected_rows);
+    return 0;
+}
+
+/* RPC database contracts. Run this same identity-checked provider probe once
+ * against GNU libc and once against the candidate, inside a private /etc. */
+struct rpc_database_ops {
+    int (*name)(const char *, struct rpcent *, char *, size_t, struct rpcent **);
+    int (*number)(int, struct rpcent *, char *, size_t, struct rpcent **);
+    int (*next)(struct rpcent *, char *, size_t, struct rpcent **);
+    struct rpcent *(*name_static)(const char *);
+    struct rpcent *(*number_static)(int);
+    struct rpcent *(*next_static)(void);
+    void (*start)(int);
+    void (*end)(void);
+    identity_name_fn files_name;
+    int (*files_number)(int, void *, char *, size_t, int *);
+    identity_next_fn files_next;
+    identity_start_fn files_start;
+    identity_end_fn files_end;
+};
+
+static int rpc_database_bind(void *handle, const struct stat *expected,
+                              struct rpc_database_ops *ops) {
+#define RPC_BIND(member, symbol) do { \
+    ops->member = (__typeof__(ops->member))identity_symbol(handle, symbol, expected); \
+    if (!ops->member) return 0; \
+} while (0)
+    RPC_BIND(name, "getrpcbyname_r");
+    RPC_BIND(number, "getrpcbynumber_r");
+    RPC_BIND(next, "getrpcent_r");
+    RPC_BIND(name_static, "getrpcbyname");
+    RPC_BIND(number_static, "getrpcbynumber");
+    RPC_BIND(next_static, "getrpcent");
+    RPC_BIND(start, "setrpcent");
+    RPC_BIND(end, "endrpcent");
+    RPC_BIND(files_name, "_nss_files_getrpcbyname_r");
+    RPC_BIND(files_number, "_nss_files_getrpcbynumber_r");
+    RPC_BIND(files_next, "_nss_files_getrpcent_r");
+    RPC_BIND(files_start, "_nss_files_setrpcent");
+    RPC_BIND(files_end, "_nss_files_endrpcent");
+#undef RPC_BIND
+    return 1;
+}
+
+struct rpc_database_result {
+    struct rpcent record;
+    struct rpcent *result;
+    char buffer[65538];
+    int rc, error, saved_errno;
+};
+
+static void rpc_database_call(const struct rpc_database_ops *ops, int kind,
+                              const char *name, int number, size_t capacity,
+                              struct rpc_database_result *out) {
+    memset(out, 0, sizeof(*out));
+    memset(out->buffer, 0xa5, sizeof(out->buffer));
+    out->error = 99;
+    errno = 77;
+    char *buffer = out->buffer + 1; /* exercise an unaligned caller buffer */
+    switch (kind) {
+        case 0: out->rc = ops->next(&out->record, buffer, capacity, &out->result); break;
+        case 1: out->rc = ops->files_next(&out->record, buffer, capacity, &out->error); break;
+        case 2: out->rc = ops->name(name, &out->record, buffer, capacity, &out->result); break;
+        case 3: out->rc = ops->files_name(name, &out->record, buffer, capacity, &out->error); break;
+        case 4: out->rc = ops->number(number, &out->record, buffer, capacity, &out->result); break;
+        case 5: out->rc = ops->files_number(number, &out->record, buffer, capacity, &out->error); break;
+        default: abort();
+    }
+    out->saved_errno = errno;
+    if (kind & 1) out->result = out->rc == 1 ? &out->record : NULL;
+}
+
+static int rpc_database_owned(const struct rpc_database_result *out, size_t capacity) {
+    for (size_t i = 0; i < sizeof(out->buffer); ++i)
+        if ((i == 0 || i >= capacity + 1) && (unsigned char)out->buffer[i] != 0xa5)
+            return 0;
+    if (!out->result) return 1;
+    uintptr_t begin = (uintptr_t)(out->buffer + 1), end = begin + capacity;
+    return out->result == &out->record && out->record.r_name &&
+        gshadow_string_inside(out->record.r_name, begin, end) &&
+        gshadow_list_inside(out->record.r_aliases, begin, end);
+}
+
+static int rpc_database_record(const struct rpcent *entry, int row) {
+    if (!entry || !entry->r_name || !entry->r_aliases ||
+        entry->r_number != 700001 + row) return 0;
+    if (row == 0) {
+        return identity_string_equal(entry->r_name, "frankenlibc-rpc-first") &&
+            identity_string_equal(entry->r_aliases[0], "FirstAlias") &&
+            identity_string_equal(entry->r_aliases[1], "first-alt") &&
+            entry->r_aliases[2] == NULL;
+    }
+    if (row == 2) {
+        return identity_string_equal(entry->r_name, "frankenlibc-rpc-last") &&
+            identity_string_equal(entry->r_aliases[0], "LastAlias") &&
+            entry->r_aliases[1] == NULL;
+    }
+    const char *prefix = "frankenlibc-rpc-long-";
+    size_t prefix_len = strlen(prefix);
+    if (strlen(entry->r_name) != 4096 || strncmp(entry->r_name, prefix, prefix_len))
+        return 0;
+    for (size_t i = prefix_len; i < 4096; ++i)
+        if (entry->r_name[i] != 'q') return 0;
+    for (unsigned int i = 0; i < 96; ++i) {
+        char expected[80];
+        snprintf(expected, sizeof(expected), "Alias%03u-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", i);
+        if (!identity_string_equal(entry->r_aliases[i], expected)) return 0;
+    }
+    return entry->r_aliases[96] == NULL;
+}
+
+static int rpc_database_expect(const struct rpc_database_ops *ops, int kind,
+                               const char *name, int number, size_t capacity,
+                               int rc, int error, int saved_errno, int row,
+                               unsigned int *observations) {
+    struct rpc_database_result out;
+    rpc_database_call(ops, kind, name, number, capacity, &out);
+    ++*observations;
+    if (out.rc != rc || out.error != error || out.saved_errno != saved_errno ||
+        !rpc_database_owned(&out, capacity) ||
+        (row < 0 ? out.result != NULL : !rpc_database_record(out.result, row))) {
+        fprintf(stderr, "FAIL: RPC kind=%d capacity=%zu row=%d "
+                "expected=(%d,%d,%d) actual=(%d,%d,%d)\n",
+                kind, capacity, row, rc, error, saved_errno,
+                out.rc, out.error, out.saved_errno);
+        return 0;
+    }
+    return 1;
+}
+
+static int test_rpc_database_provider(const char *path, const char *source_kind) {
+    void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    struct stat expected;
+    struct rpc_database_ops ops;
+    if (!handle || stat(path, &expected) || !rpc_database_bind(handle, &expected, &ops))
+        return 42;
+    unsigned int observations = 0;
+    if (!strcmp(source_kind, "missing") || !strcmp(source_kind, "directory")) {
+        int missing = !strcmp(source_kind, "missing");
+        int error = missing ? ENOENT : EISDIR;
+        errno = 77;
+        int status = ops.files_start(0);
+        if (status != (missing ? -1 : 1) || errno != (missing ? ENOENT : 77))
+            return 1;
+        for (int kind = 0; kind < 6; ++kind) {
+            int rc = kind == 0 ? ENOENT : (kind & 1) ? -1 : error;
+            int expected_error = (kind & 1) && !missing ? error : 99;
+            int expected_errno = kind <= 1 && missing ? 77 : error;
+            if (!rpc_database_expect(&ops, kind, "frankenlibc-rpc-first", 700001,
+                    65536, rc, expected_error, expected_errno, -1, &observations))
+                return 1;
+        }
+    } else if (!strcmp(source_kind, "records")) {
+        for (int files = 0; files < 2; ++files) {
+            if (files) {
+                if (ops.files_start(1) != 1) return 1;
+            } else ops.start(1);
+            int success = files ? 1 : 0, retry = files ? -2 : ERANGE;
+            if (!rpc_database_expect(&ops, files, NULL, 0, 1,
+                    retry, files ? ERANGE : 99, files ? 77 : ERANGE, -1, &observations))
+                return 1;
+            if (!rpc_database_expect(&ops, files, NULL, 0, 65536,
+                    success, 99, 77, 0, &observations))
+                return 1;
+            for (int attempt = 0; attempt < 2; ++attempt)
+                if (!rpc_database_expect(&ops, files, NULL, 0, 1024,
+                        retry, files ? ERANGE : 99, ERANGE, -1, &observations))
+                    return 1;
+            for (int row = 1; row <= 2; ++row)
+                if (!rpc_database_expect(&ops, files, NULL, 0, 65536,
+                        success, 99, 77, row, &observations))
+                    return 1;
+            if (!rpc_database_expect(&ops, files, NULL, 0, 65536,
+                    files ? 0 : ENOENT, 99, 77, -1, &observations))
+                return 1;
+            if (!rpc_database_expect(&ops, files, NULL, 0, 1,
+                    retry, files ? ERANGE : 99, files ? 77 : ERANGE, -1, &observations))
+                return 1;
+            if (files) {
+                if (ops.files_end() != 1) return 1;
+            } else ops.end();
+            if (!rpc_database_expect(&ops, files, NULL, 0, 65536,
+                    success, 99, 77, 0, &observations))
+                return 1;
+        }
+
+        const char *alias = "Alias095-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        for (int files = 0; files < 2; ++files) {
+            int success = files ? 1 : 0, normal_errno = files ? 77 : 0;
+            if (!rpc_database_expect(&ops, 2 + files, alias, 0, 65536,
+                    success, 99, normal_errno, 1, &observations) ||
+                !rpc_database_expect(&ops, 4 + files, NULL, 700002, 65536,
+                    success, 99, normal_errno, 1, &observations) ||
+                !rpc_database_expect(&ops, 2 + files, "FRANKENLIBC-RPC-FIRST", 0, 65536,
+                    0, 99, normal_errno, -1, &observations) ||
+                !rpc_database_expect(&ops, 2 + files, "firstalias", 0, 65536,
+                    0, 99, normal_errno, -1, &observations) ||
+                !rpc_database_expect(&ops, 4 + files, NULL, 799999, 65536,
+                    0, 99, normal_errno, -1, &observations))
+                return 1;
+        }
+        if (!rpc_database_record(ops.name_static(alias), 1) ||
+            !rpc_database_record(ops.number_static(700002), 1)) return 1;
+        observations += 2;
+        ops.start(0);
+        for (int row = 0; row <= 2; ++row) {
+            if (!rpc_database_record(ops.next_static(), row)) return 1;
+            ++observations;
+        }
+        if (ops.next_static()) return 1;
+        ++observations;
+    } else {
+        return 2;
+    }
+    ops.end();
+    if (ops.files_end() != 1) return 1;
+    printf("fixture_nss: RPC provider PASS (%u contract observations, %s)\n",
+           observations, source_kind);
+    dlclose(handle);
+    return 0;
+}
+
+
 int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--rpc-provider") == 0)
+        return test_rpc_database_provider(argv[2], argv[3]);
+
+    if (argc == 3 && strcmp(argv[1], "--gshadow-contract-provider") == 0)
+        return test_gshadow_contract_provider(argv[2]);
+    if (argc == 4 && strcmp(argv[1], "--gshadow-provider") == 0)
+        return test_gshadow_provider(argv[2], (unsigned int)strtoul(argv[3], NULL, 10));
+
     if (argc == 4 && strcmp(argv[1], "--password-lock-provider") == 0)
         return test_password_lock_provider(argv[2], argv[3], 0);
     if (argc == 4 && strcmp(argv[1], "--password-lock-fork-provider") == 0)
