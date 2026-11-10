@@ -608,6 +608,7 @@ This is L0 interpose functionality: installed modules use the host dynamic loade
 - Multi-address `addrinfo` chains, `AI_CANONNAME` from the answering record
 - `getaddrinfo` / `freeaddrinfo` / `getnameinfo` / `gai_strerror` (with glibc-aligned error text)
 - Reverse (PTR) lookups through the same `hosts:` policy
+- `getnameinfo` for local (`AF_UNIX`) sockets: local host names, numeric `localhost`, filesystem path bytes, empty services for unnamed/abstract sockets, and bounded output with `EAI_OVERFLOW` on short buffers
 - `_nss_files_gethostbyname{,2,3,4}_r` / `_nss_files_gethostbyaddr_r`: files-only, compared against glibc's own exports
 - `inet_pton` / `inet_ntop` with metamorphic round-trip harness coverage
 - `inet_aton` / `inet_ntoa` / `htons` / `ntohs` family
@@ -616,6 +617,12 @@ This is L0 interpose functionality: installed modules use the host dynamic loade
 - IDNA / Punycode (in `crates/frankenlibc-core/src/idna/`)
 - TLS-cached pwd / grp / shadow reentrant slots (`_r` family) hardened against concurrent reseeding
 - Base-64 helpers (`b64_ntop` / `b64_pton`) with golden conformance fixtures
+
+### Native Account Files
+
+`_nss_files_initgroups_dyn` enumerates supplementary groups from the files source, preserves the caller's existing group prefix, excludes the base group, and grows the array subject to a positive limit. Growth also preserves buffers supplied by the host allocator in hardened interpose mode; no-match and backend/allocation failures have distinct NSS statuses.
+
+The shadow files providers (`_nss_files_getspnam_r`, `_nss_files_getspent_r`, `_nss_files_setspent`, and `_nss_files_endspent`) use native byte-oriented parsing. Enumeration retains a record for retry after `ERANGE`, lookup leaves the enumeration cursor intact, and non-UTF-8 account data is preserved. The `FRANKENLIBC_SHADOW_PATH` test/backend override is ignored in privileged execution contexts. These files providers operate independently of installed NSS modules; the dynamic-loader and standalone limitations described above still apply to the module bridge.
 
 ---
 

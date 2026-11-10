@@ -214,10 +214,10 @@ jobs:
           fi
           status=0
           for mode in strict hardened; do
-            for spec in grp_abi_test:nss_files_ pwd_abi_test:nss_files_ unistd_abi_test:nss_files_ getnameinfo_differential_fuzz:getnameinfo_; do
+            for spec in grp_abi_test:nss_files_ pwd_abi_test:nss_files_ pwd_abi_test:getsp unistd_abi_test:nss_files_ getnameinfo_differential_fuzz:getnameinfo_; do
               target="${spec%%:*}"
               filter="${spec#*:}"
-              log="artifacts/identity/${target}-${mode}.log"
+              log="artifacts/identity/${target}-${filter}-${mode}.log"
               if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
                 --test "$target" "${args[@]}" "$filter" -- --nocapture --test-threads=1 \
                 2>&1 | tee "$log"; then status=1; fi

@@ -5,6 +5,9 @@
 //! Uses `FRANKENLIBC_PASSWD_PATH` env var to point at test fixture files
 //! instead of the real /etc/passwd.
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 use std::sync::Mutex;
@@ -2040,7 +2043,6 @@ fn user_from_uid_zero_with_nouser_renders_zero() {
     });
 }
 
-
 // Shadow fixtures run in a fresh process so their backend override cannot
 // change another test's host-shadow oracle or process-level runtime mode.
 fn with_shadow_fixture(test: &str, content: Option<&[u8]>, run: impl FnOnce()) {
@@ -2070,8 +2072,7 @@ fn with_shadow_fixture(test: &str, content: Option<&[u8]>, run: impl FnOnce()) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("test result: ok. 1 passed; 0 failed;"),
+        String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed; 0 failed;"),
         "the shadow child must execute exactly one test"
     );
 }
@@ -2093,8 +2094,11 @@ fn nss_files_shadow_lookup_preserves_fields_and_error_contracts() {
                 *__errno_location() = 718;
                 assert_eq!(
                     _nss_files_getspnam_r(
-                        c"beta".as_ptr(), (&raw mut entry).cast(),
-                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                        c"beta".as_ptr(),
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     1
                 );
@@ -2102,14 +2106,24 @@ fn nss_files_shadow_lookup_preserves_fields_and_error_contracts() {
                 assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"beta");
                 assert_eq!(CStr::from_ptr(entry.sp_pwdp).to_bytes(), b"\xffhash");
                 assert_eq!(
-                    (entry.sp_lstchg, entry.sp_min, entry.sp_max, entry.sp_warn,
-                     entry.sp_inact, entry.sp_expire, entry.sp_flag),
+                    (
+                        entry.sp_lstchg,
+                        entry.sp_min,
+                        entry.sp_max,
+                        entry.sp_warn,
+                        entry.sp_inact,
+                        entry.sp_expire,
+                        entry.sp_flag
+                    ),
                     (1, 2, 3, 4, 5, 6, 7)
                 );
                 assert_eq!(
                     _nss_files_getspnam_r(
-                        c"missing".as_ptr(), (&raw mut entry).cast(),
-                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                        c"missing".as_ptr(),
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     0
                 );
@@ -2120,19 +2134,28 @@ fn nss_files_shadow_lookup_preserves_fields_and_error_contracts() {
                     *__errno_location() = 718;
                     assert_eq!(
                         _nss_files_getspnam_r(
-                            c"missing".as_ptr(), (&raw mut entry).cast(),
-                            buffer.as_mut_ptr().cast(), capacity, &mut error,
+                            c"missing".as_ptr(),
+                            (&raw mut entry).cast(),
+                            buffer.as_mut_ptr().cast(),
+                            capacity,
+                            &mut error,
                         ),
                         -2
                     );
                     assert_eq!(error, libc::ERANGE);
-                    assert_eq!(*__errno_location(), if capacity < 2 { 718 } else { libc::ERANGE });
+                    assert_eq!(
+                        *__errno_location(),
+                        if capacity < 2 { 718 } else { libc::ERANGE }
+                    );
                     assert!(buffer.iter().all(|&byte| byte == 0xa5));
                 }
                 assert_eq!(
                     _nss_files_getspnam_r(
-                        c"alpha".as_ptr(), (&raw mut entry).cast(),
-                        buffer.as_mut_ptr().cast(), 1, __errno_location(),
+                        c"alpha".as_ptr(),
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        1,
+                        __errno_location(),
                     ),
                     -2
                 );
@@ -2162,8 +2185,10 @@ fn nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate() {
                 for capacity in [0, 1, 2, FIRST.len() + 1] {
                     assert_eq!(
                         _nss_files_getspent_r(
-                            (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                            capacity, &mut error,
+                            (&raw mut entry).cast(),
+                            buffer.as_mut_ptr().cast(),
+                            capacity,
+                            &mut error,
                         ),
                         -2
                     );
@@ -2172,23 +2197,30 @@ fn nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate() {
                 }
                 assert_eq!(
                     _nss_files_getspent_r(
-                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                        FIRST.len() + 2, &mut error,
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        FIRST.len() + 2,
+                        &mut error,
                     ),
                     1
                 );
                 assert_eq!(CStr::from_ptr(entry.sp_namp).to_bytes(), b"alpha");
                 assert_eq!(
                     _nss_files_getspnam_r(
-                        c"alpha".as_ptr(), (&raw mut entry).cast(),
-                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                        c"alpha".as_ptr(),
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     1
                 );
                 assert_eq!(
                     _nss_files_getspent_r(
-                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                        buffer.len(), &mut error,
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     1
                 );
@@ -2198,8 +2230,10 @@ fn nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate() {
                 *__errno_location() = 718;
                 assert_eq!(
                     _nss_files_getspent_r(
-                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                        buffer.len(), &mut error,
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     0
                 );
@@ -2207,7 +2241,10 @@ fn nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate() {
                 // The minimum reader capacity is checked even at EOF.
                 assert_eq!(
                     _nss_files_getspent_r(
-                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(), 1, &mut error,
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        1,
+                        &mut error,
                     ),
                     -2
                 );
@@ -2219,8 +2256,10 @@ fn nss_files_shadow_enumeration_retries_rewinds_and_keeps_lookup_separate() {
                     }
                     assert_eq!(
                         _nss_files_getspent_r(
-                            (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                            buffer.len(), &mut error,
+                            (&raw mut entry).cast(),
+                            buffer.as_mut_ptr().cast(),
+                            buffer.len(),
+                            &mut error,
                         ),
                         1
                     );
@@ -2247,16 +2286,21 @@ fn nss_files_shadow_backend_failure_retries_after_file_appears() {
                 assert_eq!(*__errno_location(), libc::ENOENT);
                 assert_eq!(
                     _nss_files_getspnam_r(
-                        c"alpha".as_ptr(), (&raw mut entry).cast(),
-                        buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                        c"alpha".as_ptr(),
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     -1
                 );
                 assert_eq!(error, libc::ENOENT);
                 assert_eq!(
                     _nss_files_getspent_r(
-                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                        buffer.len(), &mut error,
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     -1
                 );
@@ -2265,8 +2309,10 @@ fn nss_files_shadow_backend_failure_retries_after_file_appears() {
                 std::fs::write(path, SHADOW_FIXTURE).unwrap();
                 assert_eq!(
                     _nss_files_getspent_r(
-                        (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                        buffer.len(), &mut error,
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len(),
+                        &mut error,
                     ),
                     1
                 );
@@ -2293,8 +2339,10 @@ fn nss_files_shadow_public_enumeration_preserves_non_utf8_records() {
                     let mut result = ptr::null_mut();
                     assert_eq!(
                         getspent_r(
-                            (&raw mut entry).cast(), buffer.as_mut_ptr().cast(),
-                            buffer.len(), &mut result,
+                            (&raw mut entry).cast(),
+                            buffer.as_mut_ptr().cast(),
+                            buffer.len(),
+                            &mut result,
                         ),
                         0
                     );
@@ -2306,6 +2354,149 @@ fn nss_files_shadow_public_enumeration_preserves_non_utf8_records() {
                 }
             }
             endspent();
+        },
+    );
+}
+
+#[test]
+fn nss_files_shadow_reader_capacity_matches_host_fgetspent() {
+    with_shadow_fixture(
+        "nss_files_shadow_reader_capacity_matches_host_fgetspent",
+        Some(b""),
+        || {
+            type HostOpen = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
+            type HostClose = unsafe extern "C" fn(*mut c_void) -> libc::c_int;
+            type HostRead = unsafe extern "C" fn(
+                *mut c_void,
+                *mut c_void,
+                *mut c_char,
+                usize,
+                *mut *mut c_void,
+            ) -> libc::c_int;
+            // Resolve all three operations from host libc so a host FILE
+            // never crosses ownership domains. The resolver rejects our own
+            // exported definitions instead of allowing a self-comparison.
+            let (open, close, read): (HostOpen, HostClose, HostRead) = unsafe {
+                (
+                    dlsym_oracle::host_fn(
+                        c"fmemopen",
+                        frankenlibc_abi::stdio_abi::fmemopen as *const (),
+                    ),
+                    dlsym_oracle::host_fn(
+                        c"fclose",
+                        frankenlibc_abi::stdio_abi::fclose as *const (),
+                    ),
+                    dlsym_oracle::host_fn(
+                        c"fgetspent_r",
+                        frankenlibc_abi::unistd_abi::fgetspent_r as *const (),
+                    ),
+                )
+            };
+            let path = std::env::var_os("FRANKENLIBC_SHADOW_PATH").unwrap();
+            let cases: &[&[u8]] = &[
+                b"",
+                b"\n",
+                b"# comment\n",
+                b"malformed\n",
+                b"alpha:!:1:2:3:4:5:6:7\n",
+                b"alpha:!:1:2:3:4:5:6:7",
+                b"beta:\xffhash:1:2:3:4:5:6:7\n",
+                b"# a longer skipped physical line before the record\nalpha:!:1:2:3:4:5:6:7\n",
+            ];
+            let mut compared = 0;
+            for &content in cases {
+                std::fs::write(&path, content).unwrap();
+                let mut capacities = vec![
+                    0,
+                    1,
+                    2,
+                    3,
+                    content.len(),
+                    content.len() + 1,
+                    content.len() + 2,
+                    128,
+                ];
+                capacities.sort_unstable();
+                capacities.dedup();
+                for capacity in capacities {
+                    let mut memory = content.to_vec();
+                    memory.push(0);
+                    // SAFETY: the backing bytes remain live until the paired
+                    // host fclose; an empty stream has a non-null allocation.
+                    let stream =
+                        unsafe { open(memory.as_mut_ptr().cast(), content.len(), c"r".as_ptr()) };
+                    assert!(!stream.is_null(), "host fmemopen failed");
+                    // SAFETY: reset only this child's private files cursor.
+                    unsafe { _nss_files_endspent() };
+                    // The second read proves ERANGE retry and EOF behavior,
+                    // independently of our physical-line size calculation.
+                    for requested in [capacity, 128] {
+                        // SAFETY: spwd contains only integer/pointer fields.
+                        let mut host_entry: libc::spwd = unsafe { std::mem::zeroed() };
+                        let mut candidate: libc::spwd = unsafe { std::mem::zeroed() };
+                        let mut host_buffer = [0u8; 256];
+                        let mut candidate_buffer = [0u8; 256];
+                        let mut result = ptr::null_mut();
+                        let mut error = 717;
+                        // SAFETY: both calls receive independent live storage
+                        // with sufficient extent for every requested capacity.
+                        let expected = unsafe {
+                            read(
+                                stream,
+                                (&raw mut host_entry).cast(),
+                                host_buffer.as_mut_ptr().cast(),
+                                requested,
+                                &mut result,
+                            )
+                        };
+                        let actual = unsafe {
+                            _nss_files_getspent_r(
+                                (&raw mut candidate).cast(),
+                                candidate_buffer.as_mut_ptr().cast(),
+                                requested,
+                                &mut error,
+                            )
+                        };
+                        let expected_status = match expected {
+                            0 => 1,
+                            libc::ENOENT => 0,
+                            libc::ERANGE => -2,
+                            other => panic!("unexpected host fgetspent_r error {other}"),
+                        };
+                        assert_eq!(
+                            actual, expected_status,
+                            "shadow reader content={content:?} capacity={requested}"
+                        );
+                        if expected == 0 {
+                            assert!(!result.is_null());
+                            // SAFETY: successful readers published terminated
+                            // fields in their respective live caller buffers.
+                            unsafe {
+                                assert_eq!(
+                                    CStr::from_ptr(candidate.sp_namp).to_bytes(),
+                                    CStr::from_ptr(host_entry.sp_namp).to_bytes()
+                                );
+                                assert_eq!(
+                                    CStr::from_ptr(candidate.sp_pwdp).to_bytes(),
+                                    CStr::from_ptr(host_entry.sp_pwdp).to_bytes()
+                                );
+                            }
+                        } else if expected == libc::ERANGE {
+                            assert_eq!(error, libc::ERANGE);
+                        }
+                        compared += 1;
+                    }
+                    // SAFETY: exactly the host stream returned by open above.
+                    assert_eq!(unsafe { close(stream) }, 0);
+                }
+            }
+            assert!(
+                compared > 100,
+                "host reader comparison must execute its corpus"
+            );
+            eprintln!("shadow files reader: {compared} independent host comparisons");
+            // SAFETY: release only this child's private files cursor.
+            unsafe { _nss_files_endspent() };
         },
     );
 }

@@ -183,7 +183,6 @@ fn getnameinfo_numeric_differential_fuzz_vs_glibc() {
     );
 }
 
-
 type NameInfoFn = unsafe extern "C" fn(
     *const libc::sockaddr,
     libc::socklen_t,
@@ -293,10 +292,24 @@ fn getnameinfo_local_differential_vs_glibc() {
             for flags in flag_sets {
                 for (host_len, serv_len) in outputs {
                     let expected = unsafe {
-                        call_local(getnameinfo, &address, address_len, flags, host_len, serv_len)
+                        call_local(
+                            getnameinfo,
+                            &address,
+                            address_len,
+                            flags,
+                            host_len,
+                            serv_len,
+                        )
                     };
                     let actual = unsafe {
-                        call_local(fl_getnameinfo, &address, address_len, flags, host_len, serv_len)
+                        call_local(
+                            fl_getnameinfo,
+                            &address,
+                            address_len,
+                            flags,
+                            host_len,
+                            serv_len,
+                        )
                     };
                     assert_eq!(
                         actual, expected,
@@ -329,14 +342,22 @@ fn getnameinfo_local_bounds_flags_and_errno_match_glibc() {
             for serv_len in [0, 1, path.len(), path.len() + 1, 256] {
                 let expected = unsafe {
                     call_local(
-                        getnameinfo, &address, address_len, flags,
-                        Some(host_len), Some(serv_len),
+                        getnameinfo,
+                        &address,
+                        address_len,
+                        flags,
+                        Some(host_len),
+                        Some(serv_len),
                     )
                 };
                 let actual = unsafe {
                     call_local(
-                        fl_getnameinfo, &address, address_len, flags,
-                        Some(host_len), Some(serv_len),
+                        fl_getnameinfo,
+                        &address,
+                        address_len,
+                        flags,
+                        Some(host_len),
+                        Some(serv_len),
                     )
                 };
                 assert_eq!(
@@ -350,10 +371,24 @@ fn getnameinfo_local_bounds_flags_and_errno_match_glibc() {
     for address_len in [0, 1, size_of::<libc::sockaddr_un>()] {
         for flags in [0, 0x100, -1] {
             let expected = unsafe {
-                call_local(getnameinfo, &address, address_len, flags, Some(256), Some(256))
+                call_local(
+                    getnameinfo,
+                    &address,
+                    address_len,
+                    flags,
+                    Some(256),
+                    Some(256),
+                )
             };
             let actual = unsafe {
-                call_local(fl_getnameinfo, &address, address_len, flags, Some(256), Some(256))
+                call_local(
+                    fl_getnameinfo,
+                    &address,
+                    address_len,
+                    flags,
+                    Some(256),
+                    Some(256),
+                )
             };
             assert_eq!(
                 actual, expected,

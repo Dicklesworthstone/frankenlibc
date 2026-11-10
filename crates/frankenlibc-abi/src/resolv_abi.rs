@@ -4209,25 +4209,21 @@ unsafe fn getnameinfo_local(
                 let hostname = if flags & libc::NI_NUMERICHOST == 0 {
                     // SAFETY: sys_uname initializes the caller-owned Linux
                     // utsname on success; no field is read after a failure.
-                    if unsafe {
-                        frankenlibc_core::syscall::sys_uname(uts.as_mut_ptr().cast())
-                    }
-                    .is_ok()
+                    if unsafe { frankenlibc_core::syscall::sys_uname(uts.as_mut_ptr().cast()) }
+                        .is_ok()
                     {
                         // SAFETY: the successful syscall initialized nodename.
                         let node = unsafe { &(*uts.as_ptr()).nodename };
-                        let mut len = node.iter().position(|&byte| byte == 0).unwrap_or(node.len());
-                        if flags & libc::NI_NOFQDN != 0 {
-                            len = node[..len]
-                                .iter()
-                                .position(|&byte| byte == b'.' as c_char)
-                                .unwrap_or(len);
-                        }
+                        // GNU keeps the UTS nodename intact for AF_UNIX,
+                        // including dots when NI_NOFQDN is requested. That
+                        // flag's domain-shortening rule applies to IP names.
+                        let len = node
+                            .iter()
+                            .position(|&byte| byte == 0)
+                            .unwrap_or(node.len());
                         // SAFETY: len is bounded by the initialized field and
                         // c_char/u8 have identical byte layout.
-                        Some(unsafe {
-                            std::slice::from_raw_parts(node.as_ptr().cast::<u8>(), len)
-                        })
+                        Some(unsafe { std::slice::from_raw_parts(node.as_ptr().cast::<u8>(), len) })
                     } else {
                         None
                     }
@@ -4257,13 +4253,14 @@ unsafe fn getnameinfo_local(
                 let path = unsafe {
                     std::slice::from_raw_parts(sa.cast::<u8>().add(PATH_OFFSET), path_len)
                 };
-                let end = path.iter().position(|&byte| byte == 0).unwrap_or(path.len());
+                let end = path
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(path.len());
                 // Abstract and unnamed sockets start with NUL and therefore
                 // have an empty service string in this GNU string interface.
                 // SAFETY: the shared writer checks advertised/tracked bounds.
-                unsafe {
-                    write_c_buffer_bytes("getnameinfo", serv, servlen, &path[..end], false)
-                }?;
+                unsafe { write_c_buffer_bytes("getnameinfo", serv, servlen, &path[..end], false) }?;
             }
             Ok(())
         })()

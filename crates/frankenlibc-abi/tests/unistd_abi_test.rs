@@ -15371,7 +15371,11 @@ fn nss_files_initgroups_dyn_miss_preserves_errnop_and_array() {
     use frankenlibc_abi::unistd_abi::_nss_files_initgroups_dyn;
     let user = CString::new("frankenlibc-initgroups-definitely-missing").unwrap();
     let content = std::fs::read("/etc/group").expect("read group database");
-    assert!(!content.windows(user.as_bytes().len()).any(|bytes| bytes == user.as_bytes()));
+    assert!(
+        !content
+            .windows(user.as_bytes().len())
+            .any(|bytes| bytes == user.as_bytes())
+    );
     let mut start: libc::c_long = 0;
     let mut size: libc::c_long = 0;
     let mut groupsp: *mut libc::gid_t = std::ptr::null_mut();
@@ -17945,12 +17949,9 @@ fn getifaddrs_syscall_errors_are_not_successful_snapshots() {
     }
 }
 
-
 #[test]
 fn nss_files_shadow_rejects_missing_output_storage() {
-    use frankenlibc_abi::unistd_abi::{
-        _nss_files_getspent_r, _nss_files_getspnam_r,
-    };
+    use frankenlibc_abi::unistd_abi::{_nss_files_getspent_r, _nss_files_getspnam_r};
     // SAFETY: invalid required outputs must be rejected before dereferencing.
     unsafe {
         let mut error = 717;
@@ -17962,14 +17963,21 @@ fn nss_files_shadow_rejects_missing_output_storage() {
         error = 717;
         assert_eq!(
             _nss_files_getspnam_r(
-                c"missing".as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut error,
+                c"missing".as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut error,
             ),
             -1
         );
         assert_eq!(error, libc::EINVAL);
         assert_eq!(
             _nss_files_getspent_r(
-                std::ptr::null_mut(), std::ptr::null_mut(), 0, std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
             ),
             -1
         );

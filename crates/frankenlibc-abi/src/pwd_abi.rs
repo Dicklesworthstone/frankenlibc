@@ -1238,7 +1238,8 @@ const SHADOW_PATH: &str = "/etc/shadow";
 fn read_shadow_file() -> std::io::Result<Vec<u8>> {
     // SAFETY: the key is static and NUL-terminated. secure_getenv ignores the
     // fixture/backend override in a privileged execution context.
-    let configured = unsafe { crate::stdlib_abi::secure_getenv(c"FRANKENLIBC_SHADOW_PATH".as_ptr()) };
+    let configured =
+        unsafe { crate::stdlib_abi::secure_getenv(c"FRANKENLIBC_SHADOW_PATH".as_ptr()) };
     let path = if configured.is_null() {
         PathBuf::from(SHADOW_PATH)
     } else {
@@ -1578,8 +1579,8 @@ impl ShadowTlsStorage {
         self.iter_idx = 0;
         self.cache.clear();
         self.files_loaded = false;
-        self.cache = read_shadow_file()
-            .map_err(|err| err.raw_os_error().unwrap_or(libc::EACCES))?;
+        self.cache =
+            read_shadow_file().map_err(|err| err.raw_os_error().unwrap_or(libc::EACCES))?;
         self.files_loaded = true;
         Ok(())
     }
@@ -1640,7 +1641,9 @@ fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Opt
         SP_ENT.with(|c| c.set(cursor));
         let answer = match step {
             EntStep::Done => return Err(None),
-            EntStep::Files { restart } => with_shadow_storage(|s| s.next_files_entry(restart, None)),
+            EntStep::Files { restart } => {
+                with_shadow_storage(|s| s.next_files_entry(restart, None))
+            }
             EntStep::Module(answer) => answer,
         };
         let (status, err) = match answer {
@@ -1733,9 +1736,8 @@ unsafe fn getspent_r_impl(
                 Answer::Found(entry) => {
                     // The physical-line bound also covers both packed strings.
                     // SAFETY: output alignment and tracked extents were checked above.
-                    let rc = unsafe {
-                        fill_shadow_parsed_caller(&entry, spbuf.cast(), buf, capacity)
-                    };
+                    let rc =
+                        unsafe { fill_shadow_parsed_caller(&entry, spbuf.cast(), buf, capacity) };
                     if rc == 0 {
                         // SAFETY: result is checked writable caller storage.
                         unsafe { *result = spbuf };
