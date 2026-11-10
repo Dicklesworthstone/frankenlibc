@@ -2,10 +2,95 @@
 //! The native registry owns callbacks; the host stores only opaque tickets.
 //! C++ tickets retain their DSO association so either finalizer consumes them.
 
+use std::mem::MaybeUninit;
+
 use super::{CxaEntry, ExitHandler, c_int, c_void, set_abi_errno};
 
-static EXIT_HANDLERS: std::sync::Mutex<Vec<(usize, ExitHandler)>> =
-    std::sync::Mutex::new(Vec::new());
+const INLINE_EXIT_HANDLERS: usize = 64;
+
+struct ExitHandlerRegistry {
+    inline: [MaybeUninit<(usize, ExitHandler)>; INLINE_EXIT_HANDLERS],
+    inline_len: usize,
+    spill: Vec<(usize, ExitHandler)>,
+}
+
+impl ExitHandlerRegistry {
+    const fn new() -> Self {
+        Self {
+            inline: [const { MaybeUninit::uninit() }; INLINE_EXIT_HANDLERS],
+            inline_len: 0,
+            spill: Vec::new(),
+        }
+    }
+
+    fn try_push(&mut self, entry: (usize, ExitHandler)) -> Result<(), ()> {
+        if self.spill.is_empty() && self.inline_len < INLINE_EXIT_HANDLERS {
+            self.inline[self.inline_len].write(entry);
+            self.inline_len += 1;
+            return Ok(());
+        }
+        self.spill.try_reserve(1).map_err(|_| ())?;
+        self.spill.push(entry);
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Option<(usize, ExitHandler)> {
+        if let Some(entry) = self.spill.pop() {
+            return Some(entry);
+        }
+        if self.inline_len == 0 {
+            return None;
+        }
+        self.inline_len -= 1;
+        // SAFETY: `0..inline_len` slots are initialized.
+        Some(unsafe { self.inline[self.inline_len].assume_init_read() })
+    }
+
+    fn remove_inline_at(&mut self, index: usize) -> (usize, ExitHandler) {
+        // SAFETY: `index < self.inline_len` and all `0..self.inline_len` slots are initialized.
+        let removed = unsafe { self.inline[index].assume_init_read() };
+        for i in index..self.inline_len - 1 {
+            let next = unsafe { self.inline[i + 1].assume_init_read() };
+            self.inline[i].write(next);
+        }
+        self.inline_len -= 1;
+        removed
+    }
+
+    fn remove_by_ticket(&mut self, ticket: usize) -> Option<ExitHandler> {
+        for idx in 0..self.inline_len {
+            // SAFETY: `idx < self.inline_len`.
+            let (id, _) = unsafe { self.inline[idx].assume_init_ref() };
+            if *id == ticket {
+                return Some(self.remove_inline_at(idx).1);
+            }
+        }
+        self.spill
+            .iter()
+            .position(|(id, _)| *id == ticket)
+            .map(|idx| self.spill.remove(idx).1)
+    }
+
+    fn rremove_matching(
+        &mut self,
+        mut predicate: impl FnMut(&ExitHandler) -> bool,
+    ) -> Option<ExitHandler> {
+        if let Some(idx) = self.spill.iter().rposition(|(_, h)| predicate(h)) {
+            return Some(self.spill.remove(idx).1);
+        }
+        for idx in (0..self.inline_len).rev() {
+            // SAFETY: `idx < self.inline_len`.
+            let (_, handler) = unsafe { self.inline[idx].assume_init_ref() };
+            if predicate(handler) {
+                return Some(self.remove_inline_at(idx).1);
+            }
+        }
+        None
+    }
+}
+
+static EXIT_HANDLERS: std::sync::Mutex<ExitHandlerRegistry> =
+    std::sync::Mutex::new(ExitHandlerRegistry::new());
 static NEXT_EXIT_TICKET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 
 fn invoke_exit_handler(handler: ExitHandler, status: c_int) {
@@ -34,7 +119,27 @@ mod host {
     // Registered before the first ticket, so output from exit callbacks is
     // flushed AFTER those callbacks, never as a side effect of ordinary dlclose.
     // Registration failure remains retryable; no registry lock is held here.
-    static FLUSH_REGISTERED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+    static FLUSH_REGISTERED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    static HOST_ON_EXIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static HOST_CXA_ATEXIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static HOST_CXA_FINALIZE: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    #[inline]
+    fn cached_host_symbol(
+        slot: &std::sync::atomic::AtomicUsize,
+        name: &'static str,
+    ) -> Option<usize> {
+        use std::sync::atomic::Ordering;
+        let cached = slot.load(Ordering::Acquire);
+        if cached != 0 {
+            return Some(cached);
+        }
+        let resolved = crate::host_resolve::resolve_host_symbol_raw(name)?;
+        slot.store(resolved, Ordering::Release);
+        Some(resolved)
+    }
 
     unsafe extern "C" fn flush_owned_streams(_status: c_int, _arg: *mut c_void) {
         unsafe { crate::stdio_abi::fflush(std::ptr::null_mut()) };
@@ -42,10 +147,7 @@ mod host {
 
     fn claim(ticket: *mut c_void) -> Option<ExitHandler> {
         let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        handlers
-            .iter()
-            .position(|(id, _)| *id == ticket as usize)
-            .map(|index| handlers.remove(index).1)
+        handlers.remove_by_ticket(ticket as usize)
     }
 
     unsafe extern "C" fn on_exit_ticket(status: c_int, ticket: *mut c_void) {
@@ -62,22 +164,20 @@ mod host {
     }
 
     pub(super) fn prepare(handler: &ExitHandler) -> Result<Option<Registration>, ()> {
-        let Some(address) = crate::host_resolve::resolve_host_symbol_raw("on_exit") else {
+        use std::sync::atomic::Ordering;
+        let Some(address) = cached_host_symbol(&HOST_ON_EXIT, "on_exit") else {
             return Ok(None);
         };
         // SAFETY: raw lookup excludes this interposer and resolves the host ABI.
         let on_exit: OnExit = unsafe { std::mem::transmute(address) };
-        {
-            let mut registered = FLUSH_REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
-            if !*registered {
-                if unsafe { on_exit(flush_owned_streams, std::ptr::null_mut()) } != 0 {
-                    return Err(());
-                }
-                *registered = true;
+        if !FLUSH_REGISTERED.load(Ordering::Acquire) {
+            if unsafe { on_exit(flush_owned_streams, std::ptr::null_mut()) } != 0 {
+                return Err(());
             }
+            FLUSH_REGISTERED.store(true, Ordering::Release);
         }
         if !matches!(handler, ExitHandler::OnExit(_))
-            && let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__cxa_atexit")
+            && let Some(address) = cached_host_symbol(&HOST_CXA_ATEXIT, "__cxa_atexit")
         {
             // SAFETY: __cxa_atexit takes callback, opaque operand and DSO tag.
             let register: CxaAtExit = unsafe { std::mem::transmute(address) };
@@ -104,7 +204,7 @@ mod host {
     }
 
     pub(super) fn finalize(dso: *mut c_void) {
-        if let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__cxa_finalize") {
+        if let Some(address) = cached_host_symbol(&HOST_CXA_FINALIZE, "__cxa_finalize") {
             // Host and bridged registrations share the host's ordering. Its
             // callback claims our entry; no native lock crosses foreign code.
             let finalize: unsafe extern "C" fn(*mut c_void) =
@@ -132,20 +232,17 @@ pub(super) fn register_exit_handler(handler: ExitHandler) -> c_int {
     };
     {
         let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        if handlers.try_reserve(1).is_err() {
+        if handlers.try_push((ticket, handler)).is_err() {
             unsafe { set_abi_errno(libc::ENOMEM) };
             return -1;
         }
-        handlers.push((ticket, handler));
     }
     #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
     if let Some(bridge) = bridge
         && bridge.attach(ticket) != 0
     {
         let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(index) = handlers.iter().position(|(id, _)| *id == ticket) {
-            handlers.remove(index);
-        }
+        let _ = handlers.remove_by_ticket(ticket);
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     }
@@ -169,15 +266,12 @@ pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
     loop {
         let handler = {
             let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-            handlers
-                .iter()
-                .rposition(|(_, handler)| match handler {
-                    ExitHandler::Cxa(entry) => dso.is_null() || entry.dso == dso,
-                    // The C++ ABI specifies plain atexit as a null-DSO registration.
-                    ExitHandler::Atexit(_) => dso.is_null(),
-                    ExitHandler::OnExit(_) => false,
-                })
-                .map(|index| handlers.remove(index).1)
+            handlers.rremove_matching(|handler| match handler {
+                ExitHandler::Cxa(entry) => dso.is_null() || entry.dso == dso,
+                // The C++ ABI specifies plain atexit as a null-DSO registration.
+                ExitHandler::Atexit(_) => dso.is_null(),
+                ExitHandler::OnExit(_) => false,
+            })
         };
         let Some(handler) = handler else { break };
         invoke_exit_handler(handler, 0);
