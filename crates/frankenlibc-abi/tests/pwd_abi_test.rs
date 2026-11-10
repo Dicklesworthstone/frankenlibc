@@ -31,6 +31,8 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 /// since env var manipulation is process-global and not thread-safe.
 static PASSWD_ENV_LOCK: Mutex<()> = Mutex::new(());
 static GSHADOW_ENV_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(debug_assertions)]
+static PASSWORD_LOCK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn temp_passwd_path() -> std::path::PathBuf {
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -1106,12 +1108,137 @@ fn gshadow_missing_backend_returns_null_or_enoent() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lckpwdf_ulckpwdf_succeed() {
-    use frankenlibc_abi::pwd_abi::{lckpwdf, ulckpwdf};
-    let rc = unsafe { lckpwdf() };
-    assert_eq!(rc, 0, "lckpwdf should succeed (no-op)");
-    let rc = unsafe { ulckpwdf() };
-    assert_eq!(rc, 0, "ulckpwdf should succeed (no-op)");
+#[cfg(debug_assertions)]
+fn lckpwdf_creates_private_cloexec_lock_and_excludes_other_processes() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    use frankenlibc_abi::pwd_abi::{lckpwdf_at_for_tests, ulckpwdf};
+
+    let _guard = PASSWORD_LOCK_TEST_LOCK.lock().unwrap();
+    let path = temp_passwd_path();
+    assert!(!path.exists());
+    let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    unsafe { *__errno_location() = 731 };
+    assert_eq!(unsafe { ulckpwdf() }, -1, "no lock is owned yet");
+    assert_eq!(unsafe { *__errno_location() }, 731);
+
+    assert_eq!(lckpwdf_at_for_tests(&c_path), 0);
+    assert_eq!(unsafe { *__errno_location() }, 731);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let lock_fd = std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(Result::ok)
+        .find_map(|entry| {
+            (std::fs::read_link(entry.path()).ok().as_ref() == Some(&path))
+                .then(|| entry.file_name().to_str().unwrap().parse::<i32>().unwrap())
+        })
+        .expect("the password lock owns an open file descriptor");
+    let descriptor_flags = unsafe { libc::fcntl(lock_fd, libc::F_GETFD) };
+    assert!(descriptor_flags >= 0);
+    assert_ne!(descriptor_flags & libc::FD_CLOEXEC, 0);
+
+    unsafe { *__errno_location() = 732 };
+    assert_eq!(
+        lckpwdf_at_for_tests(&c_path),
+        -1,
+        "duplicate lock must fail"
+    );
+    assert_eq!(unsafe { *__errno_location() }, 732);
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["lckpwdf_external_process_probe", "--exact", "--nocapture"])
+        .env("FRANKENLIBC_PASSWORD_LOCK_PROBE", &path)
+        .env("FRANKENLIBC_PASSWORD_LOCK_EXPECT_BUSY", "1")
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "child lock probe failed: {}{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+
+    unsafe { *__errno_location() = 732 };
+    assert_eq!(unsafe { ulckpwdf() }, 0);
+    assert_eq!(unsafe { *__errno_location() }, 732);
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["lckpwdf_external_process_probe", "--exact", "--nocapture"])
+        .env("FRANKENLIBC_PASSWORD_LOCK_PROBE", &path)
+        .env("FRANKENLIBC_PASSWORD_LOCK_EXPECT_BUSY", "0")
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "released lock remained held: {}{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+    unsafe { *__errno_location() = 733 };
+    assert_eq!(unsafe { ulckpwdf() }, -1);
+    assert_eq!(unsafe { *__errno_location() }, 733);
+
+    std::fs::write(&path, b"existing lock-file contents\n").unwrap();
+    assert_eq!(lckpwdf_at_for_tests(&c_path), 0);
+    assert_eq!(unsafe { ulckpwdf() }, 0);
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"existing lock-file contents\n"
+    );
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn lckpwdf_external_process_probe() {
+    use std::os::fd::AsRawFd;
+
+    let Some(path) = std::env::var_os("FRANKENLIBC_PASSWORD_LOCK_PROBE") else {
+        return;
+    };
+    let expected_busy = std::env::var("FRANKENLIBC_PASSWORD_LOCK_EXPECT_BUSY").unwrap() == "1";
+    let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    // A nonempty range beyond EOF must conflict with a whole-file record lock.
+    let lock = libc::flock {
+        l_type: libc::F_WRLCK as _,
+        l_whence: libc::SEEK_SET as _,
+        l_start: 4096,
+        l_len: 1,
+        l_pid: 0,
+    };
+    let rc = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) };
+    if expected_busy {
+        assert_eq!(rc, -1);
+        assert!(matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EAGAIN | libc::EACCES)
+        ));
+    } else {
+        assert_eq!(rc, 0, "{}", std::io::Error::last_os_error());
+    }
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn lckpwdf_open_failure_preserves_error_and_allows_retry() {
+    use std::os::unix::ffi::OsStrExt;
+
+    use frankenlibc_abi::pwd_abi::{lckpwdf_at_for_tests, ulckpwdf};
+
+    let _guard = PASSWORD_LOCK_TEST_LOCK.lock().unwrap();
+    let path = temp_passwd_path();
+    let absent_parent = path.join(".pwd.lock");
+    let missing = CString::new(absent_parent.as_os_str().as_bytes()).unwrap();
+    assert_eq!(lckpwdf_at_for_tests(&missing), -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+    unsafe { *__errno_location() = 734 };
+    assert_eq!(unsafe { ulckpwdf() }, -1, "open failure cannot own a lock");
+    assert_eq!(unsafe { *__errno_location() }, 734);
+
+    let good = CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(lckpwdf_at_for_tests(&good), 0);
+    assert_eq!(unsafe { ulckpwdf() }, 0);
 }
 
 // ---------------------------------------------------------------------------

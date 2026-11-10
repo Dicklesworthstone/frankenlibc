@@ -7,15 +7,17 @@
 //! where each call overwrites the previous result.
 
 use std::cell::{Cell, RefCell};
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::time::UNIX_EPOCH;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -2262,16 +2264,310 @@ pub unsafe extern "C" fn putsgent(sgrp: *const c_void, stream: *mut c_void) -> c
     if written == line.len() { 0 } else { -1 }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lckpwdf() -> c_int {
-    // Lock the password file — no-op in our implementation
-    0
+// ---------------------------------------------------------------------------
+// lckpwdf / ulckpwdf
+// ---------------------------------------------------------------------------
+
+struct PasswordFileLock {
+    fd: AtomicI32,
+    operation_pid: AtomicU32,
 }
 
+static PASSWORD_FILE_LOCK: PasswordFileLock = PasswordFileLock {
+    fd: AtomicI32::new(-1),
+    operation_pid: AtomicU32::new(0),
+};
+
+struct PasswordLockOperation<'a> {
+    lock: &'a PasswordFileLock,
+    pid: u32,
+}
+
+impl PasswordFileLock {
+    fn enter(&self) -> PasswordLockOperation<'_> {
+        let pid = raw_syscall::sys_getpid() as u32;
+        loop {
+            let owner = self.operation_pid.load(Ordering::Acquire);
+            // After fork, a gate held by another parent thread has no owner in
+            // the child. Adopt that gate, but retain the inherited descriptor:
+            // record locks belong to the parent process, while the child must
+            // still close its own inherited handle through ulckpwdf.
+            if owner != pid {
+                if self
+                    .operation_pid
+                    .compare_exchange(owner, pid, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    return PasswordLockOperation { lock: self, pid };
+                }
+                continue;
+            }
+            // SAFETY: operation_pid is a live aligned atomic word. A release
+            // wakes waiters; the expected-value check closes the lost-wake gap.
+            let _ = unsafe {
+                raw_syscall::sys_futex(
+                    self.operation_pid.as_ptr(),
+                    libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                    owner,
+                    0,
+                    0,
+                    0,
+                )
+            };
+        }
+    }
+
+    fn acquire(&self, path: &CStr) -> Result<bool, c_int> {
+        // Publish an in-progress descriptor before waiting in F_SETLKW. A
+        // second lckpwdf caller must reject a duplicate immediately rather than
+        // taking the same process-owned kernel lock and reporting success.
+        if self.fd.load(Ordering::Acquire) >= 0 {
+            return Ok(false);
+        }
+        let _operation = self.enter();
+        if self.fd.load(Ordering::Acquire) >= 0 {
+            return Ok(false);
+        }
+        // SAFETY: path is NUL-terminated and remains live across openat.
+        let fd = unsafe {
+            raw_syscall::sys_openat(
+                libc::AT_FDCWD,
+                path.as_ptr().cast(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_CLOEXEC,
+                0o600,
+            )
+        }?;
+        self.fd.store(fd, Ordering::Release);
+        let result = (|| {
+            let _alarm = PasswordLockAlarm::arm()?;
+            let lock = libc::flock {
+                l_type: libc::F_WRLCK as _,
+                l_whence: libc::SEEK_SET as _,
+                l_start: 0,
+                l_len: 0,
+                l_pid: 0,
+            };
+            // SAFETY: F_SETLKW reads the live flock. A zero length covers the
+            // entire file, including future extensions. Unlike polling sleeps,
+            // this preserves the kernel's SA_RESTART behavior for other signals.
+            unsafe { raw_syscall::sys_fcntl(fd, libc::F_SETLKW, (&raw const lock) as usize) }
+                .map(|_| true)
+        })();
+        if result.is_err() {
+            self.fd.store(-1, Ordering::Release);
+            // Linux closes a descriptor even when close reports EINTR. Do not
+            // retry and risk closing a descriptor another thread has reused.
+            let _ = raw_syscall::sys_close(fd);
+        }
+        result
+    }
+
+    fn release(&self) -> Result<bool, c_int> {
+        let _operation = self.enter();
+        let fd = self.fd.swap(-1, Ordering::AcqRel);
+        if fd < 0 {
+            return Ok(false);
+        }
+        // Closing releases this process's POSIX record lock. In a fork child it
+        // closes only the child's handle, leaving the parent's lock intact.
+        raw_syscall::sys_close(fd).map(|()| true)
+    }
+}
+
+impl Drop for PasswordLockOperation<'_> {
+    fn drop(&mut self) {
+        if self
+            .lock
+            .operation_pid
+            .compare_exchange(self.pid, 0, Ordering::Release, Ordering::Relaxed)
+            .is_ok()
+        {
+            // SAFETY: the gate remains live and aligned while callers wait.
+            let _ = unsafe {
+                raw_syscall::sys_futex(
+                    self.lock.operation_pid.as_ptr(),
+                    libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+                    i32::MAX as u32,
+                    0,
+                    0,
+                    0,
+                )
+            };
+        }
+    }
+}
+
+// Use the kernel layout so restoring SIGALRM preserves the exact prior handler,
+// flags, mask and restorer, including handlers installed by a host libc. Going
+// through the public sigaction wrapper would introduce its dispatch trampoline.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct PasswordLockSigaction {
+    handler: usize,
+    flags: usize,
+    restorer: usize,
+    mask: u64,
+}
+
+struct PasswordLockAlarm {
+    old_action: PasswordLockSigaction,
+    old_mask: u64,
+    mask_changed: bool,
+    armed: bool,
+}
+
+extern "C" fn password_lock_alarm_handler(_signal: c_int) {}
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    fn frankenlibc_signal_restorer();
+}
+
+impl PasswordLockAlarm {
+    fn arm() -> Result<Self, c_int> {
+        let mut action = PasswordLockSigaction {
+            handler: password_lock_alarm_handler as *const () as usize,
+            // No SA_RESTART: expiration must interrupt the blocking record lock.
+            mask: u64::MAX,
+            ..PasswordLockSigaction::default()
+        };
+        #[cfg(target_arch = "x86_64")]
+        {
+            action.flags = 0x0400_0000; // Linux SA_RESTORER.
+            action.restorer = frankenlibc_signal_restorer as *const () as usize;
+        }
+        let mut old_action = PasswordLockSigaction::default();
+        // SAFETY: both structs use Linux's kernel sigaction layout and the
+        // restorer is the existing native rt_sigreturn assembly entrypoint.
+        unsafe {
+            raw_syscall::sys_rt_sigaction(
+                libc::SIGALRM,
+                (&raw const action).cast(),
+                (&raw mut old_action).cast(),
+                size_of::<u64>(),
+            )
+        }?;
+        let mut guard = Self {
+            old_action,
+            old_mask: 0,
+            mask_changed: false,
+            armed: false,
+        };
+        let alarm_bit = 1u64 << (libc::SIGALRM - 1);
+        // SAFETY: the kernel reads/writes exactly one u64 signal-mask word.
+        unsafe {
+            raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_UNBLOCK,
+                (&raw const alarm_bit).cast(),
+                (&raw mut guard.old_mask).cast(),
+                size_of::<u64>(),
+            )
+        }?;
+        guard.mask_changed = true;
+        let timer = libc::itimerval {
+            it_interval: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            it_value: libc::timeval {
+                tv_sec: 15,
+                tv_usec: 0,
+            },
+        };
+        // This deliberately shares alarm()/ITIMER_REAL, as GNU lckpwdf does:
+        // an existing alarm is replaced, then canceled rather than restored.
+        // SAFETY: timer is a valid itimerval; no old timer is requested.
+        unsafe {
+            raw_syscall::sys_setitimer(
+                libc::ITIMER_REAL,
+                (&raw const timer).cast(),
+                ptr::null_mut(),
+            )
+        }?;
+        guard.armed = true;
+        Ok(guard)
+    }
+}
+
+impl Drop for PasswordLockAlarm {
+    fn drop(&mut self) {
+        if self.armed {
+            let timer = libc::itimerval {
+                it_interval: libc::timeval {
+                    tv_sec: 0,
+                    tv_usec: 0,
+                },
+                it_value: libc::timeval {
+                    tv_sec: 0,
+                    tv_usec: 0,
+                },
+            };
+            // SAFETY: the zero interval timer cancels the temporary alarm.
+            let _ = unsafe {
+                raw_syscall::sys_setitimer(
+                    libc::ITIMER_REAL,
+                    (&raw const timer).cast(),
+                    ptr::null_mut(),
+                )
+            };
+        }
+        if self.mask_changed {
+            // SAFETY: restore the exact kernel mask captured for this thread.
+            let _ = unsafe {
+                raw_syscall::sys_rt_sigprocmask(
+                    libc::SIG_SETMASK,
+                    (&raw const self.old_mask).cast(),
+                    ptr::null_mut(),
+                    size_of::<u64>(),
+                )
+            };
+        }
+        // SAFETY: restore the exact kernel action captured by arm(). These
+        // direct syscalls do not overwrite the lock operation's errno.
+        let _ = unsafe {
+            raw_syscall::sys_rt_sigaction(
+                libc::SIGALRM,
+                (&raw const self.old_action).cast(),
+                ptr::null_mut(),
+                size_of::<u64>(),
+            )
+        };
+    }
+}
+
+fn password_lock_result(result: Result<bool, c_int>) -> c_int {
+    match result {
+        Ok(true) => 0,
+        Ok(false) => -1,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
+    }
+}
+
+/// Acquire the process-wide password database lock with GNU's 15-second alarm
+/// timeout. This temporarily uses SIGALRM and the process's alarm timer while
+/// preserving the signal action and calling thread's mask. As with GNU lckpwdf,
+/// applications must coordinate process-wide SIGALRM use between threads.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lckpwdf() -> c_int {
+    password_lock_result(PASSWORD_FILE_LOCK.acquire(c"/etc/.pwd.lock"))
+}
+
+/// Release the password database lock. Without an owned descriptor, return -1
+/// without changing errno, matching a duplicate lckpwdf call's convention.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ulckpwdf() -> c_int {
-    // Unlock the password file — no-op
-    0
+    password_lock_result(PASSWORD_FILE_LOCK.release())
+}
+
+/// Exercise the same lock implementation on a scratch file without changing
+/// the production pathname or adding an environment-variable override.
+#[doc(hidden)]
+#[cfg(debug_assertions)]
+pub fn lckpwdf_at_for_tests(path: &CStr) -> c_int {
+    password_lock_result(PASSWORD_FILE_LOCK.acquire(path))
 }
 
 // ---------------------------------------------------------------------------
