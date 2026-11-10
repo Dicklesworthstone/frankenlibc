@@ -78,6 +78,7 @@ impl MembraneMetrics {
     pub fn get(counter: &AtomicU64) -> u64 {
         if std::ptr::eq(counter, &GLOBAL_METRICS.validations)
             || std::ptr::eq(counter, &GLOBAL_METRICS.tls_cache_hits)
+            || std::ptr::eq(counter, &GLOBAL_METRICS.bloom_misses)
         {
             crate::tls_cache::flush_current_thread_hit_metrics();
         }

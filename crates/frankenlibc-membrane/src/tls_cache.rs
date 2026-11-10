@@ -246,6 +246,7 @@ pub struct TlsValidationCache {
     hits: u64,
     misses: u64,
     unflushed_pipeline_hits: u64,
+    unflushed_bloom_misses: u64,
     unbacked: bool,
 }
 
@@ -267,6 +268,7 @@ impl TlsValidationCache {
             hits: 0,
             misses: 0,
             unflushed_pipeline_hits: 0,
+            unflushed_bloom_misses: 0,
             unbacked: false,
         }
     }
@@ -282,6 +284,7 @@ impl TlsValidationCache {
             hits: 0,
             misses: 0,
             unflushed_pipeline_hits: 0,
+            unflushed_bloom_misses: 0,
             unbacked: true,
         }
     }
@@ -296,6 +299,7 @@ impl TlsValidationCache {
             hits: 0,
             misses: 0,
             unflushed_pipeline_hits: 0,
+            unflushed_bloom_misses: 0,
             unbacked: false,
         }
     }
@@ -337,14 +341,43 @@ impl TlsValidationCache {
         }
     }
 
+    #[inline(always)]
+    pub(crate) fn record_bloom_misses(&mut self, count: u64) {
+        if self.unbacked {
+            let metrics = crate::metrics::global_metrics();
+            crate::metrics::MembraneMetrics::add(&metrics.validations, count);
+            crate::metrics::MembraneMetrics::add(&metrics.bloom_misses, count);
+            return;
+        }
+        let next = self.unflushed_bloom_misses + count;
+        if next >= HIT_METRICS_FLUSH_BATCH {
+            self.unflushed_bloom_misses = 0;
+            let metrics = crate::metrics::global_metrics();
+            crate::metrics::MembraneMetrics::add(&metrics.validations, next);
+            crate::metrics::MembraneMetrics::add(&metrics.bloom_misses, next);
+        } else {
+            self.unflushed_bloom_misses = next;
+        }
+    }
+
     #[inline]
     pub(crate) fn flush_pipeline_hits(&mut self) {
-        let pending = self.unflushed_pipeline_hits;
-        if pending != 0 {
+        let pending_hits = self.unflushed_pipeline_hits;
+        let pending_bloom_misses = self.unflushed_bloom_misses;
+        if pending_hits != 0 || pending_bloom_misses != 0 {
             self.unflushed_pipeline_hits = 0;
+            self.unflushed_bloom_misses = 0;
             let metrics = crate::metrics::global_metrics();
-            crate::metrics::MembraneMetrics::add(&metrics.validations, pending);
-            crate::metrics::MembraneMetrics::add(&metrics.tls_cache_hits, pending);
+            crate::metrics::MembraneMetrics::add(
+                &metrics.validations,
+                pending_hits + pending_bloom_misses,
+            );
+            if pending_hits != 0 {
+                crate::metrics::MembraneMetrics::add(&metrics.tls_cache_hits, pending_hits);
+            }
+            if pending_bloom_misses != 0 {
+                crate::metrics::MembraneMetrics::add(&metrics.bloom_misses, pending_bloom_misses);
+            }
         }
     }
 
@@ -441,14 +474,23 @@ impl TlsValidationCache {
     /// constructing intermediate `CachedValidation` / `ValidationOutcome` values.
     #[inline]
     pub(crate) fn lookup_hit_remaining(&mut self, addr: usize) -> CachedRemaining {
+        self.lookup_hit_remaining_promote(addr, 0)
+    }
+
+    #[inline]
+    fn lookup_hit_remaining_promote(
+        &mut self,
+        addr: usize,
+        promote_slot: usize,
+    ) -> CachedRemaining {
         for idx in 0..self.ranges.len() {
             let range = self.ranges[idx];
             let offset = addr.wrapping_sub(range.user_base);
             if range.valid && offset < range.user_size {
                 if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
                     self.hits += 1;
-                    if idx != 0 {
-                        self.ranges.swap(0, idx);
+                    if idx > promote_slot {
+                        self.ranges.swap(promote_slot, idx);
                     }
                     return CachedRemaining::from_option(Self::remaining_for_state(
                         range.state,
@@ -481,7 +523,11 @@ impl TlsValidationCache {
     }
 
     #[inline(always)]
-    pub(crate) fn lookup_hit_remaining_and_record(&mut self, addr: usize) -> CachedRemaining {
+    pub(crate) fn lookup_hit_remaining_with_oracle(
+        &mut self,
+        addr: usize,
+        page_oracle: &crate::page_oracle::PageOracle,
+    ) -> CachedRemaining {
         let r0 = &self.ranges[0];
         let user_base = r0.user_base;
         let user_size = r0.user_size;
@@ -504,6 +550,15 @@ impl TlsValidationCache {
             self.record_pipeline_hits(1);
             return CachedRemaining(user_size - off);
         }
+        if addr != 0 && !page_oracle.may_contain_addr_lockfree(addr) {
+            let next = self.unflushed_bloom_misses + 1;
+            if !self.unbacked && next < HIT_METRICS_FLUSH_BATCH {
+                self.unflushed_bloom_misses = next;
+            } else {
+                self.record_bloom_misses(1);
+            }
+            return CachedRemaining::UNKNOWN;
+        }
         self.lookup_hit_remaining_slow(addr)
     }
 
@@ -517,92 +572,147 @@ impl TlsValidationCache {
     }
 
     #[inline(always)]
-    pub(crate) fn lookup_hit_remaining_pair_and_record(
+    pub(crate) fn lookup_hit_remaining_pair_with_oracle(
         &mut self,
         lhs: usize,
         rhs: usize,
+        page_oracle: &crate::page_oracle::PageOracle,
     ) -> (CachedRemaining, CachedRemaining) {
         let r0 = &self.ranges[0];
-        let user_base = r0.user_base;
-        let user_size = r0.user_size;
-        let lhs_off = lhs.wrapping_sub(user_base);
-        let rhs_off = rhs.wrapping_sub(user_base);
         if r0.valid
             && lhs != 0
             && rhs != 0
-            && lhs_off < user_size
-            && rhs_off < user_size
             && matches!(
                 r0.state,
                 SafetyState::Valid | SafetyState::Readable | SafetyState::Writable
             )
-            && r0.shard_epoch == current_shard_epoch(r0.shard_idx as usize)
         {
-            self.hits += 2;
-            let next_hits = self.unflushed_pipeline_hits + 2;
-            if !self.unbacked && next_hits < HIT_METRICS_FLUSH_BATCH {
-                self.unflushed_pipeline_hits = next_hits;
-                return (
-                    CachedRemaining(user_size - lhs_off),
-                    CachedRemaining(user_size - rhs_off),
-                );
+            let user_base0 = r0.user_base;
+            let user_size0 = r0.user_size;
+            let lhs_off0 = lhs.wrapping_sub(user_base0);
+            let rhs_off0 = rhs.wrapping_sub(user_base0);
+            if lhs_off0 < user_size0 && rhs_off0 < user_size0 {
+                if r0.shard_epoch == current_shard_epoch(r0.shard_idx as usize) {
+                    self.hits += 2;
+                    let next_hits = self.unflushed_pipeline_hits + 2;
+                    if !self.unbacked && next_hits < HIT_METRICS_FLUSH_BATCH {
+                        self.unflushed_pipeline_hits = next_hits;
+                        return (
+                            CachedRemaining(user_size0 - lhs_off0),
+                            CachedRemaining(user_size0 - rhs_off0),
+                        );
+                    }
+                    self.record_pipeline_hits(2);
+                    return (
+                        CachedRemaining(user_size0 - lhs_off0),
+                        CachedRemaining(user_size0 - rhs_off0),
+                    );
+                }
+            } else {
+                let r1 = &self.ranges[1];
+                if r1.valid
+                    && matches!(
+                        r1.state,
+                        SafetyState::Valid | SafetyState::Readable | SafetyState::Writable
+                    )
+                {
+                    let user_base1 = r1.user_base;
+                    let user_size1 = r1.user_size;
+                    let lhs_off1 = lhs.wrapping_sub(user_base1);
+                    let rhs_off1 = rhs.wrapping_sub(user_base1);
+                    let zero_one = lhs_off0 < user_size0 && rhs_off1 < user_size1;
+                    let one_zero = rhs_off0 < user_size0 && lhs_off1 < user_size1;
+                    if (zero_one || one_zero)
+                        && r0.shard_epoch == current_shard_epoch(r0.shard_idx as usize)
+                        && (r1.shard_idx == r0.shard_idx
+                            || r1.shard_epoch == current_shard_epoch(r1.shard_idx as usize))
+                    {
+                        self.hits += 2;
+                        let (lhs_rem, rhs_rem) = if zero_one {
+                            (
+                                CachedRemaining(user_size0 - lhs_off0),
+                                CachedRemaining(user_size1 - rhs_off1),
+                            )
+                        } else {
+                            (
+                                CachedRemaining(user_size1 - lhs_off1),
+                                CachedRemaining(user_size0 - rhs_off0),
+                            )
+                        };
+                        let next_hits = self.unflushed_pipeline_hits + 2;
+                        if !self.unbacked && next_hits < HIT_METRICS_FLUSH_BATCH {
+                            self.unflushed_pipeline_hits = next_hits;
+                            return (lhs_rem, rhs_rem);
+                        }
+                        self.record_pipeline_hits(2);
+                        return (lhs_rem, rhs_rem);
+                    }
+                }
             }
-            self.record_pipeline_hits(2);
+        }
+        let lhs_maybe_owned = lhs != 0 && page_oracle.may_contain_addr_lockfree(lhs);
+        let rhs_maybe_owned = rhs != 0 && page_oracle.may_contain_addr_lockfree(rhs);
+        if !lhs_maybe_owned && !rhs_maybe_owned {
+            if lhs != 0 && rhs != 0 {
+                let next = self.unflushed_bloom_misses + 2;
+                if !self.unbacked && next < HIT_METRICS_FLUSH_BATCH {
+                    self.unflushed_bloom_misses = next;
+                } else {
+                    self.record_bloom_misses(2);
+                }
+                return (CachedRemaining::UNKNOWN, CachedRemaining::UNKNOWN);
+            }
+            let misses = u64::from(lhs != 0) + u64::from(rhs != 0);
+            if misses != 0 {
+                self.record_bloom_misses(misses);
+            }
             return (
-                CachedRemaining(user_size - lhs_off),
-                CachedRemaining(user_size - rhs_off),
+                if lhs != 0 {
+                    CachedRemaining::UNKNOWN
+                } else {
+                    CachedRemaining::MISS
+                },
+                if rhs != 0 {
+                    CachedRemaining::UNKNOWN
+                } else {
+                    CachedRemaining::MISS
+                },
             );
         }
-        self.lookup_hit_remaining_pair_slow(lhs, rhs)
+        self.lookup_hit_remaining_pair_slow_with_oracle(lhs, lhs_maybe_owned, rhs, rhs_maybe_owned)
     }
 
     #[inline(never)]
-    fn lookup_hit_remaining_pair_slow(
+    fn lookup_hit_remaining_pair_slow_with_oracle(
         &mut self,
         lhs: usize,
+        lhs_maybe_owned: bool,
         rhs: usize,
+        rhs_maybe_owned: bool,
     ) -> (CachedRemaining, CachedRemaining) {
-        if lhs != 0 && rhs != 0 {
-            for idx in 0..self.ranges.len() {
-                let range = self.ranges[idx];
-                if !range.valid {
-                    continue;
-                }
-                let lhs_off = lhs.wrapping_sub(range.user_base);
-                let rhs_off = rhs.wrapping_sub(range.user_base);
-                if lhs_off < range.user_size && rhs_off < range.user_size {
-                    if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
-                        self.hits += 2;
-                        self.record_pipeline_hits(2);
-                        if idx != 0 {
-                            self.ranges.swap(0, idx);
-                        }
-                        let lhs_rem = CachedRemaining::from_option(Self::remaining_for_state(
-                            range.state,
-                            range.user_size - lhs_off,
-                        ));
-                        let rhs_rem = CachedRemaining::from_option(Self::remaining_for_state(
-                            range.state,
-                            range.user_size - rhs_off,
-                        ));
-                        return (lhs_rem, rhs_rem);
-                    }
-                    self.ranges[idx].valid = false;
-                    break;
-                }
-            }
+        let mut misses = 0u64;
+        let lhs_hit = if lhs_maybe_owned {
+            self.lookup_hit_remaining_promote(lhs, 0)
+        } else if lhs != 0 {
+            misses += 1;
+            CachedRemaining::UNKNOWN
+        } else {
+            CachedRemaining::MISS
+        };
+        let rhs_promote_slot = usize::from(lhs_maybe_owned && lhs_hit.is_hit());
+        let rhs_hit = if rhs_maybe_owned {
+            self.lookup_hit_remaining_promote(rhs, rhs_promote_slot)
+        } else if rhs != 0 {
+            misses += 1;
+            CachedRemaining::UNKNOWN
+        } else {
+            CachedRemaining::MISS
+        };
+        if misses != 0 {
+            self.record_bloom_misses(misses);
         }
-        let lhs_hit = if lhs != 0 {
-            self.lookup_hit_remaining(lhs)
-        } else {
-            CachedRemaining::MISS
-        };
-        let rhs_hit = if rhs != 0 {
-            self.lookup_hit_remaining(rhs)
-        } else {
-            CachedRemaining::MISS
-        };
-        let hits = u64::from(lhs_hit.is_hit()) + u64::from(rhs_hit.is_hit());
+        let hits = u64::from(lhs_maybe_owned && lhs_hit.is_hit())
+            + u64::from(rhs_maybe_owned && rhs_hit.is_hit());
         if hits != 0 {
             self.record_pipeline_hits(hits);
         }

@@ -5574,6 +5574,52 @@ pub(crate) fn known_remaining_for_certified_read(addr: usize) -> Option<usize> {
         .or_else(|| fallback_remaining(addr))
 }
 
+#[inline]
+fn non_arena_remaining(addr: usize) -> Option<usize> {
+    if let Some(arena_base) = segment_arena_base_if_ready()
+        && addr.wrapping_sub(arena_base) < SEGMENT_ARENA_SIZE
+        && let Some(rem) = segment_remaining(addr)
+    {
+        return Some(rem);
+    }
+    if BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire)
+        && let Some(rem) = bump_mmap_remaining(addr)
+    {
+        return Some(rem);
+    }
+    if addr > FALLBACK_SLOT_TOMBSTONE
+        && addr >= FALLBACK_ALLOC_MIN_ADDR.load(Ordering::Acquire)
+        && addr < FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire)
+    {
+        return fallback_remaining(addr);
+    }
+    None
+}
+
+#[inline]
+fn non_arena_remaining_pair(lhs: usize, rhs: usize) -> (KnownRemaining, KnownRemaining) {
+    let arena_base = segment_arena_base_if_ready();
+    let bump_active = BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire);
+    let min_addr = FALLBACK_ALLOC_MIN_ADDR.load(Ordering::Acquire);
+    let max_addr = FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire);
+    let resolve_one = |addr: usize| -> KnownRemaining {
+        if let Some(base) = arena_base
+            && addr.wrapping_sub(base) < SEGMENT_ARENA_SIZE
+            && let Some(rem) = segment_remaining(addr)
+        {
+            return KnownRemaining(rem);
+        }
+        if bump_active && let Some(rem) = bump_mmap_remaining(addr) {
+            return KnownRemaining(rem);
+        }
+        if addr > FALLBACK_SLOT_TOMBSTONE && addr >= min_addr && addr < max_addr {
+            return KnownRemaining::from_option(fallback_remaining(addr));
+        }
+        KnownRemaining::UNKNOWN
+    };
+    (resolve_one(lhs), resolve_one(rhs))
+}
+
 /// Fast remaining-bytes lookup for a caller that has already entered
 /// `enter_string_membrane_guard` (which guarantees no bootstrap/policy/allocator/
 /// validation reentry and no signal handler).
@@ -5584,7 +5630,8 @@ pub(crate) fn known_remaining_in_guarded_string(addr: usize) -> Option<usize> {
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
     {
         return match pipeline.try_validate_cached_remaining(addr) {
-            Some(rem) => rem.or_else(|| fallback_remaining(addr)),
+            Some(Some(rem)) => Some(rem),
+            Some(None) => non_arena_remaining(addr),
             None => known_remaining_uncached_in_guarded_string(addr, pipeline),
         };
     }
@@ -5657,11 +5704,32 @@ fn resolve_uncached_or_unknown_in_guarded_string(
     pipeline: &'static frankenlibc_membrane::ptr_validator::ValidationPipeline,
 ) -> KnownRemaining {
     let opt = if cached.is_hit() {
-        fallback_remaining(addr)
+        non_arena_remaining(addr)
     } else {
         known_remaining_uncached_in_guarded_string(addr, pipeline)
     };
     KnownRemaining::from_option(opt)
+}
+
+#[inline(never)]
+fn resolve_pair_uncached_or_unknown_in_guarded_string(
+    lhs: usize,
+    lhs_cached: frankenlibc_membrane::tls_cache::CachedRemaining,
+    rhs: usize,
+    rhs_cached: frankenlibc_membrane::tls_cache::CachedRemaining,
+    pipeline: &'static frankenlibc_membrane::ptr_validator::ValidationPipeline,
+) -> (KnownRemaining, KnownRemaining) {
+    if !lhs_cached.is_known_bound()
+        && lhs_cached.is_hit()
+        && !rhs_cached.is_known_bound()
+        && rhs_cached.is_hit()
+    {
+        return non_arena_remaining_pair(lhs, rhs);
+    }
+    (
+        resolve_cached_remaining_in_guarded_string(lhs, lhs_cached, pipeline),
+        resolve_cached_remaining_in_guarded_string(rhs, rhs_cached, pipeline),
+    )
 }
 
 /// Fast single-register remaining-bytes lookup for two pointers in a caller that
@@ -5676,9 +5744,14 @@ pub(crate) fn known_remaining_pair_fast_in_guarded_string(
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
     {
         let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
-        return (
-            resolve_cached_remaining_in_guarded_string(lhs, lhs_cached, pipeline),
-            resolve_cached_remaining_in_guarded_string(rhs, rhs_cached, pipeline),
+        if lhs_cached.is_known_bound() && rhs_cached.is_known_bound() {
+            return (
+                KnownRemaining(lhs_cached.raw()),
+                KnownRemaining(rhs_cached.raw()),
+            );
+        }
+        return resolve_pair_uncached_or_unknown_in_guarded_string(
+            lhs, lhs_cached, rhs, rhs_cached, pipeline,
         );
     }
     (
@@ -5757,7 +5830,7 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
         && let Some(rem) = pipeline.try_validate_cached_remaining(addr)
     {
-        return rem.or_else(|| fallback_remaining(addr));
+        return rem.or_else(|| non_arena_remaining(addr));
     }
 
     bump_mmap_remaining(addr)

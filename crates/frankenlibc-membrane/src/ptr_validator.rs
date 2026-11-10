@@ -934,7 +934,7 @@ impl ValidationPipeline {
             return None;
         }
         try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
-            cache.lookup_hit_remaining_and_record(addr)
+            cache.lookup_hit_remaining_with_oracle(addr, &self.page_oracle)
         })
         .decode()
     }
@@ -952,7 +952,7 @@ impl ValidationPipeline {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
         try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
-            cache.lookup_hit_remaining_pair_and_record(lhs, rhs)
+            cache.lookup_hit_remaining_pair_with_oracle(lhs, rhs, &self.page_oracle)
         })
     }
 
@@ -968,6 +968,19 @@ impl ValidationPipeline {
             return Some(ValidationOutcome::Bypassed);
         }
 
+        // Check the 8 KB L1-resident page-oracle presence bitmap before
+        // hashing and probing the 8 MB Bloom filter: every arena allocation is
+        // registered in `page_oracle` alongside `bloom`, so any address outside
+        // the page oracle's 16 MB chunks is guaranteed foreign (bd-rc0923-epic-eeuy4f.9).
+        if !self.page_oracle.may_contain_addr_lockfree(addr) {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            MembraneMetrics::inc(&metrics.bloom_misses);
+            return Some(ValidationOutcome::Foreign(PointerAbstraction::unknown(
+                addr,
+            )));
+        }
+
         if self.bloom.might_contain(addr) {
             return None;
         }
@@ -975,10 +988,8 @@ impl ValidationPipeline {
         // The page-oracle read lock is the one lock on this fast path: hold the
         // validation context across it, so a signal handler that allocates on
         // this thread meanwhile sees it and does not wait for a writer lock
-        // behind its own read (bd-na6ede). The lock-free empty/L1-filter check
-        // takes no lock and rejects foreign stack/mmap pointers before touching
-        // TLS validation-depth state.
-        let owned_page = self.page_oracle.may_contain_addr_lockfree(addr) && {
+        // behind its own read (bd-na6ede).
+        let owned_page = {
             let _validation_context = enter_validation_execution_context();
             self.page_oracle.query(addr)
         };
