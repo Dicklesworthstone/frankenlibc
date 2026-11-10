@@ -6735,8 +6735,85 @@ unsafe fn strcpy_core(
         return Some(dst);
     }
 
-    let dst_rem = known_remaining(dst as usize);
-    let src_rem = known_remaining(src as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let end = unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
+        return Some(unsafe { dst.add(end) });
+    };
+
+    let (dst_rem, src_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
+    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRCPY_INDEX,
+            dst as usize,
+            0,
+            true,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let src_bound = if repair { src_rem } else { None };
+        let dst_bound = if repair { dst_rem } else { None };
+
+        let (copied_len, adverse) = unsafe {
+            let (src_len, src_terminated) = scan_c_string(src, src_bound);
+            let requested = src_len.saturating_add(1);
+            if repair {
+                match dst_bound {
+                    Some(0) => {
+                        record_truncation(symbol, requested, 0, dst as usize);
+                        (0, true)
+                    }
+                    Some(limit) => {
+                        let max_payload = limit.saturating_sub(1);
+                        let copy_payload = src_len.min(max_payload);
+                        if copy_payload > 0 {
+                            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_payload);
+                        }
+                        *dst.add(copy_payload) = 0;
+                        let truncated = !src_terminated || copy_payload < src_len;
+                        if truncated {
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(symbol, requested, copy_payload, address);
+                        }
+                        (copy_payload.saturating_add(1), truncated)
+                    }
+                    None => {
+                        if src_len > 0 {
+                            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
+                        }
+                        *dst.add(src_len) = 0;
+                        let truncated = !src_terminated;
+                        if truncated {
+                            record_truncation(symbol, requested, src_len, src as usize);
+                        }
+                        (src_len.saturating_add(1), truncated)
+                    }
+                }
+            } else {
+                if src_len > 0 {
+                    raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
+                }
+                *dst.add(src_len) = 0;
+                (src_len.saturating_add(1), false)
+            }
+        };
+        if adverse {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, copied_len),
+                true,
+            );
+        }
+        return Some(unsafe { dst.add(copied_len.saturating_sub(1)) });
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strcpy");
     let (aligned, recent_page, ordering) =
         stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
@@ -6746,7 +6823,7 @@ unsafe fn strcpy_core(
         dst as usize,
         0,
         true,
-        dst_rem.is_none() && src_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -6930,8 +7007,105 @@ unsafe fn strncpy_core(
         return Some(0);
     }
 
-    let dst_rem = known_remaining(dst as usize);
-    let src_rem = known_remaining(src as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let copy_len = unsafe {
+            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
+            if copy_len < n {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
+            }
+            copy_len
+        };
+        return Some(copy_len);
+    };
+
+    let (dst_rem, src_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
+    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRNCPY_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let mut adverse = false;
+
+        let safe_dst_len = if repair {
+            match dst_rem {
+                Some(b) if b < n => {
+                    adverse = true;
+                    global_healing_policy().record(
+                        "string_memory",
+                        symbol,
+                        &HealingAction::ClampSize {
+                            requested: n,
+                            clamped: b,
+                        },
+                        RepairLogContext::new(0, Some(dst as usize)),
+                    );
+                    b
+                }
+                _ => n,
+            }
+        } else {
+            n
+        };
+
+        let safe_src_len = if repair {
+            match src_rem {
+                Some(b) if b < n && !unsafe { scan_c_string(src, Some(b)) }.1 => {
+                    adverse = true;
+                    global_healing_policy().record(
+                        "string_memory",
+                        symbol,
+                        &HealingAction::ClampSize {
+                            requested: n,
+                            clamped: b,
+                        },
+                        RepairLogContext::new(0, Some(src as usize)),
+                    );
+                    b
+                }
+                Some(b) if b < n => b,
+                _ => n,
+            }
+        } else {
+            n
+        };
+
+        if safe_dst_len == 0 {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, n),
+                true,
+            );
+            return Some(0);
+        }
+
+        let copy_len = unsafe {
+            let k = scan_c_string_nul_or_bound(src, safe_src_len).0;
+            let copy_len = k.min(safe_dst_len);
+            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+            if copy_len < safe_dst_len {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, safe_dst_len - copy_len);
+            }
+            copy_len
+        };
+        if adverse {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, safe_dst_len),
+                true,
+            );
+        }
+        return Some(copy_len);
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strncpy");
     let (aligned, recent_page, ordering) =
         stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
@@ -6941,7 +7115,7 @@ unsafe fn strncpy_core(
         dst as usize,
         n,
         true,
-        dst_rem.is_none() && src_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -7517,17 +7691,55 @@ unsafe fn strchr_locate(
         return None;
     }
 
-    let rem = known_remaining(s as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let target = c as c_char;
+        let (i, found_target, _) = unsafe { scan_c_string_for_byte(s, target as u8, None) };
+        return Some((unsafe { s.add(i) } as *mut c_char, found_target));
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    let target = c as c_char;
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRCHR_INDEX,
+            s as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        let bound = if mode.heals_enabled() { rem } else { None };
+        let (located, found, adverse, span) = unsafe {
+            let (i, found_target, hit_limit) = scan_c_string_for_byte(s, target as u8, bound);
+            let ptr = s.add(i) as *mut c_char;
+            if hit_limit {
+                (ptr, false, true, i)
+            } else {
+                (ptr, found_target, false, i.saturating_add(1))
+            }
+        };
+        if adverse {
+            record_truncation(symbol, bound.unwrap_or(span), span, s as usize);
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, span),
+                true,
+            );
+        }
+        return Some((located, found));
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strchr");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
 
-    let target = c as c_char;
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         0,
         false,
-        rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -7668,17 +7880,61 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         return std::ptr::null_mut();
     }
 
-    let rem = known_remaining(s as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let target = c as c_char;
+        let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
+        return match last_idx {
+            Some(idx) => unsafe { s.add(idx) as *mut c_char },
+            None => std::ptr::null_mut(),
+        };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    let target = c as c_char;
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRRCHR_INDEX,
+            s as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        let bound = if mode.heals_enabled() { rem } else { None };
+        let (result, adverse, span) = unsafe {
+            let (last_idx, stop_idx, hit_limit) = scan_c_string_last_byte(s, target as u8, bound);
+            let result_local = match last_idx {
+                Some(idx) => s.add(idx) as *mut c_char,
+                None => std::ptr::null_mut(),
+            };
+            if hit_limit {
+                (result_local, true, stop_idx)
+            } else {
+                (result_local, false, stop_idx.saturating_add(1))
+            }
+        };
+        if adverse {
+            record_truncation("strrchr", bound.unwrap_or(span), span, s as usize);
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, span),
+                true,
+            );
+        }
+        return result;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strrchr");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
 
-    let target = c as c_char;
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         0,
         false,
-        rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -7973,8 +8229,88 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
         return haystack as *mut c_char;
     }
 
-    let hay_known = known_remaining(haystack as usize);
-    let needle_known = known_remaining(needle as usize);
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { raw_strstr(haystack, needle) };
+    };
+
+    let (hay_known, needle_known) = crate::malloc_abi::known_remaining_pair_in_guarded_string(
+        haystack as usize,
+        needle as usize,
+    );
+    let bloom_negative = hay_known.is_none() && needle_known.is_none();
+    if cfg!(not(test))
+        && runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRSTR_INDEX,
+            haystack as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+        .is_some()
+    {
+        let hay_bound = hay_known;
+        let needle_bound = needle_known;
+        let (out, adverse, work) = unsafe {
+            let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+            let mut out_local = std::ptr::null_mut();
+            let work_local;
+
+            if needle_len == 0 {
+                out_local = haystack as *mut c_char;
+                work_local = 1;
+            } else if hay_len >= needle_len {
+                let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+                let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                match frankenlibc_core::string::mem::memmem(
+                    hay_slice,
+                    hay_len,
+                    needle_slice,
+                    needle_len,
+                ) {
+                    Some(idx) => {
+                        out_local = haystack.add(idx) as *mut c_char;
+                        work_local = idx.saturating_add(needle_len);
+                    }
+                    None => {
+                        work_local = hay_len;
+                    }
+                }
+            } else {
+                work_local = hay_len;
+            }
+
+            (
+                out_local,
+                !hay_terminated || !needle_terminated,
+                work_local.max(needle_len),
+            )
+        };
+
+        if adverse {
+            record_truncation(
+                "strstr",
+                hay_bound
+                    .unwrap_or(work)
+                    .saturating_add(needle_bound.unwrap_or(0)),
+                work,
+                bound_causing_address(
+                    haystack as usize,
+                    hay_bound,
+                    Some(needle as usize),
+                    needle_bound,
+                ),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(10, work),
+                true,
+            );
+        }
+        return out;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strstr");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_two(
         haystack as usize,
@@ -7987,7 +8323,7 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
         haystack as usize,
         0,
         false,
-        hay_known.is_none() && needle_known.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {

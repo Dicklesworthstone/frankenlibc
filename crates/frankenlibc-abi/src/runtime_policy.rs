@@ -81,6 +81,8 @@ pub(crate) const FFI_PCC_MEMRCHR_INDEX: u8 = 18;
 pub(crate) const FFI_PCC_STRNLEN_INDEX: u8 = 19;
 pub(crate) const FFI_PCC_MEMMOVE_INDEX: u8 = 20;
 pub(crate) const FFI_PCC_MEMSET_INDEX: u8 = 21;
+pub(crate) const FFI_PCC_STRCPY_INDEX: u8 = 22;
+pub(crate) const FFI_PCC_STRNCPY_INDEX: u8 = 23;
 
 // Manual init guard that avoids OnceLock's internal futex.
 // OnceLock::get_or_init uses a futex wait when it sees init-in-progress,
@@ -682,8 +684,8 @@ fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
         (K_STRNLEN, 7) => FFI_PCC_STRNLEN_INDEX,
         (K_MEMMOVE, 7) => FFI_PCC_MEMMOVE_INDEX,
         (K_MEMSET, 6) => FFI_PCC_MEMSET_INDEX,
-        (K_STRCPY, 6) => 22,
-        (K_STRNCPY, 7) => 23,
+        (K_STRCPY, 6) => FFI_PCC_STRCPY_INDEX,
+        (K_STRNCPY, 7) => FFI_PCC_STRNCPY_INDEX,
         _ => FFI_PCC_NO_INDEX,
     }
 }
@@ -3183,7 +3185,8 @@ pub(crate) fn decide_certified_memcmp(
 
 /// Fast single-TLS PCC decision + explainability recording for certified
 /// `StringMemory` operations (`memcmp`, `memcpy`, `memmove`, `memset`,
-/// `strlen`, `strnlen`, `strcmp`, `strncmp`).
+/// `memchr`, `memrchr`, `strlen`, `strnlen`, `strcmp`, `strncmp`, `strcpy`,
+/// `strncpy`, `strchr`, `strrchr`, `strstr`).
 ///
 /// Within the deployed PCC envelope (`is_runtime_ready()`, verified table,
 /// and `cert.matches_request(...)`), this resolves `mode`, advances
@@ -5477,5 +5480,34 @@ mod tests {
         assert!(!explain.bloom_negative);
         assert_eq!(explain.trace_seq, explain.parent_span_seq);
         assert!(explain.span_seq > 0);
+
+        let string_pcc_cases = [
+            (FFI_PCC_MEMCMP_INDEX, "memcmp", false, 8u32),
+            (FFI_PCC_STRLEN_INDEX, "strlen", false, 9),
+            (FFI_PCC_MEMCPY_INDEX, "memcpy", true, 10),
+            (FFI_PCC_STRCMP_INDEX, "strcmp", false, 13),
+            (FFI_PCC_STRNCMP_INDEX, "strncmp", false, 14),
+            (FFI_PCC_STRCHR_INDEX, "strchr", false, 15),
+            (FFI_PCC_STRRCHR_INDEX, "strrchr", false, 16),
+            (FFI_PCC_STRSTR_INDEX, "strstr", false, 17),
+            (FFI_PCC_MEMCHR_INDEX, "memchr", false, 18),
+            (FFI_PCC_MEMRCHR_INDEX, "memrchr", false, 19),
+            (FFI_PCC_STRNLEN_INDEX, "strnlen", false, 20),
+            (FFI_PCC_MEMMOVE_INDEX, "memmove", true, 21),
+            (FFI_PCC_MEMSET_INDEX, "memset", true, 22),
+            (FFI_PCC_STRCPY_INDEX, "strcpy", true, 23),
+            (FFI_PCC_STRNCPY_INDEX, "strncpy", true, 24),
+        ];
+        for (pcc_index, expected_symbol, is_write, policy_offset) in string_pcc_cases {
+            let mode = try_decide_certified_string_pcc(pcc_index, 0x7fff_4321, 32, is_write, false)
+                .unwrap_or_else(|| panic!("{expected_symbol} PCC fast path should succeed"));
+            assert_eq!(mode, SafetyLevel::Hardened);
+            let explain = take_last_explainability()
+                .unwrap_or_else(|| panic!("{expected_symbol} must record explainability"));
+            assert_eq!(explain.symbol, expected_symbol);
+            assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+            assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + policy_offset);
+            assert_eq!(explain.is_write, is_write);
+        }
     }
 }
