@@ -10,9 +10,14 @@ on:
       - 'crates/frankenlibc-core/src/nss/**'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/src/inet_abi.rs'
+      - 'crates/frankenlibc-abi/src/grp_abi.rs'
+      - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/tests/nss_module_test.rs'
+      - 'crates/frankenlibc-abi/tests/grp_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/getnameinfo_differential_fuzz.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'tests/integration/fixture_nss_module_lib.c'
       - 'tests/integration/fixture_nss_modules.c'
@@ -135,3 +140,71 @@ jobs:
         with:
           name: nss-services-${{ matrix.feature }}
           path: artifacts/nss-services/**
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+      CARGO_BUILD_JOBS: 2
+      CARGO_TARGET_DIR: target/identity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - name: Check the touched identity and local socket surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/identity
+          rustfmt --check --edition 2024 \
+            crates/frankenlibc-abi/src/grp_abi.rs \
+            crates/frankenlibc-abi/src/pwd_abi.rs \
+            crates/frankenlibc-abi/src/unistd_abi.rs \
+            crates/frankenlibc-abi/src/resolv_abi.rs \
+            crates/frankenlibc-abi/tests/grp_abi_test.rs \
+            crates/frankenlibc-abi/tests/pwd_abi_test.rs \
+            crates/frankenlibc-abi/tests/getnameinfo_differential_fuzz.rs \
+            2>&1 | tee artifacts/identity/format.log
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          cargo check -p frankenlibc-abi --lib --keep-going \
+            --test grp_abi_test --test pwd_abi_test \
+            --test getnameinfo_differential_fuzz "${args[@]}" \
+            2>&1 | tee artifacts/identity/check.log
+      - name: Exercise native NSS identity and getnameinfo in both runtime modes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/identity
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          status=0
+          for mode in strict hardened; do
+            for spec in grp_abi_test:nss_files_ pwd_abi_test:nss_files_ getnameinfo_differential_fuzz:getnameinfo_; do
+              target="${spec%%:*}"
+              filter="${spec#*:}"
+              log="artifacts/identity/${target}-${mode}.log"
+              if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+                --test "$target" "${args[@]}" "$filter" -- --nocapture --test-threads=1 \
+                2>&1 | tee "$log"; then status=1; fi
+              if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' "$log"; then status=1; fi
+            done
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: identity-${{ matrix.feature }}
+          path: artifacts/identity/**

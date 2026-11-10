@@ -757,6 +757,108 @@ fn files_initgroups_segment(user: &[u8], base: u32) -> (Status, Vec<u32>) {
     (status, segment)
 }
 
+/// Append this files provider's supplementary groups to the NSS caller's
+/// growable array. Unlike the public getgrouplist dispatcher, a provider keeps
+/// duplicate GIDs and the caller's existing prefix; de-duplication belongs to
+/// the dispatcher. A positive limit bounds the complete resulting array.
+///
+/// # Safety
+/// The scalar slots must be writable and non-aliasing. `groupsp` owns a
+/// realloc-compatible allocation of `*size` GIDs with `*start` initialized
+/// entries, or a null pointer with zero capacity. `user` is a C string.
+pub(crate) unsafe fn files_initgroups_dyn(
+    user: *const c_char,
+    base: libc::gid_t,
+    start: *mut libc::c_long,
+    size: *mut libc::c_long,
+    groupsp: *mut *mut libc::gid_t,
+    limit: libc::c_long,
+) -> Result<bool, c_int> {
+    if start.is_null()
+        || size.is_null()
+        || groupsp.is_null()
+        || !tracked_object_fits(start)
+        || !tracked_object_fits(size)
+        || !tracked_object_fits(groupsp)
+    {
+        return Err(libc::EINVAL);
+    }
+    // SAFETY: the caller supplies a C string; tracked allocations are bounded.
+    let user = unsafe { bounded_cstr_bytes(user) }.ok_or(libc::EINVAL)?;
+    // SAFETY: the scalar slots were checked above and are caller-owned.
+    let (mut count, mut capacity, mut groups) = unsafe { (*start, *size, *groupsp) };
+    if count < 0 || capacity < 0 || count > capacity {
+        return Err(libc::EINVAL);
+    }
+    let allocation_bytes = usize::try_from(capacity)
+        .ok()
+        .and_then(|count| count.checked_mul(std::mem::size_of::<libc::gid_t>()))
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .ok_or(libc::EINVAL)?;
+    if (capacity != 0 && groups.is_null())
+        || (groups as usize) & (std::mem::align_of::<libc::gid_t>() - 1) != 0
+        || (!groups.is_null()
+            && known_remaining(groups as usize)
+                .is_some_and(|remaining| remaining < allocation_bytes))
+    {
+        return Err(libc::EINVAL);
+    }
+
+    with_grp_storage(|storage| {
+        storage.refresh_cache();
+        if let Some(error) = storage.backend_io_error() {
+            return Err(error);
+        }
+        let mut appended = false;
+        for line in storage.current_content().split(|&byte| byte == b'\n') {
+            let Some(group) = frankenlibc_core::grp::parse_group_line(line) else {
+                continue;
+            };
+            if group.gr_gid == base || !group.gr_mem.iter().any(|member| member.as_slice() == user) {
+                continue;
+            }
+            if limit > 0 && count >= limit {
+                break;
+            }
+            if count == capacity {
+                let ceiling = if limit > 0 { limit } else { libc::c_long::MAX };
+                let next = capacity.saturating_mul(2).max(1).min(ceiling);
+                let bytes = usize::try_from(next)
+                    .ok()
+                    .and_then(|count| count.checked_mul(std::mem::size_of::<libc::gid_t>()))
+                    .filter(|&bytes| bytes <= isize::MAX as usize);
+                let Some(bytes) = bytes.filter(|_| next > capacity) else {
+                    return Err(libc::ENOMEM);
+                };
+                // SAFETY: the caller owns a realloc-compatible allocation.
+                // On failure realloc leaves it intact; publish new metadata
+                // only after the resize succeeds.
+                let resized = unsafe { crate::malloc_abi::realloc(groups.cast(), bytes) }
+                    .cast::<libc::gid_t>();
+                if resized.is_null() {
+                    return Err(libc::ENOMEM);
+                }
+                groups = resized;
+                capacity = next;
+                // SAFETY: these are the caller's validated writable slots.
+                unsafe {
+                    *groupsp = groups;
+                    *size = capacity;
+                }
+            }
+            // SAFETY: count is nonnegative and strictly below capacity.
+            // The existing prefix remains intact even if a later resize fails.
+            unsafe {
+                *groups.add(count as usize) = group.gr_gid;
+                count += 1;
+                *start = count;
+            }
+            appended = true;
+        }
+        Ok(appended)
+    })
+}
+
 /// `user`'s group list as `getgrouplist`/`initgroups` compute it: `base`
 /// first, then each initgroups source's groups (nsswitch.conf `initgroups:`,
 /// else `group:`), de-duplicated against earlier sources. `limit` is passed

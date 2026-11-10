@@ -12730,22 +12730,40 @@ pub unsafe extern "C" fn _nss_files_init() -> c_int {
     NSS_STATUS_SUCCESS
 }
 
-/// `_nss_files_initgroups_dyn(user, gid, *start, *size, **groupsp,
-/// limit, *errnop) -> nss_status` — supplementary group lookup.
-/// Stub returns NSS_STATUS_NOTFOUND with errnop=ENOENT.
+/// Append supplementary groups from the native files source. The caller's
+/// existing entries remain intact and a positive limit caps the complete list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_files_initgroups_dyn(
-    _user: *const c_char,
-    _gid: libc::gid_t,
-    _start: *mut c_long,
-    _size: *mut c_long,
-    _groupsp: *mut *mut libc::gid_t,
-    _limit: c_long,
+    user: *const c_char,
+    gid: libc::gid_t,
+    start: *mut c_long,
+    size: *mut c_long,
+    groupsp: *mut *mut libc::gid_t,
+    limit: c_long,
     errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    NSS_STATUS_NOTFOUND
+    // SAFETY: errno is the current thread's initialized cell.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    // SAFETY: forward the NSS caller's C string and growable-array contract.
+    let result = unsafe {
+        crate::grp_abi::files_initgroups_dyn(user, gid, start, size, groupsp, limit)
+    };
+    // Publish errno first because errnop may alias the thread's errno slot.
+    unsafe { set_abi_errno(saved_errno) };
+    match result {
+        Ok(true) => NSS_STATUS_SUCCESS,
+        Ok(false) => NSS_STATUS_NOTFOUND,
+        Err(error) => {
+            // SAFETY: the caller supplies a writable error slot when non-null.
+            unsafe { nss_set_errnop(errnop, error) };
+            if error == libc::ENOMEM || error == libc::EAGAIN {
+                NSS_STATUS_TRYAGAIN
+            } else {
+                NSS_STATUS_UNAVAIL
+            }
+        }
+    }
 }
 
 /// `_nss_files_parse_*(line, *result, *parser_data, buflen, *errnop)

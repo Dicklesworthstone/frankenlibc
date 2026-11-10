@@ -15370,13 +15370,16 @@ fn nss_files_init_returns_success() {
 }
 
 #[test]
-fn nss_files_initgroups_dyn_returns_notfound_and_sets_errnop() {
+fn nss_files_initgroups_dyn_miss_preserves_errnop_and_array() {
     use frankenlibc_abi::unistd_abi::_nss_files_initgroups_dyn;
-    let user = CString::new("alice").unwrap();
+    let user = CString::new("frankenlibc-initgroups-definitely-missing").unwrap();
+    let content = std::fs::read("/etc/group").expect("read group database");
+    assert!(!content.windows(user.as_bytes().len()).any(|bytes| bytes == user.as_bytes()));
     let mut start: libc::c_long = 0;
     let mut size: libc::c_long = 0;
     let mut groupsp: *mut libc::gid_t = std::ptr::null_mut();
-    let mut errnop: c_int = 0;
+    let mut errnop: c_int = 717;
+    // SAFETY: this is an empty growable array with valid scalar slots.
     let rc = unsafe {
         _nss_files_initgroups_dyn(
             user.as_ptr(),
@@ -15389,7 +15392,10 @@ fn nss_files_initgroups_dyn_returns_notfound_and_sets_errnop() {
         )
     };
     assert_eq!(rc, 0);
-    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(errnop, 717);
+    assert_eq!((start, size), (0, 0));
+    assert!(groupsp.is_null());
+    // SAFETY: a null optional error slot is accepted on an ordinary miss.
     let rc2 = unsafe {
         _nss_files_initgroups_dyn(
             user.as_ptr(),
@@ -15402,6 +15408,8 @@ fn nss_files_initgroups_dyn_returns_notfound_and_sets_errnop() {
         )
     };
     assert_eq!(rc2, 0);
+    assert_eq!((start, size), (0, 0));
+    assert!(groupsp.is_null());
 }
 
 #[test]

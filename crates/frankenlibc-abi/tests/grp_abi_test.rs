@@ -7,6 +7,9 @@
 //!
 //! Uses the "root" group (gid=0) which exists on all Linux systems.
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,7 +19,7 @@ use frankenlibc_abi::grp_abi::*;
 use frankenlibc_abi::malloc_abi::{free, malloc, malloc_known_remaining_for_tests};
 use frankenlibc_abi::unistd_abi::{
     _nss_files_endgrent, _nss_files_getgrent_r, _nss_files_getgrgid_r, _nss_files_getgrnam_r,
-    _nss_files_setgrent,
+    _nss_files_initgroups_dyn, _nss_files_setgrent,
 };
 use frankenlibc_core::errno;
 
@@ -55,6 +58,344 @@ fn with_group_file(content: &[u8], f: impl FnOnce()) {
 fn with_group_lock<T>(f: impl FnOnce() -> T) -> T {
     let _guard = GROUP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()
+}
+
+#[test]
+fn nss_files_initgroups_grows_and_preserves_prefix_and_duplicate_gids() {
+    with_group_file(
+        b"# comment\nmalformed\nbase:x:3100:alice\nstaff:x:3101:alice,alice,bob\nagain:x:3101:alice\nother:x:3102:bob,alice\nnear:x:3103:alicex,bobalice\n",
+        || {
+            // SAFETY: the array comes from the same allocator used by the
+            // provider; all scalar slots and the input string are live.
+            unsafe {
+                let mut groups = malloc(2 * std::mem::size_of::<libc::gid_t>())
+                    .cast::<libc::gid_t>();
+                assert!(!groups.is_null());
+                *groups = 7777;
+                *groups.add(1) = 3101;
+                let mut count = 2;
+                let mut capacity = 2;
+                let mut error = 717;
+                *__errno_location() = 718;
+                assert_eq!(
+                    _nss_files_initgroups_dyn(
+                        c"alice".as_ptr(),
+                        3100,
+                        &mut count,
+                        &mut capacity,
+                        &mut groups,
+                        -1,
+                        &mut error,
+                    ),
+                    1
+                );
+                assert_eq!((count, capacity, error), (5, 8, 717));
+                assert_eq!(*__errno_location(), 718);
+                assert_eq!(
+                    std::slice::from_raw_parts(groups, count as usize),
+                    &[7777, 3101, 3101, 3101, 3102]
+                );
+                free(groups.cast());
+            }
+        },
+    );
+}
+
+#[test]
+fn nss_files_initgroups_honors_limits_and_zero_capacity() {
+    with_group_file(b"a:x:21:alice\nb:x:22:alice\nc:x:23:alice\n", || {
+        // SAFETY: zero-capacity arrays begin as null; the provider allocates
+        // them before use, and every resulting allocation is freed below.
+        unsafe {
+            for (limit, expected) in [
+                (-1, &[21, 22, 23][..]),
+                (0, &[21, 22, 23][..]),
+                (1, &[21][..]),
+                (2, &[21, 22][..]),
+            ] {
+                let mut groups = std::ptr::null_mut();
+                let mut count = 0;
+                let mut capacity = 0;
+                let mut error = 717;
+                assert_eq!(
+                    _nss_files_initgroups_dyn(
+                        c"alice".as_ptr(),
+                        0,
+                        &mut count,
+                        &mut capacity,
+                        &mut groups,
+                        limit,
+                        &mut error,
+                    ),
+                    1
+                );
+                assert_eq!(error, 717);
+                assert_eq!(
+                    std::slice::from_raw_parts(groups, count as usize),
+                    expected
+                );
+                assert!(count <= capacity);
+                if limit > 0 {
+                    assert!(count <= limit);
+                }
+                free(groups.cast());
+            }
+        }
+    });
+}
+
+#[test]
+fn nss_files_initgroups_miss_and_full_limit_preserve_outputs() {
+    with_group_file(b"a:x:21:alice\n", || {
+        // SAFETY: each no-append case keeps a caller-owned one-element array.
+        unsafe {
+            for (user, base, limit) in [
+                (c"missing", 0, -1),
+                (c"alice", 21, -1),
+                (c"alice", 0, 1),
+            ] {
+                let mut groups = malloc(std::mem::size_of::<libc::gid_t>())
+                    .cast::<libc::gid_t>();
+                assert!(!groups.is_null());
+                *groups = 918;
+                let original = groups;
+                let mut count = 1;
+                let mut capacity = 1;
+                let mut error = 717;
+                *__errno_location() = 718;
+                assert_eq!(
+                    _nss_files_initgroups_dyn(
+                        user.as_ptr(),
+                        base,
+                        &mut count,
+                        &mut capacity,
+                        &mut groups,
+                        limit,
+                        &mut error,
+                    ),
+                    0
+                );
+                assert_eq!((count, capacity, error), (1, 1, 717));
+                assert_eq!(*__errno_location(), 718);
+                assert_eq!(groups, original);
+                assert_eq!(*groups, 918);
+                free(groups.cast());
+            }
+        }
+    });
+}
+
+#[test]
+fn nss_files_initgroups_reports_missing_file_without_losing_prefix() {
+    let path = temp_group_path();
+    assert!(!path.exists());
+    with_group_path(&path, || {
+        // SAFETY: the fixture path is missing and all output slots are valid.
+        unsafe {
+            let mut groups = malloc(std::mem::size_of::<libc::gid_t>())
+                .cast::<libc::gid_t>();
+            assert!(!groups.is_null());
+            *groups = 918;
+            let original = groups;
+            let mut count = 1;
+            let mut capacity = 1;
+            let mut error = 717;
+            assert_eq!(
+                _nss_files_initgroups_dyn(
+                    c"alice".as_ptr(),
+                    0,
+                    &mut count,
+                    &mut capacity,
+                    &mut groups,
+                    -1,
+                    &mut error,
+                ),
+                -1
+            );
+            assert_eq!((count, capacity, error), (1, 1, libc::ENOENT));
+            assert_eq!(groups, original);
+            assert_eq!(*groups, 918);
+            free(groups.cast());
+        }
+    });
+}
+
+#[test]
+fn nss_files_initgroups_rejects_invalid_array_state_before_writing() {
+    with_group_file(b"a:x:21:alice\n", || {
+        // SAFETY: all real storage is valid. Invalid counts and a deliberately
+        // overstated tracked capacity must be rejected without dereferencing
+        // beyond that storage.
+        unsafe {
+            let mut groups = malloc(std::mem::size_of::<libc::gid_t>())
+                .cast::<libc::gid_t>();
+            assert!(!groups.is_null());
+            assert_known_short(groups.cast(), 2 * std::mem::size_of::<libc::gid_t>());
+            *groups = 918;
+            let original = groups;
+            for (mut count, mut capacity) in [
+                (-1, 1),
+                (2, 1),
+                (0, -1),
+                (0, libc::c_long::MAX),
+                (0, 2),
+            ] {
+                let old_state = (count, capacity);
+                let mut error = 717;
+                assert_eq!(
+                    _nss_files_initgroups_dyn(
+                        c"alice".as_ptr(),
+                        0,
+                        &mut count,
+                        &mut capacity,
+                        &mut groups,
+                        -1,
+                        &mut error,
+                    ),
+                    -1
+                );
+                assert_eq!(error, libc::EINVAL);
+                assert_eq!((count, capacity), old_state);
+                assert_eq!(groups, original);
+                assert_eq!(*groups, 918);
+            }
+            let mut count = 0;
+            let mut capacity = 1;
+            let mut error = 717;
+            assert_eq!(
+                _nss_files_initgroups_dyn(
+                    c"alice".as_ptr(),
+                    0,
+                    std::ptr::null_mut(),
+                    &mut capacity,
+                    &mut groups,
+                    -1,
+                    &mut error,
+                ),
+                -1
+            );
+            assert_eq!(error, libc::EINVAL);
+            assert_eq!(
+                _nss_files_initgroups_dyn(
+                    std::ptr::null(),
+                    0,
+                    &mut count,
+                    &mut capacity,
+                    &mut groups,
+                    -1,
+                    &mut error,
+                ),
+                -1
+            );
+            assert_eq!(error, libc::EINVAL);
+            assert_eq!(*groups, 918);
+            free(groups.cast());
+        }
+    });
+}
+
+#[test]
+fn nss_files_initgroups_matches_independent_host_provider() {
+    type Initgroups = unsafe extern "C" fn(
+        *const c_char,
+        libc::gid_t,
+        *mut libc::c_long,
+        *mut libc::c_long,
+        *mut *mut libc::gid_t,
+        libc::c_long,
+        *mut libc::c_int,
+    ) -> libc::c_int;
+    type Allocate = unsafe extern "C" fn(usize) -> *mut c_void;
+    type Release = unsafe extern "C" fn(*mut c_void);
+
+    unsafe fn run(
+        provider: Initgroups,
+        allocate: Allocate,
+        release: Release,
+        user: &CStr,
+        base: libc::gid_t,
+        limit: libc::c_long,
+    ) -> (libc::c_int, libc::c_long, libc::c_int, Vec<libc::gid_t>) {
+        // SAFETY: allocator/releaser pairs belong to the provider being tested.
+        let mut groups = unsafe { allocate(std::mem::size_of::<libc::gid_t>()) }
+            .cast::<libc::gid_t>();
+        assert!(!groups.is_null());
+        let mut count = 1;
+        let mut capacity = 1;
+        let mut error = 717;
+        // SAFETY: every slot is initialized and the array is realloc-compatible.
+        let status = unsafe {
+            *groups = 918;
+            provider(
+                user.as_ptr(),
+                base,
+                &mut count,
+                &mut capacity,
+                &mut groups,
+                limit,
+                &mut error,
+            )
+        };
+        assert!(count >= 1 && count <= capacity);
+        assert!(!groups.is_null());
+        // SAFETY: the successful call retains all count initialized entries.
+        let values = unsafe { std::slice::from_raw_parts(groups, count as usize) }.to_vec();
+        // SAFETY: use the allocator's paired releaser after copying the result.
+        unsafe { release(groups.cast()) };
+        (status, count, error, values)
+    }
+
+    with_group_path(std::path::Path::new("/etc/group"), || {
+        // SAFETY: the helper resolves these exact C prototypes in host libc
+        // and rejects a pointer resolving to FrankenLibC's own implementation.
+        let host: Initgroups = unsafe {
+            dlsym_oracle::host_fn(
+                c"_nss_files_initgroups_dyn",
+                _nss_files_initgroups_dyn as *const (),
+            )
+        };
+        let host_malloc: Allocate =
+            unsafe { dlsym_oracle::host_fn(c"malloc", malloc as *const ()) };
+        let host_free: Release =
+            unsafe { dlsym_oracle::host_fn(c"free", free as *const ()) };
+        let content = std::fs::read("/etc/group").expect("read host group oracle");
+        let mut users = std::collections::BTreeSet::new();
+        users.insert(b"frankenlibc-nss-no-such-member".to_vec());
+        // Select real membership inputs independently of the native parser.
+        // The missing-member case is always executed, even on minimal hosts.
+        for line in content.split(|&byte| byte == b'\n') {
+            if let Some(members) = line.splitn(4, |&byte| byte == b':').nth(3) {
+                for member in members.split(|&byte| byte == b',') {
+                    if !member.is_empty() && !member.contains(&0) {
+                        users.insert(member.to_vec());
+                    }
+                }
+            }
+        }
+        let mut comparisons = 0;
+        let mut positive_host_cases = 0;
+        for user in users {
+            let user = CString::new(user).unwrap();
+            for base in [0, libc::gid_t::MAX] {
+                for limit in [-1, 0, 1, 2] {
+                    // SAFETY: both providers get equivalent independent arrays.
+                    let expected = unsafe {
+                        run(host, host_malloc, host_free, &user, base, limit)
+                    };
+                    let actual = unsafe {
+                        run(_nss_files_initgroups_dyn, malloc, free, &user, base, limit)
+                    };
+                    assert_eq!(actual, expected, "user={user:?} base={base} limit={limit}");
+                    comparisons += 1;
+                    positive_host_cases += usize::from(expected.0 == 1);
+                }
+            }
+        }
+        assert!(comparisons >= 8, "the oracle must execute real cases");
+        eprintln!(
+            "NSS initgroups host comparisons={comparisons} positive_host_cases={positive_host_cases}"
+        );
+    });
 }
 
 #[test]
