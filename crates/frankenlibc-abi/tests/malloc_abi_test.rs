@@ -622,6 +622,115 @@ fn test_aligned_alloc_basic() {
     unsafe { free(p) };
 }
 
+#[test]
+fn cold_aligned_allocator_resolves_host_without_startup_prewarm() {
+    const CHILD: &str = "FRANKENLIBC_COLD_ALIGNED_ALLOCATOR_CHILD";
+    const TEST: &str = "cold_aligned_allocator_resolves_host_without_startup_prewarm";
+    let Some(entry) = std::env::var_os(CHILD) else {
+        for entry in ["calloc", "memalign", "aligned_alloc", "posix_memalign"] {
+            // A fresh process keeps another test's startup/prewarm calls from
+            // hiding an unresolved aligned backing allocator. Inherit the
+            // requested safety mode so the same regression runs in both modes.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+                .env(CHILD, entry)
+                .output()
+                .expect("launch cold allocator regression");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "cold {entry} failed:\nstdout={stdout}\nstderr={}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert!(
+                stdout.contains("1 passed"),
+                "cold {entry} ran no test: {stdout}"
+            );
+        }
+        return;
+    };
+    let entry = entry.to_str().unwrap();
+    const COUNT: usize = 60_000;
+    const ALIGNMENT: usize = 256;
+    const BYTES: usize = 40;
+    let mut allocations = Vec::with_capacity(COUNT);
+    for index in 0..COUNT {
+        // SAFETY: every request is small and valid. Retain every allocation
+        // until the complete live set has been written and checked.
+        let pointer = unsafe {
+            match entry {
+                "calloc" => calloc(1, BYTES),
+                "memalign" => memalign(ALIGNMENT, BYTES),
+                "aligned_alloc" => aligned_alloc(ALIGNMENT, ALIGNMENT),
+                "posix_memalign" => {
+                    let mut pointer = ptr::null_mut();
+                    assert_eq!(posix_memalign(&mut pointer, ALIGNMENT, BYTES), 0);
+                    pointer
+                }
+                _ => panic!("unknown allocator entry point: {entry}"),
+            }
+        };
+        assert!(
+            !pointer.is_null(),
+            "cold {entry} exhausted at allocation {index}"
+        );
+        let alignment = if entry == "calloc" {
+            std::mem::align_of::<u64>()
+        } else {
+            ALIGNMENT
+        };
+        assert_eq!(pointer as usize % alignment, 0, "cold {entry} alignment");
+        // SAFETY: all four APIs provide at least BYTES writable bytes and
+        // u64 alignment. Sentinels at both ends detect aliasing or corruption.
+        unsafe {
+            if entry == "calloc" {
+                assert!(
+                    std::slice::from_raw_parts(pointer.cast::<u8>(), BYTES)
+                        .iter()
+                        .all(|&byte| byte == 0)
+                );
+            }
+            pointer.cast::<u64>().write(index as u64);
+            pointer
+                .cast::<u8>()
+                .add(BYTES - 8)
+                .cast::<u64>()
+                .write(!(index as u64));
+        }
+        allocations.push(pointer);
+    }
+    for (index, pointer) in allocations.into_iter().enumerate() {
+        // SAFETY: the live allocations are distinct and owned by this test.
+        unsafe {
+            assert_eq!(pointer.cast::<u64>().read(), index as u64);
+            assert_eq!(
+                pointer.cast::<u8>().add(BYTES - 8).cast::<u64>().read(),
+                !(index as u64),
+            );
+            free(pointer);
+        }
+    }
+    // Exhausting an internal bootstrap pool used to make even a tiny later
+    // allocation fail. Retiring the live set must leave the allocator usable.
+    let next = unsafe { calloc(1, BYTES) };
+    assert!(!next.is_null(), "cold {entry} left the allocator exhausted");
+    unsafe { free(next) };
+
+    // PTRDIFF_MAX itself passes the public oversized-request check, but arena
+    // metadata cannot fit its Layout. Both that failure and multiplication
+    // overflow must report ENOMEM, without attempting a real giant allocation.
+    for (count, size) in [(1, isize::MAX as usize), (usize::MAX, 2)] {
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = 73;
+            assert!(calloc(count, size).is_null());
+            assert_eq!(
+                *frankenlibc_abi::errno_abi::__errno_location(),
+                libc::ENOMEM
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // __libc_freeres — resource release stub
 // ---------------------------------------------------------------------------

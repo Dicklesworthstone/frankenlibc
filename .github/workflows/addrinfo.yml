@@ -9,6 +9,7 @@ on:
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/nss/**'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/inet_abi.rs'
       - 'crates/frankenlibc-abi/src/grp_abi.rs'
       - 'crates/frankenlibc-abi/src/pwd_abi.rs'

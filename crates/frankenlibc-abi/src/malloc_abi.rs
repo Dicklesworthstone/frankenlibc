@@ -2586,7 +2586,11 @@ pub(crate) fn prewarm_host_allocator_symbols() {
         let _ = HOST_CALLOC_FN.get_or_init(|| calloc_ptr);
         let _ = HOST_REALLOC_FN.get_or_init(|| realloc_ptr);
         let _ = HOST_FREE_FN.get_or_init(|| free_ptr);
-        let _ = HOST_MEMALIGN_FN.get_or_init(|| memalign_ptr);
+        // An early lookup may precede the host image becoming resolvable.
+        // Leave this cache retryable so later arena allocations can resolve it.
+        if memalign_ptr != 0 {
+            let _ = HOST_MEMALIGN_FN.set(memalign_ptr);
+        }
         let _ = HOST_MALLOC_USABLE_SIZE_FN.get_or_init(|| malloc_usable_size_ptr);
     }
     let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
@@ -3017,7 +3021,25 @@ unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
         let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MEMALIGN) else {
             return unsafe { bump_alloc_aligned(size, alignment) };
         };
-        match unsafe { host_memalign_fn() } {
+        let mut host_memalign = unsafe { host_memalign_fn() };
+        if host_memalign.is_none() {
+            // Late-loaded libraries and direct Rust callers do not pass through
+            // our process-startup prewarm. Resolve from the host's ELF image,
+            // as malloc/calloc do, instead of permanently consuming bootstrap
+            // storage for every membrane arena block. The native reentry guard
+            // stays held: a recursive call still takes the bump fallback.
+            // SAFETY: the existing raw resolver selects the host ELF symbol,
+            // with the same public C ABI used by the startup prewarm.
+            let resolved = unsafe { resolve_host_allocator_symbol(b"memalign\0") };
+            if !resolved.is_null() {
+                // Publish only a successful lookup. Never hold a OnceLock
+                // initializer across resolution or poison it with an early miss.
+                let _ = HOST_MEMALIGN_FN.set(resolved as usize);
+                host_memalign =
+                    Some(unsafe { std::mem::transmute::<*mut c_void, HostMemalignFn>(resolved) });
+            }
+        }
+        match host_memalign {
             Some(host_memalign) => host_alloc_result(unsafe { host_memalign(alignment, size) }),
             None => unsafe { bump_alloc_aligned(size, alignment) },
         }
@@ -6237,7 +6259,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
                 unsafe { std::ptr::write_bytes(ptr, 0, total) };
                 ptr.cast()
             }
-            None => std::ptr::null_mut(),
+            None => host_alloc_result(std::ptr::null_mut()),
         },
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
