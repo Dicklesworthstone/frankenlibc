@@ -91,17 +91,22 @@ fn git_head(root: &Path) -> Result<String, Box<dyn Error>> {
         .current_dir(root)
         .output()
         .map_err(|err| test_error(format!("git rev-parse HEAD should run: {err}")))?;
-    ensure(
-        output.status.success(),
-        format!(
-            "git rev-parse HEAD failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ),
-    )?;
-    Ok(String::from_utf8(output.stdout)
-        .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
-        .trim()
-        .to_owned())
+    if output.status.success() {
+        return Ok(String::from_utf8(output.stdout)
+            .map_err(|err| test_error(format!("git HEAD should be UTF-8: {err}")))?
+            .trim()
+            .to_owned());
+    }
+    if let Ok(declared) = std::env::var("RCH_BUILD_SOURCE") {
+        let trimmed = declared.trim().trim_end_matches("-dirty");
+        if trimmed.len() == 40 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Ok(trimmed.to_owned());
+        }
+    }
+    Err(test_error(format!(
+        "git rev-parse HEAD failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )))
 }
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[

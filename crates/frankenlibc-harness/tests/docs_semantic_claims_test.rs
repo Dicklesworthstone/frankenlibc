@@ -371,18 +371,60 @@ fn undeclared_source_requires_an_observed_git_head() {
         .current_dir(&root)
         .output()
         .expect("git should execute");
-    assert!(head.status.success());
-    let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
-        .current_dir(&root)
-        .env_remove("RCH_BUILD_SOURCE")
-        .output()
-        .expect("docs gate should execute");
+    let (expected_head, fallback_git_dir) = if head.status.success() {
+        (
+            String::from_utf8_lossy(&head.stdout).trim().to_string(),
+            None,
+        )
+    } else {
+        let git_dir = unique_temp_path("docs-semantic-temp-git");
+        let status = Command::new("git")
+            .args(["init", "--bare"])
+            .arg(&git_dir)
+            .status()
+            .expect("git init should execute");
+        assert!(status.success());
+        let tree = Command::new("git")
+            .arg("--git-dir")
+            .arg(&git_dir)
+            .args(["write-tree"])
+            .output()
+            .expect("git write-tree should execute");
+        assert!(tree.status.success());
+        let tree_sha = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+        let commit = Command::new("git")
+            .arg("--git-dir")
+            .arg(&git_dir)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .args(["commit-tree", &tree_sha, "-m", "init"])
+            .output()
+            .expect("git commit-tree should execute");
+        assert!(commit.status.success());
+        let commit_sha = String::from_utf8_lossy(&commit.stdout).trim().to_string();
+        let update = Command::new("git")
+            .arg("--git-dir")
+            .arg(&git_dir)
+            .args(["update-ref", "HEAD", &commit_sha])
+            .status()
+            .expect("git update-ref should execute");
+        assert!(update.success());
+        (commit_sha, Some(git_dir))
+    };
+    let mut cmd = Command::new(root.join("scripts/check_docs_semantic_claims.sh"));
+    cmd.current_dir(&root).env_remove("RCH_BUILD_SOURCE");
+    if let Some(git_dir) = &fallback_git_dir {
+        cmd.env("GIT_DIR", git_dir);
+    }
+    let output = cmd.output().expect("docs gate should execute");
     let report = parse_stdout_report(&output);
     assert!(output.status.success(), "{report}");
     assert_eq!(report["checks"]["source_identity"], "pass");
     assert_eq!(
         report["source_commit"].as_str(),
-        Some(String::from_utf8_lossy(&head.stdout).trim())
+        Some(expected_head.as_str())
     );
 
     let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
@@ -395,4 +437,166 @@ fn undeclared_source_requires_an_observed_git_head() {
     assert_eq!(output.status.code(), Some(1), "{report}");
     assert_eq!(report["checks"]["source_identity"], "fail");
     assert_eq!(report["source_commit"], "unknown");
+}
+
+#[test]
+fn operator_guides_reject_planted_l1_and_stale_claims() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let cases = [
+        (
+            "FLC_DOCS_SEMANTIC_DEPLOYMENT",
+            "DEPLOYMENT.md",
+            "Current Level: L1 hardened interposition ready for production.",
+        ),
+        (
+            "FLC_DOCS_SEMANTIC_COMPATIBILITY",
+            "docs/planning/COMPATIBILITY.md",
+            "Canonical Declared Level: L1 hardened interpose.",
+        ),
+        (
+            "FLC_DOCS_SEMANTIC_PARITY_COVERAGE",
+            "docs/planning/PARITY-COVERAGE.md",
+            "100% of targeted user-space APIs are implemented and scripts/run_aarch64_smoke.sh Currently runs a static system-libc program.",
+        ),
+        (
+            "FLC_DOCS_SEMANTIC_SECURITY",
+            "SECURITY.md",
+            "Every exported ABI entrypoint runs the full TSM validation pipeline unconditionally.",
+        ),
+    ];
+
+    for (env_key, rel_path, planted_claim) in cases {
+        let source = std::fs::read_to_string(root.join(rel_path)).unwrap();
+        let mutated = format!("{source}\n\n{planted_claim}\n");
+        let temp = unique_temp_path("docs-semantic-operator-planted.md");
+        std::fs::write(&temp, mutated).expect("failed to write operator guide fixture");
+
+        let output = run_gate_with_env(&[(env_key, &temp)]);
+        assert!(
+            !output.status.success(),
+            "planted claim in {rel_path} should fail:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = parse_stdout_report(&output);
+        assert_eq!(
+            report["checks"]["forbidden_claim_patterns"].as_str(),
+            Some("fail"),
+            "{rel_path}: {report}"
+        );
+    }
+}
+
+#[test]
+fn operator_guides_reject_missing_l0_scope_phrase() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("DEPLOYMENT.md")).unwrap();
+    let mutated = source.replace(
+        "Current declared level: `L0`",
+        "Current declared scope: interpose",
+    );
+    let temp = unique_temp_path("docs-semantic-deployment-missing-l0.md");
+    std::fs::write(&temp, mutated).expect("failed to write DEPLOYMENT fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_DEPLOYMENT", &temp)]);
+    assert!(
+        !output.status.success(),
+        "missing L0 phrase in DEPLOYMENT.md should fail:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = parse_stdout_report(&output);
+    assert_eq!(
+        report["checks"]["operator_guides_surface"].as_str(),
+        Some("fail")
+    );
+}
+
+#[test]
+fn readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let planted_lines = [
+        "The resolver only talks to local files. A full NSS / DNS backend is a future milestone.",
+        "Modules that export only tuple-based `gethostbyname4_r` are not supported.",
+        "Native-thread cleanup/unwind and stdio/poll cancellation are not implemented.",
+        "LTO, codegen-units=1 and strip are untried tuning.",
+        "The header layout is [hash:8][generation:4] at p - 12.",
+        "The deployed malloc calls the core slab allocator directly.",
+        "The checked baseline meets the < 20 ns strict and < 200 ns hardened budget.",
+    ];
+
+    for planted in planted_lines {
+        let mutated = format!("{source}\n\n{planted}\n");
+        let temp = unique_temp_path("docs-semantic-readme-planted.md");
+        std::fs::write(&temp, mutated).expect("failed to write README fixture");
+
+        let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_README", &temp)]);
+        assert!(
+            !output.status.success(),
+            "planted README contradiction `{planted}` should fail:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = parse_stdout_report(&output);
+        assert_eq!(
+            report["checks"]["forbidden_claim_patterns"].as_str(),
+            Some("fail"),
+            "planted `{planted}`: {report}"
+        );
+    }
+}
+
+#[test]
+fn readme_rejects_removal_of_required_semantic_architecture_facts() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("README.md")).unwrap();
+    for needle in [
+        "build_elf.rs",
+        "version_scripts/fromfp.map",
+        "[hash:8][generation:8][size:8]",
+        "tries `gethostbyname4_r` first (`nss_module.rs`)",
+    ] {
+        let mutated = source.replace(needle, "removed_architecture_fact_placeholder");
+        let temp = unique_temp_path("docs-semantic-readme-missing-fact.md");
+        std::fs::write(&temp, mutated).expect("failed to write README fixture");
+
+        let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_README", &temp)]);
+        assert!(
+            !output.status.success(),
+            "removing `{needle}` from README should fail:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = parse_stdout_report(&output);
+        assert_eq!(
+            report["checks"]["semantic_architecture_facts"].as_str(),
+            Some("fail"),
+            "missing `{needle}`: {report}"
+        );
+    }
+}
+
+#[test]
+fn dated_historical_snapshots_remain_permitted() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let mutated = format!(
+        "{source}\n\nHistorical snapshot note (2026-05-04): former [hash:8][generation:4] header at p - 12 and old 2,829 native count are historical and not current.\n"
+    );
+    let temp = unique_temp_path("docs-semantic-readme-dated-history.md");
+    std::fs::write(&temp, mutated).expect("failed to write README fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_README", &temp)]);
+    let report = parse_stdout_report(&output);
+    assert!(
+        output.status.success(),
+        "dated historical reference should remain permitted:\n{report}"
+    );
+    assert_eq!(report["status"].as_str(), Some("pass"));
 }

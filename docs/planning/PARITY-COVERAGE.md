@@ -1,12 +1,12 @@
 # FrankenLibC Parity Coverage Report
 
-**Reconciled:** 2026-10-20. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
+**Reconciled:** 2026-11-09. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
 
 ## Current Scope
 
-The declared replacement level is **L0 interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,419 `Implemented`, 410 `RawSyscall`, 1,272 `WrapsHostLibc`, zero `GlibcCallThrough`, and eighteen `Stub`. The 2,829 native/direct-syscall classifications (68.7%) measure ownership, not complete semantics or a standalone process.
+The declared replacement level is **L0 interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,414 `Implemented`, 408 `RawSyscall`, 1,279 `WrapsHostLibc`, zero `GlibcCallThrough`, and eighteen `Stub`. The 2,822 native/direct-syscall classifications (68.5%) measure ownership, not complete semantics or a standalone process.
 
-The committed support-maintenance report rejects 1,079 classifications; the live maintenance gate also reports a stale host census. Those mismatches require reviewed source/provider evidence, not blanket promotion. Fixture linkage covers 1,190/4,119 rows (28.9%); linkage is not an executed pass rate. The nine-entry semantic overlay is representative, not exhaustive.
+The committed support-maintenance report rejects 1,085 classifications (1,067 host-label/source mismatches and 18 stub/source mismatches awaiting reviewed evidence). Those mismatches require reviewed source/provider evidence, not blanket promotion. Fixture linkage covers 1,190/4,119 rows (28.9%); linkage is not an executed pass rate. The 36-entry semantic overlay (`tests/conformance/support_semantic_overlay.v1.json`) is representative, not exhaustive.
 
 The September 24 committed preload summary records 189 passes, zero failures, four skips and one xfail for its identified artifact. Current-source workload/performance qualification and L1 promotion remain open. See [the bridge plan](REALITY_CHECK_BRIDGE_PLAN.md) and [compatibility guide](COMPATIBILITY.md) for evidence boundaries and active tasks.
 
@@ -46,15 +46,15 @@ The full POSIX/GNU objective remains. Historical exclusions must not silently re
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| Implemented | 2419 | Classified native Rust behavior |
-| RawSyscall | 410 | Classified direct syscall path |
-| WrapsHostLibc | 1272 | Explicit host-backed subset |
+| Implemented | 2414 | Classified native Rust behavior |
+| RawSyscall | 408 | Classified direct syscall path |
+| WrapsHostLibc | 1279 | Explicit host-backed subset |
 | GlibcCallThrough | 0 | Opaque call-through subset |
 | Stub | 18 | Explicit unsupported contracts |
 
-**Native-classified:** 2,829 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
+**Native-classified:** 2,822 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
 
-**Host-backed:** 1,272 symbols (`WrapsHostLibc`). Taxonomy/source disagreements are described above.
+**Host-backed:** 1,279 symbols (`WrapsHostLibc`). Taxonomy/source disagreements are described above.
 
 ## Behavioral Parity Verification
 
@@ -116,7 +116,7 @@ Targets require deployed-path measurements with the live incumbent in the same i
 | Aarch64 toolchain | `scripts/check_aarch64_toolchain.sh` | Preflight cross-compile prerequisites |
 | Soak freshness | `scripts/check_soak_artifact_freshness.sh` | Verify artifact matches source |
 | Buffer audit | `scripts/audit_unterminated_buffers.sh` | Audit tracked buffer handling |
-| Aarch64 smoke | `scripts/run_aarch64_smoke.sh` | Currently runs a static system-libc program; actual library qualification is tracked by `bd-rc0923-epic-eeuy4f.41`–`.42` |
+| Aarch64 smoke | `scripts/run_aarch64_smoke.sh` | Qualifies an explicit linked AArch64 release library under QEMU in strict and hardened modes with provider checks and foreign-interposer rejection (`bd-rc0923-epic-eeuy4f.41`–`.42`) |
 
 ## Historical Session Record (2026-05-25)
 

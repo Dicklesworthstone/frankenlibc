@@ -262,8 +262,8 @@ fn manifest_binds_unit_e2e_and_telemetry_evidence() -> TestResult {
 
     let truth = &evidence["required_docs_truth"];
     assert_eq!(truth["required_claim_field_count"].as_u64(), Some(8));
-    assert_eq!(truth["semantic_parity_blocker_count"].as_u64(), Some(17));
-    assert_eq!(truth["taxonomy_semantic_conflict_count"].as_u64(), Some(17));
+    assert_eq!(truth["semantic_parity_blocker_count"].as_u64(), Some(19));
+    assert_eq!(truth["taxonomy_semantic_conflict_count"].as_u64(), Some(19));
     assert_eq!(truth["forbidden_claim_count"].as_u64(), Some(0));
     for phrase in truth["required_readme_phrases"]
         .as_array()
@@ -343,8 +343,8 @@ fn checker_replays_docs_claim_gates_and_preserves_current_scope() -> TestResult 
     assert_eq!(claim_report["summary"]["errors"].as_u64(), Some(0));
     assert_eq!(claim_report["summary"]["warnings"].as_u64(), Some(0));
     assert_eq!(levels_report["status"].as_str(), Some("pass"));
-    assert_eq!(levels_report["current_level"].as_str(), Some("L1"));
-    assert_eq!(report["docs_summary"]["current_level"].as_str(), Some("L1"));
+    assert_eq!(levels_report["current_level"].as_str(), Some("L0"));
+    assert_eq!(report["docs_summary"]["current_level"].as_str(), Some("L0"));
     Ok(())
 }
 

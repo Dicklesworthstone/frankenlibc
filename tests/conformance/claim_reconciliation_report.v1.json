@@ -14,12 +14,12 @@
   ],
   "ground_truth": {
     "source": "support_matrix.json",
-    "generated_at": "2026-06-03T21:45:00Z",
+    "generated_at": "2026-11-03T03:41:29Z",
     "total": 4119,
-    "Implemented": 2441,
-    "RawSyscall": 414,
+    "Implemented": 2414,
+    "RawSyscall": 408,
     "GlibcCallThrough": 0,
-    "Stub": 0
+    "Stub": 18
   },
   "summary": {
     "critical": 0,

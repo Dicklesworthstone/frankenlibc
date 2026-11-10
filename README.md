@@ -61,7 +61,7 @@ FrankenLibC distinguishes symbol-taxonomy ownership from full semantic parity. A
 | `symbol_status` | Support-taxonomy classification for a symbol; ownership only | `support_matrix.json` |
 | `semantic_parity_status` | Full / blocked / limited semantic status for known no-op / fallback / bootstrap / unsupported contracts | `tests/conformance/semantic_contract_symbol_join.v1.json` |
 | `oracle_kind` | Evidence precedence: host glibc parity vs POSIX/Linux behavior vs documented FrankenLibC contract vs allowed divergence | `tests/conformance/oracle_precedence_divergence.v1.json` |
-| `replacement_level` | Claim scope: L0 interpose-only, L1 hardened interpose, L2 standalone-ready, L3 standalone | `tests/conformance/replacement_levels.json` |
+| `replacement_level` | Claim scope: L0 interpose-only, L1 hardened interpose, L2 system-ready, L3 pure replacement | `tests/conformance/replacement_levels.json` |
 | `evidence_artifact` | Concrete report, fixture, matrix, or generated artifact backing the claim | `tests/conformance/*.json`, `tests/conformance/*.jsonl`, `target/conformance/*` |
 | `freshness_state` | `source_commit`, `generated_at_utc`, gate-specific freshness predicate | Generated reports and gate logs |
 | `known_limitation` | Explicit blocker, deferred subsystem, unsupported contract | `tests/conformance/support_semantic_overlay.v1.json` |
@@ -551,7 +551,7 @@ Default buffer size is **8,192 bytes** (`BUFSIZ`). POSIX's requirement that `set
 
 `crates/frankenlibc-core/src/pthread/` is a clean-room futex-backed design. fl's own mutexes (including process-shared, robust and priority-inheritance ones), condition variables and rwlocks run on it. Thread creation, join and cancellation, however, go through the host's NPTL by default when fl is preloaded into a glibc process; the native thread backend is opt-in (`FRANKENLIBC_THREAD_NATIVE=1`) and is what standalone builds use.
 
-**Cancellation points.** glibc 2.41+ acts on a deferred cancel only when it interrupts glibc's own syscall bridge, so fl runs each blocking syscall it implements itself (read/write and their vector and positional forms, the sleeps, poll/select/epoll, accept/connect/recv*/send* including `recvmmsg`/`sendmmsg`, the waits, the signal waits, semaphores, condvars, `open` of a FIFO, `fcntl(F_SETLKW)`, `lockf`, splice/tee/vmsplice, `system`, ...) inside an asynchronous-cancel window -- glibc's own scheme before 2.41 -- and so do their `_FORTIFY_SOURCE` entry points (`__read_chk`, `__recv_chk`, `__open_2`, ...) and glibc-namespace aliases (`__read`, `__waitpid`, ...). The window opens only in a multi-threaded process (or after a thread cancelled itself) and only when the entry point was called from outside fl's image: fl's own file and socket I/O (Rust std inside getpwnam, getaddrinfo, lazy symbol resolution) reaches the same exported symbols, and a forced unwind started there would cross frames that cannot unwind, so glibc would abort the process. `tests/integration/fixture_pthread_cancel.c` checks 73 of these points (blocked in the call, or entered with a request pending), fortified and alias forms among them, and that a pending request does not abort getpwnam/getgrnam/getaddrinfo, byte-for-byte against glibc (`pthread_cancel` in the preload smoke corpus). Not yet: cancellation of threads on the native backend; an unwind out of `main` (its cancellation, or `pthread_exit` from it) under fl's default owned startup, which does not give the main thread glibc's cancellation jump buffer (`FRANKENLIBC_STARTUP_DELEGATE=1` does); stdio calls (`fgets`, `fwrite`, ...) do not act as cancellation points; `thrd_sleep` is not one; `sem_wait`/`sem_timedwait` act only once they block (glibc also acts on a request already pending when the semaphore is available); `aio_suspend` acts on a cancel only between its 100 ms wait slices.
+**Cancellation points.** glibc 2.41+ acts on a deferred cancel only when it interrupts glibc's own syscall bridge, so fl runs each blocking syscall it implements itself (read/write and their vector and positional forms, the sleeps, poll/select/epoll, accept/connect/recv*/send* including `recvmmsg`/`sendmmsg`, the waits, the signal waits, semaphores, condvars, `open` of a FIFO, `fcntl(F_SETLKW)`, `lockf`, splice/tee/vmsplice, `system`, ...) inside an asynchronous-cancel window -- glibc's own scheme before 2.41 -- and so do their `_FORTIFY_SOURCE` entry points (`__read_chk`, `__recv_chk`, `__open_2`, ...) and glibc-namespace aliases (`__read`, `__waitpid`, ...). The window opens only in a multi-threaded process (or after a thread cancelled itself) and only when the entry point was called from outside fl's image: fl's own file and socket I/O (Rust std inside getpwnam, getgrnam, getaddrinfo, lazy symbol resolution) reaches the same exported symbols, and a forced unwind started there would cross frames that cannot unwind, so glibc would abort the process. Public stdio descriptor reads/writes (`fgets`, `fread`, `fwrite`, `fflush`, `fclose`, `getline`, `getdelim`, ...) retain their public caller's cancellation admission around the underlying raw syscall while honoring GNU `fopen` `"c"` mode suppression (`stdio_abi.rs`). `thrd_sleep`, `cnd_wait`, and `cnd_timedwait` act as cancellation points (`c11threads_abi.rs`); `sem_wait`/`sem_timedwait`/`sem_clockwait` check for a pending cancel before taking an available semaphore (`semaphore_wait.rs`); `aio_suspend` waits inside `at_cancellation_point` (`unistd_abi.rs`); and the main thread can cancel itself or be cancelled by another thread under default owned startup (`tests/integration/fixture_pthread_cancel.c`). On the opt-in native thread backend (`FRANKENLIBC_THREAD_NATIVE=1`), cooperative cancellation, cleanup handlers, forced unwind, and `cancel_poll`-wired sleep/futex waits are supported, while signal-driven asynchronous interruption of arbitrary non-`cancel_poll` blocking syscalls remains open (`bd-rc0923-epic-eeuy4f.24`).
 
 ### Mutex
 
@@ -599,9 +599,9 @@ Full POSIX TLS key lifecycle (`pthread_key_create`, `pthread_setspecific`, `pthr
 
 `getaddrinfo`, `getnameinfo`, `gethostbyname{,2}{,_r}` and `gethostbyaddr{,_r}` all use this one engine, so they agree within a process. `FRANKENLIBC_RESOLV_CONF`, `FRANKENLIBC_NSSWITCH_CONF` and `FRANKENLIBC_HOSTS_PATH` redirect the configuration files, for tests.
 
-The module bridge tries `gethostbyname3_r`, then `gethostbyname2_r`, then the IPv4-only `gethostbyname_r` when newer symbols are absent. Reverse lookup tries `gethostbyaddr2_r`, then `gethostbyaddr_r`. It copies names, aliases and full address lists before releasing module scratch storage, grows that storage on ERANGE, and keeps the separate canonical-name output for `AI_CANONNAME`. A negative answer from an implemented entry point is passed to the source policy. The internal `_nss_files_*` exports remain files-only.
+For `AF_UNSPEC` `getaddrinfo`, the module bridge tries `gethostbyname4_r` first (`nss_module.rs`), retaining mixed address families, canonical name, and IPv6 scope IDs; family-specific (`AF_INET`/`AF_INET6`) and `gethostbyname*` lookups try `gethostbyname3_r`, then `gethostbyname2_r`, then the IPv4-only `gethostbyname_r` when newer symbols are absent. Reverse lookup tries `gethostbyaddr2_r`, then `gethostbyaddr_r`. It copies names, aliases, tuples, and full address lists before releasing module scratch storage, grows that storage on ERANGE, and keeps the separate canonical-name output for `AI_CANONNAME`. A negative answer from an implemented entry point is passed to the source policy. The internal `_nss_files_*` exports remain files-only.
 
-This is L0 interpose functionality: installed modules use the host dynamic loader. Standalone builds report module sources unavailable. Modules that export only tuple-based `gethostbyname4_r` are not supported by the bridge, and `bd-rc0923-epic-eeuy4f.19` remains open for the remaining NSS scope.
+This is L0 interpose functionality: installed modules use the host dynamic loader. Standalone builds report module sources unavailable, and `bd-rc0923-epic-eeuy4f.19` remains open for the remaining NSS scope (standalone module loading and concurrency/cache-coherence closure).
 
 ### What's Live
 
@@ -1462,7 +1462,7 @@ FrankenLibC is deliberately staged.
 |---|---|
 | **L0 — Interpose only** | Current declared level; `LD_PRELOAD` deployment with host glibc still in the process |
 | **L1 — Hardened interpose** | Promotion target; blocked until the zero-stub and workload/performance gates pass |
-| **L2 — Standalone-ready** | All replacement-blocking gates green; ready to ship a non-preload artifact |
+| **L2 — System-Ready** | All replacement-blocking gates green; ready to ship a non-preload artifact |
 | **L3 — Standalone** | Fully standalone `libfrankenlibc_replace.so`; no host-glibc deployment dependency |
 
 The symbol taxonomy is what makes this staged model legible:
@@ -1513,10 +1513,10 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 
 - `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
-- `resolver`: `IMPLEMENTED_PARTIAL` — source implements numeric/files/native DNS lookup and native addrinfo-list disposal, with installed NSS modules loaded through the host bridge. The support taxonomy still labels `getaddrinfo` and `freeaddrinfo` host-backed; that classification needs reconciliation with provider evidence. Deferred scope: NSS breadth, policy/concurrency closure and full retry/cache/poisoning hardening qualification.
-- `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
+- `resolver`: `IMPLEMENTED_PARTIAL` — numeric, files, and native DNS lookups plus native addrinfo-list disposal are implemented; `getaddrinfo`, `getnameinfo`, and `freeaddrinfo` remain host-backed in the support taxonomy while installed NSS modules are loaded through the host bridge. Deferred scope: NSS breadth, policy/concurrency closure, and full retry/cache/poisoning hardening campaign.
+- `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs and `_nss_files_*` have native rows while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`, and configured hosts modules share source-order/status actions across `getaddrinfo`, `getnameinfo`, and legacy hostent APIs via `gethostbyname4_r`, `gethostbyname3_r`, `gethostbyname2_r`, `gethostbyname_r`, and `gethostbyaddr2_r`/`gethostbyaddr_r`. Deferred scope: standalone module support plus NSS concurrency/cache-coherence closure under `bd-rc0923-epic-eeuy4f.19`.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
-- `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the engine contains about 300 `Encoding` variants; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope is per-codec conformance and deterministic table-generation closure, not the obsolete four-codec phase-1 breadth.
+- `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the engine contains about 300 `Encoding` variants (`crates/frankenlibc-core/src/iconv/mod.rs` is ~54.5 kLOC, with generated tables in sibling files); codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope is per-codec conformance and deterministic table-generation closure, not the obsolete four-codec phase-1 breadth.
 
 ---
 
@@ -1716,7 +1716,7 @@ Limitations of interposition:
 - `LD_PRELOAD` is ignored for setuid/setgid binaries (kernel security policy)
 - The interpose library must export symbols with the correct version tags
 
-The version script (`crates/frankenlibc-abi/version_scripts/libc.map`) handles the last point by exporting symbols under the `GLIBC_2.2.5` version tag, which is what most dynamically linked Linux binaries expect. The script is 4,749 lines long.
+The version script (`crates/frankenlibc-abi/version_scripts/libc.map`, 4,749 lines) defines the full `GLIBC_2.2.5`+ symbol-version hierarchy used when linking `libfrankenlibc_abi.a` or standalone replacement targets. Default `cargo build -p frankenlibc-abi --release` runs `crates/frankenlibc-abi/build_elf.rs`, which supplies `version_scripts/fromfp.map` for the C23 `fromfp` version nodes on Linux x86_64 interpose builds while specific symbols carry explicit `.symver` assembly bindings.
 
 ---
 
@@ -2687,6 +2687,8 @@ These five buckets live in `tests/conformance/support_semantic_overlay.v1.json`.
 
 ## Three-Tier Allocator
 
+The diagram below shows the three-tier allocator model in `crates/frankenlibc-core/src/malloc/` paired with membrane metadata concepts. As detailed in [Deployed Call Trace: `malloc(64)`](#deployed-call-trace-malloc64), deployed `malloc` in `crates/frankenlibc-abi/src/malloc_abi.rs` does not call this core slab/magazine model: strict mode uses the ABI segment allocator with host fallback, while hardened mode allocates through the membrane's generational `AllocationArena` (`arena.rs`).
+
 ```
                        malloc(n)
                           │
@@ -2726,7 +2728,7 @@ These five buckets live in `tests/conformance/support_semantic_overlay.v1.json`.
    Pointer returned ◄────────────────────────
 ```
 
-Three tiers because workloads are bimodal: most allocations are small and short-lived (favor thread-local magazines), some are large and slab-incompatible (favor `mmap`), and the central allocator only needs to handle the spillover. Safety evidence must identify the actual allocation provider, metadata registration, runtime mode, and validation path. The tier name alone does not establish equivalent failure detection, especially for bootstrap and host-backed allocations.
+In the core model, three tiers address bimodal workloads: most allocations are small and short-lived (favor thread-local magazines), some are large and slab-incompatible (favor `mmap`), and the central allocator only needs to handle the spillover. For the deployed `.so`, safety evidence must identify the actual allocation provider (segment allocator, host fallback, pre-TLS bump arena, or hardened `AllocationArena`), metadata registration, runtime mode, and validation path. The tier name alone does not establish equivalent failure detection, especially for bootstrap, strict segment, and host-backed allocations.
 
 ---
 
@@ -2746,7 +2748,7 @@ Required:
 - Perf gate: hardened-mode overhead < 200 ns/call on the membrane budget
 - Drift: documentation and machine artifacts agree on every claim field
 
-### L1 → L2 (Standalone-Ready)
+### L1 → L2 (System-Ready)
 
 Additional requirements:
 
@@ -2797,7 +2799,7 @@ The two artifacts solve different problems even though they share most of the sa
 
 | Property | Interpose (`libfrankenlibc_abi.so`) | Replace (`libfrankenlibc_replace.so`) |
 |---|---|---|
-| Deployment | `LD_PRELOAD` alongside host glibc | Drop-in replacement; host glibc not loaded |
+| Deployment | `LD_PRELOAD` alongside host glibc | Drop-in replacement (remains planned); host glibc not loaded |
 | Process map | Both `libc.so` (host) and `libfrankenlibc_abi.so` mapped | Only `libfrankenlibc_replace.so` mapped |
 | Startup | Host glibc handles `_start`; we intercept after | We own `_start` and the dynamic linker handoff |
 | Loader | Host `ld-linux.so` resolves symbols; we hijack at the symbol-resolution layer | Own loader path or compatible system loader |
@@ -3094,29 +3096,35 @@ Correctness invariants exercised by this path: format-string parsing is bounded 
 2. ABI entrypoint in resolv_abi.rs:
    a. runtime_policy::decide(ApiFamily::Resolver, ...)
    b. Validate the node, service, hints pointers via membrane.
-3. Native resolver in core/src/resolv/mod.rs:
-   a. Try to parse "example.com" as an IPv4 literal → fail.
-   b. Try to parse as an IPv6 literal → fail.
-   c. Open /etc/hosts (cached file descriptor + mtime check for
-      cache invalidation).
-   d. Scan /etc/hosts line by line; tokenize address + hostname +
-      aliases.
-   e. Match "example.com" against the host map.
-   f. If matched, parse the address into a sockaddr_in or sockaddr_in6.
-   g. Parse "80" against /etc/services (or as a literal port number).
-   h. Build an `addrinfo` chain — one node per (family, socktype,
-      protocol) combination.
-4. Return EAI_NONAME (-2) if no match found, or 0 with a populated
-   addrinfo chain.
+3. Native resolver in resolv_abi.rs + core/src/resolv/ + dns_transport.rs:
+   a. Try to parse "example.com" as an IPv4 or IPv6 literal → fail.
+   b. Consult the `/etc/nsswitch.conf` `hosts:` source policy (`files dns`
+      by default when missing or unparseable), honoring `[STATUS=action]`
+      rules (`core/src/addrinfo/hosts_policy.rs`):
+      - `files`: scan `/etc/hosts` (or `FRANKENLIBC_HOSTS_PATH`), matching
+        hostname and aliases across all address records.
+      - `dns`: query the native DNS resolver (`core/src/resolv/` and
+        `dns_transport.rs`) using `/etc/resolv.conf` (`nameserver`, `search`/
+        `domain`, `ndots`, `timeout`, `attempts`, `rotate`, `use-vc`,
+        `trust-ad`) over UDP with TCP fallback and CNAME chain resolution.
+      - configured external NSS sources in L0 interpose mode: load
+        `libnss_<service>.so.2` via `nss_module.rs` (`gethostbyname4_r` for
+        `AF_UNSPEC`, or `gethostbyname3_r` → `gethostbyname2_r` →
+        `gethostbyname_r`) and copy results out of scratch storage.
+   c. Parse "80" against `/etc/services` (or as a numeric port literal) and
+      build the native `addrinfo` chain — one node per `(family, socktype,
+      protocol)` combination.
+4. Return EAI_NONAME (-2) / configured failure status if no source succeeds,
+   or 0 with a populated addrinfo chain.
 5. The caller frees the chain via freeaddrinfo, which is also
    native and walks the chain releasing each node.
 ```
 
 A few design choices in this trace are worth pointing out:
 
-- **No DNS network I/O** during early process startup. The resolver only talks to local files. A full NSS / DNS backend is a future milestone and would attach through a different module so the bootstrap path stays I/O-free.
-- **`/etc/hosts` caching** uses mtime to detect changes; concurrent readers see a stable snapshot via RCU-style epoch.
-- **Multi-address support**: a hostname with multiple `/etc/hosts` entries produces an `addrinfo` chain with all of them, matching glibc behavior.
+- **`nsswitch.conf`-ordered resolution**: `files`, native UDP/TCP `dns`, and installed `libnss_*` modules share one source-ordering and `[STATUS=action]` policy (`addrinfo/hosts_policy.rs`). Standalone builds report dynamic module sources unavailable while keeping `files` and native `dns`.
+- **`/etc/hosts` and `/etc/nsswitch.conf` caching**: configuration reloads when file metadata (`len`, `mtime`, `ino`) changes; `FRANKENLIBC_HOSTS_PATH`, `FRANKENLIBC_NSSWITCH_CONF`, and `FRANKENLIBC_RESOLV_CONF` override paths for isolated tests.
+- **Multi-address support**: a hostname with multiple `/etc/hosts` or DNS/NSS records produces an `addrinfo` chain with all matching addresses, preserving `AI_CANONNAME` and IPv6 scope IDs.
 - **Service parsing** handles both numeric strings ("80") and named services ("http") via `/etc/services` lookup.
 - **`gai_strerror` text** is byte-aligned with glibc (Phase 16) because some programs key error-handling on the exact string.
 
@@ -3656,33 +3664,40 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
 ```
 1. Cargo reads workspace Cargo.toml and the ABI crate's Cargo.toml.
 2. The ABI crate declares:
+     build = "build_elf.rs"
      [lib]
      crate-type = ["cdylib", "staticlib", "rlib"]
+   and the workspace Cargo.toml sets a package override:
+     [profile.release.package.frankenlibc-abi]
+     codegen-units = 1
+   so versioned `.symver` assembly bindings share a single ELF object.
 3. Cargo compiles all transitive dependencies (membrane, core,
    parking_lot, blake3, …) in release mode.
 4. The membrane crate's build.rs runs:
    a. Supplied SOS-task consistency checks (3 matrices, Cholesky verification).
    b. Memory-model barrier audit (≥20 atomic sites across 6 files).
-   c. Feature flag enforcement (`runtime-math-production` required).
-5. The ABI crate's build.rs runs:
-   a. Detects whether to link the GNU ld version script (libc.map).
-      - Skip for debug + fuzz builds.
-      - Link for release cdylib builds.
-   b. Emits `cargo:rustc-link-arg=-Wl,--version-script=...`
+   c. The membrane crate root (`src/lib.rs`) enforces the mandatory
+      `runtime-math-production` feature via `compile_error!`.
+5. The ABI crate's build_elf.rs runs:
+   a. Invokes `build.rs` policy checks (including standalone replacement
+      guard checks when the `standalone` feature is enabled).
+   b. On Linux x86_64 interpose builds, emits
+      `cargo:rustc-cdylib-link-arg=-Wl,--version-script=.../fromfp.map`
+      for C23 `fromfp` version nodes, while specific symbols carry
+      explicit `.symver` assembly directives.
 6. rustc compiles each crate to `.rlib` or `.so` artifacts.
-7. The linker (lld or gold or bfd) combines them:
+7. The linker combines them:
    - cdylib output: target/release/libfrankenlibc_abi.so
-   - Linker flag: --version-script=version_scripts/libc.map applied
-     so symbols are exported under the right GLIBC_x.y tags.
-   - opt-level=3 enables aggressive inlining (Cargo's release default).
-   - Cargo defaults are otherwise used today; LTO, codegen-units=1
-     and strip are untried tuning.
-8. The output .so is ABI-compatible with binaries expecting
-   GLIBC_2.2.5 symbol versions (with GLIBC_2.11 inheriting for the
-   `__longjmp_chk` fortify wrapper).
+   - `opt-level = 3` (Cargo's release default) with `codegen-units = 1`
+     for `frankenlibc-abi`; workspace-wide LTO and strip remain disabled
+     by default.
+8. Native packaging and standalone checks that require the full
+   4,749-line `version_scripts/libc.map` hierarchy link
+   `libfrankenlibc_abi.a` with `cc -Wl,--version-script=libc.map`
+   (see `scripts/check_setjmp_native.sh`).
 ```
 
-The static library (`libfrankenlibc_abi.a`) is also produced. It's used by `scripts/check_setjmp_native.sh` and similar native packaging checks that need to link the symbols into a standalone `libc.so` via `cc -Wl,--version-script=libc.map`.
+The static library (`libfrankenlibc_abi.a`) is also produced. It's used by `scripts/check_setjmp_native.sh` and similar native packaging checks that need to link the symbols into a versioned `libc.so` via `cc -Wl,--version-script=libc.map`.
 
 ---
 
@@ -3954,9 +3969,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,822 native/direct-syscall rows (68.5%), 1,279 host-backed wrapper rows (31.1%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,898 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 232,609 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,795 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,172,900 lines including generated codec tables |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 233,940 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 83,117 lines |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,003 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

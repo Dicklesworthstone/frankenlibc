@@ -95,8 +95,16 @@ def err(message: str) -> None:
 
 
 def git_head() -> str:
+    declared = os.environ.get("RCH_BUILD_SOURCE", "").strip()
+    if declared:
+        return declared
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
     except Exception:
         return "unknown"
 

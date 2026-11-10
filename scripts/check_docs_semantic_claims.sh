@@ -143,6 +143,10 @@ def env_path(name, key):
 
 readme_path = env_path("FLC_DOCS_SEMANTIC_README", "readme")
 feature_path = env_path("FLC_DOCS_SEMANTIC_FEATURE_PARITY", "feature_parity")
+deployment_path = env_path("FLC_DOCS_SEMANTIC_DEPLOYMENT", "deployment")
+security_path = env_path("FLC_DOCS_SEMANTIC_SECURITY", "security")
+compatibility_path = env_path("FLC_DOCS_SEMANTIC_COMPATIBILITY", "compatibility")
+parity_coverage_path = env_path("FLC_DOCS_SEMANTIC_PARITY_COVERAGE", "parity_coverage")
 support_path = env_path("FLC_DOCS_SEMANTIC_SUPPORT_MATRIX", "support_matrix")
 overlay_path = env_path("FLC_DOCS_SEMANTIC_OVERLAY", "support_semantic_overlay")
 inventory_path = env_path("FLC_DOCS_SEMANTIC_INVENTORY", "semantic_contract_inventory")
@@ -205,9 +209,17 @@ docs = {
     "README": (readme_path, read_text(readme_path, "README")),
     "FEATURE_PARITY": (feature_path, read_text(feature_path, "FEATURE_PARITY")),
 }
+operator_docs = {
+    "DEPLOYMENT": (deployment_path, read_text(deployment_path, "DEPLOYMENT")),
+    "SECURITY": (security_path, read_text(security_path, "SECURITY")),
+    "COMPATIBILITY": (compatibility_path, read_text(compatibility_path, "COMPATIBILITY")),
+    "PARITY_COVERAGE": (parity_coverage_path, read_text(parity_coverage_path, "PARITY_COVERAGE")),
+}
+all_docs = {**docs, **operator_docs}
 
 readme_text = docs["README"][1]
 feature_text = docs["FEATURE_PARITY"][1]
+parity_coverage_text = operator_docs["PARITY_COVERAGE"][1]
 
 def count_lines(path):
     try:
@@ -249,7 +261,7 @@ def tracked_files(pathspec):
 numeric_claims = []
 
 def expect_numeric_claim(surface, claim_id, expected):
-    text = readme_text if surface == "README" else feature_text
+    text = all_docs[surface][1]
     numeric_claims.append((surface, claim_id, expected))
     if expected not in text:
         fail(
@@ -380,6 +392,31 @@ if isinstance(support, dict):
     )
     generated_date = str(support.get("generated_at_utc", ""))[:10]
     expect_numeric_claim("FEATURE_PARITY", "support_snapshot_date", f"`generated_at_utc` is {generated_date}")
+    expect_numeric_claim(
+        "PARITY_COVERAGE",
+        "parity_coverage_native_subset",
+        f"**Native-classified:** {support_summary.get('implemented') + support_summary.get('raw_syscall'):,} symbols (`Implemented + RawSyscall`).",
+    )
+    expect_numeric_claim(
+        "PARITY_COVERAGE",
+        "parity_coverage_implemented_row",
+        f"| Implemented | {support_summary.get('implemented')} |",
+    )
+    expect_numeric_claim(
+        "PARITY_COVERAGE",
+        "parity_coverage_raw_syscall_row",
+        f"| RawSyscall | {support_summary.get('raw_syscall')} |",
+    )
+    expect_numeric_claim(
+        "PARITY_COVERAGE",
+        "parity_coverage_wraps_host_row",
+        f"| WrapsHostLibc | {support_summary.get('wraps_host_libc')} |",
+    )
+    expect_numeric_claim(
+        "PARITY_COVERAGE",
+        "parity_coverage_stub_row",
+        f"| Stub | {support_summary.get('stub')} |",
+    )
     if isinstance(overlay, dict):
         overlay_counts = overlay.get("support_matrix_snapshot", {}).get("status_counts", {})
         support_counts = support.get("counts", {})
@@ -411,7 +448,7 @@ stale_numeric_patterns = {
     "old_smoke_total": r"\b60/0/4\b|\b60 pass(?:es)? / 0 fail(?:s)? / 4",
     "old_toolchain_pin": r"nightly-2026-04-28",
 }
-for surface, (_, text) in docs.items():
+for surface, (_, text) in all_docs.items():
     for claim_id, pattern in stale_numeric_patterns.items():
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
@@ -435,6 +472,7 @@ if not numeric_failures:
 
 field_ids = [str(row.get("id", "")) for row in artifact.get("required_claim_fields", [])]
 doc_surfaces = {row.get("id"): row for row in artifact.get("doc_surfaces", [])}
+operator_surfaces = {row.get("id"): row for row in artifact.get("operator_guide_surfaces", [])}
 missing_fields = []
 missing_phrases = []
 for surface_id, (path, text) in docs.items():
@@ -479,10 +517,73 @@ for surface_id, (path, text) in docs.items():
         generated_claim=f"{surface_id} declares semantic claim fields",
     )
 
+missing_operator_phrases = []
+for surface_id, (path, text) in operator_docs.items():
+    surface = operator_surfaces.get(surface_id, {})
+    section = surface.get("required_section", "")
+    if section and section not in text:
+        missing_operator_phrases.append((surface_id, section))
+        fail(
+            "operator_guides_surface",
+            f"{surface_id}: missing required section {section}",
+            doc_surface=surface_id,
+            symbol_or_section=section,
+            generated_claim="missing required operator guide section",
+            failure_signature="missing_operator_guide_section",
+        )
+    for phrase in surface.get("required_phrases", []):
+        if str(phrase) not in text:
+            missing_operator_phrases.append((surface_id, phrase))
+            fail(
+                "operator_guides_surface",
+                f"{surface_id}: missing required phrase {phrase}",
+                doc_surface=surface_id,
+                symbol_or_section=phrase,
+                generated_claim="missing operator guide evidence phrase",
+                failure_signature="missing_operator_guide_phrase",
+            )
+    event(
+        "operator_guides_surface",
+        doc_surface=surface_id,
+        symbol_or_section=section,
+        generated_claim=f"{surface_id} preserves canonical L0 and bounded safety scope",
+    )
+
+operator_failures = [row for row in events if row["rule_id"] == "operator_guides_surface" and row["status"] == "fail"]
 checks["docs_claim_fields"] = "pass" if not missing_fields else "fail"
 checks["docs_claim_surface"] = "pass" if not missing_phrases else "fail"
+checks["operator_guides_surface"] = "pass" if not operator_failures else "fail"
 
-for surface_id, (path, text) in docs.items():
+required_readme_facts = [
+    ("build_elf_script", "build_elf.rs"),
+    ("fromfp_version_script", "version_scripts/fromfp.map"),
+    ("abi_release_codegen_units", "[profile.release.package.frankenlibc-abi]"),
+    ("nss_tuple_lookup", "tries `gethostbyname4_r` first (`nss_module.rs`)"),
+    ("fingerprint_24byte_layout", "[hash:8][generation:8][size:8]"),
+    ("canary_affine_xor_mask", "0xDEADBEEFCAFEBABE"),
+    ("deployed_malloc_provider_separation", "deployed `malloc` in `crates/frankenlibc-abi/src/malloc_abi.rs` does not call this core slab/magazine model"),
+    ("stdio_cancellation_admission", "retain their public caller's cancellation admission around the underlying raw syscall"),
+]
+for fact_id, needle in required_readme_facts:
+    if needle not in readme_text:
+        fail(
+            "semantic_architecture_facts",
+            f"README: missing required architectural fact {fact_id}: {needle}",
+            doc_surface="README",
+            symbol_or_section=fact_id,
+            generated_claim=needle,
+            failure_signature="missing_semantic_architecture_fact",
+        )
+arch_failures = [row for row in events if row["rule_id"] == "semantic_architecture_facts" and row["status"] == "fail"]
+checks["semantic_architecture_facts"] = "pass" if not arch_failures else "fail"
+if not arch_failures:
+    event(
+        "semantic_architecture_facts",
+        doc_surface="README",
+        generated_claim=f"{len(required_readme_facts)} source/build/provider semantic facts verified",
+    )
+
+for surface_id, (path, text) in all_docs.items():
     for line_no, line in enumerate(text.splitlines(), start=1):
         lowered = line.lower()
         for row in artifact.get("forbidden_claim_patterns", []):
@@ -591,6 +692,7 @@ else:
 
 summary = {
     "doc_surface_count": len(docs),
+    "operator_guide_surface_count": len(operator_docs),
     "required_claim_field_count": len(field_ids),
     "semantic_parity_blocker_count": join_summary.get("semantic_parity_blocker_count"),
     "taxonomy_semantic_conflict_count": len(taxonomy_semantic_conflicts),

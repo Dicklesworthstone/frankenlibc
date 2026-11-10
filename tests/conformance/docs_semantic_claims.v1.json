@@ -6,6 +6,10 @@
   "inputs": {
     "readme": "README.md",
     "feature_parity": "FEATURE_PARITY.md",
+    "deployment": "DEPLOYMENT.md",
+    "security": "SECURITY.md",
+    "compatibility": "docs/planning/COMPATIBILITY.md",
+    "parity_coverage": "docs/planning/PARITY-COVERAGE.md",
     "support_matrix": "support_matrix.json",
     "support_semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
     "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
@@ -73,6 +77,48 @@
       ]
     }
   ],
+  "operator_guide_surfaces": [
+    {
+      "id": "DEPLOYMENT",
+      "path": "DEPLOYMENT.md",
+      "required_section": "## Supported Deployment Model",
+      "required_phrases": [
+        "Current declared level: `L0`",
+        "not as a full standalone replacement for glibc",
+        "tests/conformance/replacement_levels.json"
+      ]
+    },
+    {
+      "id": "SECURITY",
+      "path": "SECURITY.md",
+      "required_section": "## Safety Guarantees",
+      "required_phrases": [
+        "They do not imply that FrankenLibC is already a full standalone libc replacement.",
+        "The membrane only sees calls that pass through FrankenLibC-managed entrypoints.",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json"
+      ]
+    },
+    {
+      "id": "COMPATIBILITY",
+      "path": "docs/planning/COMPATIBILITY.md",
+      "required_section": "## Maturity Level",
+      "required_phrases": [
+        "FrankenLibC currently declares **L0 interposition over host glibc**.",
+        "**L0 (Current)**: Interposition over host glibc",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ]
+    },
+    {
+      "id": "PARITY_COVERAGE",
+      "path": "docs/planning/PARITY-COVERAGE.md",
+      "required_section": "## Support Matrix Breakdown",
+      "required_phrases": [
+        "The declared replacement level is **L0 interposition over host glibc**.",
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "Qualifies an explicit linked AArch64 release library"
+      ]
+    }
+  ],
   "forbidden_claim_patterns": [
     {
       "id": "stub_zero_full_replacement",
@@ -88,6 +134,66 @@
       "id": "full_standalone_today",
       "pattern": "full standalone (libc )?replacement (today|now|profile)",
       "allowed_if_line_contains": ["not ", "future", "planned"]
+    },
+    {
+      "id": "operator_current_level_l1",
+      "pattern": "(?:Current|Canonical\\s+Declared)\\s+Level:\\s*`?\\*{0,2}L[123]\\b",
+      "allowed_if_line_contains": ["not ", "target", "future", "historical"]
+    },
+    {
+      "id": "parity_coverage_100_percent_claim",
+      "pattern": "100%\\s+of\\s+targeted\\s+user-space\\s+APIs\\s+are\\s+implemented",
+      "allowed_if_line_contains": ["not ", "historical", "former"]
+    },
+    {
+      "id": "stale_taxonomy_2829_or_3550",
+      "pattern": "\\b(?:3,550\\s+Implemented|2,829\\s+native|2,419\\s+`?Implemented`?\\s+and\\s+410\\s+`?RawSyscall`?)\\b",
+      "allowed_if_line_contains": ["not ", "historical", "snapshot", "old"]
+    },
+    {
+      "id": "stale_resolver_files_only_future_dns",
+      "pattern": "resolver\\s+only\\s+talks\\s+to\\s+local\\s+files|full\\s+NSS\\s*/\\s*DNS\\s+backend\\s+is\\s+a\\s+future\\s+milestone",
+      "allowed_if_line_contains": ["not ", "historical", "former"]
+    },
+    {
+      "id": "stale_nss_tuple_unsupported",
+      "pattern": "Modules\\s+that\\s+export\\s+only\\s+tuple-based\\s+`?gethostbyname4_r`?\\s+are\\s+not\\s+supported",
+      "allowed_if_line_contains": ["historical", "former"]
+    },
+    {
+      "id": "stale_cancellation_unimplemented",
+      "pattern": "Native-thread\\s+cleanup/unwind\\s+and\\s+stdio/poll\\s+cancellation\\s+are\\s+not\\s+implemented",
+      "allowed_if_line_contains": ["historical", "former"]
+    },
+    {
+      "id": "stale_cdylib_full_libc_map_or_untried_cgu",
+      "pattern": "LTO,\\s*codegen-units=1\\s+and\\s+strip\\s+are\\s+untried\\s+tuning|--version-script=libc\\.map\\s*\\(exports\\s+only\\s+listed\\s+symbols\\s+under\\s+GLIBC_2\\.2\\.5\\+\\)",
+      "allowed_if_line_contains": ["not ", "historical", "former"]
+    },
+    {
+      "id": "stale_fingerprint_12byte_or_p_minus_12",
+      "pattern": "\\[hash:8\\]\\[generation:4\\]|\\bp\\s*-\\s*12\\b",
+      "allowed_if_line_contains": ["not ", "historical", "former", "previous", "old"]
+    },
+    {
+      "id": "stale_aarch64_static_smoke_claim",
+      "pattern": "Currently\\s+runs\\s+a\\s+static\\s+system-libc\\s+program",
+      "allowed_if_line_contains": ["not ", "historical", "former", "previous"]
+    },
+    {
+      "id": "deployed_malloc_calls_core_slab",
+      "pattern": "deployed\\s+`?malloc`?\\s+(?:calls|delegates\\s+to|uses)\\s+(?:the\\s+)?core\\s+(?:slab|three-tier)",
+      "allowed_if_line_contains": ["not ", "does not", "never"]
+    },
+    {
+      "id": "universal_all_path_membrane_safety",
+      "pattern": "(?:every|all)\\s+exported\\s+(?:ABI\\s+)?(?:symbol|entrypoint)s?\\s+(?:run|execute|pass\\s+through)s?\\s+the\\s+full\\s+(?:TSM\\s+)?validation\\s+pipeline",
+      "allowed_if_line_contains": ["not ", "do not", "does not"]
+    },
+    {
+      "id": "invented_perf_budget_met",
+      "pattern": "(?:checked\\s+baseline|current\\s+build)\\s+meets\\s+the\\s+<\\s*20\\s*ns\\s+strict\\s+and\\s+<\\s*200\\s*ns\\s+hardened",
+      "allowed_if_line_contains": ["not ", "does not"]
     }
   ],
   "required_log_fields": [

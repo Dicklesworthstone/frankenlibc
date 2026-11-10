@@ -347,7 +347,7 @@
       "dirent_abi": 7,
       "dlfcn_abi": 6,
       "err_abi": 12,
-      "glibc_internal_abi": 207,
+      "glibc_internal_abi": 208,
       "grp_abi": 3,
       "inet_abi": 10,
       "io_abi": 1,
