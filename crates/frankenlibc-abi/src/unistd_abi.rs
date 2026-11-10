@@ -11699,10 +11699,16 @@ macro_rules! nss_files_end_stub {
 
 nss_files_end_stub!(_nss_files_endaliasent);
 nss_files_end_stub!(_nss_files_endetherent);
-nss_files_end_stub!(_nss_files_endhostent);
 nss_files_end_stub!(_nss_files_endnetent);
 nss_files_end_stub!(_nss_files_endrpcent);
 nss_files_end_stub!(_nss_files_endsgent);
+/// Close the native hosts cursor, including any record pending a buffer retry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endhostent() -> c_int {
+    unsafe { endhostent() };
+    NSS_STATUS_SUCCESS
+}
+
 /// Close the shadow files cursor without invoking other NSS modules.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endspent() -> c_int {
@@ -11776,10 +11782,15 @@ macro_rules! nss_files_set_stayopen_stub {
 
 nss_files_set_void_stub!(_nss_files_setaliasent);
 nss_files_set_stayopen_stub!(_nss_files_setetherent);
-nss_files_set_stayopen_stub!(_nss_files_sethostent);
 nss_files_set_stayopen_stub!(_nss_files_setnetent);
 nss_files_set_stayopen_stub!(_nss_files_setrpcent);
 nss_files_set_stayopen_stub!(_nss_files_setsgent);
+/// Open or rewind the native hosts source without consulting other modules.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_sethostent(_stayopen: c_int) -> c_int {
+    nss_identity_setent(files_sethostent)
+}
+
 /// Rewind native shadow records and report an unavailable backing file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_setspent(_stayopen: c_int) -> c_int {
@@ -12377,9 +12388,38 @@ pub unsafe extern "C" fn _nss_files_gethostent_r(
     if result.is_null() || buffer.is_null() {
         return unsafe { nss_hostent_notfound(errnop, h_errnop) };
     }
+    if !tracked_object_fits::<libc::hostent>(result.cast()) {
+        return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
+    }
+    let saved_errno = current_abi_errno();
+    let capacity = tracked_output_capacity(buffer, buflen);
     let mut resolved = std::ptr::null_mut();
-    let rc = unsafe { gethostent_r(result, buffer, buflen, &mut resolved, h_errnop) };
-    unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) }
+    let mut unavailable = false;
+    let outcome = with_host_iter_state(|state| {
+        if let Err(error) = host_iter_open(state) {
+            unavailable = true;
+            return Err(error);
+        }
+        // SAFETY: the checked caller objects remain live during packing.
+        unsafe { host_iter_next_r(state, result, buffer, buflen, &mut resolved) }
+    });
+    // Opening this iterator can fail without touching any caller error slot.
+    // GNU also preserves global errno during the earliest size preflight;
+    // later line-buffer retries set it to ERANGE as well as updating errnop.
+    unsafe {
+        if unavailable {
+            set_abi_errno(saved_errno);
+            return NSS_STATUS_UNAVAIL;
+        }
+        let reported_errno =
+            if outcome == Err(libc::ERANGE) && capacity < HOSTS_READ_BUFFER_OVERHEAD + 2 {
+                saved_errno
+            } else {
+                outcome.as_ref().err().copied().unwrap_or(saved_errno)
+            };
+        set_abi_errno(reported_errno);
+        nss_files_host_status(outcome, errnop, h_errnop)
+    }
 }
 
 /// `_nss_files_getnetent_r(*result, *buf, buflen, *errnop,
@@ -12698,11 +12738,23 @@ pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
         return unsafe { nss_files_host_status(Err(libc::EINVAL), errnop, h_errnop) };
     };
     let multi = nss_files_hosts_multi();
-    let outcome = crate::resolv_abi::with_hosts_backend_snapshot(|content, _| {
+    let outcome = match crate::resolv_abi::with_hosts_backend_snapshot(|content, _| {
         // SAFETY: output pointers retain the public NSS lifetime contract.
         unsafe { nss_pack_gaih_addrtuples(content, &name, multi, pat, buffer, buflen) }
-    })
-    .unwrap_or_else(|error| Err(error.raw_os_error().unwrap_or(libc::EIO)));
+    }) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let error = error.raw_os_error().unwrap_or(libc::EIO);
+            // GNU's name4 provider exposes a failed source open through errno
+            // and errnop, with HOST_NOT_FOUND in the legacy resolver slot.
+            unsafe {
+                set_abi_errno(error);
+                nss_set_errnop(errnop, error);
+                nss_set_herr_host_not_found(h_errnop);
+            }
+            return NSS_STATUS_UNAVAIL;
+        }
+    };
     // Files entries do not have a TTL. GNU leaves ttlp and errnop untouched on
     // success. A multi scan reaches EOF after finding its last address, leaving
     // HOST_NOT_FOUND in h_errnop even though the complete answer is successful.
@@ -21487,17 +21539,18 @@ pub unsafe extern "C" fn getprotoent() -> *mut c_void {
 // /etc/hosts iteration — native
 // ---------------------------------------------------------------------------
 
-const HOSTS_PATH: &str = "/etc/hosts";
+// GNU's observed files-iterator minimum is 35 bytes on LP64, regardless of
+// caller alignment, even at EOF. Keep that preflight allowance separate from
+// our bounded hostent packer so an empty source still gives the same retries.
+const HOSTS_READ_BUFFER_OVERHEAD: usize = 16 + 2 * core::mem::size_of::<*mut c_char>();
 
 struct HostIterState {
     reader: Option<std::io::BufReader<std::fs::File>>,
     line_buf: Vec<u8>,
-    // Buffer: struct hostent (32 bytes) + strings + address data + pointer arrays
-    entry_buf: [u8; 2048],
-    // Pointer arrays stored separately to avoid borrow issues
-    alias_ptrs: [*mut c_char; 16],
-    addr_ptrs: [*mut c_char; 2],
-    addr_data: [u8; 16], // room for one IPv4 or IPv6 address
+    // Keep a complete line until packing succeeds, so ERANGE cannot consume it.
+    pending_line: bool,
+    entry: libc::hostent,
+    entry_buf: Vec<u8>,
 }
 
 impl HostIterState {
@@ -21505,10 +21558,15 @@ impl HostIterState {
         Self {
             reader: None,
             line_buf: Vec::new(),
-            entry_buf: [0u8; 2048],
-            alias_ptrs: [std::ptr::null_mut(); 16],
-            addr_ptrs: [std::ptr::null_mut(); 2],
-            addr_data: [0u8; 16],
+            pending_line: false,
+            entry: libc::hostent {
+                h_name: std::ptr::null_mut(),
+                h_aliases: std::ptr::null_mut(),
+                h_addrtype: 0,
+                h_length: 0,
+                h_addr_list: std::ptr::null_mut(),
+            },
+            entry_buf: Vec::new(),
         }
     }
 }
@@ -21593,135 +21651,172 @@ fn hosts_line_af_inet_addr(addr_str: &str) -> Option<([u8; 16], c_int, c_int)> {
     }
 }
 
-/// Parse the next hosts entry from the reader.
-///
-/// struct hostent (x86_64, 32 bytes):
-///   h_name:      *mut c_char    (offset 0)
-///   h_aliases:   *mut *mut c_char (offset 8)
-///   h_addrtype:  c_int          (offset 16)
-///   h_length:    c_int          (offset 20)
-///   h_addr_list: *mut *mut c_char (offset 24)
-unsafe fn host_iter_next(state: &mut HostIterState) -> *mut c_void {
-    use std::io::BufRead;
-    loop {
-        let reader = match state.reader.as_mut() {
-            Some(r) => r,
-            None => return std::ptr::null_mut(),
-        };
-        state.line_buf.clear();
-        match reader.read_until(b'\n', &mut state.line_buf) {
-            Ok(0) => return std::ptr::null_mut(),
-            Err(_) => return std::ptr::null_mut(),
-            Ok(_) => {}
-        }
-
-        // Use parse_hosts_line from core
-        let parsed = frankenlibc_core::resolv::parse_hosts_line(&state.line_buf);
-        let (addr_text, hostnames) = match parsed {
-            Some(v) => v,
-            None => continue,
-        };
-
-        if hostnames.is_empty() {
-            continue;
-        }
-
-        let addr_str = match std::str::from_utf8(&addr_text) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let (addr_bin, af, addr_len) = match hosts_line_af_inet_addr(addr_str) {
-            Some(v) => v,
-            None => continue,
-        };
-
-        // Copy address data
-        state.addr_data[..addr_len as usize].copy_from_slice(&addr_bin[..addr_len as usize]);
-
-        // Set up address list: [&addr_data, NULL]
-        state.addr_ptrs[0] = state.addr_data.as_mut_ptr() as *mut c_char;
-        state.addr_ptrs[1] = std::ptr::null_mut();
-
-        // Pack hostname string into entry_buf (after struct hostent at offset 32)
-        let buf = state.entry_buf.as_mut_ptr();
-        let str_offset = 32usize;
-        let primary_name = &hostnames[0];
-        let needed = str_offset + primary_name.len() + 1;
-        if needed > state.entry_buf.len() {
-            continue;
-        }
-
-        let name_ptr = unsafe { buf.add(str_offset) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                primary_name.as_ptr(),
-                buf.add(str_offset),
-                primary_name.len(),
-            );
-            *buf.add(str_offset + primary_name.len()) = 0;
-        }
-
-        // Aliases: remaining hostnames (up to 14)
-        let mut off = str_offset + primary_name.len() + 1;
-        let max_aliases = state.alias_ptrs.len() - 1; // leave room for NULL
-        let alias_count = (hostnames.len() - 1).min(max_aliases);
-        for i in 0..alias_count {
-            let alias = &hostnames[i + 1];
-            if off + alias.len() + 1 > state.entry_buf.len() {
-                break;
-            }
-            state.alias_ptrs[i] = unsafe { buf.add(off) } as *mut c_char;
-            unsafe {
-                std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
-                *buf.add(off + alias.len()) = 0;
-            }
-            off += alias.len() + 1;
-        }
-        state.alias_ptrs[alias_count] = std::ptr::null_mut();
-
-        // Fill struct hostent
-        unsafe {
-            *(buf as *mut *mut c_char) = name_ptr; // h_name
-            *((buf as *mut *mut c_char).add(1) as *mut *mut *mut c_char) =
-                state.alias_ptrs.as_mut_ptr(); // h_aliases
-            *(buf.add(16) as *mut c_int) = af; // h_addrtype
-            *(buf.add(20) as *mut c_int) = addr_len; // h_length
-            *(buf.add(24) as *mut *mut *mut c_char) = state.addr_ptrs.as_mut_ptr(); // h_addr_list
-        }
-
-        return buf as *mut c_void;
+fn host_iter_open(state: &mut HostIterState) -> Result<(), c_int> {
+    if state.reader.is_none() {
+        let file = std::fs::File::open(crate::resolv_abi::hosts_backend_path())
+            .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+        state.reader = Some(std::io::BufReader::new(file));
+        state.pending_line = false;
     }
+    Ok(())
+}
+
+/// Read and pack a complete record. Both public APIs and the files provider
+/// share this cursor; only a successfully packed record advances it.
+unsafe fn host_iter_next_r(
+    state: &mut HostIterState,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<bool, c_int> {
+    use std::io::BufRead;
+
+    host_iter_open(state)?;
+    if tracked_output_capacity(buf, buflen) < HOSTS_READ_BUFFER_OVERHEAD + 3 {
+        return Err(libc::ERANGE);
+    }
+    loop {
+        if !state.pending_line {
+            state.line_buf.clear();
+            let count = state
+                .reader
+                .as_mut()
+                .ok_or(libc::EIO)?
+                .read_until(b'\n', &mut state.line_buf)
+                .map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))?;
+            if count == 0 {
+                return Ok(false);
+            }
+            state.pending_line = true;
+        }
+
+        let Some((addr_text, hostnames)) =
+            frankenlibc_core::resolv::parse_hosts_line(&state.line_buf)
+        else {
+            state.pending_line = false;
+            continue;
+        };
+        let Some(primary) = hostnames.first() else {
+            state.pending_line = false;
+            continue;
+        };
+        let address = std::str::from_utf8(&addr_text)
+            .ok()
+            .and_then(hosts_line_af_inet_addr);
+        let Some((addr_bin, af, addr_len)) = address else {
+            state.pending_line = false;
+            continue;
+        };
+
+        // SAFETY: the caller provides checked hostent/result slots and writable
+        // buffer storage. The shared packer aligns pointers and bounds all writes.
+        unsafe {
+            crate::resolv_abi::write_reentrant_hostent_family(
+                primary,
+                &hostnames[1..],
+                &[&addr_bin[..addr_len as usize]],
+                af,
+                result_buf,
+                buf,
+                buflen,
+                result,
+            )?;
+        }
+        state.pending_line = false;
+        return Ok(true);
+    }
+}
+
+/// Grow the nonreentrant answer storage instead of silently dropping a long
+/// record or truncating its aliases. The returned typed hostent stays aligned.
+unsafe fn host_iter_next(state: &mut HostIterState) -> Result<*mut c_void, c_int> {
+    let mut buffer = std::mem::take(&mut state.entry_buf);
+    let mut entry = std::mem::MaybeUninit::<libc::hostent>::uninit();
+    let mut resolved = std::ptr::null_mut();
+    let outcome = loop {
+        if buffer.is_empty() {
+            if buffer.try_reserve(1024).is_err() {
+                break Err(libc::ENOMEM);
+            }
+            buffer.resize(1024, 0);
+        }
+        // SAFETY: entry is aligned local storage, and buffer remains live and
+        // uniquely owned until its allocation is returned to the state below.
+        let outcome = unsafe {
+            host_iter_next_r(
+                state,
+                entry.as_mut_ptr().cast(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut resolved,
+            )
+        };
+        if outcome != Err(libc::ERANGE) {
+            break outcome;
+        }
+        let Some(next_len) = buffer.len().checked_mul(2) else {
+            break Err(libc::ENOMEM);
+        };
+        if buffer.try_reserve(next_len - buffer.len()).is_err() {
+            break Err(libc::ENOMEM);
+        }
+        buffer.resize(next_len, 0);
+    };
+    state.entry_buf = buffer;
+    if outcome? {
+        // SAFETY: successful packing initializes all hostent fields; its
+        // pointers refer to the allocation now owned by state.entry_buf.
+        state.entry = unsafe { entry.assume_init() };
+        Ok((&raw mut state.entry).cast())
+    } else {
+        Ok(std::ptr::null_mut())
+    }
+}
+
+fn files_sethostent() -> c_int {
+    with_host_iter_state(|state| {
+        state.reader = None;
+        state.pending_line = false;
+        state.line_buf.clear();
+        host_iter_open(state).err().unwrap_or(0)
+    })
 }
 
 /// `sethostent` — open /etc/hosts for iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sethostent(_stayopen: c_int) {
-    with_host_iter_state(|state| match std::fs::File::open(HOSTS_PATH) {
-        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-        Err(_) => state.reader = None,
-    });
+    let saved_errno = current_abi_errno();
+    let rc = files_sethostent();
+    unsafe { set_abi_errno(if rc == 0 { saved_errno } else { rc }) };
 }
 
 /// `endhostent` — close /etc/hosts iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endhostent() {
+    let saved_errno = current_abi_errno();
     with_host_iter_state(|state| {
         state.reader = None;
+        state.pending_line = false;
+        state.line_buf.clear();
     });
+    unsafe { set_abi_errno(saved_errno) };
 }
 
 /// `gethostent` — get next /etc/hosts entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostent() -> *mut c_void {
-    with_host_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(HOSTS_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return std::ptr::null_mut(),
-            }
+    let saved_errno = current_abi_errno();
+    match with_host_iter_state(|state| unsafe { host_iter_next(state) }) {
+        Ok(result) => {
+            unsafe { set_abi_errno(saved_errno) };
+            result
         }
-        unsafe { host_iter_next(state) }
-    })
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 // ===========================================================================
@@ -30264,8 +30359,7 @@ pub unsafe extern "C" fn gethostent_r(
     result: *mut *mut c_void,
     _h_errnop: *mut c_int,
 ) -> c_int {
-    use std::io::BufRead;
-
+    let saved_errno = current_abi_errno();
     if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
         return libc::EINVAL;
     }
@@ -30277,150 +30371,21 @@ pub unsafe extern "C" fn gethostent_r(
         return libc::EINVAL;
     }
 
-    with_host_iter_state(|state| {
-        if state.reader.is_none() {
-            match std::fs::File::open(HOSTS_PATH) {
-                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-                Err(_) => return libc::ENOENT,
-            }
+    let outcome = with_host_iter_state(|state| {
+        // SAFETY: all output slots were validated above; the shared iterator
+        // keeps the current input record when the caller needs a larger buffer.
+        unsafe { host_iter_next_r(state, result_buf, buf, buflen, result) }
+    });
+    match outcome {
+        Ok(found) => {
+            unsafe { set_abi_errno(saved_errno) };
+            if found { 0 } else { libc::ENOENT }
         }
-        let reader = match state.reader.as_mut() {
-            Some(reader) => reader,
-            None => return libc::ENOENT,
-        };
-
-        loop {
-            state.line_buf.clear();
-            match reader.read_until(b'\n', &mut state.line_buf) {
-                Ok(0) => return libc::ENOENT,
-                Err(_) => return libc::ENOENT,
-                Ok(_) => {}
-            }
-            let parsed = frankenlibc_core::resolv::parse_hosts_line(&state.line_buf);
-            let (addr_text, hostnames) = match parsed {
-                Some(v) => v,
-                None => continue,
-            };
-            if hostnames.is_empty() {
-                continue;
-            }
-            let addr_str = match std::str::from_utf8(&addr_text) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let (addr_bin, af, addr_len) = match hosts_line_af_inet_addr(addr_str) {
-                Some(v) => v,
-                None => continue,
-            };
-
-            let buf_u8 = buf as *mut u8;
-            let ptr_size = core::mem::size_of::<*mut c_char>();
-            let ptr_align = core::mem::align_of::<*mut c_char>();
-            let alen = match usize::try_from(addr_len) {
-                Ok(len) => len,
-                Err(_) => return libc::ERANGE,
-            };
-            let primary = &hostnames[0];
-            let effective_buflen = tracked_output_capacity(buf, buflen);
-
-            // Layout in buf: primary name + aliases + addr_data + align +
-            // addr_list[2] + alias_list[n+1].
-            let name_end = match primary.len().checked_add(1) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let aliases_end = match hostnames[1..].iter().try_fold(name_end, |end, alias| {
-                end.checked_add(alias.len().checked_add(1)?)
-            }) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let addr_off = aliases_end;
-            let addr_end = match addr_off.checked_add(alen) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let list_off = match aligned_output_offset(buf, addr_end, ptr_align) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let addr_list_off = list_off;
-            let addr_list_bytes = match 2usize.checked_mul(ptr_size) {
-                Some(bytes) => bytes,
-                None => return libc::ERANGE,
-            };
-            let alias_list_off = match addr_list_off.checked_add(addr_list_bytes) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let alias_count = hostnames.len() - 1;
-            let alias_list_bytes = match alias_count
-                .checked_add(1)
-                .and_then(|slots| slots.checked_mul(ptr_size))
-            {
-                Some(bytes) => bytes,
-                None => return libc::ERANGE,
-            };
-            let total_needed = match alias_list_off.checked_add(alias_list_bytes) {
-                Some(needed) => needed,
-                None => return libc::ERANGE,
-            };
-            if total_needed > effective_buflen {
-                return libc::ERANGE;
-            }
-
-            // Copy name
-            unsafe {
-                std::ptr::copy_nonoverlapping(primary.as_ptr(), buf_u8, primary.len());
-                *buf_u8.add(primary.len()) = 0;
-            }
-
-            // Copy address binary
-            unsafe {
-                std::ptr::copy_nonoverlapping(addr_bin.as_ptr(), buf_u8.add(addr_off), alen);
-            }
-
-            // addr_list: [&addr, NULL]
-            unsafe {
-                *(buf_u8.add(addr_list_off) as *mut *mut c_char) =
-                    buf_u8.add(addr_off) as *mut c_char;
-                *(buf_u8.add(addr_list_off + ptr_size) as *mut *mut c_char) = std::ptr::null_mut();
-            }
-
-            // aliases: every hostname after the first is an alias of the
-            // canonical primary name. The strings occupy the bytes between the
-            // primary name and the binary address; the pointer array follows
-            // the address list and is NULL terminated per `hostent`.
-            unsafe {
-                let mut alias_off = name_end;
-                for (slot, alias) in hostnames[1..].iter().enumerate() {
-                    let alias_ptr = buf_u8.add(alias_off).cast::<c_char>();
-                    std::ptr::copy_nonoverlapping(
-                        alias.as_ptr(),
-                        alias_ptr.cast::<u8>(),
-                        alias.len(),
-                    );
-                    *alias_ptr.add(alias.len()) = 0;
-                    *(buf_u8.add(alias_list_off + slot * ptr_size) as *mut *mut c_char) = alias_ptr;
-                    alias_off += alias.len() + 1;
-                }
-                *(buf_u8.add(alias_list_off + alias_count * ptr_size) as *mut *mut c_char) =
-                    std::ptr::null_mut();
-            }
-
-            let ent = result_buf.cast::<libc::hostent>();
-            unsafe {
-                (*ent).h_name = buf;
-                (*ent).h_aliases = buf_u8.add(alias_list_off) as *mut *mut c_char;
-                (*ent).h_addrtype = af;
-                (*ent).h_length = addr_len;
-                (*ent).h_addr_list = buf_u8.add(addr_list_off) as *mut *mut c_char;
-            }
-
-            unsafe { *result = result_buf };
-            return 0;
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            error
         }
-    })
+    }
 }
 
 /// Helper: fill a netent struct in caller-supplied buffers.

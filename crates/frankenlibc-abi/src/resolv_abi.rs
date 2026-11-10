@@ -722,6 +722,10 @@ fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(default_path))
 }
 
+pub(crate) fn hosts_backend_path() -> PathBuf {
+    configured_backend_path(HOSTS_PATH, HOSTS_PATH_ENV)
+}
+
 #[inline]
 fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "owned-tls-cache")]
@@ -2394,7 +2398,7 @@ unsafe fn write_reentrant_gethostbyname(
 const HOSTENT_ADDR_ALIGN: usize = align_of::<*mut c_char>();
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn write_reentrant_hostent_family(
+pub(crate) unsafe fn write_reentrant_hostent_family(
     name: &[u8],
     aliases: &[Vec<u8>],
     addresses: &[&[u8]],
@@ -2490,13 +2494,21 @@ unsafe fn write_reentrant_hostent_family(
     // SAFETY: the final address-list slot is within the reserved terminator slot.
     unsafe { *address_list_ptr.add(addresses.len()) = ptr::null_mut() };
 
-    // SAFETY: result_buf and result passed the alignment and null checks above.
-    let hostent = unsafe { &mut *result_buf.cast::<libc::hostent>() };
-    hostent.h_name = name_ptr;
-    hostent.h_aliases = aliases_ptr;
-    hostent.h_addrtype = af;
-    hostent.h_length = addr_len as c_int;
-    hostent.h_addr_list = address_list_ptr;
+    // SAFETY: result_buf passed the alignment and null checks above. A C caller
+    // may provide uninitialized output storage, so publish without first
+    // constructing a reference to the old, potentially uninitialized value.
+    unsafe {
+        ptr::write(
+            result_buf.cast::<libc::hostent>(),
+            libc::hostent {
+                h_name: name_ptr,
+                h_aliases: aliases_ptr,
+                h_addrtype: af,
+                h_length: addr_len as c_int,
+                h_addr_list: address_list_ptr,
+            },
+        );
+    }
     // SAFETY: result is a caller-provided writable out pointer.
     unsafe { *result = result_buf };
     Ok(())

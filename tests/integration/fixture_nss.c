@@ -341,6 +341,275 @@ static int test_hosts_provider(const char *candidate_path, const char *name,
     return 0;
 }
 
+typedef int (*hosts_public_next_fn)(struct hostent *, char *, size_t,
+                                     struct hostent **, int *);
+typedef struct hostent *(*hosts_static_next_fn)(void);
+typedef void (*hosts_public_start_fn)(int);
+typedef void (*hosts_public_end_fn)(void);
+typedef int (*hosts_files_next_fn)(struct hostent *, char *, size_t, int *, int *);
+
+struct hosts_enumeration_ops {
+    hosts_public_next_fn next;
+    hosts_static_next_fn next_static;
+    hosts_public_start_fn start;
+    hosts_public_end_fn end;
+    hosts_files_next_fn files_next;
+    identity_start_fn files_start;
+    identity_end_fn files_end;
+};
+
+struct hosts_enumeration_result {
+    struct hostent entry, *result;
+    char buffer[65537];
+    int status, err, herr, saved_errno;
+};
+
+struct hosts_enumeration_observations {
+    unsigned int count, max_aliases;
+    size_t max_name;
+};
+
+static int hosts_enumeration_bind(void *handle, const struct stat *owner,
+                                   struct hosts_enumeration_ops *ops) {
+    ops->next = (hosts_public_next_fn)identity_symbol(handle, "gethostent_r", owner);
+    ops->next_static = (hosts_static_next_fn)identity_symbol(handle, "gethostent", owner);
+    ops->start = (hosts_public_start_fn)identity_symbol(handle, "sethostent", owner);
+    ops->end = (hosts_public_end_fn)identity_symbol(handle, "endhostent", owner);
+    ops->files_next = (hosts_files_next_fn)identity_symbol(handle, "_nss_files_gethostent_r", owner);
+    ops->files_start = (identity_start_fn)identity_symbol(handle, "_nss_files_sethostent", owner);
+    ops->files_end = (identity_end_fn)identity_symbol(handle, "_nss_files_endhostent", owner);
+    return ops->next && ops->next_static && ops->start && ops->end &&
+        ops->files_next && ops->files_start && ops->files_end;
+}
+
+static int hosts_span_owned(const char *buffer, size_t capacity,
+                            const void *pointer, size_t length) {
+    uintptr_t base = (uintptr_t)buffer, address = (uintptr_t)pointer;
+    return pointer && address >= base && length <= capacity &&
+        address - base <= capacity - length;
+}
+
+static int hosts_string_owned(const char *buffer, size_t capacity, const char *text) {
+    return hosts_span_owned(buffer, capacity, text, 1) &&
+        memchr(text, 0, capacity - ((uintptr_t)text - (uintptr_t)buffer)) != NULL;
+}
+
+static char *hosts_list_at(const void *list, unsigned int index) {
+    char *value;
+    memcpy(&value, (const char *)list + index * sizeof(value), sizeof(value));
+    return value;
+}
+
+/* A reentrant answer must not borrow a parser allocation or publish unaligned
+ * native pointer tables. GNU may leave h_addr_list unaligned for buffer+1, so
+ * read the oracle's pointer slots as bytes and check native alignment separately. */
+static int hosts_record_owned(const struct hostent *entry, const char *buffer,
+                              size_t capacity) {
+    if (!hosts_string_owned(buffer, capacity, entry->h_name) ||
+        (entry->h_addrtype != AF_INET && entry->h_addrtype != AF_INET6) ||
+        entry->h_length != (entry->h_addrtype == AF_INET ? 4 : 16)) return 0;
+    for (int addresses = 0; addresses < 2; ++addresses) {
+        char **list = addresses ? entry->h_addr_list : entry->h_aliases;
+        if (!list) return 0;
+        unsigned int index = 0;
+        for (; index < 4096; ++index) {
+            if (!hosts_span_owned(buffer, capacity,
+                    (const char *)list + index * sizeof(*list), sizeof(*list))) return 0;
+            char *value = hosts_list_at(list, index);
+            if (!value) break;
+            if (addresses) {
+                if (!hosts_span_owned(buffer, capacity, value, (size_t)entry->h_length)) return 0;
+            } else if (!hosts_string_owned(buffer, capacity, value)) return 0;
+        }
+        if (index == 4096 || (addresses && !index)) return 0;
+    }
+    return 1;
+}
+
+static int hosts_records_equal(const struct hostent *a, const struct hostent *b,
+                                struct hosts_enumeration_observations *observations) {
+    if (!a || !b || (uintptr_t)b % _Alignof(struct hostent) ||
+        !a->h_name || !b->h_name || !a->h_aliases || !b->h_aliases ||
+        !a->h_addr_list || !b->h_addr_list ||
+        a->h_addrtype != b->h_addrtype || a->h_length != b->h_length ||
+        (a->h_length != 4 && a->h_length != 16) ||
+        strcmp(a->h_name, b->h_name)) return 0;
+    unsigned int aliases = 0;
+    for (; aliases < 4096; ++aliases) {
+        char *x = hosts_list_at(a->h_aliases, aliases), *y = hosts_list_at(b->h_aliases, aliases);
+        if (!x || !y) {
+            if (x != y) return 0;
+            break;
+        }
+        if (strcmp(x, y)) return 0;
+    }
+    if (aliases == 4096) return 0;
+    unsigned int addresses = 0;
+    for (; addresses < 4096; ++addresses) {
+        char *x = hosts_list_at(a->h_addr_list, addresses), *y = hosts_list_at(b->h_addr_list, addresses);
+        if (!x || !y) {
+            if (x != y) return 0;
+            break;
+        }
+        if (memcmp(x, y, (size_t)a->h_length)) return 0;
+    }
+    if (!addresses || addresses == 4096) return 0;
+    if (aliases > observations->max_aliases) observations->max_aliases = aliases;
+    size_t length = strlen(a->h_name);
+    if (length > observations->max_name) observations->max_name = length;
+    return 1;
+}
+
+static void hosts_enumeration_call(const struct hosts_enumeration_ops *ops,
+                                   int files, size_t capacity, size_t offset,
+                                   struct hosts_enumeration_result *out) {
+    memset(&out->entry, 0, sizeof(out->entry));
+    memset(out->buffer, 0xa5, sizeof(out->buffer));
+    out->result = NULL;
+    out->err = 777;
+    out->herr = 778;
+    errno = 780;
+    if (files) {
+        out->status = ops->files_next(&out->entry, out->buffer + offset,
+                                      capacity, &out->err, &out->herr);
+        if (out->status == 1) out->result = &out->entry;
+    } else {
+        out->status = ops->next(&out->entry, out->buffer + offset,
+                                capacity, &out->result, &out->herr);
+    }
+    out->saved_errno = errno;
+}
+
+static int hosts_enumeration_pair(const struct hosts_enumeration_ops *host,
+                                  const struct hosts_enumeration_ops *candidate,
+                                  int files, size_t capacity, size_t offset,
+                                  int expected, struct hosts_enumeration_observations *observations) {
+    struct hosts_enumeration_result a, b;
+    hosts_enumeration_call(host, files, capacity, offset, &a);
+    hosts_enumeration_call(candidate, files, capacity, offset, &b);
+    ++observations->count;
+    int found = files ? expected == 1 : expected == 0;
+    /* The public API can change errno while initializing resolver policy, even
+     * on success or EOF. Its ERANGE errno and all NSS-provider slots are observable. */
+    if (a.status != expected || b.status != a.status || a.err != b.err || a.herr != b.herr ||
+        ((files || expected == ERANGE) && a.saved_errno != b.saved_errno) ||
+        (found ? a.result != &a.entry || b.result != &b.entry : a.result || b.result)) {
+        fprintf(stderr, "FAIL: hosts enumeration files=%d capacity=%zu offset=%zu "
+                "expected=%d host=(%d,%d,%d,%d) candidate=(%d,%d,%d,%d)\n",
+                files, capacity, offset, expected, a.status, a.err, a.herr, a.saved_errno,
+                b.status, b.err, b.herr, b.saved_errno);
+        return 1;
+    }
+    for (size_t index = 0; index < sizeof(b.buffer); ++index) {
+        if ((index < offset || index >= offset + capacity) &&
+            ((unsigned char)a.buffer[index] != 0xa5 || (unsigned char)b.buffer[index] != 0xa5)) {
+            fprintf(stderr, "FAIL: hosts enumeration wrote outside caller storage\n");
+            return 1;
+        }
+    }
+    if (found && (!hosts_record_owned(&a.entry, a.buffer + offset, capacity) ||
+                  !hosts_record_owned(&b.entry, b.buffer + offset, capacity) ||
+                  (uintptr_t)b.entry.h_aliases % _Alignof(char *) ||
+                  (uintptr_t)b.entry.h_addr_list % _Alignof(char *) ||
+                  !hosts_records_equal(&a.entry, &b.entry, observations))) {
+        fprintf(stderr, "FAIL: hosts enumeration record or caller storage mismatch (files=%d)\n", files);
+        return 1;
+    }
+    return 0;
+}
+
+static int hosts_enumeration_control(const struct hosts_enumeration_ops *host,
+                                     const struct hosts_enumeration_ops *candidate,
+                                     int files, int closing, int stayopen,
+                                     struct hosts_enumeration_observations *observations) {
+    const struct hosts_enumeration_ops *providers[] = {host, candidate};
+    for (size_t index = 0; index < 2; ++index) {
+        const struct hosts_enumeration_ops *ops = providers[index];
+        errno = 780;
+        int status = 1;
+        if (files) status = closing ? ops->files_end() : ops->files_start(stayopen);
+        else if (closing) ops->end();
+        else ops->start(stayopen);
+        if (status != 1 || (files && errno != 780)) {
+            fprintf(stderr, "FAIL: hosts enumeration control files=%d closing=%d provider=%zu\n",
+                    files, closing, index);
+            return 1;
+        }
+    }
+    ++observations->count;
+    return 0;
+}
+
+static int test_hosts_enumeration_provider(const char *candidate_path,
+                                          unsigned int expected_records) {
+    void *host_handle = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    void *candidate_handle = dlopen(candidate_path, RTLD_NOW | RTLD_LOCAL);
+    struct stat host_stat, candidate_stat;
+    Dl_info host_info;
+    if (!expected_records || expected_records > 4096 || !host_handle || !candidate_handle ||
+        !dladdr(dlsym(host_handle, "getpid"), &host_info) ||
+        stat(host_info.dli_fname, &host_stat) || stat(candidate_path, &candidate_stat) ||
+        (host_stat.st_dev == candidate_stat.st_dev && host_stat.st_ino == candidate_stat.st_ino)) {
+        fprintf(stderr, "FAIL: distinct hosts enumeration providers and fixture rows required\n");
+        return 42;
+    }
+    struct hosts_enumeration_ops host, candidate;
+    if (!hosts_enumeration_bind(host_handle, &host_stat, &host) ||
+        !hosts_enumeration_bind(candidate_handle, &candidate_stat, &candidate) ||
+        host.next == candidate.next || host.next_static == candidate.next_static ||
+        host.files_next == candidate.files_next) return 42;
+    struct hosts_enumeration_observations observations = {0, 0, 0};
+    for (int files = 0; files < 2; ++files) {
+        int success = files ? 1 : 0, exhausted = files ? 0 : ENOENT, retry = files ? -2 : ERANGE;
+        for (size_t offset = 0; offset < 2; ++offset) {
+            if (hosts_enumeration_control(&host, &candidate, files, 0, 0, &observations)) return 1;
+            for (int attempt = 0; attempt < 2; ++attempt)
+                if (hosts_enumeration_pair(&host, &candidate, files, 1, offset, retry, &observations)) return 1;
+            for (unsigned int row = 0; row < expected_records; ++row)
+                if (hosts_enumeration_pair(&host, &candidate, files, 65536, offset, success, &observations)) return 1;
+            if (hosts_enumeration_pair(&host, &candidate, files, 65536, offset, exhausted, &observations) ||
+                hosts_enumeration_pair(&host, &candidate, files, 1, offset, retry, &observations) ||
+                hosts_enumeration_pair(&host, &candidate, files, 65536, offset, exhausted, &observations) ||
+                hosts_enumeration_control(&host, &candidate, files, 0, 1, &observations) ||
+                hosts_enumeration_pair(&host, &candidate, files, 65536, offset, success, &observations) ||
+                hosts_enumeration_control(&host, &candidate, files, 1, 0, &observations) ||
+                hosts_enumeration_pair(&host, &candidate, files, 65536, offset, success, &observations) ||
+                hosts_enumeration_control(&host, &candidate, files, 1, 0, &observations)) return 1;
+        }
+        /* The final fixture row has a 4096-byte name and 80 aliases. Retry it
+         * after a buffer that passes fixed-header validation but cannot hold the row. */
+        if (hosts_enumeration_control(&host, &candidate, files, 0, 0, &observations)) return 1;
+        for (unsigned int row = 1; row < expected_records; ++row)
+            if (hosts_enumeration_pair(&host, &candidate, files, 65536, 1, success, &observations)) return 1;
+        for (int attempt = 0; attempt < 2; ++attempt)
+            if (hosts_enumeration_pair(&host, &candidate, files, 1024, 1, retry, &observations)) return 1;
+        if (hosts_enumeration_pair(&host, &candidate, files, 65536, 1, success, &observations) ||
+            hosts_enumeration_pair(&host, &candidate, files, 65536, 1, exhausted, &observations) ||
+            hosts_enumeration_control(&host, &candidate, files, 1, 0, &observations)) return 1;
+    }
+    if (hosts_enumeration_control(&host, &candidate, 0, 0, 0, &observations)) return 1;
+    for (unsigned int row = 0; row <= expected_records; ++row) {
+        struct hostent *a = host.next_static(), *b = candidate.next_static();
+        ++observations.count;
+        if ((row == expected_records && (a || b)) ||
+            (row != expected_records && !hosts_records_equal(a, b, &observations))) {
+            fprintf(stderr, "FAIL: nonreentrant hosts enumeration row %u\n", row);
+            return 1;
+        }
+    }
+    if (hosts_enumeration_control(&host, &candidate, 0, 1, 0, &observations)) return 1;
+    if (observations.max_aliases != 80 || observations.max_name != 4096) {
+        fprintf(stderr, "FAIL: hosts enumeration long-record fixture absent or truncated\n");
+        return 1;
+    }
+    printf("fixture_nss: hosts enumeration provider PASS (%u differential observations, "
+           "%u records, %u aliases, %zu-byte name)\n", observations.count, expected_records,
+           observations.max_aliases, observations.max_name);
+    dlclose(candidate_handle);
+    dlclose(host_handle);
+    return 0;
+}
+
 static int test_getpwnam_root(void) {
     struct passwd *pw = getpwnam("root");
     if (pw == NULL) {
@@ -847,6 +1116,8 @@ int main(int argc, char **argv) {
         return test_files_provider(argv[2]);
     if (argc == 5 && strcmp(argv[1], "--hosts-provider") == 0)
         return test_hosts_provider(argv[2], argv[3], (unsigned int)strtoul(argv[4], NULL, 10));
+    if (argc == 4 && strcmp(argv[1], "--hosts-enumeration-provider") == 0)
+        return test_hosts_enumeration_provider(argv[2], (unsigned int)strtoul(argv[3], NULL, 10));
     if (argc != 1) return 2;
     int fails = 0;
 

@@ -14,8 +14,10 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/nss_module.rs'
+      - 'crates/frankenlibc-abi/src/pwd_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/pwd_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_innetgr.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/innetgr_synthetic.netgroup'
       - 'tests/integration/fixture_nss.c'
@@ -31,7 +33,7 @@ permissions:
 jobs:
   resolver:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: never
       CARGO_BUILD_JOBS: 2
@@ -73,6 +75,30 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo_default_hints -- --test-threads=1 --nocapture 2>&1 | tee "artifacts/resolver/default-hints-$mode.log"
             grep -Eq '^test result: ok\. 4 passed; 0 failed; 0 ignored;' "artifacts/resolver/default-hints-$mode.log"
           done
+      - name: Verify native files providers and password lock state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver
+          status=0
+          for mode in strict hardened; do
+            for filter in nss_files_ hosts_enumeration_; do
+              log="artifacts/resolver/files-$filter-$mode.log"
+              if ! FRANKENLIBC_MODE="$mode" cargo test --locked --no-fail-fast -p frankenlibc-abi \
+                --test resolv_abi_test "$filter" -- --test-threads=1 --nocapture \
+                2>&1 | tee "$log"; then status=1; fi
+              if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"; then status=1; fi
+            done
+            log="artifacts/resolver/password-lock-unit-$mode.log"
+            if ! FRANKENLIBC_MODE="$mode" cargo test --locked --no-fail-fast -p frankenlibc-abi \
+              --test pwd_abi_test lckpwdf -- --test-threads=1 --nocapture \
+              2>&1 | tee "$log"; then status=1; fi
+            if ! grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"; then status=1; fi
+            if ! grep -Fxq 'test lckpwdf_creates_private_cloexec_lock_and_excludes_other_processes ... ok' "$log"; then status=1; fi
+            if ! grep -Fxq 'test lckpwdf_open_failure_preserves_error_and_allows_retry ... ok' "$log"; then status=1; fi
+          done
+          exit "$status"
       - name: Verify netgroup NSS policy and iterator recovery against GNU
         if: always()
         shell: bash
@@ -154,6 +180,7 @@ jobs:
             grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "artifacts/resolver/addrconfig-$mode.log"
           done
       - name: Build release C exports and public caller
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -166,6 +193,88 @@ jobs:
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+      - name: Compare deployed files hosts and password locking with GNU
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver
+          cc -D_GNU_SOURCE -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/integration/fixture_nss.c -ldl -o target/nss-files-abi
+          caller="$PWD/target/nss-files-abi"
+          candidate="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$candidate"
+          host_libc="$(ldd "$caller" | awk '/libc.so.6/ {print $3; exit}')"
+          test -n "$host_libc"
+          command -v bwrap
+          command -v setpriv
+          runner_uid=$(id -u)
+          runner_gid=$(id -g)
+          scratch_root=$(mktemp -d "$RUNNER_TEMP/frankenlibc-files-provider.XXXXXX")
+          hosts_etc="$scratch_root/hosts-etc"
+          mkdir -p "$hosts_etc" "$scratch_root/password-host" \
+            "$scratch_root/password-strict" "$scratch_root/password-hardened"
+          printf 'hosts: files\n' > "$hosts_etc/nsswitch.conf"
+          printf 'multi on\n' > "$hosts_etc/host.conf"
+          printf '2001:db8::7 ipv6-only.example ipv6-only\n192.0.2.10 dual-v4.example dual-alias\n2001:db8::10 dual-v6.example dual-alias\n' > "$hosts_etc/hosts"
+          for row in $(seq 1 80); do
+            printf '192.0.2.%s many.example many-alias\n' "$row" >> "$hosts_etc/hosts"
+          done
+          # A complete final row must survive the nonreentrant buffer's growth
+          # and retain every alias when a reentrant caller retries it.
+          printf '198.51.100.42 ' >> "$hosts_etc/hosts"
+          printf 'n%.0s' {1..4096} >> "$hosts_etc/hosts"
+          for alias in $(seq 1 80); do
+            printf ' alias-%s-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' "$alias" >> "$hosts_etc/hosts"
+          done
+          printf '\n' >> "$hosts_etc/hosts"
+          # Mount as root, then run the caller as the runner user. The private
+          # /etc contains only fixtures, and dropping privileges keeps EACCES
+          # observable when the password test makes its scratch lock read-only.
+          run_private() {
+            local private_etc=$1 log=$2
+            shift 2
+            sudo -n timeout 30s bwrap --die-with-parent --unshare-pid --ro-bind / / \
+              --bind "$private_etc" /etc --proc /proc -- \
+              setpriv --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
+              env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_HOSTS_PATH \
+                -u FRANKENLIBC_NSSWITCH_PATH -u RESOLV_HOST_CONF -u RESOLV_MULTI \
+                "$@" 2>&1 | tee "$log"
+          }
+          # Each hosts invocation resolves and verifies two distinct ELF
+          # providers, then compares addresses, linked tuples, caller storage,
+          # ERANGE retry, errno, h_errno and TTL against GNU in the same process.
+          status=0
+          for mode in strict hardened; do
+            for query_rows in ipv6-only:1 dual-alias:2 many-alias:80; do
+              query=${query_rows%:*}
+              rows=${query_rows##*:}
+              log="artifacts/resolver/files-hosts-$query-$mode.log"
+              if ! run_private "$hosts_etc" "$log" FRANKENLIBC_MODE="$mode" \
+                "$caller" --hosts-provider "$candidate" "$query" "$rows"; then status=1; fi
+              if ! grep -Fxq "fixture_nss: hosts provider PASS (12 differential observations, $rows rows)" "$log"; then status=1; fi
+            done
+            log="artifacts/resolver/files-hosts-multi-off-$mode.log"
+            if ! run_private "$hosts_etc" "$log" FRANKENLIBC_MODE="$mode" RESOLV_MULTI=off \
+              "$caller" --hosts-provider "$candidate" many-alias 1; then status=1; fi
+            if ! grep -Fxq 'fixture_nss: hosts provider PASS (12 differential observations, 1 rows)' "$log"; then status=1; fi
+            log="artifacts/resolver/files-hosts-enumeration-$mode.log"
+            if ! run_private "$hosts_etc" "$log" FRANKENLIBC_MODE="$mode" \
+              "$caller" --hosts-enumeration-provider "$candidate" 82; then status=1; fi
+            if ! grep -Eq '^fixture_nss: hosts enumeration provider PASS \([1-9][0-9]* differential observations, 82 records, 80 aliases, 4096-byte name\)$' "$log"; then status=1; fi
+          done
+          log=artifacts/resolver/password-lock-host.log
+          if ! run_private "$scratch_root/password-host" "$log" \
+            "$caller" --password-lock-provider "$host_libc" "$scratch_root/password-host"; then status=1; fi
+          if ! grep -Eq '^fixture_nss: password lock provider PASS \(timeout [0-9]+\.[0-9]+s\)$' "$log"; then status=1; fi
+          for mode in strict hardened; do
+            private_etc="$scratch_root/password-$mode"
+            log="artifacts/resolver/password-lock-$mode.log"
+            if ! run_private "$private_etc" "$log" FRANKENLIBC_MODE="$mode" \
+              "$caller" --password-lock-fork-provider "$candidate" "$private_etc"; then status=1; fi
+            if ! grep -Eq '^fixture_nss: password lock provider PASS \(timeout [0-9]+\.[0-9]+s\)$' "$log"; then status=1; fi
+          done
+          exit "$status"
       - name: Compare deployed address configuration with GNU in isolated namespaces
         shell: bash
         run: |
@@ -197,7 +306,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cc -D_GNU_SOURCE -std=c11 -O2 -Wall -Wextra -Werror tests/integration/fixture_nss.c -o target/nss-default-hints
+          cc -D_GNU_SOURCE -std=c11 -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_nss.c -ldl -o target/nss-default-hints
           target/nss-default-hints | tee artifacts/resolver/default-hints-host.log
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" target/nss-default-hints > "artifacts/resolver/default-hints-preload-$mode.log"

@@ -6253,6 +6253,7 @@ fn nss_files_gethostbyname4_returns_all_rows_and_retries_without_publication() {
 
 #[test]
 fn nss_files_gethostbyname4_handles_ipv6_only_misses_and_unavailable_source() {
+    use frankenlibc_abi::errno_abi::__errno_location;
     use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
 
     with_nss_hosts_backend(b"2001:db8::1 ipv6-only\n", |paths| {
@@ -6298,7 +6299,8 @@ fn nss_files_gethostbyname4_handles_ipv6_only_misses_and_unavailable_source() {
                 &mut ttl,
             )
         };
-        assert_eq!((status, err, h_err, ttl), (-1, libc::ENOENT, -1, 779));
+        assert_eq!((status, err, h_err, ttl), (-1, libc::ENOENT, 1, 779));
+        assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
         assert!(head.is_null());
     });
 }
@@ -6772,6 +6774,265 @@ fn public_gethostent_agrees_with_gethtent() {
         public, private,
         "fl's public gethostent and private _gethtent disagree about /etc/hosts"
     );
+}
+
+#[test]
+fn hosts_enumeration_retries_the_same_record_after_erange() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+
+    with_resolver_backends(
+        Some(b"# ignored\n2001:db8::1 skipped-v6\n192.0.2.1 first first-alias\n198.51.100.2 second\n::1 loopback\n"),
+        None,
+        |_| unsafe {
+            unistd_abi::sethostent(0);
+            let mut entry: libc::hostent = mem::zeroed();
+            let mut storage = [0 as c_char; 1024];
+            let (buffer, capacity) =
+                misaligned_c_char_buffer(&mut storage, mem::align_of::<*mut c_char>());
+            let mut result = ptr::null_mut();
+            let mut h_err = 778;
+            for _ in 0..2 {
+                let rc = unistd_abi::gethostent_r(
+                    (&raw mut entry).cast(), buffer, 1, &mut result, &mut h_err,
+                );
+                assert_eq!(rc, libc::ERANGE);
+                assert!(result.is_null());
+                assert_eq!(h_err, 778);
+                assert_eq!(*__errno_location(), libc::ERANGE);
+            }
+            for (name, address) in [
+                (b"first".as_slice(), [192, 0, 2, 1]),
+                (b"second".as_slice(), [198, 51, 100, 2]),
+                (b"loopback".as_slice(), [127, 0, 0, 1]),
+            ] {
+                *__errno_location() = 780;
+                let rc = unistd_abi::gethostent_r(
+                    (&raw mut entry).cast(), buffer, capacity, &mut result, &mut h_err,
+                );
+                assert_eq!(rc, 0);
+                assert_eq!(result, (&raw mut entry).cast());
+                assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), name);
+                assert_eq!((entry.h_addrtype, entry.h_length), (libc::AF_INET, 4));
+                assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), 4), address);
+                assert!((entry.h_aliases as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+                assert_eq!((h_err, *__errno_location()), (778, 780));
+            }
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(), buffer, capacity, &mut result, &mut h_err,
+            );
+            assert_eq!(rc, libc::ENOENT);
+            assert!(result.is_null());
+            assert_eq!((h_err, *__errno_location()), (778, 780));
+            unistd_abi::endhostent();
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(), buffer, capacity, &mut result, &mut h_err,
+            );
+            assert_eq!(rc, 0);
+            assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), b"first");
+            unistd_abi::endhostent();
+        },
+    );
+}
+
+#[test]
+fn hosts_enumeration_keeps_long_records_and_every_alias() {
+    let primary = "n".repeat(4096);
+    let aliases: Vec<String> = (0..80)
+        .map(|i| format!("alias-{i}-{}", "x".repeat(30)))
+        .collect();
+    let hosts = format!(
+        "192.0.2.1 {primary} {}\n198.51.100.2 short last-alias\n",
+        aliases.join(" ")
+    );
+    with_resolver_backends(Some(hosts.as_bytes()), None, |_| unsafe {
+        unistd_abi::sethostent(0);
+        let entry = unistd_abi::gethostent().cast::<libc::hostent>();
+        assert!(!entry.is_null());
+        assert_eq!(
+            CStr::from_ptr((*entry).h_name).to_bytes(),
+            primary.as_bytes()
+        );
+        for (index, alias) in aliases.iter().enumerate() {
+            let value = *(*entry).h_aliases.add(index);
+            assert!(!value.is_null(), "aliases truncated at {index}");
+            assert_eq!(CStr::from_ptr(value).to_bytes(), alias.as_bytes());
+        }
+        assert!((*(*entry).h_aliases.add(aliases.len())).is_null());
+        let entry = unistd_abi::gethostent().cast::<libc::hostent>();
+        assert!(!entry.is_null());
+        assert_eq!(CStr::from_ptr((*entry).h_name).to_bytes(), b"short");
+        assert_eq!(
+            CStr::from_ptr(*(*entry).h_aliases).to_bytes(),
+            b"last-alias"
+        );
+        assert!((*(*entry).h_aliases.add(1)).is_null());
+        assert!(unistd_abi::gethostent().is_null());
+        unistd_abi::endhostent();
+    });
+}
+
+#[test]
+fn hosts_enumeration_nss_controls_rewind_and_preserve_pending_records() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_endhostent, _nss_files_gethostent_r, _nss_files_sethostent,
+    };
+
+    with_resolver_backends(
+        Some(b"192.0.2.1 first\n192.0.2.2 second\n"),
+        None,
+        |_| unsafe {
+            let mut entry: libc::hostent = mem::zeroed();
+            let mut buffer = [0 as c_char; 1024];
+            let (mut err, mut h_err) = (777, 778);
+            assert_eq!(_nss_files_sethostent(0), 1);
+            assert_eq!(
+                _nss_files_gethostent_r(
+                    (&raw mut entry).cast(),
+                    buffer.as_mut_ptr(),
+                    1,
+                    &mut err,
+                    &mut h_err,
+                ),
+                -2
+            );
+            assert_eq!((err, h_err), (libc::ERANGE, -1));
+            for name in [b"first".as_slice(), b"second".as_slice()] {
+                err = 777;
+                h_err = 778;
+                assert_eq!(
+                    _nss_files_gethostent_r(
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut err,
+                        &mut h_err,
+                    ),
+                    1
+                );
+                assert_eq!((err, h_err), (777, 778));
+                assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), name);
+            }
+            assert_eq!(_nss_files_sethostent(1), 1);
+            assert_eq!(
+                _nss_files_gethostent_r(
+                    (&raw mut entry).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                    &mut h_err,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), b"first");
+            assert_eq!(_nss_files_endhostent(), 1);
+            assert_eq!(
+                _nss_files_gethostent_r(
+                    (&raw mut entry).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                    &mut h_err,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), b"first");
+            assert_eq!(_nss_files_endhostent(), 1);
+        },
+    );
+}
+
+#[test]
+fn hosts_enumeration_empty_and_missing_source_statuses() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_endhostent, _nss_files_gethostent_r, _nss_files_sethostent,
+    };
+
+    with_resolver_backends(Some(b""), None, |paths| unsafe {
+        let mut entry: libc::hostent = mem::zeroed();
+        let mut buffer = [0 as c_char; 1024];
+        assert_eq!(_nss_files_sethostent(0), 1);
+        for (capacity, status, error, herror, global_error) in [
+            (1, -2, libc::ERANGE, -1, 780),
+            (34, -2, libc::ERANGE, -1, libc::ERANGE),
+            (35, 0, 777, 1, 780),
+            (1, -2, libc::ERANGE, -1, 780),
+        ] {
+            let (mut err, mut h_err) = (777, 778);
+            *__errno_location() = 780;
+            let actual = _nss_files_gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut err,
+                &mut h_err,
+            );
+            assert_eq!(
+                (actual, err, h_err, *__errno_location()),
+                (status, error, herror, global_error)
+            );
+        }
+        let mut result = ptr::null_mut();
+        let mut h_err = 778;
+        for capacity in [1, 35] {
+            *__errno_location() = 780;
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut result,
+                &mut h_err,
+            );
+            assert_eq!(
+                rc,
+                if capacity == 1 {
+                    libc::ERANGE
+                } else {
+                    libc::ENOENT
+                }
+            );
+            assert_eq!(
+                *__errno_location(),
+                if capacity == 1 { libc::ERANGE } else { 780 }
+            );
+            assert_eq!(h_err, 778);
+            assert!(result.is_null());
+        }
+        assert_eq!(_nss_files_endhostent(), 1);
+        std::env::set_var(HOSTS_PATH_ENV, paths.hosts.with_extension("missing"));
+        for capacity in [1, buffer.len()] {
+            let (mut err, mut h_err) = (777, 778);
+            *__errno_location() = 780;
+            let status = _nss_files_gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut err,
+                &mut h_err,
+            );
+            assert_eq!(
+                (status, err, h_err, *__errno_location()),
+                (-1, 777, 778, 780)
+            );
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut result,
+                &mut h_err,
+            );
+            assert_eq!(
+                (rc, h_err, *__errno_location()),
+                (libc::ENOENT, 778, libc::ENOENT)
+            );
+            assert!(result.is_null());
+        }
+        assert_eq!(_nss_files_sethostent(0), -1);
+        assert_eq!(*__errno_location(), libc::ENOENT);
+        assert!(unistd_abi::gethostent().is_null());
+        assert_eq!(*__errno_location(), libc::ENOENT);
+        assert_eq!(_nss_files_endhostent(), 1);
+    });
 }
 
 // ===========================================================================
