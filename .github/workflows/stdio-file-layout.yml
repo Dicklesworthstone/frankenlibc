@@ -353,7 +353,7 @@ jobs:
         run: |
           set -uo pipefail
           status=0
-          for case in fopen fdopen tmpfile fmemopen open_memstream popen fopencookie error freopen reuse; do
+          for case in fopen fdopen tmpfile fmemopen open_memstream popen fopencookie error freopen reuse many; do
             if ! timeout 20 target/stdio-file-layout "$case" > "artifacts/stdio-layout/host-$case.out" 2> "artifacts/stdio-layout/host-$case.err"; then
               status=1
             fi

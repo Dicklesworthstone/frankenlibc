@@ -734,6 +734,59 @@ fn registry_register_multiple_and_count() {
 }
 
 #[test]
+fn registry_growth_preserves_handles_iteration_and_slot_reuse() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = native_stream_registry();
+    let initial_count = reg.open_count();
+    let mut handles = Vec::new();
+    for i in 0..768 {
+        let file = NativeFile::new(10_000 + i, file_flags::READ, NativeFileBufMode::None);
+        let slot = reg.register(file).expect("native FILE registry must grow");
+        let address = reg.get(slot).unwrap() as *const NativeFile as usize;
+        handles.push((slot, address));
+    }
+    assert_eq!(reg.open_count(), initial_count + handles.len());
+    for (i, &(slot, address)) in handles.iter().enumerate() {
+        let file = reg.get(slot).unwrap();
+        assert_eq!(file as *const NativeFile as usize, address);
+        assert_eq!(file.fd(), 10_000 + i as i32);
+    }
+    drop(reg);
+
+    // Exercise the exported iterator too: a fixed end sentinel at slot 256
+    // used to make grown slots unreachable even if registration were extended.
+    let mut visited = std::collections::HashSet::new();
+    unsafe {
+        let end = _IO_iter_end();
+        let mut iter = _IO_iter_begin();
+        while iter != end {
+            let file = _IO_iter_file(iter);
+            assert!(!file.is_null());
+            assert!(visited.insert(file as usize), "iterator must make progress");
+            assert!(visited.len() <= initial_count + handles.len());
+            iter = _IO_iter_next(iter);
+        }
+    }
+    assert_eq!(visited.len(), initial_count + handles.len());
+    assert!(handles.iter().all(|(_, address)| visited.contains(address)));
+
+    let mut reg = native_stream_registry();
+    let (reused_slot, reused_address) = handles[511];
+    assert!(reg.unregister(reused_slot));
+    let replacement = NativeFile::new(20_000, file_flags::WRITE, NativeFileBufMode::None);
+    assert_eq!(reg.register(replacement), Some(reused_slot));
+    assert_eq!(reg.get(reused_slot).unwrap().fd(), 20_000);
+    assert_eq!(
+        reg.get(reused_slot).unwrap() as *const NativeFile as usize,
+        reused_address
+    );
+    for (slot, _) in handles {
+        assert!(reg.unregister(slot));
+    }
+    assert_eq!(reg.open_count(), initial_count);
+}
+
+#[test]
 fn registry_get_mut_modifies_stream() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();

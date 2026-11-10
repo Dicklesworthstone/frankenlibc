@@ -1780,19 +1780,16 @@ fn initial_glibc_flags(open_flags: &OpenFlags, has_fd: bool, buf_mode: BufMode) 
     flags
 }
 
-/// Allocate the `FILE *` for a new registry stream: a glibc-layout handle
-/// when one is available, otherwise (handle table exhausted) a legacy
-/// synthetic id. Returns `(id, handle_word)`.
-fn alloc_stream_handle(fd: c_int, open_flags: &OpenFlags, buf_mode: BufMode) -> (usize, usize) {
+/// Allocate a glibc-layout `FILE *` for a new registry stream.
+/// A synthetic id is never a valid fallback: libc macros dereference FILE.
+fn alloc_stream_handle(
+    fd: c_int,
+    open_flags: &OpenFlags,
+    buf_mode: BufMode,
+) -> Option<(usize, usize)> {
     let glibc_flags = initial_glibc_flags(open_flags, fd >= 0, buf_mode);
-    match io_internal_abi::register_stdio_handle(
-        fd,
-        native_stream_open_flags(*open_flags),
-        glibc_flags,
-    ) {
-        Some(ptr) => (ptr as usize, ptr as usize),
-        None => (alloc_stream_id(), 0),
-    }
+    io_internal_abi::register_stdio_handle(fd, native_stream_open_flags(*open_flags), glibc_flags)
+        .map(|ptr| (ptr as usize, ptr as usize))
 }
 
 struct StreamRegistry {
@@ -3377,7 +3374,7 @@ pub(crate) fn register_memory_stream_with_native_handle(
     );
     let mut native_reg = io_internal_abi::native_stream_registry();
     let Some(slot) = native_reg.register(file) else {
-        unsafe { set_abi_errno(errno::EMFILE) };
+        unsafe { set_abi_errno(errno::ENOMEM) };
         return std::ptr::null_mut();
     };
     let native_ptr = match native_reg.get_mut(slot) {
@@ -4180,9 +4177,11 @@ unsafe fn fopen_with_mount_flags(
     // Create stream via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
-        // fdopen_native_impl failed (registry full) - close the fd we opened.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        // Keep the allocation failure across descriptor cleanup and accounting.
         let _ = raw_syscall::sys_close(fd);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        unsafe { set_abi_errno(saved_errno) };
     } else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     }
@@ -4223,7 +4222,10 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
 
     // The FILE * handed back is a glibc-layout handle (bd-rc0923-epic-eeuy4f.1):
     // callers and glibc's inline macros dereference it.
-    let (id, handle) = alloc_stream_handle(fd, open_flags, buf_mode);
+    let Some((id, handle)) = alloc_stream_handle(fd, open_flags, buf_mode) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if reg.streams.contains_key(&id) {
         // A stale entry at a reused handle address would be a registry bug;
@@ -15403,7 +15405,9 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
     // Create stream via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        unsafe { set_abi_errno(saved_errno) };
     } else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
     }
@@ -16213,8 +16217,10 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
         };
         let fp = fdopen_native_impl(fd2, &open_flags);
         if fp.is_null() {
+            let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
             let _ = raw_syscall::sys_close(fd2);
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+            unsafe { set_abi_errno(saved_errno) };
             return std::ptr::null_mut();
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
@@ -16228,8 +16234,10 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
     };
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         let _ = raw_syscall::sys_close(fd);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+        unsafe { set_abi_errno(saved_errno) };
         return std::ptr::null_mut();
     }
 
@@ -17618,7 +17626,10 @@ pub unsafe extern "C" fn fopencookie(
     let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
     // glibc's fopencookie streams are byte-oriented from creation (_mode == -1).
     stream.set_orientation(-1);
-    let (id, handle) = alloc_stream_handle(-1, &open_flags, BufMode::Full);
+    let Some((id, handle)) = alloc_stream_handle(-1, &open_flags, BufMode::Full) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.insert_stream_with_handle(id, stream, handle);

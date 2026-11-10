@@ -1355,7 +1355,7 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
 
 use std::sync::Mutex;
 
-/// Maximum number of concurrently open native streams.
+/// Number of slots in the allocation-free startup slab and each growth slab.
 const STREAM_REGISTRY_CAPACITY: usize = 256;
 
 /// Slot state: slot is free.
@@ -1392,6 +1392,10 @@ impl StreamSlot {
 /// Slots 0/1/2 are pre-registered for stdin/stdout/stderr.
 pub struct NativeStreamRegistry {
     slots: [StreamSlot; STREAM_REGISTRY_CAPACITY],
+    /// Each inner allocation has its final length before it is published and
+    /// is never resized or removed. Moving the outer Vec cannot move a FILE.
+    /// Empty slots are reused, so retained storage follows peak concurrency.
+    overflow: Vec<Vec<StreamSlot>>,
 }
 
 impl NativeStreamRegistry {
@@ -1403,7 +1407,58 @@ impl NativeStreamRegistry {
     #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Self = Self {
         slots: [const { StreamSlot::EMPTY }; STREAM_REGISTRY_CAPACITY],
+        overflow: Vec::new(),
     };
+
+    fn slots(&self) -> impl Iterator<Item = &StreamSlot> {
+        self.slots
+            .iter()
+            .chain(self.overflow.iter().flat_map(|slab| slab.iter()))
+    }
+
+    fn slots_mut(&mut self) -> impl Iterator<Item = &mut StreamSlot> {
+        self.slots
+            .iter_mut()
+            .chain(self.overflow.iter_mut().flat_map(|slab| slab.iter_mut()))
+    }
+
+    fn slot(&self, index: usize) -> Option<&StreamSlot> {
+        if index < STREAM_REGISTRY_CAPACITY {
+            self.slots.get(index)
+        } else {
+            self.overflow
+                .get(index / STREAM_REGISTRY_CAPACITY - 1)?
+                .get(index % STREAM_REGISTRY_CAPACITY)
+        }
+    }
+
+    fn slot_mut(&mut self, index: usize) -> Option<&mut StreamSlot> {
+        if index < STREAM_REGISTRY_CAPACITY {
+            self.slots.get_mut(index)
+        } else {
+            self.overflow
+                .get_mut(index / STREAM_REGISTRY_CAPACITY - 1)?
+                .get_mut(index % STREAM_REGISTRY_CAPACITY)
+        }
+    }
+
+    /// Recognize occupied AND closed handles without dereferencing the caller's
+    /// pointer. Closed handles must never be misrouted to host glibc.
+    fn handle_slot(&self, file: *const c_void) -> Option<usize> {
+        self.slots()
+            .position(|slot| ptr::eq(&slot.file as *const NativeFile as *const c_void, file))
+    }
+
+    fn occupy_slot(slot: &mut StreamSlot, file: NativeFile) {
+        slot.state = SLOT_OCCUPIED;
+        slot.file = file;
+        // SAFETY: callers hold the registry mutex, and all slabs have stable
+        // addresses before this FILE becomes visible in the linked list.
+        unsafe {
+            slot.file.set_chain(native_file_list().cast::<NativeFile>());
+            publish_native_file_list((&mut slot.file as *mut NativeFile).cast());
+        }
+    }
 
     #[allow(dead_code)]
     fn new() -> Self {
@@ -1473,38 +1528,48 @@ impl NativeStreamRegistry {
         }
     }
 
-    /// Register a new stream. Returns the slot index, or `None` if full.
+    /// Register a new stream, growing by a stable slab when needed.
+    /// Returns `None` only if storage cannot be allocated or indexed.
     ///
     /// The new file is prepended to the `_IO_list_all` linked list.
     pub fn register(&mut self, file: NativeFile) -> Option<usize> {
         // Start from slot 3 (0/1/2 are reserved for stdin/stdout/stderr).
-        for (i, slot) in self.slots.iter_mut().enumerate().skip(3) {
+        for (i, slot) in self.slots_mut().enumerate().skip(3) {
             if slot.state == SLOT_FREE {
-                slot.state = SLOT_OCCUPIED;
-                slot.file = file;
-                // Link into _chain list: new file becomes the head.
-                // SAFETY: _IO_list_all is protected by the registry mutex.
-                let new_file_ptr: *mut NativeFile = &mut slot.file;
-                unsafe {
-                    let old_head = native_file_list().cast::<NativeFile>();
-                    slot.file.set_chain(old_head);
-                    publish_native_file_list(new_file_ptr.cast::<c_void>());
-                }
+                Self::occupy_slot(slot, file);
                 return Some(i);
             }
         }
-        None // Registry full.
+        let index = self
+            .overflow
+            .len()
+            .checked_add(1)?
+            .checked_mul(STREAM_REGISTRY_CAPACITY)?;
+        // Leave usize::MAX available for the opaque iterator end sentinel.
+        index.checked_add(STREAM_REGISTRY_CAPACITY)?;
+        self.overflow.try_reserve(1).ok()?;
+        let mut slab = Vec::new();
+        slab.try_reserve_exact(STREAM_REGISTRY_CAPACITY).ok()?;
+        slab.resize_with(STREAM_REGISTRY_CAPACITY, StreamSlot::empty);
+        // Neither Vec can allocate below: their capacities were reserved
+        // fallibly before publishing a FILE pointer into either registry.
+        self.overflow.push(slab);
+        Self::occupy_slot(&mut self.overflow.last_mut()?[0], file);
+        Some(index)
     }
 
     /// Unregister a stream by slot index. Returns `true` if the slot was occupied.
     ///
     /// The file is unlinked from the `_IO_list_all` linked list.
     pub fn unregister(&mut self, index: usize) -> bool {
-        if index >= STREAM_REGISTRY_CAPACITY || self.slots[index].state != SLOT_OCCUPIED {
+        let Some(slot) = self.slot_mut(index) else {
+            return false;
+        };
+        if slot.state != SLOT_OCCUPIED {
             return false;
         }
         // Unlink from _chain list.
-        let file_ptr: *mut NativeFile = &mut self.slots[index].file;
+        let file_ptr: *mut NativeFile = &mut slot.file;
         // SAFETY: _IO_list_all is protected by the registry mutex.
         unsafe {
             let mut prev: *mut NativeFile = ptr::null_mut();
@@ -1525,7 +1590,7 @@ impl NativeStreamRegistry {
                 curr = (*curr).chain();
             }
         }
-        self.slots[index] = StreamSlot::empty();
+        *slot = StreamSlot::empty();
         // Keep the lock-free `native_stdio_fd_for_ptr` table exact. `register` never hands
         // out a reserved slot (it starts at 3), so this is unreachable today; it exists so
         // the table cannot outlive the slot's occupancy if that ever changes.
@@ -1537,8 +1602,9 @@ impl NativeStreamRegistry {
 
     /// Get a mutable reference to a stream by slot index.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut NativeFile> {
-        if index < STREAM_REGISTRY_CAPACITY && self.slots[index].state == SLOT_OCCUPIED {
-            Some(&mut self.slots[index].file)
+        let slot = self.slot_mut(index)?;
+        if slot.state == SLOT_OCCUPIED {
+            Some(&mut slot.file)
         } else {
             None
         }
@@ -1546,8 +1612,9 @@ impl NativeStreamRegistry {
 
     /// Get a reference to a stream by slot index.
     pub fn get(&self, index: usize) -> Option<&NativeFile> {
-        if index < STREAM_REGISTRY_CAPACITY && self.slots[index].state == SLOT_OCCUPIED {
-            Some(&self.slots[index].file)
+        let slot = self.slot(index)?;
+        if slot.state == SLOT_OCCUPIED {
+            Some(&slot.file)
         } else {
             None
         }
@@ -1558,7 +1625,7 @@ impl NativeStreamRegistry {
     /// This implements `fflush(NULL)` semantics: flush every open output stream.
     pub fn flush_all(&mut self) -> usize {
         let mut errors = 0;
-        for slot in &mut self.slots {
+        for slot in self.slots_mut() {
             if slot.state == SLOT_OCCUPIED && slot.file.is_writable() {
                 let file_ptr: *mut NativeFile = &mut slot.file;
                 // SAFETY: file_ptr is a valid pointer to our registry-owned NativeFile.
@@ -1573,26 +1640,20 @@ impl NativeStreamRegistry {
 
     /// Count of currently open streams.
     pub fn open_count(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|s| s.state == SLOT_OCCUPIED)
-            .count()
+        self.slots().filter(|s| s.state == SLOT_OCCUPIED).count()
     }
 
     /// Find the first occupied slot index (for `_IO_iter_begin`).
     pub fn first_occupied(&self) -> Option<usize> {
-        self.slots.iter().position(|s| s.state == SLOT_OCCUPIED)
+        self.slots().position(|s| s.state == SLOT_OCCUPIED)
     }
 
     /// Find the next occupied slot index after `after` (for `_IO_iter_next`).
     pub fn next_occupied(&self, after: usize) -> Option<usize> {
-        if after + 1 >= STREAM_REGISTRY_CAPACITY {
-            return None;
-        }
-        self.slots[after + 1..]
-            .iter()
-            .position(|s| s.state == SLOT_OCCUPIED)
-            .map(|offset| after + 1 + offset)
+        self.slots()
+            .enumerate()
+            .skip(after.checked_add(1)?)
+            .find_map(|(index, slot)| (slot.state == SLOT_OCCUPIED).then_some(index))
     }
 }
 
@@ -1900,7 +1961,7 @@ pub(crate) mod glibc_flag_bits {
 /// the inline fast paths always fall through to `__uflow`/`__overflow`, which
 /// dispatch into the registry; `_fileno` and `_flags` are kept truthful.
 ///
-/// Returns `None` when the handle table is full.
+/// Returns `None` when handle storage cannot be allocated.
 pub(crate) fn register_stdio_handle(
     fd: c_int,
     native_open_flags: u32,
@@ -1961,8 +2022,7 @@ pub(crate) fn is_native_handle_slot_address(ptr: *mut c_void) -> bool {
         return false;
     }
     let registry = native_stream_registry();
-    (3..STREAM_REGISTRY_CAPACITY)
-        .any(|i| (&registry.slots[i].file as *const NativeFile as *mut c_void) == ptr)
+    registry.handle_slot(ptr).is_some_and(|index| index >= 3)
 }
 
 pub fn register_native_file_ptr(ptr: *mut c_void) {
@@ -2235,15 +2295,9 @@ pub fn verify_native_file(ptr: *mut c_void) -> Option<usize> {
 
     // Check registry for dynamically opened files (slots 3+)
     let registry = native_stream_registry();
-    for i in 3..STREAM_REGISTRY_CAPACITY {
-        if let Some(file) = registry.get(i)
-            && (file as *const NativeFile as *mut c_void) == ptr
-        {
-            return Some(i);
-        }
-    }
-
-    None
+    registry
+        .handle_slot(ptr)
+        .filter(|&index| registry.get(index).is_some())
 }
 
 // ---------------------------------------------------------------------------
@@ -3611,14 +3665,14 @@ pub unsafe extern "C" fn _IO_wmarker_delta(_marker: *mut c_void) -> c_int {
 
 /// Iterator encoding: slot index + 1 as opaque pointer (bd-di5w).
 /// Slot 0 (stdin) encodes as 1, slot 1 (stdout) as 2, etc.
-/// End sentinel = STREAM_REGISTRY_CAPACITY + 1 = 257.
-const IO_ITER_END_SENTINEL: usize = STREAM_REGISTRY_CAPACITY + 1;
+/// The end sentinel cannot collide with an index when the registry grows.
+const IO_ITER_END_SENTINEL: usize = usize::MAX;
 
 /// Decode an iterator pointer to a slot index.
 #[inline]
 fn io_iter_decode(iter: *mut c_void) -> Option<usize> {
     let encoded = iter as usize;
-    if encoded == 0 || encoded > STREAM_REGISTRY_CAPACITY {
+    if encoded == 0 || encoded == IO_ITER_END_SENTINEL {
         None
     } else {
         Some(encoded - 1)

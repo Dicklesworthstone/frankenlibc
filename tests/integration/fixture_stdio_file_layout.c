@@ -201,6 +201,69 @@ static int check_reuse(void) {
     return 0;
 }
 
+/* Cross several handle slabs with mixed backing types. Only one quarter of
+ * these streams need descriptors, so this also works with a 1024-fd limit.
+ * Header reads and unlocked macros must remain valid after later opens grow
+ * the registry, and fflush(NULL) must visit output streams in every slab. */
+static int check_many(void) {
+    enum { COUNT = 768 };
+    FILE *streams[COUNT];
+    struct cookie cookies[COUNT];
+    char input[COUNT][3];
+    char *output[COUNT] = {0};
+    size_t sizes[COUNT] = {0};
+    cookie_io_functions_t ops = {.read = cookie_read, .close = cookie_close};
+    for (int round = 0; round < 2; ++round) {
+        for (int i = 0; i < COUNT; ++i) {
+            memcpy(input[i], "ab", 3);
+            cookies[i] = (struct cookie){"ab", 0, 0};
+            switch (i % 4) {
+            case 0: streams[i] = fopen("/dev/null", "w"); break;
+            case 1: streams[i] = fmemopen(input[i], 2, "r"); break;
+            case 2: streams[i] = fopencookie(&cookies[i], "r", ops); break;
+            default: streams[i] = open_memstream(&output[i], &sizes[i]); break;
+            }
+            CHECK(streams[i] != NULL);
+            CHECK(((unsigned)streams[i]->_flags & 0xffff0000u) == 0xfbad0000u);
+            CHECK(streams[i]->_lock != NULL);
+        }
+        for (int i = 0; i < COUNT; ++i) {
+            FILE *f = streams[i];
+            if (i % 4 == 0) {
+                CHECK(fileno_unlocked(f) == fileno(f));
+                CHECK(putc_unlocked('a', f) == 'a');
+                CHECK(putc_unlocked('b', f) == 'b');
+                CHECK(__fpending(f) == 2);
+                CHECK(!ferror_unlocked(f));
+            } else if (i % 4 == 3) {
+                CHECK(putc_unlocked('a', f) == 'a');
+                CHECK(putc_unlocked('b', f) == 'b');
+            } else {
+                CHECK(check_read(f) == 0);
+            }
+        }
+        CHECK(fflush(NULL) == 0);
+        for (int i = COUNT - 1; i >= 0; --i) {
+            if (i % 4 == 0) CHECK(__fpending(streams[i]) == 0);
+            if (i % 4 == 3) {
+                /* GNU publishes memory-stream pointers on an explicit flush,
+                 * even when fflush(NULL) already flushed descriptor streams. */
+                CHECK(fflush(streams[i]) == 0);
+                CHECK(sizes[i] == 2 && memcmp(output[i], "ab\0", 3) == 0);
+            }
+            CHECK(fclose(streams[i]) == 0);
+            if (i % 4 == 2) CHECK(cookies[i].closed == 1);
+            if (i % 4 == 3) {
+                CHECK(sizes[i] == 2 && memcmp(output[i], "ab\0", 3) == 0);
+                free(output[i]);
+                output[i] = NULL;
+                sizes[i] = 0;
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     struct { const char *name; int (*run)(void); } cases[] = {
         {"fopen", check_fopen}, {"fdopen", check_fdopen},
@@ -208,6 +271,7 @@ int main(int argc, char **argv) {
         {"open_memstream", check_open_memstream}, {"popen", check_popen},
         {"fopencookie", check_fopencookie}, {"error", check_error},
         {"freopen", check_freopen}, {"reuse", check_reuse},
+        {"many", check_many},
     };
     if (argc != 2) return 2;
     for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i) {
