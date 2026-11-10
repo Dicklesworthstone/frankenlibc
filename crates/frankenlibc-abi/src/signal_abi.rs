@@ -1155,6 +1155,7 @@ pub unsafe extern "C" fn sigprocmask(
     set: *const libc::sigset_t,
     oldset: *mut libc::sigset_t,
 ) -> c_int {
+    let _ = crate::malloc_abi::signal_handler_context_now();
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, how as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EINVAL) };

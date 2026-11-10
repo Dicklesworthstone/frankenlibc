@@ -1686,13 +1686,26 @@ pub(crate) fn try_lock_native_stream_registry()
 /// forever in the child (fixture_fork_mt: a child blocked in
 /// `lookup_adopted_foreign` -> `Once::call`), then try-lock the foreign
 /// adoption map for the fork guard.
+///
+/// In a single-threaded parent (`__libc_single_threaded != 0`), no sibling
+/// thread can be mid-init, so we skip initializing or locking the map unless
+/// foreign adoption has actually been used.
 pub(crate) fn try_lock_foreign_adoption_map()
--> Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>> {
-    std::sync::LazyLock::force(&NATIVE_FILE_BLOOM);
+-> Result<Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>>, ()> {
+    let single_threaded =
+        crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
+    if single_threaded && !FOREIGN_ADOPTION_MAP_INITIALIZED.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    if !single_threaded {
+        std::sync::LazyLock::force(&NATIVE_FILE_BLOOM);
+        NATIVE_FILE_BLOOM_INITIALIZED.store(true, Ordering::Release);
+        FOREIGN_ADOPTION_MAP_INITIALIZED.store(true, Ordering::Release);
+    }
     match FOREIGN_ADOPTION_MAP.try_lock() {
-        Ok(guard) => Some(guard),
-        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-        Err(std::sync::TryLockError::WouldBlock) => None,
+        Ok(guard) => Ok(Some(guard)),
+        Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
+        Err(std::sync::TryLockError::WouldBlock) => Err(()),
     }
 }
 
@@ -1729,7 +1742,7 @@ const NATIVE_FILE_MAX_OFFSET: usize = (STREAM_REGISTRY_CAPACITY - 1) * NATIVE_SL
 /// the `STREAM_REGISTRY_CAPACITY` `NativeFile` slots in `NATIVE_STREAM_REGISTRY`.
 #[inline]
 pub(crate) fn is_native_slot_ptr_lockfree(stream: *const c_void) -> bool {
-    let base = NATIVE_SLOTS_FILE_BASE.load(Ordering::Relaxed);
+    let base = NATIVE_SLOTS_FILE_BASE.load(Ordering::Acquire);
     let offset = (stream as usize).wrapping_sub(base);
     offset <= NATIVE_FILE_MAX_OFFSET && offset.is_multiple_of(NATIVE_SLOT_STRIDE)
 }
@@ -1761,14 +1774,11 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
     if !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
         guard.ensure_stdio_chain_linked();
 
-        // Register stdin/stdout/stderr in the bloom filter for ownership tracking.
+        // Publish the base address of `slots[0].file` for the lock-free
+        // `is_native_slot_ptr_lockfree` range-and-stride check across all
+        // 256 static slots. Static slots never need `NATIVE_FILE_BLOOM`.
         let stdin_ptr: *mut NativeFile = &mut guard.slots[0].file;
-        let stdout_ptr: *mut NativeFile = &mut guard.slots[1].file;
-        let stderr_ptr: *mut NativeFile = &mut guard.slots[2].file;
-        NATIVE_FILE_BLOOM.insert(stdin_ptr as usize);
-        NATIVE_FILE_BLOOM.insert(stdout_ptr as usize);
-        NATIVE_FILE_BLOOM.insert(stderr_ptr as usize);
-        NATIVE_SLOTS_FILE_BASE.store(stdin_ptr as usize, Ordering::Relaxed);
+        NATIVE_SLOTS_FILE_BASE.store(stdin_ptr as usize, Ordering::Release);
 
         // Publish the reserved slot addresses for the lock-free `native_stdio_fd_for_ptr`
         // path. `get_mut` (not `&mut slots[i].file`) so an unoccupied slot publishes 0 and
@@ -1916,6 +1926,8 @@ pub unsafe fn configure_native_stdio_stream(
 /// (bd-rc0923-epic-eeuy4f.25). A false positive only costs the secondary lookup.
 static NATIVE_FILE_BLOOM: std::sync::LazyLock<PointerBloomFilter> =
     std::sync::LazyLock::new(|| PointerBloomFilter::with_capacity(16_384, 0.001));
+static NATIVE_FILE_BLOOM_INITIALIZED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Maps foreign FILE* addresses to NativeFile slot indices after adoption.
 ///
@@ -1924,6 +1936,8 @@ static NATIVE_FILE_BLOOM: std::sync::LazyLock<PointerBloomFilter> =
 /// subsequent calls with the same foreign pointer find the adopted NativeFile.
 static FOREIGN_ADOPTION_MAP: std::sync::LazyLock<Mutex<ArtifactHashMap<usize, usize>>> =
     std::sync::LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static FOREIGN_ADOPTION_MAP_INITIALIZED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Offset of `_fileno` field in glibc's `_IO_FILE` struct (glibc 2.34, x86_64).
 ///
@@ -2026,8 +2040,9 @@ pub(crate) fn is_native_handle_slot_address(ptr: *mut c_void) -> bool {
 }
 
 pub fn register_native_file_ptr(ptr: *mut c_void) {
-    if !ptr.is_null() {
+    if !ptr.is_null() && !is_native_slot_ptr_lockfree(ptr) {
         NATIVE_FILE_BLOOM.insert(ptr as usize);
+        NATIVE_FILE_BLOOM_INITIALIZED.store(true, Ordering::Release);
     }
 }
 
@@ -2040,14 +2055,18 @@ pub fn might_be_native_file(ptr: *mut c_void) -> bool {
     if ptr.is_null() {
         return false;
     }
-    NATIVE_FILE_BLOOM.might_contain(ptr as usize)
+    if is_native_slot_ptr_lockfree(ptr) {
+        return true;
+    }
+    NATIVE_FILE_BLOOM_INITIALIZED.load(Ordering::Acquire)
+        && NATIVE_FILE_BLOOM.might_contain(ptr as usize)
 }
 
 /// Look up a NativeFile slot index by foreign pointer (after adoption).
 ///
 /// Returns `Some(slot_index)` if this foreign pointer was previously adopted.
 pub fn lookup_adopted_foreign(foreign_ptr: *mut c_void) -> Option<usize> {
-    if foreign_ptr.is_null() {
+    if foreign_ptr.is_null() || !FOREIGN_ADOPTION_MAP_INITIALIZED.load(Ordering::Acquire) {
         return None;
     }
     let map = crate::runtime_policy::lock_std_mutex_preserving_errno(&FOREIGN_ADOPTION_MAP);
@@ -2262,6 +2281,7 @@ pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
     {
         let mut map = crate::runtime_policy::lock_std_mutex_preserving_errno(&FOREIGN_ADOPTION_MAP);
         map.insert(foreign_fp as usize, slot);
+        FOREIGN_ADOPTION_MAP_INITIALIZED.store(true, Ordering::Release);
     }
     let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
     log_foreign_file_adopted(foreign_fp, native_ptr, fd, elapsed_ns);

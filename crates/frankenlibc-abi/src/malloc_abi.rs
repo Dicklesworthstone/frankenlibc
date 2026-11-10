@@ -177,7 +177,18 @@ fn current_stack_address() -> usize {
 #[inline]
 fn in_signal_handler(slot: &AllocatorReentrySlot) -> bool {
     let handler_sp = slot.signal_handler_sp.load(Ordering::Relaxed);
-    handler_sp != 0 && current_stack_address() <= handler_sp
+    if handler_sp == 0 {
+        return false;
+    }
+    if current_stack_address() <= handler_sp {
+        return true;
+    }
+    // Control is above the recorded signal handler frame, so the handler exited
+    // non-locally (e.g. via `siglongjmp`/`longjmp`). Clear the stale marker now
+    // so subsequent deeper stack frames cannot cross back below `handler_sp` and
+    // falsely appear to be inside a signal handler.
+    slot.signal_handler_sp.store(0, Ordering::Relaxed);
+    false
 }
 
 /// `in_signal_handler` for the calling thread. `None` means the bounded slot
@@ -738,6 +749,7 @@ fn bump_path_counter(counter: &AtomicUsize) {
     let _ = counter;
 }
 static SEGMENT_OWNED_BITMAP: AtomicU64 = AtomicU64::new(0);
+static SEGMENT_SIDECAR_WRITABLE: AtomicU64 = AtomicU64::new(0);
 // Segment ids are claimed only when a thread exhausts its local class segment.
 // This counter is deliberately absent from the warmed allocation/free cycle.
 static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
@@ -1339,19 +1351,44 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     // Every slot lookup in an owned segment may read its metadata, even
     // when that slot has never been allocated. Enable the complete sidecar
     // before publishing ownership, but leave unused payload inaccessible.
-    let meta_writable = meta_bytes.checked_next_multiple_of(segment_mapping::GRANULE)?;
-    // SAFETY: this uniquely claimed, unpublished sidecar lies wholly inside
-    // our immortal reservation. No libc trampoline or allocator is entered.
-    if unsafe {
-        raw_syscall::sys_mprotect(
-            meta_base as *mut u8,
-            meta_writable,
-            libc::PROT_READ | libc::PROT_WRITE,
-        )
-    }
-    .is_err()
-    {
-        return None;
+    if SEGMENT_SIDECAR_WRITABLE.load(Ordering::Acquire) & (1u64 << raw_index) == 0 {
+        let batch_index = raw_index & !31;
+        let batch_base = arena_base + SEGMENT_ARENA_SIZE + batch_index * SEGMENT_SIDECAR_STRIDE;
+        let batch_bytes = 32 * SEGMENT_SIDECAR_STRIDE;
+        // Batch-enable 32 contiguous sidecars (16 MiB of demand-zero virtual
+        // reservation, 0 RSS until touched) in a single mprotect syscall so
+        // startup across ~20 size classes neither issues 20 mprotect syscalls
+        // nor splits the sidecar region into ~40 alternating RW/PROT_NONE VMAs
+        // that every subsequent fork() must duplicate. Fall back to the single
+        // segment's sidecar if a tight RLIMIT_DATA rejects the batch.
+        if unsafe {
+            raw_syscall::sys_mprotect(
+                batch_base as *mut u8,
+                batch_bytes,
+                libc::PROT_READ | libc::PROT_WRITE,
+            )
+        }
+        .is_ok()
+        {
+            SEGMENT_SIDECAR_WRITABLE
+                .fetch_or(u64::from(u32::MAX) << batch_index, Ordering::Release);
+        } else {
+            let meta_writable = meta_bytes.checked_next_multiple_of(segment_mapping::GRANULE)?;
+            // SAFETY: this uniquely claimed, unpublished sidecar lies wholly inside
+            // our immortal reservation. No libc trampoline or allocator is entered.
+            if unsafe {
+                raw_syscall::sys_mprotect(
+                    meta_base as *mut u8,
+                    meta_writable,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                )
+            }
+            .is_err()
+            {
+                return None;
+            }
+            SEGMENT_SIDECAR_WRITABLE.fetch_or(1u64 << raw_index, Ordering::Release);
+        }
     }
     // The reservation is demand-zero, and an all-zero word IS
     // `SegmentSlotMeta::new()` (`requested_size` 0 = never used), so every slot
