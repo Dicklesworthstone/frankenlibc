@@ -15,7 +15,7 @@
 
 use std::ffi::{CString, c_char, c_int};
 
-use frankenlibc_abi::wchar_abi as fl;
+use frankenlibc_abi::{locale_abi, wchar_abi as fl};
 
 type Wc = libc::wchar_t;
 
@@ -93,9 +93,13 @@ fn gen_wide_input(r: &mut Lcg) -> Vec<Wc> {
 #[test]
 fn swscanf_narrow_string_differential_fuzz_vs_glibc() {
     let utf8 = CString::new("C.UTF-8").unwrap();
-    if unsafe { setlocale(LC_ALL, utf8.as_ptr()) }.is_null() {
+    let host_ok = !unsafe { setlocale(LC_ALL, utf8.as_ptr()) }.is_null();
+    let fl_ok = !unsafe { locale_abi::setlocale(LC_ALL, utf8.as_ptr()) }.is_null();
+    if !host_ok || !fl_ok {
         let alt = CString::new("en_US.UTF-8").unwrap();
-        if unsafe { setlocale(LC_ALL, alt.as_ptr()) }.is_null() {
+        if unsafe { setlocale(LC_ALL, alt.as_ptr()) }.is_null()
+            || unsafe { locale_abi::setlocale(LC_ALL, alt.as_ptr()) }.is_null()
+        {
             eprintln!("no UTF-8 locale; skipping swscanf narrow %s/%c differential");
             return;
         }
@@ -138,7 +142,26 @@ fn swscanf_narrow_string_differential_fuzz_vs_glibc() {
         // conversion, so comparing those bytes would pin an implementation detail
         // rather than a contract (measured on glibc 2.42; bd-7ilguh). The sentinel
         // pre-fill still makes the successful rows catch an over- or under-write.
-        let diverged = nfl != nlc || (nfl >= 0 && fb != lb);
+        // For `%s` (`!is_char`), host glibc writes an extra reset NUL after the
+        // string terminator (`wcrtomb(L'\0')` + `*str = '\0'`), whereas FrankenLibC
+        // writes a single NUL terminator so `width * MB_CUR_MAX + 1` caller buffers
+        // are not overflowed (see `conformance_diff_swscanf::locale_scanning`).
+        let buf_diverged = if nfl < 0 {
+            false
+        } else if is_char || nfl == 0 {
+            fb != lb
+        } else {
+            match fb.iter().position(|&b| b == 0) {
+                Some(nul) if nul + 1 < lb.len() => {
+                    fb[..=nul] != lb[..=nul]
+                        || !fb[nul + 1..].iter().all(|&b| b == 0xCD)
+                        || lb[nul + 1] != 0
+                        || !lb[nul + 2..].iter().all(|&b| b == 0xCD)
+                }
+                _ => true,
+            }
+        };
+        let diverged = nfl != nlc || buf_diverged;
         if diverged && divs.len() < 40 {
             let ins: String = inp[..inp.len() - 1]
                 .iter()
