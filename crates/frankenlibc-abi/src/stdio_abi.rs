@@ -1876,17 +1876,40 @@ fn alloc_stream_handle(
 
 struct StreamRegistry {
     streams: StreamMap<StreamCell>,
+    std_initialized: u8,
 }
 
 impl StreamRegistry {
     fn new() -> Self {
-        let mut streams = stream_map();
+        Self {
+            streams: StreamMap::with_capacity_and_hasher(8, StreamIdBuildHasher::default()),
+            std_initialized: 0,
+        }
+    }
 
-        // Pre-register stdin (fd 0).
-        let stdin_flags = OpenFlags {
-            readable: true,
-            ..Default::default()
-        };
+    #[inline]
+    fn mark_std_stream_initialized(&mut self, id: usize) {
+        if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&id) {
+            self.std_initialized |= 1u8 << (id - STDIN_SENTINEL);
+        }
+    }
+
+    /// Lazily register one of the three standard streams (`stdin`, `stdout`,
+    /// `stderr`) on its first lookup so opening an unrelated file (e.g.
+    /// `libselinux`'s constructor opening `/proc/filesystems`) or writing only
+    /// to `stdout` does not issue `fstat`/`ioctl`/`lseek` syscalls for unused
+    /// standard descriptors. Once initialized, the bit stays set so an explicit
+    /// `fclose(stdout)` is not undone by a subsequent lookup.
+    #[inline]
+    fn ensure_std_stream(&mut self, id: usize) {
+        if !(STDIN_SENTINEL..=STDERR_SENTINEL).contains(&id) {
+            return;
+        }
+        let bit = 1u8 << (id - STDIN_SENTINEL);
+        if (self.std_initialized & bit) != 0 {
+            return;
+        }
+        self.std_initialized |= bit;
         // Each standard stream mirrors its EOF/ERR state into the glibc-layout
         // handle the `stdin`/`stdout`/`stderr` symbols point at: glibc's inline
         // ferror_unlocked/feof_unlocked (which gnulib's close_stdin uses via
@@ -1897,59 +1920,53 @@ impl StreamRegistry {
         // `resolve_flags_word`): looking it up here took the native registry
         // lock, and this lazy init can run with that lock held (dash hung).
         let std_handle = |fd: c_int| fd as usize + 1;
-        // A standard stream starts where its inherited descriptor is (a shell
-        // hands a child stdin mid-file): ftell and fseek(SEEK_CUR) build on
-        // this offset, which used to start at 0.
-        let at_fd_offset = |mut stream: StdioStream| {
-            if let Ok(cur) = raw_syscall::sys_lseek(stream.fd(), 0, libc::SEEK_CUR) {
-                stream.set_offset(cur);
+        let cell = match id {
+            STDIN_SENTINEL => {
+                let stdin_flags = OpenFlags {
+                    readable: true,
+                    ..Default::default()
+                };
+                new_stream_cell_with_handle(
+                    std_buffered_stream(libc::STDIN_FILENO, stdin_flags),
+                    std_handle(libc::STDIN_FILENO),
+                )
             }
-            stream
+            STDOUT_SENTINEL => {
+                let stdout_flags = OpenFlags {
+                    writable: true,
+                    ..Default::default()
+                };
+                new_stream_cell_with_handle(
+                    std_buffered_stream(libc::STDOUT_FILENO, stdout_flags),
+                    std_handle(libc::STDOUT_FILENO),
+                )
+            }
+            STDERR_SENTINEL => {
+                let stderr_flags = OpenFlags {
+                    writable: true,
+                    ..Default::default()
+                };
+                // A standard stream starts where its inherited descriptor is:
+                // ftell and fseek(SEEK_CUR) build on this offset.
+                let mut stream = StdioStream::new(libc::STDERR_FILENO, stderr_flags);
+                if let Ok(cur) = raw_syscall::sys_lseek(stream.fd(), 0, libc::SEEK_CUR) {
+                    stream.set_offset(cur);
+                }
+                new_stream_cell_with_handle(stream, std_handle(libc::STDERR_FILENO))
+            }
+            _ => unreachable!(),
         };
-        streams.insert(
-            STDIN_SENTINEL,
-            new_stream_cell_with_handle(
-                std_buffered_stream(libc::STDIN_FILENO, stdin_flags),
-                std_handle(libc::STDIN_FILENO),
-            ),
-        );
-
-        // Pre-register stdout (fd 1).
-        let stdout_flags = OpenFlags {
-            writable: true,
-            ..Default::default()
-        };
-        streams.insert(
-            STDOUT_SENTINEL,
-            new_stream_cell_with_handle(
-                std_buffered_stream(libc::STDOUT_FILENO, stdout_flags),
-                std_handle(libc::STDOUT_FILENO),
-            ),
-        );
-
-        // Pre-register stderr (fd 2).
-        let stderr_flags = OpenFlags {
-            writable: true,
-            ..Default::default()
-        };
-        streams.insert(
-            STDERR_SENTINEL,
-            new_stream_cell_with_handle(
-                at_fd_offset(StdioStream::new(libc::STDERR_FILENO, stderr_flags)),
-                std_handle(libc::STDERR_FILENO),
-            ),
-        );
-
-        Self { streams }
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        self.streams.insert(id, cell);
     }
 
     /// Insert a runtime stream, bumping the registry generation. ALL runtime
     /// `streams.insert` MUST route through here so the write cache's stored
     /// `*mut StdioStream` is invalidated whenever a HashMap insert may rehash/move
-    /// values. (The 3 std streams in `new()` are pre-registration and never cached
-    /// before init completes, so they bypass the counter.)
+    /// values.
     #[inline]
     fn insert_stream(&mut self, id: usize, stream: StdioStream) {
+        self.mark_std_stream_initialized(id);
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
         self.streams.insert(id, new_stream_cell(stream));
     }
@@ -1957,6 +1974,7 @@ impl StreamRegistry {
     /// Insert a stream whose `FILE *` is the glibc-layout handle at `handle`
     /// (0 = none); see [`StreamCellInner`].
     fn insert_stream_with_handle(&mut self, id: usize, stream: StdioStream, handle: usize) {
+        self.mark_std_stream_initialized(id);
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
         let resolved = resolve_flags_word(handle);
         if resolved != 0 {
@@ -1971,6 +1989,7 @@ impl StreamRegistry {
     /// before the Arc can drop).
     #[inline]
     fn remove_stream(&mut self, id: usize) -> Option<StreamCell> {
+        self.ensure_std_stream(id);
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
         self.streams.remove(&id)
     }
@@ -1980,7 +1999,8 @@ impl StreamRegistry {
 /// cell for the actual operation, so ops on different streams run concurrently. `None`
 /// iff the id is unknown (unregistered/foreign) — same contract as `streams.get_mut`.
 fn stream_cell(id: usize) -> Option<StreamCell> {
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.ensure_std_stream(id);
     reg.streams.get(&id).cloned()
 }
 
@@ -2629,7 +2649,8 @@ fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
 }
 
 fn registry_contains_stream(id: usize) -> bool {
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.ensure_std_stream(id);
     reg.streams.contains_key(&id)
 }
 
@@ -3561,8 +3582,7 @@ pub(crate) fn stream_id_from_handle(stream: *mut c_void) -> usize {
 
 #[inline]
 fn stream_exists(id: usize) -> bool {
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.contains_key(&id)
+    registry_contains_stream(id)
 }
 
 unsafe fn write_bytes_without_runtime_policy(
@@ -4320,8 +4340,8 @@ unsafe fn fopen_with_mount_flags(
         }
     };
 
-    // Create stream via fdopen_native_impl.
-    let fp = fdopen_native_impl(fd, &open_flags);
+    // Create stream via fdopen_native_impl_with_origin (freshly opened fd starts at offset 0).
+    let fp = fdopen_native_impl_with_origin(fd, &open_flags, true);
     if fp.is_null() {
         let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
         // Keep the allocation failure across descriptor cleanup and accounting.
@@ -4339,25 +4359,62 @@ unsafe fn fopen_with_mount_flags(
 /// Returns an opaque stream pointer. The fd remains owned by the caller on
 /// failure; this function never closes it.
 fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
-    // Determine buffering mode via raw isatty check (TIOCGWINSZ ioctl).
-    let buf_mode = if fd == libc::STDERR_FILENO {
-        BufMode::None
-    } else if raw_isatty(fd) {
-        BufMode::Line
+    fdopen_native_impl_with_origin(fd, open_flags, false)
+}
+
+fn fdopen_native_impl_with_origin(
+    fd: c_int,
+    open_flags: &OpenFlags,
+    freshly_opened: bool,
+) -> *mut c_void {
+    const GLIBC_BUFSIZ: usize = 8192;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `st` is a writable, correctly sized stat buffer.
+    let fstat_ok = fd >= 0 && unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_ok();
+    let (buf_mode, buf_size, seekable) = if fd == libc::STDERR_FILENO {
+        let seekable = fstat_ok && {
+            let file_type = unsafe { st.assume_init() }.st_mode & libc::S_IFMT;
+            !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK | libc::S_IFCHR)
+        };
+        (BufMode::None, 0, seekable)
+    } else if fstat_ok {
+        // SAFETY: fstat succeeded and filled the buffer.
+        let st = unsafe { st.assume_init() };
+        let file_type = st.st_mode & libc::S_IFMT;
+        let is_tty = file_type == libc::S_IFCHR && raw_isatty(fd);
+        let mode = if is_tty { BufMode::Line } else { BufMode::Full };
+        let size = match usize::try_from(st.st_blksize) {
+            Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
+            _ => GLIBC_BUFSIZ,
+        };
+        let seekable = !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK | libc::S_IFCHR);
+        (mode, size, seekable)
     } else {
-        BufMode::Full
+        let mode = if raw_isatty(fd) {
+            BufMode::Line
+        } else {
+            BufMode::Full
+        };
+        (mode, GLIBC_BUFSIZ, false)
     };
 
     // Create StdioStream and set initial offset for append mode.
-    let mut stream = fd_stream(fd, *open_flags, buf_mode);
+    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    if !matches!(buf_mode, BufMode::None) {
+        stream.set_buffering(buf_mode, buf_size);
+    }
     // Like glibc, only a write-only append stream ("a") starts at the end:
     // "a+" reads from the beginning while its writes still land at the end.
     if open_flags.append
         && !open_flags.readable
+        && seekable
         && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END)
     {
         stream.set_offset(end_off);
-    } else if let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR) {
+    } else if !freshly_opened
+        && seekable
+        && let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+    {
         // Any other stream starts where the descriptor is: fdopen of an fd
         // at offset 1 reads byte 1 and ftell reports 2 after one fgetc. The
         // logical offset began at 0, so fclose/fflush synced the descriptor
@@ -4508,7 +4565,8 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
     }
 
     let cell = {
-        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.ensure_std_stream(id);
         let Some(cell) = reg.streams.get(&id).cloned() else {
             unsafe { set_abi_errno(errno::EBADF) };
             return libc::EOF;
@@ -7086,7 +7144,9 @@ pub unsafe extern "C-unwind" fn setvbuf(
     let id = canonical_stream_id(stream);
     if let Some(cell) = stream_cell(id) {
         let mut s = cell.lock();
-        let requested_size = if _buf.is_null() {
+        let requested_size = if matches!(buf_mode, BufMode::None) {
+            0
+        } else if _buf.is_null() {
             glibc_stream_bufsize(s.fd())
         } else {
             size
@@ -9998,7 +10058,7 @@ fn strict_direct_snprintf_spec(bytes: &[u8]) -> Option<(StrictDirectSnprintfSpec
     if first == b'%' {
         return Some((StrictDirectSnprintfSpec::Percent, 1));
     }
-    let (long, conversion, consumed) = if first == b'l' {
+    let (long, conversion, consumed) = if first == b'l' || first == b'z' {
         (true, *bytes.get(1)?, 2usize)
     } else {
         (false, first, 1usize)
@@ -10092,6 +10152,65 @@ impl StrictDirectSnprintfWriter {
     }
 }
 
+struct StrictDirectStreamWriter {
+    inline: [u8; 512],
+    heap: Vec<u8>,
+    len: usize,
+}
+
+impl StrictDirectStreamWriter {
+    const fn new() -> Self {
+        Self {
+            inline: [0u8; 512],
+            heap: Vec::new(),
+            len: 0,
+        }
+    }
+
+    #[allow(unused_unsafe)]
+    unsafe fn push(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.heap.is_empty() {
+            if let Some(end) = self.len.checked_add(bytes.len())
+                && end <= self.inline.len()
+            {
+                self.inline[self.len..end].copy_from_slice(bytes);
+                self.len = end;
+                return;
+            }
+            self.heap
+                .reserve(self.len.saturating_add(bytes.len()).max(1024));
+            self.heap.extend_from_slice(&self.inline[..self.len]);
+        }
+        self.heap.extend_from_slice(bytes);
+        self.len = self.heap.len();
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        if self.heap.is_empty() {
+            &self.inline[..self.len]
+        } else {
+            self.heap.as_slice()
+        }
+    }
+
+    unsafe fn finish_to_stream(self, id: usize, stream: *mut c_void, caller: usize) -> c_int {
+        let bytes = self.as_slice();
+        let len = bytes.len();
+        if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+            return printf_result_to_c_int(len);
+        }
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+        if written == len {
+            printf_result_to_c_int(len)
+        } else {
+            -1
+        }
+    }
+}
+
 #[inline]
 fn strict_direct_unsigned_digits(
     mut value: u64,
@@ -10120,11 +10239,10 @@ fn strict_direct_unsigned_digits(
 // `VaListImpl` is unstable to name directly. Keeping the emitter as a macro
 // lets the ABI entrypoint pass its compiler-provided va_list without exposing
 // that implementation type to a helper signature.
-macro_rules! strict_direct_snprintf_fused {
-    ($str_buf:expr, $size:expr, $format:expr, $args:expr) => {{
+macro_rules! strict_direct_render_fused {
+    ($writer:ident, $format:expr, $args:expr) => {{
         let (len, _) = unsafe { super::string_abi::scan_c_string($format, None) };
         let bytes = unsafe { std::slice::from_raw_parts($format.cast::<u8>(), len) };
-        let mut writer = StrictDirectSnprintfWriter::new($str_buf, $size);
         let mut at = 0usize;
         let mut literal_start = 0usize;
         while at < bytes.len() {
@@ -10132,15 +10250,15 @@ macro_rules! strict_direct_snprintf_fused {
                 at += 1;
                 continue;
             }
-            unsafe { writer.push(&bytes[literal_start..at]) };
+            unsafe { $writer.push(&bytes[literal_start..at]) };
             let (spec, consumed) = strict_direct_snprintf_spec(&bytes[at + 1..])
                 .expect("fused snprintf called only after eligibility validation");
             at += 1 + consumed;
             match spec {
-                StrictDirectSnprintfSpec::Percent => unsafe { writer.push(b"%") },
+                StrictDirectSnprintfSpec::Percent => unsafe { $writer.push(b"%") },
                 StrictDirectSnprintfSpec::Char => {
                     let rendered = [unsafe { $args.next_arg::<c_int>() } as u8];
-                    unsafe { writer.push(&rendered) };
+                    unsafe { $writer.push(&rendered) };
                 }
                 StrictDirectSnprintfSpec::String => {
                     let arg = unsafe { $args.next_arg::<*const c_char>() };
@@ -10150,7 +10268,7 @@ macro_rules! strict_direct_snprintf_fused {
                         let (arg_len, _) = unsafe { super::string_abi::scan_c_string(arg, None) };
                         unsafe { std::slice::from_raw_parts(arg.cast::<u8>(), arg_len) }
                     };
-                    unsafe { writer.push(rendered) };
+                    unsafe { $writer.push(rendered) };
                 }
                 StrictDirectSnprintfSpec::Signed32 | StrictDirectSnprintfSpec::SignedLong => {
                     let value = match spec {
@@ -10171,7 +10289,7 @@ macro_rules! strict_direct_snprintf_fused {
                         start -= 1;
                         rendered[start] = b'-';
                     }
-                    unsafe { writer.push(&rendered[start..]) };
+                    unsafe { $writer.push(&rendered[start..]) };
                 }
                 StrictDirectSnprintfSpec::Unsigned32
                 | StrictDirectSnprintfSpec::UnsignedLong
@@ -10197,7 +10315,7 @@ macro_rules! strict_direct_snprintf_fused {
                     };
                     let mut rendered = [0u8; 22];
                     let start = strict_direct_unsigned_digits(value, base, upper, &mut rendered);
-                    unsafe { writer.push(&rendered[start..]) };
+                    unsafe { $writer.push(&rendered[start..]) };
                 }
                 StrictDirectSnprintfSpec::Pointer => {
                     let arg = unsafe { $args.next_arg::<*mut c_void>() };
@@ -10225,13 +10343,28 @@ macro_rules! strict_direct_snprintf_fused {
                         rendered[start..start + 2].copy_from_slice(b"0x");
                         (start, rendered.len() - start)
                     };
-                    unsafe { writer.push(&rendered[start..start + used]) };
+                    unsafe { $writer.push(&rendered[start..start + used]) };
                 }
             }
             literal_start = at;
         }
-        unsafe { writer.push(&bytes[literal_start..]) };
+        unsafe { $writer.push(&bytes[literal_start..]) };
+    }};
+}
+
+macro_rules! strict_direct_snprintf_fused {
+    ($str_buf:expr, $size:expr, $format:expr, $args:expr) => {{
+        let mut writer = StrictDirectSnprintfWriter::new($str_buf, $size);
+        strict_direct_render_fused!(writer, $format, $args);
         unsafe { writer.finish() }
+    }};
+}
+
+macro_rules! strict_direct_stream_fused {
+    ($id:expr, $stream:expr, $format:expr, $args:expr, $caller:expr) => {{
+        let mut writer = StrictDirectStreamWriter::new();
+        strict_direct_render_fused!(writer, $format, $args);
+        unsafe { writer.finish_to_stream($id, $stream, $caller) }
     }};
 }
 
@@ -12411,50 +12544,60 @@ pub unsafe extern "C-unwind" fn fprintf(
         let arg = unsafe { args.next_arg::<f64>() };
         return unsafe { strict_direct_stream_f(id, stream, arg, precision, caller) };
     }
-    let segments = parse_format_string(fmt_bytes);
-    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            return -1;
-        }
-    };
-    let extract_count = arg_buf.len();
-    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
-
-    let direct_payload =
-        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
-    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
-        let total_len = bytes.len().saturating_add(1);
-        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
-            runtime_policy::observe(
-                ApiFamily::Stdio,
-                decision.profile,
-                runtime_policy::scaled_cost(15, total_len),
-                !success,
-            );
-            return if success {
-                printf_result_to_c_int(total_len)
-            } else {
-                -1
-            };
-        }
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { is_strict_direct_snprintf_format(format) }
+    {
+        return strict_direct_stream_fused!(id, stream, format, args, caller);
     }
 
-    // Bare "%s" fast path: emit the string straight to the stream, else render.
     let mut _bare_hold = None;
-    let bytes = match direct_payload {
-        Some(DirectPrintfPayload::String(bytes)) => bytes,
-        _ => unsafe {
-            bare_s_or_render(
-                "fprintf",
-                fmt_bytes,
-                &segments,
-                arg_buf.as_ptr(),
-                extract_count,
-                &mut _bare_hold,
-            )
-        },
+    let bytes = if !fmt_bytes.contains(&b'%') {
+        fmt_bytes
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+        let direct_payload =
+            unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+        if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+            let total_len = bytes.len().saturating_add(1);
+            if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    !success,
+                );
+                return if success {
+                    printf_result_to_c_int(total_len)
+                } else {
+                    -1
+                };
+            }
+        }
+
+        // Bare "%s" fast path: emit the string straight to the stream, else render.
+        match direct_payload {
+            Some(DirectPrintfPayload::String(bytes)) => bytes,
+            _ => unsafe {
+                bare_s_or_render(
+                    "fprintf",
+                    fmt_bytes,
+                    &segments,
+                    arg_buf.as_ptr(),
+                    extract_count,
+                    &mut _bare_hold,
+                )
+            },
+        }
     };
     let total_len = bytes.len();
 
@@ -12700,50 +12843,60 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
         let arg = unsafe { args.next_arg::<f64>() };
         return unsafe { strict_direct_stream_f(id, stdout_ptr, arg, precision, caller) };
     }
-    let segments = parse_format_string(fmt_bytes);
-    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            return -1;
-        }
-    };
-    let extract_count = arg_buf.len();
-    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
-
-    let direct_payload =
-        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
-    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
-        let total_len = bytes.len().saturating_add(1);
-        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
-            runtime_policy::observe(
-                ApiFamily::Stdio,
-                decision.profile,
-                runtime_policy::scaled_cost(15, total_len),
-                !success,
-            );
-            return if success {
-                printf_result_to_c_int(total_len)
-            } else {
-                -1
-            };
-        }
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { is_strict_direct_snprintf_format(format) }
+    {
+        return strict_direct_stream_fused!(id, stdout_ptr, format, args, caller);
     }
 
-    // Bare "%s" fast path: emit the string straight to the stream, else render.
     let mut _bare_hold = None;
-    let bytes = match direct_payload {
-        Some(DirectPrintfPayload::String(bytes)) => bytes,
-        _ => unsafe {
-            bare_s_or_render(
-                "printf",
-                fmt_bytes,
-                &segments,
-                arg_buf.as_ptr(),
-                extract_count,
-                &mut _bare_hold,
-            )
-        },
+    let bytes = if !fmt_bytes.contains(&b'%') {
+        fmt_bytes
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+        let direct_payload =
+            unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+        if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+            let total_len = bytes.len().saturating_add(1);
+            if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    !success,
+                );
+                return if success {
+                    printf_result_to_c_int(total_len)
+                } else {
+                    -1
+                };
+            }
+        }
+
+        // Bare "%s" fast path: emit the string straight to the stream, else render.
+        match direct_payload {
+            Some(DirectPrintfPayload::String(bytes)) => bytes,
+            _ => unsafe {
+                bare_s_or_render(
+                    "printf",
+                    fmt_bytes,
+                    &segments,
+                    arg_buf.as_ptr(),
+                    extract_count,
+                    &mut _bare_hold,
+                )
+            },
+        }
     };
     let total_len = bytes.len();
 

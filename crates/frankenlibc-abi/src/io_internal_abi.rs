@@ -481,7 +481,56 @@ struct NativeFileLocked {
     popen_child_pid: Option<i32>,
 }
 
+// SAFETY: The raw buffer pointers in NativeFileLocked are only accessed while
+// holding the NativeFile's ABI reentrant lock.
+unsafe impl Send for NativeFileLocked {}
+
 impl NativeFileLocked {
+    const fn const_fd(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
+        let magic_bytes = NATIVE_FILE_MAGIC.to_le_bytes();
+        let fd_bytes = fd.to_le_bytes();
+        let flags_bytes = open_flags.to_le_bytes();
+        let xor_bytes = (NATIVE_FILE_MAGIC ^ open_flags).to_le_bytes();
+        let fingerprint = [
+            magic_bytes[0],
+            magic_bytes[1],
+            magic_bytes[2],
+            magic_bytes[3],
+            fd_bytes[0],
+            fd_bytes[1],
+            fd_bytes[2],
+            fd_bytes[3],
+            flags_bytes[0],
+            flags_bytes[1],
+            flags_bytes[2],
+            flags_bytes[3],
+            xor_bytes[0],
+            xor_bytes[1],
+            xor_bytes[2],
+            xor_bytes[3],
+        ];
+        Self {
+            magic: NATIVE_FILE_MAGIC,
+            backing: NativeFileBacking::Fd(fd),
+            buffer_base: ptr::null_mut(),
+            buffer_pos: ptr::null_mut(),
+            buffer_end: ptr::null_mut(),
+            buffer_capacity: 0,
+            buf_mode,
+            eof: false,
+            error: false,
+            ungetc: None,
+            generation: 0,
+            healing_budget: 0,
+            // SAFETY: glibc's mbstate_t is a plain old data state carrier.
+            _mbstate: unsafe { std::mem::zeroed() },
+            open_flags,
+            fingerprint,
+            runtime_math_hooks: NativeFileRuntimeMathHooks::new(),
+            popen_child_pid: None,
+        }
+    }
+
     fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
         Self::new_with_backing(NativeFileBacking::Fd(fd), open_flags, buf_mode)
     }
@@ -536,14 +585,35 @@ impl NativeFileLocked {
 
 type NativeFileLock = crate::util::AbiReentrantMutex<RefCell<NativeFileLocked>>;
 
+static STD_STREAM_LOCKS: [NativeFileLock; 3] = [
+    crate::util::AbiReentrantMutex::new(RefCell::new(NativeFileLocked::const_fd(
+        0,
+        file_flags::READ,
+        NativeFileBufMode::Full,
+    ))),
+    crate::util::AbiReentrantMutex::new(RefCell::new(NativeFileLocked::const_fd(
+        1,
+        file_flags::WRITE,
+        NativeFileBufMode::Line,
+    ))),
+    crate::util::AbiReentrantMutex::new(RefCell::new(NativeFileLocked::const_fd(
+        2,
+        file_flags::WRITE,
+        NativeFileBufMode::None,
+    ))),
+];
+
 struct NativeFileState {
     /// Built at construction for a real stream; for an empty registry slot,
     /// on first touch. Every process's registry has 256 slots, and boxing a
     /// lock for each at startup was 256 host mallocs plus 256 fallback-table
     /// inserts (allocations before runtime-ready go to the host allocator)
     /// per process start (bd-rc0923-epic-eeuy4f.25).
+    /// Standard streams (slots 0..3) use static `STD_STREAM_LOCKS` via
+    /// `std_lock_slot` (1..=3) so `.init_array` makes zero heap allocations.
     locked: frankenlibc_membrane::util::LazyBox<NativeFileLock>,
     orientation: AtomicI8,
+    std_lock_slot: u8,
 }
 
 impl NativeFileState {
@@ -555,6 +625,15 @@ impl NativeFileState {
                 ))),
             ),
             orientation: AtomicI8::new(0),
+            std_lock_slot: 0,
+        }
+    }
+
+    const fn new_std(slot_index: usize) -> Self {
+        Self {
+            locked: frankenlibc_membrane::util::LazyBox::new(),
+            orientation: AtomicI8::new(0),
+            std_lock_slot: (slot_index + 1) as u8,
         }
     }
 
@@ -563,12 +642,16 @@ impl NativeFileState {
         Self {
             locked: frankenlibc_membrane::util::LazyBox::new(),
             orientation: AtomicI8::new(0),
+            std_lock_slot: 0,
         }
     }
 
     /// The lock, creating an empty slot's (in the invalidated state an empty
     /// slot had always been built with) on first use.
     fn lock(&self) -> &NativeFileLock {
+        if self.std_lock_slot != 0 {
+            return &STD_STREAM_LOCKS[(self.std_lock_slot - 1) as usize];
+        }
         self.locked.get_or_init(|| {
             let mut state = NativeFileLocked::new(-1, 0, NativeFileBufMode::None);
             NativeFile::reset_locked_state(&mut state);
@@ -588,11 +671,15 @@ impl NativeFileState {
                 )),
             ),
             orientation: AtomicI8::new(0),
+            std_lock_slot: 0,
         }
     }
 
     /// `_IO_FILE::_lock`: null for an empty slot that never needed a lock.
     fn lock_ptr(&self) -> *mut c_void {
+        if self.std_lock_slot != 0 {
+            return STD_STREAM_LOCKS[(self.std_lock_slot - 1) as usize].opaque_ptr();
+        }
         self.locked
             .get()
             .map_or(ptr::null_mut(), |lock| lock.opaque_ptr())
@@ -781,11 +868,21 @@ impl NativeFile {
         file
     }
 
-    /// An empty registry slot: what `invalidate` leaves (no flags, no
-    /// vtable), without a lock until one is needed.
+    fn new_std(slot_index: usize, fd: i32) -> Self {
+        let mut file = Self {
+            _io_file: _IO_FILE_Layout::new(fd),
+            vtable: ptr::addr_of_mut!(_IO_file_jumps),
+            _frankenlibc_state: NativeFileState::new_std(slot_index),
+        };
+        file.sync_lock_ptr();
+        file
+    }
+
+    /// An empty registry slot: zero-initialized so the 63.5 KiB static
+    /// `NATIVE_STREAM_REGISTRY` resides in `.bss` instead of `.data`.
     #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY_SLOT: Self = {
-        let mut io_file = _IO_FILE_Layout::new(-1);
+        let mut io_file = _IO_FILE_Layout::new(0);
         io_file._flags = 0;
         Self {
             _io_file: io_file,
@@ -857,7 +954,10 @@ impl NativeFile {
     /// (bd-rc0923-epic-eeuy4f.25).
     #[allow(dead_code)]
     fn invalidate_unshared(&mut self) {
-        if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
+        if self._frankenlibc_state.std_lock_slot != 0 {
+            let guard = STD_STREAM_LOCKS[(self._frankenlibc_state.std_lock_slot - 1) as usize].lock();
+            Self::reset_locked_state(&mut guard.borrow_mut());
+        } else if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
             Self::reset_locked_state(lock.get_mut().get_mut());
         }
         self.reset_unlocked_fields();
@@ -1377,7 +1477,9 @@ impl StreamSlot {
     };
 
     fn empty() -> Self {
-        Self::EMPTY
+        let mut slot = Self::EMPTY;
+        slot.file._io_file._fileno = -1;
+        slot
     }
 }
 
@@ -1395,7 +1497,10 @@ pub struct NativeStreamRegistry {
     /// Each inner allocation has its final length before it is published and
     /// is never resized or removed. Moving the outer Vec cannot move a FILE.
     /// Empty slots are reused, so retained storage follows peak concurrency.
-    overflow: Vec<Vec<StreamSlot>>,
+    /// Wrapped in `Option<Box<...>>` so `Self::EMPTY` is 100% zero bytes and
+    /// the 63.5 KiB static registry resides in `.bss` rather than `.data`
+    /// (`Vec::new()` contains a non-zero `NonNull::dangling()` pointer).
+    overflow: Option<Box<Vec<Vec<StreamSlot>>>>,
 }
 
 impl NativeStreamRegistry {
@@ -1407,19 +1512,25 @@ impl NativeStreamRegistry {
     #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Self = Self {
         slots: [const { StreamSlot::EMPTY }; STREAM_REGISTRY_CAPACITY],
-        overflow: Vec::new(),
+        overflow: None,
     };
 
     fn slots(&self) -> impl Iterator<Item = &StreamSlot> {
-        self.slots
-            .iter()
-            .chain(self.overflow.iter().flat_map(|slab| slab.iter()))
+        self.slots.iter().chain(
+            self.overflow
+                .iter()
+                .flat_map(|slabs| slabs.iter())
+                .flat_map(|slab| slab.iter()),
+        )
     }
 
     fn slots_mut(&mut self) -> impl Iterator<Item = &mut StreamSlot> {
-        self.slots
-            .iter_mut()
-            .chain(self.overflow.iter_mut().flat_map(|slab| slab.iter_mut()))
+        self.slots.iter_mut().chain(
+            self.overflow
+                .iter_mut()
+                .flat_map(|slabs| slabs.iter_mut())
+                .flat_map(|slab| slab.iter_mut()),
+        )
     }
 
     fn slot(&self, index: usize) -> Option<&StreamSlot> {
@@ -1427,6 +1538,7 @@ impl NativeStreamRegistry {
             self.slots.get(index)
         } else {
             self.overflow
+                .as_ref()?
                 .get(index / STREAM_REGISTRY_CAPACITY - 1)?
                 .get(index % STREAM_REGISTRY_CAPACITY)
         }
@@ -1437,6 +1549,7 @@ impl NativeStreamRegistry {
             self.slots.get_mut(index)
         } else {
             self.overflow
+                .as_mut()?
                 .get_mut(index / STREAM_REGISTRY_CAPACITY - 1)?
                 .get_mut(index % STREAM_REGISTRY_CAPACITY)
         }
@@ -1479,8 +1592,7 @@ impl NativeStreamRegistry {
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
-                let mut file = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
-                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                let mut file = NativeFile::new_std(0, 0);
                 file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_WRITES;
                 file
             },
@@ -1488,8 +1600,7 @@ impl NativeStreamRegistry {
         registry.slots[1] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
-                let mut file = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
-                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                let mut file = NativeFile::new_std(1, 1);
                 file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_READS;
                 file
             },
@@ -1497,8 +1608,7 @@ impl NativeStreamRegistry {
         registry.slots[2] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
-                let mut file = NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None);
-                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                let mut file = NativeFile::new_std(2, 2);
                 file._io_file._flags =
                     STD_STREAM_FLAGS | glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED;
                 file
@@ -1540,21 +1650,21 @@ impl NativeStreamRegistry {
                 return Some(i);
             }
         }
-        let index = self
-            .overflow
+        let overflow = self.overflow.get_or_insert_with(|| Box::new(Vec::new()));
+        let index = overflow
             .len()
             .checked_add(1)?
             .checked_mul(STREAM_REGISTRY_CAPACITY)?;
         // Leave usize::MAX available for the opaque iterator end sentinel.
         index.checked_add(STREAM_REGISTRY_CAPACITY)?;
-        self.overflow.try_reserve(1).ok()?;
+        overflow.try_reserve(1).ok()?;
         let mut slab = Vec::new();
         slab.try_reserve_exact(STREAM_REGISTRY_CAPACITY).ok()?;
         slab.resize_with(STREAM_REGISTRY_CAPACITY, StreamSlot::empty);
         // Neither Vec can allocate below: their capacities were reserved
         // fallibly before publishing a FILE pointer into either registry.
-        self.overflow.push(slab);
-        Self::occupy_slot(&mut self.overflow.last_mut()?[0], file);
+        overflow.push(slab);
+        Self::occupy_slot(&mut overflow.last_mut()?[0], file);
         Some(index)
     }
 
