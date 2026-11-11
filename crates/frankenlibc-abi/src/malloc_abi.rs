@@ -4144,6 +4144,10 @@ const FALLBACK_TABLE_WRITER: usize = 1 << (usize::BITS - 1);
 const FALLBACK_TABLE_WRITER_WAITING: usize = 1 << (usize::BITS - 2);
 static FALLBACK_ALLOC_MIN_ADDR: AtomicUsize = AtomicUsize::new(usize::MAX);
 static FALLBACK_ALLOC_MAX_ADDR: AtomicUsize = AtomicUsize::new(0);
+const FALLBACK_CHUNK_SHIFT: usize = 16;
+const FALLBACK_CHUNK_FILTER_WORDS: usize = 64;
+static FALLBACK_CHUNK_FILTER: [AtomicU64; FALLBACK_CHUNK_FILTER_WORDS] =
+    [const { AtomicU64::new(0) }; FALLBACK_CHUNK_FILTER_WORDS];
 
 /// Seqlock word for lock-free lookups: odd while an exclusive holder may be
 /// changing the table, bumped to the next even value when it is done.
@@ -4262,6 +4266,20 @@ fn fallback_start_index(key: usize) -> usize {
     (key >> 4) % FALLBACK_ALLOC_TABLE_SLOTS
 }
 
+#[inline(always)]
+fn fallback_chunk_bit(chunk: usize) -> (usize, u64) {
+    let h = chunk.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_right(26);
+    let word = (h >> 6) & (FALLBACK_CHUNK_FILTER_WORDS - 1);
+    let bit = 1u64 << (h & 63);
+    (word, bit)
+}
+
+#[inline(always)]
+fn fallback_chunk_may_contain(addr: usize) -> bool {
+    let (word, bit) = fallback_chunk_bit(addr >> FALLBACK_CHUNK_SHIFT);
+    FALLBACK_CHUNK_FILTER[word].load(Ordering::Relaxed) & bit != 0
+}
+
 #[inline]
 fn publish_fallback_range(key: usize, size: usize) {
     let end = key.saturating_add(size.max(1));
@@ -4270,6 +4288,14 @@ fn publish_fallback_range(key: usize, size: usize) {
     }
     if end > FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire) {
         FALLBACK_ALLOC_MAX_ADDR.fetch_max(end, Ordering::AcqRel);
+    }
+    let first_chunk = key >> FALLBACK_CHUNK_SHIFT;
+    let last_chunk = end.saturating_sub(1) >> FALLBACK_CHUNK_SHIFT;
+    for chunk in first_chunk..=last_chunk {
+        let (word, bit) = fallback_chunk_bit(chunk);
+        if FALLBACK_CHUNK_FILTER[word].load(Ordering::Relaxed) & bit == 0 {
+            FALLBACK_CHUNK_FILTER[word].fetch_or(bit, Ordering::Release);
+        }
     }
 }
 
@@ -5619,6 +5645,14 @@ pub(crate) fn known_remaining_for_certified_read(addr: usize) -> Option<usize> {
         .or_else(|| fallback_remaining(addr))
 }
 
+#[inline(always)]
+fn non_arena_may_contain(addr: usize) -> bool {
+    fallback_chunk_may_contain(addr)
+        || BUMP_OVERFLOW_ACTIVE.load(Ordering::Relaxed)
+        || segment_arena_base_if_ready()
+            .is_some_and(|base| addr.wrapping_sub(base) < SEGMENT_ARENA_SIZE)
+}
+
 #[inline]
 fn non_arena_remaining(addr: usize) -> Option<usize> {
     if let Some(arena_base) = segment_arena_base_if_ready()
@@ -5632,7 +5666,8 @@ fn non_arena_remaining(addr: usize) -> Option<usize> {
     {
         return Some(rem);
     }
-    if addr > FALLBACK_SLOT_TOMBSTONE
+    if fallback_chunk_may_contain(addr)
+        && addr > FALLBACK_SLOT_TOMBSTONE
         && addr >= FALLBACK_ALLOC_MIN_ADDR.load(Ordering::Acquire)
         && addr < FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire)
     {
@@ -5657,7 +5692,11 @@ fn non_arena_remaining_pair(lhs: usize, rhs: usize) -> (KnownRemaining, KnownRem
         if bump_active && let Some(rem) = bump_mmap_remaining(addr) {
             return KnownRemaining(rem);
         }
-        if addr > FALLBACK_SLOT_TOMBSTONE && addr >= min_addr && addr < max_addr {
+        if fallback_chunk_may_contain(addr)
+            && addr > FALLBACK_SLOT_TOMBSTONE
+            && addr >= min_addr
+            && addr < max_addr
+        {
             return KnownRemaining::from_option(fallback_remaining(addr));
         }
         KnownRemaining::UNKNOWN
@@ -5676,7 +5715,13 @@ pub(crate) fn known_remaining_in_guarded_string(addr: usize) -> Option<usize> {
     {
         return match pipeline.try_validate_cached_remaining(addr) {
             Some(Some(rem)) => Some(rem),
-            Some(None) => non_arena_remaining(addr),
+            Some(None) => {
+                if non_arena_may_contain(addr) {
+                    non_arena_remaining(addr)
+                } else {
+                    None
+                }
+            }
             None => known_remaining_uncached_in_guarded_string(addr, pipeline),
         };
     }
@@ -5789,7 +5834,9 @@ pub(crate) fn known_remaining_pair_fast_in_guarded_string(
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
     {
         let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
-        if lhs_cached.is_known_bound() && rhs_cached.is_known_bound() {
+        if (lhs_cached.is_known_bound() || (lhs_cached.is_hit() && !non_arena_may_contain(lhs)))
+            && (rhs_cached.is_known_bound() || (rhs_cached.is_hit() && !non_arena_may_contain(rhs)))
+        {
             return (
                 KnownRemaining(lhs_cached.raw()),
                 KnownRemaining(rhs_cached.raw()),
