@@ -601,6 +601,7 @@ def check_replacement_level_smoke_obligations(findings, replacement, smoke_summa
         "hardened_status": modes.get("hardened", {}).get("status"),
         "perf_failures": summary.get("perf_failures"),
         "signature_guard_failures": summary.get("signature_guard_failures"),
+        "xfails": summary.get("xfails", 0),
     }
 
     actual = smoke_obligation.get("actual", {})

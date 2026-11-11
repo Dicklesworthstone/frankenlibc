@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-11-10T01:55:00Z",
-  "source_commit": "2349f6c25e6e3b3fd9e6d3c7884d2a8ee67cc113",
+  "generated_at_utc": "2026-11-11T05:10:00Z",
+  "source_commit": "b70205895998491fc13ab3ca4a420efaf5d2d1fa",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {

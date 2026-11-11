@@ -45,7 +45,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Large classified ABI surface | **4,119 exported symbols** all classified |
 | Recorded native classifications | **2,414 `Implemented` + 408 `RawSyscall` = 2,822 / 4,119 (68.5% native coverage)** |
 | Host-backed and unsupported subsets are explicit | **1,279 `WrapsHostLibc` (31.1%), 0 `GlibcCallThrough`, 18 `Stub` (0.4%)** |
-| Interposition has a checked workload snapshot | The committed 2026-09-24 preload artifact reports **189 passes / 0 fails / 4 optional skips / 1 xfail** across strict + hardened modes. It was produced from source commit `a8a4110b…`, not current HEAD, so it is historical evidence rather than a current-release result (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
+| Interposition has a checked workload snapshot | The committed 2026-11-11 preload artifact reports **344 passes / 0 fails / 4 optional skips / 0 xfails** across strict + hardened modes (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
 | Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-10, bound to ABI source `2349f6c25`; its counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-11, bound to ABI source `b70205895`; its counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
 Reality snapshot: total_exported=4119, implemented=2414, raw_syscall=408, wraps_host_libc=1279, glibc_call_through=0, stub=18.
 
 Declared replacement level: **L0 — Interpose**.
@@ -230,21 +230,19 @@ User-facing support and replacement claims must keep these fields separate:
 
 ### Curated LD_PRELOAD Smoke Battery
 
-Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T195208Z`, checked September 24, 2026) reports 189 passes / 0 fails / 4 skips overall, with strict 94/0/2 and hardened 95/0/2 across the curated preload smoke battery.
+Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20261111T045420Z-4186424`, checked November 11, 2026) reports 344 passes / 0 fails / 4 skips overall, with strict 173/0/2 and hardened 171/0/2 across the curated preload smoke battery.
 
 | Mode | Pass | Fail | Skip | Xfail | Programs exercised |
 |---|---:|---:|---:|---:|---|
-| `strict` | 94 | 0 | 2 | 1 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
-| `hardened` | 95 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
-| **Total** | **189** | **0** | **4** | **1** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
-
-The artifact's structured `modes` object assigns the xfail to strict, while its free-text notes call it hardened `sed_substitute`; that internal inconsistency is another reason to treat this as a historical snapshot pending regeneration under `bd-rc0923-epic-eeuy4f.4`.
+| `strict` | 173 | 0 | 2 | 0 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
+| `hardened` | 171 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
+| **Total** | **344** | **0** | **4** | **0** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
 
 | Workload family | Commands |
 |---|---|
 | Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/bin/wc` |
 
-The committed curated preload snapshot has 189 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 xfail. Those numbers describe run `rc0923-corpus-20260924T195208Z` at source commit `a8a4110b…`; they do **not** describe current HEAD. Later commits added many cases without regenerating the committed summary. The artifact establishes that the cases recorded in that run passed (or xfailed) under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`, bd-rc0923-epic-eeuy4f.4).
+The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 0 xfail. Those numbers describe run `20261111T045420Z-4186424` at source commit `b7020589…`. The artifact establishes that the cases recorded in that run passed under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`, bd-rc0923-epic-eeuy4f.4).
 
 ### Known broken or not yet freshly evidenced under preload
 
@@ -706,7 +704,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,974 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,086 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -1379,7 +1377,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 ### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (1,053 lines at this snapshot) parses three pre-supplied task files and checks their internal algebraic consistency:
+`crates/frankenlibc-membrane/build.rs` (1,056 lines at this snapshot) parses three pre-supplied task files and checks their internal algebraic consistency:
 
 | Task label | What the build actually checks |
 |---|---|
@@ -2969,7 +2967,7 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,053 lines at this snapshot. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,056 lines at this snapshot. It performs three jobs at compile time:
 
 ### Job 1: Supplied SOS-Task Consistency
 
@@ -3970,10 +3968,10 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,822 native/direct-syscall rows (68.5%), 1,279 host-backed wrapper rows (31.1%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,898 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 233,940 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 83,117 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,003 lines including generated codec tables |
+| Tracked Rust files in `crates/` | 2,899 |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 239,194 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 83,291 lines |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,608 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

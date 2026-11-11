@@ -300,7 +300,7 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
         .replace(
-            "The committed curated preload snapshot has 189 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 xfail. Those numbers describe run `rc0923-corpus-20260924T195208Z` at source commit `a8a4110b…`; they do **not** describe current HEAD. Later commits added many cases without regenerating the committed summary. The artifact establishes that the cases recorded in that run passed (or xfailed) under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`, bd-rc0923-epic-eeuy4f.4).",
+            "The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 0 xfail. Those numbers describe run `20261111T045420Z-4186424` at source commit `b7020589…`. The artifact establishes that the cases recorded in that run passed under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`, bd-rc0923-epic-eeuy4f.4).",
             "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
         );
     assert_ne!(
@@ -374,7 +374,7 @@ fn claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner() {
     let readme_src = repo_root.join("README.md");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke-summary.md");
 
-    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T195208Z`, checked September 24, 2026) reports 189 passes / 0 fails / 4 skips overall, with strict 94/0/2 and hardened 95/0/2 across the curated preload smoke battery.";
+    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20261111T045420Z-4186424`, checked November 11, 2026) reports 344 passes / 0 fails / 4 skips overall, with strict 173/0/2 and hardened 171/0/2 across the curated preload smoke battery.";
     let stale = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.";
     let readme = std::fs::read_to_string(&readme_src).expect("README.md should exist");
     assert!(

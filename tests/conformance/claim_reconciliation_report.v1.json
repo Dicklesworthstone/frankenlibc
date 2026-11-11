@@ -14,7 +14,7 @@
   ],
   "ground_truth": {
     "source": "support_matrix.json",
-    "generated_at": "2026-11-03T03:41:29Z",
+    "generated_at": "2026-11-11T05:10:00Z",
     "total": 4119,
     "Implemented": 2414,
     "RawSyscall": 408,
