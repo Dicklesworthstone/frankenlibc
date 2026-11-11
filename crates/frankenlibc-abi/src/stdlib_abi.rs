@@ -1012,6 +1012,7 @@ unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> GetenvNamePro
 /// reallocating the program's memory. A sticky "owned" flag made fl realloc a
 /// program's static array (host abort "realloc(): invalid pointer").
 static OWNED_ENVIRON: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static OWNED_ENVIRON_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Incremented after every successful environment mutation. The deployed
 /// single-threaded `getenv` cache uses this as its coherence fence.
@@ -1202,11 +1203,11 @@ unsafe fn ensure_environ_owned() -> bool {
         return true;
     }
     let count = unsafe { environ_len() };
-    // Allocate count + 1 (for NULL) + 8 (growth room) pointers
-    let Some(new_bytes) = count
-        .checked_add(9)
-        .and_then(|cap| cap.checked_mul(core::mem::size_of::<*mut c_char>()))
-    else {
+    // Allocate count + 1 (for NULL) + growth room pointers (minimum 16).
+    let Some(new_cap) = count.checked_add(9).map(|cap| cap.max(16)) else {
+        return false;
+    };
+    let Some(new_bytes) = new_cap.checked_mul(core::mem::size_of::<*mut c_char>()) else {
         return false;
     };
     let new_array =
@@ -1225,6 +1226,7 @@ unsafe fn ensure_environ_owned() -> bool {
     // An array fl allocated before the program replaced `environ` is left
     // alone, not freed: the program may still hold it (and restore it).
     OWNED_ENVIRON.store(new_array as usize, Ordering::Release);
+    OWNED_ENVIRON_CAP.store(new_cap, Ordering::Release);
     true
 }
 
@@ -1275,10 +1277,6 @@ unsafe fn native_setenv(
         }
     }
 
-    let _lock = environ_lock_guard();
-    let environ_owned = unsafe { ensure_environ_owned() };
-
-    // Build "NAME=value" string
     let Some(entry_len) = name_len
         .checked_add(1)
         .and_then(|len| len.checked_add(val_len))
@@ -1287,30 +1285,18 @@ unsafe fn native_setenv(
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     };
-    let new_entry = unsafe { crate::malloc_abi::host_passthrough_malloc(entry_len) } as *mut c_char;
-    if new_entry.is_null() {
-        unsafe { set_abi_errno(libc::ENOMEM) };
-        return -1;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(name as *const u8, new_entry as *mut u8, name_len);
-        *new_entry.add(name_len) = b'=' as c_char;
-        if !value.is_null() {
-            std::ptr::copy_nonoverlapping(
-                value as *const u8,
-                new_entry.add(name_len + 1) as *mut u8,
-                val_len,
-            );
-        }
-        *new_entry.add(name_len + 1 + val_len) = 0;
-    }
 
-    // Scan for existing entry
+    let _lock = environ_lock_guard();
+    let environ_owned = unsafe { ensure_environ_owned() };
+
+    // Scan for existing entry first so overwrite==0 avoids malloc+free and
+    // appends already know `count` without a second `environ_len()` walk.
+    let mut count = 0usize;
+    let mut existing_idx = None;
     if !unsafe { HOST_ENVIRON.is_null() } {
-        let mut i = 0usize;
         unsafe {
-            while !(*HOST_ENVIRON.add(i)).is_null() {
-                let entry = *HOST_ENVIRON.add(i) as *const u8;
+            while !(*HOST_ENVIRON.add(count)).is_null() {
+                let entry = *HOST_ENVIRON.add(count) as *const u8;
                 let mut match_len = 0usize;
                 while match_len < name_len
                     && *entry.add(match_len) == *(name as *const u8).add(match_len)
@@ -1319,51 +1305,94 @@ unsafe fn native_setenv(
                 }
                 if match_len == name_len && *entry.add(match_len) == b'=' {
                     if overwrite == 0 {
-                        crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
                         return 0; // already exists, don't overwrite
                     }
-                    // Replace existing entry
-                    *HOST_ENVIRON.add(i) = new_entry;
-                    return 0;
+                    existing_idx = Some(count);
+                    break;
                 }
-                i += 1;
+                count += 1;
             }
         }
     }
 
-    // Not found — append to environ
-    let count = unsafe { environ_len() };
-    if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
-        unsafe {
-            crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
-            set_abi_errno(libc::ENOMEM);
-        }
+    if existing_idx.is_none() && !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
+        unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     }
-    // May need to grow the array
-    let Some(new_array_bytes) = count
-        .checked_add(2)
-        .and_then(|cap| cap.checked_mul(core::mem::size_of::<*mut c_char>()))
-    else {
+
+    // Build "NAME=value" string
+    let new_entry = unsafe { crate::malloc_abi::host_passthrough_malloc(entry_len) } as *mut c_char;
+    if new_entry.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(name as *const u8, new_entry as *mut u8, name_len);
+        *new_entry.add(name_len) = b'=' as c_char;
+        std::ptr::copy_nonoverlapping(
+            value as *const u8,
+            new_entry.add(name_len + 1) as *mut u8,
+            val_len,
+        );
+        *new_entry.add(name_len + 1 + val_len) = 0;
+    }
+
+    if let Some(idx) = existing_idx {
+        unsafe {
+            *HOST_ENVIRON.add(idx) = new_entry;
+        }
+        return 0;
+    }
+
+    // Not found — append to environ, reusing spare capacity when owned.
+    let Some(needed_cap) = count.checked_add(2) else {
         unsafe {
             crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
             set_abi_errno(libc::ENOMEM);
         }
         return -1;
     };
-    let new_array = unsafe {
-        crate::malloc_abi::host_passthrough_realloc(HOST_ENVIRON as *mut c_void, new_array_bytes)
-    } as *mut *mut c_char;
-    if new_array.is_null() {
-        unsafe {
-            crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
-            set_abi_errno(libc::ENOMEM);
+    let cur_owned = OWNED_ENVIRON.load(std::sync::atomic::Ordering::Acquire);
+    let cur_cap =
+        if environ_owned && cur_owned != 0 && cur_owned == unsafe { HOST_ENVIRON } as usize {
+            OWNED_ENVIRON_CAP.load(std::sync::atomic::Ordering::Acquire)
+        } else {
+            0
+        };
+    if needed_cap > cur_cap {
+        let grow_cap = if cur_cap == 0 {
+            16usize.max(needed_cap)
+        } else {
+            cur_cap.saturating_mul(2).max(needed_cap)
+        };
+        let Some(new_array_bytes) = grow_cap.checked_mul(core::mem::size_of::<*mut c_char>())
+        else {
+            unsafe {
+                crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
+                set_abi_errno(libc::ENOMEM);
+            }
+            return -1;
+        };
+        let new_array = unsafe {
+            crate::malloc_abi::host_passthrough_realloc(
+                HOST_ENVIRON as *mut c_void,
+                new_array_bytes,
+            )
+        } as *mut *mut c_char;
+        if new_array.is_null() {
+            unsafe {
+                crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
+                set_abi_errno(libc::ENOMEM);
+            }
+            return -1;
         }
-        return -1;
+        unsafe {
+            HOST_ENVIRON = new_array;
+        }
+        OWNED_ENVIRON.store(new_array as usize, std::sync::atomic::Ordering::Release);
+        OWNED_ENVIRON_CAP.store(grow_cap, std::sync::atomic::Ordering::Release);
     }
     unsafe {
-        HOST_ENVIRON = new_array;
-        OWNED_ENVIRON.store(new_array as usize, std::sync::atomic::Ordering::Release);
         *HOST_ENVIRON.add(count) = new_entry;
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
@@ -1380,35 +1409,20 @@ unsafe fn native_unsetenv(name: *const c_char, name_len: usize) -> c_int {
 
 /// Native putenv: store the string directly in environ (no copy).
 /// Unlike setenv, the string must remain valid for the lifetime of the process.
-unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
+unsafe fn native_putenv_impl(string: *mut c_char, name_len: usize) -> c_int {
     if string.is_null() {
         return -1;
     }
-    let (len, terminated) = unsafe { scan_c_string(string, known_remaining(string as usize)) };
-    if !terminated {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(string.cast::<u8>(), len) };
-    let eq_pos = match bytes.iter().position(|&b| b == b'=') {
-        Some(p) => p,
-        None => {
-            // No '=': unset the variable (glibc behavior)
-            let _lock = environ_lock_guard();
-            return unsafe { remove_from_environ(string, len) };
-        }
-    };
-    let name_len = eq_pos;
 
     let _lock = environ_lock_guard();
     let environ_owned = unsafe { ensure_environ_owned() };
 
     // Scan for existing entry with same name
+    let mut count = 0usize;
     if !unsafe { HOST_ENVIRON.is_null() } {
-        let mut i = 0usize;
         unsafe {
-            while !(*HOST_ENVIRON.add(i)).is_null() {
-                let entry = *HOST_ENVIRON.add(i) as *const u8;
+            while !(*HOST_ENVIRON.add(count)).is_null() {
+                let entry = *HOST_ENVIRON.add(count) as *const u8;
                 let mut match_len = 0usize;
                 while match_len < name_len
                     && *entry.add(match_len) == *(string as *const u8).add(match_len)
@@ -1417,37 +1431,58 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
                 }
                 if match_len == name_len && *entry.add(match_len) == b'=' {
                     // Replace existing entry (putenv always overwrites)
-                    *HOST_ENVIRON.add(i) = string;
+                    *HOST_ENVIRON.add(count) = string;
                     return 0;
                 }
-                i += 1;
+                count += 1;
             }
         }
     }
 
     // Not found — append
-    let count = unsafe { environ_len() };
     if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     }
-    let Some(new_array_bytes) = count
-        .checked_add(2)
-        .and_then(|cap| cap.checked_mul(core::mem::size_of::<*mut c_char>()))
-    else {
+    let Some(needed_cap) = count.checked_add(2) else {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     };
-    let new_array = unsafe {
-        crate::malloc_abi::host_passthrough_realloc(HOST_ENVIRON as *mut c_void, new_array_bytes)
-    } as *mut *mut c_char;
-    if new_array.is_null() {
-        unsafe { set_abi_errno(libc::ENOMEM) };
-        return -1;
+    let cur_owned = OWNED_ENVIRON.load(std::sync::atomic::Ordering::Acquire);
+    let cur_cap =
+        if environ_owned && cur_owned != 0 && cur_owned == unsafe { HOST_ENVIRON } as usize {
+            OWNED_ENVIRON_CAP.load(std::sync::atomic::Ordering::Acquire)
+        } else {
+            0
+        };
+    if needed_cap > cur_cap {
+        let grow_cap = if cur_cap == 0 {
+            16usize.max(needed_cap)
+        } else {
+            cur_cap.saturating_mul(2).max(needed_cap)
+        };
+        let Some(new_array_bytes) = grow_cap.checked_mul(core::mem::size_of::<*mut c_char>())
+        else {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        };
+        let new_array = unsafe {
+            crate::malloc_abi::host_passthrough_realloc(
+                HOST_ENVIRON as *mut c_void,
+                new_array_bytes,
+            )
+        } as *mut *mut c_char;
+        if new_array.is_null() {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        }
+        unsafe {
+            HOST_ENVIRON = new_array;
+        }
+        OWNED_ENVIRON.store(new_array as usize, std::sync::atomic::Ordering::Release);
+        OWNED_ENVIRON_CAP.store(grow_cap, std::sync::atomic::Ordering::Release);
     }
     unsafe {
-        HOST_ENVIRON = new_array;
-        OWNED_ENVIRON.store(new_array as usize, std::sync::atomic::Ordering::Release);
         *HOST_ENVIRON.add(count) = string;
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
@@ -2902,12 +2937,44 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
 
+    if runtime_policy::strict_passthrough_active() {
+        if value.is_null() {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+        let mut name_len = 0usize;
+        loop {
+            let byte = unsafe { *name.add(name_len) as u8 };
+            if byte == 0 {
+                break;
+            }
+            if byte == b'=' {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                return -1;
+            }
+            name_len += 1;
+        }
+        if name_len == 0 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+        let value_len = unsafe { crate::string_abi::strlen(value) };
+        let rc = unsafe { native_setenv(name, name_len, value, value_len, overwrite) };
+        if rc != 0 {
+            unsafe { set_abi_errno_if_clear(libc::EINVAL) };
+        } else {
+            bump_environ_epoch();
+        }
+        return rc;
+    }
+
+    let bound = known_remaining(name as usize);
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         name as usize,
         0,
         true, // write operation (modifying environment)
-        known_remaining(name as usize).is_none(),
+        bound.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -2916,7 +2983,6 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
 
-    let bound = known_remaining(name as usize);
     let (name_len, name_terminated) = unsafe { scan_c_string(name, bound) };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
@@ -2983,12 +3049,39 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
         return -1;
     }
 
+    if runtime_policy::strict_passthrough_active() {
+        let mut name_len = 0usize;
+        loop {
+            let byte = unsafe { *name.add(name_len) as u8 };
+            if byte == 0 {
+                break;
+            }
+            if byte == b'=' {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                return -1;
+            }
+            name_len += 1;
+        }
+        if name_len == 0 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+        let rc = unsafe { native_unsetenv(name, name_len) };
+        if rc != 0 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+        } else {
+            bump_environ_epoch();
+        }
+        return rc;
+    }
+
+    let bound = known_remaining(name as usize);
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         name as usize,
         0,
         true, // write operation (modifying environment)
-        known_remaining(name as usize).is_none(),
+        bound.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -3683,12 +3776,36 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return -1;
     }
 
+    if runtime_policy::strict_passthrough_active() {
+        let mut i = 0usize;
+        let mut eq_pos = None;
+        loop {
+            let byte = unsafe { *string.add(i) as u8 };
+            if byte == 0 {
+                break;
+            }
+            if byte == b'=' && eq_pos.is_none() {
+                eq_pos = Some(i);
+            }
+            i += 1;
+        }
+        let Some(name_len) = eq_pos else {
+            return unsafe { super::stdlib_abi::unsetenv(string) };
+        };
+        let ret = unsafe { native_putenv_impl(string, name_len) };
+        if ret == 0 {
+            bump_environ_epoch();
+        }
+        return ret;
+    }
+
+    let bound = known_remaining(string as usize);
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         string as usize,
         0,
         false,
-        known_remaining(string as usize).is_none(),
+        bound.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -3697,7 +3814,6 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return -1;
     }
 
-    let bound = known_remaining(string as usize);
     // Find '=' to split name and value.
     let (len, terminated) = unsafe { scan_c_string(string, bound) };
     if !terminated {
@@ -3706,13 +3822,13 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return -1;
     }
     let bytes = unsafe { std::slice::from_raw_parts(string as *const u8, len) };
-    if bytes.iter().position(|&b| b == b'=').is_none() {
+    let Some(name_len) = bytes.iter().position(|&b| b == b'=') else {
         // No '=': unset the variable (glibc behavior).
         return unsafe { super::stdlib_abi::unsetenv(string) };
-    }
+    };
 
     // Native putenv: store the string directly in environ (no copy).
-    let ret = unsafe { native_putenv_impl(string) };
+    let ret = unsafe { native_putenv_impl(string, name_len) };
     if ret == 0 {
         bump_environ_epoch();
     }

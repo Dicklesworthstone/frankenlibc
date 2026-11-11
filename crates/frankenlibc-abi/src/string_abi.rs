@@ -5538,6 +5538,66 @@ const MEMCHR_PAGE: usize = 4096;
 ///
 /// Every byte of `[s, s + n)` up to and including the first match is readable.
 #[inline]
+unsafe fn memchr_within_page_short(p: *const u8, needle: u8, seg: usize) -> Option<usize> {
+    debug_assert!(seg < 32);
+    #[cfg(target_arch = "x86_64")]
+    if seg >= 16 {
+        use std::arch::x86_64::*;
+        // SAFETY: SSE2 is baseline on x86_64; `[0, 16)` and `[seg - 16, seg)` lie within `[0, seg)`.
+        unsafe {
+            let vneedle = _mm_set1_epi8(needle as i8);
+            let m0 = (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.cast()), vneedle)) as u32)
+                & 0xFFFF;
+            if m0 != 0 {
+                return Some(m0.trailing_zeros() as usize);
+            }
+            if seg > 16 {
+                let off = seg - 16;
+                let m1 =
+                    (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.add(off).cast()), vneedle))
+                        as u32)
+                        & 0xFFFF;
+                if m1 != 0 {
+                    return Some(off + m1.trailing_zeros() as usize);
+                }
+            }
+            return None;
+        }
+    }
+    if seg >= 8 {
+        const ONES: u64 = 0x0101_0101_0101_0101;
+        const HIGHS: u64 = 0x8080_8080_8080_8080;
+        let splat = ONES.wrapping_mul(needle as u64);
+        // SAFETY: `[0, 8)` and `[seg - 8, seg)` lie within `[0, seg)`.
+        unsafe {
+            let x0 = std::ptr::read_unaligned(p.cast::<u64>()) ^ splat;
+            let mask0 = x0.wrapping_sub(ONES) & !x0 & HIGHS;
+            if mask0 != 0 {
+                return Some((mask0.to_le().trailing_zeros() / 8) as usize);
+            }
+            if seg > 8 {
+                let off = seg - 8;
+                let x1 = std::ptr::read_unaligned(p.add(off).cast::<u64>()) ^ splat;
+                let mask1 = x1.wrapping_sub(ONES) & !x1 & HIGHS;
+                if mask1 != 0 {
+                    return Some(off + (mask1.to_le().trailing_zeros() / 8) as usize);
+                }
+            }
+        }
+        return None;
+    }
+    let mut k = 0usize;
+    while k < seg {
+        // SAFETY: `k < seg`.
+        if unsafe { *p.add(k) } == needle {
+            return Some(k);
+        }
+        k += 1;
+    }
+    None
+}
+
+#[inline]
 unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usize> {
     let mut off = 0usize;
     while off < n {
@@ -5545,8 +5605,44 @@ unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usiz
         let seg = (MEMCHR_PAGE - (addr & (MEMCHR_PAGE - 1))).min(n - off);
         // SAFETY: `[s + off, s + off + seg)` lies in one page, which holds an
         // unexamined byte the caller vouches for, so the whole page is mapped.
-        if let Some(idx) = unsafe { core_memchr(s.add(off), needle, seg) } {
-            return Some(off + idx);
+        let p = unsafe { s.add(off) };
+        if seg < 32 {
+            if let Some(idx) = unsafe { memchr_within_page_short(p, needle, seg) } {
+                return Some(off + idx);
+            }
+        } else {
+            #[cfg(target_arch = "x86_64")]
+            {
+                use std::arch::x86_64::*;
+                // Check the first 32 bytes inline via baseline SSE2 before crossing
+                // into out-of-line `core_memchr`.
+                unsafe {
+                    let vneedle = _mm_set1_epi8(needle as i8);
+                    let m0 = (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.cast()), vneedle))
+                        as u32)
+                        & 0xFFFF;
+                    if m0 != 0 {
+                        return Some(off + m0.trailing_zeros() as usize);
+                    }
+                    let m1 = (_mm_movemask_epi8(_mm_cmpeq_epi8(
+                        _mm_loadu_si128(p.add(16).cast()),
+                        vneedle,
+                    )) as u32)
+                        & 0xFFFF;
+                    if m1 != 0 {
+                        return Some(off + 16 + m1.trailing_zeros() as usize);
+                    }
+                }
+                if seg > 32
+                    && let Some(idx) = unsafe { core_memchr(p.add(32), needle, seg - 32) }
+                {
+                    return Some(off + 32 + idx);
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            if let Some(idx) = unsafe { core_memchr(p, needle, seg) } {
+                return Some(off + idx);
+            }
         }
         off += seg;
     }

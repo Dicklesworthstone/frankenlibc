@@ -98,21 +98,39 @@ impl<T> AbiReentrantMutex<T> {
     #[inline]
     pub(crate) fn lock(&self) -> AbiReentrantMutexGuard<'_, T> {
         let tid = current_tid();
-        let mut spins = 0u32;
+        if self.try_lock_for_tid(tid) {
+            return AbiReentrantMutexGuard {
+                lock: self,
+                owner_tid: tid,
+                _not_send_sync: PhantomData,
+            };
+        }
+        self.lock_contended(tid)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn lock_contended(&self, tid: usize) -> AbiReentrantMutexGuard<'_, T> {
         loop {
+            // Read-spin in Shared MESI state while another thread holds the lock so
+            // waiters do not blast `LOCK CMPXCHG` RFOs onto the owner's cache line.
+            let mut read_spins = 0u32;
+            while self.owner_tid.load(Ordering::Relaxed) != 0 {
+                read_spins = read_spins.wrapping_add(1);
+                if read_spins & 0x3f == 0 {
+                    frankenlibc_core::syscall::sys_sched_yield();
+                } else {
+                    std::hint::spin_loop();
+                }
+            }
             if self.try_lock_for_tid(tid) {
                 return AbiReentrantMutexGuard {
                     lock: self,
+                    owner_tid: tid,
                     _not_send_sync: PhantomData,
                 };
             }
-
-            spins = spins.wrapping_add(1);
-            if spins & 0x3ff == 0 {
-                frankenlibc_core::syscall::sys_sched_yield();
-            } else {
-                std::hint::spin_loop();
-            }
+            std::hint::spin_loop();
         }
     }
 
@@ -128,6 +146,7 @@ impl<T> AbiReentrantMutex<T> {
         let tid = current_tid();
         self.try_lock_for_tid(tid).then(|| AbiReentrantMutexGuard {
             lock: self,
+            owner_tid: tid,
             _not_send_sync: PhantomData,
         })
     }
@@ -234,6 +253,7 @@ fn current_tid() -> usize {
 /// the owner's recursion level. Keep both auto traits disabled explicitly.
 pub(crate) struct AbiReentrantMutexGuard<'a, T> {
     lock: &'a AbiReentrantMutex<T>,
+    owner_tid: usize,
     _not_send_sync: PhantomData<*mut ()>,
 }
 
@@ -250,7 +270,7 @@ impl<T> Deref for AbiReentrantMutexGuard<'_, T> {
 impl<T> Drop for AbiReentrantMutexGuard<'_, T> {
     #[inline]
     fn drop(&mut self) {
-        self.lock.unlock_for_tid(current_tid());
+        self.lock.unlock_for_tid(self.owner_tid);
     }
 }
 
