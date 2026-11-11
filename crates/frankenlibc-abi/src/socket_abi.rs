@@ -369,16 +369,14 @@ pub(crate) unsafe fn recv_cp(sockfd: c_int, buf: *mut c_void, len: usize, flags:
     }
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_recvfrom(
-                sockfd,
-                buf as *mut u8,
-                len,
-                flags,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        })
+        crate::pthread_abi::cancellation_point_recvfrom(
+            sockfd,
+            buf as *mut u8,
+            len,
+            flags,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -536,16 +534,14 @@ pub(crate) unsafe fn recvfrom_cp(
     let submitted_length = output.as_mut_ptr();
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_recvfrom(
-                sockfd,
-                buf as *mut u8,
-                len,
-                flags,
-                src_addr as *mut u8,
-                submitted_length,
-            )
-        })
+        crate::pthread_abi::cancellation_point_recvfrom(
+            sockfd,
+            buf as *mut u8,
+            len,
+            flags,
+            src_addr as *mut u8,
+            submitted_length,
+        )
     } {
         Ok(n) => match unsafe { output.publish() } {
             Ok(()) => (n, false),

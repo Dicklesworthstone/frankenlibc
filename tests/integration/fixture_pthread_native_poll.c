@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -18,6 +19,7 @@
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
@@ -1529,9 +1531,405 @@ static int suspend_contract_main(char **argv) {
     return 0;
 }
 
+/* Receives use per-call nonblocking probes only. Unlike readiness tests, these
+ * cases also check that bytes/datagrams are neither consumed by cancellation
+ * nor lost when another receiver wins the readiness race. */
+enum receive_kind {
+    RECEIVE_BLOCKED, RECEIVE_PENDING, RECEIVE_DISABLED, RECEIVE_READY,
+    RECEIVE_READY_LATE, RECEIVE_PEEK, RECEIVE_NONBLOCK, RECEIVE_DONTWAIT,
+    RECEIVE_TIMEOUT, RECEIVE_SIGNAL, RECEIVE_SIGNAL_RESTART, RECEIVE_COMPETING,
+    RECEIVE_WAITALL, RECEIVE_LOWAT, RECEIVE_EOF, RECEIVE_ZERO, RECEIVE_ERRORS,
+    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE
+};
+struct receive_probe {
+    struct state observed;
+    enum receive_kind kind;
+    int fd, from, fortified, flags;
+    size_t length;
+    unsigned char data[8];
+    struct sockaddr_storage address;
+    socklen_t address_length;
+};
+static ssize_t (*selected_recv)(int, void *, size_t, int);
+static ssize_t (*selected_recvfrom)(int, void *, size_t, int, struct sockaddr *, socklen_t *);
+static ssize_t (*selected_recv_chk)(int, void *, size_t, size_t, int);
+static ssize_t (*selected_recvfrom_chk)(int, void *, size_t, size_t, int,
+                                      struct sockaddr *, socklen_t *);
+
+static int pin_receive_provider(const char *expected, int from, int alias, int fortified) {
+    int base = pin_providers(expected, 0, EVENT_NONE);
+    if (base != 0) return base;
+    const char *name = from ? (fortified ? "__recvfrom_chk" : "recvfrom") :
+                             fortified ? "__recv_chk" : alias ? "__recv" : "recv";
+    Dl_info info = {0};
+    struct stat actual, wanted;
+    void *symbol = dlsym(RTLD_DEFAULT, name);
+    if (!symbol || !dladdr(symbol, &info) || !info.dli_fname ||
+        stat(expected, &wanted) || stat(info.dli_fname, &actual) ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
+        return 86;
+    }
+    if (from && fortified) selected_recvfrom_chk = (__typeof__(selected_recvfrom_chk))symbol;
+    else if (from) selected_recvfrom = (__typeof__(selected_recvfrom))symbol;
+    else if (fortified) selected_recv_chk = (__typeof__(selected_recv_chk))symbol;
+    else selected_recv = (__typeof__(selected_recv))symbol;
+    return 0;
+}
+
+static ssize_t receive_call(struct receive_probe *probe) {
+    if (probe->from && probe->fortified)
+        return selected_recvfrom_chk(probe->fd, probe->data, probe->length, sizeof(probe->data),
+                                     probe->flags, (struct sockaddr *)&probe->address,
+                                     &probe->address_length);
+    if (probe->from)
+        return selected_recvfrom(probe->fd, probe->data, probe->length, probe->flags,
+                                 (struct sockaddr *)&probe->address, &probe->address_length);
+    if (probe->fortified)
+        return selected_recv_chk(probe->fd, probe->data, probe->length, sizeof(probe->data),
+                                 probe->flags);
+    return selected_recv(probe->fd, probe->data, probe->length, probe->flags);
+}
+
+static void receive_cleanup(void *argument) {
+    struct receive_probe *probe = argument;
+    sigset_t mask;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0 &&
+                sigismember(&mask, SIGUSR1) == 0 && sigismember(&mask, SIGUSR2) == 1,
+            "receive cleanup preserves the complete original signal mask");
+    REQUIRE(atomic_fetch_add_explicit(&probe->observed.cleaned, 1, memory_order_release) == 0,
+            "receive cleanup executes exactly once");
+}
+
+static void *receive_worker(void *argument) {
+    struct receive_probe *probe = argument;
+    struct state *state = &probe->observed;
+    capture_identity(state);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0,
+            "deferred receive cancellation");
+    if (probe->kind == RECEIVE_DISABLED)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0,
+                "disable receive cancellation");
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "receive entry signal mask");
+    pthread_cleanup_push(receive_cleanup, probe);
+    atomic_store_explicit(&state->ready, 1, memory_order_release);
+    while (!atomic_load_explicit(&state->release, memory_order_acquire))
+        (void)syscall(SYS_sched_yield);
+    errno = EDOM;
+    int64_t started = monotonic_ns();
+    if (probe->kind == RECEIVE_ERRORS) {
+        int original = probe->fd;
+        probe->fd = -1;
+        REQUIRE(receive_call(probe) == -1 && errno == EBADF, "invalid receive fd retains EBADF");
+        int pipefd[2];
+        REQUIRE(pipe(pipefd) == 0, "receive error pipe");
+        probe->fd = pipefd[0];
+        REQUIRE(receive_call(probe) == -1 && errno == ENOTSOCK,
+                "receive metadata probes do not replace ENOTSOCK");
+        REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close receive error pipe");
+        probe->fd = original;
+        state->result = 0;
+    } else {
+        state->result = (int)receive_call(probe);
+    }
+    state->error = errno;
+    state->elapsed_ns = monotonic_ns() - started;
+    atomic_store_explicit(&state->returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (probe->kind == RECEIVE_DISABLED) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0,
+                "reenable receive cancellation");
+        pthread_testcancel();
+        fail("disabled receive lost its pending cancellation");
+    }
+    return state;
+}
+
+static void observe_receive_parked(struct receive_probe *probe, int memory) {
+    struct state *state = &probe->observed;
+    int sliced = expect_native && probe->kind != RECEIVE_DISABLED &&
+                 probe->kind != RECEIVE_TIMEOUT && probe->kind != RECEIVE_WAITALL &&
+                 probe->kind != RECEIVE_LOWAT && probe->kind != RECEIVE_SIGNAL &&
+                 probe->kind != RECEIVE_SIGNAL_RESTART;
+    int64_t deadline = monotonic_ns() + 2000000000;
+    while (monotonic_ns() < deadline) {
+        REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
+                "receive returned before its intended blocked operation");
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long args[6] = {0};
+        if (!read_proc(state, "syscall", call, sizeof(call)) ||
+            sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
+                   &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 5)
+            goto retry_receive;
+        if (sliced) {
+            struct pollfd interest;
+            struct timespec duration;
+            uint64_t mask;
+            if (number != SYS_ppoll || args[1] != 1 ||
+                !snapshot(memory, args[0], &interest, sizeof(interest)) ||
+                interest.fd != probe->fd || interest.events != POLLIN ||
+                args[2] == 0 || !snapshot(memory, args[2], &duration, sizeof(duration)) ||
+                args[3] == 0 || !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_receive;
+            REQUIRE(duration.tv_sec == 0 && duration.tv_nsec > 0 && duration.tv_nsec <= 50000000,
+                    "native receive waits in bounded nonzero slices");
+            REQUIRE(args[4] == sizeof(mask) && ((mask >> (SIGUSR2 - 1)) & 1) == 1 &&
+                        ((mask >> (SIGUSR1 - 1)) & 1) == 0,
+                    "native receive atomically reinstates the complete original mask");
+        } else if (number != SYS_recvfrom || args[0] != (unsigned)probe->fd ||
+                   args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
+            goto retry_receive;
+        }
+        if (!read_proc(state, "stat", status, sizeof(status))) goto retry_receive;
+        char *end = strrchr(status, ')');
+        if (end != NULL && end[1] == ' ' && end[2] == 'S') return;
+retry_receive:
+        pause_briefly();
+    }
+    fail("no observed socket receive with the expected native/hosted wait arguments");
+}
+
+static void send_receive_bytes(int fd, const char *bytes, size_t length) {
+    REQUIRE(syscall(SYS_sendto, fd, bytes, length, MSG_NOSIGNAL, NULL, 0) == (ssize_t)length,
+            "send exact receive payload");
+}
+
+static void receive_initialize(struct receive_probe *probe, enum receive_kind kind,
+                               int fd, int from, int fortified) {
+    memset(probe, 0, sizeof(*probe));
+    probe->kind = kind;
+    probe->fd = fd;
+    probe->from = from;
+    probe->fortified = fortified;
+    probe->flags = kind == RECEIVE_PEEK ? MSG_PEEK :
+                   kind == RECEIVE_DONTWAIT ? MSG_DONTWAIT :
+                   kind == RECEIVE_WAITALL ? MSG_WAITALL :
+                   kind == RECEIVE_TRUNCATE ? MSG_TRUNC : 0;
+    probe->length = kind == RECEIVE_LENGTH_ZERO ? 0 :
+                    kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT ? 4 : 1;
+    probe->address_length = sizeof(probe->address);
+    memset(probe->data, 0xa5, sizeof(probe->data));
+    memset(&probe->address, 0xa5, sizeof(probe->address));
+    probe->observed.result = -222;
+    atomic_init(&probe->observed.ready, 0);
+    atomic_init(&probe->observed.release, 0);
+    atomic_init(&probe->observed.returned, 0);
+    atomic_init(&probe->observed.cleaned, 0);
+}
+
+static void check_received_payload(const struct receive_probe *probe,
+                                   const struct sockaddr_in *peer) {
+    int expected = probe->kind == RECEIVE_TRUNCATE ? 4 : (int)probe->length;
+    REQUIRE(probe->observed.result == expected && probe->observed.error == EDOM,
+            "receive returns exact payload length without changing errno");
+    REQUIRE(memcmp(probe->data, "DATA", probe->length) == 0,
+            "receive preserves payload bytes");
+    for (size_t i = probe->length; i < sizeof(probe->data); ++i)
+        REQUIRE(probe->data[i] == 0xa5, "receive leaves trailing buffer bytes alone");
+    if (probe->from) {
+        const struct sockaddr_in *address = (const struct sockaddr_in *)&probe->address;
+        REQUIRE(probe->address_length == sizeof(*address) && address->sin_family == AF_INET &&
+                    address->sin_addr.s_addr == peer->sin_addr.s_addr &&
+                    address->sin_port == peer->sin_port,
+                "recvfrom publishes the actual sender address exactly once");
+    }
+}
+
+static int receive_contract_main(char **argv) {
+    int from = strncmp(case_name, "recvfrom-", 9) == 0;
+    const char *suffix = case_name + (from ? 9 : 5);
+    int alias = strncmp(suffix, "alias-", 6) == 0;
+    int fortified = strncmp(suffix, "fortified-", 10) == 0;
+    if (alias) suffix += 6;
+    if (fortified) suffix += 10;
+    const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late", "peek",
+                          "nonblock", "dontwait", "timeout", "signal", "signal-restart",
+                          "competing", "waitall", "lowat", "eof", "zero", "errors",
+                          "length-zero", "truncate"};
+    int value = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(suffix, names[i]) == 0) value = (int)i;
+    if (value < 0 || (from && alias) || (!from && (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE)) ||
+        (from && (value == RECEIVE_WAITALL || value == RECEIVE_LOWAT || value == RECEIVE_EOF)))
+        return 2;
+    enum receive_kind kind = (enum receive_kind)value;
+    int pin = pin_receive_provider(argv[2], from, alias, fortified);
+    if (pin != 0) return pin;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART ? user_signal : SIG_DFL;
+    action.sa_flags = kind == RECEIVE_SIGNAL_RESTART ? SA_RESTART : 0;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "receive signal disposition");
+    alarm(15);
+    int pair[2];
+    struct sockaddr_in peer = {0};
+    if (from) {
+        struct sockaddr_in local = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+        pair[0] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        pair[1] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        REQUIRE(pair[0] >= 0 && pair[1] >= 0, "create loopback datagram endpoints");
+        REQUIRE(bind(pair[0], (struct sockaddr *)&local, sizeof(local)) == 0 &&
+                    bind(pair[1], (struct sockaddr *)&local, sizeof(local)) == 0,
+                "bind independent datagram endpoints");
+        socklen_t size = sizeof(local);
+        REQUIRE(getsockname(pair[0], (struct sockaddr *)&local, &size) == 0,
+                "resolve datagram receiver address");
+        size = sizeof(peer);
+        REQUIRE(getsockname(pair[1], (struct sockaddr *)&peer, &size) == 0 &&
+                    connect(pair[1], (struct sockaddr *)&local, sizeof(local)) == 0,
+                "connect datagram sender to receiver");
+    } else {
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0,
+                "create stream receive endpoints");
+    }
+    if (kind == RECEIVE_NONBLOCK)
+        REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
+                "set caller-owned nonblocking flag");
+    if (kind == RECEIVE_TIMEOUT) {
+        struct timeval timeout = {0, 150000};
+        REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0,
+                "set caller-owned receive timeout");
+    }
+    if (kind == RECEIVE_LOWAT) {
+        int lowat = 4;
+        REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_RCVLOWAT, &lowat, sizeof(lowat)) == 0,
+                "set caller-owned receive low-water mark");
+    }
+    int original_flags = fcntl(pair[0], F_GETFL);
+    REQUIRE(original_flags >= 0, "capture original socket flags");
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("socket-wait-snapshot-unavailable");
+    struct receive_probe probe;
+    receive_initialize(&probe, kind, pair[0], from, fortified);
+    if (kind == RECEIVE_PENDING || kind == RECEIVE_READY || kind == RECEIVE_PEEK ||
+        kind == RECEIVE_LENGTH_ZERO)
+        send_receive_bytes(pair[1], "DATA", 1);
+    if (kind == RECEIVE_TRUNCATE) send_receive_bytes(pair[1], "DATA", 4);
+    if (kind == RECEIVE_ZERO) send_receive_bytes(pair[1], "", 0);
+    if (kind == RECEIVE_EOF)
+        REQUIRE(shutdown(pair[1], SHUT_WR) == 0, "close receive peer write side");
+    REQUIRE(pthread_create(&probe.observed.thread, NULL, receive_worker, &probe) == 0,
+            "create receive worker");
+    wait_ready(&probe.observed);
+    if (kind == RECEIVE_PENDING)
+        REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request pending receive cancellation");
+    atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
+    if (kind == RECEIVE_COMPETING) {
+        struct receive_probe competitor;
+        receive_initialize(&competitor, kind, pair[0], from, fortified);
+        REQUIRE(pthread_create(&competitor.observed.thread, NULL, receive_worker, &competitor) == 0,
+                "create competing socket receiver");
+        wait_ready(&competitor.observed);
+        atomic_store_explicit(&competitor.observed.release, 1, memory_order_release);
+        observe_receive_parked(&probe, memory);
+        observe_receive_parked(&competitor, memory);
+        send_receive_bytes(pair[1], "DATA", 1);
+        int64_t deadline = monotonic_ns() + 2000000000;
+        while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire) &&
+               !atomic_load_explicit(&competitor.observed.returned, memory_order_acquire)) {
+            REQUIRE(monotonic_ns() < deadline, "one competing receiver acquires the payload");
+            pause_briefly();
+        }
+        struct receive_probe *winner = atomic_load_explicit(&probe.observed.returned, memory_order_acquire)
+                                         ? &probe : &competitor;
+        struct receive_probe *loser = winner == &probe ? &competitor : &probe;
+        REQUIRE(join_bounded(&winner->observed) == &winner->observed, "join winning receiver");
+        check_received_payload(winner, &peer);
+        observe_receive_parked(loser, memory);
+        REQUIRE(pthread_cancel(loser->observed.thread) == 0, "cancel receiver after losing readiness");
+        REQUIRE(join_bounded(&loser->observed) == PTHREAD_CANCELED &&
+                    !atomic_load_explicit(&loser->observed.returned, memory_order_acquire),
+                "losing receiver stays cancellable without rescue data");
+        REQUIRE(loser->data[0] == 0xa5 && winner->observed.cleaned == 1 && loser->observed.cleaned == 1,
+                "competing receivers acquire only one payload and clean up once");
+    } else {
+        if (kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
+            kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART ||
+            kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT) {
+            observe_receive_parked(&probe, memory);
+            if (kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED)
+                REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request blocked receive cancellation");
+            if (kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART) {
+                REQUIRE(pthread_kill(probe.observed.thread, SIGUSR1) == 0, "interrupt socket receive");
+                int64_t deadline = monotonic_ns() + 2000000000;
+                while (!atomic_load_explicit(&signals_delivered, memory_order_acquire)) {
+                    REQUIRE(monotonic_ns() < deadline, "receive signal delivery deadline");
+                    pause_briefly();
+                }
+                if (kind == RECEIVE_SIGNAL_RESTART) observe_receive_parked(&probe, memory);
+            }
+            if (kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT) {
+                send_receive_bytes(pair[1], "D", 1);
+                int64_t short_read_deadline = monotonic_ns() + 50000000;
+                while (monotonic_ns() < short_read_deadline) {
+                    REQUIRE(!atomic_load_explicit(&probe.observed.returned, memory_order_acquire),
+                            "receive must keep waiting below its caller-selected threshold");
+                    pause_briefly();
+                }
+                observe_receive_parked(&probe, memory);
+                REQUIRE(!atomic_load_explicit(&probe.observed.returned, memory_order_acquire),
+                        "WAITALL and low-water contracts do not return a premature short read");
+                send_receive_bytes(pair[1], "ATA", 3);
+            } else if (kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
+                       kind == RECEIVE_SIGNAL_RESTART) {
+                send_receive_bytes(pair[1], "DATA", 1);
+            }
+        }
+        void *result = join_bounded(&probe.observed);
+        int canceled = kind == RECEIVE_PENDING || kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED;
+        REQUIRE(result == (canceled ? PTHREAD_CANCELED : &probe.observed), "receive join result");
+        REQUIRE(probe.observed.cleaned == 1, "receive cleanup count");
+        if (kind == RECEIVE_PENDING || kind == RECEIVE_BLOCKED) {
+            REQUIRE(!probe.observed.returned && probe.data[0] == 0xa5 &&
+                        probe.address_length == sizeof(probe.address),
+                    "cancellation precedes payload and address publication");
+        } else if (kind == RECEIVE_NONBLOCK || kind == RECEIVE_DONTWAIT || kind == RECEIVE_TIMEOUT) {
+            REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
+                    "caller nonblocking and timeout contracts preserve EAGAIN");
+            if (kind == RECEIVE_TIMEOUT)
+                REQUIRE(probe.observed.elapsed_ns >= 100000000 && probe.observed.elapsed_ns < 2000000000,
+                        "receive timeout retains its kernel deadline");
+        } else if (kind == RECEIVE_SIGNAL) {
+            REQUIRE(probe.observed.result == -1 && probe.observed.error == EINTR,
+                    "non-restarting receive preserves EINTR");
+        } else if (kind == RECEIVE_EOF || kind == RECEIVE_ZERO) {
+            REQUIRE(probe.observed.result == 0 && probe.observed.error == EDOM && probe.data[0] == 0xa5,
+                    "EOF and zero-byte datagrams retain successful zero results");
+        } else if (kind != RECEIVE_ERRORS) {
+            check_received_payload(&probe, &peer);
+        }
+    }
+    if (kind == RECEIVE_PENDING || kind == RECEIVE_PEEK || (kind == RECEIVE_LENGTH_ZERO && !from)) {
+        unsigned char remaining = 0;
+        REQUIRE(syscall(SYS_recvfrom, pair[0], &remaining, 1, MSG_DONTWAIT, NULL, NULL) == 1 &&
+                    remaining == 'D', "pending cancellation, PEEK and empty stream reads preserve payload");
+    }
+    if (kind != RECEIVE_EOF) {
+        unsigned char remaining;
+        REQUIRE(syscall(SYS_recvfrom, pair[0], &remaining, 1, MSG_DONTWAIT, NULL, NULL) == -1 &&
+                    errno == EAGAIN, "receive consumes each queued payload at most once");
+    }
+    REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "receive never changes shared O_NONBLOCK flags");
+    REQUIRE(close(memory) == 0 && close(pair[0]) == 0 && close(pair[1]) == 0,
+            "release receive fixture descriptors");
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
+    if (strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0)
+        return receive_contract_main(argv);
     if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);
     if (strncmp(case_name, "select-", 7) == 0 || strncmp(case_name, "pselect-", 8) == 0)
         return select_contract_main(argv);

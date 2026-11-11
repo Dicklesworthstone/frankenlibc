@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare observed native poll/select/epoll/sleep/suspend cancellation with GNU libc."""
+"""Compare native descriptor, receive, sleep and signal cancellation with GNU libc."""
 
 from __future__ import annotations
 
@@ -85,9 +85,23 @@ SUSPEND_CASES = tuple(
     "sigsuspend-mask-unblock", "sigsuspend-mask-cancel", "sigsuspend-mask-cancel-block",
     "sigsuspend-errors", "sigsuspend-guarded-mask",
 )
+RECEIVE_CASES = tuple(
+    f"{entry}-{case}"
+    for entry in ("recv", "recvfrom")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "peek",
+        "nonblock", "dontwait", "timeout", "signal", "signal-restart", "competing", "errors",
+        "length-zero",
+    )
+) + (
+    "recv-waitall", "recv-lowat", "recv-eof", "recvfrom-zero", "recvfrom-truncate",
+    "recv-alias-blocked", "recv-alias-pending",
+    "recv-fortified-blocked", "recv-fortified-pending",
+    "recvfrom-fortified-blocked", "recvfrom-fortified-pending",
+)
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
-CASES = POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES
+CASES = POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + RECEIVE_CASES
 
 
 def digest(path: Path) -> str:
@@ -108,11 +122,17 @@ def main() -> int:
         "--suspend-only", action="store_true",
         help="Run only pause/sigsuspend cases and the provider/backend negative controls.",
     )
+    parser.add_argument(
+        "--receive-only", action="store_true",
+        help="Run only socket receive cases and the provider/backend negative controls.",
+    )
     args = parser.parse_args()
+    if args.suspend_only and args.receive_only:
+        parser.error("--suspend-only and --receive-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
-    cases = SUSPEND_CASES if args.suspend_only else CASES
+    cases = SUSPEND_CASES if args.suspend_only else RECEIVE_CASES if args.receive_only else CASES
     source = root / "tests/integration/fixture_pthread_native_poll.c"
     library = args.library.resolve(strict=True) if args.library is not None else None
     out = args.out_dir.resolve()
@@ -187,6 +207,8 @@ def main() -> int:
         ).replace("epoll-pwait-alias-", "epoll-pwait-").replace(
             "pselect-alias-", "pselect-"
         ).replace("select-alias-", "select-").replace(
+            "recv-alias-", "recv-"
+        ).replace(
             "pause-alias-", "pause-"
         ).replace("sigsuspend-alias-", "sigsuspend-")
         if "-alias-" in case and not case.endswith("-alias-remainder"):
@@ -225,17 +247,19 @@ def main() -> int:
     report = {
         "schema_version": 2,
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
-        "case_scope": "pause/sigsuspend only" if args.suspend_only else "poll/epoll/sleep/select",
+        "case_scope": "pause/sigsuspend only" if args.suspend_only else
+                      "socket receives only" if args.receive_only else "poll/epoll/sleep/select/receive",
         "revision": revision.stdout.strip() if revision.returncode == 0 else None,
         "fixture_sha256": digest(source), "runner_sha256": digest(Path(__file__)),
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
         "gnu_provider": str(host), "gnu_provider_sha256": digest(host),
         "compiler_command": command, "case_count": len(cases),
-        "poll_cases": 0 if args.suspend_only else len(POLL_CASES),
-        "epoll_cases": 0 if args.suspend_only else len(EPOLL_CASES),
-        "sleep_cases": 0 if args.suspend_only else len(SLEEP_CASES),
-        "select_cases": 0 if args.suspend_only else len(SELECT_CASES),
+        "poll_cases": 0 if args.suspend_only or args.receive_only else len(POLL_CASES),
+        "epoll_cases": 0 if args.suspend_only or args.receive_only else len(EPOLL_CASES),
+        "sleep_cases": 0 if args.suspend_only or args.receive_only else len(SLEEP_CASES),
+        "select_cases": 0 if args.suspend_only or args.receive_only else len(SELECT_CASES),
         "suspend_cases": len(SUSPEND_CASES) if args.suspend_only else 0,
+        "receive_cases": 0 if args.suspend_only else len(RECEIVE_CASES),
         "oracle_cases": len(cases), "candidate_cases": 0 if args.host_only else 4 * len(cases),
         "provider_negatives": 1, "backend_negatives": 1,
         "explicit_skips": [row["label"] for row in rows if row["status"] == "SKIP"],
@@ -243,10 +267,10 @@ def main() -> int:
     }
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
-        print("Required poll/select/epoll/sleep/suspend coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
+        print("Required poll/select/epoll/sleep/suspend/receive coverage failed or was unavailable: " + ", ".join(failures), file=sys.stderr)
         return 1
     candidate = "no candidate validation" if args.host_only else f"{4 * len(cases)} candidate cases"
-    print(f"Native poll/select/epoll/sleep/suspend: {len(cases)} GNU oracle cases, {candidate}, 2 negative controls passed")
+    print(f"Native poll/select/epoll/sleep/suspend/receive: {len(cases)} GNU oracle cases, {candidate}, 2 negative controls passed")
     return 0
 
 

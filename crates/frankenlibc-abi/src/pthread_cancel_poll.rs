@@ -559,6 +559,193 @@ pub(super) enum ChildWaitResult {
     Unsupported,
 }
 
+/// A receive can probe without changing the socket's shared file status flags.
+/// Never follow readiness with a blocking receive: another receiver may consume
+/// the data first. MSG_DONTWAIT makes that race an ordinary retry instead.
+#[derive(Clone, Copy)]
+pub(super) struct ReceiveFrom {
+    pub fd: c_int,
+    pub buffer: *mut u8,
+    pub length: usize,
+    pub flags: c_int,
+    pub address: *mut u8,
+    pub address_length: *mut u32,
+}
+
+impl ReceiveFrom {
+    fn supports_slices(self) -> bool {
+        // WAITALL, urgent/error-queue data, caller-requested nonblocking I/O,
+        // and unfamiliar protocol flags keep the original kernel operation.
+        if self.flags & !(libc::MSG_PEEK | libc::MSG_TRUNC) != 0 {
+            return false;
+        }
+        // SAFETY: F_GETFL has no pointer argument and does not mutate the open
+        // file description. A failed query must not replace recv's own error.
+        let Ok(status) = (unsafe { syscall::sys_fcntl(self.fd, libc::F_GETFL, 0) }) else {
+            return false;
+        };
+        if status & libc::O_NONBLOCK != 0 {
+            return false;
+        }
+        if !matches!(
+            socket_integer_option(self.fd, libc::SO_TYPE),
+            Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
+        ) || !matches!(
+            socket_integer_option(self.fd, libc::SO_DOMAIN),
+            Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
+        ) || socket_integer_option(self.fd, libc::SO_RCVLOWAT) != Some(1)
+        {
+            return false;
+        }
+        let mut timeout = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
+        let mut size = core::mem::size_of::<libc::timeval>() as u32;
+        // SAFETY: both outputs are owned, aligned kernel ABI storage. Only a
+        // socket with no receive timeout is interchangeable with indefinite
+        // readiness waits; finite timeouts retain their exact kernel contract.
+        unsafe {
+            syscall::sys_getsockopt(
+                self.fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                core::ptr::from_mut(&mut timeout).cast(),
+                &mut size,
+            )
+        }
+        .is_ok()
+            && size as usize == core::mem::size_of::<libc::timeval>()
+            && timeout.tv_sec == 0
+            && timeout.tv_usec == 0
+    }
+
+    unsafe fn probe(self) -> Result<isize, c_int> {
+        // SAFETY: the public entry retains all original pointer arguments.
+        // The kernel validates them and owns all payload/address publication.
+        unsafe {
+            syscall::sys_recvfrom(
+                self.fd,
+                self.buffer,
+                self.length,
+                self.flags | libc::MSG_DONTWAIT,
+                self.address,
+                self.address_length,
+            )
+        }
+    }
+}
+
+fn socket_integer_option(fd: c_int, option: c_int) -> Option<c_int> {
+    let mut value = 0;
+    let mut size = core::mem::size_of::<c_int>() as u32;
+    // SAFETY: the query writes only to live integer/length output storage.
+    unsafe {
+        syscall::sys_getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            option,
+            core::ptr::from_mut(&mut value).cast(),
+            &mut size,
+        )
+    }
+    .ok()?;
+    (size as usize == core::mem::size_of::<c_int>()).then_some(value)
+}
+
+pub(super) enum ReceiveResult {
+    Ready(isize),
+    Cancel,
+    Unsupported,
+}
+
+/// Receive ordinary socket data with bounded native cancellation, leaving every
+/// successful receive committed even if a cancellation request races completion.
+/// Nondefault timeout/low-water/flag contracts and deliverable caught signals
+/// keep the raw receive. In particular, ppoll must not replace recv's SA_RESTART
+/// behavior. As for child waits, concurrent installation and delivery of a new
+/// handler inside a slice is outside this cooperative path's supported scope.
+///
+/// # Safety
+/// The ABI supplies its original receive arguments and an enabled cancellation
+/// descriptor belonging to the calling native thread. `supports_handlers`
+/// inspects actual kernel dispositions while the original mask is blocked.
+pub(super) unsafe fn wait_receive(
+    operation: ReceiveFrom,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<ReceiveResult, c_int> {
+    if !operation.supports_slices() {
+        return Ok(ReceiveResult::Unsupported);
+    }
+    let Ok(mut mask) = SignalMaskGuard::block_all() else {
+        // An unavailable adapter syscall must not replace the original receive
+        // with a new error, and no caller output or descriptor has changed.
+        return Ok(ReceiveResult::Unsupported);
+    };
+    // SAFETY: operation's pointers and the owned mask remain live across every
+    // nonblocking probe and bounded wait; no cancellation unwinds in this helper.
+    let result = unsafe { receive_slices(operation, cancel, supports_handlers, &mut mask) };
+    mask.restore().and(result)
+}
+
+#[inline(never)]
+unsafe fn receive_slices(
+    operation: ReceiveFrom,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+    mask: &mut SignalMaskGuard,
+) -> Result<ReceiveResult, c_int> {
+    loop {
+        if cancel.pending() {
+            return Ok(ReceiveResult::Cancel);
+        }
+        if !supports_handlers(mask.original) || !operation.supports_slices() {
+            return Ok(ReceiveResult::Unsupported);
+        }
+        // A successful probe may consume a datagram or stream bytes. Never
+        // discard it for a request racing the kernel's completed operation.
+        match unsafe { operation.probe() } {
+            Ok(received) => return Ok(ReceiveResult::Ready(received)),
+            Err(libc::EAGAIN) => {}
+            Err(error) => return Err(error),
+        }
+        let mut interest = libc::pollfd {
+            fd: operation.fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let mut slice = Timespec {
+            tv_sec: 0,
+            tv_nsec: SLICE_NS,
+        };
+        // A newly installed application handler may unwind. As in child_slices,
+        // do not restore its signal mask during that unwind. Ordinary return
+        // reinstates the blocked mask before inspecting cancellation or data.
+        mask.armed = false;
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::from_mut(&mut interest).cast(),
+                1,
+                core::ptr::from_mut(&mut slice).cast(),
+                core::ptr::from_ref(&mask.original).cast(),
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        mask.armed = true;
+        if cancel.pending() {
+            return Ok(ReceiveResult::Cancel);
+        }
+        match result {
+            Ok(_) => {}
+            Err(libc::EINTR) => return Err(libc::EINTR),
+            // Seccomp/kernel support for ppoll need not match recvfrom. No data
+            // was acquired, so preserve the original syscall on adapter errors.
+            Err(_) => return Ok(ReceiveResult::Unsupported),
+        }
+    }
+}
+
 /// Check cancellation every 50 ms when no caught signal is deliverable. With
 /// an unblocked handler, retain the original syscall: ppoll always interrupts,
 /// but child waits honor SA_RESTART, including nested signal deliveries.
