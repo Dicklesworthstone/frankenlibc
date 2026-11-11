@@ -1784,6 +1784,32 @@ impl NumericGrouping {
         &self.separator[..self.separator_len]
     }
 
+    /// Number of groups in an `n`-digit run (at least 1).
+    fn group_count(&self, n: usize) -> usize {
+        let mut count = 1usize;
+        let mut remaining = n;
+        let mut size = 0usize;
+        let mut index = 0;
+        while remaining > 0 {
+            match self.rule.get(index) {
+                Some(&next) if next != 0 => {
+                    if matches!(next, 0x7f | 0xff) {
+                        break;
+                    }
+                    size = usize::from(next);
+                    index += 1;
+                }
+                _ => {}
+            }
+            if size == 0 || remaining <= size {
+                break;
+            }
+            count += 1;
+            remaining -= size;
+        }
+        count
+    }
+
     /// Sizes of the groups of an `n`-digit run, rightmost first.
     fn group_sizes(&self, n: usize) -> Vec<usize> {
         let mut sizes = Vec::new();
@@ -1815,11 +1841,47 @@ impl NumericGrouping {
 
     /// Length of `digits` once grouped.
     fn grouped_len(&self, digits: usize) -> usize {
-        digits + (self.group_sizes(digits).len() - 1) * self.separator_len
+        digits + (self.group_count(digits) - 1) * self.separator_len
     }
 
     /// Append `digits` with the separator between groups.
     fn push_grouped(&self, buf: &mut Vec<u8>, digits: &[u8]) {
+        if digits.len() <= 64 {
+            let mut stack_sizes = [0usize; 64];
+            let mut count = 0usize;
+            let mut remaining = digits.len();
+            let mut size = 0usize;
+            let mut index = 0;
+            while remaining > 0 {
+                match self.rule.get(index) {
+                    Some(&next) if next != 0 => {
+                        if matches!(next, 0x7f | 0xff) {
+                            break;
+                        }
+                        size = usize::from(next);
+                        index += 1;
+                    }
+                    _ => {}
+                }
+                if size == 0 || remaining <= size {
+                    break;
+                }
+                stack_sizes[count] = size;
+                count += 1;
+                remaining -= size;
+            }
+            stack_sizes[count] = remaining;
+            count += 1;
+            let mut at = 0;
+            for (i, &group_size) in stack_sizes[..count].iter().rev().enumerate() {
+                if i > 0 {
+                    buf.push_bytes(self.separator());
+                }
+                buf.push_bytes(&digits[at..at + group_size]);
+                at += group_size;
+            }
+            return;
+        }
         let sizes = self.group_sizes(digits.len());
         let mut at = 0;
         for (i, &size) in sizes.iter().rev().enumerate() {
@@ -1835,7 +1897,7 @@ impl NumericGrouping {
     /// float) grouped; the rest -- point, fraction, exponent -- as it was.
     fn group_leading_digits(&self, body: &[u8]) -> Vec<u8> {
         let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
-        let mut out = Vec::with_capacity(body.len() + digits);
+        let mut out = Vec::with_capacity((body.len() + digits).max(64));
         self.push_grouped(&mut out, &body[..digits]);
         out.extend_from_slice(&body[digits..]);
         out
@@ -1846,7 +1908,7 @@ impl NumericGrouping {
     /// (Integers count bytes; glibc differs between the two, and so must we.)
     fn uncounted_in_float(&self, body: &[u8]) -> usize {
         let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
-        (self.group_sizes(digits).len() - 1) * (self.separator_len - 1)
+        (self.group_count(digits) - 1) * (self.separator_len - 1)
     }
 }
 
