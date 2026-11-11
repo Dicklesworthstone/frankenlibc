@@ -67,19 +67,21 @@ type HostFtrylockfileFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
 static HOST_FCLOSE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FWRITE_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FPUTS_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FPUTC_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FWRITE_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FPUTS_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FPUTC_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FILENO_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FEOF_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FERROR_FN: OnceLock<usize> = OnceLock::new();
-static HOST_CLEARERR_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FGETC_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FGETS_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FREAD_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FEOF_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FERROR_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_CLEARERR_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FGETC_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FGETS_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FREAD_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
 static HOST_UNGETC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FSEEK_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FTELL_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FFLUSH_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FFLUSH_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
 static HOST_SETVBUF_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETDELIM_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETLINE_FN: OnceLock<usize> = OnceLock::new();
@@ -2721,7 +2723,7 @@ fn stream_is_host_owned(stream: *mut c_void) -> bool {
     !is_fl_issued_stream_id(stream as usize)
 }
 
-fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
+pub(crate) fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
     // Never hand one of fl's own ids to the host, registered or not.
     //
     // The sentinel-only form of this guard left every ORDINARY fl id exposed to
@@ -2774,7 +2776,7 @@ fn register_host_stream(stream: *mut c_void) {
 }
 
 #[allow(dead_code)]
-fn mark_host_io_started(stream: *mut c_void) {
+pub(crate) fn mark_host_io_started(stream: *mut c_void) {
     if stream.is_null() {
         return;
     }
@@ -3306,17 +3308,27 @@ unsafe fn host_fwrite_fn() -> Option<HostFwriteFn> {
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
+// Locked entrypoints already hold StdioLockGuard. Their shared implementations
+// must use the host's unlocked operations so an explicitly unlocked call never
+// waits for a foreign FILE lock held by another thread.
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_fputs_fn() -> Option<HostFputsFn> {
-    unsafe { host_stdio_symbol(&HOST_FPUTS_FN, "fputs") }
+unsafe fn host_fwrite_unlocked_fn() -> Option<HostFwriteFn> {
+    unsafe { host_stdio_symbol(&HOST_FWRITE_UNLOCKED_FN, "fwrite_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_fputc_fn() -> Option<HostFputcFn> {
-    unsafe { host_stdio_symbol(&HOST_FPUTC_FN, "fputc") }
+unsafe fn host_fputs_unlocked_fn() -> Option<HostFputsFn> {
+    unsafe { host_stdio_symbol(&HOST_FPUTS_UNLOCKED_FN, "fputs_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fputc_unlocked_fn() -> Option<HostFputcFn> {
+    unsafe { host_stdio_symbol(&HOST_FPUTC_UNLOCKED_FN, "fputc_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
@@ -3336,43 +3348,43 @@ unsafe fn host_fileno_fn() -> Option<HostFilenoFn> {
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_feof_fn() -> Option<HostFeofFn> {
-    unsafe { host_stdio_symbol(&HOST_FEOF_FN, "feof") }
+unsafe fn host_feof_unlocked_fn() -> Option<HostFeofFn> {
+    unsafe { host_stdio_symbol(&HOST_FEOF_UNLOCKED_FN, "feof_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_ferror_fn() -> Option<HostFerrorFn> {
-    unsafe { host_stdio_symbol(&HOST_FERROR_FN, "ferror") }
+unsafe fn host_ferror_unlocked_fn() -> Option<HostFerrorFn> {
+    unsafe { host_stdio_symbol(&HOST_FERROR_UNLOCKED_FN, "ferror_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_clearerr_fn() -> Option<HostClearerrFn> {
-    unsafe { host_stdio_symbol(&HOST_CLEARERR_FN, "clearerr") }
+unsafe fn host_clearerr_unlocked_fn() -> Option<HostClearerrFn> {
+    unsafe { host_stdio_symbol(&HOST_CLEARERR_UNLOCKED_FN, "clearerr_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_fgetc_fn() -> Option<HostFgetcFn> {
-    unsafe { host_stdio_symbol(&HOST_FGETC_FN, "fgetc") }
+unsafe fn host_fgetc_unlocked_fn() -> Option<HostFgetcFn> {
+    unsafe { host_stdio_symbol(&HOST_FGETC_UNLOCKED_FN, "fgetc_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_fgets_fn() -> Option<HostFgetsFn> {
-    unsafe { host_stdio_symbol(&HOST_FGETS_FN, "fgets") }
+unsafe fn host_fgets_unlocked_fn() -> Option<HostFgetsFn> {
+    unsafe { host_stdio_symbol(&HOST_FGETS_UNLOCKED_FN, "fgets_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
 #[allow(dead_code)]
-unsafe fn host_fread_fn() -> Option<HostFreadFn> {
-    unsafe { host_stdio_symbol(&HOST_FREAD_FN, "fread") }
+unsafe fn host_fread_unlocked_fn() -> Option<HostFreadFn> {
+    unsafe { host_stdio_symbol(&HOST_FREAD_UNLOCKED_FN, "fread_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
@@ -3401,6 +3413,13 @@ unsafe fn host_ftell_fn() -> Option<HostFtellFn> {
 #[allow(dead_code)]
 unsafe fn host_fflush_fn() -> Option<HostFflushFn> {
     unsafe { host_stdio_symbol(&HOST_FFLUSH_FN, "fflush") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fflush_unlocked_fn() -> Option<HostFflushFn> {
+    unsafe { host_stdio_symbol(&HOST_FFLUSH_UNLOCKED_FN, "fflush_unlocked") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
@@ -3592,6 +3611,9 @@ fn stream_exists(id: usize) -> bool {
     registry_contains_stream(id)
 }
 
+// Callers either hold the public FILE lock for the complete operation or
+// deliberately implement an unlocked entrypoint. The host sink must preserve
+// that choice on the strict/bootstrap path as well as the membrane path.
 unsafe fn write_bytes_without_runtime_policy(
     id: usize,
     _stream: *mut c_void,
@@ -3630,7 +3652,7 @@ unsafe fn write_bytes_without_runtime_policy(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if !is_fl_issued_stream_id(id)
-            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+            && let Some(host_fwrite) = unsafe { host_fwrite_unlocked_fn() }
         {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), _stream) };
             if written == 0 {
@@ -4729,7 +4751,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if may_delegate_to_host(stream, _id)
-            && let Some(host_fflush) = unsafe { host_fflush_fn() }
+            && let Some(host_fflush) = unsafe { host_fflush_unlocked_fn() }
         {
             let rc = unsafe { host_fflush(stream) };
             if rc != 0 {
@@ -4985,7 +5007,7 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
     let Some(cell) = stream_cell(id) else {
         #[cfg(not(feature = "standalone"))]
         if !is_fl_issued_stream_id(id)
-            && let Some(host_fgetc) = unsafe { host_fgetc_fn() }
+            && let Some(host_fgetc) = unsafe { host_fgetc_unlocked_fn() }
         {
             let rc = unsafe { host_fgetc(stream) };
             mark_host_io_started(stream);
@@ -5171,7 +5193,7 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if !is_fl_issued_stream_id(id)
-            && let Some(host_fputc) = unsafe { host_fputc_fn() }
+            && let Some(host_fputc) = unsafe { host_fputc_unlocked_fn() }
         {
             let rc = unsafe { host_fputc(c, stream) };
             if rc == libc::EOF {
@@ -5576,7 +5598,7 @@ pub(crate) unsafe fn fgets_unlocked_for_caller(
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
-        && let Some(host_fgets) = unsafe { host_fgets_fn() }
+        && let Some(host_fgets) = unsafe { host_fgets_unlocked_fn() }
     {
         let rc = unsafe { host_fgets(buf, size, stream) };
         if rc.is_null() {
@@ -5871,7 +5893,7 @@ pub(crate) unsafe fn fputs_unlocked_for_caller(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if !is_fl_issued_stream_id(id)
-            && let Some(host_fputs) = unsafe { host_fputs_fn() }
+            && let Some(host_fputs) = unsafe { host_fputs_unlocked_fn() }
         {
             let rc = unsafe { host_fputs(s, stream) };
             if rc == libc::EOF {
@@ -6072,7 +6094,7 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
-        && let Some(host_fread) = unsafe { host_fread_fn() }
+        && let Some(host_fread) = unsafe { host_fread_unlocked_fn() }
     {
         let rc = unsafe { host_fread(ptr, size, nmemb, stream) };
         mark_host_io_started(stream);
@@ -6328,7 +6350,7 @@ pub(crate) unsafe fn fwrite_unlocked_for_caller(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if !is_fl_issued_stream_id(id)
-            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+            && let Some(host_fwrite) = unsafe { host_fwrite_unlocked_fn() }
         {
             let rc = unsafe { host_fwrite(ptr, size, nmemb, stream) };
             if rc == 0 {
@@ -6930,7 +6952,7 @@ unsafe fn feof_without_lock(stream: *mut c_void) -> c_int {
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
-        && let Some(host_feof) = unsafe { host_feof_fn() }
+        && let Some(host_feof) = unsafe { host_feof_unlocked_fn() }
     {
         return unsafe { host_feof(stream) };
     }
@@ -6979,7 +7001,7 @@ unsafe fn ferror_without_lock(stream: *mut c_void) -> c_int {
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id)
-        && let Some(host_ferror) = unsafe { host_ferror_fn() }
+        && let Some(host_ferror) = unsafe { host_ferror_unlocked_fn() }
     {
         return unsafe { host_ferror(stream) };
     }
@@ -7081,7 +7103,7 @@ unsafe fn clearerr_without_lock(stream: *mut c_void) {
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if may_delegate_to_host(stream, id) {
-        if let Some(host_clearerr) = unsafe { host_clearerr_fn() } {
+        if let Some(host_clearerr) = unsafe { host_clearerr_unlocked_fn() } {
             unsafe { host_clearerr(stream) };
         }
         return;
@@ -18606,9 +18628,9 @@ pub unsafe extern "C" fn funopen(
 // Batch: Unlocked stdio variants — Implemented
 // ===========================================================================
 //
-// These are GNU extensions that skip internal locking for performance.
-// Since our FILE implementation is already thread-local, they behave
-// identically to the locked versions.
+// These GNU extensions bypass the public FILE lock. Native stream state still
+// uses its internal synchronization; foreign streams use the host's matching
+// unlocked operation. The ordinary entrypoints acquire StdioLockGuard first.
 
 /// GNU `feof_unlocked` — test end-of-file indicator without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

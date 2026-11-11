@@ -1945,7 +1945,7 @@ struct stream_lock_case {
     const char *name;
     enum stream_lock_operation operation;
     int unlocked;
-    int backing; /* fd, fixed memory, growable memory, read cookie */
+    int backing; /* fd, fixed memory, growable memory, read cookie, host fd */
 };
 
 struct stream_lock_worker {
@@ -2003,18 +2003,63 @@ static void *run_stream_lock_operation(void *opaque) {
     case LOCK_FWPRINTF: state->failed |= fwprintf(fp, L"%ls:%d", L"x", 7) != 3; break;
     case LOCK_FWSCANF: state->failed |= fwscanf(fp, L"%3ls", wide) != 1 || wcscmp(wide, L"abc"); break;
     case LOCK_UNGETWC: state->failed |= ungetwc(L'x', fp) != L'x'; break;
-    case UNLOCK_FGETC: state->failed |= (fgetc_unlocked)(fp) != 'a'; break;
+    /* Parentheses do not suppress GNU extern-inline functions at -O2.
+     * Resolve the actual exports so a host FILE cannot make the test pass
+     * entirely through the caller's header implementation. Keep GETC/PUTC
+     * separately to cover the inline __uflow/__overflow fallback as well. */
+    case UNLOCK_FGETC: {
+        int (*call)(FILE *) = dlsym(RTLD_DEFAULT, "fgetc_unlocked");
+        state->failed |= !call || call(fp) != 'a';
+        break;
+    }
     case UNLOCK_GETC: state->failed |= getc_unlocked(fp) != 'a'; break;
-    case UNLOCK_FGETS: state->failed |= fgets_unlocked(buffer, sizeof(buffer), fp) == NULL || strcmp(buffer, "abc\n"); break;
-    case UNLOCK_FREAD: state->failed |= (fread_unlocked)(buffer, 1, 4, fp) != 4 || memcmp(buffer, "abc\n", 4); break;
-    case UNLOCK_FPUTC: state->failed |= (fputc_unlocked)('x', fp) != 'x'; break;
+    case UNLOCK_FGETS: {
+        char *(*call)(char *, int, FILE *) = dlsym(RTLD_DEFAULT, "fgets_unlocked");
+        state->failed |= !call || !call(buffer, sizeof(buffer), fp) || strcmp(buffer, "abc\n");
+        break;
+    }
+    case UNLOCK_FREAD: {
+        size_t (*call)(void *, size_t, size_t, FILE *) = dlsym(RTLD_DEFAULT, "fread_unlocked");
+        state->failed |= !call || call(buffer, 1, 4, fp) != 4 || memcmp(buffer, "abc\n", 4);
+        break;
+    }
+    case UNLOCK_FPUTC: {
+        int (*call)(int, FILE *) = dlsym(RTLD_DEFAULT, "fputc_unlocked");
+        state->failed |= !call || call('x', fp) != 'x';
+        break;
+    }
     case UNLOCK_PUTC: state->failed |= putc_unlocked('x', fp) != 'x'; break;
-    case UNLOCK_FPUTS: state->failed |= fputs_unlocked("xyz", fp) == EOF; break;
-    case UNLOCK_FWRITE: state->failed |= (fwrite_unlocked)("xyz", 1, 3, fp) != 3; break;
-    case UNLOCK_FFLUSH: state->failed |= fflush_unlocked(fp) != 0; break;
-    case UNLOCK_FEOF: state->failed |= (feof_unlocked)(fp) != 0; break;
-    case UNLOCK_FERROR: state->failed |= (ferror_unlocked)(fp) != 0; break;
-    case UNLOCK_CLEARERR: clearerr_unlocked(fp); break;
+    case UNLOCK_FPUTS: {
+        int (*call)(const char *, FILE *) = dlsym(RTLD_DEFAULT, "fputs_unlocked");
+        state->failed |= !call || call("xyz", fp) == EOF;
+        break;
+    }
+    case UNLOCK_FWRITE: {
+        size_t (*call)(const void *, size_t, size_t, FILE *) = dlsym(RTLD_DEFAULT, "fwrite_unlocked");
+        state->failed |= !call || call("xyz", 1, 3, fp) != 3;
+        break;
+    }
+    case UNLOCK_FFLUSH: {
+        int (*call)(FILE *) = dlsym(RTLD_DEFAULT, "fflush_unlocked");
+        state->failed |= !call || call(fp) != 0;
+        break;
+    }
+    case UNLOCK_FEOF: {
+        int (*call)(FILE *) = dlsym(RTLD_DEFAULT, "feof_unlocked");
+        state->failed |= !call || call(fp) != 0;
+        break;
+    }
+    case UNLOCK_FERROR: {
+        int (*call)(FILE *) = dlsym(RTLD_DEFAULT, "ferror_unlocked");
+        state->failed |= !call || call(fp) != 0;
+        break;
+    }
+    case UNLOCK_CLEARERR: {
+        void (*call)(FILE *) = dlsym(RTLD_DEFAULT, "clearerr_unlocked");
+        if (call) call(fp);
+        else state->failed = 1;
+        break;
+    }
     case UNLOCK_FGETWC: state->failed |= fgetwc_unlocked(fp) != L'a'; break;
     case UNLOCK_FGETWS: state->failed |= fgetws_unlocked(wide, 16, fp) == NULL || wcscmp(wide, L"abc\n"); break;
     case UNLOCK_FPUTWC: state->failed |= fputwc_unlocked(L'x', fp) != L'x'; break;
@@ -2045,7 +2090,34 @@ static int stream_lock_wait(int fd, int timeout_ms) {
     return result > 0 && (pollfd.revents & POLLIN);
 }
 
+/* Pin the constructor to GNU libc even under LD_PRELOAD. These FILE objects
+ * must remain foreign to the candidate; the I/O and lock operations above
+ * still use the provider checked by main. */
+static FILE *open_host_lock_stream(void **handle) {
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!host) return NULL;
+    FILE *(*create)(void) = dlsym(host, "tmpfile");
+    Dl_info provider = {0};
+    if (!create || !dladdr((void *)create, &provider) || !provider.dli_fname) {
+        dlclose(host);
+        return NULL;
+    }
+    const char *base = strrchr(provider.dli_fname, '/');
+    if (strcmp(base ? base + 1 : provider.dli_fname, "libc.so.6")) {
+        dlclose(host);
+        return NULL;
+    }
+    FILE *stream = create();
+    if (!stream) {
+        dlclose(host);
+        return NULL;
+    }
+    *handle = host;
+    return stream;
+}
+
 static int test_stream_lock_case(const struct stream_lock_case *test) {
+    void *host_handle = NULL;
     char backing[16] = "abc\n";
     char *published = NULL;
     size_t published_size = 0;
@@ -2056,14 +2128,21 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
     else if (test->backing == 3) {
         cookie_io_functions_t functions = {.read = read_line_cookie, .close = close_line_cookie};
         fp = fopencookie(&cookie, "r", functions);
-    } else fp = tmpfile();
+    } else if (test->backing == 4) fp = open_host_lock_stream(&host_handle);
+    else fp = tmpfile();
     if (!fp) return 1;
-    if (!test->backing && (write(fileno(fp), "abc\n", 4) != 4 || lseek(fileno(fp), 0, SEEK_SET) != 0)) {
+    if ((test->backing == 0 || test->backing == 4) &&
+        (write(fileno(fp), "abc\n", 4) != 4 || lseek(fileno(fp), 0, SEEK_SET) != 0)) {
         fclose(fp);
+        if (host_handle) dlclose(host_handle);
         return 1;
     }
     int ready[2], done[2];
-    if (pipe(ready) || pipe(done)) { fclose(fp); return 1; }
+    if (pipe(ready) || pipe(done)) {
+        fclose(fp);
+        if (host_handle) dlclose(host_handle);
+        return 1;
+    }
     struct stream_lock_worker state = {
         .stream = fp, .operation = test->operation, .ready_fd = ready[1], .done_fd = done[1],
     };
@@ -2073,6 +2152,7 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
     pthread_t thread;
     if (pthread_create(&thread, NULL, run_stream_lock_operation, &state)) {
         funlockfile(fp); funlockfile(fp); fclose(fp);
+        if (host_handle) dlclose(host_handle);
         close(ready[0]); close(ready[1]); close(done[0]); close(done[1]);
         return 1;
     }
@@ -2098,6 +2178,7 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
         if (locked) { funlockfile(fp); failed |= fclose(fp) != 0; }
     }
     if (test->backing == 3) failed |= cookie.closed != 1;
+    if (host_handle) dlclose(host_handle);
     free(published);
     close(ready[0]); close(ready[1]); close(done[0]); close(done[1]);
     if (failed) fprintf(stderr, "FAIL locks %s backing=%d ready=%d before=%d recursive=%d operation=%d\n",
@@ -2177,6 +2258,16 @@ static int test_stream_locking(void) {
         {"FGETS_UNLOCKED", UNLOCK_FGETS, 1, 1}, {"FWRITE", LOCK_FWRITE, 0, 2},
         {"FFLUSH", LOCK_FFLUSH, 0, 2}, {"FWRITE_UNLOCKED", UNLOCK_FWRITE, 1, 2},
         {"FGETS", LOCK_FGETS, 0, 3}, {"FGETS_UNLOCKED", UNLOCK_FGETS, 1, 3},
+#define HOST_LOCK_CASE(op) {#op, LOCK_##op, 0, 4}
+#define HOST_UNLOCK_CASE(op) {#op "_UNLOCKED", UNLOCK_##op, 1, 4}
+        HOST_LOCK_CASE(FGETC), HOST_LOCK_CASE(GETC), HOST_LOCK_CASE(FGETS), HOST_LOCK_CASE(FREAD),
+        HOST_LOCK_CASE(FPUTC), HOST_LOCK_CASE(PUTC), HOST_LOCK_CASE(FPUTS), HOST_LOCK_CASE(FWRITE),
+        HOST_LOCK_CASE(FFLUSH), HOST_LOCK_CASE(FEOF), HOST_LOCK_CASE(FERROR), HOST_LOCK_CASE(CLEARERR),
+        HOST_UNLOCK_CASE(FGETC), HOST_UNLOCK_CASE(GETC), HOST_UNLOCK_CASE(FGETS), HOST_UNLOCK_CASE(FREAD),
+        HOST_UNLOCK_CASE(FPUTC), HOST_UNLOCK_CASE(PUTC), HOST_UNLOCK_CASE(FPUTS), HOST_UNLOCK_CASE(FWRITE),
+        HOST_UNLOCK_CASE(FFLUSH), HOST_UNLOCK_CASE(FEOF), HOST_UNLOCK_CASE(FERROR), HOST_UNLOCK_CASE(CLEARERR),
+#undef HOST_LOCK_CASE
+#undef HOST_UNLOCK_CASE
     };
     alarm(25);
     int failed = 0;
