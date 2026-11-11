@@ -3609,8 +3609,9 @@ unsafe fn getopt_prepare(
     // selectable option; a leading `:` stays for the colon/arg-mode helpers.
     let mode = optspec.first().copied();
     let return_in_order = mode == Some(b'-');
-    let strict =
-        mode == Some(b'+') || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some());
+    let strict = mode == Some(b'+')
+        || (mode != Some(b'-')
+            && !unsafe { crate::stdlib_abi::native_getenv(b"POSIXLY_CORRECT").is_null() });
 
     let mut argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
         Some(v) => v,
@@ -3729,16 +3730,13 @@ unsafe fn getopt_prepare(
     Ok(())
 }
 
-unsafe fn parse_getopt_short(
+unsafe fn parse_getopt_short_prepared(
     argc: c_int,
     argv: *const *mut c_char,
     optspec: &[u8],
     longopts: *const libc::option,
     longindex: *mut c_int,
 ) -> c_int {
-    if let Err(code) = unsafe { getopt_prepare(argc, argv, optspec) } {
-        return code;
-    }
     let mode_prefix = matches!(optspec.first().copied(), Some(b'+' | b'-')) as usize;
     let effective = &optspec[mode_prefix..];
     // Re-read: preparation may have permuted argv.
@@ -4252,13 +4250,18 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc =
-        unsafe { parse_getopt_short(argc, argv, &optspec, std::ptr::null(), std::ptr::null_mut()) };
+    let rc = if let Err(code) = unsafe { getopt_prepare(argc, argv, &optspec) } {
+        code
+    } else {
+        unsafe {
+            parse_getopt_short_prepared(argc, argv, &optspec, std::ptr::null(), std::ptr::null_mut())
+        }
+    };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
         runtime_policy::scaled_cost(12, argc.max(0) as usize),
-        rc == (b'?' as c_int) || rc == (b':' as c_int),
+        false,
     );
     rc
 }
@@ -4324,14 +4327,16 @@ pub unsafe extern "C" fn getopt_long(
     } else {
         match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
             Some(value) => value,
-            None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
+            None => unsafe {
+                parse_getopt_short_prepared(argc, argv, &optspec, longopts, longindex)
+            },
         }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
         runtime_policy::scaled_cost(12, argc.max(0) as usize),
-        rc == (b'?' as c_int) || rc == (b':' as c_int),
+        false,
     );
     rc
 }
@@ -4377,14 +4382,16 @@ pub unsafe extern "C" fn getopt_long_only(
     } else {
         match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
             Some(value) => value,
-            None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
+            None => unsafe {
+                parse_getopt_short_prepared(argc, argv, &optspec, longopts, longindex)
+            },
         }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
         runtime_policy::scaled_cost(12, argc.max(0) as usize),
-        rc == (b'?' as c_int) || rc == (b':' as c_int),
+        false,
     );
     rc
 }

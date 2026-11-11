@@ -129,16 +129,11 @@ pub(crate) fn init_environment_globals(envp: *mut *mut c_char) {
         envp
     };
 
-    // SAFETY: glibc-compatible aliases all point at the active environment.
-    unsafe {
-        crate::glibc_internal_abi::__environ = published;
-        crate::glibc_internal_abi::_environ = published;
-        crate::glibc_internal_abi::environ = published;
-    }
-
-    // Transfer environ ownership to FrankenLibC so setenv/unsetenv can safely
-    // realloc without conflicting with glibc's crt0-allocated environ (bd-zh1y.6.1).
-    crate::stdlib_abi::take_environ_ownership();
+    // Publish the active environment to `HOST_ENVIRON` and all exported
+    // `environ` aliases without eagerly copying `envp` onto the heap at
+    // startup; `setenv`/`putenv` lazily allocate and take ownership on first
+    // mutation via `ensure_environ_owned()`.
+    crate::stdlib_abi::publish_startup_environ(published);
 }
 
 #[inline]
@@ -1629,7 +1624,11 @@ fn set_tls_atexit_reentry(value: bool) {
     }
 }
 
+static TLS_ATEXIT_FALLBACK_USED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn push_tls_atexit_entry(entry: TlsAtExitEntry) {
+    TLS_ATEXIT_FALLBACK_USED.store(true, std::sync::atomic::Ordering::Release);
     #[cfg(feature = "owned-tls-cache")]
     {
         STARTUP_OWNED_TLS.with(|tls| tls.atexit_list.borrow_mut().push(entry));
@@ -1641,6 +1640,14 @@ fn push_tls_atexit_entry(entry: TlsAtExitEntry) {
 }
 
 fn pop_tls_atexit_entry() -> Option<TlsAtExitEntry> {
+    // Avoid touching `TLS_ATEXIT_LIST` during `exit()` when no fallback TLS
+    // destructor was ever registered; touching a `thread_local!` with a `Drop`
+    // type (`Vec`) for the first time during `exit()` calls
+    // `__cxa_thread_atexit_impl` -> `calloc` -> `initialize_segment_arena()`
+    // (mapping 306 MiB right before `exit_group`).
+    if !TLS_ATEXIT_FALLBACK_USED.load(std::sync::atomic::Ordering::Acquire) {
+        return None;
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         STARTUP_OWNED_TLS.with(|tls| tls.atexit_list.borrow_mut().pop())
@@ -1659,6 +1666,9 @@ fn pop_tls_atexit_entry() -> Option<TlsAtExitEntry> {
 }
 
 fn clear_tls_atexit_entries() {
+    if !TLS_ATEXIT_FALLBACK_USED.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
     #[cfg(feature = "owned-tls-cache")]
     {
         STARTUP_OWNED_TLS.with(|tls| tls.atexit_list.borrow_mut().clear());

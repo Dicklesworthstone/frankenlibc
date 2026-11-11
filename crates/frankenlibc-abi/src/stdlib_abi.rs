@@ -1161,6 +1161,20 @@ unsafe fn environ_len() -> usize {
     n
 }
 
+/// Publish the initial startup `envp` pointer to `HOST_ENVIRON` and all
+/// exported `environ` aliases without eagerly copying `envp` onto the heap.
+/// First mutation (`setenv`/`putenv`) lazily takes ownership via `ensure_environ_owned()`.
+pub(crate) fn publish_startup_environ(published: *mut *mut c_char) {
+    let _lock = environ_lock_guard();
+    // SAFETY: startup single-threaded or under `ENVIRON_LOCK`.
+    unsafe {
+        if !published.is_null() {
+            HOST_ENVIRON = published;
+        }
+    }
+    publish_environ_aliases();
+}
+
 /// Transfer ownership of the process environ array during startup (bd-zh1y.6.1).
 ///
 /// Deep-copies the host environ into our own allocation so setenv/unsetenv can
