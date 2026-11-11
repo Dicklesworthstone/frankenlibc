@@ -1911,7 +1911,506 @@ static int test_rpc_database_provider(const char *path, const char *source_kind)
 }
 
 
+
+/* Account-file parsers are tested independently of NSS database selection.
+ * Both the parser and each FILE constructor are pinned to their providers. */
+struct account_file_ops {
+    struct passwd *(*passwd)(FILE *);
+    struct group *(*group)(FILE *);
+    int (*passwd_r)(FILE *, struct passwd *, char *, size_t, struct passwd **);
+    int (*group_r)(FILE *, struct group *, char *, size_t, struct group **);
+    FILE *(*temporary)(void);
+    FILE *(*descriptor)(int, const char *);
+    int (*close)(FILE *);
+    int (*fd)(FILE *);
+    long (*tell)(FILE *);
+    int (*eof)(FILE *);
+    int (*error)(FILE *);
+    int (*byte)(FILE *);
+};
+
+static int account_file_bind(void *handle, const struct stat *expected,
+                             struct account_file_ops *ops) {
+    ops->passwd = identity_symbol(handle, "fgetpwent", expected);
+    ops->group = identity_symbol(handle, "fgetgrent", expected);
+    ops->passwd_r = identity_symbol(handle, "fgetpwent_r", expected);
+    ops->group_r = identity_symbol(handle, "fgetgrent_r", expected);
+    ops->temporary = identity_symbol(handle, "tmpfile", expected);
+    ops->descriptor = identity_symbol(handle, "fdopen", expected);
+    ops->close = identity_symbol(handle, "fclose", expected);
+    ops->fd = identity_symbol(handle, "fileno", expected);
+    ops->tell = identity_symbol(handle, "ftell", expected);
+    ops->eof = identity_symbol(handle, "feof", expected);
+    ops->error = identity_symbol(handle, "ferror", expected);
+    ops->byte = identity_symbol(handle, "fgetc", expected);
+    return ops->passwd && ops->group && ops->passwd_r && ops->group_r &&
+        ops->temporary && ops->descriptor && ops->close && ops->fd &&
+        ops->tell && ops->eof && ops->error && ops->byte;
+}
+
+struct account_file_value {
+    unsigned char bytes[32768];
+    size_t used;
+};
+
+static int account_file_append(struct account_file_value *value,
+                               const void *bytes, size_t length) {
+    if (length > sizeof(value->bytes) - value->used) return 0;
+    memcpy(value->bytes + value->used, bytes, length);
+    value->used += length;
+    return 1;
+}
+
+static int account_file_string(struct account_file_value *value, const char *text) {
+    if (!text) return 0;
+    size_t length = strnlen(text, sizeof(value->bytes));
+    if (length == sizeof(value->bytes)) return 0;
+    return account_file_append(value, &length, sizeof(length)) &&
+        account_file_append(value, text, length);
+}
+
+static int account_file_value(int group, const void *record,
+                              struct account_file_value *value) {
+    value->used = 0;
+    if (!group) {
+        const struct passwd *pw = record;
+        return account_file_append(value, &pw->pw_uid, sizeof(pw->pw_uid)) &&
+            account_file_append(value, &pw->pw_gid, sizeof(pw->pw_gid)) &&
+            account_file_string(value, pw->pw_name) &&
+            account_file_string(value, pw->pw_passwd) &&
+            account_file_string(value, pw->pw_gecos) &&
+            account_file_string(value, pw->pw_dir) &&
+            account_file_string(value, pw->pw_shell);
+    }
+    const struct group *gr = record;
+    if (!gr->gr_mem ||
+        !account_file_append(value, &gr->gr_gid, sizeof(gr->gr_gid)) ||
+        !account_file_string(value, gr->gr_name) ||
+        !account_file_string(value, gr->gr_passwd)) return 0;
+    size_t count = 0;
+    for (; count < 4096 && gr->gr_mem[count]; ++count)
+        if (!account_file_string(value, gr->gr_mem[count])) return 0;
+    return count < 4096 && account_file_append(value, &count, sizeof(count));
+}
+
+static int account_file_value_equal(const struct account_file_value *a,
+                                    const struct account_file_value *b) {
+    return a->used == b->used && !memcmp(a->bytes, b->bytes, a->used);
+}
+
+struct account_file_fixture {
+    char text[16384];
+    size_t length, line_length;
+    struct account_file_value rows[2];
+};
+
+static int account_file_fixture(int group, struct account_file_fixture *fixture) {
+    const char *prefix = "# account stream fixture\n\n";
+    int written;
+    if (!group) {
+        char gecos[5001];
+        memset(gecos, 'G', sizeof(gecos) - 1);
+        gecos[9] = (char)0xff;
+        gecos[4096] = (char)0x80;
+        gecos[5000] = 0;
+        struct passwd first = {
+            .pw_name = "stream-long-\xff", .pw_passwd = "x",
+            .pw_uid = 23001, .pw_gid = 23002, .pw_gecos = gecos,
+            .pw_dir = "/home/\xfe", .pw_shell = "/bin/sh",
+        };
+        struct passwd next = {
+            .pw_name = "stream-next", .pw_passwd = "!",
+            .pw_uid = 23003, .pw_gid = 23004, .pw_gecos = "Second",
+            .pw_dir = "/tmp", .pw_shell = "/bin/false",
+        };
+        if (!account_file_value(0, &first, &fixture->rows[0]) ||
+            !account_file_value(0, &next, &fixture->rows[1])) return 0;
+        written = snprintf(fixture->text, sizeof(fixture->text),
+            "%s%s:%s:%u:%u:%s:%s:%s\n", prefix, first.pw_name, first.pw_passwd,
+            (unsigned int)first.pw_uid, (unsigned int)first.pw_gid,
+            first.pw_gecos, first.pw_dir, first.pw_shell);
+        if (written < 0 || (size_t)written >= sizeof(fixture->text)) return 0;
+        fixture->length = (size_t)written;
+        fixture->line_length = fixture->length - strlen(prefix);
+        written = snprintf(fixture->text + fixture->length,
+            sizeof(fixture->text) - fixture->length, "%s:%s:%u:%u:%s:%s:%s\n",
+            next.pw_name, next.pw_passwd, (unsigned int)next.pw_uid,
+            (unsigned int)next.pw_gid, next.pw_gecos, next.pw_dir, next.pw_shell);
+    } else {
+        char members[192][32];
+        char *member_list[193];
+        for (size_t i = 0; i < 192; ++i) {
+            snprintf(members[i], sizeof(members[i]), "member-%03u-abcdefghijkl",
+                     (unsigned int)i);
+            member_list[i] = members[i];
+        }
+        members[77][14] = (char)0xfe;
+        member_list[192] = NULL;
+        char *next_members[] = {"alice", "bob", NULL};
+        struct group first = {
+            .gr_name = "stream-group-\xff", .gr_passwd = "x",
+            .gr_gid = 23005, .gr_mem = member_list,
+        };
+        struct group next = {
+            .gr_name = "stream-next-group", .gr_passwd = "!",
+            .gr_gid = 23006, .gr_mem = next_members,
+        };
+        if (!account_file_value(1, &first, &fixture->rows[0]) ||
+            !account_file_value(1, &next, &fixture->rows[1])) return 0;
+        written = snprintf(fixture->text, sizeof(fixture->text), "%s%s:%s:%u:",
+            prefix, first.gr_name, first.gr_passwd, (unsigned int)first.gr_gid);
+        if (written < 0 || (size_t)written >= sizeof(fixture->text)) return 0;
+        fixture->length = (size_t)written;
+        for (size_t i = 0; i < 192; ++i) {
+            written = snprintf(fixture->text + fixture->length,
+                sizeof(fixture->text) - fixture->length, "%s%s",
+                i ? "," : "", members[i]);
+            if (written < 0 || (size_t)written >= sizeof(fixture->text) - fixture->length)
+                return 0;
+            fixture->length += (size_t)written;
+        }
+        if (fixture->length + 1 >= sizeof(fixture->text)) return 0;
+        fixture->text[fixture->length++] = '\n';
+        fixture->line_length = fixture->length - strlen(prefix);
+        written = snprintf(fixture->text + fixture->length,
+            sizeof(fixture->text) - fixture->length, "%s:%s:%u:alice,bob\n",
+            next.gr_name, next.gr_passwd, (unsigned int)next.gr_gid);
+    }
+    if (written < 0 || (size_t)written >= sizeof(fixture->text) - fixture->length)
+        return 0;
+    fixture->length += (size_t)written;
+    return fixture->line_length > 4096;
+}
+
+
+static int account_file_numeric_fixture(int group, struct account_file_fixture *fixture) {
+    int written;
+    if (!group) {
+        struct passwd first = {
+            .pw_name = "numeric-negative", .pw_passwd = "x",
+            .pw_uid = (uid_t)UINT32_MAX, .pw_gid = (gid_t)UINT32_MAX,
+            .pw_gecos = "Raw-\xff", .pw_dir = "/home", .pw_shell = "/bin/sh",
+        };
+        struct passwd next = {
+            .pw_name = "numeric-overflow", .pw_passwd = "!",
+            .pw_uid = (uid_t)UINT32_MAX, .pw_gid = 17,
+            .pw_gecos = "Next", .pw_dir = "/tmp", .pw_shell = "/bin/false",
+        };
+        if (!account_file_value(0, &first, &fixture->rows[0]) ||
+            !account_file_value(0, &next, &fixture->rows[1])) return 0;
+        written = snprintf(fixture->text, sizeof(fixture->text),
+            "bad-number:x:abc:44:Skipped:/bad:/bad\n"
+            "bad-tail:x:12z:44:Skipped:/bad:/bad\n"
+            "numeric-negative:x:-1:4294967296:Raw-\xff:/home:/bin/sh\n"
+            "numeric-overflow:!:18446744073709551616:17:Next:/tmp:/bin/false\n");
+    } else {
+        char *first_members[] = {"alice", NULL}, *next_members[] = {"bob", NULL};
+        struct group first = {
+            .gr_name = "numeric-negative", .gr_passwd = "x",
+            .gr_gid = (gid_t)UINT32_MAX, .gr_mem = first_members,
+        };
+        struct group next = {
+            .gr_name = "numeric-overflow", .gr_passwd = "!",
+            .gr_gid = (gid_t)UINT32_MAX, .gr_mem = next_members,
+        };
+        if (!account_file_value(1, &first, &fixture->rows[0]) ||
+            !account_file_value(1, &next, &fixture->rows[1])) return 0;
+        written = snprintf(fixture->text, sizeof(fixture->text),
+            "bad-number:x:abc:skipped\n"
+            "bad-tail:x:12z:skipped\n"
+            "numeric-negative:x:-1:alice\n"
+            "numeric-overflow:!:18446744073709551616:bob\n");
+    }
+    if (written < 0 || (size_t)written >= sizeof(fixture->text)) return 0;
+    fixture->length = (size_t)written;
+    fixture->line_length = 0;
+    return 1;
+}
+
+struct account_file_stream {
+    FILE *file;
+    pid_t writer;
+};
+
+static int account_file_write(int fd, const char *bytes, size_t length) {
+    while (length) {
+        ssize_t written = write(fd, bytes, length);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return 0;
+        bytes += (size_t)written;
+        length -= (size_t)written;
+    }
+    return 1;
+}
+
+static int account_file_open(const struct account_file_ops *constructor,
+                             const struct account_file_fixture *fixture,
+                             int pipe_backed, struct account_file_stream *stream) {
+    stream->file = NULL;
+    stream->writer = -1;
+    if (!pipe_backed) {
+        stream->file = constructor->temporary();
+        if (!stream->file) return 0;
+        int fd = constructor->fd(stream->file);
+        if (fd >= 0 && account_file_write(fd, fixture->text, fixture->length) &&
+            lseek(fd, 0, SEEK_SET) == 0) return 1;
+        constructor->close(stream->file);
+        stream->file = NULL;
+        return 0;
+    }
+    int ends[2];
+    if (pipe(ends)) return 0;
+    pid_t child = fork();
+    if (child < 0) { close(ends[0]); close(ends[1]); return 0; }
+    if (!child) {
+        close(ends[0]);
+        signal(SIGPIPE, SIG_IGN);
+        int ok = account_file_write(ends[1], fixture->text, fixture->length);
+        int error = errno;
+        close(ends[1]);
+        _exit(ok || error == EPIPE ? 0 : 1);
+    }
+    close(ends[1]);
+    stream->file = constructor->descriptor(ends[0], "r");
+    stream->writer = child;
+    if (stream->file) return 1;
+    close(ends[0]);
+    int status;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    stream->writer = -1;
+    return 0;
+}
+
+static int account_file_close(const struct account_file_ops *constructor,
+                              struct account_file_stream *stream) {
+    int ok = constructor->close(stream->file) == 0;
+    if (stream->writer > 0) {
+        int status = 0;
+        pid_t result;
+        do { result = waitpid(stream->writer, &status, 0); } while (result < 0 && errno == EINTR);
+        ok &= result == stream->writer && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+    return ok;
+}
+
+struct account_file_result {
+    uint64_t before;
+    union { struct passwd pw; struct group gr; } record;
+    uint64_t after;
+    _Alignas(void *) unsigned char buffer[32784];
+    struct account_file_value value;
+    int rc, saved_errno, present, valid, eof, error;
+    long position;
+};
+
+static int account_file_inside(const char *text, uintptr_t begin, uintptr_t end) {
+    uintptr_t address = (uintptr_t)text;
+    return text && address >= begin && address < end &&
+        memchr(text, 0, (size_t)(end - address)) != NULL;
+}
+
+static int account_file_owned(int group, const struct account_file_result *out,
+                              size_t capacity, size_t offset) {
+    uintptr_t begin = (uintptr_t)(out->buffer + offset), end = begin + capacity;
+    if (!group) {
+        const struct passwd *pw = &out->record.pw;
+        return account_file_inside(pw->pw_name, begin, end) &&
+            account_file_inside(pw->pw_passwd, begin, end) &&
+            account_file_inside(pw->pw_gecos, begin, end) &&
+            account_file_inside(pw->pw_dir, begin, end) &&
+            account_file_inside(pw->pw_shell, begin, end);
+    }
+    const struct group *gr = &out->record.gr;
+    uintptr_t address = (uintptr_t)gr->gr_mem;
+    if (!account_file_inside(gr->gr_name, begin, end) ||
+        !account_file_inside(gr->gr_passwd, begin, end) ||
+        address % _Alignof(char *) || address < begin || address > end) return 0;
+    while (end - address >= sizeof(char *)) {
+        char *member;
+        memcpy(&member, (const void *)address, sizeof(member));
+        if (!member) return 1;
+        if (!account_file_inside(member, begin, end)) return 0;
+        address += sizeof(char *);
+    }
+    return 0;
+}
+
+static void account_file_call(const struct account_file_ops *parser,
+                              const struct account_file_ops *constructor,
+                              FILE *stream, int group, int reentrant, int pipe_backed,
+                              size_t capacity, size_t offset,
+                              struct account_file_result *out) {
+    memset(out, 0, sizeof(*out));
+    out->before = UINT64_C(0x123456789abcdef0);
+    out->after = UINT64_C(0xfedcba9876543210);
+    memset(out->buffer, 0xa5, sizeof(out->buffer));
+    void *result;
+    errno = 811;
+    if (reentrant) {
+        if (group) {
+            struct group *value = (struct group *)(uintptr_t)1;
+            out->rc = parser->group_r(stream, &out->record.gr,
+                (char *)out->buffer + offset, capacity, &value);
+            result = value;
+        } else {
+            struct passwd *value = (struct passwd *)(uintptr_t)1;
+            out->rc = parser->passwd_r(stream, &out->record.pw,
+                (char *)out->buffer + offset, capacity, &value);
+            result = value;
+        }
+    } else {
+        result = group ? (void *)parser->group(stream) : (void *)parser->passwd(stream);
+        out->rc = result ? 0 : -1;
+    }
+    out->saved_errno = errno;
+    out->present = result != NULL;
+    out->eof = constructor->eof(stream) != 0;
+    out->error = constructor->error(stream) != 0;
+    out->position = pipe_backed ? -1 : constructor->tell(stream);
+    out->valid = out->before == UINT64_C(0x123456789abcdef0) &&
+        out->after == UINT64_C(0xfedcba9876543210);
+    for (size_t i = 0; i < sizeof(out->buffer); ++i)
+        if ((i < offset || i >= offset + capacity) && out->buffer[i] != 0xa5)
+            out->valid = 0;
+    if (reentrant) {
+        void *owned = group ? (void *)&out->record.gr : (void *)&out->record.pw;
+        out->valid &= out->rc ? result == NULL : result == owned;
+        if (!out->rc && result == owned)
+            out->valid &= account_file_owned(group, out, capacity, offset);
+    }
+    if (out->present && out->valid)
+        out->valid = account_file_value(group, result, &out->value);
+}
+
+static int account_file_pair(const struct account_file_ops *host,
+                              const struct account_file_ops *candidate,
+                              const struct account_file_ops *constructor,
+                              FILE *a_stream, FILE *b_stream,
+                              const struct account_file_fixture *fixture,
+                              int group, int reentrant, int pipe_backed,
+                              size_t capacity, size_t offset, int row, int expected_error,
+                              unsigned int *observations) {
+    struct account_file_result a, b;
+    account_file_call(host, host, a_stream, group, reentrant, pipe_backed,
+                      capacity, offset, &a);
+    account_file_call(candidate, constructor, b_stream, group, reentrant, pipe_backed,
+                      capacity, offset, &b);
+    ++*observations;
+    int ok = a.valid && b.valid && a.rc == b.rc && a.present == b.present &&
+        a.present == (row >= 0) && a.eof == b.eof && a.error == b.error &&
+        a.position == b.position;
+    /* Success errno is unspecified, including GNU's internal growing retry.
+     * Failure errno and result publication are part of this interface. */
+    if (row >= 0) {
+        ok &= account_file_value_equal(&a.value, &fixture->rows[row]) &&
+            account_file_value_equal(&b.value, &fixture->rows[row]);
+    } else {
+        ok &= a.saved_errno == b.saved_errno && a.saved_errno == expected_error;
+        if (reentrant) ok &= a.rc == expected_error;
+    }
+    if (!ok) {
+        fprintf(stderr, "FAIL: account-file %s reentrant=%d pipe=%d capacity=%zu offset=%zu row=%d "
+            "host=(%d,%d,%d,%d,%d,%ld,%d) candidate=(%d,%d,%d,%d,%d,%ld,%d)\n",
+            group ? "group" : "passwd", reentrant, pipe_backed, capacity, offset, row,
+            a.rc, a.saved_errno, a.present, a.eof, a.error, a.position, a.valid,
+            b.rc, b.saved_errno, b.present, b.eof, b.error, b.position, b.valid);
+    }
+    return ok;
+}
+
+static int account_file_sequence(const struct account_file_ops *host,
+                                 const struct account_file_ops *candidate,
+                                 const struct account_file_ops *constructor,
+                                 const struct account_file_fixture *fixture,
+                                 int group, int scenario, unsigned int *observations) {
+    int pipe_backed = scenario >= 2 && scenario <= 5;
+    int reentrant = scenario != 0 && scenario != 2;
+    struct account_file_stream a, b;
+    if (!account_file_open(host, fixture, pipe_backed, &a)) return 0;
+    if (!account_file_open(constructor, fixture, pipe_backed, &b)) {
+        account_file_close(host, &a);
+        return 0;
+    }
+    int ok = 1;
+    if (scenario == 1 || scenario == 4) {
+        ok = account_file_pair(host, candidate, constructor, a.file, b.file,
+            fixture, group, 1, pipe_backed, 1, 1, -1, ERANGE, observations);
+        if (ok && scenario == 1)
+            ok = account_file_pair(host, candidate, constructor, a.file, b.file,
+                fixture, group, 1, 0, 64, 3, -1, ERANGE, observations);
+        if (ok && scenario == 1)
+            ok = account_file_pair(host, candidate, constructor, a.file, b.file,
+                fixture, group, 1, 0, group ? fixture->line_length + 2 : 1024,
+                7, -1, ERANGE, observations);
+    }
+    if (ok && (scenario == 2 || scenario == 5)) {
+        ok = account_file_pair(host, candidate, constructor, a.file, b.file,
+            fixture, group, reentrant, 1, 8, 1, -1, ESPIPE, observations);
+        int expected = (unsigned char)fixture->text[scenario == 2 ? 0 : 7];
+        int a_byte = host->byte(a.file), b_byte = constructor->byte(b.file);
+        if (a_byte != expected || b_byte != expected) {
+            fprintf(stderr, "FAIL: account-file pipe consumption scenario=%d host=%d candidate=%d expected=%d\n",
+                    scenario, a_byte, b_byte, expected);
+            ok = 0;
+        }
+    } else if (ok) {
+        for (int row = 0; row < 2 && ok; ++row)
+            ok = account_file_pair(host, candidate, constructor, a.file, b.file,
+                fixture, group, reentrant, pipe_backed, 32768, (size_t)row + 1,
+                row, 0, observations);
+        if (ok)
+            ok = account_file_pair(host, candidate, constructor, a.file, b.file,
+                fixture, group, reentrant, pipe_backed, 32768, 3, -1, ENOENT,
+                observations);
+    }
+    ok &= account_file_close(host, &a);
+    ok &= account_file_close(constructor, &b);
+    return ok;
+}
+
+static int test_account_file_provider(const char *path) {
+    void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    void *host_handle = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    struct stat expected, host_expected;
+    struct account_file_ops candidate, host;
+    Dl_info info;
+    void *host_symbol = host_handle ? dlsym(host_handle, "fgetpwent") : NULL;
+    if (!handle || !host_symbol || !dladdr(host_symbol, &info) || !info.dli_fname ||
+        stat(path, &expected) || stat(info.dli_fname, &host_expected) ||
+        !account_file_bind(handle, &expected, &candidate) ||
+        !account_file_bind(host_handle, &host_expected, &host)) return 42;
+    unsigned int observations = 0;
+    alarm(30);
+    for (int group = 0; group < 2; ++group) {
+        struct account_file_fixture fixture;
+        if (!account_file_fixture(group, &fixture)) return 1;
+        for (int foreign = 0; foreign < 2; ++foreign) {
+            const struct account_file_ops *constructor = foreign ? &host : &candidate;
+            for (int scenario = 0; scenario < 6; ++scenario)
+                if (!account_file_sequence(&host, &candidate, constructor,
+                        &fixture, group, scenario, &observations)) return 1;
+        }
+        if (!account_file_numeric_fixture(group, &fixture)) return 1;
+        for (int foreign = 0; foreign < 2; ++foreign) {
+            const struct account_file_ops *constructor = foreign ? &host : &candidate;
+            if (!account_file_sequence(&host, &candidate, constructor,
+                    &fixture, group, 0, &observations) ||
+                !account_file_sequence(&host, &candidate, constructor,
+                    &fixture, group, 6, &observations)) return 1;
+        }
+    }
+    alarm(0);
+    if (observations != 96) return 1;
+    printf("fixture_nss: account-file provider PASS (%u contract observations)\n", observations);
+    dlclose(host_handle);
+    dlclose(handle);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--account-file-provider") == 0)
+        return test_account_file_provider(argv[2]);
+
     if (argc == 4 && strcmp(argv[1], "--rpc-provider") == 0)
         return test_rpc_database_provider(argv[2], argv[3]);
 

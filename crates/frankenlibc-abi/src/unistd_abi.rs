@@ -17338,81 +17338,216 @@ pub unsafe extern "C" fn res_search(
 // here.
 
 // ---------------------------------------------------------------------------
-// fgetpwent / fgetgrent — Implemented (native line reading + parsing)
-// Reuses parse_passwd_line / parse_group_line from frankenlibc-core
-// and TLS fill helpers from pwd_abi / grp_abi.
+// Stream account records: complete byte lines, bounded retries, owned results.
 // ---------------------------------------------------------------------------
 
-/// POSIX `fgetpwent` — read the next passwd entry from a stream.
-///
-/// Reads lines from `stream` using our native fgets, parses each with
-/// `parse_passwd_line`, and returns a pointer to thread-local storage.
-/// Returns NULL on EOF or error.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetpwent(stream: *mut c_void) -> *mut c_void {
-    if stream.is_null() {
-        return std::ptr::null_mut();
-    }
+struct AccountStreamRecord<T> {
+    entry: T,
+    line_len: usize,
+    position: i64,
+    success_errno: c_int,
+}
 
-    let mut line_buf = [0u8; 1024];
+fn account_stream_error(error: c_int) -> c_int {
+    // SAFETY: only the calling thread's errno is modified.
+    unsafe { set_abi_errno(error) };
+    error
+}
+
+/// An undersized record can be retried only if its FILE position can be restored.
+///
+/// # Safety
+/// The caller keeps the FILE live and owns its automatic or caller-managed lock.
+unsafe fn retry_account_stream_line(stream: *mut c_void, position: i64) -> c_int {
+    if position < 0
+        || unsafe { crate::stdio_abi::fseeko(stream, position, libc::SEEK_SET) } != 0
+    {
+        // SAFETY: the enclosing operation owns this live stream. A consumed
+        // record that cannot be retried is a stream error, including on pipes.
+        unsafe { crate::stdio_abi::set_stream_error(stream) };
+        account_stream_error(libc::ESPIPE)
+    } else {
+        account_stream_error(libc::ERANGE)
+    }
+}
+
+/// Read one complete, valid account record without treating a buffer fragment
+/// as a line. Invalid lines are consumed; an undersized line is retried.
+///
+/// # Safety
+/// The caller owns the FILE lock and supplies capacity writable bytes at buffer.
+unsafe fn read_account_stream_record<T>(
+    stream: *mut c_void,
+    buffer: *mut c_char,
+    capacity: usize,
+    parse: fn(&[u8]) -> Option<(T, bool)>,
+    caller: usize,
+) -> Result<AccountStreamRecord<T>, c_int> {
+    let capacity = capacity.min(c_int::MAX as usize);
+    if capacity < 3 {
+        return Err(account_stream_error(libc::ERANGE));
+    }
     loop {
-        let result = unsafe {
-            super::stdio_abi::fgets(
-                line_buf.as_mut_ptr().cast::<c_char>(),
-                line_buf.len() as c_int,
+        // Preserve the start of each physical line, including comments and
+        // malformed records. A pipe may still produce a fitting record.
+        let position = unsafe { crate::stdio_abi::ftello(stream) };
+        // Leave one untouched sentinel beyond a complete line and its NUL.
+        // Filling the last byte means the caller needs a larger buffer even
+        // when that fragment happens to end at a newline.
+        unsafe { *buffer.add(capacity - 1) = -1_i8 as c_char };
+        let line = unsafe {
+            crate::stdio_abi::fgets_unlocked_for_caller(
+                buffer,
+                capacity as c_int,
                 stream,
+                caller,
             )
         };
-        if result.is_null() {
-            return std::ptr::null_mut(); // EOF or error
+        if line.is_null() {
+            let read_errno = current_abi_errno();
+            let error = if unsafe { crate::stdio_abi::feof_unlocked(stream) } != 0 {
+                libc::ENOENT
+            } else if read_errno == 0 || read_errno == libc::ERANGE {
+                // A read error must not masquerade as a retryable short buffer.
+                libc::EINVAL
+            } else {
+                read_errno
+            };
+            return Err(account_stream_error(error));
         }
+        if unsafe { *buffer.add(capacity - 1) } != -1_i8 as c_char {
+            return Err(unsafe { retry_account_stream_line(stream, position) });
+        }
+        let success_errno = current_abi_errno();
+        // SAFETY: fgets initialized a terminated string within capacity.
+        let (line_len, terminated) = unsafe { scan_c_string(buffer, Some(capacity)) };
+        if !terminated {
+            return Err(account_stream_error(libc::EINVAL));
+        }
+        // Account text is a byte format; names, paths and members need not be UTF-8.
+        let bytes = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), line_len) };
+        let bytes = bytes.trim_ascii_start();
+        if bytes.is_empty() || bytes.first() == Some(&b'#') {
+            continue;
+        }
+        let Some((entry, numeric_overflow)) = parse(bytes) else {
+            account_stream_error(libc::EINVAL);
+            continue;
+        };
+        return Ok(AccountStreamRecord {
+            entry,
+            line_len,
+            position,
+            success_errno: if numeric_overflow {
+                libc::ERANGE
+            } else {
+                success_errno
+            },
+        });
+    }
+}
 
-        // `fgets` writes into a fixed local buffer; keep the scan inside it.
-        let line_len = line_buf
-            .iter()
-            .position(|&byte| byte == 0)
-            .unwrap_or(line_buf.len());
-        let line = &line_buf[..line_len];
-
-        // Skip blank lines and comments; parse_passwd_line returns None for those.
-        if let Some(entry) = frankenlibc_core::pwd::parse_passwd_line(line) {
-            return super::pwd_abi::fill_passwd_from_entry(&entry).cast::<c_void>();
+/// Nonreentrant account readers grow their private line buffer and retry the
+/// same seekable record. The parsed entry owns its bytes before the buffer drops.
+///
+/// # Safety
+/// The caller keeps the FILE live and owns its automatic or caller-managed lock.
+unsafe fn read_growing_account_stream_record<T>(
+    stream: *mut c_void,
+    parse: fn(&[u8]) -> Option<(T, bool)>,
+    caller: usize,
+) -> Result<AccountStreamRecord<T>, c_int> {
+    // GNU's nonreentrant readers require a seekable FILE before consuming it.
+    if unsafe { crate::stdio_abi::ftello(stream) } < 0 {
+        let error = current_abi_errno();
+        return Err(account_stream_error(if error == 0 {
+            libc::ESPIPE
+        } else {
+            error
+        }));
+    }
+    let mut buffer = Vec::<u8>::new();
+    let mut capacity = 1024usize;
+    loop {
+        buffer
+            .try_reserve_exact(capacity - buffer.len())
+            .map_err(|_| account_stream_error(libc::ENOMEM))?;
+        buffer.resize(capacity, 0);
+        match unsafe {
+            read_account_stream_record(
+                stream,
+                buffer.as_mut_ptr().cast(),
+                capacity,
+                parse,
+                caller,
+            )
+        } {
+            Err(libc::ERANGE) => {
+                capacity = capacity
+                    .checked_mul(2)
+                    .filter(|&next| next <= c_int::MAX as usize)
+                    .ok_or_else(|| account_stream_error(libc::ENOMEM))?;
+            }
+            outcome => return outcome,
         }
     }
 }
 
-/// POSIX `fgetgrent` — read the next group entry from a stream.
-///
-/// Reads lines from `stream` using our native fgets, parses each with
-/// `parse_group_line`, and returns a pointer to thread-local storage.
-/// Returns NULL on EOF or error.
+/// Read the next complete passwd entry from a caller-provided FILE.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetgrent(stream: *mut c_void) -> *mut c_void {
+pub unsafe extern "C-unwind" fn fgetpwent(stream: *mut c_void) -> *mut c_void {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut errno_restore = ErrnoRestore(current_abi_errno());
     if stream.is_null() {
+        errno_restore.0 = libc::EINVAL;
         return std::ptr::null_mut();
     }
-
-    let mut line_buf = [0u8; 1024];
-    loop {
-        let result = unsafe {
-            super::stdio_abi::fgets(
-                line_buf.as_mut_ptr().cast::<c_char>(),
-                line_buf.len() as c_int,
-                stream,
-            )
-        };
-        if result.is_null() {
-            return std::ptr::null_mut(); // EOF or error
+    // The guard and growing buffer both unwind safely through FILE callbacks.
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    match unsafe {
+        read_growing_account_stream_record(
+            stream,
+            frankenlibc_core::pwd::parse_passwd_stream_line,
+            caller,
+        )
+    } {
+        Ok(record) => {
+            let result = super::pwd_abi::fill_passwd_from_entry(&record.entry);
+            errno_restore.0 = record.success_errno;
+            result.cast()
         }
+        Err(error) => {
+            errno_restore.0 = error;
+            std::ptr::null_mut()
+        }
+    }
+}
 
-        let line_len = line_buf
-            .iter()
-            .position(|&byte| byte == 0)
-            .unwrap_or(line_buf.len());
-        let line = &line_buf[..line_len];
-
-        if let Some(entry) = frankenlibc_core::grp::parse_group_line(line) {
-            return super::grp_abi::fill_group_from_entry(&entry).cast::<c_void>();
+/// Read the next complete group entry, including every member, from a FILE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgetgrent(stream: *mut c_void) -> *mut c_void {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut errno_restore = ErrnoRestore(current_abi_errno());
+    if stream.is_null() {
+        errno_restore.0 = libc::EINVAL;
+        return std::ptr::null_mut();
+    }
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    match unsafe {
+        read_growing_account_stream_record(
+            stream,
+            frankenlibc_core::grp::parse_group_stream_line,
+            caller,
+        )
+    } {
+        Ok(record) => {
+            let result = super::grp_abi::fill_group_from_entry(&record.entry);
+            errno_restore.0 = record.success_errno;
+            result.cast()
+        }
+        Err(error) => {
+            errno_restore.0 = error;
+            std::ptr::null_mut()
         }
     }
 }
@@ -26496,225 +26631,143 @@ pub unsafe extern "C" fn fgetspent_r(
     }
 }
 
-/// `fgetpwent_r` — reentrant read passwd entry from stream.
-///
-/// Native implementation: reads a line and parses /etc/passwd format (name:pass:uid:gid:gecos:dir:shell).
+/// Reentrant passwd stream reader. ERANGE leaves the result null and restores
+/// the record's position when the FILE supports seeking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetpwent_r(
+pub unsafe extern "C-unwind" fn fgetpwent_r(
     stream: *mut libc::FILE,
     result_buf: *mut libc::passwd,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut libc::passwd,
 ) -> c_int {
-    if !tracked_object_fits::<*mut libc::passwd>(result as *const *mut libc::passwd) {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut errno_restore = ErrnoRestore(current_abi_errno());
+    if !tracked_object_fits(result) {
+        errno_restore.0 = libc::EINVAL;
         return libc::EINVAL;
     }
+    // SAFETY: result names a checked writable caller-owned pointer slot.
     unsafe { *result = std::ptr::null_mut() };
-    if stream.is_null()
-        || result_buf.is_null()
-        || buffer.is_null()
-        || !tracked_object_fits::<libc::passwd>(result_buf)
-    {
+    if stream.is_null() || buffer.is_null() || !tracked_object_fits(result_buf) {
+        errno_restore.0 = libc::EINVAL;
         return libc::EINVAL;
     }
-
-    let mut line_buf = [0u8; 1024];
-    loop {
-        let line_ptr = unsafe {
-            crate::stdio_abi::fgets(
-                line_buf.as_mut_ptr().cast(),
-                line_buf.len() as c_int,
-                stream.cast(),
-            )
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let stream = stream.cast::<c_void>();
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    let record = match unsafe {
+        read_account_stream_record(
+            stream,
+            buffer,
+            capacity,
+            frankenlibc_core::pwd::parse_passwd_stream_line,
+            caller,
+        )
+    } {
+        Ok(record) => record,
+        Err(error) => {
+            errno_restore.0 = error;
+            return error;
+        }
+    };
+    // SAFETY: the parsed entry owns its bytes; output objects were validated.
+    // The shared packer checks its entire layout before publishing result.
+    let rc = unsafe {
+        crate::pwd_abi::fill_passwd_r(&record.entry, result_buf, buffer, capacity, result)
+    };
+    if rc == 0 {
+        errno_restore.0 = record.success_errno;
+        0
+    } else {
+        let error = if rc == libc::ERANGE {
+            unsafe { retry_account_stream_line(stream, record.position) }
+        } else {
+            rc
         };
-        if line_ptr.is_null() {
-            return libc::ENOENT;
-        }
-        let len = unsafe { crate::string_abi::strlen(line_ptr) };
-        let line = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
-        };
-        let line = line.trim_end_matches('\n');
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 7 {
-            continue;
-        }
-
-        let mut needed = 0usize;
-        for field in [parts[0], parts[1], parts[4], parts[5], parts[6]] {
-            needed = match needed
-                .checked_add(field.len())
-                .and_then(|offset| offset.checked_add(1))
-            {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-        }
-        let effective_buflen = tracked_output_capacity(buffer, buflen);
-        if needed > effective_buflen {
-            return libc::ERANGE;
-        }
-
-        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, effective_buflen) };
-        let mut off = 0usize;
-        let mut copy_field = |field: &str| -> *mut c_char {
-            let ptr = unsafe { buffer.add(off) };
-            buf[off..off + field.len()].copy_from_slice(field.as_bytes());
-            buf[off + field.len()] = 0;
-            off += field.len() + 1;
-            ptr
-        };
-        let pw = unsafe { &mut *result_buf };
-        pw.pw_name = copy_field(parts[0]);
-        pw.pw_passwd = copy_field(parts[1]);
-        pw.pw_uid = parts[2].parse().unwrap_or(65534);
-        pw.pw_gid = parts[3].parse().unwrap_or(65534);
-        pw.pw_gecos = copy_field(parts[4]);
-        pw.pw_dir = copy_field(parts[5]);
-        pw.pw_shell = copy_field(parts[6]);
-
-        unsafe { *result = result_buf };
-        return 0;
+        errno_restore.0 = error;
+        error
     }
 }
 
-/// `fgetgrent_r` — reentrant read group entry from stream.
-///
-/// Native implementation: reads a line and parses /etc/group format (name:pass:gid:members).
+/// Reentrant group stream reader with byte-preserving, aligned caller storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetgrent_r(
+pub unsafe extern "C-unwind" fn fgetgrent_r(
     stream: *mut libc::FILE,
     result_buf: *mut libc::group,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut libc::group,
 ) -> c_int {
-    if !tracked_object_fits::<*mut libc::group>(result as *const *mut libc::group) {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut errno_restore = ErrnoRestore(current_abi_errno());
+    if !tracked_object_fits(result) {
+        errno_restore.0 = libc::EINVAL;
         return libc::EINVAL;
     }
+    // SAFETY: result names a checked writable caller-owned pointer slot.
     unsafe { *result = std::ptr::null_mut() };
-    if stream.is_null()
-        || result_buf.is_null()
-        || buffer.is_null()
-        || !tracked_object_fits::<libc::group>(result_buf)
-    {
+    if stream.is_null() || buffer.is_null() || !tracked_object_fits(result_buf) {
+        errno_restore.0 = libc::EINVAL;
         return libc::EINVAL;
     }
-
-    let mut line_buf = [0u8; 1024];
-    loop {
-        let line_ptr = unsafe {
-            crate::stdio_abi::fgets(
-                line_buf.as_mut_ptr().cast(),
-                line_buf.len() as c_int,
-                stream.cast(),
-            )
-        };
-        if line_ptr.is_null() {
-            return libc::ENOENT;
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let stream = stream.cast::<c_void>();
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
+    let record = match unsafe {
+        read_account_stream_record(
+            stream,
+            buffer,
+            capacity,
+            frankenlibc_core::grp::parse_group_stream_line,
+            caller,
+        )
+    } {
+        Ok(record) => record,
+        Err(error) => {
+            errno_restore.0 = error;
+            return error;
         }
-        let len = unsafe { crate::string_abi::strlen(line_ptr) };
-        let line = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
-        };
-        let line = line.trim_end_matches('\n');
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-
-        let members_str = if parts.len() > 3 { parts[3] } else { "" };
-        let member_names: Vec<&str> = if members_str.is_empty() {
-            Vec::new()
+    };
+    // GNU reserves the original line plus its NUL before an aligned member
+    // vector, including one spare pointer after the terminating NULL.
+    let pointer_size = std::mem::size_of::<*mut c_char>();
+    let needed = record
+        .line_len
+        .checked_add(1)
+        .and_then(|offset| {
+            aligned_output_offset(buffer, offset, std::mem::align_of::<*mut c_char>())
+        })
+        .and_then(|offset| {
+            record
+                .entry
+                .gr_mem
+                .len()
+                .checked_add(2)?
+                .checked_mul(pointer_size)?
+                .checked_add(offset)
+        });
+    if needed.is_none_or(|needed| needed > capacity) {
+        let error = unsafe { retry_account_stream_line(stream, record.position) };
+        errno_restore.0 = error;
+        return error;
+    }
+    // SAFETY: the parsed entry owns its bytes; the shared packer verifies its
+    // compact layout before writing the caller's struct and result pointer.
+    let rc = unsafe {
+        crate::grp_abi::fill_group_r(&record.entry, result_buf, buffer, capacity, result)
+    };
+    if rc == 0 {
+        errno_restore.0 = record.success_errno;
+        0
+    } else {
+        let error = if rc == libc::ERANGE {
+            unsafe { retry_account_stream_line(stream, record.position) }
         } else {
-            members_str.split(',').collect()
+            rc
         };
-
-        let ptr_size = std::mem::size_of::<*mut c_char>();
-        let ptr_align = std::mem::align_of::<*mut c_char>();
-        let mut string_prefix_len = 0usize;
-        for field in [parts[0], parts[1]] {
-            string_prefix_len = match string_prefix_len
-                .checked_add(field.len())
-                .and_then(|offset| offset.checked_add(1))
-            {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-        }
-        let mem_array_off = match aligned_output_offset(buffer, string_prefix_len, ptr_align) {
-            Some(offset) => offset,
-            None => return libc::ERANGE,
-        };
-        let mem_array_bytes = match member_names
-            .len()
-            .checked_add(1)
-            .and_then(|slots| slots.checked_mul(ptr_size))
-        {
-            Some(bytes) => bytes,
-            None => return libc::ERANGE,
-        };
-        let mut total_needed = match mem_array_off.checked_add(mem_array_bytes) {
-            Some(offset) => offset,
-            None => return libc::ERANGE,
-        };
-        for member in &member_names {
-            total_needed = match total_needed
-                .checked_add(member.len())
-                .and_then(|offset| offset.checked_add(1))
-            {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-        }
-        let effective_buflen = tracked_output_capacity(buffer, buflen);
-        if total_needed > effective_buflen {
-            return libc::ERANGE;
-        }
-
-        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, effective_buflen) };
-        let mut off = 0usize;
-
-        fn copy_field_at(
-            buf: &mut [u8],
-            buffer: *mut c_char,
-            off: &mut usize,
-            field: &str,
-        ) -> *mut c_char {
-            let ptr = unsafe { buffer.add(*off) };
-            buf[*off..*off + field.len()].copy_from_slice(field.as_bytes());
-            buf[*off + field.len()] = 0;
-            *off += field.len() + 1;
-            ptr
-        }
-
-        let gr = unsafe { &mut *result_buf };
-        gr.gr_name = copy_field_at(buf, buffer, &mut off, parts[0]);
-        gr.gr_passwd = copy_field_at(buf, buffer, &mut off, parts[1]);
-        gr.gr_gid = parts[2].parse().unwrap_or(65534);
-
-        off = mem_array_off;
-
-        let mem_array_ptr = unsafe { buffer.add(off) as *mut *mut c_char };
-        let mem_array_bytes = (member_names.len() + 1) * ptr_size;
-        off += mem_array_bytes;
-
-        for (i, name) in member_names.iter().enumerate() {
-            let str_ptr = copy_field_at(buf, buffer, &mut off, name);
-            unsafe { *mem_array_ptr.add(i) = str_ptr };
-        }
-        unsafe { *mem_array_ptr.add(member_names.len()) = std::ptr::null_mut() };
-        gr.gr_mem = mem_array_ptr;
-
-        unsafe { *result = result_buf };
-        return 0;
+        errno_restore.0 = error;
+        error
     }
 }
 

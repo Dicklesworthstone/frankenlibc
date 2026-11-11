@@ -1028,7 +1028,7 @@ unsafe fn getpwuid_r_impl(
 ///
 /// `pwd`, `buf`, `result` must be valid writable pointers. `buflen` must be
 /// capped to the actual writable size of `buf`.
-unsafe fn fill_passwd_r(
+pub(crate) unsafe fn fill_passwd_r(
     entry: &frankenlibc_core::pwd::Passwd,
     pwd: *mut libc::passwd,
     buf: *mut c_char,

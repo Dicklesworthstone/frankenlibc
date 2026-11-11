@@ -1218,7 +1218,7 @@ unsafe fn getgrgid_r_impl(
 ///
 /// `grp`, `buf`, `result` must be valid writable pointers. `buflen` must be
 /// capped to the actual writable size of `buf`.
-unsafe fn fill_group_r(
+pub(crate) unsafe fn fill_group_r(
     entry: &frankenlibc_core::grp::Group,
     grp: *mut libc::group,
     buf: *mut c_char,

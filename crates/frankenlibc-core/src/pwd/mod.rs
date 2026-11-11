@@ -127,6 +127,90 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
     })
 }
 
+/// Parse a stream record with GNU's unsigned-long ID conversions.
+///
+/// Files lookups retain their stricter ID policy in `parse_passwd_line`.
+/// The flag reports unsigned-long overflow, which stream readers publish
+/// through errno even when the record itself is successfully returned.
+pub fn parse_passwd_stream_line(line: &[u8]) -> Option<(Passwd, bool)> {
+    if let Some(entry) = parse_passwd_line(line) {
+        return Some((entry, false));
+    }
+
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let mut fields = line.splitn(7, |&byte| byte == b':');
+    let name = fields.next()?;
+    let passwd = fields.next()?;
+    let (uid, uid_overflow) = parse_stream_id(fields.next()?)?;
+    let (gid, gid_overflow) = parse_stream_id(fields.next()?)?;
+    let mut normalized = Vec::with_capacity(line.len().checked_add(20)?);
+    normalized.extend_from_slice(name);
+    normalized.push(b':');
+    normalized.extend_from_slice(passwd);
+    normalized.push(b':');
+    write_u32_decimal(&mut normalized, uid);
+    normalized.push(b':');
+    write_u32_decimal(&mut normalized, gid);
+    for field in fields {
+        normalized.push(b':');
+        normalized.extend_from_slice(field);
+    }
+    parse_passwd_line(&normalized).map(|entry| (entry, uid_overflow || gid_overflow))
+}
+
+/// GNU's stream parser uses strtoul, then clamps to UINT32_MAX. Apply the
+/// optional sign at unsigned-long width before that clamp, and distinguish
+/// unsigned-long overflow from a value that merely exceeds the ID width.
+pub(crate) fn parse_stream_id(field: &[u8]) -> Option<(u32, bool)> {
+    let mut digits = field;
+    while let Some((&byte, rest)) = digits.split_first() {
+        if byte == b' ' || (b'\t'..=b'\r').contains(&byte) {
+            digits = rest;
+        } else {
+            break;
+        }
+    }
+    let negative = match digits.first() {
+        Some(b'-') => {
+            digits = &digits[1..];
+            true
+        }
+        Some(b'+') => {
+            digits = &digits[1..];
+            false
+        }
+        _ => false,
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: core::ffi::c_ulong = 0;
+    let mut overflow = false;
+    for &byte in digits {
+        let digit = byte.checked_sub(b'0')?;
+        if digit > 9 {
+            return None;
+        }
+        if !overflow {
+            match value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(digit.into()))
+            {
+                Some(next) => value = next,
+                None => {
+                    value = core::ffi::c_ulong::MAX;
+                    overflow = true;
+                }
+            }
+        }
+    }
+    if negative && !overflow {
+        value = value.wrapping_neg();
+    }
+    Some((value.min(u32::MAX.into()) as u32, overflow))
+}
+
 /// Parse a uid/gid field the way glibc does (`strtoul`, base 10): skip leading
 /// whitespace and an optional `+`, then require the rest to be all digits and
 /// fully consumed. Rejects "", a sign-only field, hex (`0x10`), and trailing
@@ -346,6 +430,42 @@ bin:x:2:2:bin:/bin:/usr/sbin/nologin
 nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
 ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
 ";
+
+    #[test]
+    fn stream_ids_follow_unsigned_long_conversion_without_relaxing_lookup_ids() {
+        let overflow_text = format!("{}0", core::ffi::c_ulong::MAX);
+        let negative_max = format!("-{}", core::ffi::c_ulong::MAX);
+        for (field, expected, overflow) in [
+            ("-1", u32::MAX, false),
+            ("-0", 0, false),
+            (" +17", 17, false),
+            ("4294967296", u32::MAX, core::mem::size_of::<core::ffi::c_ulong>() == 4),
+            (negative_max.as_str(), 1, false),
+            (overflow_text.as_str(), u32::MAX, true),
+        ] {
+            assert_eq!(
+                parse_stream_id(field.as_bytes()),
+                Some((expected, overflow)),
+                "{field}"
+            );
+        }
+        for field in [b"".as_slice(), b"+", b"-", b"12z", b"1 ", b"0x1", b"\xff"] {
+            assert_eq!(parse_stream_id(field), None, "{field:?}");
+        }
+
+        let line = b"\xff:x:-1:4294967296:\xfe:/home/\xfd:/bin/\xfc\n";
+        assert!(parse_passwd_line(line).is_none());
+        let (entry, overflow) = parse_passwd_stream_line(line).unwrap();
+        assert_eq!(entry.pw_name, b"\xff");
+        assert_eq!((entry.pw_uid, entry.pw_gid), (u32::MAX, u32::MAX));
+        assert_eq!(entry.pw_gecos, b"\xfe");
+        assert_eq!(entry.pw_dir, b"/home/\xfd");
+        assert_eq!(entry.pw_shell, b"/bin/\xfc");
+        assert_eq!(overflow, core::mem::size_of::<core::ffi::c_ulong>() == 4);
+        let (compat, overflow) = parse_passwd_stream_line(b"+remote\n").unwrap();
+        assert!(compat.nis_compat_null_fields);
+        assert!(!overflow);
+    }
 
     #[test]
     fn files_lookup_buffer_threshold_matches_glibc() {

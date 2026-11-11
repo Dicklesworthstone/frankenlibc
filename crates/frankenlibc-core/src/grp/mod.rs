@@ -97,6 +97,35 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
     })
 }
 
+/// Parse a stream record with GNU's unsigned-long group ID conversion.
+///
+/// Keep the existing files lookup policy unchanged. Non-numeric field bytes
+/// and compat records retain the behavior of `parse_group_line`; the flag
+/// reports unsigned-long overflow for the stream reader's errno.
+pub fn parse_group_stream_line(line: &[u8]) -> Option<(Group, bool)> {
+    if let Some(entry) = parse_group_line(line) {
+        return Some((entry, false));
+    }
+
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let mut fields = line.splitn(4, |&byte| byte == b':');
+    let name = fields.next()?;
+    let passwd = fields.next()?;
+    let (gid, overflow) = crate::pwd::parse_stream_id(fields.next()?)?;
+    let mut normalized = Vec::with_capacity(line.len().checked_add(10)?);
+    normalized.extend_from_slice(name);
+    normalized.push(b':');
+    normalized.extend_from_slice(passwd);
+    normalized.push(b':');
+    write_u32_decimal(&mut normalized, gid);
+    if let Some(members) = fields.next() {
+        normalized.push(b':');
+        normalized.extend_from_slice(members);
+    }
+    parse_group_line(&normalized).map(|entry| (entry, overflow))
+}
+
 /// Parse a uid/gid field: skip leading whitespace, then require an unsigned
 /// decimal value that is fully consumed. Signed group ids are rejected so NSS
 /// lookups skip those rows instead of aliasing them to valid unsigned gids.
@@ -316,6 +345,27 @@ sudo:x:27:ubuntu
 users:x:100:alice,bob,charlie
 ubuntu:x:1000:
 ";
+
+    #[test]
+    fn stream_group_ids_preserve_raw_members_and_lookup_policy() {
+        let line = b"\xff:x:-1:\xfe,,alice,\xfd\n";
+        assert!(parse_group_line(line).is_none());
+        let (entry, overflow) = parse_group_stream_line(line).unwrap();
+        assert_eq!(entry.gr_name, b"\xff");
+        assert_eq!(entry.gr_gid, u32::MAX);
+        assert_eq!(entry.gr_mem, vec![b"\xfe".to_vec(), b"alice".to_vec(), b"\xfd".to_vec()]);
+        assert!(!overflow);
+
+        let line = format!("group:x:{}0:alice,bob\n", core::ffi::c_ulong::MAX);
+        let (entry, overflow) = parse_group_stream_line(line.as_bytes()).unwrap();
+        assert_eq!(entry.gr_gid, u32::MAX);
+        assert_eq!(entry.gr_mem, vec![b"alice".to_vec(), b"bob".to_vec()]);
+        assert!(overflow);
+        assert!(parse_group_stream_line(b"group:x:12z:alice\n").is_none());
+        let (compat, overflow) = parse_group_stream_line(b"-remote\n").unwrap();
+        assert!(compat.nis_compat_null_fields);
+        assert!(!overflow);
+    }
 
     #[test]
     fn files_lookup_buffer_threshold_matches_glibc() {

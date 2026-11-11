@@ -214,6 +214,45 @@ jobs:
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+      - name: Preserve complete passwd and group records and buffer retries
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver/account-files
+          cc -D_GNU_SOURCE -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/integration/fixture_nss.c -ldl -o target/nss-account-files
+          caller="$PWD/target/nss-account-files"
+          candidate="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$candidate"
+          host_libc="$(env -u LD_PRELOAD ldd "$caller" | awk '/libc.so.6/ {print $3; exit}')"
+          test -f "$host_libc"
+          prefix=artifacts/resolver/account-files
+          if ! timeout 45s env -u LD_PRELOAD -u FRANKENLIBC_MODE \
+            "$caller" --account-file-provider "$host_libc" \
+            > "$prefix/host.log" 2> "$prefix/host.err"; then
+            cat "$prefix/host.log" "$prefix/host.err"
+            exit 1
+          fi
+          cat "$prefix/host.log"
+          grep -Fxq 'fixture_nss: account-file provider PASS (96 contract observations)' "$prefix/host.log"
+          for mode in strict hardened; do
+            if ! timeout 45s env -u LD_PRELOAD FRANKENLIBC_MODE="$mode" \
+              "$caller" --account-file-provider "$candidate" \
+              > "$prefix/$mode.log" 2> "$prefix/$mode.err"; then
+              cat "$prefix/$mode.log" "$prefix/$mode.err"
+              exit 1
+            fi
+            cat "$prefix/$mode.log"
+            cmp "$prefix/host.log" "$prefix/$mode.log"
+          done
+          set +e
+          timeout 45s env -u LD_PRELOAD \
+            "$caller" --account-file-provider "$RUNNER_TEMP/nss-no-such-provider-$GITHUB_RUN_ID.so" \
+            > "$prefix/provider-negative.log" 2> "$prefix/provider-negative.err"
+          rejected=$?
+          set -e
+          test "$rejected" -eq 42
       - name: Compare deployed hosts, gshadow, RPC and password locking with GNU
         if: always()
         shell: bash
