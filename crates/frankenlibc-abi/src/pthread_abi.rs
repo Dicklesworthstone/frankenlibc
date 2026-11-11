@@ -291,7 +291,7 @@ struct PthreadTlsState {
 }
 
 impl PthreadTlsState {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             force_native_threading_override: None,
             threading_test_override_baseline: false,
@@ -343,7 +343,7 @@ pub(crate) const fn pthread_tls_access_active() -> bool {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static PTHREAD_TLS: RefCell<PthreadTlsState> = RefCell::new(PthreadTlsState::new());
+    static PTHREAD_TLS: RefCell<PthreadTlsState> = const { RefCell::new(PthreadTlsState::new()) };
     static PTHREAD_SELF_FAST: Cell<libc::pthread_t> = const { Cell::new(0) };
 }
 
@@ -490,11 +490,12 @@ fn current_threading_backend() -> u8 {
         return cached;
     }
 
-    let resolved = match core_self_tid() {
-        tid if tid > 0 && core_handle_for_tid(tid).is_some() => THREAD_BACKEND_MANAGED,
+    let resolved = if core_current_thread_handle().is_some() {
+        THREAD_BACKEND_MANAGED
+    } else {
         // Supported host targets always provide pthread_self, so any
         // non-managed thread in non-forced mode is host-backed.
-        _ => THREAD_BACKEND_HOST,
+        THREAD_BACKEND_HOST
     };
     let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = resolved);
     resolved
@@ -1762,14 +1763,84 @@ fn thread_tid_appears_alive(tid: i32) -> bool {
 /// (glibc reports `stackblock + guard` and `stackblock_size - guard`, the
 /// same range). The `[stack]` label names only the main stack, even in a
 /// thread's own /proc/self/task/<tid>/maps.
-fn stack_bounds_from_proc_maps(main_thread: bool) -> Option<(usize, usize, usize)> {
-    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+fn read_proc_self_startstack() -> Option<usize> {
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/stat".as_ptr().cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
+    }
+    .ok()?;
+    let mut buf = [0u8; 1024];
+    let mut total = 0usize;
+    while total < buf.len() {
+        match unsafe { raw_syscall::sys_read(fd, buf[total..].as_mut_ptr(), buf.len() - total) } {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(libc::EINTR) => continue,
+            Err(_) => {
+                let _ = raw_syscall::sys_close(fd);
+                return None;
+            }
+        }
+    }
+    let _ = raw_syscall::sys_close(fd);
+    let stat = core::str::from_utf8(&buf[..total]).ok()?;
+    // Fields after the parenthesised command name; startstack is field 28.
+    let after_comm = stat.get(stat.rfind(')')? + 2..)?;
+    after_comm.split(' ').nth(25)?.parse::<usize>().ok()
+}
+
+fn stack_bounds_from_maps_line(
+    line: &str,
+    anchor: usize,
+    main_thread: bool,
+    previous: &mut Option<(usize, usize, bool)>,
+) -> Option<Option<(usize, usize, usize)>> {
     let page = 4096usize;
+    let (start, end) = parse_maps_range(line)?;
+    let inaccessible = line
+        .split_whitespace()
+        .nth(1)
+        .is_some_and(|perms| perms.starts_with("---"));
+    if (start..end).contains(&anchor) {
+        let (below_start, below_end, below_inaccessible) = previous.unwrap_or((0, 0, false));
+        if main_thread {
+            let stack_end = (anchor & !(page - 1)) + page;
+            let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            // SAFETY: getrlimit writes a complete rlimit on success.
+            if unsafe {
+                raw_syscall::sys_getrlimit(
+                    libc::RLIMIT_STACK as i32,
+                    limit.as_mut_ptr().cast::<u8>(),
+                )
+            }
+            .is_err()
+            {
+                return Some(None);
+            }
+            // SAFETY: initialized by the successful call above.
+            let rlim = unsafe { limit.assume_init() }.rlim_cur as usize;
+            let mut size = rlim.saturating_sub(end - stack_end) / page * page;
+            size = size.min(stack_end - below_end);
+            return Some(Some((stack_end - size, size, 0)));
+        }
+        let guard = if below_inaccessible && below_end == start {
+            below_end - below_start
+        } else {
+            0
+        };
+        return Some(Some((start, end - start, guard)));
+    }
+    *previous = Some((start, end, inaccessible));
+    None
+}
+
+fn stack_bounds_from_proc_maps(main_thread: bool) -> Option<(usize, usize, usize)> {
     let anchor = if main_thread {
-        let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-        // Fields after the parenthesised command name; startstack is field 28.
-        let after_comm = &stat[stat.rfind(')')? + 2..];
-        after_comm.split(' ').nth(25)?.parse::<usize>().ok()?
+        read_proc_self_startstack()?
     } else {
         let sp: usize;
         #[cfg(target_arch = "x86_64")]
@@ -1787,44 +1858,69 @@ fn stack_bounds_from_proc_maps(main_thread: bool) -> Option<(usize, usize, usize
         }
         sp
     };
-    let mut previous: Option<(usize, usize, bool)> = None;
-    for line in maps.lines() {
-        let Some((start, end)) = parse_maps_range(line) else {
-            continue;
-        };
-        let inaccessible = line
-            .split_whitespace()
-            .nth(1)
-            .is_some_and(|perms| perms.starts_with("---"));
-        if (start..end).contains(&anchor) {
-            let (below_start, below_end, below_inaccessible) = previous.unwrap_or((0, 0, false));
-            if main_thread {
-                let stack_end = (anchor & !(page - 1)) + page;
-                let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-                // SAFETY: getrlimit writes a complete rlimit on success.
-                unsafe {
-                    raw_syscall::sys_getrlimit(
-                        libc::RLIMIT_STACK as i32,
-                        limit.as_mut_ptr().cast::<u8>(),
-                    )
-                }
-                .ok()?;
-                // SAFETY: initialized by the successful call above.
-                let rlim = unsafe { limit.assume_init() }.rlim_cur as usize;
-                let mut size = rlim.saturating_sub(end - stack_end) / page * page;
-                size = size.min(stack_end - below_end);
-                return Some((stack_end - size, size, 0));
-            }
-            let guard = if below_inaccessible && below_end == start {
-                below_end - below_start
-            } else {
-                0
-            };
-            return Some((start, end - start, guard));
-        }
-        previous = Some((start, end, inaccessible));
+
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/maps".as_ptr().cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
     }
-    None
+    .ok()?;
+    let mut buf = [0u8; 4096];
+    let mut filled = 0usize;
+    let mut discard_until_newline = false;
+    let mut previous: Option<(usize, usize, bool)> = None;
+    let mut result = None;
+
+    'read_loop: loop {
+        let n = match unsafe {
+            raw_syscall::sys_read(fd, buf[filled..].as_mut_ptr(), buf.len() - filled)
+        } {
+            Ok(n) => n,
+            Err(libc::EINTR) => continue,
+            Err(_) => break,
+        };
+        if n == 0 {
+            if !discard_until_newline
+                && filled > 0
+                && let Ok(line) = core::str::from_utf8(&buf[..filled])
+                && let Some(found) =
+                    stack_bounds_from_maps_line(line, anchor, main_thread, &mut previous)
+            {
+                result = found;
+            }
+            break;
+        }
+        filled += n;
+        let mut consumed = 0usize;
+        while let Some(rel_nl) = buf[consumed..filled].iter().position(|&b| b == b'\n') {
+            let line_bytes = &buf[consumed..consumed + rel_nl];
+            consumed += rel_nl + 1;
+            if discard_until_newline {
+                discard_until_newline = false;
+                continue;
+            }
+            if let Ok(line) = core::str::from_utf8(line_bytes)
+                && let Some(found) =
+                    stack_bounds_from_maps_line(line, anchor, main_thread, &mut previous)
+            {
+                result = found;
+                break 'read_loop;
+            }
+        }
+        if consumed > 0 {
+            buf.copy_within(consumed..filled, 0);
+            filled -= consumed;
+        } else if filled == buf.len() {
+            filled = 0;
+            discard_until_newline = true;
+        }
+    }
+
+    let _ = raw_syscall::sys_close(fd);
+    result
 }
 
 /// Extract (start_addr, end_addr) from a `/proc/self/maps` line.
