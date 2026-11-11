@@ -409,6 +409,26 @@ impl HealingPolicy {
         action: &HealingAction,
         context: RepairLogContext,
     ) {
+        self.record_counters(action);
+        self.emit_healing_log(api_family, symbol, action, context, false);
+    }
+
+    /// Record integrity rejection while allocation/validation state is borrowed.
+    /// Only counters and an already-open JSONL sink are used. Heap-backed
+    /// diagnostic mirrors and lazy environment/fd initialization would reenter
+    /// the allocator while its validation guard is active.
+    pub(crate) fn record_allocation_free(
+        &self,
+        api_family: &'static str,
+        symbol: &'static str,
+        action: &HealingAction,
+        context: RepairLogContext,
+    ) {
+        self.record_counters(action);
+        self.emit_healing_log(api_family, symbol, action, context, true);
+    }
+
+    fn record_counters(&self, action: &HealingAction) {
         if action.is_heal() {
             self.total_heals.fetch_add(1, Ordering::Relaxed);
         }
@@ -437,8 +457,6 @@ impl HealingPolicy {
             }
             HealingAction::None => {}
         }
-
-        self.emit_healing_log(api_family, symbol, action, context);
     }
 
     /// Decide healing for a copy/memory operation with bounds.
@@ -494,12 +512,13 @@ impl HealingPolicy {
         symbol: &'static str,
         action: &HealingAction,
         context: RepairLogContext,
+        allocation_free: bool,
     ) {
         if !action.is_heal() {
             return;
         }
         let signal_context = runtime_signal_context();
-        let signal_safe_path = signal_context.requires_signal_safe_path();
+        let signal_safe_path = allocation_free || signal_context.requires_signal_safe_path();
         if signal_safe_path {
             match RUNTIME_LOG_FD.load(Ordering::Acquire) {
                 0.. => {}
@@ -565,7 +584,15 @@ impl HealingPolicy {
             return;
         }
         if runtime_sink_active {
-            append_to_runtime_log(line.as_str());
+            if signal_safe_path {
+                append_to_runtime_log_with_fd(
+                    RUNTIME_LOG_FD.load(Ordering::Acquire),
+                    line.as_str(),
+                    true,
+                );
+            } else {
+                append_to_runtime_log(line.as_str());
+            }
         }
 
         // A signal handler may have interrupted either allocator or evidence

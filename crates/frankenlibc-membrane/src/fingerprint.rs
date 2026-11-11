@@ -2,20 +2,20 @@
 //!
 //! Every membrane-managed allocation gets:
 //! - A 24-byte fingerprint header: `[u64 hash | u64 generation | u64 size]`
-//! - An 8-byte trailing canary (an invertible transform of the hash)
+//! - An 8-byte trailing canary, authenticated with a separate secret key
 //!
 //! The fingerprint provides:
 //! - Allocation integrity checks when the arena/validator reaches them
 //! - Generation tracking for temporal safety
 //! - Size metadata for bounds checking (supports allocations >4GiB)
 //!
-//! The canary preserves all 64 hash bits; it does not add entropy or provide
-//! an independent authentication tag. A single blind guess succeeds with
-//! probability 2^-64 only if the hash is uniformly unpredictable to the caller.
-//! Reading the header hash reveals the canary. The process/time/address key
-//! initialization below does not establish cryptographic entropy, and neither
-//! metadata check intercepts direct C writes or identifies stale raw pointers
-//! after same-address reuse.
+//! Header and tail keys come from the kernel CSPRNG, through raw syscalls that
+//! cannot re-enter the allocator or alter C `errno`. The tail authenticates the
+//! allocation address, size, generation, and header hash with its own key, so
+//! disclosure of the header no longer reveals the tail. Neither metadata check
+//! intercepts direct C writes or identifies stale raw pointers after same-address
+//! reuse. The tags are 64 bits: this does not protect against disclosure of the
+//! secret keys or replay of an intact allocation's metadata.
 
 /// Size of the fingerprint header prepended to allocations.
 pub const FINGERPRINT_SIZE: usize = 24;
@@ -30,7 +30,7 @@ pub const TOTAL_OVERHEAD: usize = FINGERPRINT_SIZE + CANARY_SIZE;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct AllocationFingerprint {
-    /// SipHash-2-4 of (base_address, size, generation, secret).
+    /// SipHash-2-4 of (base_address, size, generation) with the header key.
     pub hash: u64,
     /// Generation counter for temporal safety.
     pub generation: u64,
@@ -86,32 +86,41 @@ impl AllocationFingerprint {
         }
     }
 
-    /// Derive the canary value from the fingerprint hash.
+    /// Authenticate the allocation and its header with the independent tail key.
+    ///
+    /// `base_addr`, size, and generation must come from trusted arena metadata
+    /// when this is used for verification. Never use an unverified header's
+    /// size to locate the tail in memory.
     #[must_use]
-    pub fn canary(&self) -> Canary {
-        Canary::from_hash(self.hash)
+    pub fn canary(&self, base_addr: usize) -> Canary {
+        Canary::compute(base_addr, self.size, self.generation, self.hash)
     }
 }
 
 /// 8-byte trailing canary for buffer overflow detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Canary {
-    /// The canary bytes derived from the allocation hash.
+    /// The independently authenticated canary bytes.
     pub value: [u8; CANARY_SIZE],
 }
 
 impl Canary {
-    /// Derive a canary without discarding any fingerprint hash bits.
-    ///
-    /// XOR with a constant is a bijection: applying the same XOR recovers the
-    /// hash. This separates the stored byte patterns, not cryptographic domains;
-    /// disclosure of either value reveals the other. In particular, do not XOR
-    /// the hash with its 32-bit rotation: that folds both halves into only 32
-    /// independent output bits.
+    /// Compute the tail tag from trusted allocation metadata and its header hash.
     #[must_use]
-    pub fn from_hash(hash: u64) -> Self {
+    pub fn compute(base_addr: usize, size: u64, generation: u64, header_hash: u64) -> Self {
+        Self::with_key(secret_keys().tail, base_addr, size, generation, header_hash)
+    }
+
+    fn with_key(
+        key: [u64; 2],
+        base_addr: usize,
+        size: u64,
+        generation: u64,
+        header_hash: u64,
+    ) -> Self {
         Self {
-            value: (hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes(),
+            value: sip_hash_words(key, &[base_addr as u64, size, generation, header_hash])
+                .to_le_bytes(),
         }
     }
 
@@ -128,112 +137,251 @@ impl Canary {
     }
 }
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-static SIP_KEY_0: AtomicU64 = AtomicU64::new(0);
-static SIP_KEY_1: AtomicU64 = AtomicU64::new(0);
-
-#[inline(always)]
-fn splitmix64(seed: &mut u64) -> u64 {
-    *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = *seed;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+#[repr(C)]
+struct SecretKeys {
+    header: [u64; 2],
+    tail: [u64; 2],
 }
 
-#[cfg(feature = "owned-tls-cache")]
-fn current_thread_entropy() -> u64 {
-    let stack_probe = 0u8;
-    let stack_addr = &stack_probe as *const u8 as usize as u64;
-    u64::from(std::process::id()).rotate_left(23) ^ stack_addr.rotate_left(11)
+fn secret_keys() -> &'static SecretKeys {
+    entropy::keys()
 }
 
-#[cfg(not(feature = "owned-tls-cache"))]
-fn current_thread_entropy() -> u64 {
-    use std::hash::{Hash, Hasher};
-
-    let mut tid_hasher = std::collections::hash_map::DefaultHasher::new();
-    std::thread::current().id().hash(&mut tid_hasher);
-    tid_hasher.finish()
-}
-
-fn init_keys() -> (u64, u64) {
-    let mut k0 = SIP_KEY_0.load(Ordering::Relaxed);
-    let mut k1 = SIP_KEY_1.load(Ordering::Relaxed);
-    if k0 == 0 || k1 == 0 {
-        // Safe entropy mix from process/thread/time + ASLR address noise.
-        let aslr = init_keys as *const () as usize as u64;
-        let pid = u64::from(std::process::id());
-        let time_nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0u128, |d| d.as_nanos());
-        let time_lo = time_nanos as u64;
-        let time_hi = (time_nanos >> 64) as u64;
-        let tid = current_thread_entropy();
-
-        let mut seed = aslr
-            ^ pid.rotate_left(11)
-            ^ tid.rotate_left(23)
-            ^ time_lo.rotate_left(7)
-            ^ time_hi.rotate_left(31)
-            ^ 0xA5A5_5A5A_D3C3_B4B4;
-
-        let mut r0 = splitmix64(&mut seed);
-        let mut r1 = splitmix64(&mut seed);
-
-        // Ensure non-zero keys
-        if r0 == 0 {
-            r0 = 1;
+/// Complete a kernel entropy read, including short reads and early-boot EINTR.
+/// Zero progress or any other error must never publish partially filled keys.
+fn fill_random(
+    mut remaining: &mut [u8],
+    mut read: impl FnMut(&mut [u8]) -> isize,
+) -> Result<(), ()> {
+    while !remaining.is_empty() {
+        match read(remaining) {
+            -4 => continue, // EINTR; no C errno access.
+            n if n > 0 && n as usize <= remaining.len() => {
+                remaining = &mut remaining[n as usize..];
+            }
+            _ => return Err(()),
         }
-        if r1 == 0 {
-            r1 = 1;
-        }
-
-        let _ = SIP_KEY_0.compare_exchange(0, r0, Ordering::Relaxed, Ordering::Relaxed);
-        let _ = SIP_KEY_1.compare_exchange(0, r1, Ordering::Relaxed, Ordering::Relaxed);
-
-        k0 = SIP_KEY_0.load(Ordering::Relaxed);
-        k1 = SIP_KEY_1.load(Ordering::Relaxed);
     }
-    (k0, k1)
+    Ok(())
 }
 
-/// SipHash-2-4 implementation (simplified).
-///
-/// Uses a runtime-initialized secret key for collision resistance
-/// and allocation integrity.
-fn sip_hash_2_4(addr: usize, size: u64, generation: u64) -> u64 {
-    let (k0, k1) = init_keys();
+/// This boundary owns exactly one immutable mmap page. Publishing a pointer
+/// instead of a Once/lock means signal reentry or fork during initialization
+/// cannot strand a waiter on a vanished initializer. A losing initializer has
+/// never published its page and can safely unmap it. The winning page remains
+/// mapped for the lifetime of the process and is inherited unchanged by fork.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[allow(unsafe_code)]
+mod entropy {
+    use super::{SecretKeys, fill_random};
+    use std::sync::atomic::{AtomicPtr, Ordering};
 
+    static KEYS: AtomicPtr<SecretKeys> = AtomicPtr::new(std::ptr::null_mut());
+
+    // mmap/mprotect/munmap round this to the host page size on 16/64-KiB ARM
+    // kernels too. The allocation holds only 32 bytes and has u64 alignment.
+    const MAP_SIZE: usize = 4096;
+    const PROT_READ: usize = 1;
+    const PROT_WRITE: usize = 2;
+    const MAP_PRIVATE_ANONYMOUS: usize = 0x22;
+
+    #[cfg(target_arch = "x86_64")]
+    const SYS_MMAP: usize = 9;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_MPROTECT: usize = 10;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_MUNMAP: usize = 11;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_GETRANDOM: usize = 318;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_WRITE: usize = 1;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_EXIT_GROUP: usize = 231;
+
+    #[cfg(target_arch = "aarch64")]
+    const SYS_MMAP: usize = 222;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_MPROTECT: usize = 226;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_MUNMAP: usize = 215;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_GETRANDOM: usize = 278;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_WRITE: usize = 64;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_EXIT_GROUP: usize = 94;
+
+    #[inline]
+    pub(super) fn keys() -> &'static SecretKeys {
+        let mut ptr = KEYS.load(Ordering::Acquire);
+        if ptr.is_null() {
+            ptr = initialize();
+        }
+        // SAFETY: Acquire sees a fully initialized, read-only SecretKeys page.
+        // Only unpublished losing pages are unmapped; this reference never dies.
+        unsafe { &*ptr }
+    }
+
+    #[cold]
+    fn initialize() -> *mut SecretKeys {
+        let mapped = syscall6(
+            SYS_MMAP,
+            0,
+            MAP_SIZE,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE_ANONYMOUS,
+            usize::MAX,
+            0,
+        );
+        if (-4095..=0).contains(&mapped) {
+            fail_closed();
+        }
+        let candidate = mapped as *mut SecretKeys;
+        // SAFETY: the successful anonymous mapping is writable and exclusively
+        // owned here. Every u64 bit pattern is valid; getrandom initializes all
+        // 32 bytes before they are interpreted as keys or published.
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(candidate.cast::<u8>(), size_of::<SecretKeys>())
+        };
+        if fill_random(bytes, |part| {
+            syscall6(
+                SYS_GETRANDOM,
+                part.as_mut_ptr() as usize,
+                part.len(),
+                0,
+                0,
+                0,
+                0,
+            )
+        })
+        .is_err()
+        {
+            fail_closed();
+        }
+        if syscall6(SYS_MPROTECT, mapped as usize, MAP_SIZE, PROT_READ, 0, 0, 0) != 0 {
+            fail_closed();
+        }
+        match KEYS.compare_exchange(
+            std::ptr::null_mut(),
+            candidate,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => candidate,
+            Err(winner) => {
+                // No other thread has ever observed candidate. The winner's
+                // page is distinct and remains mapped for the process lifetime.
+                let _ = syscall6(SYS_MUNMAP, mapped as usize, MAP_SIZE, 0, 0, 0, 0);
+                winner
+            }
+        }
+    }
+
+    #[cold]
+    fn fail_closed() -> ! {
+        let message = b"frankenlibc: cannot initialize allocation integrity keys\n";
+        // A fixed raw write avoids stdio, allocation, and interposed symbols on
+        // this failure path. No weak entropy fallback is permitted, even ENOSYS.
+        let _ = syscall6(
+            SYS_WRITE,
+            2,
+            message.as_ptr() as usize,
+            message.len(),
+            0,
+            0,
+            0,
+        );
+        let _ = syscall6(SYS_EXIT_GROUP, 127, 0, 0, 0, 0, 0);
+        // SAFETY: terminate even if a sandbox denies exit_group. Returning from
+        // initialization without a secret would violate the integrity contract.
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            std::arch::asm!("ud2", options(noreturn, nostack));
+        }
+        // SAFETY: same non-returning failure contract on aarch64.
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            std::arch::asm!("brk #0", options(noreturn, nostack));
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn syscall6(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> isize {
+        let result: isize;
+        // SAFETY: callers pass either a valid live output slice, a static
+        // message, or a mapping owned by this module. mmap's other parameters
+        // are constants; all syscall clobbers are listed and memory effects
+        // are intentionally not marked nomem/readonly.
+        unsafe {
+            std::arch::asm!(
+                "syscall",
+                inlateout("rax") n => result,
+                in("rdi") a, in("rsi") b, in("rdx") c,
+                in("r10") d, in("r8") e, in("r9") f,
+                lateout("rcx") _, lateout("r11") _,
+                options(nostack),
+            );
+        }
+        result
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    fn syscall6(n: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> isize {
+        let result: isize;
+        // SAFETY: the same owned-buffer/mapping contract as x86_64; kernel
+        // errors are returned directly, without touching the C errno slot.
+        unsafe {
+            std::arch::asm!(
+                "svc 0",
+                in("x8") n, inlateout("x0") a => result,
+                in("x1") b, in("x2") c, in("x3") d, in("x4") e, in("x5") f,
+                options(nostack),
+            );
+        }
+        result
+    }
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+mod entropy {
+    use super::SecretKeys;
+
+    pub(super) fn keys() -> &'static SecretKeys {
+        // Unsupported targets must not quietly fall back to guessable keys.
+        std::process::abort()
+    }
+}
+
+fn sip_hash_2_4(addr: usize, size: u64, generation: u64) -> u64 {
+    sip_hash_words(secret_keys().header, &[addr as u64, size, generation])
+}
+
+/// Standard SipHash-2-4 over complete little-endian u64 message words.
+/// The final length word is required even when no partial word remains.
+fn sip_hash_words([k0, k1]: [u64; 2], words: &[u64]) -> u64 {
     let mut v0: u64 = k0 ^ 0x736f_6d65_7073_6575;
     let mut v1: u64 = k1 ^ 0x646f_7261_6e64_6f6d;
     let mut v2: u64 = k0 ^ 0x6c79_6765_6e65_7261;
     let mut v3: u64 = k1 ^ 0x7465_6462_7974_6573;
 
-    // Pack inputs into a 192-bit message (3 words)
-    let m0 = addr as u64;
-    let m1 = size;
-    let m2 = generation;
+    for &word in words {
+        v3 ^= word;
+        sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
+        sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
+        v0 ^= word;
+    }
 
-    // Process m0
-    v3 ^= m0;
+    let last = ((words.len() * 8) as u64) << 56;
+    v3 ^= last;
     sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
     sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
-    v0 ^= m0;
-
-    // Process m1
-    v3 ^= m1;
-    sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
-    sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
-    v0 ^= m1;
-
-    // Process m2
-    v3 ^= m2;
-    sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
-    sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
-    v0 ^= m2;
+    v0 ^= last;
 
     // Finalization
     v2 ^= 0xFF;
@@ -290,7 +438,7 @@ mod tests {
     #[test]
     fn canary_roundtrip() {
         let fp = AllocationFingerprint::compute(0x4000, 128, 1);
-        let canary = fp.canary();
+        let canary = fp.canary(0x4000);
         let bytes = canary.to_bytes();
         assert!(canary.verify(&bytes));
     }
@@ -298,15 +446,14 @@ mod tests {
     #[test]
     fn canary_detects_corruption() {
         let fp = AllocationFingerprint::compute(0x4000, 128, 1);
-        let canary = fp.canary();
+        let canary = fp.canary(0x4000);
         let mut corrupted = canary.to_bytes();
         corrupted[3] ^= 0xFF;
         assert!(!canary.verify(&corrupted));
     }
 
-    // Rank over GF(2) of the linear part of an affine 64-bit transform.
-    // This inspects the actual production function on a complete basis; a
-    // random collision sample would not establish its preserved bit width.
+    // Negative-control characterization of the old affine canary derivations.
+    // The current keyed nonlinear function must not inherit their linear laws.
     fn affine_difference_rank(transform: impl Fn(u64) -> u64, origin: u64) -> usize {
         let offset = transform(origin);
         let mut basis = [0u64; 64];
@@ -327,23 +474,23 @@ mod tests {
     }
 
     #[test]
-    fn canary_derivation_preserves_full_width() {
-        for origin in [0, u64::MAX, 0x1234_5678_9ABC_DEF0] {
-            assert_eq!(
-                affine_difference_rank(
-                    |hash| u64::from_le_bytes(Canary::from_hash(hash).to_bytes()),
-                    origin,
-                ),
-                64,
-                "the affine canary transform must preserve all 64 hash bits"
-            );
+    fn canary_is_not_a_fixed_xor_of_disclosed_header() {
+        let mut xor_offsets = std::collections::HashSet::new();
+        for generation in 0..10_000u64 {
+            let base = 0x4000 + generation as usize * 64;
+            let fp = AllocationFingerprint::compute(base, 32, generation);
+            let tag = u64::from_le_bytes(fp.canary(base).to_bytes());
+            xor_offsets.insert(fp.hash ^ tag);
+            assert_ne!(tag, fp.hash ^ 0xDEAD_BEEF_CAFE_BABE);
         }
+        // This regression sample rejects a fixed XOR mask, not a proof of PRF
+        // security. The independence comes from separate OS-random keys.
+        assert_eq!(xor_offsets.len(), 10_000);
     }
 
     #[test]
     fn canary_width_check_rejects_legacy_fold() {
-        // Frozen negative control from bd-reality-202609-lx578q.8.1. The same
-        // structural check used above must reject the former production map.
+        // Frozen negative control from bd-reality-202609-lx578q.8.1.
         let legacy = |hash: u64| hash ^ hash.rotate_left(32) ^ 0xDEAD_BEEF_CAFE_BABE;
         assert_eq!(affine_difference_rank(legacy, 0), 32);
         for (left, right) in [
@@ -351,22 +498,187 @@ mod tests {
             (0x1234_5678_9ABC_DEF0, 0x1234_5679_9ABC_DEF1),
         ] {
             assert_eq!(legacy(left), legacy(right));
-            assert_ne!(Canary::from_hash(left), Canary::from_hash(right));
+            assert_ne!(
+                Canary::compute(0x4000, 32, 1, left),
+                Canary::compute(0x4000, 32, 1, right),
+            );
         }
     }
 
     #[test]
-    fn canary_derivation_known_vectors_and_layout() {
+    fn siphash_known_vectors_and_layout() {
         assert_eq!(std::mem::size_of::<AllocationFingerprint>(), 24);
         assert_eq!(std::mem::size_of::<Canary>(), 8);
-        for (hash, expected) in [
-            (0, 0xDEAD_BEEF_CAFE_BABE_u64),
-            (u64::MAX, 0x2152_4110_3501_4541),
-            (0x0000_0001_0000_0001, 0xDEAD_BEEE_CAFE_BABF),
-            (0xDEAD_BEEF_CAFE_BABE, 0),
+        assert_eq!(std::mem::size_of::<SecretKeys>(), 32);
+        // The authors' vectors_sip64 (https://github.com/veorq/SipHash):
+        // key bytes 00..0f; message bytes 00..17 and 00..1f respectively.
+        let key = [0x0706_0504_0302_0100, 0x0f0e_0d0c_0b0a_0908];
+        let words = [
+            0x0706_0504_0302_0100,
+            0x0f0e_0d0c_0b0a_0908,
+            0x1716_1514_1312_1110,
+            0x1f1e_1d1c_1b1a_1918,
+        ];
+        assert_eq!(sip_hash_words(key, &[]), 0x726f_db47_dd0e_0e31);
+        assert_eq!(sip_hash_words(key, &words[..3]), 0xb8ad_50c6_f649_af94);
+        assert_eq!(sip_hash_words(key, &words), 0x7127_512f_72f2_7cce);
+    }
+
+    #[test]
+    fn tail_key_changes_canary_without_changing_header() {
+        let header_key = [0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210];
+        let header = sip_hash_words(header_key, &[0x4000, 128, 7]);
+        let disclosed = AllocationFingerprint {
+            hash: header,
+            size: 128,
+            generation: 7,
+        };
+        let first = Canary::with_key(
+            [1, 2],
+            0x4000,
+            disclosed.size,
+            disclosed.generation,
+            disclosed.hash,
+        );
+        let second = Canary::with_key(
+            [3, 4],
+            0x4000,
+            disclosed.size,
+            disclosed.generation,
+            disclosed.hash,
+        );
+        assert_ne!(first, second);
+        assert_ne!(
+            first.to_bytes(),
+            (header ^ 0xDEAD_BEEF_CAFE_BABE).to_le_bytes()
+        );
+        assert_ne!(
+            second.to_bytes(),
+            (header ^ 0xDEAD_BEEF_CAFE_BABE).to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn tail_authenticates_each_allocation_field() {
+        let original = Canary::compute(0x4000, 128, 7, 0x1234_5678_9abc_def0);
+        for changed in [
+            Canary::compute(0x4001, 128, 7, 0x1234_5678_9abc_def0),
+            Canary::compute(0x4000, 129, 7, 0x1234_5678_9abc_def0),
+            Canary::compute(0x4000, 128, 8, 0x1234_5678_9abc_def0),
+            Canary::compute(0x4000, 128, 7, 0x1234_5678_9abc_def1),
         ] {
-            assert_eq!(Canary::from_hash(hash).to_bytes(), expected.to_le_bytes());
+            assert_ne!(original, changed);
         }
+    }
+
+    #[test]
+    fn entropy_reader_retries_interruption_and_completes_short_reads() {
+        let mut bytes = [0u8; 32];
+        let mut call = 0;
+        assert_eq!(
+            fill_random(&mut bytes, |remaining| {
+                call += 1;
+                match call {
+                    1 | 3 => -4,
+                    2 => {
+                        remaining[..7].fill(0x11);
+                        7
+                    }
+                    4 => {
+                        assert_eq!(remaining.len(), 25);
+                        remaining.fill(0x22);
+                        25
+                    }
+                    _ => panic!("unexpected extra entropy read"),
+                }
+            }),
+            Ok(())
+        );
+        assert_eq!(call, 4);
+        assert_eq!(bytes[..7], [0x11; 7]);
+        assert_eq!(bytes[7..], [0x22; 25]);
+    }
+
+    #[test]
+    fn entropy_reader_rejects_unavailable_zero_and_invalid_reads() {
+        for error in [-38, -1, -5, 0, 33] {
+            let mut bytes = [0u8; 32];
+            assert_eq!(fill_random(&mut bytes, |_| error), Err(()));
+        }
+        let mut calls = 0;
+        assert_eq!(
+            fill_random(&mut [0u8; 32], |remaining| {
+                calls += 1;
+                if calls == 1 {
+                    remaining[..3].fill(0x33);
+                    3
+                } else {
+                    -38
+                }
+            }),
+            Err(())
+        );
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[allow(unsafe_code)]
+    fn fork_preserves_initialized_allocation_keys() {
+        let expected = AllocationFingerprint::compute(0x6000, 128, 9);
+        let expected_tail = expected.canary(0x6000);
+        // SAFETY: the child only executes lock-free integer hashing over the
+        // inherited immutable keys, then _exit; no Rust allocation or locks.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "fork failed");
+        if child == 0 {
+            let actual = AllocationFingerprint::compute(0x6000, 128, 9);
+            let valid = actual == expected && actual.canary(0x6000) == expected_tail;
+            // SAFETY: immediate child termination; no inherited destructors run.
+            unsafe { libc::_exit(i32::from(!valid)) };
+        }
+        let mut status = 0;
+        // SAFETY: child is the live pid returned by fork and status is writable.
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+    }
+
+    #[test]
+    fn exec_initializes_fresh_allocation_keys() {
+        const PROBE_ENV: &str = "FRANKENLIBC_FINGERPRINT_EXEC_PROBE";
+        if std::env::var_os(PROBE_ENV).is_some() {
+            let fp = AllocationFingerprint::compute(0x6000, 128, 9);
+            // A tag for fixed public metadata is not secret key material.
+            println!(
+                "CANARY_EXEC_TAG {}",
+                u64::from_le_bytes(fp.canary(0x6000).to_bytes())
+            );
+            return;
+        }
+        let parent = AllocationFingerprint::compute(0x6000, 128, 9)
+            .canary(0x6000)
+            .to_bytes();
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("current test binary"))
+                .args([
+                    "--exact",
+                    "fingerprint::tests::exec_initializes_fresh_allocation_keys",
+                    "--nocapture",
+                ])
+                .env(PROBE_ENV, "1")
+                .output()
+                .expect("execute independent key process");
+        assert!(output.status.success(), "key probe child failed");
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 test output");
+        let child = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("CANARY_EXEC_TAG "))
+            .expect("non-zero child test executed")
+            .parse::<u64>()
+            .expect("numeric child tag")
+            .to_le_bytes();
+        assert_ne!(parent, child, "exec must not reuse inherited process keys");
     }
 
     #[test]
@@ -494,7 +806,7 @@ mod tests {
     #[test]
     fn proof_canary_detects_all_single_byte_corruptions() {
         let fp = AllocationFingerprint::compute(0x5000, 512, 7);
-        let canary = fp.canary();
+        let canary = fp.canary(0x5000);
         let original = canary.to_bytes();
 
         for byte_idx in 0..CANARY_SIZE {
@@ -597,16 +909,17 @@ mod tests {
 
         #[test]
         fn prop_canary_roundtrip(hash in 0u64..u64::MAX) {
-            let canary = Canary::from_hash(hash);
+            let canary = Canary::compute(0x4000, 128, 1, hash);
             let bytes = canary.to_bytes();
             prop_assert!(canary.verify(&bytes), "canary must verify its own bytes");
         }
 
         #[test]
-        fn prop_canary_preserves_hash_differences(left: u64, right: u64) {
-            let left_canary = u64::from_le_bytes(Canary::from_hash(left).to_bytes());
-            let right_canary = u64::from_le_bytes(Canary::from_hash(right).to_bytes());
-            prop_assert_eq!(left_canary ^ right_canary, left ^ right);
+        fn prop_canary_authenticates_hash_differences(left: u64, right: u64) {
+            prop_assume!(left != right);
+            let left_canary = Canary::compute(0x4000, 128, 1, left);
+            let right_canary = Canary::compute(0x4000, 128, 1, right);
+            prop_assert_ne!(left_canary, right_canary);
         }
 
         #[test]
@@ -614,7 +927,7 @@ mod tests {
             hash in 0u64..u64::MAX,
             byte_idx in 0usize..CANARY_SIZE,
         ) {
-            let canary = Canary::from_hash(hash);
+            let canary = Canary::compute(0x4000, 128, 1, hash);
             let mut corrupted = canary.to_bytes();
             corrupted[byte_idx] ^= 0xFF; // flip all bits in one byte
             prop_assert!(

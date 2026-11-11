@@ -2249,7 +2249,13 @@ fn maybe_clamp_copy_len_fast(
     secondary_remaining: crate::malloc_abi::KnownRemaining,
     enable_repair: bool,
 ) -> (usize, bool) {
-    if !enable_repair || requested <= primary_remaining.min(secondary_remaining).raw() {
+    if !enable_repair {
+        return (requested, false);
+    }
+    let boundary_write = !primary_remaining.is_none()
+        && requested != 0
+        && requested >= primary_remaining.raw().saturating_sub(64);
+    if !boundary_write && requested <= primary_remaining.min(secondary_remaining).raw() {
         return (requested, false);
     }
     maybe_clamp_copy_len(
@@ -2261,6 +2267,31 @@ fn maybe_clamp_copy_len_fast(
         secondary_remaining.into_option(),
         true,
     )
+}
+
+/// A write reaching the last cache line must not rely on a previously cached
+/// integrity verdict. The arena performs the check under its lifetime lock;
+/// foreign/strict-allocator bounds continue through their usual lookup path.
+#[inline]
+fn recheck_write_boundary(
+    addr: usize,
+    requested: usize,
+    remaining: Option<usize>,
+) -> Option<usize> {
+    let Some(bound) = remaining else {
+        return remaining;
+    };
+    if requested == 0 || requested < bound.saturating_sub(64) {
+        return remaining;
+    }
+    let Some(pipeline) = crate::membrane_state::ready_pipeline() else {
+        return remaining;
+    };
+    let checked = match pipeline.try_revalidate_cached_remaining(addr) {
+        Some(checked) => checked,
+        None => known_remaining(addr),
+    };
+    Some(checked.map_or(bound, |current| current.min(bound)))
 }
 
 #[inline(always)]
@@ -2277,6 +2308,7 @@ fn maybe_clamp_copy_len(
         return (requested, false);
     }
 
+    let primary_remaining = recheck_write_boundary(primary_addr, requested, primary_remaining);
     let action =
         global_healing_policy().heal_copy_bounds(requested, secondary_remaining, primary_remaining);
     match action {
@@ -6754,11 +6786,15 @@ unsafe fn strcpy_core(
     {
         let repair = mode.heals_enabled();
         let src_bound = if repair { src_rem } else { None };
-        let dst_bound = if repair { dst_rem } else { None };
 
         let (copied_len, adverse) = unsafe {
             let (src_len, src_terminated) = scan_c_string(src, src_bound);
             let requested = src_len.saturating_add(1);
+            let dst_bound = if repair {
+                recheck_write_boundary(dst as usize, requested, dst_rem)
+            } else {
+                None
+            };
             if repair {
                 match dst_bound {
                     Some(0) => {
@@ -6839,12 +6875,16 @@ unsafe fn strcpy_core(
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
     let src_bound = if repair { src_rem } else { None };
-    let dst_bound = if repair { dst_rem } else { None };
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads/writes.
     let (copied_len, adverse) = unsafe {
         let (src_len, src_terminated) = scan_c_string(src, src_bound);
         let requested = src_len.saturating_add(1);
+        let dst_bound = if repair {
+            recheck_write_boundary(dst as usize, requested, dst_rem)
+        } else {
+            None
+        };
         if repair {
             match dst_bound {
                 Some(0) => {
@@ -7034,7 +7074,7 @@ unsafe fn strncpy_core(
         let mut adverse = false;
 
         let safe_dst_len = if repair {
-            match dst_rem {
+            match recheck_write_boundary(dst as usize, n, dst_rem) {
                 Some(b) if b < n => {
                     adverse = true;
                     global_healing_policy().record(
@@ -7138,7 +7178,7 @@ unsafe fn strncpy_core(
     let mut adverse = false;
 
     let safe_dst_len = if repair {
-        match dst_rem {
+        match recheck_write_boundary(dst as usize, n, dst_rem) {
             Some(b) if b < n => {
                 adverse = true;
                 global_healing_policy().record(
@@ -7352,6 +7392,12 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
         let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
         let (src_len, src_terminated) = scan_c_string(src, src_bound);
         if repair {
+            let write_span = if dst_terminated {
+                dst_len.saturating_add(src_len).saturating_add(1)
+            } else {
+                dst_bound.unwrap_or(dst_len)
+            };
+            let dst_bound = recheck_write_boundary(dst as usize, write_span, dst_bound);
             match dst_bound {
                 Some(0) => {
                     record_truncation("strcat", src_len.saturating_add(1), 0, dst as usize);
@@ -7549,6 +7595,12 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
         let src_scan_bound = src_bound.unwrap_or(usize::MAX).min(n);
         let (src_len, src_terminated) = scan_c_string_nul_or_bound(src, src_scan_bound);
         if repair {
+            let write_span = if dst_terminated {
+                dst_len.saturating_add(src_len).saturating_add(1)
+            } else {
+                dst_bound.unwrap_or(dst_len)
+            };
+            let dst_bound = recheck_write_boundary(dst as usize, write_span, dst_bound);
             match dst_bound {
                 Some(0) => {
                     record_truncation("strncat", n.saturating_add(1), 0, dst as usize);
@@ -11339,6 +11391,11 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
     } else {
         None
     };
+    let dst_bound = if repair {
+        recheck_write_boundary(dst as usize, dstsize, dst_bound)
+    } else {
+        dst_bound
+    };
     let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
     if dst_clamped {
         record_truncation("strlcpy", dstsize, dst_limit, dst as usize);
@@ -11473,6 +11530,11 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
         known_remaining(dst as usize)
     } else {
         None
+    };
+    let dst_bound = if repair {
+        recheck_write_boundary(dst as usize, dstsize, dst_bound)
+    } else {
+        dst_bound
     };
     let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
     if dst_clamped {

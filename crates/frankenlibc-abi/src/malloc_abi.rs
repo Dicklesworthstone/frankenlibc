@@ -2025,7 +2025,9 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
         }
         if !matches!(
             pipeline.free(ptr.cast()),
-            FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
+            FreeResult::Freed
+                | FreeResult::FreedWithCanaryCorruption
+                | FreeResult::FreedWithFingerprintCorruption
         ) {
             // SAFETY: only the unexposed replacement allocation is released.
             unsafe { native_libc_free(host) };
@@ -5178,7 +5180,7 @@ pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
 
     let canary_ptr = slot.user_base.saturating_add(slot.user_size) as *const u8;
     let canary_bytes = unsafe { read_fixed::<CANARY_SIZE>(canary_ptr) };
-    if !fingerprint.canary().verify(&canary_bytes) {
+    if !fingerprint.canary(slot.user_base).verify(&canary_bytes) {
         return MCHECK_TAIL;
     }
 
@@ -6220,18 +6222,50 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     //
     // SAFETY: "reentry_guard" is live and its slot is exclusively ours.
     let heal = unsafe { free_membrane_path(&reentry_guard, ptr) };
-    if let Some(action) = heal {
+    if let Some((action, corruption)) = heal {
         // Recorded outside the guard: the healing log allocates, and under the
         // guard those allocations take the bootstrap passthrough, which hands
         // ARENA blocks (the log ring's buffer, made by an earlier hardened
         // call) to host realloc/free -- "corrupted size vs. prev_size".
         drop(reentry_guard);
+        if let Some(reason) = corruption {
+            record_retired_allocation_corruption(ptr as usize, &action, reason);
+        }
         global_healing_policy().record(
             "allocator",
             "free",
             &action,
             RepairLogContext::new(0, Some(ptr as usize)),
         );
+    }
+}
+
+/// Evidence for an allocation whose corrupted metadata was discovered during
+/// retirement. ClampSize records withdrawal of its usable extent, not a claim
+/// that free intercepted or reversed the earlier corrupting write.
+fn record_retired_allocation_corruption(addr: usize, action: &HealingAction, reason: &str) {
+    use frankenlibc_membrane::heal::{
+        RuntimeLogBuffer, append_runtime_log_record, note_runtime_log_drop,
+        runtime_log_is_configured,
+    };
+    if !runtime_log_is_configured() {
+        return;
+    }
+    let requested = match action {
+        HealingAction::ClampSize { requested, .. } => *requested,
+        _ => 0,
+    };
+    let mut line = RuntimeLogBuffer::new();
+    if writeln!(
+        line,
+        "{{\"schema_version\":\"{}\",\"event\":\"allocation_corruption_quarantined\",\"api_family\":\"allocator\",\"symbol\":\"free\",\"reason\":\"{}\",\"address\":{},\"action\":\"ClampSize\",\"requested\":{},\"clamped\":0}}",
+        MEMBRANE_SCHEMA_VERSION, reason, addr, requested
+    )
+    .is_ok()
+    {
+        append_runtime_log_record(line.as_str());
+    } else {
+        note_runtime_log_drop();
     }
 }
 
@@ -6251,7 +6285,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 unsafe fn free_membrane_path(
     reentry_guard: &AllocatorReentryGuard,
     ptr: *mut c_void,
-) -> Option<HealingAction> {
+) -> Option<(HealingAction, Option<&'static str>)> {
     let _trace_scope = runtime_policy::entrypoint_scope("free");
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
@@ -6290,6 +6324,7 @@ unsafe fn free_membrane_path(
 
     let mut adverse = false;
     let mut heal = None;
+    let mut corruption = None;
     // The size for the stats comes from the slot the free itself locked; a
     // separate arena lookup beforehand cost a second locked index search on
     // every hardened free.
@@ -6302,11 +6337,22 @@ unsafe fn free_membrane_path(
                 record_free_stats(Some(reentry_guard.slot), size);
             }
         }
-        FreeResult::FreedWithCanaryCorruption => {
-            // Buffer overflow was detected -- the canary after the allocation was
-            // corrupted. In strict mode we still free (damage is done). Metrics
-            // are recorded by the arena.
+        FreeResult::FreedWithCanaryCorruption | FreeResult::FreedWithFingerprintCorruption => {
+            // Arena metadata owns the retirement even when user-adjacent tags
+            // are corrupt. Both failures quarantine the allocation and are
+            // auditable; neither implies that an earlier C write was stopped.
             adverse = true;
+            if runtime_policy::mode().heals_enabled() {
+                heal = Some(HealingAction::ClampSize {
+                    requested: freed_size,
+                    clamped: 0,
+                });
+                corruption = Some(if result == FreeResult::FreedWithFingerprintCorruption {
+                    "header_fingerprint"
+                } else {
+                    "trailing_canary"
+                });
+            }
             if let Some(size) = known_size {
                 record_free_stats(Some(reentry_guard.slot), size);
             }
@@ -6348,7 +6394,7 @@ unsafe fn free_membrane_path(
             None
         },
     );
-    heal
+    heal.map(|action| (action, corruption))
 }
 
 // ---------------------------------------------------------------------------
@@ -6809,7 +6855,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     let old_free = pipeline.free(ptr.cast());
     if matches!(
         old_free,
-        FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
+        FreeResult::Freed
+            | FreeResult::FreedWithCanaryCorruption
+            | FreeResult::FreedWithFingerprintCorruption
     ) {
         record_free_stats(Some(reentry_guard.slot), old_size);
     }

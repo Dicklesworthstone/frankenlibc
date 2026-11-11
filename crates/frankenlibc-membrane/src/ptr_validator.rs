@@ -17,7 +17,7 @@
 #[path = "ptr_validator_access_tests.rs"]
 mod access_tests;
 
-use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
+use crate::arena::{AllocationArena, ArenaSlot, CachedAllocationIntegrity, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::check_oracle::CheckStage;
 use crate::config::{SafetyLevel, safety_level};
@@ -28,8 +28,8 @@ use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
 use crate::tls_cache::{
-    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs,
-    try_with_tls_cache_hit, with_tls_cache,
+    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, TlsValidationCache,
+    snapshot_shard_epochs, try_with_tls_cache_hit, with_tls_cache,
 };
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
@@ -917,13 +917,116 @@ impl ValidationPipeline {
         }
 
         let cached = try_with_tls_cache_hit(None, |cache| {
-            let hit = cache.lookup_hit_only(addr);
+            let mut hit = cache.lookup_hit_only(addr);
             if hit.is_some() {
                 cache.record_pipeline_hits(1);
+                if cache.integrity_recheck_due(addr) {
+                    hit = hit.and_then(|cv| self.recheck_cached_allocation(cache, addr, cv));
+                }
             }
             hit
         });
-        cached.map(|cv| ValidationOutcome::CachedValid(Self::abstraction_from_cached(addr, cv)))
+        cached.map(|cv| Self::outcome_from_cached(addr, cv))
+    }
+
+    /// Authenticate cached geometry against the live arena while its shard is
+    /// locked. An epoch check alone cannot keep memory alive across a raw read:
+    /// a concurrent free may reclaim it immediately after that check.
+    #[inline(never)]
+    fn recheck_cached_allocation(
+        &self,
+        cache: &mut TlsValidationCache,
+        addr: usize,
+        cached: CachedValidation,
+    ) -> Option<CachedValidation> {
+        let _validation_context = enter_validation_execution_context();
+        let integrity = self.arena.verify_cached_allocation(
+            cached.user_base,
+            cached.user_size,
+            cached.generation,
+        );
+        match integrity {
+            CachedAllocationIntegrity::Valid => Some(cached),
+            CachedAllocationIntegrity::Stale => {
+                cache.invalidate(cached.user_base);
+                None
+            }
+            CachedAllocationIntegrity::FingerprintCorruption
+            | CachedAllocationIntegrity::CanaryCorruption => {
+                // Remove every alias, including the exact-address table, so a
+                // later unsampled access cannot resurrect the old valid extent.
+                cache.invalidate(cached.user_base);
+                if safety_level().heals_enabled() {
+                    let symbol = match integrity {
+                        CachedAllocationIntegrity::FingerprintCorruption => {
+                            "cached_header_integrity"
+                        }
+                        _ => "cached_tail_integrity",
+                    };
+                    crate::heal::global_healing_policy().record_allocation_free(
+                        "pointer_validation",
+                        symbol,
+                        &crate::heal::HealingAction::ClampSize {
+                            requested: cached
+                                .user_size
+                                .saturating_sub(addr.wrapping_sub(cached.user_base)),
+                            clamped: 0,
+                        },
+                        crate::heal::RepairLogContext::new(0, Some(addr)),
+                    );
+                }
+                Some(CachedValidation {
+                    state: crate::lattice::SafetyState::Invalid,
+                    ..cached
+                })
+            }
+        }
+    }
+
+    #[inline]
+    fn outcome_from_cached(addr: usize, cached: CachedValidation) -> ValidationOutcome {
+        let abstraction = Self::abstraction_from_cached(addr, cached);
+        if cached.state == crate::lattice::SafetyState::Invalid {
+            ValidationOutcome::Invalid(abstraction)
+        } else {
+            ValidationOutcome::CachedValid(abstraction)
+        }
+    }
+
+    #[inline]
+    fn recheck_cached_remaining(
+        &self,
+        cache: &mut TlsValidationCache,
+        addr: usize,
+    ) -> CachedRemaining {
+        let Some(cached) = cache.peek(addr) else {
+            return CachedRemaining::MISS;
+        };
+        let Some(checked) = self.recheck_cached_allocation(cache, addr, cached) else {
+            return CachedRemaining::MISS;
+        };
+        if checked.state == crate::lattice::SafetyState::Invalid {
+            CachedRemaining::from_option(Some(0))
+        } else {
+            CachedRemaining::from_option(Some(
+                checked
+                    .user_size
+                    .saturating_sub(addr.wrapping_sub(checked.user_base)),
+            ))
+        }
+    }
+
+    /// Force an integrity check before a write reaches an allocation's last
+    /// cache line. The caller falls back to ordinary validation on a cache miss.
+    #[inline]
+    pub fn try_revalidate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
+        if addr == 0 || !safety_level().validation_enabled() {
+            return None;
+        }
+        try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
+            self.recheck_cached_remaining(cache, addr)
+        })
+        .decode()
     }
 
     /// Resolve remaining bytes from the thread-local validation cache without
@@ -934,7 +1037,12 @@ impl ValidationPipeline {
             return None;
         }
         try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
-            cache.lookup_hit_remaining_with_oracle(addr, &self.page_oracle)
+            let hit = cache.lookup_hit_remaining_with_oracle(addr, &self.page_oracle);
+            if hit.is_known_bound() && cache.integrity_recheck_due(addr) {
+                self.recheck_cached_remaining(cache, addr)
+            } else {
+                hit
+            }
         })
         .decode()
     }
@@ -952,7 +1060,19 @@ impl ValidationPipeline {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
         try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
-            cache.lookup_hit_remaining_pair_with_oracle(lhs, rhs, &self.page_oracle)
+            let (mut left, mut right) =
+                cache.lookup_hit_remaining_pair_with_oracle(lhs, rhs, &self.page_oracle);
+            let left_due = left.is_known_bound() && cache.integrity_recheck_due(lhs);
+            let right_due = right.is_known_bound() && cache.integrity_recheck_due(rhs);
+            if left_due || right_due {
+                if left.is_known_bound() {
+                    left = self.recheck_cached_remaining(cache, lhs);
+                }
+                if right.is_known_bound() {
+                    right = self.recheck_cached_remaining(cache, rhs);
+                }
+            }
+            (left, right)
         })
     }
 
@@ -1195,8 +1315,18 @@ impl ValidationPipeline {
                 CheckStage::TlsCache => {
                     elapsed_ns =
                         elapsed_ns.saturating_add(u64::from(CheckStage::TlsCache.cost_ns()));
-                    let cached = with_tls_cache(|cache| cache.lookup(addr));
+                    let cached = with_tls_cache(|cache| {
+                        let cached = cache.lookup(addr);
+                        if cached.is_some() && cache.integrity_recheck_due(addr) {
+                            cached.and_then(|cv| self.recheck_cached_allocation(cache, addr, cv))
+                        } else {
+                            cached
+                        }
+                    });
                     if let Some(cv) = cached {
+                        if cv.state == crate::lattice::SafetyState::Invalid {
+                            return Self::outcome_from_cached(addr, cv);
+                        }
                         MembraneMetrics::inc(&metrics.tls_cache_hits);
                         self.emit_validation_log(
                             &trace,
@@ -1605,13 +1735,18 @@ impl ValidationPipeline {
                         elapsed_ns =
                             elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
                         let expected_canary = match verified_fp_hash {
-                            Some(hash) => crate::fingerprint::Canary::from_hash(hash),
+                            Some(hash) => crate::fingerprint::Canary::compute(
+                                s.user_base,
+                                s.user_size as u64,
+                                s.generation,
+                                hash,
+                            ),
                             None => AllocationFingerprint::compute(
                                 s.user_base,
                                 s.user_size as u64,
                                 s.generation,
                             )
-                            .canary(),
+                            .canary(s.user_base),
                         };
                         let canary_addr = s.user_base + s.user_size;
                         let mut actual = [0u8; CANARY_SIZE];
@@ -1932,13 +2067,18 @@ impl ValidationPipeline {
         if !saw_canary {
             elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
             let expected_canary = match verified_fp_hash {
-                Some(hash) => crate::fingerprint::Canary::from_hash(hash),
+                Some(hash) => crate::fingerprint::Canary::compute(
+                    slot.user_base,
+                    slot.user_size as u64,
+                    slot.generation,
+                    hash,
+                ),
                 None => AllocationFingerprint::compute(
                     slot.user_base,
                     slot.user_size as u64,
                     slot.generation,
                 )
-                .canary(),
+                .canary(slot.user_base),
             };
             let canary_addr = slot.user_base + slot.user_size;
             let mut actual = [0u8; CANARY_SIZE];
@@ -2699,6 +2839,179 @@ mod tests {
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn warm_cache_corruption_is_detected_by_every_validation_entrypoint() {
+        use crate::tls_cache::INTEGRITY_RECHECK_INTERVAL;
+
+        // Exercise both members of paired lookups: checking only the second
+        // operand at an even cadence would leave the first permanently warm.
+        for corrupt_header in [false, true] {
+            for route in 0..5 {
+                let pipeline = ValidationPipeline::with_runtime_math(false);
+                let size = 1024;
+                let ptr = pipeline.allocate(size).expect("tracked allocation");
+                let peer = pipeline.allocate(size).expect("paired positive control");
+                let addr = ptr as usize;
+                let peer_addr = peer as usize;
+                let corrupt_addr = if corrupt_header {
+                    addr - FINGERPRINT_SIZE
+                } else {
+                    addr + size
+                };
+                {
+                    let _epochs = lock_tls_cache_epoch_for_tests();
+                    pipeline.set_validation_logging_enabled(route == 4);
+                    assert!(pipeline.validate(addr).can_write());
+                    assert!(pipeline.validate(peer_addr).can_write());
+                    assert!(matches!(
+                        pipeline.validate(addr),
+                        ValidationOutcome::CachedValid(_)
+                    ));
+                    // SAFETY: both allocations remain live, and the selected byte
+                    // is inside the allocator-owned header or trailing redzone.
+                    let original = unsafe {
+                        let byte = corrupt_addr as *mut u8;
+                        let original = byte.read_volatile();
+                        byte.write_volatile(original ^ 1);
+                        original
+                    };
+                    let metrics = global_metrics();
+                    let failures = if corrupt_header {
+                        &metrics.fingerprint_failures
+                    } else {
+                        &metrics.canary_failures
+                    };
+                    let before = MembraneMetrics::get(failures);
+                    let mut detected = false;
+                    for _ in 0..INTEGRITY_RECHECK_INTERVAL {
+                        let remaining = match route {
+                            1 => pipeline.try_validate_cached_remaining(addr).flatten(),
+                            2 => pipeline
+                                .try_validate_cached_remaining_pair(addr, peer_addr)
+                                .0
+                                .decode()
+                                .flatten(),
+                            3 => pipeline
+                                .try_validate_cached_remaining_pair(peer_addr, addr)
+                                .1
+                                .decode()
+                                .flatten(),
+                            _ => pipeline
+                                .validate(addr)
+                                .access_abstraction()
+                                .and_then(|a| a.remaining),
+                        };
+                        if remaining == Some(0) {
+                            detected = true;
+                            break;
+                        }
+                    }
+                    assert!(
+                        detected,
+                        "warm corruption escaped route={route}, header={corrupt_header}"
+                    );
+                    assert!(MembraneMetrics::get(failures) > before);
+                    assert!(
+                        with_tls_cache(|cache| cache.peek(addr).is_none()),
+                        "all cached aliases must be evicted"
+                    );
+                    assert!(
+                        !pipeline.validate(addr).can_write(),
+                        "a later call must not revive cached access"
+                    );
+                    assert!(
+                        pipeline.validate(peer_addr).can_write(),
+                        "intact peer remains usable"
+                    );
+                    // SAFETY: restore the same live redzone byte before cleanup.
+                    unsafe { (corrupt_addr as *mut u8).write_volatile(original) };
+                }
+                assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+                assert_eq!(pipeline.free(peer), FreeResult::Freed);
+            }
+        }
+    }
+
+    #[test]
+    fn forced_warm_cache_integrity_check_rejects_immediately() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let size = 1024;
+        let ptr = pipeline.allocate(size).expect("tracked allocation");
+        let addr = ptr as usize;
+        {
+            let _epochs = lock_tls_cache_epoch_for_tests();
+            assert!(pipeline.validate(addr).can_write());
+            assert_eq!(
+                pipeline.try_revalidate_cached_remaining(addr + 960),
+                Some(Some(64))
+            );
+            // SAFETY: the tail belongs to this live allocation; corrupt exactly
+            // one byte and restore it after the immediate-denial observation.
+            let original = unsafe {
+                let tail = ptr.add(size);
+                let original = tail.read_volatile();
+                tail.write_volatile(original ^ 0x80);
+                original
+            };
+            assert_eq!(
+                pipeline.try_revalidate_cached_remaining(addr + 960),
+                Some(Some(0))
+            );
+            assert!(with_tls_cache(|cache| cache.peek(addr).is_none()));
+            // SAFETY: same live trailing redzone byte as above.
+            unsafe { ptr.add(size).write_volatile(original) };
+        }
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+
+    #[test]
+    fn warm_cache_sampling_cannot_be_steered_to_healthy_allocations() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let size = 1024;
+        let ptr = pipeline.allocate(size).expect("corruption target");
+        let peer = pipeline
+            .allocate(size)
+            .expect("intact interleaved allocation");
+        {
+            let _epochs = lock_tls_cache_epoch_for_tests();
+            assert!(pipeline.validate(ptr as usize).can_write());
+            assert!(pipeline.validate(peer as usize).can_write());
+            let _ = pipeline.try_validate_cached_remaining(ptr as usize);
+            let _ = pipeline.try_validate_cached_remaining(peer as usize);
+            // SAFETY: the target is live, including its 8-byte redzone.
+            let original = unsafe {
+                let tail = ptr.add(size);
+                let original = tail.read_volatile();
+                tail.write_volatile(original ^ 1);
+                original
+            };
+            let mut detected = false;
+            for hit in 0..crate::tls_cache::INTEGRITY_RECHECK_INTERVAL {
+                // Vary the interior address as well: aliases must share a budget.
+                if pipeline.try_validate_cached_remaining(ptr as usize + usize::from(hit))
+                    == Some(Some(0))
+                {
+                    detected = true;
+                    break;
+                }
+                for _ in 0..15 {
+                    assert_eq!(
+                        pipeline.try_validate_cached_remaining(peer as usize),
+                        Some(Some(size))
+                    );
+                }
+            }
+            assert!(
+                detected,
+                "healthy interleaving must not starve a corrupt allocation's probe"
+            );
+            // SAFETY: restore the still-live tail before freeing the allocation.
+            unsafe { ptr.add(size).write_volatile(original) };
+        }
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+        assert_eq!(pipeline.free(peer), FreeResult::Freed);
     }
 
     #[test]

@@ -9,7 +9,9 @@ on:
       - 'crates/frankenlibc-abi/src/string_abi.rs'
       - 'crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs'
       - 'scripts/check_membrane_access.py'
+      - 'scripts/check_allocation_integrity.py'
       - 'tests/integration/fixture_membrane_access.c'
+      - 'tests/integration/fixture_malloc.c'
       - '.github/workflows/membrane-access.yml'
   workflow_dispatch:
 
@@ -48,6 +50,10 @@ jobs:
         run: |
           set -euo pipefail
           rustc --version --verbose | tee artifacts/access/rustc.txt
+          cargo test -p frankenlibc-membrane --lib fingerprint::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/fingerprints.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/fingerprints.log
+          cargo test -p frankenlibc-membrane --lib arena::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/arena.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/arena.log
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ptr_validator::access_tests:: -- --test-threads=1 2>&1 | tee "artifacts/access/slots-$mode.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/access/slots-$mode.log"
@@ -100,6 +106,7 @@ jobs:
           set -euo pipefail
           cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/access/release-build.log
           python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --output artifacts/access/preload 2>&1 | tee artifacts/access/preload.log
+          python3 scripts/check_allocation_integrity.py target/release/libfrankenlibc_abi.so --output artifacts/access/allocation-integrity 2>&1 | tee artifacts/access/allocation-integrity.log
           git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()

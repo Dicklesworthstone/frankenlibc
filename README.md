@@ -491,11 +491,13 @@ The fingerprint header is a `#[repr(C)]` struct:
 
 | Field | Size | Content |
 |---|---:|---|
-| Hash | 8 bytes | SipHash-2-4 of `(base_address, size, generation, secret)` |
+| Hash | 8 bytes | SipHash-2-4 of `(base_address, size, generation)` under the header key |
 | Generation | 8 bytes | `u64` generation counter for temporal safety |
 | Allocation size | 8 bytes | User-requested size as `u64` (supports allocations > 4 GiB) |
 
-The trailing canary stores `hash XOR 0xDEADBEEFCAFEBABE` in little-endian order. This invertible transform preserves all 64 input bits; the previous `hash XOR rotate_left(hash, 32)` fold discarded half of them. Header and canary checks detect mismatches when validation reaches them. A single blind guess has probability **2⁻⁶⁴** only under a uniformly unpredictable 64-bit hash assumption. The process/time/address key mix does not establish that assumption, and reading the header hash reveals the canary. These two checks are correlated, not independent authentication tags.
+The trailing canary is a separate SipHash-2-4 tag of `(base_address, size, generation, header_hash)`, stored in little-endian order. Header and tail use independent 128-bit keys obtained from Linux `getrandom`; the key page is made read-only before publication. Reading the header hash alone no longer reveals the tail. A single blind guess of an undisclosed tag has probability **2⁻⁶⁴** under the keyed-hash assumptions; this is not a blanket 128-bit guarantee for an entire allocation.
+
+Hardened validation rechecks cached arena allocations within 16 cache hits per allocation on each thread, with interior-pointer aliases sharing the same budget. The checked string/memory write paths also recheck immediately before a write reaches the allocation's final 64 bytes. These checks expose corruption at a later checked operation; they do not intercept direct C writes. Strict segment/host allocations, bootstrap bypasses, key disclosure, and same-address stale-pointer reuse retain the limits described below.
 
 ### Bloom Filter
 
@@ -1353,7 +1355,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 | Galois soundness | `γ(α(c)) ≥ c` is the intended abstraction/concretization law | Unit/property-test evidence plus proof notes; not established for every deployed ABI path |
 | Allocation integrity | Hardened-arena fingerprint checks use a keyed 64-bit SipHash value | A targeted forgery is bounded by `2⁻⁶⁴` under the keyed-hash assumptions when the check is reached |
 | Use-after-free detection (hardened) | Freed blocks sit in a quarantine queue; access to a quarantined block is recognised | Deterministic while the block is quarantined. A raw C pointer carries no generation, so once the address is reused a stale pointer resolves to the NEW allocation and is not detected (`arena.rs` module doc) |
-| Buffer overflow detection (hardened arena allocations) | Full-width trailing canary checked at `free` | A single blind guess is `2⁻⁶⁴` only for a uniformly unpredictable, undisclosed hash. Changed bytes are detected when checked, not at the overflowing write; header disclosure reveals the canary |
+| Buffer overflow detection (hardened arena allocations) | Independently keyed 64-bit tail checked at `free`, bounded warm-cache probes, and checked boundary writes | A single blind guess is `2⁻⁶⁴` under the keyed-hash assumptions. Header disclosure alone does not reveal the tail; direct writes remain visible only when a later check reaches the damaged metadata |
 | Bloom filter soundness | Zero false negatives | By construction (all insertions are remembered) |
 | Healing policy coverage | Explicitly membrane-gated families map wired validation outcomes to policy actions | Partial; universal per-function/per-invalid-input completeness is not established |
 | Supplied SOS-task consistency | Three supplied Gram matrices are PSD and the generated quadratic terms recompose algebraically | Checked at build time; this does not connect the variables to allocator fragmentation, thread safety, or size-class behavior |
@@ -1886,7 +1888,7 @@ Catches the highest-frequency, lowest-cost failure: a null pointer where one is 
 
 ### Stage 2 — TLS Validation Cache (~5 ns)
 
-Each thread carries a 1,024-entry direct-mapped cache indexed by `ptr >> 4` (16-byte granularity, masked by `CACHE_SIZE - 1`). Entries record `(generation, classification)`. A cache hit avoids the global metadata path entirely. Cache entries are invalidated lazily by epoch advancement (the EBR layer), so a freed allocation can never produce a stale `Valid` hit on its old slot.
+Each thread carries a 1,024-entry direct-mapped cache indexed by `ptr >> 4` (16-byte granularity, masked by `CACHE_SIZE - 1`), plus four recent allocation ranges. Entries retain allocation bounds, generation, classification, and shard epoch. Most hits avoid the arena lookup, but an allocation's header and tail are rechecked under its arena shard lock within 16 cache hits. Interior-pointer aliases share a budget; interleaved allocations cannot postpone another allocation's check, and an absent or evicted budget forces a check. Shard epochs invalidate stale cached geometry. Neither the epoch check nor the integrity probe protects a later caller access from a concurrent free or identifies an old raw pointer after same-address reuse. The stage timing in this heading is not a measurement of the newly added probes.
 
 ### Stage 3 — Bloom Filter (~10 ns)
 
@@ -1902,7 +1904,7 @@ For a hardened-arena allocation, the 24-byte header at `user_base − 24` carrie
 
 ### Stage 6 — Canary Check (~10 ns)
 
-The 8-byte trailing canary at `user_base + user_size` is derived from the same key. A mismatch when the check is reached reports that bytes past the allocation end changed. Strict segment/host allocations do not carry this metadata, and an unchecked raw write is not intercepted at the instant it happens.
+The 8-byte trailing canary at `user_base + user_size` authenticates the allocation address, size, generation, and header hash with an independent tail key. Verification takes the tail location from trusted arena metadata, never from a corrupted header's size. Checked hardened string/memory writes that reach the allocation's final 64 bytes force an immediate integrity recheck, even on a warm cache hit. A mismatch withdraws the usable extent and invalidates cached aliases. Strict segment/host allocations do not carry this metadata, and an unchecked raw write is not intercepted at the instant it happens.
 
 ### Stage 7 — Bounds + Policy Check (~5 ns)
 
@@ -2014,9 +2016,9 @@ Arena draining updates metadata under the shard lock. The validation pipeline th
 Why SipHash-2-4 specifically:
 
 - **Designed for short messages.** Allocation metadata is tens of bytes; this is SipHash's sweet spot.
-- **Keyed.** Keys are initialized from process/thread identifiers, wall-clock time, and address noise. This mix is not an established cryptographic entropy source; it does not by itself justify an attacker-independent forgery bound.
-- **Fast.** SipHash-2-4 runs in a handful of cycles per 8-byte block on x86_64; the per-call cost is ~20 ns even before vectorization.
-- **Strong against differential attacks.** The 2-4 round count is conservatively chosen to defeat known cryptanalytic shortcuts.
+- **Independently keyed.** A complete 32-byte Linux `getrandom` read supplies separate 128-bit header and tail keys. Short reads and `EINTR` are handled; entropy or memory-protection failure terminates initialization instead of falling back to process identifiers, timestamps, or addresses.
+- **Immutable publication.** Raw syscalls allocate the key page and make it read-only before an atomic pointer publishes it. Concurrent or signal-reentrant initializers discard only their unpublished losing mappings; fork inherits the published keys. Initialization does not depend on an allocator, TLS, or a lock held by an interrupted thread.
+- **Bounded input.** The header hashes three 64-bit words and the tail hashes four. The extra keyed hash and periodic arena checks add work; their end-to-end overhead requires measurement on the actual build and workload. Earlier stage-cost estimates do not qualify this implementation's performance.
 
 The 24-byte header layout is `[hash:8][generation:8][size:8]`, immediately before the user region:
 
@@ -2024,9 +2026,9 @@ The 24-byte header layout is `[hash:8][generation:8][size:8]`, immediately befor
 - The generation binds the current metadata to an allocation lifetime; raw pointers still cannot identify an old lifetime after same-address reuse
 - The hash binds size and generation to the user allocation address
 
-Trailing canaries use the invertible map `c(h) = h XOR 0xDEADBEEFCAFEBABE`, not a separate keyed hash or cryptographic domain separator. Since `h = c(h) XOR 0xDEADBEEFCAFEBABE`, the map is one-to-one over all 64-bit inputs and preserves their entropy without increasing it. The former `h XOR rotate_left(h, 32)` map had rank 32 over GF(2); regression tests measure the repaired affine map's rank as 64 and reject that frozen negative control. These are structural and execution checks, not a proof that the process keys are uniformly secret.
+The tail is `SipHash-2-4(K_tail, base_address, size, generation, header_hash)`, replacing the public XOR transform. The independently generated `K_header` and `K_tail` separate header authentication from tail authentication. Full header bytes are compared with trusted arena size and generation before the tail is checked, including on `free`. When `free` finds a corrupt header or tail, it still retires the allocation into quarantine; hardened audit records describe withdrawal of its usable extent, not reversal of the earlier corrupting write.
 
-For a uniformly unpredictable and undisclosed hash, a single blind full-word guess has success probability `2⁻⁶⁴`. This is distinct from birthday collisions across many allocations, and from overwriting bytes that happen to remain unchanged. Header disclosure reveals the tail exactly, so coordinated header/tail forgery probabilities must not be multiplied. Repeated attempts, arbitrary reads, direct writes outside checked libc calls, bootstrap/signal bypasses, and same-address stale-pointer reuse require their own threat models.
+For a uniformly unpredictable and undisclosed tag, a single blind full-word guess has success probability `2⁻⁶⁴` under the keyed-hash assumptions. This is distinct from birthday collisions across many allocations, replay of an intact allocation's metadata, and overwriting bytes that happen to remain unchanged. A read-only key page is not a secrecy boundary against arbitrary reads or an attacker able to change page protections. Key disclosure, repeated attempts, direct writes outside checked libc calls, bootstrap/signal bypasses, concurrent free, and same-address stale-pointer reuse remain outside that single-guess claim. Independent keys do not establish a universal `2⁻¹²⁸` allocation-safety bound.
 
 The fingerprint and canary together are a *detection* mechanism, not an *exclusion* mechanism for an attacker who has already achieved arbitrary write. The membrane's job is to make corruption visible, not to make it impossible.
 
@@ -2528,9 +2530,9 @@ The size-class/slab/magazine implementation in `frankenlibc-core` is a real mode
    a. the allocator runtime policy can deny the operation;
    b. `ValidationPipeline::free_with_size` asks the arena to verify/retire the
       allocation and schedules drained blocks for EBR reclamation;
-   c. canary corruption is reported but the already-damaged block is still
-      retired; double/foreign frees become healing actions only when healing
-      is enabled;
+   c. header or canary corruption is reported and the already-damaged block
+      is still retired into quarantine; hardened auditing records a zero
+      usable extent, while double/foreign frees use their own healing actions;
    d. `runtime_policy::observe` and allocator stage telemetry record the result.
 ```
 
@@ -3613,23 +3615,23 @@ Offset within slab:
 
 ### The overflow
 
-Caller has `p = base + 24`. Caller writes `memset(p, 0x42, 70)`. The write covers `[base+24, base+94)`, which is 6 bytes past the user region, overwriting bytes `base+88..base+94` (part of the canary plus part of the next object's fingerprint header).
+Caller has `p = base + 24`. An unchecked raw write of 70 bytes covers `[base+24, base+94)`, which is 6 bytes past the user region, overwriting bytes `base+88..base+94` of the canary. A hardened, membrane-gated `memset(p, 0x42, 70)` can instead clamp the write to the known 64-byte bound.
 
 ### Detection on the next free or validation
 
-When `free(p)` or any later call hits the membrane validation pipeline for this allocation:
+When `free(p)` or a reached validation probe checks this allocation's metadata:
 
 - The fingerprint header at `base..base+24` is unchanged (the overflow was forward, not backward).
-- The 8-byte trailing canary at `base+88..base+96` is compared against `SipHash(base+24, size=64, gen=N, secret)`.
-- The canary doesn't match (because 6 of its 8 bytes were overwritten).
+- The 8-byte trailing canary at `base+88..base+96` is compared against `SipHash-2-4(K_tail, base+24, size=64, gen=N, header_hash)`.
+- If the overwritten bytes differ from their authenticated values, the canary check fails.
 - A membrane-gated copy can clamp/truncate **before** an out-of-bounds write when it knows the allocation bound. If the program performed the raw write itself, `free(p)` reports `FreedWithCanaryCorruption` but still retires the block; it does not retroactively return `TruncateWithNull` or `EFAULT` (`arena.rs`, `malloc_abi.rs`).
 - Corruption of a neighboring hardened-arena header can be detected when that neighboring allocation is later validated. Strict segment/host allocations do not carry these fingerprint/canary fields.
 
 ### Why this is structural
 
-The detection doesn't depend on the caller asking; it happens automatically on the *next* call that touches either the overflowed allocation or its neighbor. A program that does `memset(p, 0x42, 70)` and then immediately calls `exit()` would not surface the bug (because no later call hits the membrane), but the *next* allocator or membrane operation against either allocation would.
+Detection requires a reached integrity check. `free` checks the arena metadata and tail; warm-cache validation checks within 16 hits per allocation on each thread, and checked writes reaching the final 64 bytes force a probe immediately. Other cache hits can return before probing. A program that performs an unchecked raw overflow and exits without another reached check may never report the corruption. The six-byte overflow above does not touch the neighboring header; a larger overflow could, and that neighbor would need its own later check.
 
-For a hardened-arena block whose canary is checked, a uniformly unpredictable 64-bit canary gives a per-check forgery bound of `2⁻⁶⁴`. The code does not establish independence between a canary failure and neighboring-header corruption, so it does not claim a compounded `2⁻¹²⁸` bound.
+For a hardened-arena block whose canary is checked, an undisclosed 64-bit tag has a single blind-guess bound of `2⁻⁶⁴` under the keyed-hash assumptions. Independent header and tail keys do not turn this example, arbitrary memory corruption, or neighboring-allocation checks into a blanket `2⁻¹²⁸` guarantee.
 
 ---
 

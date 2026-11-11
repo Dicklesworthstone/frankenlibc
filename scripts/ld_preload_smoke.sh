@@ -5,8 +5,8 @@
 # any non-zero/timeout outcome.
 set -euo pipefail
 
-if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" ) ]]; then
-  echo "usage: $0 [--performance-only]" >&2
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" && "${1:-}" != "--canary-only" ) ]]; then
+  echo "usage: $0 [--performance-only|--canary-only]" >&2
   exit 2
 fi
 
@@ -123,9 +123,25 @@ run_deployed_overhead() {
     --benchmark --output "${RUN_DIR}/deployed-overhead"
 }
 
+run_deployed_allocation_integrity() {
+  # Invalid accesses have an explicit hardened contract, not a host-libc
+  # parity oracle. The runner pins every tested export to this exact artifact,
+  # exercises warm caches with FRANKENLIBC_LOG absent, and checks audit JSONL
+  # separately. This gate never replaces the existing parity/perf corpus.
+  python3 "${ROOT}/scripts/check_allocation_integrity.py" "${LIB_PATH}" \
+    --output "${RUN_DIR}/allocation-integrity" --timeout "${TIMEOUT_SECONDS}" \
+    --trace "${TRACE_FILE}"
+}
+
 if [[ "${1:-}" == "--performance-only" ]]; then
   # Scoped invocation: never label it a pass of the whole functional corpus.
   run_deployed_overhead
+  exit 0
+fi
+
+if [[ "${1:-}" == "--canary-only" ]]; then
+  # Scoped correctness invocation; a pass is not a whole-corpus/perf claim.
+  run_deployed_allocation_integrity
   exit 0
 fi
 
@@ -1230,6 +1246,11 @@ emit_trace "info" "suite_start" "all" "all" "running" \
 overall_failed=0
 run_suite_for_mode strict || overall_failed=1
 run_suite_for_mode hardened || overall_failed=1
+allocation_integrity_exit=0
+run_deployed_allocation_integrity || allocation_integrity_exit=$?
+if [[ "${allocation_integrity_exit}" -ne 0 ]]; then
+  overall_failed=1
+fi
 deployed_overhead_exit=0
 run_deployed_overhead || deployed_overhead_exit=$?
 if [[ "${deployed_overhead_exit}" -ne 0 ]]; then
@@ -1239,6 +1260,8 @@ emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && 
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 
 export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_ALLOCATION_INTEGRITY_EXIT="${allocation_integrity_exit}"
+export LD_PRELOAD_SMOKE_ALLOCATION_INTEGRITY_REPORT="${RUN_DIR}/allocation-integrity/report.json"
 export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT="${deployed_overhead_exit}"
 export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT="${RUN_DIR}/deployed-overhead/benchmark.json"
 export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
@@ -1355,6 +1378,13 @@ payload = {
         if m.strip()
     ],
     "perf_ratio_max_ppm": int(env["LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM"]),
+    "allocation_integrity": {
+        "required": True,
+        "modes": ["strict", "hardened"],
+        "exit_code": int(env["LD_PRELOAD_SMOKE_ALLOCATION_INTEGRITY_EXIT"]),
+        "passed": env["LD_PRELOAD_SMOKE_ALLOCATION_INTEGRITY_EXIT"] == "0",
+        "report": env["LD_PRELOAD_SMOKE_ALLOCATION_INTEGRITY_REPORT"],
+    },
     "deployed_overhead": {
         "required": True,
         "modes": ["strict", "hardened"],

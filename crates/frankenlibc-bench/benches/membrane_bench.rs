@@ -300,7 +300,7 @@ fn bench_membrane(c: &mut Criterion) {
         let slot = arena.lookup(res.ptr as usize).expect("slot");
         let expected =
             AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation)
-                .canary();
+                .canary(slot.user_base);
 
         let stats = RefCell::new(BenchStats::default());
         group.bench_function(BenchmarkId::new("stage_canary_verify", mode_label), |b| {

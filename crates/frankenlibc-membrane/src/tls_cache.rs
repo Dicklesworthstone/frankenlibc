@@ -230,6 +230,9 @@ fn allocate_entries() -> Option<Box<[CacheEntry; CACHE_SIZE]>> {
 
 const HIT_METRICS_FLUSH_BATCH: u64 = 4096;
 
+/// Upper bound on hits to one allocation between integrity probes.
+pub(crate) const INTEGRITY_RECHECK_INTERVAL: u8 = 16;
+
 /// Thread-local validation cache.
 pub struct TlsValidationCache {
     entries: Option<Box<[CacheEntry; CACHE_SIZE]>>,
@@ -247,6 +250,11 @@ pub struct TlsValidationCache {
     misses: u64,
     unflushed_pipeline_hits: u64,
     unflushed_bloom_misses: u64,
+    /// Allocation-keyed budgets prevent interleaved healthy hits from always
+    /// consuming the probe while a corrupt allocation stays unsampled. Losing
+    /// a budget slot forces a probe on its next hit, so eviction fails closed.
+    integrity_budgets: [(usize, u8); 4],
+    next_integrity_budget: usize,
     unbacked: bool,
 }
 
@@ -269,6 +277,8 @@ impl TlsValidationCache {
             misses: 0,
             unflushed_pipeline_hits: 0,
             unflushed_bloom_misses: 0,
+            integrity_budgets: [(0, 0); 4],
+            next_integrity_budget: 0,
             unbacked: false,
         }
     }
@@ -285,6 +295,8 @@ impl TlsValidationCache {
             misses: 0,
             unflushed_pipeline_hits: 0,
             unflushed_bloom_misses: 0,
+            integrity_budgets: [(0, 0); 4],
+            next_integrity_budget: 0,
             unbacked: true,
         }
     }
@@ -300,6 +312,8 @@ impl TlsValidationCache {
             misses: 0,
             unflushed_pipeline_hits: 0,
             unflushed_bloom_misses: 0,
+            integrity_budgets: [(0, 0); 4],
+            next_integrity_budget: 0,
             unbacked: false,
         }
     }
@@ -445,8 +459,19 @@ impl TlsValidationCache {
     /// where the authoritative miss accounting still happens.
     #[inline]
     pub(crate) fn lookup_hit_only(&mut self, addr: usize) -> Option<CachedValidation> {
-        if let Some(hit) = self.range_hit(addr) {
+        let hit = self.peek(addr);
+        if hit.is_some() {
             self.hits += 1;
+        }
+        hit
+    }
+
+    /// Inspect a cached allocation without counting an additional validation.
+    /// This returns metadata only: callers must use the arena to authenticate
+    /// allocation bytes while holding its lifetime lock, never dereference a
+    /// cached address based solely on an epoch comparison.
+    pub(crate) fn peek(&mut self, addr: usize) -> Option<CachedValidation> {
+        if let Some(hit) = self.range_hit(addr) {
             return Some(hit);
         }
         if let Some(entries) = self.entries.as_deref_mut() {
@@ -456,7 +481,6 @@ impl TlsValidationCache {
             if entry.valid && entry.addr == addr {
                 let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
                 if entry.shard_epoch == live_shard_epoch {
-                    self.hits += 1;
                     return Some(CachedValidation {
                         user_base: entry.user_base,
                         user_size: entry.user_size,
@@ -468,6 +492,30 @@ impl TlsValidationCache {
             }
         }
         None
+    }
+
+    /// Sample by allocation, not by thread-wide call number. Interior pointers
+    /// share the budget of their base, and interleaved allocations cannot defer
+    /// another allocation's check. A missing/evicted budget requires a check.
+    #[inline(always)]
+    pub(crate) fn integrity_recheck_due(&mut self, addr: usize) -> bool {
+        let Some(cached) = self.peek(addr) else {
+            return true;
+        };
+        for (base, remaining) in &mut self.integrity_budgets {
+            if *base == cached.user_base {
+                if *remaining > 1 {
+                    *remaining -= 1;
+                    return false;
+                }
+                *remaining = INTEGRITY_RECHECK_INTERVAL;
+                return true;
+            }
+        }
+        self.integrity_budgets[self.next_integrity_budget] =
+            (cached.user_base, INTEGRITY_RECHECK_INTERVAL);
+        self.next_integrity_budget = (self.next_integrity_budget + 1) & 3;
+        true
     }
 
     #[inline]

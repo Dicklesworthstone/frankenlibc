@@ -364,11 +364,25 @@ static int canary_probe(const char *id, const char *library) {
     int kind = !strcmp(id, "intact") ? 1 :
                !strcmp(id, "corrupt-legacy-fold") ? 2 :
                !strcmp(id, "corrupt-symmetric-pair") ? 3 :
-               !strcmp(id, "corrupt-header") ? 4 : 0;
+               !strcmp(id, "corrupt-header") ? 4 :
+               !strcmp(id, "corrupt-after-warm-tls-write") ? 5 :
+               !strcmp(id, "corrupt-header-after-warm-tls") ? 6 :
+               !strcmp(id, "corrupt-after-warm-tls-read") ? 7 :
+               !strcmp(id, "corrupt-after-warm-tls-strcpy") ? 8 :
+               !strcmp(id, "corrupt-after-warm-tls-memset") ? 9 :
+               !strcmp(id, "corrupt-after-warm-tls-memmove") ? 10 :
+               !strcmp(id, "corrupt-after-warm-tls-strncpy") ? 11 :
+               !strcmp(id, "corrupt-after-warm-tls-stpncpy") ? 12 :
+               !strcmp(id, "corrupt-after-warm-tls-strcat") ? 13 :
+               !strcmp(id, "corrupt-after-warm-tls-strncat") ? 14 :
+               !strcmp(id, "corrupt-after-warm-tls-strlcpy") ? 15 :
+               !strcmp(id, "corrupt-after-warm-tls-strlcat") ? 16 : 0;
     if (!kind || (kind > 1 && !hardened)) return 2;
 
     const char *symbols[] = {"malloc", "free", "mprobe", "memcpy",
-        "__frankenlibc_healing_action_count", "__frankenlibc_is_runtime_ready"};
+        "__frankenlibc_healing_action_count", "__frankenlibc_is_runtime_ready",
+        "strlen", "strcpy", "memset", "memmove", "strncpy", "stpncpy",
+        "strcat", "strncat", "strlcpy", "strlcat"};
     void *addresses[sizeof(symbols) / sizeof(symbols[0])];
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
         addresses[i] = probe_symbol(symbols[i], library);
@@ -380,17 +394,31 @@ static int canary_probe(const char *id, const char *library) {
     void *(*copy)(void *, const void *, size_t) = addresses[3];
     uint64_t (*counter)(unsigned) = addresses[4];
     int (*ready)(void) = addresses[5];
+    size_t (*length)(const char *) = addresses[6];
+    char *(*copy_string)(char *, const char *) = addresses[7];
+    void *(*fill)(void *, int, size_t) = addresses[8];
+    void *(*move)(void *, const void *, size_t) = addresses[9];
+    char *(*copy_bounded)(char *, const char *, size_t) = addresses[10];
+    char *(*copy_end)(char *, const char *, size_t) = addresses[11];
+    char *(*append_string)(char *, const char *) = addresses[12];
+    char *(*append_bounded)(char *, const char *, size_t) = addresses[13];
+    size_t (*copy_sized)(char *, const char *, size_t) = addresses[14];
+    size_t (*append_sized)(char *, const char *, size_t) = addresses[15];
 
-    const char *names[16];
-    int passed[16], count = 0;
+    const char *names[24];
+    int passed[24], count = 0;
 #define CANARY_CHECK(name, outcome) do { names[count] = (name); passed[count++] = !!(outcome); } while (0)
     CANARY_CHECK("runtime_ready", ready());
 
-    size_t capacity = 32;
+    size_t capacity = kind >= 5 ? 1024 : 32;
     unsigned char *p = allocate(capacity);
     CANARY_CHECK("allocation_non_null", p != NULL);
     uint64_t gen = 0, sz = 0, hash = 0, canary_word = 0, expected_canary = 0, legacy_canary = 0;
     uint64_t clamp_before = 0, clamp_after = 0;
+    uint64_t free_clamp_before = 0, free_clamp_after = 0;
+    uintptr_t allocation_address = (uintptr_t)p;
+    unsigned char boundary_before[8] = {0}, boundary_after[8] = {0};
+    unsigned detection_calls = 0;
     int mprobe_initial = -1, mprobe_mutated = -1, mprobe_freed = -1;
 
     if (p) {
@@ -410,7 +438,7 @@ static int canary_probe(const char *id, const char *library) {
             legacy_canary = (hash ^ rot) ^ 0xDEADBEEFCAFEBABEULL;
 
             CANARY_CHECK("header_layout_24b", gen > 0 && sz == capacity && hash != 0);
-            CANARY_CHECK("tail_full_width_8b", canary_word == expected_canary);
+            CANARY_CHECK("tail_not_disclosed_by_header", canary_word != expected_canary);
             CANARY_CHECK("tail_not_legacy_fold", rot == 0 || canary_word != legacy_canary);
 
             if (kind == 1) {
@@ -453,10 +481,120 @@ static int canary_probe(const char *id, const char *library) {
                     clamp_after > clamp_before && ((volatile unsigned char *)p)[0] == 0xA0);
                 *hdr_byte = saved;
                 CANARY_CHECK("mprobe_restored_ok", probe(p) == 0);
+            } else {
+                /* Populate the range cache through the real ABI before the
+                 * corrupting write. No mprobe/free/allocator call intervenes
+                 * between mutation and the operation under test. */
+                copy(p, "WARM", 5);
+                if (kind == 13 || kind == 14 || kind == 16) {
+                    /* A valid empty destination leaves exactly eight bytes
+                     * for the append, including the terminating NUL. */
+                    ((volatile unsigned char *)p)[capacity - 8] = 0;
+                }
+                CANARY_CHECK("warm_strlen_allowed", length((const char *)p) == 4);
+                for (size_t i = 0; i < 8; i++) {
+                    boundary_before[i] = ((volatile unsigned char *)p)[capacity - 8 + i];
+                }
+                volatile unsigned char *redzone = kind == 6 ? p - 24 : p + capacity;
+                unsigned char original = *redzone;
+                *redzone = (unsigned char)(original ^ 1U);
+                clamp_before = counter(1);
+                if (kind == 7) {
+                    int denied = 0;
+                    for (int attempt = 0; attempt < 16; attempt++) {
+                        detection_calls++;
+                        if (length((const char *)p) == 0) { denied = 1; break; }
+                    }
+                    CANARY_CHECK("warm_read_detected_within_16_calls", denied);
+                } else if (kind == 8) {
+                    copy_string((char *)p + capacity - 8, "BLOCKED");
+                } else if (kind == 9) {
+                    fill(p + capacity - 8, 'Z', 8);
+                } else if (kind == 10) {
+                    move(p + capacity - 8, p, 8);
+                } else if (kind == 11) {
+                    copy_bounded((char *)p + capacity - 8, "BLOCKED", 8);
+                } else if (kind == 12) {
+                    copy_end((char *)p + capacity - 8, "BLOCKED", 8);
+                } else if (kind == 13) {
+                    append_string((char *)p + capacity - 8, "BLOCKED");
+                } else if (kind == 14) {
+                    append_bounded((char *)p + capacity - 8, "BLOCKED", 7);
+                } else if (kind == 15) {
+                    copy_sized((char *)p + capacity - 8, "BLOCKED", 8);
+                } else if (kind == 16) {
+                    append_sized((char *)p + capacity - 8, "BLOCKED", 8);
+                } else {
+                    copy(p + capacity - 8, "BLOCKED!", 8);
+                }
+                clamp_after = counter(1);
+                CANARY_CHECK("warm_corruption_emits_clamp", clamp_after > clamp_before);
+                int unchanged = 1;
+                for (size_t i = 0; i < 8; i++) {
+                    boundary_after[i] = ((volatile unsigned char *)p)[capacity - 8 + i];
+                    if (boundary_after[i] != boundary_before[i]) unchanged = 0;
+                }
+                if (kind != 7) {
+                    CANARY_CHECK("boundary_write_denied_immediately", unchanged);
+                }
+                mprobe_mutated = probe(p);
+                CANARY_CHECK("mprobe_agrees_with_warm_rejection",
+                    mprobe_mutated == (kind == 6 ? 2 : 3));
+                /* Keep corruption in place through free: its quarantine action
+                 * must be observable independently of the access rejection. */
             }
+        } else {
+            clamp_before = counter(1);
+            copy(p, "ABCDEFGH", 8);
+            clamp_after = counter(1);
+            CANARY_CHECK("memcpy_intact_allowed",
+                clamp_after == clamp_before && ((volatile unsigned char *)p)[0] == 'A');
         }
 
+        if (kind == 1) {
+            const char *intact_checks[] = {
+                "intact_boundary_memcpy_allowed", "intact_boundary_memmove_allowed",
+                "intact_boundary_memset_allowed", "intact_boundary_strcpy_allowed",
+                "intact_boundary_strncpy_allowed", "intact_boundary_stpncpy_allowed",
+                "intact_boundary_strcat_allowed", "intact_boundary_strncat_allowed",
+                "intact_boundary_strlcpy_allowed", "intact_boundary_strlcat_allowed"
+            };
+            for (unsigned operation = 0; operation < 10; operation++) {
+                char *dst = (char *)p + capacity - 8;
+                for (size_t i = 0; i < 8; i++) ((volatile unsigned char *)dst)[i] = 0xCD;
+                if (operation == 6 || operation == 7 || operation == 9) {
+                    ((volatile unsigned char *)dst)[0] = 0;
+                }
+                switch (operation) {
+                    case 0: copy(dst, "BOUNDAR", 8); break;
+                    case 1: move(dst, p, 8); break;
+                    case 2: fill(dst, 'Z', 8); break;
+                    case 3: copy_string(dst, "BOUNDAR"); break;
+                    case 4: copy_bounded(dst, "BOUNDAR", 8); break;
+                    case 5: copy_end(dst, "BOUNDAR", 8); break;
+                    case 6: append_string(dst, "BOUNDAR"); break;
+                    case 7: append_bounded(dst, "BOUNDAR", 7); break;
+                    case 8: copy_sized(dst, "BOUNDAR", 8); break;
+                    case 9: append_sized(dst, "BOUNDAR", 8); break;
+                }
+                int correct = 1;
+                for (size_t i = 0; i < 8; i++) {
+                    unsigned char expected = operation == 1 ? (unsigned char)('A' + i) :
+                        operation == 2 ? 'Z' : (unsigned char)"BOUNDAR"[i];
+                    if (((volatile unsigned char *)dst)[i] != expected) correct = 0;
+                }
+                CANARY_CHECK(intact_checks[operation], correct);
+            }
+            clamp_after = counter(1);
+            CANARY_CHECK("intact_boundary_writes_emit_no_clamp", clamp_after == clamp_before);
+        }
+
+        free_clamp_before = counter(1);
         release(p);
+        free_clamp_after = counter(1);
+        if (hardened && (kind == 2 || kind == 3 || kind >= 5)) {
+            CANARY_CHECK("corrupt_free_emits_quarantine_clamp", free_clamp_after > free_clamp_before);
+        }
         mprobe_freed = probe(p);
         CANARY_CHECK("mprobe_after_free", mprobe_freed == 1);
     }
@@ -469,6 +607,16 @@ static int canary_probe(const char *id, const char *library) {
            (unsigned long long)gen, (unsigned long long)sz);
     printf(",\"mprobe_initial\":%d,\"mprobe_mutated\":%d,\"mprobe_freed\":%d",
            mprobe_initial, mprobe_mutated, mprobe_freed);
+    printf(",\"allocation_address\":%llu,\"capacity\":%zu,\"detection_calls\":%u",
+           (unsigned long long)allocation_address, capacity, detection_calls);
+    printf(",\"clamp_before\":%llu,\"clamp_after\":%llu,\"free_clamp_before\":%llu,\"free_clamp_after\":%llu",
+           (unsigned long long)clamp_before, (unsigned long long)clamp_after,
+           (unsigned long long)free_clamp_before, (unsigned long long)free_clamp_after);
+    printf(",\"boundary_before\":[");
+    for (size_t i = 0; i < 8; i++) printf("%s%u", i ? "," : "", boundary_before[i]);
+    printf("],\"boundary_after\":[");
+    for (size_t i = 0; i < 8; i++) printf("%s%u", i ? "," : "", boundary_after[i]);
+    printf("]");
     printf(",\"checks\":[");
     for (int i = 0; i < count; i++) {
         printf("%s{\"name\":", i ? "," : ""); ws8_json_string(names[i]);

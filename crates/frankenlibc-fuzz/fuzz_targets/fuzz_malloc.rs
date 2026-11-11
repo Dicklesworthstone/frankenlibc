@@ -199,7 +199,8 @@ fuzz_target!(|input: AllocFuzzInput| {
                         | FreeResult::ForeignPointer
                         | FreeResult::InvalidPointer
                         | FreeResult::Freed
-                        | FreeResult::FreedWithCanaryCorruption => {
+                        | FreeResult::FreedWithCanaryCorruption
+                        | FreeResult::FreedWithFingerprintCorruption => {
                             // All of these are acceptable responses to double-free
                         }
                     }
