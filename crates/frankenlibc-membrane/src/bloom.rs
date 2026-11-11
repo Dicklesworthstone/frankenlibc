@@ -15,8 +15,9 @@
 //!
 //! Two countermeasures live here:
 //!
-//! - The default `expected_items` is sized for a typical long-running libc
-//!   consumer (4M items at 0.1% FP), not the 1M of the original design.
+//! - The default `expected_items` is sized for CLI and server workloads alike
+//!   (262,144 items at 0.1% FP = 512 KiB single-tier cache-line-blocked table,
+//!   L2-resident and well inside tight `RLIMIT_DATA` caps).
 //! - The data structure exposes diagnostic and rebuild primitives
 //!   (`insert_count`, `saturation_ratio`, `is_saturated`, `clear`,
 //!   `rebuild_from`) so callers holding the authoritative live set can
@@ -25,19 +26,16 @@
 //!   pattern: callers enumerate the current live set, hand it to the bloom,
 //!   and the bloom replaces its bit pattern in place.
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Default expected number of insertions. Sized for long-running consumers
-/// (4M items at 0.1% false-positive rate). Short-lived CLI processes only
-/// pay for [`TIER0_EXPECTED_ITEMS`] (~128 KiB, L2-resident) unless they cross
-/// 65,536 insertions, at which point the overflow slab is initialized lazily.
-const DEFAULT_EXPECTED_ITEMS: usize = 4_000_000;
-
-/// Initial primary-tier capacity for [`PointerBloomFilter::new`]: 65,536 items
-/// at 0.1% FP = 16,384 `u64` words (128 KiB), keeping `VmData` well below tight
-/// `RLIMIT_DATA` caps (e.g. 10 MiB) while fitting inside L2 cache.
-const TIER0_EXPECTED_ITEMS: usize = 65_536;
+/// Default expected number of insertions: 262,144 items at 0.1% false-positive
+/// rate (`65,536` `AtomicU64` words = `512 KiB` = `4,194,304` bits).
+///
+/// This single-tier sizing keeps `VmData` well below tight `RLIMIT_DATA` caps
+/// (`<= 4 MiB` total hardened startup footprint), stays L2-resident on modern
+/// x86_64 cores, and handles `100k+`-allocation CLI workloads (e.g. `sort` on
+/// 100,000 lines) in a single cache-line-blocked probe with `< 0.001%` FP rate.
+const DEFAULT_EXPECTED_ITEMS: usize = 262_144;
 
 /// Bits per block of the blocked layout: one 64-byte cache line.
 const BLOOM_BLOCK_BITS: usize = 512;
@@ -136,14 +134,8 @@ impl BloomSlab {
 ///
 /// Thread-safe via atomic bit operations on the underlying array.
 pub struct PointerBloomFilter {
-    /// Compact primary L2-resident slab (always present).
-    tier0: BloomSlab,
-    /// Design capacity of the lazy overflow slab (`0` for single-tier `with_capacity`).
-    overflow_capacity: usize,
-    /// Fast acquire/release flag avoiding `OnceLock` inspection while `< TIER0_EXPECTED_ITEMS`.
-    overflow_active: AtomicBool,
-    /// Lazily allocated 4M-item overflow slab for long-running processes.
-    overflow: OnceLock<BloomSlab>,
+    /// Single-tier cache-line-blocked bit array.
+    slab: BloomSlab,
     /// Sizing target the filter was constructed with — used by saturation
     /// diagnostics so callers can decide when to drive a `rebuild_from`.
     expected_items: usize,
@@ -153,47 +145,27 @@ pub struct PointerBloomFilter {
 }
 
 impl PointerBloomFilter {
-    /// Create a new two-tier bloom filter with compact 128 KiB initial footprint
-    /// and lazy 4M-item overflow promotion.
+    /// Create a new bloom filter with default L2-resident 512 KiB sizing.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            tier0: BloomSlab::new(TIER0_EXPECTED_ITEMS, DEFAULT_FP_RATE),
-            overflow_capacity: DEFAULT_EXPECTED_ITEMS,
-            overflow_active: AtomicBool::new(false),
-            overflow: OnceLock::new(),
-            expected_items: DEFAULT_EXPECTED_ITEMS,
-            insert_count: AtomicU64::new(0),
-        }
+        Self::with_capacity(DEFAULT_EXPECTED_ITEMS, DEFAULT_FP_RATE)
     }
 
     /// Create a bloom filter with specific capacity and false positive rate.
     #[must_use]
     pub fn with_capacity(expected_items: usize, fp_rate: f64) -> Self {
         Self {
-            tier0: BloomSlab::new(expected_items, fp_rate),
-            overflow_capacity: 0,
-            overflow_active: AtomicBool::new(false),
-            overflow: OnceLock::new(),
+            slab: BloomSlab::new(expected_items, fp_rate),
             expected_items: expected_items.max(1),
             insert_count: AtomicU64::new(0),
         }
     }
 
     /// Insert a pointer into the bloom filter.
+    #[inline]
     pub fn insert(&self, ptr: usize) {
         let (h1, h2) = (Self::hash1(ptr), Self::hash2(ptr));
-        if self.overflow_capacity > 0
-            && self.insert_count.load(Ordering::Relaxed) >= TIER0_EXPECTED_ITEMS as u64
-        {
-            let ov = self
-                .overflow
-                .get_or_init(|| BloomSlab::new(self.overflow_capacity, DEFAULT_FP_RATE));
-            self.overflow_active.store(true, Ordering::Release);
-            ov.insert_hashes(h1, h2);
-        } else {
-            self.tier0.insert_hashes(h1, h2);
-        }
+        self.slab.insert_hashes(h1, h2);
         self.insert_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -201,30 +173,23 @@ impl PointerBloomFilter {
     ///
     /// Returns `true` if the pointer might be ours (may be false positive).
     /// Returns `false` if the pointer is definitely not ours (no false negatives).
+    #[inline]
     #[must_use]
     pub fn might_contain(&self, ptr: usize) -> bool {
         let (h1, h2) = (Self::hash1(ptr), Self::hash2(ptr));
-        if self.tier0.might_contain_hashes(h1, h2) {
-            return true;
-        }
-        if !self.overflow_active.load(Ordering::Acquire) {
-            return false;
-        }
-        self.overflow
-            .get()
-            .is_some_and(|ov| ov.might_contain_hashes(h1, h2))
+        self.slab.might_contain_hashes(h1, h2)
     }
 
     /// Number of bits currently allocated in the filter.
     #[must_use]
     pub fn num_bits(&self) -> usize {
-        self.tier0.num_bits + self.overflow.get().map_or(0, |ov| ov.num_bits)
+        self.slab.num_bits
     }
 
     /// Number of hash functions.
     #[must_use]
     pub fn num_hashes(&self) -> u32 {
-        self.tier0.num_hashes
+        self.slab.num_hashes
     }
 
     /// Sizing target the filter was constructed with.
@@ -269,11 +234,7 @@ impl PointerBloomFilter {
     /// from the caller's live truth set, and bumps the insert counter so
     /// observers never see an empty filter.
     pub fn clear(&self) {
-        self.tier0.clear();
-        if let Some(ov) = self.overflow.get() {
-            ov.clear();
-        }
-        self.overflow_active.store(false, Ordering::Release);
+        self.slab.clear();
         self.insert_count.store(0, Ordering::Relaxed);
     }
 
@@ -302,23 +263,11 @@ impl PointerBloomFilter {
     {
         // Zero first, then refill. Inserts during this window may race; the
         // contract above documents the requirement that callers quiesce.
-        self.tier0.clear();
-        if let Some(ov) = self.overflow.get() {
-            ov.clear();
-        }
-        self.overflow_active.store(false, Ordering::Release);
+        self.slab.clear();
         let mut count: u64 = 0;
         for ptr in items {
             let (h1, h2) = (Self::hash1(ptr), Self::hash2(ptr));
-            if self.overflow_capacity > 0 && count >= TIER0_EXPECTED_ITEMS as u64 {
-                let ov = self
-                    .overflow
-                    .get_or_init(|| BloomSlab::new(self.overflow_capacity, DEFAULT_FP_RATE));
-                self.overflow_active.store(true, Ordering::Release);
-                ov.insert_hashes(h1, h2);
-            } else {
-                self.tier0.insert_hashes(h1, h2);
-            }
+            self.slab.insert_hashes(h1, h2);
             count = count.saturating_add(1);
         }
         self.insert_count.store(count, Ordering::Relaxed);
@@ -403,30 +352,37 @@ mod tests {
         let filter = PointerBloomFilter::new();
         assert!(!filter.might_contain(0x1000));
         assert!(!filter.might_contain(0xDEAD_BEEF));
-        // Compact primary tier only (16,384 u64 words = 128 KiB = 1,048,576 bits).
-        assert_eq!(filter.num_bits(), 1_048_576);
+        // Single-tier 512 KiB slab (65,536 u64 words = 4,194,304 bits).
+        assert_eq!(filter.num_bits(), 4_194_304);
         assert_eq!(filter.expected_items(), DEFAULT_EXPECTED_ITEMS);
     }
 
     #[test]
-    fn default_filter_promotes_overflow_tier_without_false_negatives() {
+    fn default_filter_handles_100k_inserts_with_low_false_positives() {
         let filter = PointerBloomFilter::new();
-        let total = TIER0_EXPECTED_ITEMS + 2_048;
+        let total = 105_000usize;
         for i in 0..total {
             filter.insert(0x4000_0000 + i * 32);
         }
-        assert!(filter.num_bits() > 1_048_576);
+        assert_eq!(filter.num_bits(), 4_194_304);
         for i in 0..total {
             let p = 0x4000_0000 + i * 32;
-            assert!(
-                filter.might_contain(p),
-                "false negative across tier0/overflow boundary at {i}"
-            );
+            assert!(filter.might_contain(p), "false negative at {i}");
         }
+        let mut fp = 0usize;
+        let probes = 20_000usize;
+        for i in 0..probes {
+            if filter.might_contain(0x7000_0000 + i * 64) {
+                fp += 1;
+            }
+        }
+        assert!(
+            (fp as f64) / (probes as f64) < 0.002,
+            "105k-item FP rate too high: {fp}/{probes}"
+        );
         filter.clear();
         assert_eq!(filter.insert_count(), 0);
         assert!(!filter.might_contain(0x4000_0000));
-        assert!(!filter.might_contain(0x4000_0000 + TIER0_EXPECTED_ITEMS * 32));
     }
 
     #[test]

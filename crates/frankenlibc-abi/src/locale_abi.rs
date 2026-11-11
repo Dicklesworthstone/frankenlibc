@@ -418,30 +418,38 @@ pub(crate) enum WideCtype {
     Builtin,
 }
 
-#[inline]
-pub(crate) fn wide_ctype() -> WideCtype {
-    if let Some(category) = thread_category(locale_core::LC_CTYPE) {
-        let tables = match category {
-            Resolved::Named(n) => n.ctype.as_ref(),
-            Resolved::Builtin(Charset::Ascii) => None,
-            Resolved::Builtin(Charset::Utf8) => {
-                // SAFETY: cached pointers refer to immutable, leaked tables.
-                unsafe { c_utf8_ctype_tables().as_ref() }
-            }
-        };
-        if let Some(tables) = tables {
-            return WideCtype::Tables(tables);
+#[cold]
+#[inline(never)]
+fn wide_ctype_thread_override(category: Resolved) -> WideCtype {
+    let tables = match category {
+        Resolved::Named(n) => n.ctype.as_ref(),
+        Resolved::Builtin(Charset::Ascii) => None,
+        Resolved::Builtin(Charset::Utf8) => {
+            // SAFETY: cached pointers refer to immutable, leaked tables.
+            unsafe { c_utf8_ctype_tables().as_ref() }
         }
-        return match resolved_charset(category) {
-            Charset::Ascii => WideCtype::Ascii,
-            Charset::Utf8 => WideCtype::Builtin,
-        };
+    };
+    if let Some(tables) = tables {
+        return WideCtype::Tables(tables);
+    }
+    match resolved_charset(category) {
+        Charset::Ascii => WideCtype::Ascii,
+        Charset::Utf8 => WideCtype::Builtin,
+    }
+}
+
+#[inline(always)]
+pub(crate) fn wide_ctype() -> WideCtype {
+    if THREAD_LOCALE_EVER_USED.load(Ordering::Relaxed)
+        && let Some(category) = thread_category(locale_core::LC_CTYPE)
+    {
+        return wide_ctype_thread_override(category);
     }
     // SAFETY: published pointers come from leaked, never-freed tables.
     if let Some(t) = unsafe { CTYPE_TABLES.load(Ordering::Acquire).as_ref() } {
         return WideCtype::Tables(t);
     }
-    match active_charset() {
+    match decode_charset(ACTIVE_CHARSET[locale_core::LC_CTYPE as usize].load(Ordering::Acquire)) {
         Charset::Ascii => WideCtype::Ascii,
         Charset::Utf8 => WideCtype::Builtin,
     }

@@ -3556,20 +3556,28 @@ static HEADROOM_PREWARMED: AtomicBool = AtomicBool::new(false);
 pub(crate) fn prewarm_host_heap_headroom() {
     if !strict_allocator_host_path_active()
         && !crate::membrane_state::pipeline_initialization_active()
+        && let Some(pipeline) = crate::membrane_state::try_global_pipeline()
     {
-        let _ = crate::membrane_state::try_global_pipeline();
+        pipeline.arena.prewarm_for_rlimit();
     }
     if HEADROOM_PREWARMED.swap(true, Ordering::AcqRel) {
         return;
     }
+    let _ = BUMP_HEAP_SLAB.ensure_writable(0, segment_mapping::GRANULE);
     const HEADROOM_BYTES: usize = 96 * 1024;
-    // SAFETY: transient host allocation + immediate release below a 16-byte
-    // fencepost chunk that remains live for process lifetime.
+    // SAFETY: transient host allocations + immediate release below 16-byte
+    // fencepost chunks that remain live for process lifetime, keeping two
+    // 96 KiB free blocks in `main_arena` before `RLIMIT_AS`/`RLIMIT_DATA` clamps.
     unsafe {
-        let ptr = native_libc_malloc(HEADROOM_BYTES);
-        let _fence = native_libc_malloc(16);
-        if !ptr.is_null() {
-            native_libc_free(ptr);
+        let ptr1 = native_libc_malloc(HEADROOM_BYTES);
+        let _fence1 = native_libc_malloc(16);
+        let ptr2 = native_libc_malloc(HEADROOM_BYTES);
+        let _fence2 = native_libc_malloc(16);
+        if !ptr1.is_null() {
+            native_libc_free(ptr1);
+        }
+        if !ptr2.is_null() {
+            native_libc_free(ptr2);
         }
     }
 }

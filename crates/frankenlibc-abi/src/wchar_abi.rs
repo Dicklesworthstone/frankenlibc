@@ -4139,13 +4139,12 @@ const WC_CNTRL: usize = 9;
 const WC_PUNCT: usize = 10;
 const WC_ALNUM: usize = 11;
 
+#[inline(always)]
 fn ascii_wide_class(class: usize, wc: u32) -> bool {
-    let Ok(c) = u8::try_from(wc) else {
-        return false;
-    };
-    if !c.is_ascii() {
+    if wc > 0x7f {
         return false;
     }
+    let c = wc as u8;
     match class {
         WC_UPPER => c.is_ascii_uppercase(),
         WC_LOWER => c.is_ascii_lowercase(),
@@ -4163,7 +4162,7 @@ fn ascii_wide_class(class: usize, wc: u32) -> bool {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn wide_class(class: usize, wc: u32, builtin: fn(u32) -> bool) -> c_int {
     c_int::from(match crate::locale_abi::wide_ctype() {
         crate::locale_abi::WideCtype::Tables(t) => t.is_class(class, wc),
@@ -4172,7 +4171,7 @@ fn wide_class(class: usize, wc: u32, builtin: fn(u32) -> bool) -> c_int {
     })
 }
 
-#[inline]
+#[inline(always)]
 fn wide_width(wc: u32) -> c_int {
     match crate::locale_abi::wide_ctype() {
         crate::locale_abi::WideCtype::Tables(t) => t.width(wc),
@@ -7658,9 +7657,7 @@ unsafe fn orient_wprintf_stream(stream: *mut c_void) -> bool {
         };
         // Orient before rendering, including empty output and reached %n
         // stores. Byte-oriented host streams reject the entire operation.
-        if let Some(orientation) =
-            unsafe { try_host_wide_io(stream, &HOST, "fwide", 0, call) }
-        {
+        if let Some(orientation) = unsafe { try_host_wide_io(stream, &HOST, "fwide", 0, call) } {
             return orientation > 0;
         }
     }
@@ -7695,8 +7692,7 @@ unsafe fn write_wprintf_rendered(
                 unsafe { std::mem::transmute(address) };
             let mut offset = 0;
             while offset < rendered.len() {
-                let (wc, length) =
-                    wchar_core::mbtowc(&rendered[offset..]).ok_or(libc::EILSEQ)?;
+                let (wc, length) = wchar_core::mbtowc(&rendered[offset..]).ok_or(libc::EILSEQ)?;
                 // The host owns the retained codec and conversion state.
                 // NUL is one wide output character, never a terminator.
                 if unsafe { host(wc as libc::wchar_t, stream) } == WEOF_VALUE {

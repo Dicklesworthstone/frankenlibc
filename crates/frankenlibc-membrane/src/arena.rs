@@ -463,6 +463,26 @@ impl AllocationArena {
         }
     }
 
+    /// Pre-reserve initial slot capacity and index-node chunks across all shards
+    /// and the large-extent set before the caller clamps `RLIMIT_AS` or
+    /// `RLIMIT_DATA`, so subsequent hardened `malloc`/`realloc` operations on
+    /// any page-hashed shard succeed without needing new VM mappings.
+    pub fn prewarm_for_rlimit(&self) {
+        for shard_lock in self.shards.iter() {
+            let mut shard = shard_lock.lock();
+            let _ = shard.slots.try_reserve(4);
+            if shard.addr_to_slot.is_empty() {
+                shard.addr_to_slot.insert(0, 0);
+                shard.addr_to_slot.remove(&0);
+            }
+        }
+        let mut large = self.large.lock();
+        if large.is_empty() {
+            large.insert(0);
+            large.remove(&0);
+        }
+    }
+
     /// Allocate memory with fingerprint header and canary.
     ///
     /// Returns the allocation metadata on success.
