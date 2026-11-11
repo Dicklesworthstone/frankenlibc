@@ -33945,6 +33945,384 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.8.3",
+      "title": "Enforce AT_RANDOM dual-key canary domain separation, warm-TLS canary verification, and FreedWithCanaryCorruption audit emission",
+      "priority": 0,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "canary",
+        "membrane",
+        "reality-check-202611",
+        "security",
+        "tls-cache"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.8"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened LD_PRELOAD canary probes"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "ClampSize heal/audit emission on warm-TLS and free/realloc canary corruption"
+        },
+        "perf_evidence": {
+          "required": true,
+          "scope": "check_membrane_access.py --benchmark sort100k <= 2.5x glibc and <= 2.0x strict"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-abi/src/malloc_abi.rs"
+        },
+        "perf_evidence": {
+          "status": "complete",
+          "artifacts": "scripts/check_membrane_access.py"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.8.3",
+        "stream": "membrane",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-membrane --lib",
+          "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "bash scripts/ld_preload_smoke.sh",
+          "python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --benchmark"
+        ],
+        "expected_assertions": [
+          "256-bit CSPRNG dual-key domain separation (K_hdr != K_tail), O(1) warm-TLS header+tail integrity verification on 1-in-16 cadence and near-tail writes, FreedWithCanaryCorruption ClampSize audit in free and realloc, sort100k hardened_over_strict=1.9655<=2.0"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-membrane/src/fingerprint.rs",
+          "crates/frankenlibc-membrane/src/arena.rs",
+          "crates/frankenlibc-membrane/src/tls_cache.rs",
+          "crates/frankenlibc-membrane/src/ptr_validator.rs",
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-abi/src/string_abi.rs",
+          "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+          "target/closure_receipts/wave2_20261111T1625Z/bd-reality-202609-lx578q.8.3/receipt.json"
+        ],
+        "perf_proof_refs": [
+          "scripts/check_membrane_access.py"
+        ],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 482f813cf60c85d262b9305dedf57dece4792ca5.",
+        "result_receipts": [
+          "target/closure_receipts/wave2_20261111T1625Z/bd-reality-202609-lx578q.8.3/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Enforce 256-bit CSPRNG dual-key canary domain separation, O(1) warm-TLS header and trailing canary integrity verification with near-tail write checks, and structured ClampSize audit emission on FreedWithCanaryCorruption in free and realloc",
+          "acceptance_sha256": "d80ea765069373e01df9bdcab5a3a270f130f8e63bd98c178b6825a66872e42e",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-membrane/src/fingerprint.rs",
+            "crates/frankenlibc-membrane/src/arena.rs",
+            "crates/frankenlibc-membrane/src/tls_cache.rs",
+            "crates/frankenlibc-membrane/src/ptr_validator.rs",
+            "crates/frankenlibc-abi/src/malloc_abi.rs",
+            "crates/frankenlibc-abi/src/string_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs",
+            "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs"
+          ],
+          "source": {
+            "commit": "482f813cf60c85d262b9305dedf57dece4792ca5",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "52b3961cb4832850f6b6c34567f8a85630a290645e000e9c3a954b44b94f04fa",
+              "crates/frankenlibc-abi/src/string_abi.rs": "4679cc87c045b3c0e42a98b614e416635c1240ef356cbfeb23b83c467c16bc22",
+              "crates/frankenlibc-membrane/Cargo.toml": "b9c91993f3b9c584ee9d1624bca2c078c71e09345f1dbb4acf60a5a9c7a8eb4a",
+              "crates/frankenlibc-membrane/src/arena.rs": "bb92dfe3fbee3912506b0d00a312d3c21365f89bd58500a3b1d6d5fc5bd79bcc",
+              "crates/frankenlibc-membrane/src/fingerprint.rs": "9ac0e07096136d884e97c779d995dbfce6a2e5ed87899f5a87eb3b930803864e",
+              "crates/frankenlibc-membrane/src/ptr_validator.rs": "124af479f5afa70c44166df8d34ce657b97ef15a8b3032fb7dc8b1cbd018df87",
+              "crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs": "4b30576e0fddde5c6259723f4583e2b882a0a21208d2775784b17d53f856cbdf",
+              "crates/frankenlibc-membrane/src/tls_cache.rs": "373743b482588422fc904e3244b736891db45020bf947ca36ca155991a5dbef9",
+              "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "31488d74eff04e6ee545a92ff1af6605d27b2d106ffe034f9cccb61de27efafb",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/ld_preload_smoke.sh": "bb3daa49f49e2a3f40d6d377089cd0ad5409a01cd2053f052dd68521d838e16f",
+              "tests/integration/fixture_malloc.c": "d41c1f9d761e42fe73fea822ab9473895694197c8d96c0258c3912de2ce738f5"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T16:12:00+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/53422a2aee1b2909/out/tsm_pipeline_e2e_test-53422a2aee1b2909",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-membrane",
+              "--test",
+              "tsm_pipeline_e2e_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/53422a2aee1b2909/out/tsm_pipeline_e2e_test-53422a2aee1b2909"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "dual_key_csprng_canary_domain_separation_e2e",
+              "warm_tls_cache_detects_tail_and_header_corruption_e2e",
+              "smoke_script_wires_all_canary_cases_and_audit_emission"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.8.4",
+      "title": "[RC-202609 tests] Adversarially verify warm-TLS heap-overflow detection, header-leak non-derivability, and wired CI canary gate",
+      "priority": 0,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "canary",
+        "membrane",
+        "reality-check-202611",
+        "security",
+        "verification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.8",
+        "bd-reality-202609-lx578q.8.3"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "8 live LD_PRELOAD fixture_malloc --canary-case probes wired into ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": ""
+        },
+        "perf_evidence": {
+          "required": true,
+          "scope": "deployed sort100k hardened_over_glibc<=2.5 and hardened_over_strict<=2.0"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "complete",
+          "artifacts": "scripts/check_membrane_access.py"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 3,
+        "complete": 3,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.8.4",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --test-threads=1",
+          "cargo test -p frankenlibc-membrane --lib"
+        ],
+        "e2e_cmds": [
+          "bash scripts/ld_preload_smoke.sh",
+          "python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --benchmark"
+        ],
+        "expected_assertions": [
+          "intact, corrupt-legacy-fold, corrupt-symmetric-pair, corrupt-header, corrupt-after-warm-tls-write, corrupt-header-after-warm-tls, fork-preserves-canary-exec-reseeds all pass (76/76 live checks) and sort100k-lexical hardened_over_strict=1.9655<=2.0"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "tests/integration/fixture_malloc.c",
+          "scripts/ld_preload_smoke.sh",
+          "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
+          "target/closure_receipts/wave2_20261111T1625Z/bd-reality-202609-lx578q.8.4/receipt.json"
+        ],
+        "perf_proof_refs": [
+          "scripts/check_membrane_access.py"
+        ],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 482f813cf60c85d262b9305dedf57dece4792ca5.",
+        "result_receipts": [
+          "target/closure_receipts/wave2_20261111T1625Z/bd-reality-202609-lx578q.8.4/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Adversarially verify warm-TLS heap-overflow and header-tampering detection, header-leak non-derivability across CSPRNG dual keys, fork preservation + execve reseeding, and wired ld_preload_smoke.sh canary gates within <=2.0x hardened_over_strict budget",
+          "acceptance_sha256": "9b73b641b957e3fb60f06af8e2036105b33bc68550bc62137d4242701c599478",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-membrane/src/fingerprint.rs",
+            "crates/frankenlibc-membrane/src/tls_cache.rs",
+            "crates/frankenlibc-membrane/src/ptr_validator.rs",
+            "scripts/ld_preload_smoke.sh"
+          ],
+          "test_paths": [
+            "tests/integration/fixture_malloc.c",
+            "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs"
+          ],
+          "source": {
+            "commit": "482f813cf60c85d262b9305dedf57dece4792ca5",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "52b3961cb4832850f6b6c34567f8a85630a290645e000e9c3a954b44b94f04fa",
+              "crates/frankenlibc-abi/src/string_abi.rs": "4679cc87c045b3c0e42a98b614e416635c1240ef356cbfeb23b83c467c16bc22",
+              "crates/frankenlibc-membrane/Cargo.toml": "b9c91993f3b9c584ee9d1624bca2c078c71e09345f1dbb4acf60a5a9c7a8eb4a",
+              "crates/frankenlibc-membrane/src/arena.rs": "bb92dfe3fbee3912506b0d00a312d3c21365f89bd58500a3b1d6d5fc5bd79bcc",
+              "crates/frankenlibc-membrane/src/fingerprint.rs": "9ac0e07096136d884e97c779d995dbfce6a2e5ed87899f5a87eb3b930803864e",
+              "crates/frankenlibc-membrane/src/ptr_validator.rs": "124af479f5afa70c44166df8d34ce657b97ef15a8b3032fb7dc8b1cbd018df87",
+              "crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs": "4b30576e0fddde5c6259723f4583e2b882a0a21208d2775784b17d53f856cbdf",
+              "crates/frankenlibc-membrane/src/tls_cache.rs": "373743b482588422fc904e3244b736891db45020bf947ca36ca155991a5dbef9",
+              "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "31488d74eff04e6ee545a92ff1af6605d27b2d106ffe034f9cccb61de27efafb",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/ld_preload_smoke.sh": "bb3daa49f49e2a3f40d6d377089cd0ad5409a01cd2053f052dd68521d838e16f",
+              "tests/integration/fixture_malloc.c": "d41c1f9d761e42fe73fea822ab9473895694197c8d96c0258c3912de2ce738f5"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T16:12:00+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/53422a2aee1b2909/out/tsm_pipeline_e2e_test-53422a2aee1b2909",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-membrane",
+              "--test",
+              "tsm_pipeline_e2e_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/53422a2aee1b2909/out/tsm_pipeline_e2e_test-53422a2aee1b2909"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "dual_key_csprng_canary_domain_separation_e2e",
+              "warm_tls_cache_detects_tail_and_header_corruption_e2e",
+              "smoke_script_wires_all_canary_cases_and_audit_emission"
+            ]
+          }
+        }
+      }
     }
   ]
 }
