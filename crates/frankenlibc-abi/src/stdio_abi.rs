@@ -1799,14 +1799,14 @@ pub(crate) fn republish_read_window(stream: *mut c_void) {
 #[inline]
 fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
     publish_read_window(stream);
-    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN, LINE_BUF, UNBUFFERED};
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN, LINE_BUF, UNBUFFERED, USER_LOCK};
     // SAFETY: `handle` is the address of a registered NativeFile, whose first
     // field is the 4-byte-aligned `_flags` int; it outlives the registry
     // entry holding this cell. Other threads may read it (unlocked macros),
     // hence the atomic view.
     let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
     let current = word.load(Ordering::Relaxed);
-    let mut next = current & !(EOF_SEEN | ERR_SEEN | LINE_BUF | UNBUFFERED);
+    let mut next = current & !(EOF_SEEN | ERR_SEEN | LINE_BUF | UNBUFFERED | USER_LOCK);
     if stream.is_eof() {
         next |= EOF_SEEN;
     }
@@ -1822,6 +1822,9 @@ fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
     }
     if !stream.reports_buffered() {
         next |= UNBUFFERED;
+    }
+    if stream.locking_bycaller() {
+        next |= USER_LOCK;
     }
     if next != current {
         word.store(next, Ordering::Relaxed);
@@ -3060,9 +3063,9 @@ pub(crate) fn orient_stream_wide(stream: *mut c_void) -> bool {
     next > 0
 }
 
-/// Run one wide-memory output operation under both its recursive FILE lock
-/// and its stream-cell lock. The former honors flockfile; the latter excludes
-/// seeks and flushes between chunks. The internal writer must not call an ABI
+/// Run one wide-memory output operation under its stream-cell lock and its
+/// recursive FILE lock unless BYCALLER mode disables automatic locking.
+/// The cell excludes seeks and flushes between chunks. The writer must not call an ABI
 /// entrypoint or user callback: those can acquire the nonrecursive cell again.
 pub(crate) fn with_wide_memstream_write(
     stream: *mut c_void,
@@ -3070,8 +3073,7 @@ pub(crate) fn with_wide_memstream_write(
 ) -> bool {
     // SAFETY: the caller supplies the live wide stream for this operation.
     // No registry or cell lock is held while waiting for the recursive lock.
-    unsafe { flockfile(stream) };
-    let _file_lock = StdioLockGuard(stream);
+    let _file_lock = unsafe { StdioLockGuard::acquire(stream) };
     with_wide_memstream_write_unlocked(stream, write)
 }
 
@@ -3241,12 +3243,37 @@ fn orient_stream_byte_by_id(id: usize) -> bool {
     true
 }
 
-/// `__fsetlocking`: query/set the stream's locking mode, returning the mode in
-/// effect before the call (1 = INTERNAL, 2 = BYCALLER). `None` if fl does not
-/// own the stream.
-pub(crate) fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Option<c_int> {
+/// Query/set a stream's locking mode, returning its previous mode.
+/// Native state owns the mode; a foreign FILE delegates to its provider.
+///
+/// # Safety
+/// A non-null foreign pointer must name a live FILE. Mode changes require
+/// the caller to exclude concurrent use, as with GNU __fsetlocking.
+pub(crate) unsafe fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Option<c_int> {
+    if stream.is_null() {
+        return None;
+    }
     let id = canonical_stream_id(stream);
-    stream_cell(id).map(|cell| cell.lock().set_locking(typ))
+    if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&(stream as usize)) {
+        // Publish the standard handle before its cell mirrors USER_LOCK.
+        // This also covers a synthetic sentinel used before stdio chain init.
+        let _ = io_internal_abi::native_stdio_stream_ptr((id - STDIN_SENTINEL) as c_int);
+    }
+    if let Some(cell) = stream_cell(id) {
+        return Some(cell.lock().set_locking(typ));
+    }
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id) {
+        static HOST_FSETLOCKING: OnceLock<usize> = OnceLock::new();
+        let symbol = unsafe { host_stdio_symbol(&HOST_FSETLOCKING, "__fsetlocking") }?;
+        // SAFETY: the cached symbol is the host's function with this ABI.
+        let call: unsafe extern "C" fn(*mut c_void, c_int) -> c_int =
+            unsafe { std::mem::transmute(symbol) };
+        // SAFETY: ownership excludes all native handles, including closed
+        // slots and synthetic ids; the caller supplies a live foreign FILE.
+        return Some(unsafe { call(stream, typ) });
+    }
+    None
 }
 
 /// `__fpurge`: discard the stream's buffered (unread/unflushed) data. Returns
@@ -8488,9 +8515,52 @@ unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize)
     }
 }
 
+/// Read GNU's caller-locking bit without taking another registry or cell
+/// lock on the ordinary FILE-pointer path. Synthetic ids are not addresses.
+///
+/// # Safety
+/// The caller must keep a valid FILE alive for the enclosing operation.
+#[inline]
+unsafe fn stream_uses_caller_locking(stream: *mut c_void) -> bool {
+    let addr = stream as usize;
+    if addr == 0 {
+        return false;
+    }
+    let handle = if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&addr) {
+        let handle = io_internal_abi::native_stdio_slot_addr_lockfree(addr - STDIN_SENTINEL);
+        if handle == 0 {
+            // __fsetlocking publishes the standard handle before changing
+            // its mode, so an unpublished handle still uses INTERNAL.
+            return false;
+        }
+        handle
+    } else if addr >= STDIN_SENTINEL && addr < NEXT_STREAM_ID.load(Ordering::Acquire) {
+        // Legacy streams have no public FILE mutex; flockfile is already a
+        // no-op for them. Never dereference their synthetic ids.
+        return false;
+    } else {
+        addr
+    };
+    #[cfg(feature = "standalone")]
+    if !(io_internal_abi::native_stdio_slot_addr_lockfree(0) != 0
+        && io_internal_abi::is_native_slot_ptr_lockfree(handle as *const c_void))
+        && !io_internal_abi::is_native_handle_slot_address(handle as *mut c_void)
+    {
+        // Standalone rejects foreign handles without interpreting their
+        // storage. Require a published slab before its address shortcut;
+        // its initial base is a deliberately noncanonical sentinel.
+        return false;
+    }
+    // SAFETY: native and GNU FILEs both begin with an aligned _flags int.
+    // Mode changes must be synchronized by the caller; native flags are
+    // mirrored atomically by StreamGuard.
+    let flags = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    flags.load(Ordering::Relaxed) & io_internal_abi::glibc_flag_bits::USER_LOCK != 0
+}
+
 /// The POSIX stream lock is distinct from the mutex protecting StdioStream's
 /// Rust state. Hold it for a complete locked operation, including callbacks
-/// and multiple buffer flushes. The unlocked entrypoints deliberately skip
+/// and multiple buffer flushes. Unlocked entrypoints and BYCALLER mode skip
 /// this guard; their internal Rust-state synchronization is unchanged.
 pub(crate) struct StdioLockGuard(*mut c_void);
 
@@ -8498,6 +8568,11 @@ impl StdioLockGuard {
     /// The caller keeps this FILE alive until the returned guard is dropped.
     /// Closing paths must drop it before retiring the native FILE handle.
     pub(crate) unsafe fn acquire(stream: *mut c_void) -> Self {
+        // BYCALLER suppresses only implicit locking. Explicit flockfile and
+        // ftrylockfile continue to acquire the recursive public FILE lock.
+        if stream.is_null() || unsafe { stream_uses_caller_locking(stream) } {
+            return Self(std::ptr::null_mut());
+        }
         // flockfile resolves the provider and releases the registry lock
         // before it waits. Reentrant calls by this thread share the same lock.
         unsafe { flockfile(stream) };
@@ -8507,8 +8582,10 @@ impl StdioLockGuard {
 
 impl Drop for StdioLockGuard {
     fn drop(&mut self) {
-        // SAFETY: this guard follows exactly one flockfile on the same stream.
-        unsafe { funlockfile(self.0) };
+        if !self.0.is_null() {
+            // SAFETY: an active guard follows exactly one flockfile call.
+            unsafe { funlockfile(self.0) };
+        }
     }
 }
 
@@ -8806,8 +8883,7 @@ pub(crate) unsafe fn registered_printf_stream_for_caller(
     }
     // The FILE lock is recursive, so user callbacks can call fprintf on the
     // same stream. It is distinct from the registry lock, which is never held.
-    unsafe { flockfile(stream) };
-    let _lock = StdioLockGuard(stream);
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     match unsafe { extension_format_stream(stream, bytes, ap, wide, entry_errno, caller) } {
         Ok(count) => count,
         Err(error) => {
@@ -15164,8 +15240,7 @@ unsafe fn scan_narrow_stream(
 
     // The recursive FILE lock covers parsing, assignments, and pushback, and
     // is released if a read or cookie callback unwinds through cancellation.
-    unsafe { flockfile(stream) };
-    let _lock = StdioLockGuard(stream);
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if let Some(cell) = stream_cell(id)
         && !cell.lock().is_readable()
     {

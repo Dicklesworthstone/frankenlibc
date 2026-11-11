@@ -7644,13 +7644,27 @@ pub unsafe extern "C-unwind" fn swprintf(
     finish_swprintf(&rendered, s, n)
 }
 
-struct WideStreamLock(*mut std::ffi::c_void);
-
-impl Drop for WideStreamLock {
-    fn drop(&mut self) {
-        // SAFETY: this guard follows one flockfile on the same stream.
-        unsafe { super::stdio_abi::funlockfile(self.0) };
+// The renderer and registered printf callbacks remain native, while a
+// foreign FILE keeps its own orientation and conversion state.
+unsafe fn orient_wprintf_stream(stream: *mut c_void) -> bool {
+    #[cfg(not(feature = "standalone"))]
+    {
+        static HOST: OnceLock<usize> = OnceLock::new();
+        let call = |address| {
+            // SAFETY: the selected host function owns this live foreign FILE.
+            let host: unsafe extern "C" fn(*mut c_void, c_int) -> c_int =
+                unsafe { std::mem::transmute(address) };
+            unsafe { host(stream, 1) }
+        };
+        // Orient before rendering, including empty output and reached %n
+        // stores. Byte-oriented host streams reject the entire operation.
+        if let Some(orientation) =
+            unsafe { try_host_wide_io(stream, &HOST, "fwide", 0, call) }
+        {
+            return orientation > 0;
+        }
     }
+    super::stdio_abi::orient_stream_wide(stream)
 }
 
 /// Write the completed wide rendering through its FILE, including buffering
@@ -7671,6 +7685,41 @@ unsafe fn write_wprintf_rendered(
         unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     };
+    #[cfg(not(feature = "standalone"))]
+    {
+        static HOST: OnceLock<usize> = OnceLock::new();
+        let call = |address| -> Result<c_int, c_int> {
+            // SAFETY: every caller holds the operation's FILE lock, unless
+            // the stream explicitly requests caller-managed locking.
+            let host: unsafe extern "C-unwind" fn(libc::wchar_t, *mut c_void) -> u32 =
+                unsafe { std::mem::transmute(address) };
+            let mut offset = 0;
+            while offset < rendered.len() {
+                let (wc, length) =
+                    wchar_core::mbtowc(&rendered[offset..]).ok_or(libc::EILSEQ)?;
+                // The host owns the retained codec and conversion state.
+                // NUL is one wide output character, never a terminator.
+                if unsafe { host(wc as libc::wchar_t, stream) } == WEOF_VALUE {
+                    return Ok(-1);
+                }
+                offset += length;
+            }
+            Ok(wide_count)
+        };
+        // Keep native formatting and registered conversions intact; only
+        // the output sink belongs to the foreign FILE's provider.
+        if let Some(result) =
+            unsafe { try_host_wide_io(stream, &HOST, "fputwc_unlocked", Ok(-1), call) }
+        {
+            return match result {
+                Ok(count) => count,
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    -1
+                }
+            };
+        }
+    }
     if reserve_wide_output(stream, 0).is_some() {
         let written = super::stdio_abi::with_wide_memstream_write(stream, |destination| {
             let mut offset = 0;
@@ -7722,10 +7771,9 @@ unsafe fn write_wprintf_rendered(
             };
         }
 
-        // Keep all chunks under one recursive FILE lock, as the extension
-        // writer does. The guard also releases it during cancellation unwind.
-        unsafe { super::stdio_abi::flockfile(stream) };
-        let _lock = WideStreamLock(stream);
+        // Keep all chunks under one operation lock, respecting caller-managed
+        // locking. The guard also releases it during cancellation unwind.
+        let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
 
         // The remaining codecs encode each scalar in exactly one byte.
         // Keep staging bounded, including for arbitrarily long renderings.
@@ -7775,7 +7823,7 @@ pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: 
     };
     let caller = core::intrinsics::return_address() as usize;
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
-    if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
+    if format.is_null() || !unsafe { orient_wprintf_stream(stdout_ptr) } {
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
@@ -7821,7 +7869,7 @@ pub unsafe extern "C-unwind" fn fwprintf(
 ) -> c_int {
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     let caller = core::intrinsics::return_address() as usize;
-    if format.is_null() || stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
+    if format.is_null() || stream.is_null() || !unsafe { orient_wprintf_stream(stream) } {
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
@@ -7926,7 +7974,7 @@ pub(crate) unsafe fn vwprintf_for_caller(
         super::stdio_abi::StdioLockGuard::acquire(super::stdio_abi::active_stdout_stream())
     };
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
-    if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
+    if format.is_null() || !unsafe { orient_wprintf_stream(stdout_ptr) } {
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
@@ -7987,7 +8035,7 @@ pub(crate) unsafe fn vfwprintf_for_caller(
     caller: usize,
 ) -> c_int {
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
-    if format.is_null() || stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
+    if format.is_null() || stream.is_null() || !unsafe { orient_wprintf_stream(stream) } {
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
@@ -8332,9 +8380,9 @@ pub(crate) unsafe fn vfwscanf_with_dialect(
         return result;
     }
     // A formatted scan is one FILE operation, including parsing, reads,
-    // assignments, and pushback. Release the recursive lock on cancellation.
-    unsafe { super::stdio_abi::flockfile(stream) };
-    let _lock = WideStreamLock(stream);
+    // assignments, and pushback. Respect caller-managed locking and release
+    // an acquired recursive lock on cancellation.
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     if !super::stdio_abi::orient_stream_wide(stream) {
         return libc::EOF;
     }

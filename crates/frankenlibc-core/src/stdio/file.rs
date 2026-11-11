@@ -867,6 +867,12 @@ impl StdioStream {
         self.read_pushback.clear();
     }
 
+    /// Whether the caller owns synchronization of ordinary stream operations.
+    #[inline]
+    pub fn locking_bycaller(&self) -> bool {
+        self.flags.locking_bycaller
+    }
+
     /// `__fsetlocking`: FSETLOCKING_QUERY(0) only reports the current locking
     /// mode; INTERNAL(1)/BYCALLER(2) change it. Returns the mode that was in
     /// effect BEFORE the call (glibc returns the previous mode on a set and the

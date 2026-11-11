@@ -83,7 +83,7 @@ jobs:
         run: |
           # Each test launches isolated strict and hardened children and requires one case per child.
           cargo test --release -p frankenlibc-abi --test conformance_diff_swscanf foreign_wide_streams -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/foreign-wide-stdio.log
-          grep -Eq '^test result: ok\. 2 passed; 0 failed;' artifacts/locale-results/foreign-wide-stdio.log
+          grep -Eq '^test result: ok\. 3 passed; 0 failed;' artifacts/locale-results/foreign-wide-stdio.log
       - name: Check wide scanning with independent locale and destination oracles
         run: |
           cargo test --release -p frankenlibc-abi --test conformance_diff_swscanf --test conformance_diff_scanf_engine_still_covered -- --test-threads=1 --nocapture 2>&1 | tee artifacts/locale-results/wide-scanf.log

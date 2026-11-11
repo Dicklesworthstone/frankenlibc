@@ -2071,6 +2071,7 @@ pub(crate) mod glibc_flag_bits {
     pub const TIED_PUT_GET: i32 = 0x0400;
     pub const IS_APPENDING: i32 = 0x1000;
     pub const IS_FILEBUF: i32 = 0x2000;
+    pub const USER_LOCK: i32 = 0x8000;
 }
 
 /// Register a glibc-layout `FILE` handle for a stream whose I/O state lives in

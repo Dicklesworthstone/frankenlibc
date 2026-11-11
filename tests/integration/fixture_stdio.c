@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdio_ext.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
@@ -1945,7 +1946,7 @@ struct stream_lock_case {
     const char *name;
     enum stream_lock_operation operation;
     int unlocked;
-    int backing; /* fd, fixed memory, growable memory, read cookie, host fd */
+    int backing; /* fd, fixed memory, growable memory, read cookie, host fd, wide memory */
 };
 
 struct stream_lock_worker {
@@ -2138,10 +2139,11 @@ static FILE *open_host_lock_stream(void **handle) {
     return stream;
 }
 
-static int test_stream_lock_case(const struct stream_lock_case *test) {
+static int test_stream_lock_case(const struct stream_lock_case *test, int locking_mode) {
     void *host_handle = NULL;
     char backing[16] = "abc\n";
     char *published = NULL;
+    wchar_t *wide_published = NULL;
     size_t published_size = 0;
     struct line_cookie cookie = {.data = (const unsigned char *)"abc\n", .length = 4};
     FILE *fp;
@@ -2151,6 +2153,7 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
         cookie_io_functions_t functions = {.read = read_line_cookie, .close = close_line_cookie};
         fp = fopencookie(&cookie, "r", functions);
     } else if (test->backing == 4) fp = open_host_lock_stream(&host_handle);
+    else if (test->backing == 5) fp = open_wmemstream(&wide_published, &published_size);
     else fp = tmpfile();
     if (!fp) return 1;
     if ((test->backing == 0 || test->backing == 4) &&
@@ -2165,6 +2168,38 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
         if (host_handle) dlclose(host_handle);
         return 1;
     }
+    /* Use the real export, and query GNU separately for a GNU-owned FILE.
+     * A candidate-local setting cannot stand in for the provider's mode. */
+    int (*set_locking)(FILE *, int) = NULL;
+    int (*host_locking)(FILE *, int) = NULL;
+    if (locking_mode) {
+        set_locking = dlsym(RTLD_DEFAULT, "__fsetlocking");
+        if (host_handle) host_locking = dlsym(host_handle, "__fsetlocking");
+        int mode_failed = !set_locking || (host_handle && !host_locking);
+        if (!mode_failed) {
+            mode_failed |= set_locking(fp, FSETLOCKING_QUERY) != FSETLOCKING_INTERNAL;
+            mode_failed |= set_locking(fp, FSETLOCKING_BYCALLER) != FSETLOCKING_INTERNAL;
+            mode_failed |= set_locking(fp, FSETLOCKING_QUERY) != FSETLOCKING_BYCALLER;
+            if (host_locking)
+                mode_failed |= host_locking(fp, FSETLOCKING_QUERY) != FSETLOCKING_BYCALLER;
+            if (locking_mode == FSETLOCKING_INTERNAL) {
+                mode_failed |= set_locking(fp, FSETLOCKING_INTERNAL) != FSETLOCKING_BYCALLER;
+                mode_failed |= set_locking(fp, FSETLOCKING_QUERY) != FSETLOCKING_INTERNAL;
+                if (host_locking)
+                    mode_failed |= host_locking(fp, FSETLOCKING_QUERY) != FSETLOCKING_INTERNAL;
+            }
+        }
+        if (mode_failed) {
+            fprintf(stderr, "FAIL locks %s backing=%d mode=%d: locking mode transition\n",
+                    test->name, test->backing, locking_mode);
+            fclose(fp);
+            if (host_handle) dlclose(host_handle);
+            free(published); free(wide_published);
+            close(ready[0]); close(ready[1]); close(done[0]); close(done[1]);
+            return 1;
+        }
+    }
+    int bypass = test->unlocked || locking_mode == FSETLOCKING_BYCALLER;
     struct stream_lock_worker state = {
         .stream = fp, .operation = test->operation, .ready_fd = ready[1], .done_fd = done[1],
     };
@@ -2179,12 +2214,12 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
         return 1;
     }
     int ready_seen = stream_lock_wait(ready[0], 2000);
-    int before_release = ready_seen && stream_lock_wait(done[0], test->unlocked ? 2000 : 40);
+    int before_release = ready_seen && stream_lock_wait(done[0], bypass ? 2000 : 40);
     /* A broken fclose may already have destroyed the handle. The negative
      * control must report that failure without unlocking freed storage. */
     int closed_early = before_release && test->operation == LOCK_FCLOSE;
     if (!closed_early) funlockfile(fp);
-    int after_one_release = before_release || stream_lock_wait(done[0], test->unlocked ? 0 : 40);
+    int after_one_release = before_release || stream_lock_wait(done[0], bypass ? 0 : 40);
     closed_early |= after_one_release && test->operation == LOCK_FCLOSE;
     if (!closed_early) funlockfile(fp);
     int completed = after_one_release || stream_lock_wait(done[0], 2000);
@@ -2193,19 +2228,21 @@ static int test_stream_lock_case(const struct stream_lock_case *test) {
         _exit(3); /* do not join an unexpectedly deadlocked operation */
     }
     int failed = pthread_join(thread, NULL) != 0 || !ready_seen || state.failed;
-    failed |= test->unlocked ? !before_release : before_release || after_one_release;
+    failed |= bypass ? !before_release : before_release || after_one_release;
     if (test->operation != LOCK_FCLOSE) {
+        if (set_locking) failed |= set_locking(fp, FSETLOCKING_QUERY) != locking_mode;
+        if (host_locking) failed |= host_locking(fp, FSETLOCKING_QUERY) != locking_mode;
         int locked = ftrylockfile(fp) == 0;
         failed |= !locked;
         if (locked) { funlockfile(fp); failed |= fclose(fp) != 0; }
     }
     if (test->backing == 3) failed |= cookie.closed != 1;
     if (host_handle) dlclose(host_handle);
-    free(published);
+    free(published); free(wide_published);
     close(ready[0]); close(ready[1]); close(done[0]); close(done[1]);
-    if (failed) fprintf(stderr, "FAIL locks %s backing=%d ready=%d before=%d recursive=%d operation=%d\n",
-                        test->name, test->backing, ready_seen, before_release, after_one_release, state.failed);
-    printf("locks %s backing=%d: %s\n", test->name, test->backing, failed ? "FAIL" : "PASS");
+    if (failed) fprintf(stderr, "FAIL locks %s backing=%d mode=%d ready=%d before=%d recursive=%d operation=%d\n",
+                        test->name, test->backing, locking_mode, ready_seen, before_release, after_one_release, state.failed);
+    printf("locks %s backing=%d mode=%d: %s\n", test->name, test->backing, locking_mode, failed ? "FAIL" : "PASS");
     return failed != 0;
 }
 
@@ -2298,20 +2335,45 @@ static int test_stream_locking(void) {
 #undef HOST_LOCK_CASE
 #undef HOST_UNLOCK_CASE
     };
+    const struct stream_lock_case caller_cases[] = {
+#define CALLER_CASE(op, backing) {#op, LOCK_##op, 0, backing}
+        CALLER_CASE(FGETC, 0), CALLER_CASE(FREAD, 0), CALLER_CASE(FWRITE, 0),
+        CALLER_CASE(FFLUSH, 0), CALLER_CASE(FEOF, 0), CALLER_CASE(FERROR, 0),
+        CALLER_CASE(CLEARERR, 0), CALLER_CASE(FPRINTF, 0), CALLER_CASE(FSCANF, 0),
+        CALLER_CASE(FGETWS, 0), CALLER_CASE(FPUTWS, 0), CALLER_CASE(FWPRINTF, 0),
+        CALLER_CASE(FWSCANF, 0), CALLER_CASE(UNGETWC, 0),
+        CALLER_CASE(FGETC, 4), CALLER_CASE(FREAD, 4), CALLER_CASE(FWRITE, 4),
+        CALLER_CASE(FFLUSH, 4), CALLER_CASE(FEOF, 4), CALLER_CASE(FERROR, 4),
+        CALLER_CASE(CLEARERR, 4), CALLER_CASE(FPRINTF, 4), CALLER_CASE(FSCANF, 4),
+        CALLER_CASE(FGETWS, 4), CALLER_CASE(FPUTWS, 4), CALLER_CASE(FWPRINTF, 4),
+        CALLER_CASE(FWSCANF, 4), CALLER_CASE(UNGETWC, 4),
+        CALLER_CASE(FGETS, 1), CALLER_CASE(FSCANF, 1),
+        CALLER_CASE(FWRITE, 2), CALLER_CASE(FFLUSH, 2), CALLER_CASE(FPRINTF, 2),
+        CALLER_CASE(FGETS, 3), CALLER_CASE(FSCANF, 3),
+        CALLER_CASE(FPUTWC, 5), CALLER_CASE(FPUTWS, 5),
+        CALLER_CASE(FWPRINTF, 5), CALLER_CASE(FFLUSH, 5),
+#undef CALLER_CASE
+    };
     alarm(25);
     int failed = 0;
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
-        failed += test_stream_lock_case(&cases[i]);
+        failed += test_stream_lock_case(&cases[i], 0);
+    for (size_t i = 0; i < sizeof(caller_cases) / sizeof(caller_cases[0]); ++i) {
+        failed += test_stream_lock_case(&caller_cases[i], FSETLOCKING_BYCALLER);
+        failed += test_stream_lock_case(&caller_cases[i], FSETLOCKING_INTERNAL);
+    }
     failed += test_puts_records_are_atomic();
     alarm(0);
     printf("fixture_stdio locks: %s (%zu cases, %d failed)\n",
-           failed ? "FAIL" : "PASS", sizeof(cases) / sizeof(cases[0]) + 1, failed);
+           failed ? "FAIL" : "PASS",
+           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 1,
+           failed);
     return failed != 0;
 }
 
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "locks") == 0) {
-        const char *symbols[] = {"tmpfile", "flockfile", "funlockfile", "ftrylockfile",
+        const char *symbols[] = {"tmpfile", "flockfile", "funlockfile", "ftrylockfile", "__fsetlocking",
             "fgetc", "getc", "fgets", "fread", "fputc", "putc", "fputs", "fwrite", "fflush",
             "fseek", "ftell", "rewind", "fgetpos", "fsetpos", "feof", "ferror", "clearerr",
             "ungetc", "setvbuf", "fclose", "freopen", "fprintf", "__isoc99_fscanf", "getline",
@@ -2320,7 +2382,7 @@ int main(int argc, char **argv) {
             "__overflow", "fputs_unlocked", "fwrite_unlocked", "fflush_unlocked", "feof_unlocked",
             "ferror_unlocked", "clearerr_unlocked", "fgetwc_unlocked", "getwc_unlocked", "fgetws_unlocked",
             "fputwc_unlocked", "putwc_unlocked", "fputws_unlocked", "__fgets_chk", "__fgets_unlocked_chk",
-            "__fgetws_chk", "__fgetws_unlocked_chk", "fmemopen", "open_memstream", "fopencookie", "puts"};
+            "__fgetws_chk", "__fgetws_unlocked_chk", "fmemopen", "open_memstream", "open_wmemstream", "fopencookie", "puts"};
         if (argc != 3 || check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_stream_locking();

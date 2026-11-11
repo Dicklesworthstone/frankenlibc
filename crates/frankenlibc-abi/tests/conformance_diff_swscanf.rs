@@ -1957,6 +1957,187 @@ mod locale_scanning {
     }
 
     #[test]
+    fn foreign_wide_streams_preserve_formatted_output() {
+        if !isolated("foreign_wide_streams_preserve_formatted_output") {
+            return;
+        }
+        const PREFIX_LEN: usize = 1030;
+        let prefix = w(&"é".repeat(PREFIX_LEN));
+        let suffix = w("éX");
+        let format = w("%ls%lc%ls%s%n");
+        let [host_io, foreign_io, ..] = foreign_wide_io_engines();
+        for (bound, active, encoded, narrow) in [
+            (
+                c"C.UTF-8",
+                c"fr_FR",
+                b"\xc3\xa9".as_slice(),
+                b"\xe9".as_slice(),
+            ),
+            (
+                c"fr_FR",
+                c"C.UTF-8",
+                b"\xe9".as_slice(),
+                b"\xc3\xa9".as_slice(),
+            ),
+        ] {
+            let narrow = std::ffi::CString::new(narrow).unwrap();
+            for io in [host_io, foreign_io] {
+                let entries: [(&str, FwprintfFn); 2] = if io.name == "host" {
+                    [
+                        ("fwprintf", host_fwprintf()),
+                        ("vfwprintf", call_host_vfwprintf),
+                    ]
+                } else {
+                    [("fwprintf", fl::fwprintf), ("vfwprintf", call_vfwprintf)]
+                };
+                for (entry, print) in entries {
+                    select(bound);
+                    let (output_path, path) = wide_stream_path(io.name, b"");
+                    let stream = unsafe { (io.open)(path.as_ptr(), c"r+".as_ptr()) };
+                    assert!(!stream.is_null(), "{} {entry} FILE", io.name);
+                    assert!(unsafe { (io.orient)(stream, 1) } > 0);
+                    select(active);
+                    let mut count = SENTINEL;
+                    unsafe {
+                        *(io.errno)() = 23;
+                        assert_eq!(
+                            print(
+                                stream,
+                                format.as_ptr(),
+                                prefix.as_ptr(),
+                                0u32,
+                                suffix.as_ptr(),
+                                narrow.as_ptr(),
+                                &mut count,
+                            ),
+                            (PREFIX_LEN + 4) as c_int,
+                            "{bound:?} -> {active:?}/{} {entry}",
+                            io.name
+                        );
+                        assert_eq!(count, (PREFIX_LEN + 4) as c_int);
+                        assert_eq!(*(io.errno)(), 23);
+                        assert_eq!((io.flush)(stream), 0);
+                        assert_eq!((io.error)(stream), 0);
+                        assert!((io.orient)(stream, 0) > 0);
+                        assert_eq!((io.close)(stream), 0);
+                    }
+                    let mut expected = encoded.repeat(PREFIX_LEN);
+                    expected.push(0);
+                    expected.extend_from_slice(encoded);
+                    expected.push(b'X');
+                    expected.extend_from_slice(encoded);
+                    assert_eq!(
+                        std::fs::read(&output_path).unwrap(),
+                        expected,
+                        "{bound:?} -> {active:?}/{} {entry} retained codec and NUL",
+                        io.name
+                    );
+
+                    select(bound);
+                    let (_, path) = wide_stream_path(io.name, b"");
+                    let stream = unsafe { (io.open)(path.as_ptr(), c"r+".as_ptr()) };
+                    assert!(!stream.is_null());
+                    unsafe {
+                        assert_eq!((io.orient)(stream, 0), 0);
+                        assert_eq!(print(stream, w("").as_ptr()), 0);
+                        assert!((io.orient)(stream, 0) > 0, "{} {entry} empty", io.name);
+                        assert_eq!((io.close)(stream), 0);
+                    }
+
+                    let (_, path) = wide_stream_path(io.name, b"");
+                    let stream = unsafe { (io.open)(path.as_ptr(), c"r+".as_ptr()) };
+                    assert!(!stream.is_null());
+                    let mut rejected_count = SENTINEL;
+                    unsafe {
+                        assert!((io.orient)(stream, -1) < 0);
+                        *(io.errno)() = 23;
+                        assert_eq!(print(stream, w("%n").as_ptr(), &mut rejected_count), -1);
+                        assert_eq!(rejected_count, SENTINEL);
+                        assert_eq!(*(io.errno)(), 23);
+                        assert_eq!((io.error)(stream), 0);
+                        assert_eq!((io.tell)(stream), 0);
+                        assert_eq!((io.close)(stream), 0);
+                    }
+                }
+            }
+        }
+
+        // Register only in the native provider. Delegating the entire format
+        // to GNU would lose this callback even though GNU owns the FILE.
+        static CALLBACKS: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        unsafe extern "C-unwind" fn arginfo(
+            _info: *const c_void,
+            _count: usize,
+            _types: *mut c_int,
+            _sizes: *mut c_int,
+        ) -> c_int {
+            0
+        }
+        unsafe extern "C-unwind" fn render(
+            stream: *mut c_void,
+            _info: *const c_void,
+            _args: *const *const c_void,
+        ) -> c_int {
+            CALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            for wc in [0xe9, 0, b'X' as u32] {
+                if unsafe { fl::fputwc(wc, stream) } == u32::MAX {
+                    return -1;
+                }
+            }
+            3
+        }
+        unsafe {
+            assert_eq!(
+                glibc_internal_abi::register_printf_specifier(
+                    b'Q' as c_int,
+                    render as *const () as *mut c_void,
+                    arginfo as *const () as *mut c_void,
+                ),
+                0
+            );
+        }
+        for (bound, active, encoded) in [
+            (c"C.UTF-8", c"fr_FR", b"\xc3\xa9".as_slice()),
+            (c"fr_FR", c"C.UTF-8", b"\xe9".as_slice()),
+        ] {
+            for (entry, print) in [
+                ("fwprintf", fl::fwprintf as FwprintfFn),
+                ("vfwprintf", call_vfwprintf),
+            ] {
+                select(bound);
+                let (output_path, path) = wide_stream_path("foreign-printf-callback", b"");
+                let stream = unsafe { (host_io.open)(path.as_ptr(), c"r+".as_ptr()) };
+                assert!(!stream.is_null());
+                assert!(unsafe { (host_io.orient)(stream, 1) } > 0);
+                select(active);
+                let before = CALLBACKS.load(std::sync::atomic::Ordering::Relaxed);
+                let mut count = SENTINEL;
+                unsafe {
+                    assert_eq!(print(stream, w("A%Q%nZ").as_ptr(), &mut count), 5);
+                    assert_eq!(count, 4, "{entry} callback count");
+                    assert_eq!((host_io.flush)(stream), 0);
+                    assert_eq!((host_io.error)(stream), 0);
+                    assert_eq!((host_io.close)(stream), 0);
+                }
+                assert_eq!(
+                    CALLBACKS.load(std::sync::atomic::Ordering::Relaxed),
+                    before + 1,
+                    "{entry} native callback"
+                );
+                let mut expected = vec![b'A'];
+                expected.extend_from_slice(encoded);
+                expected.extend_from_slice(&[0, b'X', b'Z']);
+                assert_eq!(
+                    std::fs::read(&output_path).unwrap(),
+                    expected,
+                    "{bound:?} -> {active:?}/{entry} callback output"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn formatted_wide_streams_keep_bound_codec() {
         if !isolated("formatted_wide_streams_keep_bound_codec") {
             return;

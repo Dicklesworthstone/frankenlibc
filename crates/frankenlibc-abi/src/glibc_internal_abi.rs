@@ -3770,7 +3770,7 @@ pub unsafe extern "C" fn __fsetlocking(fp: *mut c_void, typ: c_int) -> c_int {
     // it. Returns the mode in effect before the call. fl previously ignored
     // `typ` and the stream, always returning 2 (BYCALLER) — wrong default (glibc
     // streams default to INTERNAL=1) and never honoring a set. bd-zwtrcz.
-    crate::stdio_abi::stream_set_locking(fp, typ).unwrap_or(1)
+    unsafe { crate::stdio_abi::stream_set_locking(fp, typ) }.unwrap_or(1)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fwritable(fp: *mut c_void) -> c_int {
