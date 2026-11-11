@@ -110,8 +110,9 @@ impl PrimalDualController {
 
         let full_validation_trigger_ppm =
             (base_full - lambda_r + lambda_l).clamp(5_000, 900_000) as u32;
-        let repair_trigger_ppm =
-            (base_repair - lambda_r / 2 + lambda_l / 2).clamp(10_000, 980_000) as u32;
+        let repair_trigger_ppm = (base_repair - lambda_r / 2 + lambda_l / 2)
+            .clamp(10_000, 980_000)
+            .max(i64::from(full_validation_trigger_ppm)) as u32;
 
         // Keep size bound conservative but mode-aware.
         let max_request_bytes = match mode {
@@ -285,5 +286,36 @@ mod tests {
             high_hardened.full_validation_trigger_ppm > low_hardened.full_validation_trigger_ppm
         );
         assert!(high_hardened.repair_trigger_ppm > low_hardened.repair_trigger_ppm);
+    }
+
+    #[test]
+    fn repair_trigger_never_undercuts_full_validation_trigger_across_multiplier_extremes() {
+        let ctl = PrimalDualController::new();
+        let samples = [
+            -2_000_000_i64,
+            -500_000,
+            -120_000,
+            -80_000,
+            0,
+            80_000,
+            120_000,
+            500_000,
+            2_000_000,
+        ];
+        for lambda_l in samples {
+            for lambda_r in samples {
+                ctl.lambda_latency.store(lambda_l, Ordering::Relaxed);
+                ctl.lambda_risk.store(lambda_r, Ordering::Relaxed);
+                for mode in [SafetyLevel::Strict, SafetyLevel::Hardened, SafetyLevel::Off] {
+                    let limits = ctl.limits(mode);
+                    assert!(
+                        limits.full_validation_trigger_ppm <= limits.repair_trigger_ppm,
+                        "mode={mode:?} lambda_l={lambda_l} lambda_r={lambda_r}: full={} > repair={}",
+                        limits.full_validation_trigger_ppm,
+                        limits.repair_trigger_ppm
+                    );
+                }
+            }
+        }
     }
 }

@@ -123,7 +123,7 @@ fn best_response(mu: &[f64; LEVELS]) -> [f64; LEVELS] {
     }
     let mut total = 0.0f64;
     for (k, br_k) in br.iter_mut().enumerate() {
-        *br_k = ((-congestion_cost(k, mu) / TEMPERATURE) - max_val).exp();
+        *br_k = crate::util::exp_f64((-congestion_cost(k, mu) / TEMPERATURE) - max_val);
         total += *br_k;
     }
     for v in &mut br {

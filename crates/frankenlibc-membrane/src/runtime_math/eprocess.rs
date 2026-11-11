@@ -76,16 +76,17 @@ impl AnytimeEProcessMonitor {
         let warning_e = warning_e.max(1.0);
         let alarm_e = alarm_e.max(warning_e);
 
-        let adverse_delta = (q1 / p0).ln();
-        let clean_delta = ((1.0 - q1) / (1.0 - p0)).ln();
+        let adverse_delta = crate::util::ln_f64(q1 / p0);
+        let clean_delta = crate::util::ln_f64((1.0 - q1) / (1.0 - p0));
 
         Self {
             calls: std::array::from_fn(|_| AtomicU64::new(0)),
             adverse: std::array::from_fn(|_| AtomicU64::new(0)),
             log_e_scaled: std::array::from_fn(|_| AtomicI64::new(0)),
             warmup_calls,
-            warning_log_e_scaled: crate::util::round_f64(warning_e.ln() * SCALE) as i64,
-            alarm_log_e_scaled: crate::util::round_f64(alarm_e.ln() * SCALE) as i64,
+            warning_log_e_scaled: crate::util::round_f64(crate::util::ln_f64(warning_e) * SCALE)
+                as i64,
+            alarm_log_e_scaled: crate::util::round_f64(crate::util::ln_f64(alarm_e) * SCALE) as i64,
             adverse_delta_scaled: crate::util::round_f64(adverse_delta * SCALE) as i64,
             clean_delta_scaled: crate::util::round_f64(clean_delta * SCALE) as i64,
         }
@@ -140,7 +141,7 @@ impl AnytimeEProcessMonitor {
     pub fn e_value(&self, family: ApiFamily) -> f64 {
         let idx = usize::from(family as u8);
         let log_e = self.log_e_scaled[idx].load(Ordering::Relaxed) as f64 / SCALE;
-        log_e.exp()
+        crate::util::exp_f64(log_e)
     }
 
     /// Family summary.

@@ -105,7 +105,7 @@ fn padic_abs(n: u64) -> f64 {
         return 0.0;
     }
     let v = binary_valuation(n);
-    2.0f64.powi(-(v as i32))
+    crate::util::powi_f64(2.0, -(v as i32))
 }
 
 /// Classify an IEEE 754 exponent into one of EXPONENT_BINS regime bins.
@@ -149,7 +149,7 @@ fn ultrametric_distance(a: &[f64; EXPONENT_BINS], b: &[f64; EXPONENT_BINS]) -> f
         .position(|(&ai, &bi)| (ai - bi).abs() > EPS)
     {
         None => 0.0,
-        Some(k) => 2.0f64.powi(-(k as i32)),
+        Some(k) => crate::util::powi_f64(2.0, -(k as i32)),
     }
 }
 

@@ -258,7 +258,7 @@ fn hoeffding_epsilon(n: u64) -> f64 {
     if n == 0 {
         return f64::INFINITY;
     }
-    let log_term = (2.0_f64 / DELTA).ln();
+    let log_term = crate::util::ln_f64(2.0_f64 / DELTA);
     (log_term / (2.0 * n as f64)).sqrt()
 }
 

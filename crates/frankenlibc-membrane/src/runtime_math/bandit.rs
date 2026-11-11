@@ -177,7 +177,7 @@ impl ConstrainedBanditRouter {
         }
 
         let total = (fast_pulls + full_pulls) as f64;
-        let log_total = total.ln().max(1.0);
+        let log_total = crate::util::ln_f64(total).max(1.0);
         let mode = crate::config::safety_level();
         // Utility values are around 100,000, so scale c accordingly.
         let c = if mode.heals_enabled() {

@@ -89,7 +89,7 @@ const FAMILIES: usize = ApiFamily::COUNT;
 fn binary_kl(x: f64, p: f64) -> f64 {
     let x = x.clamp(1e-15, 1.0 - 1e-15);
     let p = p.clamp(1e-15, 1.0 - 1e-15);
-    x * (x / p).ln() + (1.0 - x) * ((1.0 - x) / (1.0 - p)).ln()
+    x * crate::util::ln_f64(x / p) + (1.0 - x) * crate::util::ln_f64((1.0 - x) / (1.0 - p))
 }
 
 /// Evaluate the rate function at multiple threshold levels.

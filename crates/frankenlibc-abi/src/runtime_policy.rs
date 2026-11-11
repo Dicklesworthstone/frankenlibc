@@ -101,6 +101,7 @@ static MODE_EVENT_LOGS: Mutex<ModeEventRing> = Mutex::new(ModeEventRing::new());
 static FFI_PCC_STATE: AtomicU8 = AtomicU8::new(FFI_PCC_STATE_UNVERIFIED);
 static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
 static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
+static ALLOCATOR_OBSERVE_TICKS: AtomicU32 = AtomicU32::new(0);
 
 // Runtime-math kill-switch state (bd-06bxm.9)
 // FRANKENLIBC_RUNTIME_MATH=on|off controls whether decide() consults the
@@ -3923,13 +3924,20 @@ pub(crate) fn observe(
     adverse: bool,
 ) {
     // High-frequency families fast path: skip observation overhead.
-    // This applies to both strict and hardened mode for perf.
-    if cfg!(not(test))
-        && !adverse
-        && matches!(
+    // Hardened `Allocator` observations sample 1-in-64 non-adverse calls (plus
+    // 100% of adverse events) so `QuarantineController` and SOS allocator
+    // certificates (`FRAGMENTATION`, `THREAD_SAFETY`) receive live telemetry
+    // without perturbing strict passthrough or hot-loop latency.
+    if cfg!(not(test)) && !adverse {
+        if matches!(family, ApiFamily::Allocator) {
+            if MODE_STATE.load(AtomicOrdering::Relaxed) != MODE_HARDENED
+                || (ALLOCATOR_OBSERVE_TICKS.fetch_add(1, AtomicOrdering::Relaxed) & 63) != 0
+            {
+                return;
+            }
+        } else if matches!(
             family,
-            ApiFamily::Allocator
-                | ApiFamily::StringMemory
+            ApiFamily::StringMemory
                 | ApiFamily::Ctype
                 | ApiFamily::Loader
                 | ApiFamily::Stdlib
@@ -3967,9 +3975,9 @@ pub(crate) fn observe(
                 | ApiFamily::Resolver
                 | ApiFamily::Locale
                 | ApiFamily::VirtualMemory
-        )
-    {
-        return;
+        ) {
+            return;
+        }
     }
 
     // Observation is telemetry into an existing kernel; it never builds one.
@@ -4014,8 +4022,10 @@ pub(crate) fn observe(
         let _ = (profile, estimated_cost_ns, adverse, mode);
         return;
     }
-    if lookup_active_ffi_pcc_certificate(family, usize::MAX, true, adverse).is_some()
-        || lookup_active_ffi_pcc_certificate(family, usize::MAX, false, adverse).is_some()
+    if !adverse
+        && !matches!(family, ApiFamily::Allocator)
+        && (lookup_active_ffi_pcc_certificate(family, usize::MAX, true, false).is_some()
+            || lookup_active_ffi_pcc_certificate(family, usize::MAX, false, false).is_some())
     {
         let _ = (profile, estimated_cost_ns);
         return;
@@ -4030,6 +4040,36 @@ pub(crate) fn observe(
     if let Some(k) = kernel()
         && runtime_policy_guard(|| {
             k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
+        })
+        .is_err()
+    {
+        mark_kernel_broken();
+    }
+}
+
+pub(crate) fn observe_size_class_mapping(
+    requested_size: usize,
+    mapped_class_size: usize,
+    class_membership_valid: bool,
+) {
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY {
+        return;
+    }
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
+    if runtime_math_disabled() {
+        return;
+    }
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
+    if let Some(k) = kernel()
+        && runtime_policy_guard(|| {
+            k.observe_size_class_mapping(
+                requested_size,
+                mapped_class_size,
+                class_membership_valid,
+            );
         })
         .is_err()
     {

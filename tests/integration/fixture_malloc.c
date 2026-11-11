@@ -699,6 +699,144 @@ static int canary_probe(const char *id, const char *library) {
     return ok ? 0 : 1;
 }
 
+#if defined(__x86_64__)
+static uint32_t read_mxcsr_raw(void) {
+    uint32_t mx = 0;
+    __asm__ volatile("stmxcsr %0" : "=m"(mx));
+    return mx;
+}
+
+static void write_mxcsr_raw(uint32_t mx) {
+    __asm__ volatile("ldmxcsr %0" : : "m"(mx));
+}
+
+static uint16_t read_x87_sw_raw(void) {
+    uint16_t sw = 0;
+    __asm__ volatile("fnstsw %0" : "=m"(sw));
+    return sw;
+}
+
+static void clear_x87_exceptions_raw(void) {
+    __asm__ volatile("fnclex");
+}
+#endif
+
+static int errno_fenv_probe(const char *id, const char *library) {
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (!mode || (strcmp(mode, "strict") && strcmp(mode, "hardened"))) return 2;
+    if (strcmp(id, "membrane-churn") != 0) return 2;
+    int hardened = strcmp(mode, "hardened") == 0;
+
+    void *(*allocate)(size_t) = probe_symbol("malloc", library);
+    void (*release)(void *) = probe_symbol("free", library);
+    void *(*copy)(void *, const void *, size_t) = probe_symbol("memcpy", library);
+    size_t (*len_fn)(const char *) = probe_symbol("strlen", library);
+    pid_t (*getpid_fn)(void) = probe_symbol("getpid", library);
+    int (*probe)(void *) = probe_symbol("mprobe", library);
+    int (*ready)(void) = probe_symbol("__frankenlibc_is_runtime_ready", library);
+    if (!allocate || !release || !copy || !len_fn || !getpid_fn || !probe || !ready || !ready()) {
+        return 2;
+    }
+
+    const char *names[24];
+    int passed[24];
+    int count = 0;
+#define EF_CHECK(label, expr) do { \
+    names[count] = (label); \
+    passed[count] = (expr) ? 1 : 0; \
+    count++; \
+} while (0)
+
+    const int sentinels[3] = {0, EAGAIN, ENOENT};
+    const char *sentinel_names[3] = {"zero", "eagain", "enoent"};
+
+#if defined(__x86_64__)
+    uint32_t saved_mxcsr = read_mxcsr_raw();
+#endif
+
+    for (int s = 0; s < 3; s++) {
+        int want_errno = sentinels[s];
+#if defined(__x86_64__)
+        /* Round-toward-zero (0x6000) and all sticky FP exception flags (0x3f) cleared. */
+        uint32_t target_mxcsr = (saved_mxcsr & ~0x603fU) | 0x6000U;
+        clear_x87_exceptions_raw();
+        write_mxcsr_raw(target_mxcsr);
+#endif
+        errno = want_errno;
+
+        for (int i = 0; i < 600; i++) {
+            size_t sz = (size_t)(16 + ((i * 37) & 511));
+            char *buf = allocate(sz);
+            if (!buf) {
+                errno = want_errno;
+                continue;
+            }
+            copy(buf, "membrane-fenv-probe", 20 <= sz ? 20 : sz);
+            buf[sz - 1] = '\0';
+            volatile size_t n = len_fn(buf);
+            (void)n;
+            if ((i & 7) == 0) {
+                (void)getpid_fn();
+                (void)probe(buf);
+            }
+            release(buf);
+            if (hardened && s == 1 && i < 260) {
+                /* Adverse double-free crosses QuarantineController::EPOCH_INTERVAL (256)
+                 * and exercises runtime_math transcendental controllers under load. */
+                release(buf);
+            }
+        }
+
+        int got_errno = errno;
+#if defined(__x86_64__)
+        uint32_t got_mxcsr = read_mxcsr_raw();
+        uint16_t got_x87_sw = read_x87_sw_raw();
+#endif
+        if (s == 0) {
+            EF_CHECK("errno_zero_preserved", got_errno == want_errno);
+#if defined(__x86_64__)
+            EF_CHECK("mxcsr_round_zero_preserved_s0", (got_mxcsr & 0x6000U) == 0x6000U);
+            EF_CHECK("mxcsr_sticky_clean_s0", (got_mxcsr & 0x3fU) == 0U);
+            EF_CHECK("x87_sticky_clean_s0", (got_x87_sw & 0x3fU) == 0U);
+#endif
+        } else if (s == 1) {
+            EF_CHECK("errno_eagain_preserved_across_quarantine_epoch", got_errno == want_errno);
+#if defined(__x86_64__)
+            EF_CHECK("mxcsr_round_zero_preserved_s1", (got_mxcsr & 0x6000U) == 0x6000U);
+            EF_CHECK("mxcsr_sticky_clean_s1", (got_mxcsr & 0x3fU) == 0U);
+            EF_CHECK("x87_sticky_clean_s1", (got_x87_sw & 0x3fU) == 0U);
+#endif
+        } else {
+            EF_CHECK("errno_enoent_preserved", got_errno == want_errno);
+#if defined(__x86_64__)
+            EF_CHECK("mxcsr_round_zero_preserved_s2", (got_mxcsr & 0x6000U) == 0x6000U);
+            EF_CHECK("mxcsr_sticky_clean_s2", (got_mxcsr & 0x3fU) == 0U);
+            EF_CHECK("x87_sticky_clean_s2", (got_x87_sw & 0x3fU) == 0U);
+#endif
+        }
+        (void)sentinel_names;
+    }
+
+#if defined(__x86_64__)
+    clear_x87_exceptions_raw();
+    write_mxcsr_raw(saved_mxcsr);
+#endif
+    errno = 0;
+
+    int ok = 1;
+    for (int i = 0; i < count; i++) if (!passed[i]) ok = 0;
+    printf("{\"case_id\":"); ws8_json_string(id);
+    printf(",\"mode\":"); ws8_json_string(mode);
+    printf(",\"checks\":[");
+    for (int i = 0; i < count; i++) {
+        printf("%s{\"name\":", i ? "," : ""); ws8_json_string(names[i]);
+        printf(",\"passed\":%s}", passed[i] ? "true" : "false");
+    }
+    printf("],\"status\":\"%s\",\"executed\":%d}\n", ok ? "pass" : "fail", count);
+#undef EF_CHECK
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     if (argc == 3 && !strcmp(argv[1], "--print-canary-hex")) {
         return print_canary_hex(argv[2]);
@@ -711,6 +849,9 @@ int main(int argc, char **argv) {
     }
     if (argc == 4 && !strcmp(argv[1], "--canary-case")) {
         return canary_probe(argv[2], argv[3]);
+    }
+    if (argc == 4 && !strcmp(argv[1], "--errno-fenv-case")) {
+        return errno_fenv_probe(argv[2], argv[3]);
     }
     if (argc != 1) return 2;
     int fails = 0;

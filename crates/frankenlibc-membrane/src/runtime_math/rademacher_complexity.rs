@@ -226,7 +226,7 @@ impl RademacherComplexityMonitor {
             (2.0 / ALPHA - 1.0).min(self.count as f64)
         };
         let delta = 0.05;
-        let concentration = ((2.0_f64 / delta).ln() / (2.0 * n)).sqrt();
+        let concentration = (crate::util::ln_f64(2.0_f64 / delta) / (2.0 * n)).sqrt();
         2.0 * self.complexity + concentration
     }
 

@@ -794,34 +794,44 @@ mod tests {
     fn reader_read_if_changed_under_contention() {
         let sl = StdArc::new(SeqLock::new(0u64));
         let barrier = StdArc::new(Barrier::new(2));
+        let writer_done = StdArc::new(std::sync::atomic::AtomicBool::new(false));
 
         let sl_r = StdArc::clone(&sl);
         let bar_r = StdArc::clone(&barrier);
+        let done_r = StdArc::clone(&writer_done);
         let reader_handle = thread::spawn(move || {
             let mut reader = SeqLockReader::new(&sl_r);
             let _ = reader.read(); // prime
             bar_r.wait();
             let mut change_count = 0u64;
-            for _ in 0..5000 {
-                if reader.read_if_changed().is_some() {
-                    change_count += 1;
+            while !done_r.load(Ordering::Acquire) {
+                for _ in 0..64 {
+                    if reader.read_if_changed().is_some() {
+                        change_count += 1;
+                    }
                 }
+                thread::yield_now();
+            }
+            if reader.read_if_changed().is_some() {
+                change_count += 1;
             }
             change_count
         });
 
         let sl_w = StdArc::clone(&sl);
         let bar_w = StdArc::clone(&barrier);
+        let done_w = StdArc::clone(&writer_done);
         let writer_handle = thread::spawn(move || {
             bar_w.wait();
             for i in 1..=1000u64 {
                 sl_w.write_with(|d| *d = i);
             }
+            done_w.store(true, Ordering::Release);
         });
 
         writer_handle.join().expect("writer panicked");
         let changes = reader_handle.join().expect("reader panicked");
-        // Reader should have detected at least some changes.
+        // Reader must observe at least the final committed state change.
         assert!(changes > 0, "reader should have seen at least one change");
         assert_eq!(*sl.load(), 1000);
     }

@@ -907,3 +907,380 @@ fn e2e_framework_decision_cards_export_contains_all_decisions() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Wave 3 (bd-reality-202609-lx578q.4.1 / .4.2):
+// Causal reachability of UpgradeToSafeVariant, live QuarantineController
+// adaptation, FRANKENLIBC_LOG JSONL emission, and ELF GOT libm zero-call gate.
+// ---------------------------------------------------------------------------
+
+const FORBIDDEN_LIBM_SYMBOLS: &[&str] = &[
+    "acos", "acosf", "acosh", "acoshf", "asin", "asinf", "asinh", "asinhf", "atan", "atanf",
+    "atan2", "atan2f", "atanh", "atanhf", "cbrt", "cbrtf", "cos", "cosf", "cosh", "coshf",
+    "erf", "erff", "erfc", "erfcf", "exp", "expf", "exp2", "exp2f", "exp10", "exp10f",
+    "expm1", "expm1f", "hypot", "hypotf", "lgamma", "lgammaf", "log", "logf", "log10",
+    "log10f", "log1p", "log1pf", "log2", "log2f", "pow", "powf", "sin", "sinf", "sincos",
+    "sincosf", "sinh", "sinhf", "sqrt", "sqrtf", "tan", "tanf", "tanh", "tanhf", "tgamma",
+    "tgammaf",
+];
+
+fn normalize_elf_symbol_name(raw: &str) -> &str {
+    let trimmed = raw.trim().trim_start_matches('<').trim_end_matches('>');
+    let without_plt = trimmed.split("@plt").next().unwrap_or(trimmed);
+    let without_ver = without_plt.split('@').next().unwrap_or(without_plt);
+    without_ver.split('+').next().unwrap_or(without_ver).trim()
+}
+
+fn is_forbidden_libm_target(sym: &str) -> bool {
+    let base = normalize_elf_symbol_name(sym);
+    FORBIDDEN_LIBM_SYMBOLS.contains(&base) || base.contains("frankenlibc_abi::math_abi::")
+}
+
+fn parse_got_relocations(readelf_relocs: &str) -> std::collections::HashMap<u64, String> {
+    let mut map = std::collections::HashMap::new();
+    for line in readelf_relocs.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.len() < 5 {
+            continue;
+        }
+        let Ok(offset) = u64::from_str_radix(tokens[0], 16) else {
+            continue;
+        };
+        if !tokens[2].starts_with("R_X86_64_") && !tokens[2].starts_with("R_AARCH64_") {
+            continue;
+        }
+        let sym = normalize_elf_symbol_name(tokens[4]);
+        if !sym.is_empty() {
+            map.insert(offset, sym.to_string());
+        }
+    }
+    map
+}
+
+/// Scans `objdump -d -C` text paired with `readelf -rW` GOT relocation offsets
+/// and returns `(membrane_function_count, violations)`.
+fn scan_membrane_disassembly_for_libm_calls(
+    objdump_text: &str,
+    got_relocs: &std::collections::HashMap<u64, String>,
+) -> (usize, Vec<String>) {
+    let mut in_membrane_fn = false;
+    let mut current_fn = String::new();
+    let mut membrane_fn_count = 0usize;
+    let mut violations = Vec::new();
+
+    for line in objdump_text.lines() {
+        let trimmed = line.trim();
+        // Function header in `objdump -d -C`: `0000000000123450 <symbol_name>:`
+        if !line.starts_with(' ')
+            && !line.starts_with('\t')
+            && trimmed.ends_with(">:")
+            && let Some(open) = trimmed.find('<')
+        {
+            let header_sym = &trimmed[open + 1..trimmed.len() - 2];
+            in_membrane_fn = header_sym.contains("frankenlibc_membrane::");
+            if in_membrane_fn {
+                membrane_fn_count += 1;
+                current_fn = header_sym.to_string();
+            } else {
+                current_fn.clear();
+            }
+            continue;
+        }
+
+        if !in_membrane_fn {
+            continue;
+        }
+
+        // Only inspect call / tail-jump instructions inside `frankenlibc_membrane::*`.
+        let Some((_addr_col, rest)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let insn = rest.trim();
+        let is_branch_or_call = insn.starts_with("call")
+            || insn.contains("\tcall")
+            || insn.contains(" call")
+            || insn.starts_with("jmp")
+            || insn.contains("\tjmp")
+            || insn.contains(" jmp");
+        if !is_branch_or_call {
+            continue;
+        }
+
+        // 1. Direct or PLT symbol target `<sym>` at end of instruction (excluding `<current_fn+0x...>` intra-fn jumps).
+        if let (Some(lt), Some(gt)) = (insn.rfind('<'), insn.rfind('>'))
+            && lt < gt
+        {
+            let target_raw = &insn[lt + 1..gt];
+            // Intra-function local branch targets look like `frankenlibc_membrane::...+0x42`.
+            if !target_raw.starts_with("frankenlibc_membrane::")
+                && is_forbidden_libm_target(target_raw)
+            {
+                violations.push(format!("{current_fn} -> direct/PLT `{target_raw}` ({trimmed})"));
+                continue;
+            }
+        }
+
+        // 2. RIP-relative GOT indirect call/jmp: `# 2a8f10` comment in objdump output.
+        if let Some(hash_idx) = insn.find('#') {
+            let comment = insn[hash_idx + 1..].trim();
+            if let Some(hex_tok) = comment.split_whitespace().next()
+                && let Ok(got_addr) = u64::from_str_radix(hex_tok, 16)
+                && let Some(got_sym) = got_relocs.get(&got_addr)
+                && is_forbidden_libm_target(got_sym)
+            {
+                violations.push(format!(
+                    "{current_fn} -> GOT 0x{got_addr:x} `{got_sym}` ({trimmed})"
+                ));
+            }
+        }
+    }
+
+    (membrane_fn_count, violations)
+}
+
+#[test]
+fn elf_got_disassembly_detector_catches_direct_and_indirect_libm_calls() {
+    let synthetic_readelf = "\
+00000000003f9a10  0000001200000006 R_X86_64_GLOB_DAT      0000000000081200 log@@GLIBC_2.2.5 + 0
+00000000003f9a18  0000001300000006 R_X86_64_GLOB_DAT      0000000000090000 memcpy@@GLIBC_2.14 + 0
+";
+    let synthetic_objdump = "\
+0000000000081200 <log@@GLIBC_2.2.5>:
+   81200:\tff 25 0a 88 37 00    \tjmp    *0x37880a(%rip)        # 3f9a10 <log@@GLIBC_2.2.5+0x378810>
+
+00000000001a4000 <frankenlibc_membrane::runtime_math::design::DesignController::update>:
+  1a4000:\t50                   \tpush   %rax
+  1a4001:\tff 15 09 5a 25 00    \tcall   *0x255a09(%rip)        # 3f9a10 <_DYNAMIC+0x210>
+  1a4007:\te8 f4 d1 ed ff       \tcall   81200 <exp@plt>
+  1a400c:\tff 15 06 5a 25 00    \tcall   *0x255a06(%rip)        # 3f9a18 <_DYNAMIC+0x218>
+  1a4012:\t75 ee                \tjne    1a4002 <frankenlibc_membrane::runtime_math::design::DesignController::update+0x2>
+  1a4014:\t58                   \tpop    %rax
+  1a4015:\tc3                   \tret
+";
+    let relocs = parse_got_relocations(synthetic_readelf);
+    let (fn_count, violations) =
+        scan_membrane_disassembly_for_libm_calls(synthetic_objdump, &relocs);
+    assert_eq!(fn_count, 1);
+    assert_eq!(
+        violations.len(),
+        2,
+        "detector must catch both GOT-indirect `log` and PLT `exp` while ignoring `memcpy` and non-membrane functions: {violations:?}"
+    );
+    assert!(violations[0].contains("log"));
+    assert!(violations[1].contains("exp"));
+}
+
+fn locate_release_cdylib() -> Option<std::path::PathBuf> {
+    if let Some(explicit) = std::env::var_os("FRANKENLIBC_RELEASE_SO") {
+        let p = std::path::PathBuf::from(explicit);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(profile_dir) = exe.parent().and_then(|p| p.parent())
+    {
+        let sibling = profile_dir.join("libfrankenlibc_abi.so");
+        if sibling.is_file() {
+            return Some(sibling);
+        }
+    }
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())?;
+    let default_release = workspace_root.join("target/release/libfrankenlibc_abi.so");
+    if default_release.is_file() {
+        return Some(default_release);
+    }
+    let shared_tmp_release =
+        std::path::Path::new("/data/tmp/cargo-target/release/libfrankenlibc_abi.so");
+    if shared_tmp_release.is_file() {
+        return Some(shared_tmp_release.to_path_buf());
+    }
+    if let Ok(entries) = std::fs::read_dir(workspace_root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with(".rch-target-") {
+                let candidate = entry.path().join("release/libfrankenlibc_abi.so");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn release_libfrankenlibc_abi_has_zero_membrane_to_libm_calls() {
+    let so_path = locate_release_cdylib().unwrap_or_else(|| {
+        panic!(
+            "release libfrankenlibc_abi.so not found; build `-p frankenlibc-abi --release` before running ELF GOT audit"
+        )
+    });
+
+    let readelf_out = std::process::Command::new("readelf")
+        .args(["-rW"])
+        .arg(&so_path)
+        .output()
+        .expect("readelf -rW must execute");
+    assert!(
+        readelf_out.status.success(),
+        "readelf -rW failed on {}",
+        so_path.display()
+    );
+    let got_relocs = parse_got_relocations(&String::from_utf8_lossy(&readelf_out.stdout));
+
+    let objdump_out = std::process::Command::new("objdump")
+        .args(["-d", "-C"])
+        .arg(&so_path)
+        .output()
+        .expect("objdump -d -C must execute");
+    assert!(
+        objdump_out.status.success(),
+        "objdump -d -C failed on {}",
+        so_path.display()
+    );
+    let (membrane_fns, violations) = scan_membrane_disassembly_for_libm_calls(
+        &String::from_utf8_lossy(&objdump_out.stdout),
+        &got_relocs,
+    );
+
+    assert!(
+        membrane_fns >= 50,
+        "expected >= 50 demangled frankenlibc_membrane::* functions in {}, found {membrane_fns}",
+        so_path.display()
+    );
+    assert!(
+        violations.is_empty(),
+        "found {} forbidden membrane -> libm/math_abi calls in {}:\n{}",
+        violations.len(),
+        so_path.display(),
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
+    if std::env::var_os("FRANKENLIBC_WAVE3_LOG_CHILD").is_some() {
+        frankenlibc_membrane::heal::initialize_runtime_log();
+        let kernel = RuntimeMathKernel::new();
+        let probe_ctx = RuntimeContext::pointer_validation(0x4000, false);
+
+        // Drive adverse observations on PointerValidation so conformal risk exceeds repair_trigger_ppm.
+        let mut saw_upgrade = false;
+        for _ in 0..64 {
+            kernel.observe_validation_result(
+                SafetyLevel::Hardened,
+                ApiFamily::PointerValidation,
+                ValidationProfile::Full,
+                35,
+                true,
+            );
+            let decision = kernel.decide(SafetyLevel::Hardened, probe_ctx);
+            if decision.action == MembraneAction::Repair(HealingAction::UpgradeToSafeVariant) {
+                assert_eq!(decision.profile, ValidationProfile::Full);
+                assert!(decision.evidence_seqno > 0);
+                saw_upgrade = true;
+                break;
+            }
+        }
+        assert!(
+            saw_upgrade,
+            "hardened kernel must reach MembraneAction::Repair(HealingAction::UpgradeToSafeVariant) under elevated conformal risk"
+        );
+
+        // Drive >= 256 allocator observations to cross QuarantineController::EPOCH_INTERVAL (256)
+        // and adapt `quarantine_controller::current_depth()` away from DEFAULT_DEPTH (8192).
+        frankenlibc_membrane::quarantine_controller::CONTENTION.free_begin();
+        frankenlibc_membrane::quarantine_controller::CONTENTION.free_end();
+        let initial_depth = frankenlibc_membrane::quarantine_controller::current_depth();
+        assert_eq!(initial_depth, 8192);
+        for step in 0..300 {
+            kernel.observe_validation_result(
+                SafetyLevel::Hardened,
+                ApiFamily::Allocator,
+                ValidationProfile::Full,
+                150_000 + (step % 16) * 5_000,
+                step % 4 == 0,
+            );
+        }
+        let adapted_depth = frankenlibc_membrane::quarantine_controller::current_depth();
+        assert_ne!(
+            adapted_depth, initial_depth,
+            "QuarantineController must dynamically adapt depth across epoch boundary"
+        );
+        return;
+    }
+
+    // Parent creates an in-memory memfd (no MFD_CLOEXEC so child inherits it via /proc/<pid>/fd/<fd>).
+    // SAFETY: valid NUL-terminated name, flags = 0.
+    let memfd = unsafe { libc::memfd_create(c"wave3_runtime_math_log".as_ptr(), 0) };
+    assert!(memfd >= 0, "memfd_create failed");
+    let log_path = format!("/proc/{}/fd/{memfd}", std::process::id());
+
+    let child = std::process::Command::new(std::env::current_exe().expect("current_exe"))
+        .args([
+            "--exact",
+            "e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl",
+            "--nocapture",
+        ])
+        .env("FRANKENLIBC_WAVE3_LOG_CHILD", "1")
+        .env("FRANKENLIBC_LOG", &log_path)
+        .output()
+        .expect("child test process must execute");
+
+    // Read JSONL bytes from memfd at offset 0, then close memfd.
+    // SAFETY: memfd is valid and owned by this test.
+    unsafe {
+        libc::lseek(memfd, 0, libc::SEEK_SET);
+    }
+    let mut raw_bytes = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        // SAFETY: valid fd and stack buffer.
+        let n = unsafe { libc::read(memfd, buf.as_mut_ptr().cast(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        raw_bytes.extend_from_slice(&buf[..n as usize]);
+    }
+    // SAFETY: closing owned memfd.
+    unsafe {
+        libc::close(memfd);
+    }
+
+    assert!(
+        child.status.success(),
+        "child failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+
+    let log_text = String::from_utf8(raw_bytes).expect("FRANKENLIBC_LOG must be valid UTF-8");
+    let rows = parse_jsonl_rows(&log_text);
+    let has_upgrade = rows.iter().any(|row| {
+        row.get("event").and_then(Value::as_str) == Some("runtime_math_upgrade_to_safe_variant")
+            && row.get("action").and_then(Value::as_str)
+                == Some("Repair(UpgradeToSafeVariant)")
+            && row.get("risk_ppm").and_then(Value::as_u64).is_some()
+            && row.get("repair_trigger_ppm").and_then(Value::as_u64).is_some()
+    });
+    let has_quarantine = rows.iter().any(|row| {
+        row.get("event").and_then(Value::as_str) == Some("quarantine_depth_transition")
+            && row.get("from_depth").and_then(Value::as_u64) == Some(8192)
+            && row
+                .get("to_depth")
+                .and_then(Value::as_u64)
+                .is_some_and(|d| d != 8192)
+            && row.get("epochs").and_then(Value::as_u64).is_some_and(|e| e >= 1)
+    });
+    assert!(
+        has_upgrade,
+        "FRANKENLIBC_LOG must contain structured upgrade_to_safe_variant JSONL record; got:\n{log_text}"
+    );
+    assert!(
+        has_quarantine,
+        "FRANKENLIBC_LOG must contain structured quarantine_depth_transition JSONL record; got:\n{log_text}"
+    );
+}

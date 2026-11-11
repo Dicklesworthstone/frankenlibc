@@ -67,12 +67,13 @@ fn alloc_zeroed_atomic_u64_slice(num_words: usize) -> Box<[AtomicU64]> {
 
 impl BloomSlab {
     fn new(expected_items: usize, fp_rate: f64) -> Self {
+        let _floating_env = crate::runtime_math::FloatingEnvironmentGuard::enter();
         let fp_rate = fp_rate.clamp(1e-10, 0.5);
         let n = expected_items.max(1) as f64;
 
         // Optimal bit count: m = -n * ln(p) / (ln2)^2
         let ln2 = std::f64::consts::LN_2;
-        let m = crate::util::ceil_f64(-n * fp_rate.ln() / (ln2 * ln2)) as usize;
+        let m = crate::util::ceil_f64(-n * crate::util::ln_f64(fp_rate) / (ln2 * ln2)) as usize;
         let m = m.max(64); // minimum 64 bits
 
         // Optimal hash count: k = (m/n) * ln2

@@ -58,6 +58,7 @@ static HOST_MEMALIGN_FN: OnceLock<usize> = OnceLock::new();
 static HOST_MALLOC_USABLE_SIZE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_ALLOCATOR_RAW_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
 static HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
+static SIZE_CLASS_OBSERVE_TICKS: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostAllocatorResolutionMetrics {
@@ -1716,6 +1717,11 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     descriptor.meta_base.store(meta_base, Ordering::Release);
     descriptor.next_unused_slot.store(0, Ordering::Relaxed);
     SEGMENT_OWNED_BITMAP.fetch_or(1u64 << raw_index, Ordering::Release);
+    runtime_policy::observe_size_class_mapping(
+        class_size,
+        class_size,
+        small_bin_index(class_size).map(|idx| idx.get()) == Some(class_index),
+    );
     Some(raw_index)
 }
 
@@ -6681,6 +6687,12 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     if !out.is_null() {
         bump_path_counter(&NONSTRICT_PATH_ALLOCS);
         record_alloc_stats(Some(reentry_guard.slot), req);
+        if req <= MAX_SMALL_SIZE
+            && (SIZE_CLASS_OBSERVE_TICKS.fetch_add(1, Ordering::Relaxed) & 63) == 0
+            && let Some(class_index) = small_bin_index(req)
+        {
+            runtime_policy::observe_size_class_mapping(req, bin_size(class_index.get()), true);
+        }
     }
     runtime_policy::observe(
         ApiFamily::Allocator,

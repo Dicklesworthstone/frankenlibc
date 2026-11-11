@@ -207,13 +207,13 @@ impl ProvenanceInfoController {
         for &count in &self.histogram {
             if count > 0 {
                 let p = count as f64 / n;
-                shannon -= p * p.log2();
+                shannon -= p * crate::util::log2_f64(p);
                 sum_p_sq += p * p;
             }
         }
 
         let renyi_h2 = if sum_p_sq > 0.0 {
-            -sum_p_sq.log2()
+            -crate::util::log2_f64(sum_p_sq)
         } else {
             8.0
         };
@@ -266,14 +266,18 @@ impl ProvenanceInfoController {
                 max_p = max_p.max(p);
             }
         }
-        let min_entropy = if max_p > 0.0 { -max_p.log2() } else { 8.0 };
+        let min_entropy = if max_p > 0.0 {
+            -crate::util::log2_f64(max_p)
+        } else {
+            8.0
+        };
 
         // Birthday bound collision probability (log₂).
         // P ≈ N²/2^{H₂+1} → log₂(P) ≈ 2·log₂(N) - H₂ - 1
         // Use H₂ scaled to 128-bit tag (H₂ * 16 bytes).
         let tag_h2 = self.renyi_ewma * 16.0; // Scale from per-byte to per-tag.
         let log2_n = if self.observations > 0 {
-            (self.observations as f64).log2()
+            crate::util::log2_f64(self.observations as f64)
         } else {
             0.0
         };

@@ -215,12 +215,12 @@ impl EntropyRateMonitor {
             }
             for &p_ij in &probs[i] {
                 if p_ij > eps {
-                    h_rate -= pi_i * p_ij * p_ij.log2();
+                    h_rate -= pi_i * p_ij * crate::util::log2_f64(p_ij);
                 }
             }
         }
         // Clamp to valid range: [0, log₂(K)]
-        h_rate.clamp(0.0, (K as f64).log2())
+        h_rate.clamp(0.0, crate::util::log2_f64(K as f64))
     }
 
     /// Feed a severity vector and update entropy rate estimates.
@@ -253,7 +253,7 @@ impl EntropyRateMonitor {
                     h_sum += self.controller_entropy_rate(i);
                 }
                 let mean_h = h_sum / N as f64;
-                let log2_k = (K as f64).log2();
+                let log2_k = crate::util::log2_f64(K as f64);
                 let ratio = if log2_k > 1e-12 {
                     (mean_h / log2_k).clamp(0.0, 1.0)
                 } else {

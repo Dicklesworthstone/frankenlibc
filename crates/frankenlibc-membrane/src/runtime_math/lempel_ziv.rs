@@ -155,7 +155,7 @@ fn expected_random_complexity(n: usize) -> f64 {
         return 1.0;
     }
     let n_f = n as f64;
-    n_f * (K as f64).ln() / n_f.ln()
+    n_f * crate::util::ln_f64(K as f64) / crate::util::ln_f64(n_f)
 }
 
 /// Lempel-Ziv complexity monitor.

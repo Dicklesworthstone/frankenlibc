@@ -162,7 +162,7 @@ impl ReferenceModel {
         for k in 0..K {
             let q_k = (other.freq[k] + eps) / other_total;
             let p_k = (self.freq[k] + eps) / self_total;
-            kl += q_k * (q_k / p_k).ln();
+            kl += q_k * crate::util::ln_f64(q_k / p_k);
         }
         kl.max(0.0) // numerical floor
     }

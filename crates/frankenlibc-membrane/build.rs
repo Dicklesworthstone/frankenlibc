@@ -18,11 +18,11 @@ const MIN_BARRIER_MAP_SITES: usize = 20;
 const OPERATION_LOOKBACK_LINES: usize = 6;
 
 #[derive(Debug)]
-struct SosTask {
-    dimension: usize,
-    monomial_degree: u32,
-    barrier_budget_milli: i64,
-    gram_matrix: Vec<Vec<i64>>,
+pub struct SosTask {
+    pub dimension: usize,
+    pub monomial_degree: u32,
+    pub barrier_budget_milli: i64,
+    pub gram_matrix: Vec<Vec<i64>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -33,10 +33,10 @@ struct PsdVerification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct QuadraticPolynomial {
-    constant: i128,
+pub struct QuadraticPolynomial {
+    pub constant: i128,
     /// Canonical quadratic coefficients for monomials `z_i * z_j` with `i <= j`.
-    coefficients: Vec<Vec<i128>>,
+    pub coefficients: Vec<Vec<i128>>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,14 +146,15 @@ fn generate_certificate_artifact(
             task_path.display()
         )
     });
-    verify_polynomial_identity(&task.gram_matrix, task.barrier_budget_milli).unwrap_or_else(
-        |err| {
+    let barrier = build_barrier_polynomial(&task.gram_matrix, task.barrier_budget_milli);
+    verify_barrier_against_sos_witness(&barrier, task.monomial_degree, &task.gram_matrix)
+        .unwrap_or_else(|err| {
             panic!(
-                "SOS task artifact {} failed symbolic identity verification: {err}",
+                "SOS task artifact {} failed exact rational SOS witness verification: {err}",
                 task_path.display()
             )
-        },
-    );
+        });
+    assert_sos_verifier_negative_controls();
 
     let proof_hash = compute_proof_hash(
         task.dimension,
@@ -193,7 +194,7 @@ fn generate_certificate_artifact(
     }
 }
 
-fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
+pub fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("unable to read {}: {err}", path.display()))?;
     let mut dimension: Option<usize> = None;
@@ -395,14 +396,113 @@ fn verify_psd_cholesky(gram_matrix: &[Vec<i64>]) -> Result<PsdVerification, Stri
     })
 }
 
-fn verify_polynomial_identity(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rational128 {
+    num: i128,
+    den: i128,
+}
+
+impl Rational128 {
+    const ZERO: Self = Self { num: 0, den: 1 };
+    const ONE: Self = Self { num: 1, den: 1 };
+
+    fn from_i128(value: i128) -> Self {
+        Self { num: value, den: 1 }
+    }
+
+    fn new(num: i128, den: i128) -> Result<Self, String> {
+        if den == 0 {
+            return Err("zero denominator in rational SOS witness".to_string());
+        }
+        if num == 0 {
+            return Ok(Self::ZERO);
+        }
+        let (signed_num, pos_den) = if den < 0 {
+            (
+                num.checked_neg()
+                    .ok_or_else(|| "i128 numerator negation overflow".to_string())?,
+                den.checked_neg()
+                    .ok_or_else(|| "i128 denominator negation overflow".to_string())?,
+            )
+        } else {
+            (num, den)
+        };
+        let g = gcd_u128(signed_num.unsigned_abs(), pos_den.unsigned_abs()) as i128;
+        Ok(Self {
+            num: signed_num / g,
+            den: pos_den / g,
+        })
+    }
+
+    fn checked_add(self, rhs: Self) -> Result<Self, String> {
+        let g = gcd_u128(self.den.unsigned_abs(), rhs.den.unsigned_abs()) as i128;
+        let lhs_scaled = self
+            .num
+            .checked_mul(rhs.den / g)
+            .ok_or_else(|| "rational add lhs overflow".to_string())?;
+        let rhs_scaled = rhs
+            .num
+            .checked_mul(self.den / g)
+            .ok_or_else(|| "rational add rhs overflow".to_string())?;
+        let num = lhs_scaled
+            .checked_add(rhs_scaled)
+            .ok_or_else(|| "rational add sum overflow".to_string())?;
+        let den = (self.den / g)
+            .checked_mul(rhs.den)
+            .ok_or_else(|| "rational add denominator overflow".to_string())?;
+        Self::new(num, den)
+    }
+
+    fn checked_sub(self, rhs: Self) -> Result<Self, String> {
+        let neg_rhs = Self {
+            num: rhs
+                .num
+                .checked_neg()
+                .ok_or_else(|| "rational sub negation overflow".to_string())?,
+            den: rhs.den,
+        };
+        self.checked_add(neg_rhs)
+    }
+
+    fn checked_mul(self, rhs: Self) -> Result<Self, String> {
+        if self.num == 0 || rhs.num == 0 {
+            return Ok(Self::ZERO);
+        }
+        let g1 = gcd_u128(self.num.unsigned_abs(), rhs.den.unsigned_abs()) as i128;
+        let g2 = gcd_u128(rhs.num.unsigned_abs(), self.den.unsigned_abs()) as i128;
+        let num = (self.num / g1)
+            .checked_mul(rhs.num / g2)
+            .ok_or_else(|| "rational mul numerator overflow".to_string())?;
+        let den = (self.den / g2)
+            .checked_mul(rhs.den / g1)
+            .ok_or_else(|| "rational mul denominator overflow".to_string())?;
+        Self::new(num, den)
+    }
+
+    fn checked_div(self, rhs: Self) -> Result<Self, String> {
+        if rhs.num == 0 {
+            return Err("division by zero pivot in rational LDL^T".to_string());
+        }
+        let recip = Self::new(rhs.den, rhs.num)?;
+        self.checked_mul(recip)
+    }
+}
+
+fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a.max(1)
+}
+
+pub fn build_barrier_polynomial(
     gram_matrix: &[Vec<i64>],
     barrier_budget_milli: i64,
-) -> Result<(), String> {
+) -> QuadraticPolynomial {
     let degree_two = canonical_degree_two_coefficients(gram_matrix);
     let dim = degree_two.len();
-
-    // Runtime barrier polynomial: B(z) = budget - z^T Q z.
     let mut barrier = QuadraticPolynomial {
         constant: i128::from(barrier_budget_milli),
         coefficients: vec![vec![0_i128; dim]; dim],
@@ -412,22 +512,178 @@ fn verify_polynomial_identity(
             barrier.coefficients[i][j] = -*coeff;
         }
     }
+    barrier
+}
 
-    // SOS remainder polynomial: sigma(z) = z^T Q z (sum-of-squares when Q is PSD).
-    let sigma = QuadraticPolynomial {
-        constant: 0,
-        coefficients: degree_two,
-    };
+/// Non-tautological exact rational SOS witness verification:
+/// 1. Validates degree == 2, interior safety budget `B(0) > 0`, and symmetric `n x n` Gram shape.
+/// 2. Computes exact reduced rational `Q = L D L^T` over `Q`, rejecting negative pivots or
+///    rank-deficient zero pivots with non-zero off-diagonal coupling.
+/// 3. Expands the explicit sum-of-squares polynomial
+///    `sigma_SOS(z) = sum_{k=0}^{n-1} d_k * (sum_{i=k}^{n-1} L_{i,k} z_i)^2`
+///    and verifies coefficient-by-coefficient that `B(z) + sigma_SOS(z) == B(0)` over `Q`.
+pub fn verify_barrier_against_sos_witness(
+    barrier: &QuadraticPolynomial,
+    monomial_degree: u32,
+    gram_matrix: &[Vec<i64>],
+) -> Result<(), String> {
+    if monomial_degree != 2 {
+        return Err(format!(
+            "unsupported SOS monomial_degree {monomial_degree}; expected 2"
+        ));
+    }
+    if barrier.constant <= 0 {
+        return Err(format!(
+            "barrier constant B(0) must be strictly positive, got {}",
+            barrier.constant
+        ));
+    }
+    let n = gram_matrix.len();
+    if n == 0 {
+        return Err("empty Gram matrix".to_string());
+    }
+    if barrier.coefficients.len() != n {
+        return Err(format!(
+            "barrier polynomial dimension {} does not match Gram dimension {n}",
+            barrier.coefficients.len()
+        ));
+    }
+    for (row_idx, row) in gram_matrix.iter().enumerate() {
+        if row.len() != n {
+            return Err(format!(
+                "Gram row {row_idx} has length {}, expected {n}",
+                row.len()
+            ));
+        }
+        if barrier.coefficients[row_idx].len() != n {
+            return Err(format!(
+                "barrier row {row_idx} has length {}, expected {n}",
+                barrier.coefficients[row_idx].len()
+            ));
+        }
+        for (col_idx, &entry) in row.iter().enumerate() {
+            if entry != gram_matrix[col_idx][row_idx] {
+                return Err(format!(
+                    "Gram matrix is not symmetric at ({row_idx}, {col_idx}): {entry} != {}",
+                    gram_matrix[col_idx][row_idx]
+                ));
+            }
+        }
+    }
 
-    // Invariant witness polynomial for identity check:
-    // I(z) = B(z) - sigma(z), so B(z) = I(z) + sigma(z).
-    let invariant = polynomial_sub(&barrier, &sigma)?;
-    let recomposed = polynomial_add(&invariant, &sigma)?;
-    if barrier != recomposed {
-        return Err(polynomial_identity_mismatch(&barrier, &recomposed));
+    let mut l = vec![vec![Rational128::ZERO; n]; n];
+    let mut d = vec![Rational128::ZERO; n];
+    for (idx, row) in l.iter_mut().enumerate() {
+        row[idx] = Rational128::ONE;
+    }
+
+    for j in 0..n {
+        let mut pivot = Rational128::from_i128(i128::from(gram_matrix[j][j]));
+        for (k, &d_k) in d.iter().enumerate().take(j) {
+            let l_sq = l[j][k].checked_mul(l[j][k])?;
+            let term = l_sq.checked_mul(d_k)?;
+            pivot = pivot.checked_sub(term)?;
+        }
+        if pivot.num < 0 {
+            return Err(format!(
+                "indefinite Gram matrix: negative rational LDL^T pivot at row {j}: {}/{}",
+                pivot.num, pivot.den
+            ));
+        }
+        d[j] = pivot;
+
+        for i in (j + 1)..n {
+            let mut sum = Rational128::from_i128(i128::from(gram_matrix[i][j]));
+            for (k, &d_k) in d.iter().enumerate().take(j) {
+                let prod = l[i][k].checked_mul(l[j][k])?.checked_mul(d_k)?;
+                sum = sum.checked_sub(prod)?;
+            }
+            if pivot.num == 0 {
+                if sum.num != 0 {
+                    return Err(format!(
+                        "indefinite Gram matrix: zero pivot at row {j} with non-zero coupling at ({i}, {j}): {}/{}",
+                        sum.num, sum.den
+                    ));
+                }
+                l[i][j] = Rational128::ZERO;
+            } else {
+                l[i][j] = sum.checked_div(pivot)?;
+            }
+        }
+    }
+
+    let mut sigma_coeffs = vec![vec![Rational128::ZERO; n]; n];
+    let two = Rational128::from_i128(2);
+    for (k, &d_k) in d.iter().enumerate() {
+        if d_k.num == 0 {
+            continue;
+        }
+        for i in k..n {
+            let diag_sq = l[i][k].checked_mul(l[i][k])?;
+            let diag_term = d_k.checked_mul(diag_sq)?;
+            sigma_coeffs[i][i] = sigma_coeffs[i][i].checked_add(diag_term)?;
+            for j in (i + 1)..n {
+                let cross = two
+                    .checked_mul(d_k)?
+                    .checked_mul(l[i][k])?
+                    .checked_mul(l[j][k])?;
+                sigma_coeffs[i][j] = sigma_coeffs[i][j].checked_add(cross)?;
+            }
+        }
+    }
+
+    for (i, (barrier_row, sigma_row)) in barrier
+        .coefficients
+        .iter()
+        .zip(sigma_coeffs.iter())
+        .enumerate()
+    {
+        for j in 0..i {
+            if barrier_row[j] != 0 {
+                return Err(format!(
+                    "non-canonical lower-triangular barrier coefficient at ({i}, {j}): {}",
+                    barrier_row[j]
+                ));
+            }
+        }
+        for j in i..n {
+            let sos_coeff = sigma_row[j];
+            if sos_coeff.den != 1 {
+                return Err(format!(
+                    "non-integral reconstructed SOS coefficient at ({i}, {j}): {}/{}",
+                    sos_coeff.num, sos_coeff.den
+                ));
+            }
+            let residual = barrier_row[j]
+                .checked_add(sos_coeff.num)
+                .ok_or_else(|| format!("barrier + SOS coefficient overflow at ({i}, {j})"))?;
+            if residual != 0 {
+                return Err(format!(
+                    "SOS identity B(z) + sigma(z) == B(0) violated at ({i}, {j}): barrier_coeff={}, sos_coeff={}",
+                    barrier_row[j], sos_coeff.num
+                ));
+            }
+        }
     }
 
     Ok(())
+}
+
+fn assert_sos_verifier_negative_controls() {
+    let valid_gram = vec![vec![4_i64, 2], vec![2, 3]];
+    let mut perturbed = build_barrier_polynomial(&valid_gram, 1_000);
+    perturbed.coefficients[0][1] += 1;
+    assert!(
+        verify_barrier_against_sos_witness(&perturbed, 2, &valid_gram).is_err(),
+        "SOS verifier must reject perturbed barrier polynomial"
+    );
+
+    let indefinite_gram = vec![vec![0_i64, 1], vec![1, 0]];
+    let indefinite_barrier = build_barrier_polynomial(&indefinite_gram, 1_000);
+    assert!(
+        verify_barrier_against_sos_witness(&indefinite_barrier, 2, &indefinite_gram).is_err(),
+        "SOS verifier must reject rank-deficient indefinite Gram matrix"
+    );
 }
 
 fn canonical_degree_two_coefficients(gram_matrix: &[Vec<i64>]) -> Vec<Vec<i128>> {
@@ -441,94 +697,6 @@ fn canonical_degree_two_coefficients(gram_matrix: &[Vec<i64>]) -> Vec<Vec<i128>>
         }
     }
     coeffs
-}
-
-fn polynomial_add(
-    lhs: &QuadraticPolynomial,
-    rhs: &QuadraticPolynomial,
-) -> Result<QuadraticPolynomial, String> {
-    if lhs.coefficients.len() != rhs.coefficients.len() {
-        return Err(format!(
-            "dimension mismatch in polynomial_add: {} vs {}",
-            lhs.coefficients.len(),
-            rhs.coefficients.len()
-        ));
-    }
-    let dim = lhs.coefficients.len();
-    let mut out = QuadraticPolynomial {
-        constant: lhs.constant.saturating_add(rhs.constant),
-        coefficients: vec![vec![0_i128; dim]; dim],
-    };
-    for (i, (lhs_row, rhs_row)) in lhs
-        .coefficients
-        .iter()
-        .zip(rhs.coefficients.iter())
-        .enumerate()
-        .take(dim)
-    {
-        for (j, (lhs_coeff, rhs_coeff)) in lhs_row.iter().zip(rhs_row.iter()).enumerate().skip(i) {
-            out.coefficients[i][j] = lhs_coeff.saturating_add(*rhs_coeff);
-        }
-    }
-    Ok(out)
-}
-
-fn polynomial_sub(
-    lhs: &QuadraticPolynomial,
-    rhs: &QuadraticPolynomial,
-) -> Result<QuadraticPolynomial, String> {
-    if lhs.coefficients.len() != rhs.coefficients.len() {
-        return Err(format!(
-            "dimension mismatch in polynomial_sub: {} vs {}",
-            lhs.coefficients.len(),
-            rhs.coefficients.len()
-        ));
-    }
-    let dim = lhs.coefficients.len();
-    let mut out = QuadraticPolynomial {
-        constant: lhs.constant.saturating_sub(rhs.constant),
-        coefficients: vec![vec![0_i128; dim]; dim],
-    };
-    for (i, (lhs_row, rhs_row)) in lhs
-        .coefficients
-        .iter()
-        .zip(rhs.coefficients.iter())
-        .enumerate()
-        .take(dim)
-    {
-        for (j, (lhs_coeff, rhs_coeff)) in lhs_row.iter().zip(rhs_row.iter()).enumerate().skip(i) {
-            out.coefficients[i][j] = lhs_coeff.saturating_sub(*rhs_coeff);
-        }
-    }
-    Ok(out)
-}
-
-fn polynomial_identity_mismatch(
-    expected: &QuadraticPolynomial,
-    actual: &QuadraticPolynomial,
-) -> String {
-    if expected.constant != actual.constant {
-        return format!(
-            "constant term mismatch: expected {}, got {}",
-            expected.constant, actual.constant
-        );
-    }
-    for (i, (lhs_row, rhs_row)) in expected
-        .coefficients
-        .iter()
-        .zip(actual.coefficients.iter())
-        .enumerate()
-    {
-        for j in i..lhs_row.len() {
-            if lhs_row[j] != rhs_row[j] {
-                return format!(
-                    "quadratic coefficient mismatch at ({i}, {j}): expected {}, got {}",
-                    lhs_row[j], rhs_row[j]
-                );
-            }
-        }
-    }
-    "polynomials differ but no mismatch was located".to_string()
 }
 
 fn write_soundness_report(out_dir: &Path, entries: &[SoundnessReportEntry]) -> Result<(), String> {

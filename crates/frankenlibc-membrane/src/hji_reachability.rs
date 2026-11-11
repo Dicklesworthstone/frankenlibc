@@ -482,7 +482,7 @@ impl HjiReachabilityController {
 
         // Map to [0, 1] range.
         let risk_frac = f64::from(risk_ppm) / 1_000_000.0;
-        let lat_frac = ((latency_ns as f64).ln_1p() / 10.0).clamp(0.0, 1.0);
+        let lat_frac = (crate::util::ln_1p_f64(latency_ns as f64) / 10.0).clamp(0.0, 1.0);
         let adv_frac = if adverse { 1.0 } else { 0.0 };
 
         // EWMA update.

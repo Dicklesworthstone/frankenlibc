@@ -162,6 +162,7 @@ mod floating_environment {
         }
     }
 }
+pub(crate) use floating_environment::Guard as FloatingEnvironmentGuard;
 
 /// Thread-bound scope preserving caller floating-point state around internal
 /// runtime-math work, including ABI-side allocation and compiler-generated
@@ -416,6 +417,93 @@ pub enum ApiFamily {
 
 impl ApiFamily {
     pub const COUNT: usize = 20;
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PointerValidation => "pointer_validation",
+            Self::Allocator => "allocator",
+            Self::StringMemory => "string_memory",
+            Self::Stdio => "stdio",
+            Self::Threading => "threading",
+            Self::Resolver => "resolver",
+            Self::MathFenv => "math_fenv",
+            Self::Loader => "loader",
+            Self::Stdlib => "stdlib",
+            Self::Ctype => "ctype",
+            Self::Time => "time",
+            Self::Signal => "signal",
+            Self::IoFd => "io_fd",
+            Self::Socket => "socket",
+            Self::Locale => "locale",
+            Self::Termios => "termios",
+            Self::Inet => "inet",
+            Self::Process => "process",
+            Self::VirtualMemory => "virtual_memory",
+            Self::Poll => "poll",
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn emit_upgrade_to_safe_variant_log(
+    family: ApiFamily,
+    risk_ppm: u32,
+    full_trigger_ppm: u32,
+    repair_trigger_ppm: u32,
+    evidence_seqno: u64,
+) {
+    if !crate::heal::runtime_log_is_configured() {
+        return;
+    }
+    use core::fmt::Write as _;
+    let seq = crate::heal::next_runtime_log_sequence();
+    let mut buf = crate::heal::RuntimeLogBuffer::new();
+    if write!(
+        &mut buf,
+        "{{\"event\":\"runtime_math_upgrade_to_safe_variant\",\"seq\":{seq},\
+\"family\":\"{}\",\"action\":\"Repair(UpgradeToSafeVariant)\",\"risk_ppm\":{risk_ppm},\
+\"full_trigger_ppm\":{full_trigger_ppm},\"repair_trigger_ppm\":{repair_trigger_ppm},\
+\"evidence_seqno\":{evidence_seqno}}}",
+        family.as_str()
+    )
+    .is_ok()
+    {
+        crate::heal::append_runtime_log_record(buf.as_str());
+    } else {
+        crate::heal::note_runtime_log_drop();
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn emit_quarantine_depth_transition_log(
+    from_depth: usize,
+    to_depth: usize,
+    contention: u32,
+    adverse_ppm: u32,
+    epochs: u64,
+    total_hits: u64,
+) {
+    if !crate::heal::runtime_log_is_configured() {
+        return;
+    }
+    use core::fmt::Write as _;
+    let seq = crate::heal::next_runtime_log_sequence();
+    let mut buf = crate::heal::RuntimeLogBuffer::new();
+    if write!(
+        &mut buf,
+        "{{\"event\":\"quarantine_depth_transition\",\"seq\":{seq},\
+\"from_depth\":{from_depth},\"to_depth\":{to_depth},\"contention\":{contention},\
+\"adverse_ppm\":{adverse_ppm},\"epochs\":{epochs},\"total_hits\":{total_hits}}}"
+    )
+    .is_ok()
+    {
+        crate::heal::append_runtime_log_record(buf.as_str());
+    } else {
+        crate::heal::note_runtime_log_drop();
+    }
 }
 
 /// Validation profile selected by the runtime controller.
@@ -2368,7 +2456,7 @@ impl RuntimeMathKernel {
 
         // Policy table escalation: extract Deny/Repair/FullValidate suggestions.
         // Allow is NOT extracted — it defers to the normal cascade so that the
-        // source-level ordering invariant (barrier → full_validation → repair → Allow)
+        // descending-severity ordering invariant (barrier → repair → full_validation → Allow)
         // is preserved.
         let policy_escalation = policy_cell.and_then(|cell| match cell.action {
             // Hardened mode: table may choose Repair/Deny directly.
@@ -2389,14 +2477,18 @@ impl RuntimeMathKernel {
             } else {
                 MembraneAction::Deny
             }
-        } else if let Some(escalated) = policy_escalation {
+        } else if let Some(escalated @ (MembraneAction::Deny | MembraneAction::Repair(_))) =
+            policy_escalation
+        {
             escalated
-        } else if profile.requires_full()
+        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
+            profile = ValidationProfile::Full;
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+        } else if matches!(policy_escalation, Some(MembraneAction::FullValidate))
+            || profile.requires_full()
             || risk_upper_bound_ppm >= limits.full_validation_trigger_ppm
         {
             MembraneAction::FullValidate
-        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
-            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
         } else {
             MembraneAction::Allow
         };
@@ -2506,6 +2598,18 @@ impl RuntimeMathKernel {
             );
             decision.evidence_seqno = seqno;
             self.cached_evidence_seqno.store(seqno, Ordering::Relaxed);
+            if matches!(
+                decision.action,
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+            ) {
+                emit_upgrade_to_safe_variant_log(
+                    ctx.family,
+                    risk_upper_bound_ppm,
+                    limits.full_validation_trigger_ppm,
+                    limits.repair_trigger_ppm,
+                    seqno,
+                );
+            }
         }
 
         decision
@@ -2893,14 +2997,27 @@ impl RuntimeMathKernel {
             risk_bound_ppm,
         );
 
-        // Everything below -- the probe cascade, the quarantine controller and
-        // the check-order bandit -- is statistical estimation, and consumes a
-        // uniform 1-in-CASCADE_STRIDE subsample of observations (adverse or
-        // not, so rates stay unbiased). Running it on every validated call
-        // was a large share of hardened mode's cost (bd-rc0923-epic-eeuy4f.9);
-        // detection latency grows by the stride in events, which at millions
-        // of events per second is milliseconds. The core estimators above
-        // (risk bound, router, controller, Pareto) still see every call.
+        // Feed allocator observations directly into the primal-dual quarantine
+        // controller and allocator SOS barrier certificates BEFORE `CASCADE_STRIDE`
+        // subsampling so `QuarantineController`, `FRAGMENTATION_CERTIFICATE`, and
+        // `THREAD_SAFETY_CERTIFICATE` are never starved in `cfg(not(test))`.
+        if matches!(family, ApiFamily::Allocator) {
+            self.observe_allocator_quarantine_and_sos(
+                profile,
+                estimated_cost_ns,
+                adverse,
+                risk_bound_ppm,
+            );
+        }
+
+        // Everything below -- the probe cascade and the check-order bandit -- is
+        // statistical estimation, and consumes a uniform 1-in-CASCADE_STRIDE
+        // subsample of observations (adverse or not, so rates stay unbiased).
+        // Running it on every validated call was a large share of hardened mode's
+        // cost (bd-rc0923-epic-eeuy4f.9); detection latency grows by the stride
+        // in events, which at millions of events per second is milliseconds. The
+        // core estimators above (risk bound, router, controller, Pareto, and
+        // allocator quarantine/SOS) still see every call that reaches observe.
         let tick = self.cascade_ticks.fetch_add(1, Ordering::Relaxed);
         if !tick.wrapping_add(1).is_multiple_of(CASCADE_STRIDE) {
             return;
@@ -2978,7 +3095,7 @@ impl RuntimeMathKernel {
             ) / 2.0;
             let hit_rate = if adverse { 1.0 } else { 0.0 };
             let risk_score = f64::from(risk_bound_ppm) / 1_000_000.0;
-            let latency = (estimated_cost_ns as f64).ln_1p();
+            let latency = crate::util::ln_1p_f64(estimated_cost_ns as f64);
             let mut spectral = self.spectral.lock();
             spectral.observe(risk_score, latency, contention, hit_rate);
             // Cache the phase state for the hot-path decision.
@@ -2998,7 +3115,7 @@ impl RuntimeMathKernel {
         let run_persistence = ProbePlan::includes_mask(probe_mask, Probe::Persistence);
         if run_rough || run_persistence {
             let rp_risk = f64::from(risk_bound_ppm) / 1_000_000.0;
-            let rp_latency = (estimated_cost_ns as f64).ln_1p();
+            let rp_latency = crate::util::ln_1p_f64(estimated_cost_ns as f64);
             let rp_contention = f64::from(
                 self.cached_oracle_bias[usize::from(family as u8)].load(Ordering::Relaxed),
             ) / 2.0;
@@ -3919,10 +4036,10 @@ impl RuntimeMathKernel {
                 self.cached_sos_state.store(sos_code, Ordering::Relaxed);
             }
 
-            // Feed SOS barrier certificate evaluator (cadence-gated).
-            // Evaluates provenance + quarantine + fragmentation + thread-safety
-            // barriers using cached runtime signals.
-            {
+            // Feed SOS barrier certificate evaluator for non-allocator families.
+            // (`ApiFamily::Allocator` already updated quarantine + SOS barriers
+            // above `CASCADE_STRIDE`.)
+            if !matches!(family, ApiFamily::Allocator) {
                 let barrier_code = {
                     let mut barrier = self.sos_barrier.lock();
                     // Provenance barrier: use cached risk and profile.
@@ -3933,7 +4050,6 @@ impl RuntimeMathKernel {
                         0u32
                     };
                     let depth = current_depth() as u32;
-                    let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth);
                     let pressure_score_milli =
                         self.cached_pressure_score_milli.load(Ordering::Relaxed);
                     let pressure_raw_score_milli =
@@ -3954,31 +4070,22 @@ impl RuntimeMathKernel {
                         projected_pressure_ppm,
                         arena_pressure_ppm,
                     );
-                    if matches!(family, ApiFamily::Allocator) {
-                        barrier.note_allocator_observation(adverse, depth);
-                    }
                     // Quarantine barrier: evaluate on cadence.
                     if barrier.is_quarantine_cadence() {
                         let contention = crate::quarantine_controller::CONTENTION.current_peak();
                         let lambda_latency = crate::quarantine_controller::current_lambda_latency();
                         barrier.evaluate_quarantine(depth, contention, risk_ppm, lambda_latency);
                     }
-                    // Fragmentation barrier: allocator-family cadence check.
-                    if matches!(family, ApiFamily::Allocator) && barrier.is_fragmentation_cadence()
-                    {
-                        let sparse_state =
-                            u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
-                        let size_dispersion_ppm = sparse_state.saturating_mul(250_000);
-                        barrier.evaluate_fragmentation(size_dispersion_ppm, arena_utilization_ppm);
-                    }
-                    if matches!(family, ApiFamily::Allocator | ApiFamily::Threading) {
+                    if matches!(family, ApiFamily::Threading) {
                         let sparse_state =
                             u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
                         let mfg_state =
                             u32::from(self.cached_mfg_state.load(Ordering::Relaxed)).min(3);
-                        let thread_count = 32u32.saturating_add(mfg_state.saturating_mul(128));
                         let live_contention =
                             crate::quarantine_controller::CONTENTION.current_peak();
+                        let thread_count = crate::ebr::active_registered_threads()
+                            .max(live_contention)
+                            .max(1);
                         let concurrent_writers = 1u32
                             .saturating_add(u32::from(adverse))
                             .saturating_add(mfg_state / 2)
@@ -4715,15 +4822,6 @@ impl RuntimeMathKernel {
             }
         }
 
-        // Feed allocator frees into primal-dual quarantine controller.
-        if matches!(family, ApiFamily::Allocator) {
-            let mut quarantine = self.quarantine.lock();
-            let updated = quarantine.record_free(estimated_cost_ns, adverse);
-            if updated {
-                publish_depth(&quarantine);
-            }
-        }
-
         // For non-pointer families we only have coarse stage-exit information.
         // PointerValidation feeds exact stage exits via `note_check_order_outcome`.
         if !matches!(family, ApiFamily::PointerValidation) {
@@ -4751,6 +4849,119 @@ impl RuntimeMathKernel {
                 Ordering::Relaxed,
             );
         }
+    }
+
+    fn observe_allocator_quarantine_and_sos(
+        &self,
+        profile: ValidationProfile,
+        estimated_cost_ns: u64,
+        adverse: bool,
+        risk_bound_ppm: u32,
+    ) {
+        let prev_depth = current_depth();
+        // Capture contention peak BEFORE `record_free()` resets it on an epoch boundary.
+        let peak_contention = crate::quarantine_controller::CONTENTION.current_peak();
+        let (updated, new_depth, epochs, total_hits) = {
+            let mut quarantine = self.quarantine.lock();
+            let updated = quarantine.record_free(estimated_cost_ns, adverse);
+            if updated {
+                publish_depth(&quarantine);
+            }
+            (
+                updated,
+                quarantine.depth(),
+                quarantine.epochs(),
+                quarantine.total_hits(),
+            )
+        };
+        if updated && new_depth != prev_depth {
+            emit_quarantine_depth_transition_log(
+                prev_depth,
+                new_depth,
+                peak_contention,
+                risk_bound_ppm,
+                epochs,
+                total_hits,
+            );
+        }
+
+        let barrier_code = {
+            let mut barrier = self.sos_barrier.lock();
+            let depth_u32 = new_depth.min(u32::MAX as usize) as u32;
+            let depth_ppm = if profile.requires_full() {
+                1_000_000u32
+            } else {
+                0u32
+            };
+            let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth_u32);
+            let pressure_score_milli = self.cached_pressure_score_milli.load(Ordering::Relaxed);
+            let pressure_raw_score_milli =
+                self.cached_pressure_raw_score_milli.load(Ordering::Relaxed);
+            let arena_pressure_ppm = compose_memory_pressure_ppm(
+                depth_u32,
+                pressure_score_milli,
+                pressure_raw_score_milli,
+            );
+            let projected_pressure_ppm = u32::try_from(pressure_raw_score_milli)
+                .unwrap_or(u32::MAX)
+                .saturating_mul(10)
+                .min(1_000_000);
+            barrier.evaluate_provenance(
+                risk_bound_ppm,
+                depth_ppm,
+                projected_pressure_ppm,
+                arena_pressure_ppm,
+            );
+            barrier.note_allocator_observation(adverse, depth_u32);
+            if barrier.is_quarantine_cadence() {
+                let lambda_latency = crate::quarantine_controller::current_lambda_latency();
+                barrier.evaluate_quarantine(
+                    depth_u32,
+                    peak_contention,
+                    risk_bound_ppm,
+                    lambda_latency,
+                );
+            }
+            if barrier.is_fragmentation_cadence() {
+                let sparse_state =
+                    u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
+                let size_dispersion_ppm = sparse_state.saturating_mul(250_000);
+                barrier.evaluate_fragmentation(size_dispersion_ppm, arena_utilization_ppm);
+            }
+            let sparse_state = u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
+            let mfg_state = u32::from(self.cached_mfg_state.load(Ordering::Relaxed)).min(3);
+            let thread_count = crate::ebr::active_registered_threads()
+                .max(peak_contention)
+                .max(1);
+            let concurrent_writers = 1u32
+                .saturating_add(u32::from(adverse))
+                .saturating_add(mfg_state / 2)
+                .max(peak_contention);
+            let owner_conflict = adverse && !profile.requires_full() && risk_bound_ppm > 300_000;
+            let free_list_skew_ppm = sparse_state.saturating_mul(200_000).min(1_000_000);
+            let allocation_epoch_lag_ppm = risk_bound_ppm.min(1_000_000);
+            barrier.evaluate_thread_safety(
+                thread_count,
+                concurrent_writers,
+                owner_conflict,
+                free_list_skew_ppm,
+                allocation_epoch_lag_ppm,
+            );
+            match barrier.state() {
+                SosBarrierState::Calibrating => 0u8,
+                SosBarrierState::Safe => 1u8,
+                SosBarrierState::Warning => 2u8,
+                SosBarrierState::Violated => 3u8,
+            }
+        };
+        self.cached_sos_barrier_state
+            .store(barrier_code, Ordering::Relaxed);
+    }
+
+    /// Detailed SOS barrier controller summary snapshot.
+    #[must_use]
+    pub fn sos_barrier_summary(&self) -> sos_barrier::SosBarrierSummary {
+        self.sos_barrier.lock().summary()
     }
 
     /// Record overlap information for cross-shard consistency checks.
@@ -8543,12 +8754,12 @@ mod tests {
     }
 
     /// Decision-law invariant: the hard-gate cascade in decide() must follow
-    /// exactly this order: barrier → full_validation_trigger → repair_trigger → Allow.
+    /// strict descending-severity order:
+    /// barrier (!admissible) → repair_trigger → full_validation_trigger → Allow.
     ///
-    /// This is the *conservatism guarantee*: no soft heuristic (oracle bias,
-    /// tropical pressure, Pareto, design probes, etc.) can override a hard gate.
-    /// The test verifies source structure rather than runtime behavior so it
-    /// cannot be invalidated by changing cached atomic values.
+    /// This preserves the lattice severity hierarchy (`Deny/SafeDefault >=
+    /// UpgradeToSafeVariant >= FullValidate >= Allow`) so `UpgradeToSafeVariant`
+    /// is never shadowed by the lower `full_validation_trigger` threshold.
     #[test]
     fn decide_hard_gate_cascade_order_is_invariant() {
         let src = include_str!("mod.rs");
@@ -8574,15 +8785,15 @@ mod tests {
             .find("if !admissible {")
             .expect("barrier hard gate must exist");
 
-        // Hard gate 2: full_validation_trigger_ppm checked second.
+        // Hard gate 2: hardened repair_trigger_ppm checked second.
         let gate2 = action_block
-            .find("risk_upper_bound_ppm >= limits.full_validation_trigger_ppm")
-            .expect("full_validation_trigger hard gate must exist");
-
-        // Hard gate 3: repair_trigger_ppm checked third.
-        let gate3 = action_block
             .find("risk_upper_bound_ppm >= limits.repair_trigger_ppm")
             .expect("repair_trigger hard gate must exist");
+
+        // Hard gate 3: full_validation_trigger_ppm checked third.
+        let gate3 = action_block
+            .find("risk_upper_bound_ppm >= limits.full_validation_trigger_ppm")
+            .expect("full_validation_trigger hard gate must exist");
 
         // Hard gate 4: Allow is the final else (lowest priority).
         let gate4 = action_block
@@ -8591,15 +8802,15 @@ mod tests {
 
         assert!(
             gate1 < gate2,
-            "barrier gate must precede full_validation_trigger gate"
+            "barrier gate must precede repair_trigger gate"
         );
         assert!(
             gate2 < gate3,
-            "full_validation_trigger gate must precede repair_trigger gate"
+            "repair_trigger gate must precede full_validation_trigger gate"
         );
         assert!(
             gate3 < gate4,
-            "repair_trigger gate must precede Allow fallthrough"
+            "full_validation_trigger gate must precede Allow fallthrough"
         );
 
         // No `.lock()` calls between barrier check and action determination.
@@ -8790,14 +9001,15 @@ mod tests {
         }
     }
 
-    /// Decision-law invariant (behavioral): in hardened mode, risk above
-    /// repair_trigger_ppm produces Repair or stronger, never Allow.
+    /// Decision-law invariant (behavioral): in hardened mode, admissible calls
+    /// with risk above `repair_trigger_ppm` produce `Repair(UpgradeToSafeVariant)`
+    /// with `ValidationProfile::Full`.
     #[test]
     fn decide_hardened_repair_trigger_never_allows() {
         let kernel = RuntimeMathKernel::new();
 
         // Use a moderate bonus that exceeds hardened repair_trigger (140k base)
-        // but doesn't necessarily exceed strict full_validation_trigger (220k).
+        // while keeping the request admissible.
         kernel
             .cached_risk_bonus_ppm
             .store(200_000, Ordering::Relaxed);
@@ -8812,9 +9024,11 @@ mod tests {
         };
 
         let decision = kernel.decide(SafetyLevel::Hardened, ctx);
-        assert!(
-            !matches!(decision.action, MembraneAction::Allow),
-            "hardened mode with risk {} ppm (above repair_trigger) must not Allow",
+        assert_eq!(decision.profile, ValidationProfile::Full);
+        assert_eq!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+            "hardened mode with risk {} ppm (above repair_trigger) must emit UpgradeToSafeVariant",
             decision.risk_upper_bound_ppm,
         );
     }

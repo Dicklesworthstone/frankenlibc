@@ -206,7 +206,7 @@ impl HurstExponentMonitor {
             ALPHA
         };
 
-        let log_w = (W as f64).ln();
+        let log_w = crate::util::ln_f64(W as f64);
         let mut max_h = 0.0_f64;
         let mut sum_h = 0.0_f64;
 
@@ -220,7 +220,7 @@ impl HurstExponentMonitor {
             let rs = rescaled_range(&linear, W);
             // H = ln(R/S) / ln(W).
             let h = if rs > 1e-12 {
-                (rs.ln() / log_w).clamp(0.0, 1.0)
+                (crate::util::ln_f64(rs) / log_w).clamp(0.0, 1.0)
             } else {
                 0.5
             };

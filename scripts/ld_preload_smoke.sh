@@ -1081,6 +1081,7 @@ EOF
     run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
     run_corpus_case "${mode}" "strict_string_overflow_parity" "${STRICT_STRING_OVERFLOW_BIN}" || mode_failed=1
     run_preload_probe_case "${mode}" "canary_case_intact" "${FIXTURE_MALLOC_PROBE_BIN}" --canary-case intact "${LIB_PATH}" || mode_failed=1
+    run_preload_probe_case "${mode}" "errno_fenv_transparency" "${FIXTURE_MALLOC_PROBE_BIN}" --errno-fenv-case membrane-churn "${LIB_PATH}" || mode_failed=1
   else
     # String/memory ops through a quarantined (freed) block heal to zero length.
     run_corpus_case "${mode}" "hardened_uaf_heal" "${HARDENED_UAF_HEAL_BIN}" || mode_failed=1
@@ -1089,6 +1090,8 @@ EOF
       corrupt-after-warm-tls-write corrupt-header-after-warm-tls fork-preserves-canary-exec-reseeds; do
       run_preload_probe_case "${mode}" "canary_case_${canary_case//-/_}" "${FIXTURE_MALLOC_PROBE_BIN}" --canary-case "${canary_case}" "${LIB_PATH}" || mode_failed=1
     done
+    # Membrane pure-Rust transcendental errno/FPU transparency across QuarantineController epochs (bd-reality-202609-lx578q.4.1/.4.2).
+    run_preload_probe_case "${mode}" "errno_fenv_transparency" "${FIXTURE_MALLOC_PROBE_BIN}" --errno-fenv-case membrane-churn "${LIB_PATH}" || mode_failed=1
   fi
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
   # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.

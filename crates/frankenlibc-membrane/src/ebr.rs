@@ -6,7 +6,16 @@
 
 use crate::util::NoPoisonMutex as Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+/// Process-wide count of currently active registered EBR thread handles.
+static ACTIVE_REGISTERED_THREADS: AtomicU32 = AtomicU32::new(0);
+
+/// Return the number of currently active registered EBR threads (lock-free).
+#[must_use]
+pub fn active_registered_threads() -> u32 {
+    ACTIVE_REGISTERED_THREADS.load(Ordering::Relaxed)
+}
 
 /// Global epoch counter for EBR.
 pub struct EbrCollector {
@@ -107,6 +116,11 @@ impl EbrCollector {
             if !slot.active.load(Ordering::Acquire) && Arc::strong_count(slot) == 1 {
                 *slot.pins.lock() = EbrPinState { count: 0, epoch };
                 slot.active.store(true, Ordering::Release);
+                let _ = ACTIVE_REGISTERED_THREADS.try_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |n| Some(n.saturating_add(1)),
+                );
                 return EbrHandle {
                     collector: self,
                     slot: Arc::clone(slot),
@@ -122,6 +136,10 @@ impl EbrCollector {
             pins: Mutex::new(EbrPinState { count: 0, epoch }),
         });
         slots.push(Arc::clone(&slot));
+        let _ =
+            ACTIVE_REGISTERED_THREADS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_add(1))
+            });
         EbrHandle {
             collector: self,
             slot,
@@ -332,6 +350,10 @@ impl Drop for EbrHandle<'_> {
         // Deregistration is not unpinning: guards can legally outlive this
         // handle and retain both their counted pin and their Arc to the slot.
         self.slot.active.store(false, Ordering::Release);
+        let _ =
+            ACTIVE_REGISTERED_THREADS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_sub(1))
+            });
     }
 }
 

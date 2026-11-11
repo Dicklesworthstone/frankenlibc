@@ -266,7 +266,7 @@ impl OptimalDesignController {
         // and gives a stable scalar identifiability proxy.
         let logdet = logdet_spd(&self.fisher);
         let shifted = (logdet + 20.0).max(0.0);
-        let score = (1.0 - (-0.05 * shifted).exp()).clamp(0.0, 1.0);
+        let score = (1.0 - crate::util::exp_f64(-0.05 * shifted)).clamp(0.0, 1.0);
         (score * 1_000_000.0) as u32
     }
 
@@ -330,7 +330,7 @@ fn logdet_spd(matrix: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
 fn logdet_from_cholesky(l: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
     let mut logdet = 0.0;
     for (i, row) in l.iter().enumerate() {
-        logdet += 2.0 * row[i].ln();
+        logdet += 2.0 * crate::util::ln_f64(row[i]);
     }
     logdet
 }
@@ -352,7 +352,7 @@ fn rank_one_logdet_gain_from_cholesky(
     }
 
     let qform = y.iter().map(|value| value * value).sum::<f64>();
-    (1.0 + w * qform).ln().max(0.0)
+    crate::util::ln_1p_f64(w * qform).max(0.0)
 }
 
 pub fn probe_cost_ns(probe: Probe) -> u64 {

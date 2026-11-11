@@ -463,6 +463,422 @@ pub fn round_f64(x: f64) -> f64 {
     }
 }
 
+const LN2_HI: f64 = f64::from_bits(0x3fe6_2e42_fee0_0000);
+const LN2_LO: f64 = f64::from_bits(0x3dea_39ef_3579_3c76);
+const INV_LN2: f64 = f64::from_bits(0x3ff7_1547_652b_82fe);
+const INV_LN2_HI: f64 = f64::from_bits(0x3ff7_1547_6500_0000);
+const INV_LN2_LO: f64 = f64::from_bits(0x3e05_c17f_0bbb_e880);
+const SQRT2: f64 = f64::from_bits(0x3ff6_a09e_667f_3bcd);
+
+const LG1: f64 = f64::from_bits(0x3fe5_5555_5555_5593);
+const LG2: f64 = f64::from_bits(0x3fd9_9999_9997_fa04);
+const LG3: f64 = f64::from_bits(0x3fd2_4924_9422_9359);
+const LG4: f64 = f64::from_bits(0x3fcc_71c5_1d8e_78af);
+const LG5: f64 = f64::from_bits(0x3fc7_4664_96cb_03de);
+const LG6: f64 = f64::from_bits(0x3fc3_9a09_d078_c69f);
+const LG7: f64 = f64::from_bits(0x3fc2_f112_df3e_5244);
+
+#[inline]
+fn ln_poly_tail(f: f64) -> (f64, f64, f64) {
+    let s = f / (2.0 + f);
+    let hfsq = 0.5 * f * f;
+    let z = s * s;
+    let w = z * z;
+    let t1 = w * (LG2 + w * (LG4 + w * LG6));
+    let t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)));
+    (s, hfsq, t2 + t1)
+}
+
+#[inline]
+fn ln_decompose_positive(x: f64) -> (i32, f64, f64, f64, f64) {
+    let mut bits = x.to_bits();
+    let mut k = 0i32;
+    if (bits & 0x7ff0_0000_0000_0000) == 0 {
+        // Normalize positive subnormal by multiplying by 2^54.
+        bits = (x * f64::from_bits(0x4350_0000_0000_0000)).to_bits();
+        k -= 54;
+    }
+    k += ((bits >> 52) & 0x7ff) as i32 - 1023;
+    let mut m = f64::from_bits((bits & 0x000f_ffff_ffff_ffff) | 0x3ff0_0000_0000_0000);
+    if m > SQRT2 {
+        m *= 0.5;
+        k += 1;
+    }
+    let f = m - 1.0;
+    let (s, hfsq, r) = ln_poly_tail(f);
+    (k, f, s, hfsq, r)
+}
+
+/// Pure-Rust IEEE-754 `exp(x)` (~0.9 ULP) with zero C `libm` relocations and zero
+/// `errno` side effects under overflow/underflow (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn exp_f64(x: f64) -> f64 {
+    const P1: f64 = f64::from_bits(0x3fc5_5555_5555_553e);
+    const P2: f64 = f64::from_bits(0xbf66_c16c_16be_bd93);
+    const P3: f64 = f64::from_bits(0x3f11_566a_af25_de2c);
+    const P4: f64 = f64::from_bits(0xbebb_bd41_c5d2_6bf1);
+    const P5: f64 = f64::from_bits(0x3e66_3769_72be_a4d0);
+
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x > f64::from_bits(0x4086_2e42_fefa_39ef) {
+        return f64::INFINITY;
+    }
+    if x <= f64::from_bits(0xc087_4910_d52d_3052) {
+        return 0.0;
+    }
+    if x.abs() < f64::from_bits(0x3e30_0000_0000_0000) {
+        return 1.0 + x;
+    }
+
+    let kf = round_f64(x * INV_LN2);
+    let k = kf as i32;
+    let hi = x - kf * LN2_HI;
+    let lo = kf * LN2_LO;
+    let r = hi - lo;
+    let t = r * r;
+    let c = r - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    let y = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi);
+
+    if k == 1024 {
+        return (y * 2.0) * f64::from_bits(0x7fe0_0000_0000_0000);
+    }
+    if k >= -1021 {
+        return y * f64::from_bits(((k + 1023) as u64) << 52);
+    }
+    (y * f64::from_bits(((k + 1023 + 54) as u64) << 52)) * f64::from_bits(0x3c90_0000_0000_0000)
+}
+
+/// Pure-Rust IEEE-754 `ln(x)` (~0.9 ULP) with zero C `libm` relocations and zero
+/// `errno` side effects (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn ln_f64(x: f64) -> f64 {
+    if x.is_nan() || x < 0.0 {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 1.0 {
+        return 0.0;
+    }
+    let (k, f, s, hfsq, r) = ln_decompose_positive(x);
+    if k == 0 {
+        f - (hfsq - s * (hfsq + r))
+    } else {
+        let dk = f64::from(k);
+        dk * LN2_HI - ((hfsq - (s * (hfsq + r) + dk * LN2_LO)) - f)
+    }
+}
+
+/// Pure-Rust IEEE-754 `log2(x)` (~0.9 ULP) with zero C `libm` relocations and zero
+/// `errno` side effects (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn log2_f64(x: f64) -> f64 {
+    if x.is_nan() || x < 0.0 {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 1.0 {
+        return 0.0;
+    }
+    let (k, f, s, hfsq, r) = ln_decompose_positive(x);
+    let f_hi = f64::from_bits(f.to_bits() & 0xffff_ffff_f000_0000);
+    let f_lo = (f - f_hi) + (s * (hfsq + r) - hfsq);
+    let log2_1pf_hi = f_hi * INV_LN2_HI;
+    let log2_1pf_lo = f_lo * INV_LN2 + f_hi * INV_LN2_LO;
+    f64::from(k) + (log2_1pf_hi + log2_1pf_lo)
+}
+
+/// Pure-Rust IEEE-754 `ln(1 + x)` (~1.0 ULP) with zero C `libm` relocations and
+/// zero `errno` side effects (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn ln_1p_f64(x: f64) -> f64 {
+    if x.is_nan() || x < -1.0 {
+        return f64::NAN;
+    }
+    if x == -1.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return x;
+    }
+    let ax = x.abs();
+    if ax < f64::from_bits(0x3c90_0000_0000_0000) {
+        return x;
+    }
+    if ax < f64::from_bits(0x3e20_0000_0000_0000) {
+        return x - 0.5 * x * x;
+    }
+    if x > -0.292_893_218_813_452_5 && x < 0.414_213_562_373_095_03 {
+        let (s, hfsq, r) = ln_poly_tail(x);
+        return x - (hfsq - s * (hfsq + r));
+    }
+    if x >= f64::from_bits(0x4340_0000_0000_0000) {
+        return ln_f64(x);
+    }
+
+    let u = 1.0 + x;
+    let corr = if x >= 1.0 {
+        1.0 - (u - x)
+    } else {
+        x - (u - 1.0)
+    };
+    let bits = u.to_bits();
+    let mut k = ((bits >> 52) & 0x7ff) as i32 - 1023;
+    let mut m = f64::from_bits((bits & 0x000f_ffff_ffff_ffff) | 0x3ff0_0000_0000_0000);
+    let mut scale_exp = k;
+    if m > SQRT2 {
+        m *= 0.5;
+        k += 1;
+        scale_exp = k;
+    }
+    let c = if scale_exp >= -1021 && scale_exp <= 1023 {
+        corr * f64::from_bits(((1023 - scale_exp) as u64) << 52) / m
+    } else {
+        corr / u
+    };
+    let f = m - 1.0;
+    let (s, hfsq, r) = ln_poly_tail(f);
+    if k == 0 {
+        f - (hfsq - (s * (hfsq + r) + c))
+    } else {
+        let dk = f64::from(k);
+        dk * LN2_HI - ((hfsq - (s * (hfsq + r) + (dk * LN2_LO + c))) - f)
+    }
+}
+
+/// Pure-Rust IEEE-754 `acos(x)` (~0.9 ULP) using SSE2 `sqrtsd` and fdlibm rational
+/// minimax, emitting zero C `libm` relocations and zero `errno` writes
+/// (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn acos_f64(x: f64) -> f64 {
+    const PIO2_HI: f64 = f64::from_bits(0x3ff9_21fb_5444_2d18);
+    const PIO2_LO: f64 = f64::from_bits(0x3c91_a626_3314_5c07);
+    const PI_HI: f64 = f64::from_bits(0x4009_21fb_5444_2d18);
+    const PS0: f64 = f64::from_bits(0x3fc5_5555_5555_5555);
+    const PS1: f64 = f64::from_bits(0xbfd4_d612_03eb_6f7d);
+    const PS2: f64 = f64::from_bits(0x3fc9_c155_0e88_4455);
+    const PS3: f64 = f64::from_bits(0xbfa4_8228_b568_8f3b);
+    const PS4: f64 = f64::from_bits(0x3f49_efe0_7501_b288);
+    const PS5: f64 = f64::from_bits(0x3f02_3de1_0dfd_f709);
+    const QS1: f64 = f64::from_bits(0xc003_3a27_1c8a_2d4b);
+    const QS2: f64 = f64::from_bits(0x4000_2ae5_9c59_8ac8);
+    const QS3: f64 = f64::from_bits(0xbfe6_066c_1b8d_0159);
+    const QS4: f64 = f64::from_bits(0x3fb3_b8c5_b12e_9282);
+
+    if x.is_nan() || !(-1.0..=1.0).contains(&x) {
+        return f64::NAN;
+    }
+    if x == 1.0 {
+        return 0.0;
+    }
+    if x == -1.0 {
+        return core::f64::consts::PI;
+    }
+
+    let ax = x.abs();
+    if ax < 0.5 {
+        if ax < f64::from_bits(0x3c60_0000_0000_0000) {
+            return PIO2_HI + PIO2_LO;
+        }
+        let z = x * x;
+        let p = z * (PS0 + z * (PS1 + z * (PS2 + z * (PS3 + z * (PS4 + z * PS5)))));
+        let q = 1.0 + z * (QS1 + z * (QS2 + z * (QS3 + z * QS4)));
+        let r = p / q;
+        return PIO2_HI - (x - (PIO2_LO - x * r));
+    }
+
+    if x < 0.0 {
+        let z = (1.0 + x) * 0.5;
+        let p = z * (PS0 + z * (PS1 + z * (PS2 + z * (PS3 + z * (PS4 + z * PS5)))));
+        let q = 1.0 + z * (QS1 + z * (QS2 + z * (QS3 + z * QS4)));
+        let s = z.sqrt();
+        let r = p / q;
+        let w = r * s - PIO2_LO;
+        PI_HI - 2.0 * (s + w)
+    } else {
+        let z = (1.0 - x) * 0.5;
+        let s = z.sqrt();
+        let df = f64::from_bits(s.to_bits() & 0xffff_ffff_0000_0000);
+        let c = (z - df * df) / (s + df);
+        let p = z * (PS0 + z * (PS1 + z * (PS2 + z * (PS3 + z * (PS4 + z * PS5)))));
+        let q = 1.0 + z * (QS1 + z * (QS2 + z * (QS3 + z * QS4)));
+        let r = p / q;
+        let w = r * s + c;
+        2.0 * (df + w)
+    }
+}
+
+/// Pure-Rust integer exponentiation `base^exp` without `pow` / `llvm.powi` symbol
+/// calls (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn powi_f64(base: f64, exp: i32) -> f64 {
+    if exp == 0 {
+        return 1.0;
+    }
+    if base.is_nan() {
+        return f64::NAN;
+    }
+    let mut n = exp.unsigned_abs();
+    let invert_after = exp < 0 && base.abs() < 1.0;
+    let mut b = if exp < 0 && !invert_after {
+        1.0 / base
+    } else {
+        base
+    };
+    let mut acc = 1.0_f64;
+    while n != 0 {
+        if (n & 1) != 0 {
+            acc *= b;
+        }
+        n >>= 1;
+        if n != 0 {
+            b *= b;
+        }
+    }
+    if invert_after { 1.0 / acc } else { acc }
+}
+
+/// Pure-Rust floating-point exponentiation `base^exp` (~1.0 ULP) using extended
+/// `(hi, lo)` `exp(exp * ln(base))` decomposition with zero C `libm` calls and
+/// zero `errno` writes (bd-reality-202609-lx578q.4.1).
+#[inline]
+#[must_use]
+pub fn powf_f64(base: f64, exp: f64) -> f64 {
+    if exp == 0.0 || base == 1.0 {
+        return 1.0;
+    }
+    if base.is_nan() || exp.is_nan() {
+        return f64::NAN;
+    }
+    if base == 0.0 {
+        let odd_int = exp.is_finite()
+            && trunc_f64(exp) == exp
+            && trunc_f64(exp * 0.5) * 2.0 != exp;
+        let sign = if base.is_sign_negative() && odd_int {
+            -1.0
+        } else {
+            1.0
+        };
+        return if exp > 0.0 {
+            0.0_f64.copysign(sign)
+        } else {
+            f64::INFINITY.copysign(sign)
+        };
+    }
+    if !exp.is_finite() {
+        let ab = base.abs();
+        if ab == 1.0 {
+            return 1.0;
+        }
+        return if (ab > 1.0) == exp.is_sign_positive() {
+            f64::INFINITY
+        } else {
+            0.0
+        };
+    }
+    if !base.is_finite() {
+        if base.is_sign_positive() {
+            return if exp > 0.0 { f64::INFINITY } else { 0.0 };
+        }
+        if trunc_f64(exp) != exp {
+            return f64::NAN;
+        }
+        let odd_int = trunc_f64(exp * 0.5) * 2.0 != exp;
+        let mag = if exp > 0.0 { f64::INFINITY } else { 0.0 };
+        return if odd_int { -mag } else { mag };
+    }
+
+    let mut sign = 1.0_f64;
+    let x = if base < 0.0 {
+        if trunc_f64(exp) != exp {
+            return f64::NAN;
+        }
+        if trunc_f64(exp * 0.5) * 2.0 != exp {
+            sign = -1.0;
+        }
+        -base
+    } else {
+        base
+    };
+
+    if exp == 0.5 {
+        return sign * x.sqrt();
+    }
+    if exp == 0.25 {
+        return sign * x.sqrt().sqrt();
+    }
+
+    let (k, f, s, hfsq, r) = ln_decompose_positive(x);
+    let dk = f64::from(k);
+    let f_hi = f64::from_bits(f.to_bits() & 0xffff_ffff_f000_0000);
+    let f_lo = (f - f_hi) + (s * (hfsq + r) - hfsq);
+    let ln_hi_raw = dk * LN2_HI + f_hi;
+    let ln_lo_raw = (dk * LN2_HI - ln_hi_raw + f_hi) + (dk * LN2_LO + f_lo);
+    let ln_sum = ln_hi_raw + ln_lo_raw;
+    let ln_hi = f64::from_bits(ln_sum.to_bits() & 0xffff_ffff_f000_0000);
+    let ln_lo = (ln_hi_raw - ln_hi) + ln_lo_raw;
+
+    let exp_hi = f64::from_bits(exp.to_bits() & 0xffff_ffff_f000_0000);
+    let exp_lo = exp - exp_hi;
+    let prod_hi = exp_hi * ln_hi;
+    let prod_lo = exp_lo * ln_hi + exp * ln_lo;
+    let z = prod_hi + prod_lo;
+
+    if z > f64::from_bits(0x4086_2e42_fefa_39ef) {
+        return sign * f64::INFINITY;
+    }
+    if z <= f64::from_bits(0xc087_4910_d52d_3052) {
+        return 0.0_f64.copysign(sign);
+    }
+
+    // Apply prod_hi + prod_lo reduction directly so intermediate multiplication
+    // rounding does not inflate ULP error at large exponents.
+    let kf = round_f64(z * INV_LN2);
+    let k_out = kf as i32;
+    let hi = (prod_hi - kf * LN2_HI) + prod_lo;
+    let lo = kf * LN2_LO;
+    let rem = hi - lo;
+
+    const P1: f64 = f64::from_bits(0x3fc5_5555_5555_553e);
+    const P2: f64 = f64::from_bits(0xbf66_c16c_16be_bd93);
+    const P3: f64 = f64::from_bits(0x3f11_566a_af25_de2c);
+    const P4: f64 = f64::from_bits(0xbebb_bd41_c5d2_6bf1);
+    const P5: f64 = f64::from_bits(0x3e66_3769_72be_a4d0);
+
+    let t = rem * rem;
+    let c = rem - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    let y = 1.0 - ((lo - (rem * c) / (2.0 - c)) - hi);
+    let mag = if k_out == 1024 {
+        (y * 2.0) * f64::from_bits(0x7fe0_0000_0000_0000)
+    } else if k_out >= -1021 {
+        y * f64::from_bits(((k_out + 1023) as u64) << 52)
+    } else {
+        (y * f64::from_bits(((k_out + 1023 + 54) as u64) << 52))
+            * f64::from_bits(0x3c90_0000_0000_0000)
+    };
+    sign * mag
+}
+
 #[cfg(test)]
 mod tests {
     use super::{LazyBox, ceil_f64, floor_f64, round_f64, trunc_f64};
@@ -573,5 +989,169 @@ mod tests {
         assert!(floor_f64(f64::NAN).is_nan());
         assert!(ceil_f64(f64::NAN).is_nan());
         assert!(round_f64(f64::NAN).is_nan());
+    }
+
+    fn ulp_distance(a: f64, b: f64) -> u64 {
+        if a == 0.0 && b == 0.0 {
+            return 0;
+        }
+        let to_ordered = |x: f64| -> i64 {
+            let bits = x.to_bits() as i64;
+            if bits < 0 {
+                i64::MIN - bits
+            } else {
+                bits
+            }
+        };
+        to_ordered(a).abs_diff(to_ordered(b))
+    }
+
+    #[test]
+    fn pure_rust_transcendentals_match_ieee754_within_two_ulp() {
+        use super::{acos_f64, exp_f64, ln_1p_f64, ln_f64, log2_f64, powf_f64, powi_f64};
+
+        let exp_inputs = [
+            -800.0,
+            -745.133_219_101_941_2,
+            -744.44,
+            -708.396_4,
+            -100.0,
+            -1.0,
+            -1e-12,
+            0.0,
+            1e-12,
+            0.693_147_180_559_945_3,
+            1.0,
+            10.5,
+            709.78,
+            709.782_712_893_384,
+            800.0,
+        ];
+        for x in exp_inputs {
+            let got = exp_f64(x);
+            let want = x.exp();
+            if want.is_infinite() {
+                assert!(got.is_infinite() && got.is_sign_positive(), "exp({x})");
+            } else {
+                assert!(
+                    ulp_distance(got, want) <= 2,
+                    "exp({x}): got={got:e} want={want:e} ulp={}",
+                    ulp_distance(got, want)
+                );
+            }
+        }
+        assert!(exp_f64(f64::NAN).is_nan());
+        assert_eq!(exp_f64(f64::NEG_INFINITY), 0.0);
+        assert_eq!(exp_f64(f64::INFINITY), f64::INFINITY);
+
+        let pos_inputs = [
+            f64::from_bits(1),
+            1e-315,
+            f64::MIN_POSITIVE,
+            1e-100,
+            1e-10,
+            0.5,
+            0.75,
+            0.999_999_9,
+            1.0,
+            1.000_000_1,
+            core::f64::consts::E,
+            2.0,
+            8.0,
+            256.0,
+            1e50,
+            f64::MAX,
+        ];
+        for x in pos_inputs {
+            let got_ln = ln_f64(x);
+            let want_ln = x.ln();
+            assert!(
+                ulp_distance(got_ln, want_ln) <= 2,
+                "ln({x:e}): got={got_ln} want={want_ln} ulp={}",
+                ulp_distance(got_ln, want_ln)
+            );
+            let got_log2 = log2_f64(x);
+            let want_log2 = x.log2();
+            assert!(
+                ulp_distance(got_log2, want_log2) <= 2,
+                "log2({x:e}): got={got_log2} want={want_log2} ulp={}",
+                ulp_distance(got_log2, want_log2)
+            );
+        }
+        assert_eq!(ln_f64(0.0), f64::NEG_INFINITY);
+        assert_eq!(log2_f64(0.0), f64::NEG_INFINITY);
+        assert!(ln_f64(-1.0).is_nan());
+        assert!(log2_f64(-1.0).is_nan());
+        assert_eq!(ln_f64(f64::INFINITY), f64::INFINITY);
+        assert_eq!(log2_f64(f64::INFINITY), f64::INFINITY);
+
+        let ln1p_inputs = [
+            -0.999_999_9,
+            -0.5,
+            -0.25,
+            -1e-15,
+            -0.0,
+            0.0,
+            1e-16,
+            1e-8,
+            0.125,
+            0.5,
+            1.0,
+            100.0,
+            1e20,
+        ];
+        for x in ln1p_inputs {
+            let got = ln_1p_f64(x);
+            let want = x.ln_1p();
+            assert!(
+                ulp_distance(got, want) <= 2,
+                "ln_1p({x:e}): got={got:e} want={want:e} ulp={}",
+                ulp_distance(got, want)
+            );
+        }
+        assert_eq!(ln_1p_f64(-1.0), f64::NEG_INFINITY);
+        assert!(ln_1p_f64(-1.5).is_nan());
+
+        for i in -100..=100 {
+            let x = f64::from(i) / 100.0;
+            let got = acos_f64(x);
+            let want = x.acos();
+            assert!(
+                ulp_distance(got, want) <= 2,
+                "acos({x}): got={got} want={want} ulp={}",
+                ulp_distance(got, want)
+            );
+        }
+        assert!(acos_f64(1.000_001).is_nan());
+        assert!(acos_f64(-1.000_001).is_nan());
+
+        for k in [-1050, -63, -12, -1, 0, 1, 2, 16, 100] {
+            let got = powi_f64(2.0, k);
+            let want = 2.0_f64.powf(f64::from(k));
+            assert!(
+                ulp_distance(got, want) <= 1,
+                "2.0.powi({k}): got={got:e} want={want:e}"
+            );
+        }
+
+        let powf_cases = [
+            (0.125, 0.25),
+            (1.5, 4.0 / 3.0),
+            (64.0, -2.0 / 3.0),
+            (3.75, 2.25),
+            (0.01, 0.5),
+            (-2.0, 3.0),
+            (-2.0, 4.0),
+        ];
+        for (b, e) in powf_cases {
+            let got = powf_f64(b, e);
+            let want = b.powf(e);
+            assert!(
+                ulp_distance(got, want) <= 2,
+                "powf({b}, {e}): got={got} want={want} ulp={}",
+                ulp_distance(got, want)
+            );
+        }
+        assert!(powf_f64(-2.0, 0.5).is_nan());
     }
 }

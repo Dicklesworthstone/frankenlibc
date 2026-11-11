@@ -176,7 +176,7 @@ impl LyapunovStabilityMonitor {
             self.expansion_ratio += alpha * (ratio - self.expansion_ratio);
 
             // Lyapunov exponent = EWMA of ln(expansion_ratio).
-            let log_ratio = ratio.ln();
+            let log_ratio = crate::util::ln_f64(ratio);
             self.exponent += alpha * (log_ratio - self.exponent);
         }
 

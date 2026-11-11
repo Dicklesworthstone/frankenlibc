@@ -152,7 +152,7 @@ impl AzumaHoeffdingMonitor {
     fn azuma_threshold(&self) -> f64 {
         let n = self.count as f64;
         let c = (K - 1) as f64;
-        c * (2.0 * n * (2.0_f64 / CONFIDENCE_ALPHA).ln()).sqrt()
+        c * (2.0 * n * crate::util::ln_f64(2.0_f64 / CONFIDENCE_ALPHA)).sqrt()
     }
 
     /// Feed a severity vector and update concentration estimates.

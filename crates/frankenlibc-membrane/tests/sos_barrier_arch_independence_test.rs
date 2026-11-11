@@ -10,9 +10,19 @@
 //!
 //! Part of bd-10pq: Cross-cutting architecture heterogeneity.
 
+use std::path::Path;
+
+use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::ebr::EbrCollector;
 use frankenlibc_membrane::runtime_math::sos_barrier::{
-    evaluate_fragmentation_barrier, evaluate_size_class_barrier, evaluate_thread_safety_barrier,
+    SosBarrierState, evaluate_fragmentation_barrier, evaluate_size_class_barrier,
+    evaluate_thread_safety_barrier,
 };
+use frankenlibc_membrane::runtime_math::{ApiFamily, RuntimeMathKernel, ValidationProfile};
+
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod build_script;
 
 /// Expected barrier values for canonical inputs (golden values).
 ///
@@ -192,4 +202,144 @@ fn no_arch_specific_compilation_in_sos_barrier() {
         "No SIMD intrinsics in barrier evaluation hot path",
     ];
     assert_eq!(source_guarantees.len(), 4);
+}
+
+#[test]
+fn build_script_sos_witness_accepts_production_certificates_and_rejects_counterexamples() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for rel_path in [
+        "artifacts/sos/fragmentation_certificate.task",
+        "artifacts/sos/thread_safety_certificate.task",
+        "artifacts/sos/size_class_certificate.task",
+    ] {
+        let task_path = manifest_dir.join(rel_path);
+        let task = build_script::parse_sos_task(&task_path)
+            .unwrap_or_else(|err| panic!("failed to parse {rel_path}: {err}"));
+        let barrier =
+            build_script::build_barrier_polynomial(&task.gram_matrix, task.barrier_budget_milli);
+        build_script::verify_barrier_against_sos_witness(
+            &barrier,
+            task.monomial_degree,
+            &task.gram_matrix,
+        )
+        .unwrap_or_else(|err| panic!("valid SOS certificate {rel_path} rejected: {err}"));
+
+        // Perturbing any diagonal quadratic term of B(z) without updating the Gram witness must fail.
+        let mut perturbed_diag = barrier.clone();
+        perturbed_diag.coefficients[1][1] += 1;
+        assert!(
+            build_script::verify_barrier_against_sos_witness(
+                &perturbed_diag,
+                task.monomial_degree,
+                &task.gram_matrix,
+            )
+            .is_err(),
+            "{rel_path}: perturbed diagonal term must be rejected by non-tautological SOS check"
+        );
+
+        // Perturbing a linear term z_0*z_1 of B(z) must fail.
+        let mut perturbed_linear = barrier.clone();
+        perturbed_linear.coefficients[0][1] -= 1;
+        assert!(
+            build_script::verify_barrier_against_sos_witness(
+                &perturbed_linear,
+                task.monomial_degree,
+                &task.gram_matrix,
+            )
+            .is_err(),
+            "{rel_path}: perturbed linear term must be rejected by non-tautological SOS check"
+        );
+    }
+
+    // Negative LDL^T pivot must be rejected even if barrier polynomial was built from the same matrix.
+    let neg_gram = vec![vec![0_i64, 0], vec![0, -5]];
+    let neg_barrier = build_script::build_barrier_polynomial(&neg_gram, 100_000);
+    assert!(
+        build_script::verify_barrier_against_sos_witness(&neg_barrier, 2, &neg_gram).is_err(),
+        "negative LDL^T pivot must be rejected"
+    );
+
+    // Indefinite zero-diagonal coupling matrix [[0, 1], [1, 0]] (eigenvalues +1, -1) must be rejected.
+    let indef_gram = vec![vec![0_i64, 1], vec![1, 0]];
+    let indef_barrier = build_script::build_barrier_polynomial(&indef_gram, 100_000);
+    assert!(
+        build_script::verify_barrier_against_sos_witness(&indef_barrier, 2, &indef_gram).is_err(),
+        "indefinite zero-pivot off-diagonal coupling matrix must be rejected"
+    );
+
+    // Non-positive interior safety budget B(0) <= 0 must be rejected.
+    let psd_gram = vec![vec![0_i64, 0], vec![0, 10]];
+    let zero_budget_barrier = build_script::build_barrier_polynomial(&psd_gram, 0);
+    assert!(
+        build_script::verify_barrier_against_sos_witness(&zero_budget_barrier, 2, &psd_gram)
+            .is_err(),
+        "zero barrier budget B(0)=0 must be rejected"
+    );
+}
+
+#[test]
+fn runtime_math_kernel_evaluates_live_allocator_sos_certificates_and_detects_violations() {
+    let collector = EbrCollector::new();
+    let ebr_handle = collector.register();
+    assert!(
+        frankenlibc_membrane::ebr::active_registered_threads() >= 1,
+        "EBR registration must advance active_registered_threads()"
+    );
+
+    let kernel = RuntimeMathKernel::new();
+    let before = kernel.sos_barrier_summary();
+
+    // Feed 64 nominal allocator observations (crossing WARMUP = 64 and CADENCE_FRAGMENTATION = 64)
+    // plus valid size-class mappings.
+    for step in 0..64 {
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ApiFamily::Allocator,
+            ValidationProfile::Full,
+            18 + (step % 5),
+            false,
+        );
+        kernel.observe_size_class_mapping(64, 64, true);
+    }
+
+    let nominal = kernel.sos_barrier_summary();
+    assert!(
+        nominal.fragmentation_hash_valid
+            && nominal.thread_safety_hash_valid
+            && nominal.size_class_hash_valid,
+        "all offline SOS certificate SHA-256 proofs must verify: {nominal:?}"
+    );
+    assert!(
+        nominal.total_observations >= before.total_observations + 64,
+        "allocator observations must evaluate SOS barrier controller past WARMUP (64): before={}, after={}",
+        before.total_observations,
+        nominal.total_observations
+    );
+    let nominal_violations = nominal.provenance_violations
+        + nominal.quarantine_violations
+        + nominal.fragmentation_violations
+        + nominal.thread_safety_violations
+        + nominal.size_class_violations;
+    assert_eq!(
+        nominal_violations, 0,
+        "nominal allocator + size-class telemetry must stay inside certified SOS safe set: {nominal:?}"
+    );
+    assert!(
+        matches!(nominal.state, SosBarrierState::Safe | SosBarrierState::Warning),
+        "after 64 nominal observations SOS barrier state must exit Calibrating without violation: {nominal:?}"
+    );
+
+    // Feed invalid size-class membership mappings to drive SOS violation detection.
+    for _ in 0..8 {
+        kernel.observe_size_class_mapping(usize::MAX, usize::MAX, false);
+    }
+    let violated = kernel.sos_barrier_summary();
+    assert!(
+        violated.size_class_violations >= 8
+            && violated.size_class_value < 0
+            && matches!(violated.state, SosBarrierState::Violated),
+        "invalid size-class mapping must trigger SOS barrier violation: {violated:?}"
+    );
+
+    drop(ebr_handle);
 }
