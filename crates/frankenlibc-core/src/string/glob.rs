@@ -533,6 +533,27 @@ fn glob_recursive(
     fs: &dyn GlobFs,
 ) -> Result<(), i32> {
     let noescape = flags & GLOB_NOESCAPE != 0;
+    if !resolved_prefix.is_empty() && !has_magic(pattern, noescape) {
+        // When all remaining pattern components after a wildcard directory are
+        // magic-free (e.g., `/*///...///sh`), stat the candidate path directly
+        // instead of opening and scanning every candidate directory via
+        // `read_dir` + `fnmatch`.
+        let trailing_slash = pattern.len() > 1 && pattern.ends_with(b"/");
+        let stripped = strip_trailing_slashes(pattern);
+        let mut full_path = Vec::with_capacity(resolved_prefix.len() + stripped.len() + 1);
+        full_path.extend_from_slice(resolved_prefix);
+        full_path.extend_from_slice(stripped);
+        if let Some(is_dir) = fs.stat_is_dir(&full_path) {
+            if (flags & GLOB_ONLYDIR != 0 || trailing_slash) && !is_dir {
+                return Ok(());
+            }
+            if (flags & GLOB_MARK != 0 || trailing_slash) && is_dir && !full_path.ends_with(b"/") {
+                full_path.push(b'/');
+            }
+            results.push(full_path);
+        }
+        return Ok(());
+    }
     let (dir_prefix, tail) = split_pattern(pattern, noescape);
 
     // Split tail at the next '/' to get the component pattern. A trailing slash
