@@ -478,20 +478,18 @@ const EMPTY_POLL: libc::pollfd = libc::pollfd {
     events: libc::POLLIN,
     revents: 0,
 };
-const ZERO_POLL: libc::pollfd = libc::pollfd {
-    fd: 0,
-    events: 0,
-    revents: 0,
-};
 struct PollSnapshot {
-    entries: [libc::pollfd; LIMIT],
+    // The published ABI pointer remains stable after the first successful
+    // refresh: capacity is reserved for the entire bounded registry, and no
+    // subsequent refresh grows or shrinks the allocation.
+    entries: Vec<libc::pollfd>,
 }
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static POLL_SNAPSHOT: UnsafeCell<PollSnapshot> = const {
-        // Zero-initialized so the 8 KiB per-thread snapshot resides in `.tbss`
-        // rather than `.tdata`; `refresh()` always fills `EMPTY_POLL` before use.
-        UnsafeCell::new(PollSnapshot { entries: [ZERO_POLL; LIMIT] })
+        // Ordinary threads pay only for a Vec handle. SunRPC allocates its
+        // 8 KiB poll snapshot on the first refresh, not during TLS setup.
+        UnsafeCell::new(PollSnapshot { entries: Vec::new() })
     };
 }
 #[cfg(feature = "owned-tls-cache")]
@@ -500,7 +498,7 @@ static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
 #[cfg(feature = "owned-tls-cache")]
 fn empty_snapshot() -> PollSnapshot {
     PollSnapshot {
-        entries: [ZERO_POLL; LIMIT],
+        entries: Vec::new(),
     }
 }
 fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
@@ -518,11 +516,27 @@ fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
 /// backing array has thread lifetime. Never retain a lock across C access.
 pub(super) fn refresh() {
     with_snapshot(|snapshot| {
-        snapshot.entries.fill(EMPTY_POLL);
-        let r = registry();
         let bits = super::rpc_svc_fdset_ptr().cast::<u64>();
         // SAFETY: existing accessors own aligned, initialized per-thread slots.
         unsafe { ptr::write_bytes(bits, 0, LIMIT / 64) };
+        if snapshot.entries.is_empty() {
+            if snapshot.entries.try_reserve_exact(LIMIT).is_err() {
+                // Never publish a dangling Vec sentinel as a poll array, and
+                // never advertise descriptors when no snapshot was prepared.
+                unsafe {
+                    super::rpc_svc_max_pollfd_ptr().cast::<c_int>().write(0);
+                    super::rpc_svc_pollfd_ptr()
+                        .cast::<*mut libc::pollfd>()
+                        .write(ptr::null_mut());
+                }
+                error(libc::ENOMEM);
+                return;
+            }
+            snapshot.entries.resize(LIMIT, EMPTY_POLL);
+        } else {
+            snapshot.entries.fill(EMPTY_POLL);
+        }
+        let r = registry();
         for (index, t) in r.transports.iter().enumerate() {
             snapshot.entries[index].fd = t.fd;
             if t.wants_write.load(Ordering::Acquire) {

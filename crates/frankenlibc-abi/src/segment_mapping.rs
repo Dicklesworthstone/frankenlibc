@@ -233,7 +233,9 @@ pub mod tests {
         assert_eq!(&permissions(first.user_base)[..3], "rw-");
         assert_eq!(&permissions(base + SEGMENT_SIZE - 1)[..3], "---");
         assert_eq!(
-            SEGMENT_DESCRIPTORS[index]
+            SEGMENT_DESCRIPTORS
+                .get(index)
+                .unwrap()
                 .writable
                 .ready
                 .load(Ordering::Acquire),
@@ -271,7 +273,9 @@ pub mod tests {
             }
         }
         assert_eq!(
-            SEGMENT_DESCRIPTORS[index]
+            SEGMENT_DESCRIPTORS
+                .get(index)
+                .unwrap()
                 .writable
                 .ready
                 .load(Ordering::Acquire),

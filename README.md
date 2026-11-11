@@ -1964,7 +1964,9 @@ The 64-objects-per-class threshold is chosen so that bulk transfers amortize the
 
 ### Pre-TLS bump allocator
 
-A small `static` bump allocator services allocations during early process startup *before* TLS is initialized. `dlerror`, dl-init paths, and the `__libc_start_main` validation envelope all need to allocate before `pthread_key_create` is available. The bump allocator is a single linear arena protected by an atomic offset; allocations from it are never freed (they live until process exit).
+Bootstrap and reentrant allocations that cannot use the normal or host allocator use a linear bump arena without TLS or allocator locks. Its storage is reserved on first use through a raw anonymous `mmap` using `PROT_NONE` and `MAP_NORESERVE`, then promoted to read/write in 64 KiB granules before the atomic allocation cursor advances. The reservation is 8 MiB in the interposition build and 256 MiB in standalone mode; allocations within it remain until process exit. Exhaustion or a failed permission upgrade falls back to separately tracked, reclaimable overflow mappings.
+
+Untouched reservation pages avoid the writable-data charge that the former static buffer imposed at startup. The full virtual reservation still counts toward `RLIMIT_AS`, and each committed granule needs available `RLIMIT_DATA` and memory budget. Lazy commitment reduces initial data usage; it does not guarantee success under every resource limit.
 
 ---
 

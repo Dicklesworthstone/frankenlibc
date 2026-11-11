@@ -6,6 +6,8 @@ on:
     paths:
       - 'crates/frankenlibc-membrane/**'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/src/segment_mapping.rs'
+      - 'crates/frankenlibc-abi/src/rpc_svc.rs'
       - 'crates/frankenlibc-abi/src/string_abi.rs'
       - 'crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs'
       - 'scripts/check_membrane_access.py'
@@ -108,6 +110,57 @@ jobs:
           python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --output artifacts/access/preload 2>&1 | tee artifacts/access/preload.log
           python3 scripts/check_allocation_integrity.py target/release/libfrankenlibc_abi.so --output artifacts/access/allocation-integrity 2>&1 | tee artifacts/access/allocation-integrity.log
           git diff --exit-code
+      - name: Check deployed startup under a 10 MiB data limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          mkdir -p artifacts/access/startup-memory
+          sha256sum "$library" | tee artifacts/access/startup-memory/library-sha256.txt
+          size -A -d "$library" | tee artifacts/access/startup-memory/sections.txt
+          readelf -lW "$library" | tee artifacts/access/startup-memory/segments.txt
+          python3 - "$library" <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          from scripts.check_allocation_integrity import validate_contract
+
+          library = Path(sys.argv[1]).resolve(strict=True)
+          fixture = Path('artifacts/access/allocation-integrity/fixture_malloc').resolve(strict=True)
+          output = Path('artifacts/access/startup-memory')
+          env = dict(os.environ, LC_ALL='C')
+          for name in ('LD_PRELOAD', 'LD_AUDIT', 'LD_DEBUG', 'FRANKENLIBC_MODE',
+                       'FRANKENLIBC_LOG', 'FRANKENLIBC_HEAL_LOG'):
+              env.pop(name, None)
+          # The launcher bash and its env wrapper are unpreloaded. The limit
+          # applies before exec loads the target and candidate shared library.
+          launch = 'set -eu; ulimit -d 10240; exec env FRANKENLIBC_MODE="$1" LD_PRELOAD="$2" "${@:3}"'
+          cases = (
+              ('echo', ['/bin/echo', 'startup-ready'], '', 'startup-ready\n'),
+              ('env', ['/usr/bin/env', '-i', 'STARTUP_PROBE=ready'], '', 'STARTUP_PROBE=ready\n'),
+              ('grep', ['/usr/bin/grep', '-x', 'startup-ready'], 'skip\nstartup-ready\n', 'startup-ready\n'),
+              ('malloc', [str(fixture), '--canary-case', 'intact', str(library)], '', None),
+          )
+          for mode in ('strict', 'hardened'):
+              for name, command, stdin, expected in cases:
+                  label = f'{mode}-{name}'
+                  result = subprocess.run(
+                      ['/bin/bash', '-c', launch, 'startup-memory', mode, str(library), *command],
+                      env=env, input=stdin, capture_output=True, text=True, timeout=20,
+                  )
+                  (output / f'{label}.stdout').write_text(result.stdout)
+                  (output / f'{label}.stderr').write_text(result.stderr)
+                  assert result.returncode == 0, f'{label}: exit {result.returncode}: {result.stderr}'
+                  checks = 0
+                  if expected is not None:
+                      assert result.stdout == expected, f'{label}: unexpected output {result.stdout!r}'
+                      assert not result.stderr, f'{label}: unexpected stderr {result.stderr!r}'
+                  else:
+                      data = json.loads(result.stdout)
+                      validate_contract(data, 'intact', mode)
+                      checks = data['executed']
+                      assert checks > 0, f'{label}: no C checks executed'
+                  print(f'startup_memory {label}: pass (C checks={checks})', flush=True)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

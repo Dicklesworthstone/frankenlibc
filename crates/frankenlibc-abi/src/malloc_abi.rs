@@ -59,6 +59,308 @@ static HOST_MALLOC_USABLE_SIZE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_ALLOCATOR_RAW_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
 static HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
 
+/// Bootstrap-safe, immortal storage whose unused pages are not charged to
+/// RLIMIT_DATA. Permissions only increase. There is deliberately no initializing
+/// lock: a signal handler or fork child can finish an interrupted reservation or
+/// permission upgrade instead of waiting for a thread that cannot run.
+struct DemandZeroRegion {
+    len: usize,
+    base: AtomicUsize,
+    writable: [AtomicU64; 64],
+}
+
+impl DemandZeroRegion {
+    const GRANULE: usize = 64 * 1024;
+    const MAX_LEN: usize = 64 * 64 * Self::GRANULE;
+
+    const fn new(len: usize) -> Self {
+        assert!(len > 0 && len <= Self::MAX_LEN);
+        Self {
+            len: len.next_multiple_of(Self::GRANULE),
+            base: AtomicUsize::new(0),
+            writable: [const { AtomicU64::new(0) }; 64],
+        }
+    }
+
+    #[cold]
+    fn reserve(&self) -> Option<usize> {
+        let existing = self.base.load(Ordering::Acquire);
+        if existing != 0 {
+            return Some(existing);
+        }
+        let mapping_len = self.len + Self::GRANULE;
+        // SAFETY: the kernel chooses a fresh inaccessible anonymous mapping.
+        // The raw syscall does not allocate or enter our interposed ABI.
+        let mapping = unsafe {
+            raw_syscall::sys_mmap(
+                std::ptr::null_mut(),
+                mapping_len,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        }
+        .ok()?;
+        let aligned = (mapping as usize + Self::GRANULE - 1) & !(Self::GRANULE - 1);
+        match self
+            .base
+            .compare_exchange(0, aligned, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => Some(aligned),
+            Err(published) => {
+                // SAFETY: this losing reservation was never published, has no
+                // users, and is distinct from the winning mapping.
+                let _ = unsafe { raw_syscall::sys_munmap(mapping, mapping_len) };
+                Some(published)
+            }
+        }
+    }
+
+    #[inline]
+    fn range_is_writable(&self, start: usize, end: usize) -> bool {
+        if start >= end || end > self.len {
+            return false;
+        }
+        let first = start / Self::GRANULE;
+        let last = (end - 1) / Self::GRANULE;
+        for granule in first..=last {
+            if self.writable[granule / 64].load(Ordering::Acquire) & (1u64 << (granule % 64)) == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[inline]
+    fn enable(&self, start: usize, end: usize) -> Option<usize> {
+        if start >= end || end > self.len {
+            return None;
+        }
+        let mut base = self.base.load(Ordering::Acquire);
+        if base == 0 {
+            base = self.reserve()?;
+        }
+        if !self.range_is_writable(start, end) {
+            self.enable_cold(base, start, end)?;
+        }
+        Some(base)
+    }
+
+    #[cold]
+    fn enable_cold(&self, base: usize, start: usize, end: usize) -> Option<()> {
+        let first = start / Self::GRANULE;
+        let last = (end - 1) / Self::GRANULE;
+        // SAFETY: this aligned range is entirely within our immortal mapping.
+        // Concurrent upgrades are idempotent, and no caller clears or unmaps
+        // published storage. Only successful upgrades publish permission bits.
+        unsafe {
+            raw_syscall::sys_mprotect(
+                (base + first * Self::GRANULE) as *mut u8,
+                (last - first + 1) * Self::GRANULE,
+                libc::PROT_READ | libc::PROT_WRITE,
+            )
+        }
+        .ok()?;
+        for granule in first..=last {
+            self.writable[granule / 64].fetch_or(1u64 << (granule % 64), Ordering::Release);
+        }
+        Some(())
+    }
+}
+
+/// Types used in demand-zero storage must have a valid all-zero representation
+/// equivalent to their empty constructor, with no initialization side effects.
+///
+/// # Safety
+/// Every zero byte pattern (including padding) must initialize a valid `Self`;
+/// references are shared only under the type's existing synchronization rules.
+unsafe trait DemandZero: Sync {}
+
+// SAFETY: AtomicUsize::new(0) has an all-zero representation.
+unsafe impl DemandZero for AtomicUsize {}
+
+struct DemandZeroArray<T: DemandZero, const N: usize> {
+    region: DemandZeroRegion,
+    marker: std::marker::PhantomData<T>,
+}
+
+impl<T: DemandZero, const N: usize> DemandZeroArray<T, N> {
+    const fn new() -> Self {
+        assert!(std::mem::align_of::<T>() <= DemandZeroRegion::GRANULE);
+        assert!(std::mem::size_of::<T>() > 0);
+        Self {
+            region: DemandZeroRegion::new(N * std::mem::size_of::<T>()),
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *const T {
+        self.region.base.load(Ordering::Acquire) as *const T
+    }
+
+    #[inline]
+    fn get(&self, index: usize) -> Option<&T> {
+        if index >= N {
+            return None;
+        }
+        let start = index * std::mem::size_of::<T>();
+        let base = self
+            .region
+            .enable(start, start + std::mem::size_of::<T>())?;
+        // SAFETY: the complete aligned element is writable, demand-zero bytes
+        // are a valid empty T, and published regions are never unmapped.
+        Some(unsafe { &*((base + start) as *const T) })
+    }
+
+    #[inline]
+    fn get_existing(&self, index: usize) -> Option<&T> {
+        if index >= N {
+            return None;
+        }
+        let start = index * std::mem::size_of::<T>();
+        if !self
+            .region
+            .range_is_writable(start, start + std::mem::size_of::<T>())
+        {
+            return None;
+        }
+        // SAFETY: Acquire permission loads certify complete initialization;
+        // an untouched granule contains no table entries and is never read.
+        Some(unsafe { &*self.as_ptr().add(index) })
+    }
+}
+
+impl<const N: usize> DemandZeroArray<AtomicUsize, N> {
+    #[inline]
+    fn load(&self, index: usize, order: Ordering) -> usize {
+        self.get_existing(index)
+            .map_or(0, |value| value.load(order))
+    }
+
+    /// Update an entry already known to exist. Insertion must prepare both
+    /// pointer and size storage before publishing either table entry.
+    #[inline]
+    fn store_existing(&self, index: usize, value: usize, order: Ordering) {
+        if let Some(slot) = self.get_existing(index) {
+            slot.store(value, order);
+        }
+    }
+}
+
+// Like segment_mapping_tests, these run through malloc_abi_test.rs against
+// this module's real non-test build; lib.rs excludes malloc_abi from --lib tests.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub mod demand_storage_tests {
+    use super::*;
+
+    fn permissions(addr: usize) -> String {
+        for line in std::fs::read_to_string("/proc/self/maps").unwrap().lines() {
+            let mut fields = line.split_whitespace();
+            let (lo, hi) = fields.next().unwrap().split_once('-').unwrap();
+            let lo = usize::from_str_radix(lo, 16).unwrap();
+            let hi = usize::from_str_radix(hi, 16).unwrap();
+            if lo <= addr && addr < hi {
+                return fields.next().unwrap().to_owned();
+            }
+        }
+        panic!("missing demand-storage mapping");
+    }
+
+    pub fn read_only_misses_reserve_nothing() {
+        let table = DemandZeroArray::<AtomicUsize, 4096>::new();
+        assert_eq!(table.load(0, Ordering::Relaxed), 0);
+        assert_eq!(table.load(4095, Ordering::Relaxed), 0);
+        assert_eq!(table.region.base.load(Ordering::Acquire), 0);
+        assert!(table.get(4096).is_none());
+        assert!(table.region.enable(0, 0).is_none());
+        assert!(table.region.enable(0, table.region.len + 1).is_none());
+        assert_eq!(table.region.base.load(Ordering::Acquire), 0);
+    }
+
+    pub fn only_requested_granules_are_writable() {
+        const WORDS: usize = DemandZeroRegion::GRANULE / std::mem::size_of::<AtomicUsize>();
+        let table = DemandZeroArray::<AtomicUsize, { WORDS * 3 }>::new();
+        let base = table.region.reserve().unwrap();
+        for offset in [0, DemandZeroRegion::GRANULE, 2 * DemandZeroRegion::GRANULE] {
+            assert_eq!(&permissions(base + offset)[..3], "---");
+        }
+        let first = table.get(WORDS - 1).unwrap();
+        assert_eq!(first.load(Ordering::Relaxed), 0);
+        first.store(0x1357, Ordering::Release);
+        assert_eq!(&permissions(base)[..3], "rw-");
+        assert_eq!(&permissions(base + DemandZeroRegion::GRANULE)[..3], "---");
+        assert!(table.get_existing(WORDS).is_none());
+        let last = table.get(3 * WORDS - 1).unwrap();
+        assert_eq!(last.load(Ordering::Relaxed), 0);
+        last.store(0x2468, Ordering::Release);
+        assert_eq!(
+            &permissions(base + 2 * DemandZeroRegion::GRANULE)[..3],
+            "rw-"
+        );
+        assert_eq!(&permissions(base + DemandZeroRegion::GRANULE)[..3], "---");
+        assert_eq!(table.load(WORDS - 1, Ordering::Acquire), 0x1357);
+        assert_eq!(table.load(3 * WORDS - 1, Ordering::Acquire), 0x2468);
+    }
+
+    pub fn concurrent_first_touch_preserves_published_values() {
+        const WORKERS: usize = 16;
+        const WORDS: usize = DemandZeroRegion::GRANULE / std::mem::size_of::<AtomicUsize>();
+        let table = DemandZeroArray::<AtomicUsize, { WORKERS * WORDS }>::new();
+        let barrier = std::sync::Barrier::new(WORKERS);
+        std::thread::scope(|scope| {
+            for worker in 0..WORKERS {
+                let table = &table;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    table
+                        .get(worker * WORDS)
+                        .unwrap()
+                        .store(worker + 1, Ordering::Release);
+                    // A second upgrade of the same granule must not clear any
+                    // earlier data or replace the published reservation.
+                    table
+                        .get(worker * WORDS + 1)
+                        .unwrap()
+                        .store(0x55aa, Ordering::Release);
+                });
+            }
+        });
+        for worker in 0..WORKERS {
+            assert_eq!(table.load(worker * WORDS, Ordering::Acquire), worker + 1);
+            assert_eq!(table.load(worker * WORDS + 1, Ordering::Acquire), 0x55aa);
+        }
+    }
+
+    pub fn fork_child_extends_inherited_mapping_without_locks() {
+        const WORDS: usize = DemandZeroRegion::GRANULE / std::mem::size_of::<AtomicUsize>();
+        let table = DemandZeroArray::<AtomicUsize, { WORDS * 2 }>::new();
+        table.get(0).unwrap().store(0x1234, Ordering::Release);
+        // SAFETY: the child executes only raw demand-storage operations and
+        // exits without running Rust destructors or acquiring inherited locks.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            let inherited = table.load(0, Ordering::Acquire) == 0x1234;
+            let extended = table.get(WORDS).is_some_and(|slot| {
+                let zero = slot.load(Ordering::Relaxed) == 0;
+                slot.store(0x5678, Ordering::Release);
+                zero && slot.load(Ordering::Acquire) == 0x5678
+            });
+            raw_syscall::sys_exit_group(if inherited && extended { 0 } else { 1 });
+        }
+        let mut status = 0;
+        // SAFETY: this test owns the child and its writable wait-status cell.
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert_eq!(status, 0);
+        assert_eq!(table.load(0, Ordering::Acquire), 0x1234);
+        assert!(table.get_existing(WORDS).is_none());
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostAllocatorResolutionMetrics {
     pub raw_host_fallback_hits: u64,
@@ -74,8 +376,8 @@ pub struct HostAllocatorResolutionMetrics {
 // directly. When that resolution is unavailable or re-enters during bootstrap,
 // we fall back to a small bump allocator to break recursive startup cycles.
 //
-// The bump allocator breaks this cycle.  When the atomic reentry guard
-// detects recursion, we satisfy the allocation from a small static buffer.
+// The bump allocator breaks this cycle. When the atomic reentry guard
+// detects recursion, raw syscalls reserve and commit an allocation-free arena.
 // This is sufficient for the handful of allocations during startup (Rust
 // runtime init, format strings in mode/policy setup) before TLS becomes
 // available and the normal allocator path takes over.
@@ -139,6 +441,8 @@ struct AllocatorReentrySlot {
 unsafe impl Sync for AllocatorReentrySlot {}
 
 impl AllocatorReentrySlot {
+    // Kept as the explicit zero-representation contract for DemandZero.
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             tid: AtomicI32::new(0),
@@ -146,8 +450,7 @@ impl AllocatorReentrySlot {
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
             // Stored as `index + 1` so `0` means "empty" and the entire
-            // 14.75 MiB `ALLOCATOR_REENTRY_SLOTS` table is zero-initialized in `.bss`
-            // (bd-rc0923-epic-eeuy4f.25).
+            // table can use untouched demand-zero pages.
             fallback_cache_index: AtomicUsize::new(0),
             segment_local: UnsafeCell::new(SegmentLocalState::new()),
             mt_counts: SlotMtCounters::new(),
@@ -238,15 +541,19 @@ pub(crate) fn enter_signal_handler_alloc_scope() -> SignalHandlerAllocScope {
     SignalHandlerAllocScope { slot, previous }
 }
 
-static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
-    [const { AllocatorReentrySlot::new() }; ALLOCATOR_REENTRY_SLOT_COUNT];
+// SAFETY: every field's empty constructor is all-zero, including the segment
+// magazines, stats, atomics and UnsafeCell payload. Slot ownership is unchanged.
+unsafe impl DemandZero for AllocatorReentrySlot {}
+static ALLOCATOR_REENTRY_SLOTS: DemandZeroArray<
+    AllocatorReentrySlot,
+    ALLOCATOR_REENTRY_SLOT_COUNT,
+> = DemandZeroArray::new();
 
 /// One bit per slot that has ever been claimed (by thread key or by tid); bits
 /// are never cleared. Only a claimed slot can have its stats lock taken, so
 /// walks that must visit every possibly-locked slot use this instead of
-/// touching all of `ALLOCATOR_REENTRY_SLOTS`: the table is ~7.4 MiB of
-/// initialized data, and storing to every slot in a fork child dirtied ~1800
-/// pages per fork (12 ms per fork+exit+wait vs glibc 0.37 ms).
+/// touching unclaimed pages in `ALLOCATOR_REENTRY_SLOTS`. Only claimed slots
+/// have committed backing storage; a fork child must retain that sparsity.
 static ALLOCATOR_REENTRY_SLOTS_CLAIMED: [AtomicU64; ALLOCATOR_REENTRY_SLOT_COUNT / 64] =
     [const { AtomicU64::new(0) }; ALLOCATOR_REENTRY_SLOT_COUNT / 64];
 
@@ -267,7 +574,9 @@ fn for_each_claimed_slot(mut f: impl FnMut(&'static AllocatorReentrySlot)) {
         while bits != 0 {
             let bit = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            f(&ALLOCATOR_REENTRY_SLOTS[word_index * 64 + bit]);
+            if let Some(slot) = ALLOCATOR_REENTRY_SLOTS.get_existing(word_index * 64 + bit) {
+                f(slot);
+            }
         }
     }
 }
@@ -366,7 +675,7 @@ fn note_thread_key(key: usize) {
 fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentrySlot> {
     let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
     for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
-        let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
+        let slot = ALLOCATOR_REENTRY_SLOTS.get((start + offset) & ALLOCATOR_REENTRY_SLOT_MASK)?;
         match slot.tid.load(Ordering::Acquire) {
             KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => {
                 return Some(slot);
@@ -471,7 +780,7 @@ fn allocator_reentry_slot_for_tid(
     }
     let start = allocator_reentry_slot_start(tid);
     for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
-        let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
+        let slot = ALLOCATOR_REENTRY_SLOTS.get((start + offset) & ALLOCATOR_REENTRY_SLOT_MASK)?;
         let observed = slot.tid.load(Ordering::Acquire);
         if observed == tid {
             bind_slot_to_thread_key(slot, thread_key);
@@ -525,8 +834,9 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     // through `current_allocator_reentry_slot_slow` -> `note_thread_key`.
     if keyed && let Some(key) = thread_key {
         let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
-        let slot = &ALLOCATOR_REENTRY_SLOTS[start & ALLOCATOR_REENTRY_SLOT_MASK];
-        if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+        if let Some(slot) =
+            ALLOCATOR_REENTRY_SLOTS.get_existing(start & ALLOCATOR_REENTRY_SLOT_MASK)
+            && slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
             && slot.thread_key.load(Ordering::Acquire) == key
         {
             return Some(slot);
@@ -552,8 +862,7 @@ fn current_allocator_reentry_slot_slow(
         let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
         if cached != 0 {
             let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
-            if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
-                let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
+            if let Some(slot) = ALLOCATOR_REENTRY_SLOTS.get_existing(cached_slot_idx) {
                 if slot_matches_thread_key(slot, thread_key)
                     && (!MULTI_THREADED.load(Ordering::Relaxed)
                         || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
@@ -631,9 +940,9 @@ const BUMP_SIZE: usize = 256 * 1024 * 1024;
 /// allocator resolves or re-entrantly inside it: 0 bytes for echo, sort, git,
 /// perl, bash, python3 and claude in strict mode, 52 KiB in hardened
 /// (measured 2026-10-04); anything beyond spills into reclaimable overflow
-/// mappings. Its size is address space every process pays for: at 256 MiB the
-/// library alone exceeded the `ulimit -v` budgets programs and test suites set
-/// (coreutils cut-huge-range, printf-surprise), so nothing could even load.
+/// mappings. A reservation is now created only on first use and unused pages
+/// stay PROT_NONE; keeping it bounded also respects virtual-address-space
+/// budgets in programs that do need bootstrap storage.
 #[cfg(not(feature = "standalone"))]
 const BUMP_SIZE: usize = 8 * 1024 * 1024;
 const BUMP_ALIGN: usize = 16;
@@ -641,14 +950,9 @@ const BUMP_HEADER_WORDS: usize = 2;
 const BUMP_HEADER_SIZE: usize = std::mem::size_of::<usize>() * BUMP_HEADER_WORDS;
 const BUMP_MAGIC: usize = 0x4652_414E_4B42_554D;
 
-/// Bump heap uses `UnsafeCell` to avoid mutable-static references
-/// (forbidden in Rust 2024 edition).  Access is synchronized via
-/// `BUMP_POS` atomic CAS — only one thread can advance the position.
-#[repr(align(16))]
-struct BumpHeap(std::cell::UnsafeCell<[u8; BUMP_SIZE]>);
-// SAFETY: concurrent access is serialized by BUMP_POS atomic CAS.
-unsafe impl Sync for BumpHeap {}
-static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE]));
+/// BUMP_POS claims disjoint ranges; writable pages are committed before a
+/// successful claim is returned. Unused bootstrap capacity costs no data limit.
+static BUMP_HEAP: DemandZeroRegion = DemandZeroRegion::new(BUMP_SIZE);
 
 // ---------------------------------------------------------------------------
 // Strict-mode small-allocation segment heap
@@ -848,6 +1152,8 @@ struct SegmentDescriptor {
 }
 
 impl SegmentDescriptor {
+    // Kept as the explicit zero-representation contract for DemandZero.
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             writable: segment_mapping::WritablePages::new(),
@@ -858,8 +1164,11 @@ impl SegmentDescriptor {
     }
 }
 
-static SEGMENT_DESCRIPTORS: [SegmentDescriptor; SEGMENT_COUNT] =
-    [const { SegmentDescriptor::new() }; SEGMENT_COUNT];
+// SAFETY: all descriptor fields, including WritablePages and spill atomics,
+// have valid all-zero empty states. Publication uses the existing ownership bit.
+unsafe impl DemandZero for SegmentDescriptor {}
+static SEGMENT_DESCRIPTORS: DemandZeroArray<SegmentDescriptor, SEGMENT_COUNT> =
+    DemandZeroArray::new();
 
 /// A retired slot cached by one thread for its next allocation in this class.
 ///
@@ -1320,16 +1629,20 @@ fn segment_exact_live_view(ptr: *mut c_void) -> Option<(SegmentSlotView, usize)>
 #[cold]
 fn initialize_segment(class_index: usize) -> Option<usize> {
     let arena_base = initialize_segment_arena()?;
-    let raw_index = loop {
+    let (raw_index, descriptor) = loop {
         let current = SEGMENT_NEXT_UNUSED.load(Ordering::Acquire);
         if current as usize >= SEGMENT_COUNT {
             return None;
         }
+        // Prepare fallible descriptor storage before consuming a segment or
+        // charging its sidecar to RLIMIT_DATA. A failed commit leaves the
+        // claim cursor and all segment publication state untouched.
+        let descriptor = SEGMENT_DESCRIPTORS.get(current as usize)?;
         if SEGMENT_NEXT_UNUSED
             .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
-            break current as usize;
+            break (current as usize, descriptor);
         }
     };
     let class_size = bin_size(class_index);
@@ -1414,7 +1727,6 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
         .store(slot_reciprocal, Ordering::Relaxed);
     header.slot_count.store(slot_count, Ordering::Release);
 
-    let descriptor = &SEGMENT_DESCRIPTORS[raw_index];
     descriptor.meta_base.store(meta_base, Ordering::Release);
     descriptor.next_unused_slot.store(0, Ordering::Relaxed);
     SEGMENT_OWNED_BITMAP.fetch_or(1u64 << raw_index, Ordering::Release);
@@ -2056,14 +2368,17 @@ unsafe fn bump_alloc(size: usize) -> *mut c_void {
         let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
         let new_pos = aligned_pos.saturating_add(total);
         if new_pos > BUMP_SIZE {
-            // Static bump heap exhausted — create a reclaimable overflow mapping.
+            // Bump reservation exhausted — create a reclaimable overflow mapping.
             return unsafe { bump_alloc_overflow(request, BUMP_ALIGN) };
         }
+        let Some(base) = BUMP_HEAP.enable(aligned_pos, new_pos) else {
+            return unsafe { bump_alloc_overflow(request, BUMP_ALIGN) };
+        };
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
         {
-            let base = BUMP_HEAP.0.get().cast::<u8>();
+            let base = base as *mut u8;
             // SAFETY: aligned_pos..new_pos is reserved for this allocation.
             unsafe {
                 let header = base.add(aligned_pos).cast::<usize>();
@@ -2089,16 +2404,19 @@ unsafe fn bump_alloc_aligned(size: usize, alignment: usize) -> *mut c_void {
         let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
         let new_pos = aligned_pos.saturating_add(total);
         if new_pos > BUMP_SIZE {
-            // Static bump heap exhausted — create a reclaimable overflow mapping.
+            // Bump reservation exhausted — create a reclaimable overflow mapping.
             // (bd-ummyux: this used to return NULL, while the unaligned sibling
             // returned an unmanaged mmap. Both now share one owned lifecycle.)
             return unsafe { bump_alloc_overflow(request, alignment) };
         }
+        let Some(base) = BUMP_HEAP.enable(aligned_pos, new_pos) else {
+            return unsafe { bump_alloc_overflow(request, alignment) };
+        };
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
         {
-            let base = BUMP_HEAP.0.get().cast::<u8>();
+            let base = base as *mut u8;
             // SAFETY: aligned_pos..new_pos is reserved for this allocation.
             // The header is written immediately before the aligned user
             // pointer so the existing bump metadata lookup still works.
@@ -2541,13 +2859,17 @@ pub unsafe fn malloc_bump_allocation_size_for_tests(ptr: *mut c_void) -> Option<
 #[inline]
 fn is_static_bump_ptr(ptr: *mut c_void) -> bool {
     let addr = ptr as usize;
-    let base = BUMP_HEAP.0.get() as usize;
-    if addr < base + BUMP_HEADER_SIZE || addr >= base + BUMP_SIZE {
+    let base = BUMP_HEAP.base.load(Ordering::Acquire);
+    let used = BUMP_POS.load(Ordering::Acquire);
+    if base == 0 || addr < base + BUMP_HEADER_SIZE || addr >= base + used {
+        return false;
+    }
+    if !BUMP_HEAP.range_is_writable(addr - base - BUMP_HEADER_SIZE, addr - base) {
         return false;
     }
     // Verify magic sentinel to prevent false positives if a host pointer
     // happens to fall in the bump heap address range.
-    // SAFETY: the range check proves the header lies inside the static heap.
+    // SAFETY: the range and permission checks prove the header is mapped.
     let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
     unsafe { header.read() == BUMP_MAGIC }
 }
@@ -4134,10 +4456,10 @@ pub fn export_alloc_stats_snapshot_jsonl(bead_id: &str, run_id: &str, mode: &str
 const FALLBACK_ALLOC_TABLE_SLOTS: usize = 262144;
 const FALLBACK_SLOT_EMPTY: usize = 0;
 const FALLBACK_SLOT_TOMBSTONE: usize = 1;
-static FALLBACK_ALLOC_PTRS: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
-    [const { AtomicUsize::new(FALLBACK_SLOT_EMPTY) }; FALLBACK_ALLOC_TABLE_SLOTS];
-static FALLBACK_ALLOC_SIZES: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
-    [const { AtomicUsize::new(0) }; FALLBACK_ALLOC_TABLE_SLOTS];
+static FALLBACK_ALLOC_PTRS: DemandZeroArray<AtomicUsize, FALLBACK_ALLOC_TABLE_SLOTS> =
+    DemandZeroArray::new();
+static FALLBACK_ALLOC_SIZES: DemandZeroArray<AtomicUsize, FALLBACK_ALLOC_TABLE_SLOTS> =
+    DemandZeroArray::new();
 /// Reader-writer spin lock over the fallback table: the low bits count
 /// readers, `FALLBACK_TABLE_WRITER` marks the exclusive holder and
 /// `FALLBACK_TABLE_WRITER_WAITING` stops new readers so a writer (malloc /
@@ -4313,9 +4635,9 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let slot = FALLBACK_ALLOC_PTRS.load(idx, Ordering::Relaxed);
         if slot == key {
-            return FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) != 0;
+            return FALLBACK_ALLOC_SIZES.load(idx, Ordering::Relaxed) != 0;
         }
         if slot == FALLBACK_SLOT_EMPTY {
             return false;
@@ -4367,20 +4689,19 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
     let mut first_reusable: Option<usize> = None;
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let slot = FALLBACK_ALLOC_PTRS.load(idx, Ordering::Relaxed);
         if slot == key {
             // A zero-sized entry is a retired key, not a live allocation.
             // Reactivating the exact key preserves the table's uniqueness
             // invariant while avoiding a tombstone-chain scan on tcache reuse.
             if size != 0 {
-                publish_fallback_range(key, size);
-                FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
+                fallback_publish_entry(idx, key, size)?;
             }
             return Some(idx);
         }
         if slot == FALLBACK_SLOT_TOMBSTONE
             || (slot != FALLBACK_SLOT_EMPTY
-                && FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) == 0)
+                && FALLBACK_ALLOC_SIZES.load(idx, Ordering::Relaxed) == 0)
         {
             if first_reusable.is_none() {
                 first_reusable = Some(idx);
@@ -4389,25 +4710,27 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
         }
         if slot == FALLBACK_SLOT_EMPTY {
             if let Some(reusable_idx) = first_reusable {
-                publish_fallback_range(key, size);
-                FALLBACK_ALLOC_SIZES[reusable_idx].store(size, Ordering::Relaxed);
-                FALLBACK_ALLOC_PTRS[reusable_idx].store(key, Ordering::Release);
-                return Some(reusable_idx);
+                return fallback_publish_entry(reusable_idx, key, size);
             }
-            publish_fallback_range(key, size);
-            FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
-            FALLBACK_ALLOC_PTRS[idx].store(key, Ordering::Release);
-            return Some(idx);
+            return fallback_publish_entry(idx, key, size);
         }
     }
 
     if let Some(reusable_idx) = first_reusable {
-        publish_fallback_range(key, size);
-        FALLBACK_ALLOC_SIZES[reusable_idx].store(size, Ordering::Relaxed);
-        FALLBACK_ALLOC_PTRS[reusable_idx].store(key, Ordering::Release);
-        return Some(reusable_idx);
+        return fallback_publish_entry(reusable_idx, key, size);
     }
     None
+}
+
+/// Prepare both halves before publishing a live key. Failed page commits leave
+/// the old entry untouched; readers never see a key with inaccessible metadata.
+fn fallback_publish_entry(index: usize, key: usize, size: usize) -> Option<usize> {
+    let ptr_slot = FALLBACK_ALLOC_PTRS.get(index)?;
+    let size_slot = FALLBACK_ALLOC_SIZES.get(index)?;
+    publish_fallback_range(key, size);
+    size_slot.store(size, Ordering::Relaxed);
+    ptr_slot.store(key, Ordering::Release);
+    Some(index)
 }
 
 fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
@@ -4477,14 +4800,14 @@ fn fallback_remove_sized_for_slot(
         let cached = slot.fallback_cache_index.load(Ordering::Acquire);
         if let Some(cached_idx) = cached.checked_sub(1) {
             if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
-                let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+                let slot_key = FALLBACK_ALLOC_PTRS.load(cached_idx, Ordering::Acquire);
                 if slot_key == key {
-                    let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
+                    let size = FALLBACK_ALLOC_SIZES.load(cached_idx, Ordering::Relaxed);
                     clear_fallback_cache(slot);
                     if size != 0 {
                         // Keep the key as an inactive marker. The next host tcache
                         // reuse can reactivate it without probing past a tombstone.
-                        FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
+                        FALLBACK_ALLOC_SIZES.store_existing(cached_idx, 0, Ordering::Release);
                         return Some(size);
                     }
                     return None;
@@ -4502,9 +4825,9 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let slot = FALLBACK_ALLOC_PTRS.load(idx, Ordering::Relaxed);
         if slot == key {
-            let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+            let size = FALLBACK_ALLOC_SIZES.load(idx, Ordering::Relaxed);
             if size == 0 {
                 return None;
             }
@@ -4512,7 +4835,7 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
             // non-zero size before treating the entry as live. Keeping the key
             // turns the common same-address host tcache reuse into a first-probe
             // reactivation rather than accumulating another tombstone.
-            FALLBACK_ALLOC_SIZES[idx].store(0, Ordering::Release);
+            FALLBACK_ALLOC_SIZES.store_existing(idx, 0, Ordering::Release);
             return Some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
@@ -4535,14 +4858,14 @@ fn fallback_update_size(ptr: *mut c_void, new_size: usize) -> bool {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let slot = FALLBACK_ALLOC_PTRS.load(idx, Ordering::Relaxed);
         if slot == key {
-            if FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) == 0 {
+            if FALLBACK_ALLOC_SIZES.load(idx, Ordering::Relaxed) == 0 {
                 return false;
             }
             if new_size != 0 {
                 publish_fallback_range(key, new_size);
-                FALLBACK_ALLOC_SIZES[idx].store(new_size, Ordering::Relaxed);
+                FALLBACK_ALLOC_SIZES.store_existing(idx, new_size, Ordering::Relaxed);
             }
             return true;
         }
@@ -4573,9 +4896,9 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let slot = FALLBACK_ALLOC_PTRS.load(idx, Ordering::Relaxed);
         if slot == key {
-            let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+            let size = FALLBACK_ALLOC_SIZES.load(idx, Ordering::Relaxed);
             return (size != 0).then_some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
@@ -4868,9 +5191,9 @@ fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void)
     if !MULTI_THREADED.load(Ordering::Relaxed) {
         let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
         if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
-            let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+            let slot_key = FALLBACK_ALLOC_PTRS.load(cached_idx, Ordering::Acquire);
             if slot_key == key {
-                return Some(FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed));
+                return Some(FALLBACK_ALLOC_SIZES.load(cached_idx, Ordering::Relaxed));
             }
             clear_fallback_cache(slot);
         }
@@ -4930,7 +5253,7 @@ fn fallback_remaining_probe(addr: usize) -> Option<usize> {
     let start = fallback_start_index(addr);
     for i in 0..64 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let base = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let base = FALLBACK_ALLOC_PTRS.load(idx, Ordering::Relaxed);
         if base == FALLBACK_SLOT_EMPTY {
             // No more entries in this probe sequence
             return None;
@@ -4938,7 +5261,7 @@ fn fallback_remaining_probe(addr: usize) -> Option<usize> {
         if base <= FALLBACK_SLOT_TOMBSTONE {
             continue;
         }
-        let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+        let size = FALLBACK_ALLOC_SIZES.load(idx, Ordering::Relaxed);
         if size == 0 {
             continue;
         }

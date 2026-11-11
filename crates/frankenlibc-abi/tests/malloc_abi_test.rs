@@ -2330,3 +2330,23 @@ fn segment_mapping_concurrent_real_chunk_claims_are_disjoint_and_writable() {
     let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
     frankenlibc_abi::malloc_abi::segment_mapping_tests::concurrent_real_chunk_claims_are_disjoint_and_writable();
 }
+
+#[test]
+fn demand_storage_read_only_misses_reserve_nothing() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::read_only_misses_reserve_nothing();
+}
+
+#[test]
+fn demand_storage_only_requested_granules_are_writable() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::only_requested_granules_are_writable();
+}
+
+#[test]
+fn demand_storage_concurrent_first_touch_preserves_published_values() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::concurrent_first_touch_preserves_published_values();
+}
+
+#[test]
+fn demand_storage_fork_child_extends_inherited_mapping_without_locks() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::fork_child_extends_inherited_mapping_without_locks();
+}

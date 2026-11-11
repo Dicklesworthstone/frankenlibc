@@ -317,6 +317,49 @@ fn rpc_thread_svc_pollfd_returns_non_null() {
 }
 
 #[test]
+fn rpc_poll_snapshot_backing_stays_stable_across_refreshes() {
+    // The ABI returns a pointer cell, whose backing array is allocated lazily.
+    // Callers may retain the array across refreshes on the same live thread.
+    let cell = unsafe { __rpc_thread_svc_pollfd() }.cast::<*mut libc::pollfd>();
+    assert!(!cell.is_null());
+    let initial = unsafe { cell.read() };
+    assert!(!initial.is_null());
+    for _ in 0..8 {
+        let refreshed = unsafe { __rpc_thread_svc_pollfd() }.cast::<*mut libc::pollfd>();
+        assert_eq!(refreshed, cell);
+        assert_eq!(unsafe { refreshed.read() }, initial);
+        let count = unsafe { __rpc_thread_svc_max_pollfd().cast::<libc::c_int>().read() };
+        assert!((0..=libc::FD_SETSIZE as libc::c_int).contains(&count));
+        // refresh fills the entire bounded array, including unused entries.
+        if count < libc::FD_SETSIZE as libc::c_int {
+            assert_eq!(unsafe { (*initial.add(count as usize)).fd }, -1);
+        }
+    }
+}
+
+#[test]
+fn rpc_poll_snapshot_backing_is_private_to_each_live_thread() {
+    use std::sync::{Arc, Barrier};
+    let barrier = Arc::new(Barrier::new(2));
+    let peer_barrier = Arc::clone(&barrier);
+    let peer = std::thread::spawn(move || {
+        let cell = unsafe { __rpc_thread_svc_pollfd() }.cast::<*mut libc::pollfd>();
+        let backing = unsafe { cell.read() } as usize;
+        assert_ne!(backing, 0);
+        peer_barrier.wait();
+        peer_barrier.wait();
+        backing
+    });
+    let cell = unsafe { __rpc_thread_svc_pollfd() }.cast::<*mut libc::pollfd>();
+    let own_backing = unsafe { cell.read() } as usize;
+    barrier.wait();
+    assert_ne!(own_backing, 0);
+    barrier.wait();
+    let peer_backing = peer.join().unwrap();
+    assert_ne!(own_backing, peer_backing);
+}
+
+#[test]
 fn rpc_thread_tls_per_thread_isolation() {
     use std::sync::mpsc;
 
