@@ -4746,7 +4746,11 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
     }
 
     let (dst_rem_fast, src_rem_fast) =
-        crate::malloc_abi::known_remaining_pair_fast_in_guarded_string(dst as usize, src as usize);
+        crate::malloc_abi::known_remaining_write_pair_fast_in_guarded_string(
+            dst as usize,
+            src as usize,
+            n,
+        );
     let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -4915,7 +4919,11 @@ unsafe fn memmove_validating(dst: *mut c_void, src: *const c_void, n: usize) -> 
     };
 
     let (dst_rem_fast, src_rem_fast) =
-        crate::malloc_abi::known_remaining_pair_fast_in_guarded_string(dst as usize, src as usize);
+        crate::malloc_abi::known_remaining_write_pair_fast_in_guarded_string(
+            dst as usize,
+            src as usize,
+            n,
+        );
     let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -5068,7 +5076,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         return dst;
     };
 
-    let dst_rem = crate::malloc_abi::known_remaining_in_guarded_string(dst as usize);
+    let dst_rem = crate::malloc_abi::known_remaining_write_in_guarded_string(dst as usize, n);
     let bloom_negative = dst_rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -6857,8 +6865,11 @@ unsafe fn strcpy_core(
         return Some(unsafe { dst.add(end) });
     };
 
-    let (dst_rem, src_rem) =
-        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
+    let (dst_rem, src_rem) = crate::malloc_abi::known_remaining_write_pair_in_guarded_string(
+        dst as usize,
+        src as usize,
+        1,
+    );
     let bloom_negative = dst_rem.is_none() && src_rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
@@ -6876,6 +6887,15 @@ unsafe fn strcpy_core(
         let (copied_len, adverse) = unsafe {
             let (src_len, src_terminated) = scan_c_string(src, src_bound);
             let requested = src_len.saturating_add(1);
+            let dst_bound = if repair
+                && let Some(limit) = dst_bound
+                && limit > 64
+                && requested >= limit
+            {
+                crate::malloc_abi::known_remaining_write_in_guarded_string(dst as usize, requested)
+            } else {
+                dst_bound
+            };
             if repair {
                 match dst_bound {
                     Some(0) => {
@@ -7135,8 +7155,11 @@ unsafe fn strncpy_core(
         return Some(copy_len);
     };
 
-    let (dst_rem, src_rem) =
-        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
+    let (dst_rem, src_rem) = crate::malloc_abi::known_remaining_write_pair_in_guarded_string(
+        dst as usize,
+        src as usize,
+        n,
+    );
     let bloom_negative = dst_rem.is_none() && src_rem.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(

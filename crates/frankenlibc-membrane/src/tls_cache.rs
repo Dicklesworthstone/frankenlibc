@@ -194,19 +194,29 @@ struct CacheEntry {
     user_size: usize,
     /// The generation at time of validation.
     generation: u64,
+    /// Expected 64-bit `AllocationFingerprint::hash` at `user_base - 24`.
+    expected_hash: u64,
+    /// Expected 64-bit trailing `Canary` tag at `user_base + user_size`.
+    expected_canary: u64,
+    /// Shard epoch captured at validation start. A free of this slot will
+    /// leave the live `SHARD_EPOCHS[shard_idx]` ahead of this value,
+    /// turning the next lookup into a miss.
+    shard_epoch: u64,
+    /// Owning shard's `slots` vector index (`O(1)` lookup on warm-TLS verification).
+    slot_idx: u32,
     /// The safety state at time of validation.
     state: SafetyState,
     /// Shard that owns this allocation, computed via `tls_cache_shard_for`
     /// on `user_base` at insert time. The arena's free path bumps
     /// `SHARD_EPOCHS[shard_idx]` when it disposes of this slot.
     shard_idx: u8,
-    /// Shard epoch captured at validation start. A free of this slot will
-    /// leave the live `SHARD_EPOCHS[shard_idx]` ahead of this value,
-    /// turning the next lookup into a miss.
-    shard_epoch: u64,
+    /// True when `expected_hash` and `expected_canary` bind a real arena block.
+    has_integrity: bool,
     /// Whether this entry is populated.
     valid: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<CacheEntry>() <= 64);
 
 impl CacheEntry {
     const EMPTY: Self = Self {
@@ -214,9 +224,13 @@ impl CacheEntry {
         user_base: 0,
         user_size: 0,
         generation: 0,
+        expected_hash: 0,
+        expected_canary: 0,
+        shard_epoch: 0,
+        slot_idx: 0,
         state: SafetyState::Unknown,
         shard_idx: 0,
-        shard_epoch: 0,
+        has_integrity: false,
         valid: false,
     };
 }
@@ -230,6 +244,14 @@ fn allocate_entries() -> Option<Box<[CacheEntry; CACHE_SIZE]>> {
 
 const HIT_METRICS_FLUSH_BATCH: u64 = 4096;
 
+/// Cadence mask (`1-in-16` warm hits) for bounded warm-`TLS_CACHE` header/canary re-verification.
+const WARM_INTEGRITY_CADENCE_MASK: u32 = 15;
+
+/// Near-tail write threshold in bytes: any hardened write whose destination has
+/// `remaining <= WARM_WRITE_TAIL_THRESHOLD` (or `write_len >= remaining`) re-verifies
+/// header and trailing canary immediately on warm `TLS_CACHE` hits.
+pub(crate) const WARM_WRITE_TAIL_THRESHOLD: usize = 64;
+
 /// Thread-local validation cache.
 pub struct TlsValidationCache {
     entries: Option<Box<[CacheEntry; CACHE_SIZE]>>,
@@ -242,11 +264,12 @@ pub struct TlsValidationCache {
     /// allocations) paid the full pipeline on every string call
     /// (bd-rc0923-epic-eeuy4f.9, widened to 4-way in bd-rc0923-epic-eeuy4f.28).
     ranges: [CacheEntry; 4],
-    next_range: usize,
     hits: u64,
     misses: u64,
     unflushed_pipeline_hits: u64,
     unflushed_bloom_misses: u64,
+    cadence_counter: u32,
+    next_range: u8,
     unbacked: bool,
 }
 
@@ -264,11 +287,12 @@ impl TlsValidationCache {
         Self {
             entries: None,
             ranges: [CacheEntry::EMPTY; 4],
-            next_range: 0,
             hits: 0,
             misses: 0,
             unflushed_pipeline_hits: 0,
             unflushed_bloom_misses: 0,
+            cadence_counter: 0,
+            next_range: 0,
             unbacked: false,
         }
     }
@@ -280,11 +304,12 @@ impl TlsValidationCache {
         Self {
             entries: None,
             ranges: [CacheEntry::EMPTY; 4],
-            next_range: 0,
             hits: 0,
             misses: 0,
             unflushed_pipeline_hits: 0,
             unflushed_bloom_misses: 0,
+            cadence_counter: 0,
+            next_range: 0,
             unbacked: true,
         }
     }
@@ -295,11 +320,12 @@ impl TlsValidationCache {
         Self {
             entries: allocate_entries(),
             ranges: [CacheEntry::EMPTY; 4],
-            next_range: 0,
             hits: 0,
             misses: 0,
             unflushed_pipeline_hits: 0,
             unflushed_bloom_misses: 0,
+            cadence_counter: 0,
+            next_range: 0,
             unbacked: false,
         }
     }
@@ -381,21 +407,150 @@ impl TlsValidationCache {
         }
     }
 
+    #[cold]
+    #[inline(never)]
+    fn verify_entry_validation_slow(
+        &mut self,
+        entry: CacheEntry,
+        arena: &crate::arena::AllocationArena,
+    ) -> bool {
+        match arena.verify_cached_slot_integrity(
+            entry.user_base,
+            entry.user_size,
+            entry.generation,
+            entry.slot_idx,
+            entry.shard_idx,
+            entry.shard_epoch,
+            entry.expected_hash,
+            entry.expected_canary,
+        ) {
+            crate::arena::CachedIntegrityVerdict::Intact => true,
+            crate::arena::CachedIntegrityVerdict::EpochStale
+            | crate::arena::CachedIntegrityVerdict::HeaderCorrupted
+            | crate::arena::CachedIntegrityVerdict::CanaryCorrupted => {
+                // Evict stale/corrupted entry so the caller falls through to the
+                // authoritative validation stages (which record failure metrics
+                // and emit structured transition logs once).
+                self.invalidate(entry.user_base);
+                false
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn verify_entry_remaining_slow(
+        &mut self,
+        entry: CacheEntry,
+        rem: usize,
+        arena: &crate::arena::AllocationArena,
+    ) -> CachedRemaining {
+        match arena.verify_cached_slot_integrity(
+            entry.user_base,
+            entry.user_size,
+            entry.generation,
+            entry.slot_idx,
+            entry.shard_idx,
+            entry.shard_epoch,
+            entry.expected_hash,
+            entry.expected_canary,
+        ) {
+            crate::arena::CachedIntegrityVerdict::Intact => CachedRemaining(rem),
+            crate::arena::CachedIntegrityVerdict::EpochStale => {
+                self.invalidate(entry.user_base);
+                CachedRemaining::MISS
+            }
+            crate::arena::CachedIntegrityVerdict::HeaderCorrupted => {
+                self.invalidate(entry.user_base);
+                let metrics = crate::metrics::global_metrics();
+                crate::metrics::MembraneMetrics::inc(&metrics.fingerprint_failures);
+                CachedRemaining::CORRUPTED
+            }
+            crate::arena::CachedIntegrityVerdict::CanaryCorrupted => {
+                self.invalidate(entry.user_base);
+                let metrics = crate::metrics::global_metrics();
+                crate::metrics::MembraneMetrics::inc(&metrics.canary_failures);
+                CachedRemaining::CORRUPTED
+            }
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn verify_range_validation_slow(
+        &mut self,
+        range_idx: usize,
+        arena: &crate::arena::AllocationArena,
+    ) -> bool {
+        let entry = self.ranges[range_idx];
+        self.verify_entry_validation_slow(entry, arena)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn verify_range_remaining_slow(
+        &mut self,
+        range_idx: usize,
+        rem: usize,
+        arena: &crate::arena::AllocationArena,
+    ) -> CachedRemaining {
+        let entry = self.ranges[range_idx];
+        self.verify_entry_remaining_slow(entry, rem, arena)
+    }
+
+    #[inline(always)]
+    fn check_entry_remaining_if_needed(
+        &mut self,
+        entry: CacheEntry,
+        rem: usize,
+        integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
+    ) -> CachedRemaining {
+        if let Some((arena, is_write, write_len)) = integrity
+            && entry.has_integrity
+        {
+            self.cadence_counter = self.cadence_counter.wrapping_add(1);
+            let near_tail = is_write && rem.saturating_sub(write_len) <= WARM_WRITE_TAIL_THRESHOLD;
+            if near_tail || (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0 {
+                return self.verify_entry_remaining_slow(entry, rem, arena);
+            }
+        }
+        CachedRemaining(rem)
+    }
+
     /// A hit in the recently-validated allocation ranges.
     #[inline(always)]
-    fn range_hit(&mut self, addr: usize) -> Option<CachedValidation> {
+    fn range_hit(
+        &mut self,
+        addr: usize,
+        arena: Option<&crate::arena::AllocationArena>,
+    ) -> Option<CachedValidation> {
         for idx in 0..self.ranges.len() {
-            let range = self.ranges[idx];
-            if addr.wrapping_sub(range.user_base) < range.user_size {
-                if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
+            let user_base = self.ranges[idx].user_base;
+            let user_size = self.ranges[idx].user_size;
+            if addr.wrapping_sub(user_base) < user_size {
+                let shard_idx = self.ranges[idx].shard_idx;
+                if self.ranges[idx].shard_epoch == current_shard_epoch(shard_idx as usize) {
+                    let generation = self.ranges[idx].generation;
+                    let state = self.ranges[idx].state;
+                    if let Some(arena_ref) = arena
+                        && self.ranges[idx].has_integrity
+                    {
+                        self.cadence_counter = self.cadence_counter.wrapping_add(1);
+                        if (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0
+                            && !self.verify_range_validation_slow(idx, arena_ref)
+                        {
+                            return None;
+                        }
+                    }
                     return Some(CachedValidation {
-                        user_base: range.user_base,
-                        user_size: range.user_size,
-                        generation: range.generation,
-                        state: range.state,
+                        user_base,
+                        user_size,
+                        generation,
+                        state,
                     });
                 }
-                self.ranges[idx] = CacheEntry::EMPTY;
+                self.ranges[idx].user_size = 0;
+                self.ranges[idx].valid = false;
             }
         }
         None
@@ -409,30 +564,55 @@ impl TlsValidationCache {
     /// mismatch comparison.
     #[inline]
     pub fn lookup(&mut self, addr: usize) -> Option<CachedValidation> {
-        if let Some(hit) = self.range_hit(addr) {
+        self.lookup_with_arena(addr, None)
+    }
+
+    /// Look up a pointer in the cache with optional hardened arena cadence verification.
+    #[inline]
+    pub(crate) fn lookup_with_arena(
+        &mut self,
+        addr: usize,
+        arena: Option<&crate::arena::AllocationArena>,
+    ) -> Option<CachedValidation> {
+        if let Some(hit) = self.range_hit(addr, arena) {
             self.hits += 1;
             return Some(hit);
         }
-        if let Some(entries) = self.entries.as_deref_mut() {
+        let found_entry = if let Some(entries) = self.entries.as_deref_mut() {
             let idx = Self::index(addr);
             let entry = &mut entries[idx];
-
             if entry.valid && entry.addr == addr {
-                let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
-                if entry.shard_epoch == live_shard_epoch {
-                    self.hits += 1;
-                    return Some(CachedValidation {
-                        user_base: entry.user_base,
-                        user_size: entry.user_size,
-                        generation: entry.generation,
-                        state: entry.state,
-                    });
+                if entry.shard_epoch == current_shard_epoch(entry.shard_idx as usize) {
+                    Some(*entry)
+                } else {
+                    entry.valid = false;
+                    None
                 }
-                // Shard epoch advanced; the slot was freed (or another slot in
-                // the same shard was freed). Self-clean so we don't repay the
-                // mismatch on the next lookup.
-                entry.valid = false;
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if let Some(entry) = found_entry {
+            if let Some(arena_ref) = arena
+                && entry.has_integrity
+            {
+                self.cadence_counter = self.cadence_counter.wrapping_add(1);
+                if (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0
+                    && !self.verify_entry_validation_slow(entry, arena_ref)
+                {
+                    self.misses += 1;
+                    return None;
+                }
+            }
+            self.hits += 1;
+            return Some(CachedValidation {
+                user_base: entry.user_base,
+                user_size: entry.user_size,
+                generation: entry.generation,
+                state: entry.state,
+            });
         }
         self.misses += 1;
         None
@@ -444,79 +624,173 @@ impl TlsValidationCache {
     /// is used by speculative fast paths that fall back to the full pipeline,
     /// where the authoritative miss accounting still happens.
     #[inline]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn lookup_hit_only(&mut self, addr: usize) -> Option<CachedValidation> {
-        if let Some(hit) = self.range_hit(addr) {
+        self.lookup_hit_only_with_arena(addr, None)
+    }
+
+    #[inline]
+    pub(crate) fn lookup_hit_only_with_arena(
+        &mut self,
+        addr: usize,
+        arena: Option<&crate::arena::AllocationArena>,
+    ) -> Option<CachedValidation> {
+        if let Some(hit) = self.range_hit(addr, arena) {
             self.hits += 1;
             return Some(hit);
         }
-        if let Some(entries) = self.entries.as_deref_mut() {
+        let found_entry = if let Some(entries) = self.entries.as_deref_mut() {
             let idx = Self::index(addr);
             let entry = &mut entries[idx];
-
             if entry.valid && entry.addr == addr {
-                let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
-                if entry.shard_epoch == live_shard_epoch {
-                    self.hits += 1;
-                    return Some(CachedValidation {
-                        user_base: entry.user_base,
-                        user_size: entry.user_size,
-                        generation: entry.generation,
-                        state: entry.state,
-                    });
+                if entry.shard_epoch == current_shard_epoch(entry.shard_idx as usize) {
+                    Some(*entry)
+                } else {
+                    entry.valid = false;
+                    None
                 }
-                entry.valid = false;
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if let Some(entry) = found_entry {
+            if let Some(arena_ref) = arena
+                && entry.has_integrity
+            {
+                self.cadence_counter = self.cadence_counter.wrapping_add(1);
+                if (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0
+                    && !self.verify_entry_validation_slow(entry, arena_ref)
+                {
+                    return None;
+                }
+            }
+            self.hits += 1;
+            return Some(CachedValidation {
+                user_base: entry.user_base,
+                user_size: entry.user_size,
+                generation: entry.generation,
+                state: entry.state,
+            });
         }
         None
     }
 
     #[inline]
-    fn lookup_hit_remaining_entries(&mut self, addr: usize) -> CachedRemaining {
-        if let Some(entries) = self.entries.as_deref_mut() {
+    fn lookup_hit_remaining_entries(
+        &mut self,
+        addr: usize,
+        integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
+    ) -> CachedRemaining {
+        let found_entry = if let Some(entries) = self.entries.as_deref_mut() {
             let idx = Self::index(addr);
             let entry = &mut entries[idx];
-
             if entry.valid && entry.addr == addr {
-                let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
-                if entry.shard_epoch == live_shard_epoch {
-                    self.hits += 1;
-                    let offset = addr.wrapping_sub(entry.user_base);
-                    let rem = if offset < entry.user_size {
-                        Self::remaining_for_state(entry.state, entry.user_size - offset)
-                    } else {
-                        Some(0)
-                    };
-                    return CachedRemaining::from_option(rem);
+                if entry.shard_epoch == current_shard_epoch(entry.shard_idx as usize) {
+                    Some(*entry)
+                } else {
+                    entry.valid = false;
+                    None
                 }
-                entry.valid = false;
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if let Some(entry) = found_entry {
+            let offset = addr.wrapping_sub(entry.user_base);
+            if offset < entry.user_size {
+                if let Some(rem) =
+                    Self::remaining_for_state(entry.state, entry.user_size - offset)
+                {
+                    let checked = self.check_entry_remaining_if_needed(entry, rem, integrity);
+                    if checked.is_hit() {
+                        self.hits += 1;
+                    }
+                    return checked;
+                }
+                self.hits += 1;
+                return CachedRemaining::UNKNOWN;
+            }
+            self.hits += 1;
+            return CachedRemaining(0);
         }
         CachedRemaining::MISS
     }
 
     #[inline(always)]
-    fn lookup_range_remaining_raw(&mut self, addr: usize) -> CachedRemaining {
+    fn lookup_range_remaining_const<const IS_WRITE: bool>(
+        &mut self,
+        addr: usize,
+        arena: Option<&crate::arena::AllocationArena>,
+        write_len: usize,
+    ) -> CachedRemaining {
         for idx in 0..self.ranges.len() {
-            let r = &self.ranges[idx];
-            let off = addr.wrapping_sub(r.user_base);
-            if off < r.user_size {
-                if r.shard_epoch == current_shard_epoch(r.shard_idx as usize) {
-                    return CachedRemaining(r.user_size - off);
+            let user_base = self.ranges[idx].user_base;
+            let user_size = self.ranges[idx].user_size;
+            let off = addr.wrapping_sub(user_base);
+            if off < user_size {
+                let shard_idx = self.ranges[idx].shard_idx;
+                if self.ranges[idx].shard_epoch == current_shard_epoch(shard_idx as usize) {
+                    let rem = user_size - off;
+                    if let Some(arena_ref) = arena
+                        && self.ranges[idx].has_integrity
+                    {
+                        let c = self.cadence_counter.wrapping_add(1);
+                        self.cadence_counter = c;
+                        let near_tail =
+                            IS_WRITE && rem.saturating_sub(write_len) <= WARM_WRITE_TAIL_THRESHOLD;
+                        if near_tail || (c & WARM_INTEGRITY_CADENCE_MASK) == 0 {
+                            return self.verify_range_remaining_slow(idx, rem, arena_ref);
+                        }
+                    }
+                    return CachedRemaining(rem);
                 }
-                self.ranges[idx] = CacheEntry::EMPTY;
+                self.ranges[idx].user_size = 0;
+                self.ranges[idx].valid = false;
                 break;
             }
         }
         CachedRemaining::MISS
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn lookup_hit_remaining_with_oracle(
         &mut self,
         addr: usize,
         page_oracle: &crate::page_oracle::PageOracle,
+        integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
     ) -> CachedRemaining {
-        let range_rem = self.lookup_range_remaining_raw(addr);
+        match integrity {
+            Some((arena, true, write_len)) => self
+                .lookup_hit_remaining_with_oracle_const::<true>(
+                    addr,
+                    page_oracle,
+                    Some(arena),
+                    write_len,
+                ),
+            Some((arena, false, _)) => {
+                self.lookup_hit_remaining_with_oracle_const::<false>(addr, page_oracle, Some(arena), 0)
+            }
+            None => self.lookup_hit_remaining_with_oracle_const::<false>(addr, page_oracle, None, 0),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn lookup_hit_remaining_with_oracle_const<const IS_WRITE: bool>(
+        &mut self,
+        addr: usize,
+        page_oracle: &crate::page_oracle::PageOracle,
+        arena: Option<&crate::arena::AllocationArena>,
+        write_len: usize,
+    ) -> CachedRemaining {
+        let range_rem = self.lookup_range_remaining_const::<IS_WRITE>(addr, arena, write_len);
+        if range_rem.is_corrupted() {
+            return range_rem;
+        }
         if range_rem.is_known_bound() {
             self.hits += 1;
             let next_hits = self.unflushed_pipeline_hits + 1;
@@ -536,49 +810,116 @@ impl TlsValidationCache {
             }
             return CachedRemaining::UNKNOWN;
         }
-        self.lookup_hit_remaining_slow(addr)
+        self.lookup_hit_remaining_slow(addr, arena.map(|a| (a, IS_WRITE, write_len)))
     }
 
     #[inline(never)]
-    fn lookup_hit_remaining_slow(&mut self, addr: usize) -> CachedRemaining {
-        let hit = self.lookup_hit_remaining_entries(addr);
-        if hit.is_hit() {
+    fn lookup_hit_remaining_slow(
+        &mut self,
+        addr: usize,
+        integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
+    ) -> CachedRemaining {
+        let hit = self.lookup_hit_remaining_entries(addr, integrity);
+        if hit.is_hit() && !hit.is_corrupted() {
             self.record_pipeline_hits(1);
         }
         hit
     }
 
     #[inline(always)]
-    pub(crate) fn lookup_hit_remaining_pair_with_oracle(
+    pub(crate) fn lookup_hit_remaining_pair_with_oracle<const LHS_IS_WRITE: bool>(
         &mut self,
         lhs: usize,
         rhs: usize,
         page_oracle: &crate::page_oracle::PageOracle,
+        arena: Option<&crate::arena::AllocationArena>,
+        write_len: usize,
     ) -> (CachedRemaining, CachedRemaining) {
         let mut lhs_rem = CachedRemaining::MISS;
         let mut rhs_rem = CachedRemaining::MISS;
+        let mut stepped_cadence = None;
 
         for idx in 0..self.ranges.len() {
-            let r = &self.ranges[idx];
-            let user_base = r.user_base;
-            let user_size = r.user_size;
+            let user_base = self.ranges[idx].user_base;
+            let user_size = self.ranges[idx].user_size;
             let lhs_off = lhs.wrapping_sub(user_base);
             if lhs_off < user_size {
-                if r.shard_epoch == current_shard_epoch(r.shard_idx as usize) {
-                    lhs_rem = CachedRemaining(user_size - lhs_off);
-                    let rhs_off = rhs.wrapping_sub(user_base);
-                    if rhs_off < user_size {
-                        rhs_rem = CachedRemaining(user_size - rhs_off);
+                let shard_idx = self.ranges[idx].shard_idx;
+                if self.ranges[idx].shard_epoch == current_shard_epoch(shard_idx as usize) {
+                    let rem = user_size - lhs_off;
+                    lhs_rem = if let Some(arena_ref) = arena
+                        && self.ranges[idx].has_integrity
+                    {
+                        let c = self.cadence_counter.wrapping_add(1);
+                        self.cadence_counter = c;
+                        stepped_cadence = Some(c);
+                        let near_tail = LHS_IS_WRITE
+                            && rem.saturating_sub(write_len) <= WARM_WRITE_TAIL_THRESHOLD;
+                        if near_tail || (c & WARM_INTEGRITY_CADENCE_MASK) == 0 {
+                            self.verify_range_remaining_slow(idx, rem, arena_ref)
+                        } else {
+                            CachedRemaining(rem)
+                        }
+                    } else {
+                        CachedRemaining(rem)
+                    };
+                    if lhs_rem.is_known_bound() {
+                        let rhs_off = rhs.wrapping_sub(user_base);
+                        if rhs_off < user_size {
+                            // Same live allocation; already passed epoch + cadence/write check.
+                            rhs_rem = CachedRemaining(user_size - rhs_off);
+                        }
+                    } else if lhs_rem.is_corrupted() {
+                        let rhs_off = rhs.wrapping_sub(user_base);
+                        if rhs_off < user_size {
+                            rhs_rem = CachedRemaining(0);
+                        }
                     }
                 } else {
-                    self.ranges[idx] = CacheEntry::EMPTY;
+                    self.ranges[idx].user_size = 0;
+                    self.ranges[idx].valid = false;
                 }
                 break;
             }
         }
 
-        if !rhs_rem.is_known_bound() {
-            rhs_rem = self.lookup_range_remaining_raw(rhs);
+        if !rhs_rem.is_known_bound() && !rhs_rem.is_corrupted() {
+            for idx in 0..self.ranges.len() {
+                let user_base = self.ranges[idx].user_base;
+                let user_size = self.ranges[idx].user_size;
+                let off = rhs.wrapping_sub(user_base);
+                if off < user_size {
+                    let shard_idx = self.ranges[idx].shard_idx;
+                    if self.ranges[idx].shard_epoch == current_shard_epoch(shard_idx as usize) {
+                        let rem = user_size - off;
+                        rhs_rem = if let Some(arena_ref) = arena
+                            && self.ranges[idx].has_integrity
+                        {
+                            let c = stepped_cadence.unwrap_or_else(|| {
+                                let next = self.cadence_counter.wrapping_add(1);
+                                self.cadence_counter = next;
+                                next
+                            });
+                            let phase = if stepped_cadence.is_some() { 8 } else { 0 };
+                            if (c & WARM_INTEGRITY_CADENCE_MASK) == phase {
+                                self.verify_range_remaining_slow(idx, rem, arena_ref)
+                            } else {
+                                CachedRemaining(rem)
+                            }
+                        } else {
+                            CachedRemaining(rem)
+                        };
+                    } else {
+                        self.ranges[idx].user_size = 0;
+                        self.ranges[idx].valid = false;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if lhs_rem.is_corrupted() || rhs_rem.is_corrupted() {
+            return (lhs_rem, rhs_rem);
         }
 
         if lhs_rem.is_known_bound() && rhs_rem.is_known_bound() {
@@ -591,6 +932,9 @@ impl TlsValidationCache {
             self.record_pipeline_hits(2);
             return (lhs_rem, rhs_rem);
         }
+
+        let lhs_integrity = arena.map(|a| (a, LHS_IS_WRITE, write_len));
+        let rhs_integrity = arena.map(|a| (a, false, 0));
 
         let lhs_maybe_owned = if lhs_rem.is_known_bound() {
             false
@@ -635,21 +979,26 @@ impl TlsValidationCache {
             lhs,
             lhs_rem,
             lhs_maybe_owned,
+            lhs_integrity,
             rhs,
             rhs_rem,
             rhs_maybe_owned,
+            rhs_integrity,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     fn lookup_hit_remaining_pair_slow_with_oracle(
         &mut self,
         lhs: usize,
         lhs_rem: CachedRemaining,
         lhs_maybe_owned: bool,
+        lhs_integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
         rhs: usize,
         rhs_rem: CachedRemaining,
         rhs_maybe_owned: bool,
+        rhs_integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
     ) -> (CachedRemaining, CachedRemaining) {
         let mut misses = 0u64;
         let mut hits = 0u64;
@@ -659,8 +1008,8 @@ impl TlsValidationCache {
             hits += 1;
             lhs_rem
         } else if lhs_maybe_owned {
-            let h = self.lookup_hit_remaining_entries(lhs);
-            if h.is_hit() {
+            let h = self.lookup_hit_remaining_entries(lhs, lhs_integrity);
+            if h.is_hit() && !h.is_corrupted() {
                 hits += 1;
             }
             h
@@ -676,8 +1025,8 @@ impl TlsValidationCache {
             hits += 1;
             rhs_rem
         } else if rhs_maybe_owned {
-            let h = self.lookup_hit_remaining_entries(rhs);
-            if h.is_hit() {
+            let h = self.lookup_hit_remaining_entries(rhs, rhs_integrity);
+            if h.is_hit() && !h.is_corrupted() {
                 hits += 1;
             }
             h
@@ -697,19 +1046,46 @@ impl TlsValidationCache {
         (lhs_hit, rhs_hit)
     }
 
-    /// Insert or update a cache entry.
-    ///
-    /// `shard_epochs` is a snapshot taken at validation entry. The shard for
-    /// the cached entry is derived from `validation.user_base`, and the
-    /// recorded epoch is the snapshot's value for that shard, *not* the
-    /// live `SHARD_EPOCHS[shard]` at insert time. This is what makes the
-    /// per-shard scheme race-free: if a free intervened between snapshot
-    /// and insert, the recorded `shard_epoch` lags the live value and the
-    /// very next lookup will mismatch.
+    /// Insert or update a cache entry (synthetic/untagged wrapper).
     pub fn insert(
         &mut self,
         addr: usize,
         validation: CachedValidation,
+        shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
+    ) {
+        self.insert_internal(addr, validation, 0, 0, 0, false, shard_epochs);
+    }
+
+    /// Insert or update a cache entry carrying verified 24B header and 8B trailing canary tags.
+    pub(crate) fn insert_with_integrity(
+        &mut self,
+        addr: usize,
+        validation: CachedValidation,
+        slot_idx: u32,
+        expected_hash: u64,
+        expected_canary: u64,
+        shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
+    ) {
+        self.insert_internal(
+            addr,
+            validation,
+            slot_idx,
+            expected_hash,
+            expected_canary,
+            true,
+            shard_epochs,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_internal(
+        &mut self,
+        addr: usize,
+        validation: CachedValidation,
+        slot_idx: u32,
+        expected_hash: u64,
+        expected_canary: u64,
+        has_integrity: bool,
         shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
     ) {
         let idx = Self::index(addr);
@@ -719,9 +1095,13 @@ impl TlsValidationCache {
             user_base: validation.user_base,
             user_size: validation.user_size,
             generation: validation.generation,
+            expected_hash,
+            expected_canary,
+            shard_epoch: shard_epochs[shard_idx],
+            slot_idx,
             state: validation.state,
             shard_idx: shard_idx as u8,
-            shard_epoch: shard_epochs[shard_idx],
+            has_integrity,
             valid: true,
         };
         let range_eligible = entry.user_size != 0
@@ -857,6 +1237,12 @@ pub struct CachedRemaining(usize);
 impl CachedRemaining {
     pub const UNKNOWN: Self = Self(usize::MAX);
     pub const MISS: Self = Self(usize::MAX - 1);
+    pub const CORRUPTED: Self = Self(usize::MAX - 2);
+
+    #[inline(always)]
+    pub const fn clamped_zero() -> Self {
+        Self(0)
+    }
 
     #[inline(always)]
     pub const fn from_option(rem: Option<usize>) -> Self {
@@ -868,12 +1254,17 @@ impl CachedRemaining {
 
     #[inline(always)]
     pub const fn is_hit(self) -> bool {
-        self.0 != usize::MAX - 1
+        self.0 != Self::MISS.0
+    }
+
+    #[inline(always)]
+    pub const fn is_corrupted(self) -> bool {
+        self.0 == Self::CORRUPTED.0
     }
 
     #[inline(always)]
     pub const fn is_known_bound(self) -> bool {
-        self.0 < usize::MAX - 1
+        self.0 < Self::CORRUPTED.0
     }
 
     #[inline(always)]
@@ -883,10 +1274,12 @@ impl CachedRemaining {
 
     #[inline(always)]
     pub const fn decode(self) -> Option<Option<usize>> {
-        if self.0 == usize::MAX - 1 {
+        if self.0 == Self::MISS.0 {
             None
-        } else if self.0 == usize::MAX {
+        } else if self.0 == Self::UNKNOWN.0 {
             Some(None)
+        } else if self.0 == Self::CORRUPTED.0 {
+            Some(Some(0))
         } else {
             Some(Some(self.0))
         }
@@ -951,37 +1344,35 @@ pub(crate) fn try_with_tls_cache_hit<F, R: Copy>(default: R, f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
-    let cache_ptr = TLS_CACHE_FAST_PTR.get();
-    if !cache_ptr.is_null() {
-        // SAFETY: `cache_ptr` points to this thread's live `TLS_CACHE`
-        // `RefCell<TlsValidationCache>`, populated after `TLS_CACHE` initialization
-        // on this thread and cleared in `TlsValidationCache::drop` before teardown.
-        // `RefCell::try_borrow_mut` prevents mutable aliasing across reentrant calls.
-        let cache = unsafe { &*cache_ptr };
-        return match cache.try_borrow_mut() {
-            Ok(mut borrowed) => f(&mut borrowed),
-            Err(_) => default,
-        };
+    let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
+    if cache_ptr.is_null() {
+        cache_ptr = init_tls_cache_fast_ptr_slow();
+        if cache_ptr.is_null() {
+            return default;
+        }
     }
-    try_with_tls_cache_hit_slow(default, f)
+    // SAFETY: `cache_ptr` points to this thread's live `TLS_CACHE`
+    // `RefCell<TlsValidationCache>`, populated after `TLS_CACHE` initialization
+    // on this thread and cleared in `TlsValidationCache::drop` before teardown.
+    // `RefCell::try_borrow_mut` prevents mutable aliasing across reentrant calls.
+    let cache = unsafe { &*cache_ptr };
+    match cache.try_borrow_mut() {
+        Ok(mut borrowed) => f(&mut borrowed),
+        Err(_) => default,
+    }
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
 #[cold]
 #[inline(never)]
-fn try_with_tls_cache_hit_slow<F, R: Copy>(default: R, f: F) -> R
-where
-    F: FnOnce(&mut TlsValidationCache) -> R,
-{
+fn init_tls_cache_fast_ptr_slow() -> *const std::cell::RefCell<TlsValidationCache> {
     TLS_CACHE
         .try_with(|cache| {
-            TLS_CACHE_FAST_PTR.set(std::ptr::from_ref(cache));
-            match cache.try_borrow_mut() {
-                Ok(mut borrowed) => f(&mut borrowed),
-                Err(_) => default,
-            }
+            let ptr = std::ptr::from_ref(cache);
+            TLS_CACHE_FAST_PTR.set(ptr);
+            ptr
         })
-        .unwrap_or(default)
+        .unwrap_or(std::ptr::null())
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -1605,5 +1996,190 @@ mod tests {
         // invalidate(user_base) clears ranges too.
         cache.invalidate(0xB_0000);
         assert!(cache.lookup(0xB_0000 + 100).is_none());
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn warm_tls_cache_detects_tail_canary_corruption_immediately_on_near_tail_write_and_cadence() {
+        let arena = crate::arena::AllocationArena::new();
+        let page_oracle = crate::page_oracle::PageOracle::new();
+        let metrics = crate::metrics::global_metrics();
+
+        let alloc = arena.allocate(128).expect("alloc 128");
+        page_oracle.insert(alloc.raw_base, alloc.total_size);
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        let fp = crate::fingerprint::AllocationFingerprint::compute(
+            slot.user_base,
+            slot.user_size as u64,
+            slot.generation,
+        );
+        let canary = fp.canary_for(slot.user_base);
+
+        let epoch_guard = lock_tls_cache_epoch_for_tests();
+        let epochs = snapshot_shard_epochs();
+        let mut cache = TlsValidationCache::new();
+        cache.insert_with_integrity(
+            slot.user_base,
+            CachedValidation {
+                user_base: slot.user_base,
+                user_size: slot.user_size,
+                generation: slot.generation,
+                state: slot.state,
+            },
+            slot.slot_idx,
+            fp.hash,
+            canary.as_u64(),
+            &epochs,
+        );
+
+        // Intact hit returns full 128B bound.
+        let intact = cache.lookup_hit_remaining_with_oracle(
+            slot.user_base,
+            &page_oracle,
+            Some((&arena, false, 0)),
+        );
+        assert_eq!(intact, CachedRemaining(128));
+
+        // Corrupt 1 bit of the trailing canary AFTER TLS cache is warm.
+        // SAFETY: `[slot.user_base + 128 .. + 8]` is the live trailing canary.
+        unsafe {
+            let tail = (slot.user_base + 128) as *mut u8;
+            *tail ^= 0x01;
+        }
+
+        // Negative control: unverified cold-only lookup (`integrity = None`) stays blind!
+        let blind = cache.lookup_hit_remaining_with_oracle(slot.user_base, &page_oracle, None);
+        assert_eq!(
+            blind,
+            CachedRemaining(128),
+            "negative control: without warm-TLS integrity verification, corrupted tail returns stale 128"
+        );
+
+        // Positive check 1: near-tail write (`slot.user_base + 96` => remaining 32 <= 64)
+        // detects corruption IMMEDIATELY on the very next call, evicts cache, and bumps `canary_failures`.
+        let failures_before = crate::metrics::MembraneMetrics::get(&metrics.canary_failures);
+        let near_tail = cache.lookup_hit_remaining_with_oracle(
+            slot.user_base + 96,
+            &page_oracle,
+            Some((&arena, true, 8)),
+        );
+        assert_eq!(near_tail, CachedRemaining::CORRUPTED);
+        assert_eq!(near_tail.decode(), Some(Some(0)));
+        assert!(
+            crate::metrics::MembraneMetrics::get(&metrics.canary_failures) > failures_before,
+            "warm-TLS canary failure must increment canary_failures"
+        );
+        // Entry was evicted from both `ranges` and `entries`.
+        assert_eq!(
+            cache.lookup_hit_remaining_with_oracle(slot.user_base, &page_oracle, None),
+            CachedRemaining::MISS
+        );
+
+        // Re-populate warm cache and verify 1-in-16 read cadence catches corruption even at offset 0.
+        cache.insert_with_integrity(
+            slot.user_base,
+            CachedValidation {
+                user_base: slot.user_base,
+                user_size: slot.user_size,
+                generation: slot.generation,
+                state: slot.state,
+            },
+            slot.slot_idx,
+            fp.hash,
+            canary.as_u64(),
+            &epochs,
+        );
+        let failures_before_cadence =
+            crate::metrics::MembraneMetrics::get(&metrics.canary_failures);
+        let mut detected_at = None;
+        for step in 1..=16 {
+            let res = cache.lookup_hit_remaining_with_oracle(
+                slot.user_base,
+                &page_oracle,
+                Some((&arena, false, 0)),
+            );
+            if res.is_corrupted() {
+                detected_at = Some(step);
+                break;
+            }
+        }
+        assert!(
+            detected_at.is_some(),
+            "1-in-16 warm-TLS cadence must detect tail corruption within 16 reads"
+        );
+        assert!(
+            crate::metrics::MembraneMetrics::get(&metrics.canary_failures)
+                > failures_before_cadence
+        );
+
+        drop(epoch_guard);
+        let (_, drained) = arena.free(alloc.ptr);
+        // SAFETY: test owns drained quarantine entries exclusively.
+        unsafe { crate::arena::AllocationArena::deallocate_drained(&drained) };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn warm_tls_cache_detects_header_corruption_and_evicts_entry() {
+        let arena = crate::arena::AllocationArena::new();
+        let page_oracle = crate::page_oracle::PageOracle::new();
+        let metrics = crate::metrics::global_metrics();
+
+        let alloc = arena.allocate(48).expect("alloc 48");
+        page_oracle.insert(alloc.raw_base, alloc.total_size);
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+        let fp = crate::fingerprint::AllocationFingerprint::compute(
+            slot.user_base,
+            slot.user_size as u64,
+            slot.generation,
+        );
+        let canary = fp.canary_for(slot.user_base);
+
+        let epoch_guard = lock_tls_cache_epoch_for_tests();
+        let epochs = snapshot_shard_epochs();
+        let mut cache = TlsValidationCache::new();
+        cache.insert_with_integrity(
+            slot.user_base,
+            CachedValidation {
+                user_base: slot.user_base,
+                user_size: slot.user_size,
+                generation: slot.generation,
+                state: slot.state,
+            },
+            slot.slot_idx,
+            fp.hash,
+            canary.as_u64(),
+            &epochs,
+        );
+
+        // Corrupt 1 bit of the 24B prepended fingerprint header (`user_base - 24`).
+        // SAFETY: `[slot.user_base - 24 .. slot.user_base]` is the live header.
+        let hdr_ptr = (slot.user_base - crate::fingerprint::FINGERPRINT_SIZE) as *mut u8;
+        let saved = unsafe { *hdr_ptr };
+        unsafe { *hdr_ptr = saved ^ 0x40 };
+
+        let fp_failures_before =
+            crate::metrics::MembraneMetrics::get(&metrics.fingerprint_failures);
+        let res = cache.lookup_hit_remaining_with_oracle(
+            slot.user_base,
+            &page_oracle,
+            Some((&arena, true, 8)),
+        );
+        assert_eq!(res, CachedRemaining::CORRUPTED);
+        assert!(
+            crate::metrics::MembraneMetrics::get(&metrics.fingerprint_failures)
+                > fp_failures_before,
+            "warm-TLS header failure must increment fingerprint_failures"
+        );
+        assert_eq!(
+            cache.lookup_hit_remaining_with_oracle(slot.user_base, &page_oracle, None),
+            CachedRemaining::MISS
+        );
+
+        // Restore header before freeing.
+        unsafe { *hdr_ptr = saved };
+        drop(epoch_guard);
+        let (_, drained) = arena.free(alloc.ptr);
+        unsafe { crate::arena::AllocationArena::deallocate_drained(&drained) };
     }
 }

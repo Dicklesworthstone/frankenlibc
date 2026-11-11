@@ -5689,7 +5689,7 @@ pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
 
     let canary_ptr = slot.user_base.saturating_add(slot.user_size) as *const u8;
     let canary_bytes = unsafe { read_fixed::<CANARY_SIZE>(canary_ptr) };
-    if !fingerprint.canary().verify(&canary_bytes) {
+    if !fingerprint.canary_for(slot.user_base).verify(&canary_bytes) {
         return MCHECK_TAIL;
     }
 
@@ -6243,6 +6243,33 @@ pub(crate) fn known_remaining_in_guarded_string(addr: usize) -> Option<usize> {
     known_remaining(addr)
 }
 
+/// Fast remaining-bytes lookup for a guarded write destination of `write_len`
+/// bytes, triggering immediate warm-`TLS_CACHE` header/canary verification on
+/// near-tail (`remaining <= 64`) or full-buffer (`write_len >= remaining`) writes.
+#[inline(always)]
+pub(crate) fn known_remaining_write_in_guarded_string(
+    addr: usize,
+    write_len: usize,
+) -> Option<usize> {
+    if !runtime_policy::strict_passthrough_active()
+        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+    {
+        return match pipeline.try_validate_cached_write_remaining(addr, write_len) {
+            Some(Some(rem)) => Some(rem),
+            Some(None) => {
+                if non_arena_may_contain(addr) {
+                    non_arena_remaining(addr)
+                } else {
+                    None
+                }
+            }
+            None => known_remaining_uncached_in_guarded_string(addr, pipeline),
+        };
+    }
+    known_remaining(addr)
+}
+
 /// Single-register representation of `Option<usize>` for known allocation bounds.
 ///
 /// `usize::MAX` represents `None` (unknown/unbounded), while any value
@@ -6344,11 +6371,36 @@ pub(crate) fn known_remaining_pair_fast_in_guarded_string(
     lhs: usize,
     rhs: usize,
 ) -> (KnownRemaining, KnownRemaining) {
+    known_remaining_pair_fast_inner_in_guarded_string(lhs, rhs, false, 0)
+}
+
+/// Fast single-register remaining-bytes lookup for `(dst, src)` where `dst` is
+/// a guarded write destination of `write_len` bytes.
+#[inline(always)]
+pub(crate) fn known_remaining_write_pair_fast_in_guarded_string(
+    dst: usize,
+    src: usize,
+    write_len: usize,
+) -> (KnownRemaining, KnownRemaining) {
+    known_remaining_pair_fast_inner_in_guarded_string(dst, src, true, write_len)
+}
+
+#[inline(always)]
+fn known_remaining_pair_fast_inner_in_guarded_string(
+    lhs: usize,
+    rhs: usize,
+    lhs_is_write: bool,
+    write_len: usize,
+) -> (KnownRemaining, KnownRemaining) {
     if !runtime_policy::strict_passthrough_active()
         && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
     {
-        let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
+        let (lhs_cached, rhs_cached) = if lhs_is_write {
+            pipeline.try_validate_cached_write_remaining_pair(lhs, rhs, write_len)
+        } else {
+            pipeline.try_validate_cached_remaining_pair(lhs, rhs)
+        };
         if (lhs_cached.is_known_bound() || (lhs_cached.is_hit() && !non_arena_may_contain(lhs)))
             && (rhs_cached.is_known_bound() || (rhs_cached.is_hit() && !non_arena_may_contain(rhs)))
         {
@@ -6376,6 +6428,18 @@ pub(crate) fn known_remaining_pair_in_guarded_string(
     rhs: usize,
 ) -> (Option<usize>, Option<usize>) {
     let (l, r) = known_remaining_pair_fast_in_guarded_string(lhs, rhs);
+    (l.into_option(), r.into_option())
+}
+
+/// Fast remaining-bytes lookup for `(dst, src)` where `dst` is a guarded write
+/// destination of `write_len` bytes.
+#[inline(always)]
+pub(crate) fn known_remaining_write_pair_in_guarded_string(
+    dst: usize,
+    src: usize,
+    write_len: usize,
+) -> (Option<usize>, Option<usize>) {
+    let (l, r) = known_remaining_write_pair_fast_in_guarded_string(dst, src, write_len);
     (l.into_option(), r.into_option())
 }
 
@@ -6815,11 +6879,17 @@ unsafe fn free_membrane_path(
         }
         FreeResult::FreedWithCanaryCorruption => {
             // Buffer overflow was detected -- the canary after the allocation was
-            // corrupted. In strict mode we still free (damage is done). Metrics
-            // are recorded by the arena.
+            // corrupted. Quarantine the block, mark adverse, and emit a structured
+            // ClampSize heal/audit entry when self-healing is active.
             adverse = true;
             if let Some(size) = known_size {
                 record_free_stats(Some(reentry_guard.slot), size);
+            }
+            if runtime_policy::mode().heals_enabled() {
+                heal = Some(HealingAction::ClampSize {
+                    requested: known_size.unwrap_or(1),
+                    clamped: 0,
+                });
             }
         }
         FreeResult::DoubleFree => {
@@ -7318,6 +7388,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
     // Free old block and account deallocation only if arena confirms it was released.
     let old_free = pipeline.free(ptr.cast());
+    let canary_corrupted = matches!(old_free, FreeResult::FreedWithCanaryCorruption);
     if matches!(
         old_free,
         FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
@@ -7328,9 +7399,31 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         ApiFamily::Allocator,
         decision.profile,
         runtime_policy::scaled_cost(18, size),
-        false,
+        canary_corrupted,
     );
-    record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
+    record_allocator_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        if canary_corrupted {
+            Some(stage_index(&ordering, CheckStage::Canary))
+        } else {
+            None
+        },
+    );
+    let record_canary_heal = canary_corrupted && runtime_policy::mode().heals_enabled();
+    drop(reentry_guard);
+    if record_canary_heal {
+        global_healing_policy().record(
+            "allocator",
+            "realloc",
+            &HealingAction::ClampSize {
+                requested: old_size.max(1),
+                clamped: 0,
+            },
+            RepairLogContext::new(0, Some(ptr as usize)),
+        );
+    }
     new_ptr.cast()
 }
 

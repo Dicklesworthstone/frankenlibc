@@ -917,7 +917,7 @@ impl ValidationPipeline {
         }
 
         let cached = try_with_tls_cache_hit(None, |cache| {
-            let hit = cache.lookup_hit_only(addr);
+            let hit = cache.lookup_hit_only_with_arena(addr, Some(&self.arena));
             if hit.is_some() {
                 cache.record_pipeline_hits(1);
             }
@@ -926,17 +926,62 @@ impl ValidationPipeline {
         cached.map(|cv| ValidationOutcome::CachedValid(Self::abstraction_from_cached(addr, cv)))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn record_warm_cache_corruption_heal(addr: usize) {
+        crate::heal::global_healing_policy().record(
+            "pointer_validation",
+            "tls_cache_canary",
+            &crate::heal::HealingAction::ClampSize {
+                requested: 1,
+                clamped: 0,
+            },
+            crate::heal::RepairLogContext::new(0, Some(addr)),
+        );
+    }
+
     /// Resolve remaining bytes from the thread-local validation cache without
     /// constructing a 72-byte `ValidationOutcome` on the stack.
     #[inline(always)]
     pub fn try_validate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
-        if addr == 0 || self.validation_logging_enabled() || !safety_level().validation_enabled() {
+        self.try_validate_cached_remaining_const::<false>(addr, 0)
+    }
+
+    /// Resolve remaining bytes for a guarded write destination, re-verifying
+    /// the 24B header and 8B trailing canary immediately whenever the write
+    /// lands within 64 bytes of `user_size` or requests `>= remaining`.
+    #[inline(always)]
+    pub fn try_validate_cached_write_remaining(
+        &self,
+        addr: usize,
+        write_len: usize,
+    ) -> Option<Option<usize>> {
+        self.try_validate_cached_remaining_const::<true>(addr, write_len)
+    }
+
+    #[inline(always)]
+    fn try_validate_cached_remaining_const<const IS_WRITE: bool>(
+        &self,
+        addr: usize,
+        write_len: usize,
+    ) -> Option<Option<usize>> {
+        let mode = safety_level();
+        if addr == 0 || self.validation_logging_enabled() || !mode.validation_enabled() {
             return None;
         }
-        try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
-            cache.lookup_hit_remaining_with_oracle(addr, &self.page_oracle)
-        })
-        .decode()
+        let cached = try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
+            cache.lookup_hit_remaining_with_oracle_const::<IS_WRITE>(
+                addr,
+                &self.page_oracle,
+                Some(&self.arena),
+                write_len,
+            )
+        });
+        if cached.is_corrupted() {
+            Self::record_warm_cache_corruption_heal(addr);
+            return Some(Some(0));
+        }
+        cached.decode()
     }
 
     /// Resolve remaining bytes for two pointers in a single TLS cache borrow,
@@ -948,12 +993,54 @@ impl ValidationPipeline {
         lhs: usize,
         rhs: usize,
     ) -> (CachedRemaining, CachedRemaining) {
-        if self.validation_logging_enabled() || !safety_level().validation_enabled() {
+        self.try_validate_cached_remaining_pair_const::<false>(lhs, rhs, 0)
+    }
+
+    /// Resolve remaining bytes for `(dst, src)` where `dst` is a guarded write
+    /// destination of `write_len` bytes, immediately re-verifying `dst`'s
+    /// header and trailing canary on near-tail/full-buffer writes.
+    #[inline(always)]
+    pub fn try_validate_cached_write_remaining_pair(
+        &self,
+        dst: usize,
+        src: usize,
+        write_len: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        self.try_validate_cached_remaining_pair_const::<true>(dst, src, write_len)
+    }
+
+    #[inline(always)]
+    fn try_validate_cached_remaining_pair_const<const LHS_IS_WRITE: bool>(
+        &self,
+        lhs: usize,
+        rhs: usize,
+        write_len: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        let mode = safety_level();
+        if self.validation_logging_enabled() || !mode.validation_enabled() {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
-        try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
-            cache.lookup_hit_remaining_pair_with_oracle(lhs, rhs, &self.page_oracle)
-        })
+        let (mut l, mut r) = try_with_tls_cache_hit(
+            (CachedRemaining::MISS, CachedRemaining::MISS),
+            |cache| {
+                cache.lookup_hit_remaining_pair_with_oracle::<LHS_IS_WRITE>(
+                    lhs,
+                    rhs,
+                    &self.page_oracle,
+                    Some(&self.arena),
+                    write_len,
+                )
+            },
+        );
+        if l.is_corrupted() {
+            Self::record_warm_cache_corruption_heal(lhs);
+            l = CachedRemaining::clamped_zero();
+        }
+        if r.is_corrupted() {
+            Self::record_warm_cache_corruption_heal(rhs);
+            r = CachedRemaining::clamped_zero();
+        }
+        (l, r)
     }
 
     #[inline]
@@ -1161,6 +1248,7 @@ impl ValidationPipeline {
         let mut bloom_negative = false;
         let mut saw_fingerprint = false;
         let mut verified_fp_hash: Option<u64> = None;
+        let mut verified_canary_tag: Option<u64> = None;
         let mut saw_canary = false;
         let mut epoch_guard: Option<PinnedEpochGuard<'_>> = None;
         // Snapshot of all per-shard TLS-cache epochs, captured lazily on the
@@ -1195,7 +1283,8 @@ impl ValidationPipeline {
                 CheckStage::TlsCache => {
                     elapsed_ns =
                         elapsed_ns.saturating_add(u64::from(CheckStage::TlsCache.cost_ns()));
-                    let cached = with_tls_cache(|cache| cache.lookup(addr));
+                    let cached =
+                        with_tls_cache(|cache| cache.lookup_with_arena(addr, Some(&self.arena)));
                     if let Some(cv) = cached {
                         MembraneMetrics::inc(&metrics.tls_cache_hits);
                         self.emit_validation_log(
@@ -1605,13 +1694,18 @@ impl ValidationPipeline {
                         elapsed_ns =
                             elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
                         let expected_canary = match verified_fp_hash {
-                            Some(hash) => crate::fingerprint::Canary::from_hash(hash),
+                            Some(hash) => crate::fingerprint::Canary::derive(
+                                s.user_base,
+                                s.user_size as u64,
+                                s.generation,
+                                hash,
+                            ),
                             None => AllocationFingerprint::compute(
                                 s.user_base,
                                 s.user_size as u64,
                                 s.generation,
                             )
-                            .canary(),
+                            .canary_for(s.user_base),
                         };
                         let canary_addr = s.user_base + s.user_size;
                         let mut actual = [0u8; CANARY_SIZE];
@@ -1680,6 +1774,7 @@ impl ValidationPipeline {
                             0,
                         );
                         saw_canary = true;
+                        verified_canary_tag = Some(expected_canary.as_u64());
                     }
                 }
                 CheckStage::Bounds => {
@@ -1817,7 +1912,13 @@ impl ValidationPipeline {
             // Borrow the snapshot rather than copying — `[u64; NUM_TLS_CACHE_SHARDS]`
             // is 128 bytes and we hit this path on every cached fast-profile hit.
             if let Some(snapshot) = validation_shard_epochs.as_ref() {
-                self.cache_validation(addr, &slot, snapshot);
+                self.cache_validation(
+                    addr,
+                    &slot,
+                    verified_fp_hash,
+                    verified_canary_tag,
+                    snapshot,
+                );
             }
             self.runtime_math.note_check_order_outcome(
                 mode,
@@ -1932,14 +2033,20 @@ impl ValidationPipeline {
         if !saw_canary {
             elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
             let expected_canary = match verified_fp_hash {
-                Some(hash) => crate::fingerprint::Canary::from_hash(hash),
+                Some(hash) => crate::fingerprint::Canary::derive(
+                    slot.user_base,
+                    slot.user_size as u64,
+                    slot.generation,
+                    hash,
+                ),
                 None => AllocationFingerprint::compute(
                     slot.user_base,
                     slot.user_size as u64,
                     slot.generation,
                 )
-                .canary(),
+                .canary_for(slot.user_base),
             };
+            verified_canary_tag = Some(expected_canary.as_u64());
             let canary_addr = slot.user_base + slot.user_size;
             let mut actual = [0u8; CANARY_SIZE];
             // SAFETY: Valid memory within the allocation's total size.
@@ -2013,7 +2120,13 @@ impl ValidationPipeline {
         // is 128 bytes; the full-validation path here is rarer than the fast
         // profile above but the borrow still costs nothing extra.
         if let Some(snapshot) = validation_shard_epochs.as_ref() {
-            self.cache_validation(addr, &slot, snapshot);
+            self.cache_validation(
+                addr,
+                &slot,
+                verified_fp_hash,
+                verified_canary_tag,
+                snapshot,
+            );
         }
         self.runtime_math.note_check_order_outcome(
             mode,
@@ -2207,10 +2320,25 @@ impl ValidationPipeline {
         &self,
         addr: usize,
         slot: &ArenaSlot,
+        verified_fp_hash: Option<u64>,
+        verified_canary_tag: Option<u64>,
         shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
     ) {
+        let expected_hash = verified_fp_hash.unwrap_or_else(|| {
+            AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation)
+                .hash
+        });
+        let expected_canary = verified_canary_tag.unwrap_or_else(|| {
+            crate::fingerprint::Canary::derive(
+                slot.user_base,
+                slot.user_size as u64,
+                slot.generation,
+                expected_hash,
+            )
+            .as_u64()
+        });
         with_tls_cache(|cache| {
-            cache.insert(
+            cache.insert_with_integrity(
                 addr,
                 CachedValidation {
                     user_base: slot.user_base,
@@ -2218,6 +2346,9 @@ impl ValidationPipeline {
                     generation: slot.generation,
                     state: slot.state,
                 },
+                slot.slot_idx,
+                expected_hash,
+                expected_canary,
                 shard_epochs,
             );
         });
@@ -3378,5 +3509,81 @@ mod tests {
             *((addr_fp - 1) as *mut u8) = saved_byte;
         }
         assert_eq!(pipeline.free(ptr_fp), FreeResult::Freed);
+    }
+
+    #[test]
+    fn pipeline_warm_tls_cache_detects_tail_and_header_corruption_and_records_clamp_heal() {
+        let pipeline = ValidationPipeline::new();
+        let metrics = global_metrics();
+        let policy = crate::heal::global_healing_policy();
+
+        // 1. Warm TLS cache on a 32-byte allocation, then corrupt trailing canary.
+        let ptr_tail = pipeline.allocate(32).expect("alloc 32");
+        let addr_tail = ptr_tail as usize;
+        assert!(matches!(
+            pipeline.validate(addr_tail),
+            ValidationOutcome::Validated(_)
+        ));
+        assert_eq!(
+            pipeline.try_validate_cached_remaining(addr_tail),
+            Some(Some(32))
+        );
+
+        assert!(pipeline.inject_trailing_canary_corruption(addr_tail, 32, 0xCC));
+        let canary_failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let clamps_before = MembraneMetrics::get(&policy.size_clamps);
+
+        // Near-tail write (`32 <= 64`) on warm TLS cache must IMMEDIATELY clamp to 0,
+        // increment `canary_failures`, evict `TLS_CACHE`, and record a `ClampSize` heal.
+        assert_eq!(
+            pipeline.try_validate_cached_write_remaining(addr_tail, 8),
+            Some(Some(0))
+        );
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_failures_before);
+        assert!(MembraneMetrics::get(&policy.size_clamps) > clamps_before);
+        assert!(
+            policy
+                .export_healing_log_jsonl()
+                .contains("\"symbol\":\"tls_cache_canary\"")
+        );
+        // Subsequent cached probe misses because the corrupted entry was evicted.
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_tail), None);
+        assert_eq!(
+            pipeline.free(ptr_tail),
+            FreeResult::FreedWithCanaryCorruption
+        );
+
+        // 2. Warm TLS cache on a 32-byte allocation, then corrupt 24B header.
+        let ptr_hdr = pipeline.allocate(32).expect("alloc 32");
+        let addr_hdr = ptr_hdr as usize;
+        assert!(matches!(
+            pipeline.validate(addr_hdr),
+            ValidationOutcome::Validated(_)
+        ));
+        assert_eq!(
+            pipeline.try_validate_cached_remaining(addr_hdr),
+            Some(Some(32))
+        );
+
+        let saved = unsafe {
+            let b = (addr_hdr - FINGERPRINT_SIZE) as *mut u8;
+            let orig = *b;
+            *b ^= 0x20;
+            orig
+        };
+        let fp_failures_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let heals_before = MembraneMetrics::get(&policy.size_clamps);
+        assert_eq!(
+            pipeline.try_validate_cached_write_remaining(addr_hdr, 8),
+            Some(Some(0))
+        );
+        assert!(MembraneMetrics::get(&metrics.fingerprint_failures) > fp_failures_before);
+        assert!(MembraneMetrics::get(&policy.size_clamps) > heals_before);
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_hdr), None);
+
+        unsafe {
+            *((addr_hdr - FINGERPRINT_SIZE) as *mut u8) = saved;
+        }
+        assert_eq!(pipeline.free(ptr_hdr), FreeResult::Freed);
     }
 }

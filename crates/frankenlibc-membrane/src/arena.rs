@@ -306,6 +306,8 @@ pub struct ArenaSlot {
     pub user_size: usize,
     /// Generation counter (monotonically increasing).
     pub generation: u64,
+    /// Owning shard's `slots` vector index (`O(1)` lookup on warm-TLS verification).
+    pub(crate) slot_idx: u32,
     /// Current safety state.
     pub state: SafetyState,
 }
@@ -531,7 +533,7 @@ impl AllocationArena {
         }
 
         // Write trailing canary
-        let canary = fp.canary();
+        let canary = fp.canary_for(user_base);
         let canary_bytes = canary.to_bytes();
         // SAFETY: canary sits at user_base + user_size. Valid since total_size = offset + user_size + TRAILING_REDZONE_SIZE (>= CANARY_SIZE).
         unsafe {
@@ -540,11 +542,12 @@ impl AllocationArena {
         }
 
         // Register in arena
-        let slot = ArenaSlot {
+        let mut slot = ArenaSlot {
             raw_base,
             user_base,
             user_size,
             generation,
+            slot_idx: 0,
             state: SafetyState::Valid,
         };
 
@@ -552,6 +555,7 @@ impl AllocationArena {
         let mut shard = self.shards[shard_idx].lock();
 
         let slot_idx = if let Some(free_idx) = shard.free_list.pop() {
+            slot.slot_idx = free_idx as u32;
             shard.slots[free_idx] = slot;
             free_idx
         } else {
@@ -562,6 +566,7 @@ impl AllocationArena {
                 return None;
             }
             let idx = shard.slots.len();
+            slot.slot_idx = idx as u32;
             shard.slots.push(slot);
             idx
         };
@@ -828,7 +833,7 @@ impl AllocationArena {
     fn verify_canary_for_slot(&self, slot: &ArenaSlot) -> bool {
         let fp =
             AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation);
-        let expected_canary = fp.canary();
+        let expected_canary = fp.canary_for(slot.user_base);
         let canary_addr = slot.user_base + slot.user_size;
         // Read the 8-byte trailing canary at user_base + user_size.
         let mut actual = [0u8; CANARY_SIZE];
@@ -841,6 +846,69 @@ impl AllocationArena {
             );
         }
         expected_canary.verify(&actual)
+    }
+
+    /// Re-verify both the 24-byte `AllocationFingerprint` header and the 8-byte
+    /// trailing `Canary` of a warm `TLS_CACHE` entry while holding the owning
+    /// shard lock so concurrent `free()` + quarantine drain cannot reclaim the
+    /// backing block mid-read.
+    ///
+    /// Indexes `shard.slots[slot_idx]` in `O(1)` rather than traversing the
+    /// shard's `BTreeMap`, keeping warm-TLS integrity checks under ~10 ns even
+    /// when shards hold tens of thousands of live allocations (e.g. GNU `sort`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn verify_cached_slot_integrity(
+        &self,
+        user_base: usize,
+        user_size: usize,
+        generation: u64,
+        slot_idx: u32,
+        shard_idx: u8,
+        shard_epoch: u64,
+        expected_hash: u64,
+        expected_canary: u64,
+    ) -> CachedIntegrityVerdict {
+        let idx = (shard_idx as usize) & (NUM_SHARDS - 1);
+        let shard = self.shards[idx].lock();
+        if shard_epoch != crate::tls_cache::current_shard_epoch(idx) {
+            return CachedIntegrityVerdict::EpochStale;
+        }
+        let Some(slot) = shard.slots.get(slot_idx as usize) else {
+            return CachedIntegrityVerdict::EpochStale;
+        };
+        if slot.user_base != user_base
+            || !slot.state.is_live()
+            || slot.generation != generation
+            || slot.user_size != user_size
+        {
+            return CachedIntegrityVerdict::EpochStale;
+        }
+
+        // SAFETY: Under `shard` lock with matching `shard_epoch`, `user_base`,
+        // `generation`, and `slot.state.is_live()`, `[user_base - FINGERPRINT_SIZE .. user_base]`
+        // holds the live 24-byte LE header `(hash, generation, size)` and
+        // `[user_base + user_size .. + CANARY_SIZE]` holds the live 8-byte LE canary.
+        let (actual_hash, actual_gen, actual_size, actual_canary) = unsafe {
+            let hdr = (user_base - FINGERPRINT_SIZE) as *const u64;
+            let tail = (user_base + user_size) as *const u64;
+            (
+                u64::from_le(hdr.read_unaligned()),
+                u64::from_le(hdr.add(1).read_unaligned()),
+                u64::from_le(hdr.add(2).read_unaligned()),
+                u64::from_le(tail.read_unaligned()),
+            )
+        };
+        drop(shard);
+
+        if actual_hash != expected_hash || actual_gen != generation || actual_size != user_size as u64
+        {
+            return CachedIntegrityVerdict::HeaderCorrupted;
+        }
+        if actual_canary != expected_canary {
+            return CachedIntegrityVerdict::CanaryCorrupted;
+        }
+
+        CachedIntegrityVerdict::Intact
     }
 
     fn drain_quarantine(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
@@ -951,6 +1019,19 @@ impl Default for AllocationArena {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Result of re-verifying a warm `TLS_CACHE` slot's 24B header and 8B trailing canary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CachedIntegrityVerdict {
+    /// Header fingerprint and trailing canary match cached tags.
+    Intact,
+    /// Shard epoch or slot liveness changed concurrently; treat as cache miss.
+    EpochStale,
+    /// 24-byte `AllocationFingerprint` header at `user_base - 24` was corrupted.
+    HeaderCorrupted,
+    /// 8-byte trailing `Canary` at `user_base + user_size` was corrupted.
+    CanaryCorrupted,
 }
 
 /// Result of a free operation.
@@ -1315,7 +1396,7 @@ mod tests {
                 FINGERPRINT_SIZE,
             );
             std::ptr::copy_nonoverlapping(
-                fp.canary().to_bytes().as_ptr(),
+                fp.canary_for(stale_addr).to_bytes().as_ptr(),
                 (stale_addr + 128) as *mut u8,
                 CANARY_SIZE,
             );
@@ -1547,15 +1628,16 @@ mod tests {
 
         let raw1 = alloc_block(total_size, align);
         let user1 = raw1 + align;
+        let slot1_idx = shard.slots.len();
         let slot1 = ArenaSlot {
             raw_base: raw1,
             user_base: user1,
             user_size,
             generation: 1,
+            slot_idx: slot1_idx as u32,
             state: SafetyState::Quarantined,
         };
         shard.slots.push(slot1);
-        let slot1_idx = shard.slots.len() - 1;
         shard.addr_to_slot.insert(user1, slot1_idx);
         arena.enqueue_quarantine(
             &mut shard,
@@ -1569,15 +1651,16 @@ mod tests {
 
         let raw2 = alloc_block(total_size, align);
         let user2 = raw2 + align;
+        let slot2_idx = shard.slots.len();
         let slot2 = ArenaSlot {
             raw_base: raw2,
             user_base: user2,
             user_size,
             generation: 2,
+            slot_idx: slot2_idx as u32,
             state: SafetyState::Quarantined,
         };
         shard.slots.push(slot2);
-        let slot2_idx = shard.slots.len() - 1;
         shard.addr_to_slot.insert(user2, slot2_idx);
         arena.enqueue_quarantine(
             &mut shard,
@@ -1935,9 +2018,12 @@ mod tests {
         assert_eq!(fp.size, user_size as u64);
         assert!(fp.verify(slot.user_base));
 
-        let expected_canary = (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
-        assert_eq!(canary_bytes, expected_canary);
-        assert_eq!(canary_bytes, fp.canary().to_bytes());
+        let header_xor_forgery = (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+        assert_ne!(
+            canary_bytes, header_xor_forgery,
+            "trailing canary must be domain-separated from header hash"
+        );
+        assert_eq!(canary_bytes, fp.canary_for(slot.user_base).to_bytes());
         assert!(arena.verify_canary_for_slot(&slot));
 
         let (result, drained) = arena.free(alloc.ptr);
@@ -1946,6 +2032,50 @@ mod tests {
         }
         assert_eq!(result, FreeResult::Freed);
         assert!(MembraneMetrics::get(&metrics.canary_passes) > passes_before);
+    }
+
+    #[test]
+    fn arena_rejects_header_xor_forged_canary_and_records_failure_metric() {
+        use crate::metrics::{MembraneMetrics, global_metrics};
+
+        let arena = AllocationArena::new();
+        let metrics = global_metrics();
+        let user_size = 32usize;
+        let alloc = arena
+            .allocate(user_size)
+            .expect("allocation should succeed");
+        let slot = arena.lookup(alloc.user_base).expect("live slot");
+
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        // SAFETY: live allocation header at `user_base - FINGERPRINT_SIZE`.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (alloc.user_base - FINGERPRINT_SIZE) as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let fp = AllocationFingerprint::from_bytes(&header_bytes);
+        let forged_canary = (fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
+        // SAFETY: trailing canary slot lies inside live allocation backing block.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                forged_canary.as_ptr(),
+                (alloc.user_base + user_size) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        assert!(
+            !arena.verify_canary_for_slot(&slot),
+            "plaintext header XOR forgery must be rejected under K_tail domain separation"
+        );
+        let failures_before = MembraneMetrics::get(&metrics.canary_failures);
+        let (result, drained) = arena.free(alloc.ptr);
+        unsafe {
+            AllocationArena::deallocate_drained(&drained);
+        }
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > failures_before);
     }
 
     #[test]
@@ -1958,7 +2088,7 @@ mod tests {
 
         // Allocate until the fingerprint hash has non-zero 32-bit halves so the
         // legacy rank-32 fold `h ^ h.rotate_left(32) ^ C` is strictly distinct
-        // from the full-width canary `h ^ C`.
+        // from the domain-separated canary.
         let mut target_alloc = None;
         let mut legacy_bytes = [0u8; CANARY_SIZE];
         let mut cleanup = Vec::new();
@@ -1979,7 +2109,7 @@ mod tests {
             if fp.hash.rotate_left(32) != 0 {
                 legacy_bytes =
                     ((fp.hash ^ fp.hash.rotate_left(32)) ^ 0xDEAD_BEEF_CAFE_BABEu64).to_le_bytes();
-                assert_ne!(legacy_bytes, fp.canary().to_bytes());
+                assert_ne!(legacy_bytes, fp.canary_for(alloc.user_base).to_bytes());
                 target_alloc = Some(alloc);
                 break;
             }

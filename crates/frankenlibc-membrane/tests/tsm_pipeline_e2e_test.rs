@@ -692,3 +692,206 @@ fn validation_outcome_abstraction_fields() {
     let outcome = pipeline.validate(ptr as usize);
     assert!(matches!(outcome, ValidationOutcome::TemporalViolation(_)));
 }
+
+// ===========================================================================
+// 19. Dual-key CSPRNG seeding & header-leak canary non-derivability (VR.8.3/.8.4)
+// ===========================================================================
+
+#[test]
+fn dual_key_csprng_canary_domain_separation_e2e() {
+    use frankenlibc_membrane::fingerprint::{
+        AllocationFingerprint, Canary, keys_seeded_from_csprng,
+    };
+
+    let sample_fp = AllocationFingerprint::compute(0x4000_0000, 128, 1);
+    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    assert!(
+        keys_seeded_from_csprng(),
+        "Linux key initialization must seed 256-bit header/tail SipHash keys from SYS_getrandom"
+    );
+
+    // Same 24-byte header bytes `(hash, size, generation)` under two independent `K_tail`
+    // keys must yield unrelated trailing canaries.
+    let tail_a = Canary::derive_with_tail_keys(
+        0x1122_3344_5566_7788,
+        0x99AA_BBCC_DDEE_FF00,
+        0x4000_0000,
+        sample_fp.size,
+        sample_fp.generation,
+        sample_fp.hash,
+    );
+    let tail_b = Canary::derive_with_tail_keys(
+        0xCAFE_F00D_1234_5678,
+        0x8765_4321_DEAD_BEEF,
+        0x4000_0000,
+        sample_fp.size,
+        sample_fp.generation,
+        sample_fp.hash,
+    );
+    assert_ne!(tail_a.as_u64(), tail_b.as_u64());
+    assert_ne!(tail_a.as_u64(), sample_fp.hash);
+    assert_ne!(tail_a.as_u64(), sample_fp.hash ^ 0xDEAD_BEEF_CAFE_BABEu64);
+
+    // Across 10,000 allocations, `canary ^ hash` must never collapse to any fixed XOR mask.
+    let first_fp = AllocationFingerprint::compute(0x5000_0000, 64, 1);
+    let first_xor = first_fp.canary_for(0x5000_0000).as_u64() ^ first_fp.hash;
+    let mut distinct_xors = 0usize;
+    for step in 1..10_000u64 {
+        let addr = 0x5000_0000usize + (step as usize) * 64;
+        let fp = AllocationFingerprint::compute(addr, 64 + (step & 63), step + 1);
+        let xor_mask = fp.canary_for(addr).as_u64() ^ fp.hash;
+        if xor_mask != first_xor {
+            distinct_xors += 1;
+        }
+    }
+    assert!(
+        distinct_xors >= 9_990,
+        "expected independent K_tail PRF outputs across 10,000 allocations, got {distinct_xors}"
+    );
+}
+
+// ===========================================================================
+// 20. Warm TLS_CACHE tail-canary & prepended-header corruption detection
+// ===========================================================================
+
+#[test]
+fn warm_tls_cache_detects_tail_and_header_corruption_e2e() {
+    use frankenlibc_membrane::arena::FreeResult;
+    use frankenlibc_membrane::fingerprint::FINGERPRINT_SIZE;
+    use frankenlibc_membrane::heal::global_healing_policy;
+    use frankenlibc_membrane::metrics::{MembraneMetrics, global_metrics};
+
+    let pipeline = ValidationPipeline::new();
+    let metrics = global_metrics();
+    let heal_policy = global_healing_policy();
+
+    // Case A: Warm TLS_CACHE + near-tail write catches 1-byte trailing canary smash immediately.
+    let ptr = pipeline.allocate(128).expect("allocate 128");
+    let addr = ptr as usize;
+    assert!(matches!(
+        pipeline.validate(addr),
+        ValidationOutcome::Validated(_) | ValidationOutcome::CachedValid(_)
+    ));
+
+    if frankenlibc_membrane::config::safety_level().validation_enabled() {
+        assert_eq!(
+            pipeline.try_validate_cached_remaining(addr),
+            Some(Some(128))
+        );
+        let canary_fails_before = MembraneMetrics::get(&metrics.canary_failures);
+        let clamps_before = heal_policy
+            .size_clamps
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(pipeline.inject_trailing_canary_corruption(addr, 128, 0xEE));
+
+        // Near-tail write (`addr + 96`, remaining 32 <= 64) clamps to 0 immediately.
+        let clamped = pipeline.try_validate_cached_write_remaining(addr + 96, 8);
+        assert_eq!(
+            clamped,
+            Some(Some(0)),
+            "warm TLS near-tail write must clamp corrupted buffer to 0 bytes"
+        );
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_fails_before);
+        assert!(
+            heal_policy
+                .size_clamps
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > clamps_before
+        );
+        assert_eq!(
+            pipeline.try_validate_cached_remaining(addr),
+            None,
+            "corrupted allocation must be evicted from warm TLS_CACHE"
+        );
+    }
+    assert_eq!(pipeline.free(ptr), FreeResult::FreedWithCanaryCorruption);
+
+    // Case B: Warm TLS_CACHE + 1-in-16 read cadence catches corruption on large buffer front reads.
+    let ptr_cadence = pipeline.allocate(256).expect("allocate 256");
+    let addr_cadence = ptr_cadence as usize;
+    let _ = pipeline.validate(addr_cadence);
+    assert!(pipeline.inject_trailing_canary_corruption(addr_cadence, 256, 0xAA));
+    if frankenlibc_membrane::config::safety_level().validation_enabled() {
+        let mut saw_clamp_zero = false;
+        for _ in 0..16 {
+            match pipeline.try_validate_cached_remaining(addr_cadence) {
+                Some(Some(0)) | None => {
+                    saw_clamp_zero = true;
+                    break;
+                }
+                Some(Some(256)) => {}
+                other => panic!("unexpected warm-cache cadence result: {other:?}"),
+            }
+        }
+        assert!(
+            saw_clamp_zero,
+            "1-in-16 warm-TLS read cadence must detect corrupted tail canary within 16 probes"
+        );
+    }
+    assert_eq!(
+        pipeline.free(ptr_cadence),
+        FreeResult::FreedWithCanaryCorruption
+    );
+
+    // Case C: Warm TLS_CACHE catches 1-bit prepended 24B header corruption (`addr - 24`).
+    let ptr_hdr = pipeline.allocate(64).expect("allocate 64");
+    let addr_hdr = ptr_hdr as usize;
+    let _ = pipeline.validate(addr_hdr);
+    let hdr_byte_ptr = (addr_hdr - FINGERPRINT_SIZE) as *mut u8;
+    let saved_hdr_byte = unsafe { *hdr_byte_ptr };
+    unsafe { *hdr_byte_ptr = saved_hdr_byte ^ 0x80 };
+    if frankenlibc_membrane::config::safety_level().validation_enabled() {
+        let fp_fails_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let hdr_clamped = pipeline.try_validate_cached_write_remaining(addr_hdr, 8);
+        if hdr_clamped == Some(Some(0)) {
+            assert!(MembraneMetrics::get(&metrics.fingerprint_failures) > fp_fails_before);
+        }
+        assert!(matches!(
+            pipeline.validate(addr_hdr),
+            ValidationOutcome::TemporalViolation(_)
+        ));
+    }
+    unsafe { *hdr_byte_ptr = saved_hdr_byte };
+    assert_eq!(pipeline.free(ptr_hdr), FreeResult::Freed);
+}
+
+// ===========================================================================
+// 21. CI / smoke wiring & FreedWithCanaryCorruption audit emission check
+// ===========================================================================
+
+#[test]
+fn smoke_script_wires_all_canary_cases_and_audit_emission() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+
+    let smoke_script = std::fs::read_to_string(repo_root.join("scripts/ld_preload_smoke.sh"))
+        .expect("read scripts/ld_preload_smoke.sh");
+    for required_case in [
+        "--canary-case",
+        "intact",
+        "corrupt-legacy-fold",
+        "corrupt-symmetric-pair",
+        "corrupt-header",
+        "corrupt-after-warm-tls-write",
+        "corrupt-header-after-warm-tls",
+        "fork-preserves-canary-exec-reseeds",
+    ] {
+        assert!(
+            smoke_script.contains(required_case),
+            "scripts/ld_preload_smoke.sh missing wired canary probe token `{required_case}`"
+        );
+    }
+
+    let malloc_abi =
+        std::fs::read_to_string(repo_root.join("crates/frankenlibc-abi/src/malloc_abi.rs"))
+            .expect("read malloc_abi.rs");
+    assert!(
+        malloc_abi.contains("FreeResult::FreedWithCanaryCorruption =>")
+            && malloc_abi.contains("let record_canary_heal = canary_corrupted")
+            && malloc_abi.contains("\"realloc\""),
+        "malloc_abi.rs must emit structured healing audit records on FreedWithCanaryCorruption in free and realloc"
+    );
+}

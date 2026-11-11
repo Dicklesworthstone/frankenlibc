@@ -228,6 +228,8 @@ STRICT_STRING_OVERFLOW_BIN="${BIN_DIR}/fixture_strict_string_overflow"
 cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_strict_string_overflow.c" -o "${STRICT_STRING_OVERFLOW_BIN}"
 HARDENED_UAF_HEAL_BIN="${BIN_DIR}/fixture_hardened_uaf_heal"
 cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_hardened_uaf_heal.c" -o "${HARDENED_UAF_HEAL_BIN}" -ldl
+FIXTURE_MALLOC_PROBE_BIN="${BIN_DIR}/fixture_malloc_probe"
+cc -O0 -fno-builtin -Wall -Wextra "${ROOT}/tests/integration/fixture_malloc.c" -ldl -o "${FIXTURE_MALLOC_PROBE_BIN}"
 MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
 cc -O2 "${ROOT}/tests/integration/fixture_malloc_misuse.c" -o "${MALLOC_MISUSE_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
@@ -843,6 +845,79 @@ run_case() {
   return 1
 }
 
+run_preload_probe_case() {
+  local mode="$1"
+  local label="$2"
+  shift 2
+  local case_dir="${RUN_DIR}/${mode}/${label}"
+  local workload
+  workload="$(case_workload "${label}")"
+  local startup_path
+  startup_path="$(case_startup_path "${label}")"
+  mkdir -p "${case_dir}"
+
+  printf '%q ' "$@" > "${case_dir}/command.shline"
+  echo "" >> "${case_dir}/command.shline"
+
+  local preload_stdout="${case_dir}/stdout.txt"
+  local preload_stderr="${case_dir}/stderr.txt"
+  local preload_start_ns
+  preload_start_ns="$(date +%s%N)"
+  set +e
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
+    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
+    > "${preload_stdout}" 2> "${preload_stderr}"
+  local preload_rc=$?
+  set -e
+  local preload_end_ns
+  preload_end_ns="$(date +%s%N)"
+  local preload_latency_ns=$((preload_end_ns - preload_start_ns))
+
+  printf '%s\n' "${preload_rc}" > "${case_dir}/preload.exit_code"
+  printf '%s\n' "${preload_latency_ns}" > "${case_dir}/preload.latency_ns"
+
+  local status="pass"
+  if [[ "${preload_rc}" -ne 0 ]] || ! grep -q '"status":"pass"' "${preload_stdout}" 2>/dev/null; then
+    status="fail"
+    if [[ "${preload_rc}" -eq 0 ]]; then
+      preload_rc=1
+    fi
+  fi
+
+  local failure_signature
+  failure_signature="$(classify_failure_signature "${preload_rc}" "${preload_stderr}" 0 1 0 1 0 1)"
+  local signature_guard_triggered=0
+  if signature_is_guarded "${failure_signature}"; then
+    signature_guard_triggered=1
+    status="fail"
+  fi
+
+  local artifact_refs_json
+  artifact_refs_json=$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/command.shline"]' \
+    "${mode}" "${label}" "${mode}" "${label}" "${mode}" "${label}")
+
+  if [[ "${status}" == "pass" ]]; then
+    passes=$((passes + 1))
+    append_case_row \
+      "${mode}" "${label}" "${status}" "${workload}" "${startup_path}" "${failure_signature}" "${signature_guard_triggered}" \
+      "0" "1" "0" "1" "0" "0" "${preload_rc}" "1" "1" "0" "${preload_latency_ns}" "0" "1"
+    emit_trace "info" "case_pass" "${mode}" "${label}" "${status}" "preload_probe" "None" "0" "${preload_latency_ns}" \
+      "${artifact_refs_json}" "${workload}" "${startup_path}" "${failure_signature}" "${preload_latency_ns}" "${signature_guard_triggered}"
+    echo "[PASS] mode=${mode} case=${label}"
+    return 0
+  fi
+
+  fails=$((fails + 1))
+  append_case_row \
+    "${mode}" "${label}" "${status}" "${workload}" "${startup_path}" "${failure_signature}" "${signature_guard_triggered}" \
+    "0" "1" "0" "1" "0" "0" "${preload_rc}" "1" "1" "0" "${preload_latency_ns}" "0" "1"
+  emit_trace "error" "case_fail" "${mode}" "${label}" "${status}" "preload_probe_failed" "None" "${preload_rc}" "${preload_latency_ns}" \
+    "${artifact_refs_json}" "${workload}" "${startup_path}" "${failure_signature}" "${preload_latency_ns}" "${signature_guard_triggered}"
+  echo "[FAIL] mode=${mode} case=${label} (exit ${preload_rc})"
+  record_failure_bundle "${case_dir}" "${mode}" "${label}" "${preload_rc}" "${failure_signature}" "${workload}" "${startup_path}" "${signature_guard_triggered}"
+  return 1
+}
+
 run_optional_case() {
   local required_binary="$1"
   local mode="$2"
@@ -1005,9 +1080,15 @@ EOF
   if [[ "${mode}" == "strict" ]]; then
     run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
     run_corpus_case "${mode}" "strict_string_overflow_parity" "${STRICT_STRING_OVERFLOW_BIN}" || mode_failed=1
+    run_preload_probe_case "${mode}" "canary_case_intact" "${FIXTURE_MALLOC_PROBE_BIN}" --canary-case intact "${LIB_PATH}" || mode_failed=1
   else
     # String/memory ops through a quarantined (freed) block heal to zero length.
     run_corpus_case "${mode}" "hardened_uaf_heal" "${HARDENED_UAF_HEAL_BIN}" || mode_failed=1
+    # Dual-key domain-separated tail canaries, warm-TLS canary/header checks, and fork/exec CSPRNG seeding (bd-reality-202609-lx578q.8.3/.8.4).
+    for canary_case in intact corrupt-legacy-fold corrupt-symmetric-pair corrupt-header \
+      corrupt-after-warm-tls-write corrupt-header-after-warm-tls fork-preserves-canary-exec-reseeds; do
+      run_preload_probe_case "${mode}" "canary_case_${canary_case//-/_}" "${FIXTURE_MALLOC_PROBE_BIN}" --canary-case "${canary_case}" "${LIB_PATH}" || mode_failed=1
+    done
   fi
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
   # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.

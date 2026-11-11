@@ -9,6 +9,7 @@ fn slot(state: SafetyState, size: usize) -> ArenaSlot {
         user_base: 0x1018,
         user_size: size,
         generation: 17,
+        slot_idx: 0,
         state,
     }
 }

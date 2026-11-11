@@ -10,6 +10,11 @@
 #include <dlfcn.h>
 #include <stdint.h>
 #include <limits.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#if defined(__linux__)
+#include <sys/personality.h>
+#endif
 
 /* Isolated, deployed-ABI observations for harness verify-membrane. No expected
  * answer is emitted here: the Rust runner checks these raw results independently.
@@ -357,6 +362,70 @@ static void raw_write_u64_le(volatile unsigned char *dst, uint64_t val) {
     }
 }
 
+static int print_canary_hex(const char *library) {
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (!mode || strcmp(mode, "hardened") != 0) return 2;
+    void *(*allocate)(size_t) = probe_symbol("malloc", library);
+    void (*release)(void *) = probe_symbol("free", library);
+    int (*ready)(void) = probe_symbol("__frankenlibc_is_runtime_ready", library);
+    if (!allocate || !release || !ready || !ready()) return 2;
+    unsigned char *p = allocate(32);
+    if (!p) return 2;
+    uint64_t hash = raw_read_u64_le((const volatile unsigned char *)(p - 24));
+    uint64_t canary = raw_read_u64_le((const volatile unsigned char *)(p + 32));
+    release(p);
+    printf("%p:%016llx:%016llx\n", (void *)p, (unsigned long long)hash, (unsigned long long)canary);
+    fflush(stdout);
+    return 0;
+}
+
+static int capture_exec_canary(const char *library, uintptr_t *out_addr, uint64_t *out_hash, uint64_t *out_canary) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return -1;
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(pipefd[0]);
+        if (dup2(pipefd[1], STDOUT_FILENO) < 0) _exit(126);
+        close(pipefd[1]);
+#if defined(__linux__) && defined(ADDR_NO_RANDOMIZE)
+        int pers = personality(0xffffffffUL);
+        if (pers != -1) {
+            (void)personality((unsigned long)pers | ADDR_NO_RANDOMIZE);
+        }
+#endif
+        execl("/proc/self/exe", "/proc/self/exe", "--print-canary-hex", library, (char *)NULL);
+        _exit(127);
+    }
+    close(pipefd[1]);
+    char buf[128];
+    size_t total = 0;
+    while (total + 1 < sizeof(buf)) {
+        ssize_t n = read(pipefd[0], buf + total, sizeof(buf) - 1 - total);
+        if (n <= 0) break;
+        total += (size_t)n;
+    }
+    buf[total] = '\0';
+    close(pipefd[0]);
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return -1;
+    }
+    void *parsed_ptr = NULL;
+    unsigned long long parsed_hash = 0, parsed_canary = 0;
+    if (sscanf(buf, "%p:%llx:%llx", &parsed_ptr, &parsed_hash, &parsed_canary) != 3) {
+        return -1;
+    }
+    *out_addr = (uintptr_t)parsed_ptr;
+    *out_hash = (uint64_t)parsed_hash;
+    *out_canary = (uint64_t)parsed_canary;
+    return 0;
+}
+
 static int canary_probe(const char *id, const char *library) {
     const char *mode = getenv("FRANKENLIBC_MODE");
     if (!mode || (strcmp(mode, "strict") && strcmp(mode, "hardened"))) return 2;
@@ -364,10 +433,13 @@ static int canary_probe(const char *id, const char *library) {
     int kind = !strcmp(id, "intact") ? 1 :
                !strcmp(id, "corrupt-legacy-fold") ? 2 :
                !strcmp(id, "corrupt-symmetric-pair") ? 3 :
-               !strcmp(id, "corrupt-header") ? 4 : 0;
+               !strcmp(id, "corrupt-header") ? 4 :
+               !strcmp(id, "corrupt-after-warm-tls-write") ? 5 :
+               !strcmp(id, "corrupt-header-after-warm-tls") ? 6 :
+               !strcmp(id, "fork-preserves-canary-exec-reseeds") ? 7 : 0;
     if (!kind || (kind > 1 && !hardened)) return 2;
 
-    const char *symbols[] = {"malloc", "free", "mprobe", "memcpy",
+    const char *symbols[] = {"malloc", "free", "mprobe", "memcpy", "strlen",
         "__frankenlibc_healing_action_count", "__frankenlibc_is_runtime_ready"};
     void *addresses[sizeof(symbols) / sizeof(symbols[0])];
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
@@ -378,20 +450,22 @@ static int canary_probe(const char *id, const char *library) {
     void (*release)(void *) = addresses[1];
     int (*probe)(void *) = addresses[2];
     void *(*copy)(void *, const void *, size_t) = addresses[3];
-    uint64_t (*counter)(unsigned) = addresses[4];
-    int (*ready)(void) = addresses[5];
+    size_t (*str_len)(const char *) = addresses[4];
+    uint64_t (*counter)(unsigned) = addresses[5];
+    int (*ready)(void) = addresses[6];
 
-    const char *names[16];
-    int passed[16], count = 0;
+    const char *names[32];
+    int passed[32], count = 0;
 #define CANARY_CHECK(name, outcome) do { names[count] = (name); passed[count++] = !!(outcome); } while (0)
     CANARY_CHECK("runtime_ready", ready());
 
     size_t capacity = 32;
     unsigned char *p = allocate(capacity);
     CANARY_CHECK("allocation_non_null", p != NULL);
-    uint64_t gen = 0, sz = 0, hash = 0, canary_word = 0, expected_canary = 0, legacy_canary = 0;
+    uint64_t gen = 0, sz = 0, hash = 0, canary_word = 0, forged_xor_canary = 0, legacy_canary = 0;
     uint64_t clamp_before = 0, clamp_after = 0;
     int mprobe_initial = -1, mprobe_mutated = -1, mprobe_freed = -1;
+    int already_released = 0;
 
     if (p) {
         for (size_t i = 0; i < capacity; i++) ((volatile unsigned char *)p)[i] = (unsigned char)(0xA0 + i);
@@ -405,12 +479,12 @@ static int canary_probe(const char *id, const char *library) {
             gen = raw_read_u64_le((const volatile unsigned char *)(p - 16));
             sz = raw_read_u64_le((const volatile unsigned char *)(p - 8));
             canary_word = raw_read_u64_le((const volatile unsigned char *)(p + capacity));
-            expected_canary = hash ^ 0xDEADBEEFCAFEBABEULL;
+            forged_xor_canary = hash ^ 0xDEADBEEFCAFEBABEULL;
             uint64_t rot = (hash << 32) | (hash >> 32);
             legacy_canary = (hash ^ rot) ^ 0xDEADBEEFCAFEBABEULL;
 
-            CANARY_CHECK("header_layout_24b", gen > 0 && sz == capacity && hash != 0);
-            CANARY_CHECK("tail_full_width_8b", canary_word == expected_canary);
+            CANARY_CHECK("header_layout_24b", gen > 0 && sz == capacity && hash != 0 && canary_word != 0);
+            CANARY_CHECK("tail_domain_separated_from_header", canary_word != forged_xor_canary);
             CANARY_CHECK("tail_not_legacy_fold", rot == 0 || canary_word != legacy_canary);
 
             if (kind == 1) {
@@ -420,6 +494,15 @@ static int canary_probe(const char *id, const char *library) {
                 CANARY_CHECK("memcpy_intact_allowed",
                     clamp_after == clamp_before && ((volatile unsigned char *)p)[0] == 'A');
             } else if (kind == 2) {
+                /* Forged header-XOR canary must be rejected under K_tail != K_hdr. */
+                raw_write_u64_le((volatile unsigned char *)(p + capacity), forged_xor_canary);
+                CANARY_CHECK("mprobe_detects_header_xor_forged_tail", probe(p) == 3);
+                clamp_before = counter(1);
+                copy(p, "YYYYYYYY", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("membrane_rejects_header_xor_forged_canary",
+                    clamp_after > clamp_before && ((volatile unsigned char *)p)[0] == 0xA0);
+
                 uint64_t replacement = (rot != 0) ? legacy_canary : (canary_word ^ 1ULL);
                 raw_write_u64_le((volatile unsigned char *)(p + capacity), replacement);
                 mprobe_mutated = probe(p);
@@ -453,12 +536,144 @@ static int canary_probe(const char *id, const char *library) {
                     clamp_after > clamp_before && ((volatile unsigned char *)p)[0] == 0xA0);
                 *hdr_byte = saved;
                 CANARY_CHECK("mprobe_restored_ok", probe(p) == 0);
+            } else if (kind == 5) {
+                /* Warm TLS_CACHE via strlen + two intact memcpy hits. */
+                ((volatile unsigned char *)p)[0] = 'W';
+                ((volatile unsigned char *)p)[7] = '\0';
+                size_t warm_len = str_len((const char *)p);
+                clamp_before = counter(1);
+                copy(p, "WARM1234", 8);
+                copy(p, "WARM5678", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("warm_tls_initial_write_ok",
+                    warm_len >= 1 && clamp_after == clamp_before &&
+                    ((volatile unsigned char *)p)[0] == 'W' &&
+                    ((volatile unsigned char *)p)[4] == '5');
+
+                /* Flip 1 bit in the trailing canary AFTER TLS_CACHE is warm,
+                 * and immediately write without calling mprobe first. */
+                raw_write_u64_le((volatile unsigned char *)(p + capacity), canary_word ^ 1ULL);
+                clamp_before = counter(1);
+                copy(p, "ZZZZZZZZ", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("warm_tls_write_detects_tail_canary_and_clamps",
+                    clamp_after > clamp_before &&
+                    ((volatile unsigned char *)p)[0] == 'W' &&
+                    ((volatile unsigned char *)p)[4] == '5');
+                mprobe_mutated = probe(p);
+                CANARY_CHECK("mprobe_confirms_tail_corruption", mprobe_mutated == 3);
+
+                /* Near-tail write on 256B allocation (rem = 56 <= 64) catches immediately,
+                 * and 1-in-16 cadence catches front-of-buffer writes (rem = 256 > 64). */
+                unsigned char *big_tail = allocate(256);
+                unsigned char *big_cadence = allocate(256);
+                if (big_tail && big_cadence) {
+                    copy(big_tail, "WARMBIG!", 8);
+                    copy(big_tail, "WARMBIG2", 8);
+                    uint64_t big_tail_canary = raw_read_u64_le((const volatile unsigned char *)(big_tail + 256));
+                    raw_write_u64_le((volatile unsigned char *)(big_tail + 256), big_tail_canary ^ 1ULL);
+                    uint64_t bt_before = counter(1);
+                    ((volatile unsigned char *)big_tail)[200] = 'K';
+                    copy(big_tail + 200, "ZZZZZZZZ", 8);
+                    uint64_t bt_after = counter(1);
+                    CANARY_CHECK("warm_tls_near_tail_256b_immediate_clamp",
+                        bt_after > bt_before && ((volatile unsigned char *)big_tail)[200] == 'K');
+                    raw_write_u64_le((volatile unsigned char *)(big_tail + 256), big_tail_canary);
+                    release(big_tail);
+
+                    copy(big_cadence, "CADENCE1", 8);
+                    copy(big_cadence, "CADENCE2", 8);
+                    uint64_t big_cad_canary = raw_read_u64_le((const volatile unsigned char *)(big_cadence + 256));
+                    raw_write_u64_le((volatile unsigned char *)(big_cadence + 256), big_cad_canary ^ 1ULL);
+                    uint64_t bc_before = counter(1);
+                    int cadence_detected = 0;
+                    for (int step = 0; step < 16; step++) {
+                        copy(big_cadence, "X", 1);
+                        if (counter(1) > bc_before) {
+                            cadence_detected = 1;
+                            break;
+                        }
+                    }
+                    CANARY_CHECK("warm_tls_cadence_1_in_16_detects_front_write", cadence_detected);
+                    raw_write_u64_le((volatile unsigned char *)(big_cadence + 256), big_cad_canary);
+                    release(big_cadence);
+                } else {
+                    CANARY_CHECK("warm_tls_256b_allocations_non_null", 0);
+                    if (big_tail) release(big_tail);
+                    if (big_cadence) release(big_cadence);
+                }
+
+                /* Freeing p with corrupted tail canary must emit structured heal audit. */
+                uint64_t free_clamp_before = counter(1);
+                release(p);
+                uint64_t free_clamp_after = counter(1);
+                already_released = 1;
+                mprobe_freed = probe(p);
+                CANARY_CHECK("free_corrupted_canary_records_heal_event",
+                    free_clamp_after > free_clamp_before);
+                CANARY_CHECK("mprobe_after_free", mprobe_freed == 1);
+            } else if (kind == 6) {
+                /* Warm TLS_CACHE, then corrupt 1 bit in 24B pre-user header. */
+                copy(p, "WARM1234", 8);
+                copy(p, "WARM5678", 8);
+                volatile unsigned char *hdr_byte = (volatile unsigned char *)(p - 24);
+                unsigned char saved = *hdr_byte;
+                *hdr_byte = (unsigned char)(saved ^ 0x80U);
+                clamp_before = counter(1);
+                copy(p, "ZZZZZZZZ", 8);
+                clamp_after = counter(1);
+                CANARY_CHECK("warm_tls_detects_corrupted_header_and_clamps",
+                    clamp_after > clamp_before &&
+                    ((volatile unsigned char *)p)[0] == 'W' &&
+                    ((volatile unsigned char *)p)[4] == '5');
+                mprobe_mutated = probe(p);
+                CANARY_CHECK("mprobe_detects_warm_header_corruption", mprobe_mutated == 2);
+                *hdr_byte = saved;
+                CANARY_CHECK("mprobe_restored_ok", probe(p) == 0);
+            } else if (kind == 7) {
+                /* fork() child must inherit (K_hdr, K_tail); execve() must re-seed via OS CSPRNG. */
+                copy(p, "PARENTOK", 8);
+                pid_t pid = fork();
+                if (pid == 0) {
+                    int child_probe_ok = (probe(p) == 0);
+                    uint64_t c_before = counter(1);
+                    copy(p, "CHILDOK!", 8);
+                    uint64_t c_after = counter(1);
+                    unsigned char *cp = allocate(32);
+                    int cp_ok = (cp != NULL && probe(cp) == 0);
+                    if (cp) release(cp);
+                    release(p);
+                    int child_ok = child_probe_ok && cp_ok &&
+                                   (c_after == c_before) &&
+                                   (((volatile unsigned char *)p)[0] == 'C');
+                    _exit(child_ok ? 0 : 1);
+                }
+                int fork_status = 0;
+                int waited = (pid > 0 && waitpid(pid, &fork_status, 0) == pid);
+                CANARY_CHECK("fork_child_inherits_dual_keys",
+                    waited && WIFEXITED(fork_status) && WEXITSTATUS(fork_status) == 0);
+                CANARY_CHECK("parent_canary_intact_after_fork",
+                    probe(p) == 0 && ((volatile unsigned char *)p)[0] == 'P');
+
+                uintptr_t exec_addr_1 = 0, exec_addr_2 = 0;
+                uint64_t exec_hash_1 = 0, exec_canary_1 = 0;
+                uint64_t exec_hash_2 = 0, exec_canary_2 = 0;
+                int rc1 = capture_exec_canary(library, &exec_addr_1, &exec_hash_1, &exec_canary_1);
+                int rc2 = capture_exec_canary(library, &exec_addr_2, &exec_hash_2, &exec_canary_2);
+                CANARY_CHECK("exec_reseed_probes_succeeded",
+                    rc1 == 0 && rc2 == 0 && exec_addr_1 != 0 && exec_addr_2 != 0 &&
+                    exec_canary_1 != 0 && exec_canary_2 != 0);
+                CANARY_CHECK("exec_reseeds_independent_keys_across_fresh_processes",
+                    exec_hash_1 != exec_hash_2 && exec_canary_1 != exec_canary_2 &&
+                    exec_canary_1 != canary_word && exec_canary_2 != canary_word);
             }
         }
 
-        release(p);
-        mprobe_freed = probe(p);
-        CANARY_CHECK("mprobe_after_free", mprobe_freed == 1);
+        if (!already_released) {
+            release(p);
+            mprobe_freed = probe(p);
+            CANARY_CHECK("mprobe_after_free", mprobe_freed == 1);
+        }
     }
 
     int ok = 1;
@@ -485,6 +700,9 @@ static int canary_probe(const char *id, const char *library) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 3 && !strcmp(argv[1], "--print-canary-hex")) {
+        return print_canary_hex(argv[2]);
+    }
     if (argc == 4 && !strcmp(argv[1], "--ws8-case")) {
         return ws8_probe(argv[2], argv[3]);
     }
