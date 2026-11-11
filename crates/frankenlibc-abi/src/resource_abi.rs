@@ -111,6 +111,13 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const libc::rlimit) -
         return -1;
     }
 
+    if (resource == libc::RLIMIT_AS as c_int || resource == libc::RLIMIT_DATA as c_int)
+        && crate::startup_abi::process_malloc_is_ours()
+    {
+        crate::malloc_abi::prewarm_host_allocator_symbols();
+        crate::malloc_abi::prewarm_host_heap_headroom();
+    }
+
     // In hardened mode, clamp soft to hard if soft > hard.
     let effective_rlim = if mode.heals_enabled() {
         let r = unsafe { *rlim };

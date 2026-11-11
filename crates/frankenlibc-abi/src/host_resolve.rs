@@ -811,52 +811,13 @@ pub(crate) fn bootstrap_host_symbols() {
 
     let mut unresolved = 0usize;
     for (symbol, cache) in [
-        ("pthread_create", &HOST_PTHREAD_CREATE),
-        ("pthread_cancel", &HOST_PTHREAD_CANCEL),
-        ("pthread_setcancelstate", &HOST_PTHREAD_SETCANCELSTATE),
-        ("pthread_setcanceltype", &HOST_PTHREAD_SETCANCELTYPE),
-        ("pthread_testcancel", &HOST_PTHREAD_TESTCANCEL),
-        ("sigsuspend", &HOST_SIGSUSPEND),
-        ("__pthread_register_cancel", &HOST_PTHREAD_REGISTER_CANCEL),
-        (
-            "__pthread_unregister_cancel",
-            &HOST_PTHREAD_UNREGISTER_CANCEL,
-        ),
-        (
-            "__pthread_register_cancel_defer",
-            &HOST_PTHREAD_REGISTER_CANCEL_DEFER,
-        ),
-        (
-            "__pthread_unregister_cancel_restore",
-            &HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE,
-        ),
-        ("__pthread_unwind_next", &HOST_PTHREAD_UNWIND_NEXT),
-        ("pthread_join", &HOST_PTHREAD_JOIN),
-        ("pthread_detach", &HOST_PTHREAD_DETACH),
-        ("pthread_getattr_np", &HOST_PTHREAD_GETATTR_NP),
-        ("pthread_attr_getstack", &HOST_PTHREAD_ATTR_GETSTACK),
-        ("pthread_attr_getguardsize", &HOST_PTHREAD_ATTR_GETGUARDSIZE),
-        (
-            "pthread_attr_getdetachstate",
-            &HOST_PTHREAD_ATTR_GETDETACHSTATE,
-        ),
-        ("pthread_attr_destroy", &HOST_PTHREAD_ATTR_DESTROY),
-        ("pthread_exit", &HOST_PTHREAD_EXIT),
         ("pthread_self", &HOST_PTHREAD_SELF),
-        ("pthread_tryjoin_np", &HOST_PTHREAD_TRYJOIN_NP),
-        ("pthread_timedjoin_np", &HOST_PTHREAD_TIMEDJOIN_NP),
-        ("pthread_clockjoin_np", &HOST_PTHREAD_CLOCKJOIN_NP),
-        ("pthread_condattr_getclock", &HOST_PTHREAD_CONDATTR_GETCLOCK),
-        ("pthread_equal", &HOST_PTHREAD_EQUAL),
         ("malloc", &HOST_MALLOC),
         ("calloc", &HOST_CALLOC),
         ("realloc", &HOST_REALLOC),
         ("free", &HOST_FREE),
         ("__errno_location", &HOST_ERRNO_LOCATION),
         ("dlvsym", &HOST_DLVSYM),
-        ("dl_iterate_phdr", &HOST_DL_ITERATE_PHDR),
-        ("dladdr", &HOST_DLADDR),
-        ("dladdr1", &HOST_DLADDR1),
     ] {
         if cache.load(Ordering::Acquire) == 0 {
             let a = resolve_host_symbol_raw(symbol).unwrap_or(0);
@@ -883,20 +844,64 @@ fn loaded_tables(
     }
     #[cfg(not(feature = "standalone"))]
     {
-        let mut base = cache.base.load(Ordering::Acquire);
-        let mut dynamic = cache.dynamic.load(Ordering::Acquire);
-        if base == 0 {
-            let (found_base, _path, found_dynamic) = find_object_via_link_map(needle)?;
-            (base, dynamic) = (found_base, found_dynamic);
-            cache.dynamic.store(dynamic, Ordering::Release);
-            cache.base.store(base, Ordering::Release);
+        let base = cache.base.load(Ordering::Acquire);
+        if base != 0 {
+            let strtab_ptr = cache.strtab_ptr.load(Ordering::Relaxed);
+            let strtab_len = cache.strtab_len.load(Ordering::Relaxed);
+            let symtab_ptr = cache.symtab_ptr.load(Ordering::Relaxed);
+            let sym_bytes_len = cache.sym_bytes_len.load(Ordering::Relaxed);
+            let sym_entsize = cache.sym_entsize.load(Ordering::Relaxed);
+            let gnu_hash_ptr = cache.gnu_hash_ptr.load(Ordering::Relaxed);
+            let gnu_hash_len = cache.gnu_hash_len.load(Ordering::Relaxed);
+            if strtab_ptr != 0 && symtab_ptr != 0 && gnu_hash_ptr != 0 {
+                // SAFETY: cached extents from permanently loaded link-map object.
+                return unsafe {
+                    Some((
+                        base,
+                        DynamicSymbols {
+                            strtab: std::slice::from_raw_parts(strtab_ptr as *const u8, strtab_len),
+                            sym_bytes: std::slice::from_raw_parts(
+                                symtab_ptr as *const u8,
+                                sym_bytes_len,
+                            ),
+                            sym_entsize,
+                            gnu_hash: Some(std::slice::from_raw_parts(
+                                gnu_hash_ptr as *const u8,
+                                gnu_hash_len,
+                            )),
+                        },
+                    ))
+                };
+            }
         }
+        let (found_base, _path, found_dynamic) = find_object_via_link_map(needle)?;
         // SAFETY: link-map objects found at startup stay loaded.
-        let (tables, count) = unsafe {
-            DynamicSymbols::from_loaded(base, dynamic, cache.count.load(Ordering::Acquire))
-        }?;
-        cache.count.store(count, Ordering::Release);
-        Some((base, tables))
+        let (tables, count) = unsafe { DynamicSymbols::from_loaded(found_base, found_dynamic, 0) }?;
+        cache
+            .strtab_ptr
+            .store(tables.strtab.as_ptr() as usize, Ordering::Relaxed);
+        cache
+            .strtab_len
+            .store(tables.strtab.len(), Ordering::Relaxed);
+        cache
+            .symtab_ptr
+            .store(tables.sym_bytes.as_ptr() as usize, Ordering::Relaxed);
+        cache
+            .sym_bytes_len
+            .store(tables.sym_bytes.len(), Ordering::Relaxed);
+        cache
+            .sym_entsize
+            .store(tables.sym_entsize, Ordering::Relaxed);
+        if let Some(gh) = tables.gnu_hash {
+            cache
+                .gnu_hash_ptr
+                .store(gh.as_ptr() as usize, Ordering::Relaxed);
+            cache.gnu_hash_len.store(gh.len(), Ordering::Relaxed);
+        }
+        cache.dynamic.store(found_dynamic, Ordering::Relaxed);
+        cache.count.store(count, Ordering::Relaxed);
+        cache.base.store(found_base, Ordering::Release);
+        Some((found_base, tables))
     }
 }
 
@@ -905,17 +910,38 @@ struct LoadedTablesCache {
     dynamic: AtomicUsize,
     /// Symbol count derived from the GNU hash table; zero until derived.
     count: AtomicUsize,
+    strtab_ptr: AtomicUsize,
+    strtab_len: AtomicUsize,
+    symtab_ptr: AtomicUsize,
+    sym_bytes_len: AtomicUsize,
+    sym_entsize: AtomicUsize,
+    gnu_hash_ptr: AtomicUsize,
+    gnu_hash_len: AtomicUsize,
 }
 
 static LOADED_LIBC_TABLES: LoadedTablesCache = LoadedTablesCache {
     base: AtomicUsize::new(0),
     dynamic: AtomicUsize::new(0),
     count: AtomicUsize::new(0),
+    strtab_ptr: AtomicUsize::new(0),
+    strtab_len: AtomicUsize::new(0),
+    symtab_ptr: AtomicUsize::new(0),
+    sym_bytes_len: AtomicUsize::new(0),
+    sym_entsize: AtomicUsize::new(0),
+    gnu_hash_ptr: AtomicUsize::new(0),
+    gnu_hash_len: AtomicUsize::new(0),
 };
 static LOADED_LOADER_TABLES: LoadedTablesCache = LoadedTablesCache {
     base: AtomicUsize::new(0),
     dynamic: AtomicUsize::new(0),
     count: AtomicUsize::new(0),
+    strtab_ptr: AtomicUsize::new(0),
+    strtab_len: AtomicUsize::new(0),
+    symtab_ptr: AtomicUsize::new(0),
+    sym_bytes_len: AtomicUsize::new(0),
+    sym_entsize: AtomicUsize::new(0),
+    gnu_hash_ptr: AtomicUsize::new(0),
+    gnu_hash_len: AtomicUsize::new(0),
 };
 
 pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
@@ -947,10 +973,28 @@ pub(crate) fn resolve_host_symbol_cached(
 }
 
 #[inline]
-fn load_host_symbol(cache: &AtomicUsize) -> Option<usize> {
+fn load_host_symbol(cache: &AtomicUsize, symbol: &'static str) -> Option<usize> {
+    let addr = cache.load(Ordering::Acquire);
+    if addr != 0 {
+        return Some(addr);
+    }
+    load_host_symbol_slow(cache, symbol)
+}
+
+#[cold]
+#[inline(never)]
+fn load_host_symbol_slow(cache: &AtomicUsize, symbol: &'static str) -> Option<usize> {
     bootstrap_host_symbols();
     let addr = cache.load(Ordering::Acquire);
-    (addr != 0).then_some(addr)
+    if addr != 0 {
+        return Some(addr);
+    }
+    let resolved = resolve_host_symbol_raw(symbol)?;
+    if resolved == 0 {
+        return None;
+    }
+    cache.store(resolved, Ordering::Release);
+    Some(resolved)
 }
 
 pub(crate) fn host_pthread_create_raw() -> Option<
@@ -961,32 +1005,37 @@ pub(crate) fn host_pthread_create_raw() -> Option<
         *mut c_void,
     ) -> i32,
 > {
-    load_host_symbol(&HOST_PTHREAD_CREATE).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_CREATE, "pthread_create")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_cancel_raw() -> Option<unsafe extern "C" fn(libc::pthread_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_CANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_CANCEL, "pthread_cancel")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_setcancelstate_raw()
 -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SETCANCELSTATE).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_SETCANCELSTATE, "pthread_setcancelstate")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_setcanceltype_raw()
 -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SETCANCELTYPE).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_SETCANCELTYPE, "pthread_setcanceltype")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern "C-unwind" fn()> {
-    load_host_symbol(&HOST_PTHREAD_TESTCANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_TESTCANCEL, "pthread_testcancel")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 /// The host's signal-suspension cancellation wrapper. Calling it directly
 /// preserves the host runtime's signal-mask behavior during forced unwind.
 pub(crate) fn host_sigsuspend_raw()
 -> Option<unsafe extern "C-unwind" fn(*const libc::sigset_t) -> c_int> {
-    load_host_symbol(&HOST_SIGSUSPEND).map(|addr| {
+    load_host_symbol(&HOST_SIGSUSPEND, "sigsuspend").map(|addr| {
         // SAFETY: the cache contains the host ELF symbol with this GNU ABI;
         // cancellation and application signal handlers can unwind through it.
         unsafe { core::mem::transmute(addr) }
@@ -997,40 +1046,52 @@ pub(crate) fn host_sigsuspend_raw()
 /// `-fexceptions`). `__pthread_unwind_next` continues a cancellation unwind.
 pub(crate) fn host_pthread_register_cancel_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void)>
 {
-    load_host_symbol(&HOST_PTHREAD_REGISTER_CANCEL)
+    load_host_symbol(&HOST_PTHREAD_REGISTER_CANCEL, "__pthread_register_cancel")
         .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_unregister_cancel_raw()
 -> Option<unsafe extern "C-unwind" fn(*mut c_void)> {
-    load_host_symbol(&HOST_PTHREAD_UNREGISTER_CANCEL)
-        .map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(
+        &HOST_PTHREAD_UNREGISTER_CANCEL,
+        "__pthread_unregister_cancel",
+    )
+    .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_register_cancel_defer_raw()
 -> Option<unsafe extern "C-unwind" fn(*mut c_void)> {
-    load_host_symbol(&HOST_PTHREAD_REGISTER_CANCEL_DEFER)
-        .map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(
+        &HOST_PTHREAD_REGISTER_CANCEL_DEFER,
+        "__pthread_register_cancel_defer",
+    )
+    .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_unregister_cancel_restore_raw()
 -> Option<unsafe extern "C-unwind" fn(*mut c_void)> {
-    load_host_symbol(&HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE)
-        .map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(
+        &HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE,
+        "__pthread_unregister_cancel_restore",
+    )
+    .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_unwind_next_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void) -> !>
 {
-    load_host_symbol(&HOST_PTHREAD_UNWIND_NEXT).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_UNWIND_NEXT, "__pthread_unwind_next")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_join_raw()
 -> Option<unsafe extern "C-unwind" fn(libc::pthread_t, *mut *mut c_void) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_JOIN).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_JOIN, "pthread_join")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_detach_raw() -> Option<unsafe extern "C" fn(libc::pthread_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_DETACH).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_DETACH, "pthread_detach")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 /// The stack and detach state host glibc reports for a thread it created:
@@ -1048,15 +1109,26 @@ pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize
     // whose C signature is the one transmuted to.
     let (getattr, getstack, getguard, getdetach, destroy) = unsafe {
         (
-            core::mem::transmute::<usize, GetAttr>(load_host_symbol(&HOST_PTHREAD_GETATTR_NP)?),
-            core::mem::transmute::<usize, GetStack>(load_host_symbol(&HOST_PTHREAD_ATTR_GETSTACK)?),
+            core::mem::transmute::<usize, GetAttr>(load_host_symbol(
+                &HOST_PTHREAD_GETATTR_NP,
+                "pthread_getattr_np",
+            )?),
+            core::mem::transmute::<usize, GetStack>(load_host_symbol(
+                &HOST_PTHREAD_ATTR_GETSTACK,
+                "pthread_attr_getstack",
+            )?),
             core::mem::transmute::<usize, GetSize>(load_host_symbol(
                 &HOST_PTHREAD_ATTR_GETGUARDSIZE,
+                "pthread_attr_getguardsize",
             )?),
             core::mem::transmute::<usize, GetInt>(load_host_symbol(
                 &HOST_PTHREAD_ATTR_GETDETACHSTATE,
+                "pthread_attr_getdetachstate",
             )?),
-            core::mem::transmute::<usize, Destroy>(load_host_symbol(&HOST_PTHREAD_ATTR_DESTROY)?),
+            core::mem::transmute::<usize, Destroy>(load_host_symbol(
+                &HOST_PTHREAD_ATTR_DESTROY,
+                "pthread_attr_destroy",
+            )?),
         )
     };
     let mut attr = core::mem::MaybeUninit::<libc::pthread_attr_t>::zeroed();
@@ -1077,55 +1149,61 @@ pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize
 }
 
 pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void) -> !> {
-    load_host_symbol(&HOST_PTHREAD_EXIT).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_EXIT, "pthread_exit")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_self_raw() -> Option<unsafe extern "C" fn() -> libc::pthread_t> {
-    load_host_symbol(&HOST_PTHREAD_SELF).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_SELF, "pthread_self")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_tryjoin_np_raw()
 -> Option<unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_TRYJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_TRYJOIN_NP, "pthread_tryjoin_np")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_timedjoin_np_raw()
 -> Option<unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void, *const libc::timespec) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_TIMEDJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_TIMEDJOIN_NP, "pthread_timedjoin_np")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_clockjoin_np_raw() -> Option<
     unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void, c_int, *const libc::timespec) -> i32,
 > {
-    load_host_symbol(&HOST_PTHREAD_CLOCKJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_CLOCKJOIN_NP, "pthread_clockjoin_np")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_condattr_getclock_raw()
 -> Option<unsafe extern "C" fn(*const libc::pthread_condattr_t, *mut libc::clockid_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_CONDATTR_GETCLOCK)
+    load_host_symbol(&HOST_PTHREAD_CONDATTR_GETCLOCK, "pthread_condattr_getclock")
         .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_equal_raw()
 -> Option<unsafe extern "C" fn(libc::pthread_t, libc::pthread_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_EQUAL).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_PTHREAD_EQUAL, "pthread_equal")
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_malloc_raw() -> Option<unsafe extern "C" fn(usize) -> *mut c_void> {
-    load_host_symbol(&HOST_MALLOC).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_MALLOC, "malloc").map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_calloc_raw() -> Option<unsafe extern "C" fn(usize, usize) -> *mut c_void> {
-    load_host_symbol(&HOST_CALLOC).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_CALLOC, "calloc").map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_realloc_raw() -> Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>
 {
-    load_host_symbol(&HOST_REALLOC).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_REALLOC, "realloc").map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_free_raw() -> Option<unsafe extern "C" fn(*mut c_void)> {
-    load_host_symbol(&HOST_FREE).map(|addr| unsafe { core::mem::transmute(addr) })
+    load_host_symbol(&HOST_FREE, "free").map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 /// Attempts spent resolving the host `__errno_location` SPECIFICALLY.
@@ -1152,7 +1230,14 @@ static ERRNO_RESOLVE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 /// this symbol's own, so a cold cache always gets its first three attempts.
 /// Once resolved this is one load and a branch, as before.
 pub(crate) fn host_errno_location_raw() -> Option<unsafe extern "C" fn() -> *mut c_int> {
-    if let Some(addr) = load_host_symbol(&HOST_ERRNO_LOCATION) {
+    let cached = HOST_ERRNO_LOCATION.load(Ordering::Acquire);
+    if cached != 0 {
+        // SAFETY: the cached address is the host `__errno_location`.
+        return Some(unsafe {
+            core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(cached)
+        });
+    }
+    if let Some(addr) = load_host_symbol(&HOST_ERRNO_LOCATION, "__errno_location") {
         // SAFETY: the cached address is the host `__errno_location`.
         return Some(unsafe {
             core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr)
@@ -1208,8 +1293,7 @@ pub(crate) fn host_errno_location_cached() -> Option<unsafe extern "C" fn() -> *
 /// Get the cached host `dl_iterate_phdr` address (non-blocking, no recursion).
 #[inline]
 pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {
-    let addr = HOST_DL_ITERATE_PHDR.load(Ordering::Acquire);
-    (addr != 0).then_some(addr)
+    load_host_symbol(&HOST_DL_ITERATE_PHDR, "dl_iterate_phdr")
 }
 
 /// Get the cached host `dladdr` address, lazily bootstrapping the
@@ -1222,14 +1306,14 @@ pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {
 /// impl_output="0" vs host_output="nonzero".
 #[inline]
 pub(crate) fn host_dladdr_cached() -> Option<usize> {
-    load_host_symbol(&HOST_DLADDR)
+    load_host_symbol(&HOST_DLADDR, "dladdr")
 }
 
 /// The host's `dladdr1`, whose `RTLD_DL_LINKMAP`/`RTLD_DL_SYMENT` results
 /// point into the host loader's own structures.
 #[inline]
 pub(crate) fn host_dladdr1_cached() -> Option<usize> {
-    load_host_symbol(&HOST_DLADDR1)
+    load_host_symbol(&HOST_DLADDR1, "dladdr1")
 }
 
 #[inline]

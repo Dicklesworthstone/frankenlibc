@@ -1270,8 +1270,8 @@ unsafe fn startup_phase0_impl(
     // faulted growing the stack for the kernel's ~158 KiB constructor frame,
     // hardened aborted at exit (stdio flush) on the pipeline's ~8 MB.
     if publish_environment
-        && process_malloc_is_ours()
         && crate::runtime_policy::mode().heals_enabled()
+        && process_malloc_is_ours()
     {
         crate::runtime_policy::prewarm_kernel();
         let _ = crate::membrane_state::try_global_pipeline();

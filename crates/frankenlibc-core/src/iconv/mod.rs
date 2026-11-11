@@ -627,7 +627,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-static PHASE1_CODEC_TABLE: [CodecSpec; 302] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 302] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -3428,6 +3428,39 @@ fn encode_sbcs_full(ch: char, out: &mut [u8], enc: &[(u16, u8)]) -> Result<usize
     }
 }
 
+#[derive(Clone, Copy)]
+struct PackedMbEncEntry {
+    cp: u16,
+    len: u8,
+    bytes: [u8; 3],
+}
+
+const fn pack_mbenc<const N: usize>(src: &[(u16, &[u8])]) -> [PackedMbEncEntry; N] {
+    assert!(src.len() == N);
+    let mut out = [PackedMbEncEntry {
+        cp: 0,
+        len: 0,
+        bytes: [0; 3],
+    }; N];
+    let mut i = 0;
+    while i < N {
+        let (cp, slice) = src[i];
+        let mut bytes = [0u8; 3];
+        let mut j = 0;
+        while j < slice.len() {
+            bytes[j] = slice[j];
+            j += 1;
+        }
+        out[i] = PackedMbEncEntry {
+            cp,
+            len: slice.len() as u8,
+            bytes,
+        };
+        i += 1;
+    }
+    out
+}
+
 /// Variable-length encoder for single-byte codecs whose glibc encode decomposes
 /// some precomposed code points into a multi-byte (base + combining) sequence —
 /// e.g. Windows/Vietnamese CP1258, TCVN, and Hebrew CP1255, where a precomposed
@@ -3435,19 +3468,24 @@ fn encode_sbcs_full(ch: char, out: &mut [u8], enc: &[(u16, u8)]) -> Result<usize
 /// `enc` is sorted by code point and maps each representable code point to its
 /// exact glibc byte sequence (1-3 bytes). Code points absent from the table are
 /// `Unrepresentable` (EILSEQ), matching glibc.
-fn encode_sbcs_mb(ch: char, out: &mut [u8], enc: &[(u16, &[u8])]) -> Result<usize, EncodeError> {
+fn encode_sbcs_mb(
+    ch: char,
+    out: &mut [u8],
+    enc: &[PackedMbEncEntry],
+) -> Result<usize, EncodeError> {
     let cp = ch as u32;
     if cp > u32::from(u16::MAX) {
         return Err(EncodeError::Unrepresentable);
     }
-    match enc.binary_search_by_key(&(cp as u16), |&(c, _)| c) {
+    match enc.binary_search_by_key(&(cp as u16), |e| e.cp) {
         Ok(i) => {
-            let bytes = enc[i].1;
-            if out.len() < bytes.len() {
+            let entry = &enc[i];
+            let len = usize::from(entry.len);
+            if out.len() < len {
                 return Err(EncodeError::NoSpace);
             }
-            out[..bytes.len()].copy_from_slice(bytes);
-            Ok(bytes.len())
+            out[..len].copy_from_slice(&entry.bytes[..len]);
+            Ok(len)
         }
         Err(_) => Err(EncodeError::Unrepresentable),
     }
@@ -3472,16 +3510,198 @@ enum EncodeError {
     Unrepresentable,
 }
 
-fn normalize_encoding_label(raw: &[u8]) -> Vec<u8> {
-    let mut canonical = Vec::with_capacity(raw.len());
+fn normalize_encoding_label<'a>(raw: &[u8], buf: &'a mut [u8; 64]) -> Option<&'a [u8]> {
+    let mut len = 0;
     for &b in raw {
         if matches!(b, b'-' | b'_' | b' ' | b'\t') {
             continue;
         }
-        canonical.push(b.to_ascii_uppercase());
+        if len >= buf.len() {
+            return None;
+        }
+        buf[len] = b.to_ascii_uppercase();
+        len += 1;
     }
-    canonical
+    Some(&buf[..len])
 }
+
+const PACKED_CODEC_COUNT: usize = PHASE1_CODEC_TABLE.len();
+const PACKED_SUPPLEMENT_COUNT: usize = ICONV_GLIBC_ALIAS_SUPPLEMENT.len();
+const PACKED_ALIAS_CAPACITY: usize = 1024;
+const PACKED_BYTES_CAPACITY: usize = 16384;
+
+#[derive(Clone, Copy)]
+struct PackedStrSpan {
+    offset: u16,
+    len: u8,
+}
+
+impl PackedStrSpan {
+    #[inline]
+    fn as_bytes(self) -> &'static [u8] {
+        let start = usize::from(self.offset);
+        let end = start + usize::from(self.len);
+        &PACKED_CODEC_TABLE.bytes[start..end]
+    }
+
+    #[inline]
+    fn as_str(self) -> &'static str {
+        core::str::from_utf8(self.as_bytes()).unwrap_or("")
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PackedCodecSpec {
+    encoding: Encoding,
+    canonical: PackedStrSpan,
+    normalized: PackedStrSpan,
+    alias_start: u16,
+    alias_count: u8,
+}
+
+#[derive(Clone, Copy)]
+struct PackedSupplementAlias {
+    alias: PackedStrSpan,
+    codec_idx: u16,
+}
+
+struct PackedCodecTable {
+    specs: [PackedCodecSpec; PACKED_CODEC_COUNT],
+    aliases: [PackedStrSpan; PACKED_ALIAS_CAPACITY],
+    supplements: [PackedSupplementAlias; PACKED_SUPPLEMENT_COUNT],
+    bytes: [u8; PACKED_BYTES_CAPACITY],
+}
+
+const fn const_str_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < ab.len() {
+        if ab[i] != bb[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn pack_codec_table() -> PackedCodecTable {
+    let zero_span = PackedStrSpan { offset: 0, len: 0 };
+    let mut specs = [PackedCodecSpec {
+        encoding: Encoding::Utf8,
+        canonical: zero_span,
+        normalized: zero_span,
+        alias_start: 0,
+        alias_count: 0,
+    }; PACKED_CODEC_COUNT];
+    let mut aliases = [zero_span; PACKED_ALIAS_CAPACITY];
+    let mut supplements = [PackedSupplementAlias {
+        alias: zero_span,
+        codec_idx: 0,
+    }; PACKED_SUPPLEMENT_COUNT];
+    let mut bytes = [0u8; PACKED_BYTES_CAPACITY];
+    let mut byte_cursor = 0usize;
+    let mut alias_cursor = 0usize;
+
+    let mut i = 0;
+    while i < PACKED_CODEC_COUNT {
+        let src = PHASE1_CODEC_TABLE[i];
+
+        let canon_bytes = src.canonical.as_bytes();
+        let canon_span = PackedStrSpan {
+            offset: byte_cursor as u16,
+            len: canon_bytes.len() as u8,
+        };
+        let mut j = 0;
+        while j < canon_bytes.len() {
+            bytes[byte_cursor] = canon_bytes[j];
+            byte_cursor += 1;
+            j += 1;
+        }
+
+        let norm_bytes = src.normalized.as_bytes();
+        let norm_span = PackedStrSpan {
+            offset: byte_cursor as u16,
+            len: norm_bytes.len() as u8,
+        };
+        j = 0;
+        while j < norm_bytes.len() {
+            bytes[byte_cursor] = norm_bytes[j];
+            byte_cursor += 1;
+            j += 1;
+        }
+
+        let alias_start = alias_cursor as u16;
+        let mut a = 0;
+        while a < src.aliases.len() {
+            let ab = src.aliases[a].as_bytes();
+            aliases[alias_cursor] = PackedStrSpan {
+                offset: byte_cursor as u16,
+                len: ab.len() as u8,
+            };
+            alias_cursor += 1;
+            j = 0;
+            while j < ab.len() {
+                bytes[byte_cursor] = ab[j];
+                byte_cursor += 1;
+                j += 1;
+            }
+            a += 1;
+        }
+
+        specs[i] = PackedCodecSpec {
+            encoding: src.encoding,
+            canonical: canon_span,
+            normalized: norm_span,
+            alias_start,
+            alias_count: src.aliases.len() as u8,
+        };
+        i += 1;
+    }
+
+    let mut s = 0;
+    while s < PACKED_SUPPLEMENT_COUNT {
+        let (alias_str, canon_str) = ICONV_GLIBC_ALIAS_SUPPLEMENT[s];
+        let ab = alias_str.as_bytes();
+        let alias_span = PackedStrSpan {
+            offset: byte_cursor as u16,
+            len: ab.len() as u8,
+        };
+        let mut j = 0;
+        while j < ab.len() {
+            bytes[byte_cursor] = ab[j];
+            byte_cursor += 1;
+            j += 1;
+        }
+        let mut found_idx = u16::MAX;
+        let mut k = 0;
+        while k < PACKED_CODEC_COUNT {
+            if const_str_eq(PHASE1_CODEC_TABLE[k].canonical, canon_str) {
+                found_idx = k as u16;
+                break;
+            }
+            k += 1;
+        }
+        assert!(found_idx != u16::MAX);
+        supplements[s] = PackedSupplementAlias {
+            alias: alias_span,
+            codec_idx: found_idx,
+        };
+        s += 1;
+    }
+
+    PackedCodecTable {
+        specs,
+        aliases,
+        supplements,
+        bytes,
+    }
+}
+
+static PACKED_CODEC_TABLE: PackedCodecTable = pack_codec_table();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EncodingLookup {
@@ -3491,24 +3711,32 @@ struct EncodingLookup {
 }
 
 fn classify_encoding(raw: &[u8]) -> EncodingLookup {
-    let canonical = normalize_encoding_label(raw);
+    let mut buf = [0u8; 64];
+    let Some(canonical) = normalize_encoding_label(raw, &mut buf) else {
+        return EncodingLookup {
+            encoding: None,
+            canonical: "UNSUPPORTED",
+            dispatch_path: CodecDispatchPath::UnsupportedCodec,
+        };
+    };
 
-    for spec in PHASE1_CODEC_TABLE {
-        if canonical.as_slice() == spec.normalized.as_bytes() {
+    for spec in &PACKED_CODEC_TABLE.specs {
+        if canonical == spec.normalized.as_bytes() {
             return EncodingLookup {
                 encoding: Some(spec.encoding),
-                canonical: spec.canonical,
+                canonical: spec.canonical.as_str(),
                 dispatch_path: CodecDispatchPath::IncludedCanonical,
             };
         }
-        if spec
-            .aliases
+        let alias_start = usize::from(spec.alias_start);
+        let alias_end = alias_start + usize::from(spec.alias_count);
+        if PACKED_CODEC_TABLE.aliases[alias_start..alias_end]
             .iter()
-            .any(|alias| canonical.as_slice() == alias.as_bytes())
+            .any(|alias| canonical == alias.as_bytes())
         {
             return EncodingLookup {
                 encoding: Some(spec.encoding),
-                canonical: spec.canonical,
+                canonical: spec.canonical.as_str(),
                 dispatch_path: CodecDispatchPath::IncludedAlias,
             };
         }
@@ -3516,22 +3744,19 @@ fn classify_encoding(raw: &[u8]) -> EncodingLookup {
 
     // Supplemental glibc aliases for already-implemented codecs (probe-verified
     // byte-identical). Consulted only after the canonical/per-spec-alias misses.
-    for &(alias, canon) in ICONV_GLIBC_ALIAS_SUPPLEMENT {
-        if canonical.as_slice() == alias.as_bytes() {
-            for spec in PHASE1_CODEC_TABLE {
-                if spec.canonical == canon {
-                    return EncodingLookup {
-                        encoding: Some(spec.encoding),
-                        canonical: spec.canonical,
-                        dispatch_path: CodecDispatchPath::IncludedAlias,
-                    };
-                }
-            }
+    for supp in &PACKED_CODEC_TABLE.supplements {
+        if canonical == supp.alias.as_bytes() {
+            let spec = &PACKED_CODEC_TABLE.specs[usize::from(supp.codec_idx)];
+            return EncodingLookup {
+                encoding: Some(spec.encoding),
+                canonical: spec.canonical.as_str(),
+                dispatch_path: CodecDispatchPath::IncludedAlias,
+            };
         }
     }
 
     for spec in PHASE1_EXCLUDED_CODEC_TABLE {
-        if canonical.as_slice() == spec.normalized.as_bytes() {
+        if canonical == spec.normalized.as_bytes() {
             return EncodingLookup {
                 encoding: None,
                 canonical: spec.canonical,
@@ -4196,7 +4421,7 @@ const CP1255_FULL: [u16; 256] = [
     0x05E8, 0x05E9, 0x05EA, 0xFFFF, 0xFFFF, 0x200E, 0x200F, 0xFFFF, // F8-FF
 ];
 
-const CP1255_MBENC: &[(u16, &[u8])] = &[
+const CP1255_MBENC_RAW: &[(u16, &[u8])] = &[
     (0x0000, &[0x00]),
     (0x0001, &[0x01]),
     (0x0002, &[0x02]),
@@ -4471,7 +4696,8 @@ fn decode_cp1255(input: &[u8]) -> Result<(char, usize), DecodeError> {
 }
 
 fn encode_cp1255(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    encode_sbcs_mb(ch, out, CP1255_MBENC)
+    static CP1255_MBENC: [PackedMbEncEntry; CP1255_MBENC_RAW.len()] = pack_mbenc(CP1255_MBENC_RAW);
+    encode_sbcs_mb(ch, out, &CP1255_MBENC)
 }
 
 /// Windows-1256 (CP1256/Arabic) to Unicode mapping for bytes 0x80-0xFF.
@@ -4617,7 +4843,7 @@ const CP1258_FULL: [u16; 256] = [
     0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x01B0, 0x20AB, 0x00FF, // F8-FF
 ];
 
-const CP1258_MBENC: &[(u16, &[u8])] = &[
+const CP1258_MBENC_RAW: &[(u16, &[u8])] = &[
     (0x0000, &[0x00]),
     (0x0001, &[0x01]),
     (0x0002, &[0x02]),
@@ -5055,7 +5281,8 @@ fn decode_cp1258(input: &[u8]) -> Result<(char, usize), DecodeError> {
 }
 
 fn encode_cp1258(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    encode_sbcs_mb(ch, out, CP1258_MBENC)
+    static CP1258_MBENC: [PackedMbEncEntry; CP1258_MBENC_RAW.len()] = pack_mbenc(CP1258_MBENC_RAW);
+    encode_sbcs_mb(ch, out, &CP1258_MBENC)
 }
 
 /// Windows-874 (CP874/Thai/TIS-620) to Unicode mapping for bytes 0x80-0xFF.
@@ -6429,7 +6656,7 @@ const TCVN_FULL: [u16; 256] = [
     0x1EE9, 0x1EF1, 0x1EF3, 0x1EF7, 0x1EF9, 0x00FD, 0x1EF5, 0x1ED0, // F8-FF
 ];
 
-const TCVN_MBENC: &[(u16, &[u8])] = &[
+const TCVN_MBENC_RAW: &[(u16, &[u8])] = &[
     (0x0000, &[0x00]),
     (0x0003, &[0x03]),
     (0x0007, &[0x07]),
@@ -6749,7 +6976,8 @@ fn decode_tcvn(input: &[u8]) -> Result<(char, usize), DecodeError> {
 }
 
 fn encode_tcvn(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    encode_sbcs_mb(ch, out, TCVN_MBENC)
+    static TCVN_MBENC: [PackedMbEncEntry; TCVN_MBENC_RAW.len()] = pack_mbenc(TCVN_MBENC_RAW);
+    encode_sbcs_mb(ch, out, &TCVN_MBENC)
 }
 
 /// ARMSCII-8 (Armenian) to Unicode mapping for bytes 0x80-0xFF.

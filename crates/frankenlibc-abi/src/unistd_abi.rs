@@ -4254,7 +4254,13 @@ pub unsafe extern "C" fn getopt(
         code
     } else {
         unsafe {
-            parse_getopt_short_prepared(argc, argv, &optspec, std::ptr::null(), std::ptr::null_mut())
+            parse_getopt_short_prepared(
+                argc,
+                argv,
+                &optspec,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+            )
         }
     };
     runtime_policy::observe(
@@ -12342,9 +12348,7 @@ pub unsafe extern "C" fn _nss_files_getsgent_r(
     let mut resolved = std::ptr::null_mut();
     let mut open_failure = false;
     let rc = unsafe {
-        crate::pwd_abi::files_getsgent_r(
-            result, buffer, buflen, &mut resolved, &mut open_failure,
-        )
+        crate::pwd_abi::files_getsgent_r(result, buffer, buflen, &mut resolved, &mut open_failure)
     };
     if open_failure {
         // GNU enumeration leaves both error cells alone on an open failure.
@@ -12357,7 +12361,11 @@ pub unsafe extern "C" fn _nss_files_getsgent_r(
     }
     unsafe {
         nss_gshadow_result(
-            rc, resolved, errnop, saved_errno, tracked_output_capacity(buffer, buflen),
+            rc,
+            resolved,
+            errnop,
+            saved_errno,
+            tracked_output_capacity(buffer, buflen),
         )
     }
 }
@@ -12575,7 +12583,12 @@ pub unsafe extern "C" fn _nss_files_getsgnam_r(
     let mut open_failure = false;
     let rc = unsafe {
         crate::pwd_abi::files_getsgnam_r(
-            name, result, buffer, buflen, &mut resolved, &mut open_failure,
+            name,
+            result,
+            buffer,
+            buflen,
+            &mut resolved,
+            &mut open_failure,
         )
     };
     if open_failure {
@@ -12588,7 +12601,11 @@ pub unsafe extern "C" fn _nss_files_getsgnam_r(
     }
     unsafe {
         nss_gshadow_result(
-            rc, resolved, errnop, saved_errno, tracked_output_capacity(buffer, buflen),
+            rc,
+            resolved,
+            errnop,
+            saved_errno,
+            tracked_output_capacity(buffer, buflen),
         )
     }
 }
@@ -14472,6 +14489,14 @@ pub unsafe extern "C" fn prlimit(
     new_limit: *const libc::rlimit,
     old_limit: *mut libc::rlimit,
 ) -> c_int {
+    if !new_limit.is_null()
+        && (resource == libc::RLIMIT_AS as c_int || resource == libc::RLIMIT_DATA as c_int)
+        && (pid == 0 || pid == syscall::sys_getpid())
+        && crate::startup_abi::process_malloc_is_ours()
+    {
+        crate::malloc_abi::prewarm_host_allocator_symbols();
+        crate::malloc_abi::prewarm_host_heap_headroom();
+    }
     match unsafe {
         syscall::sys_prlimit64(
             pid,

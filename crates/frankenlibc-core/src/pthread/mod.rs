@@ -37,5 +37,5 @@ pub use thread::{
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use tls::run_exiting_thread_key_destructors;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub use tls::{pthread_getspecific, pthread_setspecific};
+pub use tls::{current_tid, pthread_getspecific, pthread_setspecific};
 pub use tls::{pthread_key_create, pthread_key_delete};

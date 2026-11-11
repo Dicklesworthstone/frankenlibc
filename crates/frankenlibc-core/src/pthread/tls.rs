@@ -435,6 +435,7 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
     if tid <= 0 {
         return false;
     }
+    TLS_TABLE_USED.store(true, Ordering::Release);
     // Refuse further registrations on exhaustion instead of ever reusing a
     // generation. In practice this permits over nine quintillion lifetimes.
     let Ok(generation) =
@@ -652,7 +653,8 @@ fn table_remove(tid: i32) -> *mut TlsEntry {
 
 /// Get the calling thread's kernel TID.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn current_tid() -> i32 {
+#[inline]
+pub fn current_tid() -> i32 {
     if TID_CACHE_DISABLED.load(Ordering::Relaxed) {
         return syscall::sys_gettid();
     }
@@ -686,6 +688,11 @@ static TID_CACHE_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::Atom
 static TID_CACHE_DISABLED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Set when at least one native thread registers in `TLS_TIDS`. Ordinary hosted
+/// processes never register in `TLS_TIDS`, so skipping `rekey_fork_child_table`
+/// avoids scanning and COW-faulting 80 KiB of `.bss` on every `fork()`.
+static TLS_TABLE_USED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// Rebuild one inherited TID table around the sole surviving thread.
 ///
 /// Old hash positions cannot be relabeled: the child's new TID has a different
@@ -711,11 +718,15 @@ fn rekey_fork_child_table(
         .zip(survivor_index)
         .map_or(0, |(words, index)| words[index].load(Ordering::Acquire));
     for index in 0..TLS_TABLE_SLOTS {
-        if let Some(words) = cancellation {
+        if let Some(words) = cancellation
+            && words[index].load(Ordering::Relaxed) != 0
+        {
             words[index].store(0, Ordering::Release);
         }
-        tids[index].store(TLS_SLOT_EMPTY, Ordering::Release);
-        if !retain_unused_blocks {
+        if tids[index].load(Ordering::Relaxed) != TLS_SLOT_EMPTY {
+            tids[index].store(TLS_SLOT_EMPTY, Ordering::Release);
+        }
+        if !retain_unused_blocks && pointers[index].load(Ordering::Relaxed) != 0 {
             pointers[index].store(0, Ordering::Release);
         }
     }
@@ -743,24 +754,29 @@ fn rekey_fork_child_table(
 /// and parent_tid is its kernel TID captured before fork. Inherited table
 /// metadata must not be accessed concurrently while it is rebuilt.
 pub unsafe fn note_fork_child(parent_tid: i32) {
-    let child_tid = syscall::sys_gettid();
-    rekey_fork_child_table(
-        &TLS_TIDS,
-        &TLS_PTRS,
-        Some(&TLS_CANCEL_WORDS),
-        parent_tid,
-        child_tid,
-        false,
-    );
+    if TLS_TABLE_USED.load(Ordering::Acquire) {
+        let child_tid = syscall::sys_gettid();
+        rekey_fork_child_table(
+            &TLS_TIDS,
+            &TLS_PTRS,
+            Some(&TLS_CANCEL_WORDS),
+            parent_tid,
+            child_tid,
+            false,
+        );
+    }
     #[cfg(feature = "owned-tls-cache")]
-    rekey_fork_child_table(
-        &FALLBACK_TLS_TIDS,
-        &FALLBACK_TLS_PTRS,
-        None,
-        parent_tid,
-        child_tid,
-        true,
-    );
+    {
+        let child_tid = syscall::sys_gettid();
+        rekey_fork_child_table(
+            &FALLBACK_TLS_TIDS,
+            &FALLBACK_TLS_PTRS,
+            None,
+            parent_tid,
+            child_tid,
+            true,
+        );
+    }
     TID_CACHE_EPOCH.fetch_add(1, Ordering::AcqRel);
 }
 

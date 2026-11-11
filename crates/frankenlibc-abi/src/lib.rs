@@ -413,6 +413,7 @@ unsafe extern "C" fn frankenlibc_abi_stdio_init_entry(
     // filter carved out of its allocator during `.init_array`.
     if runtime_policy::mode().heals_enabled() && startup_abi::process_malloc_is_ours() {
         malloc_abi::prewarm_host_allocator_symbols();
+        runtime_policy::prewarm_kernel();
         let _ = membrane_state::try_global_pipeline();
     }
 }

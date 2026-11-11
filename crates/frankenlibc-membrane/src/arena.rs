@@ -223,10 +223,15 @@ unsafe impl std::alloc::Allocator for IndexNodeAlloc {
         if state.cursor == 0 || start + layout.size() > state.end {
             let min_chunk =
                 INDEX_POOL_CHUNK_ALIGN + layout.size().next_multiple_of(INDEX_POOL_CHUNK_ALIGN);
+            let primary_chunk = if state.chunks.is_null() {
+                INDEX_POOL_FALLBACK_CHUNK.max(min_chunk)
+            } else {
+                INDEX_POOL_CHUNK
+            };
             let mut chunk = std::ptr::null_mut();
             let mut chunk_size = 0;
             for candidate in [
-                INDEX_POOL_CHUNK,
+                primary_chunk,
                 INDEX_POOL_FALLBACK_CHUNK.max(min_chunk),
                 min_chunk,
             ] {
@@ -392,7 +397,7 @@ pub struct AllocationArena {
     shards: Box<[Mutex<ArenaShard>]>,
     /// `user_base` of every registered allocation whose raw extent exceeds
     /// `SMALL_EXTENT`; see `lookup`.
-    large: Mutex<std::collections::BTreeSet<usize>>,
+    large: Mutex<std::collections::BTreeSet<usize, IndexNodeAlloc>>,
     /// Global generation counter.
     next_generation: std::sync::atomic::AtomicU64,
     /// Bytes and entries quarantined across all shards (the sum of the
@@ -420,7 +425,7 @@ pub struct AllocationResult {
 /// the page oracle's lock exclusively, and allocating (or freeing a Vec
 /// buffer on drop) goes through the membrane, which takes that lock.
 pub struct ArenaAtforkGuard<'a> {
-    _large: MutexGuard<'a, std::collections::BTreeSet<usize>>,
+    _large: MutexGuard<'a, std::collections::BTreeSet<usize, IndexNodeAlloc>>,
     _guards: [MutexGuard<'a, ArenaShard>; NUM_SHARDS],
 }
 
@@ -439,7 +444,7 @@ impl AllocationArena {
             .collect();
         Self {
             shards: shards.into_boxed_slice(),
-            large: Mutex::new(std::collections::BTreeSet::new()),
+            large: Mutex::new(std::collections::BTreeSet::new_in(IndexNodeAlloc::new())),
             next_generation: std::sync::atomic::AtomicU64::new(1),
             quarantine_total_bytes: std::sync::atomic::AtomicUsize::new(0),
             quarantine_total_entries: std::sync::atomic::AtomicUsize::new(0),

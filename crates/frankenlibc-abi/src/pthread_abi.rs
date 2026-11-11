@@ -44,9 +44,10 @@ use frankenlibc_core::pthread::{
     condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
     condvar_timed_futex_op as core_condvar_timed_futex_op,
     condvar_wait_finish as core_condvar_wait_finish,
-    condvar_wait_prepare as core_condvar_wait_prepare, detach_thread as core_detach_thread,
-    exit_current_thread as core_exit_current_thread, handle_for_tid as core_handle_for_tid,
-    join_thread as core_join_thread, self_tid as core_self_tid,
+    condvar_wait_prepare as core_condvar_wait_prepare, current_tid as core_cached_tid,
+    detach_thread as core_detach_thread, exit_current_thread as core_exit_current_thread,
+    handle_for_tid as core_handle_for_tid, join_thread as core_join_thread,
+    self_tid as core_self_tid,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -3342,7 +3343,11 @@ unsafe fn ext_mutex_lock(
     let mtype = raw_type & MUTEX_TYPE_MASK;
     let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
     let is_pp = raw_type & MUTEX_FLAG_PP != 0;
-    let tid = core_self_tid();
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
     if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
         return libc::ENOTRECOVERABLE;
     }
@@ -3404,8 +3409,10 @@ unsafe fn ext_mutex_lock(
         }
     }
     m.owner.store(tid, Ordering::Release);
-    m.owner_pid
-        .store(raw_syscall::sys_getpid(), Ordering::Release);
+    if robust {
+        m.owner_pid
+            .store(raw_syscall::sys_getpid(), Ordering::Release);
+    }
     m.count.store(1, Ordering::Release);
     if robust {
         remember_robust_mutex_held(tid, mutex);
@@ -3494,23 +3501,25 @@ fn ext_pi_acquire(
         if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
             return libc::ENOTRECOVERABLE;
         }
-        let observed = m.word.load(Ordering::Acquire);
-        let holder = observed & FUTEX_PI_TID_MASK;
-        let holder_gone = observed & FUTEX_PI_OWNER_DIED != 0
-            || (holder != 0 && mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), holder));
-        if robust && holder_gone {
-            if m.word
-                .compare_exchange(
-                    observed,
-                    tid | (observed & FUTEX_PI_WAITERS),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                return libc::EOWNERDEAD;
+        if robust {
+            let observed = m.word.load(Ordering::Acquire);
+            let holder = observed & FUTEX_PI_TID_MASK;
+            let holder_gone = observed & FUTEX_PI_OWNER_DIED != 0
+                || (holder != 0 && mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), holder));
+            if holder_gone {
+                if m.word
+                    .compare_exchange(
+                        observed,
+                        tid | (observed & FUTEX_PI_WAITERS),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    return libc::EOWNERDEAD;
+                }
+                continue;
             }
-            continue;
         }
         if try_only {
             return libc::EBUSY;
@@ -3566,7 +3575,11 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
     let mtype = raw_type & MUTEX_TYPE_MASK;
     let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
     let is_pp = raw_type & MUTEX_FLAG_PP != 0;
-    let tid = core_self_tid();
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
     let owned = m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER;
     if !owned
         && (robust
@@ -3596,9 +3609,9 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
     }
     if robust {
         forget_robust_mutex_held(mutex);
+        m.owner_pid.store(0, Ordering::Release);
     }
     m.owner.store(MUTEX_NO_OWNER, Ordering::Release);
-    m.owner_pid.store(0, Ordering::Release);
     m.count.store(0, Ordering::Release);
     if raw_type & MUTEX_FLAG_PI != 0 {
         if m.word
@@ -4455,7 +4468,7 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
             };
             let owner = unsafe { &*owner_ptr };
             let count = unsafe { &*count_ptr };
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
 
             // Check if we already own this mutex.
             if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
@@ -4482,7 +4495,7 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
                 return libc::EINVAL;
             };
             let owner = unsafe { &*owner_ptr };
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
 
             // If we already own it, return EDEADLK.
             if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
@@ -4530,7 +4543,7 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
             };
             let owner = unsafe { &*owner_ptr };
             let count = unsafe { &*count_ptr };
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
 
             // Check if we already own this mutex.
             if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
@@ -4557,7 +4570,7 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
                 return libc::EINVAL;
             };
             let owner = unsafe { &*owner_ptr };
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
 
             // If we already own it, return EBUSY for trylock.
             if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
@@ -4604,7 +4617,7 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
             };
             let owner = unsafe { &*owner_ptr };
             let count = unsafe { &*count_ptr };
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
 
             // Verify ownership.
             if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
@@ -4630,7 +4643,7 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
                 return libc::EINVAL;
             };
             let owner = unsafe { &*owner_ptr };
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
 
             // Verify ownership — non-owner unlock returns EPERM.
             if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
@@ -4758,7 +4771,7 @@ impl Drop for CondWaitGuard {
         {
             if let Some(owner_ptr) = mutex_owner_ptr(self.mutex) {
                 let owner = unsafe { &*owner_ptr };
-                owner.store(core_self_tid(), Ordering::Release);
+                owner.store(core_cached_tid(), Ordering::Release);
             }
             if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
                 && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
@@ -4882,7 +4895,11 @@ unsafe fn cond_wait_extended_mutex(
     let Some(m) = ext_mutex_fields(mutex) else {
         return libc::EINVAL;
     };
-    let tid = core_self_tid();
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
     if m.owner.load(Ordering::Acquire) != tid || tid == MUTEX_NO_OWNER {
         return libc::EPERM;
     }
@@ -4948,7 +4965,7 @@ unsafe fn cond_wait_common(
         // owner/count state. Without this check, a thread that incorrectly
         // calls cond_wait without holding the mutex would clobber the real
         // owner's bookkeeping and silently steal the mutex on wake. (bd-cie59)
-        let self_tid = core_self_tid();
+        let self_tid = core_cached_tid();
         if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
             let owner = unsafe { &*owner_ptr };
             if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
@@ -9723,7 +9740,7 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
             if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
                 // SAFETY: alignment checked.
                 let owner = unsafe { &*owner_ptr };
@@ -9758,7 +9775,7 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
             return 0;
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
-            let self_tid = core_self_tid();
+            let self_tid = core_cached_tid();
             if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
                 // SAFETY: alignment checked.
                 let owner = unsafe { &*owner_ptr };
@@ -9908,8 +9925,12 @@ pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
     let Some(m) = ext_mutex_fields(mutex) else {
         return libc::EINVAL;
     };
-    let tid = core_self_tid();
     let raw_type = type_word.load(Ordering::Acquire);
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
     if m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER {
         match raw_type & MUTEX_TYPE_MASK {
             PTHREAD_MUTEX_ERRORCHECK_TYPE => return libc::EDEADLK,

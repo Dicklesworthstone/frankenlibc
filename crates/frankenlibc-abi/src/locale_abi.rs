@@ -596,7 +596,7 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         .map(std::os::unix::ffi::OsStrExt::as_bytes);
     let mut blob = None;
     let mut norm_buf = [0u8; 128];
-    let mut norm_heap: Option<Vec<u8>> = None;
+    let norm_heap: Option<Vec<u8>>;
     let mut second_candidate: Option<&[u8]> = None;
     if let Some(dot) = name.iter().position(|&b| b == b'.') {
         let rest = &name[dot + 1..];

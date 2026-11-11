@@ -3124,14 +3124,18 @@ pub(crate) fn install_arena_block_allocator() {
 }
 
 /// Reserve and immediately release a 96 KiB block in the host `main_arena`
-/// (`< M_MMAP_THRESHOLD = 128 KiB` and `< M_TRIM_THRESHOLD = 128 KiB`) so the
-/// `sbrk` heap retains enough free top-chunk space after `ValidationPipeline`
-/// construction for programs that immediately cap `RLIMIT_AS` in `main`.
+/// (`< M_MMAP_THRESHOLD = 128 KiB` and `< M_TRIM_THRESHOLD = 128 KiB`), pinned
+/// below a 16-byte fencepost chunk so glibc's `_int_free` places the 96 KiB
+/// chunk in `unsorted_chunks` instead of coalescing into `top` and trimming it
+/// back via `systrim`. This keeps 96 KiB of mapped `sbrk` heap available for
+/// programs that immediately cap `RLIMIT_AS` in `main`.
 pub(crate) fn prewarm_host_heap_headroom() {
     const HEADROOM_BYTES: usize = 96 * 1024;
-    // SAFETY: transient host allocation + immediate release.
+    // SAFETY: transient host allocation + immediate release below a 16-byte
+    // fencepost chunk that remains live for process lifetime.
     unsafe {
         let ptr = native_libc_malloc(HEADROOM_BYTES);
+        let _fence = native_libc_malloc(16);
         if !ptr.is_null() {
             native_libc_free(ptr);
         }
