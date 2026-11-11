@@ -6,7 +6,6 @@
 
 #![allow(dead_code)]
 
-use std::collections::VecDeque;
 use std::ffi::{c_char, c_int};
 use std::fmt::Write as _;
 #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
@@ -31,7 +30,6 @@ use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeEvidenceContractSnapshot,
     RuntimeKernelSnapshot, RuntimeMathKernel, ValidationProfile,
 };
-use frankenlibc_membrane::util::now_utc_iso_like;
 use sha2::{Digest, Sha256};
 
 // Kernel lifecycle states.
@@ -99,7 +97,7 @@ static PANIC_HOOK_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 // Counts actual env-rescan samples; per-call cadence is thread-local.
 static MODE_SWITCH_CHECK_COUNTER: AtomicU64 = AtomicU64::new(0);
 static MODE_LOG_DECISION_SEQ: AtomicU64 = AtomicU64::new(0);
-static MODE_EVENT_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+static MODE_EVENT_LOGS: Mutex<ModeEventRing> = Mutex::new(ModeEventRing::new());
 static FFI_PCC_STATE: AtomicU8 = AtomicU8::new(FFI_PCC_STATE_UNVERIFIED);
 static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
 static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -1040,6 +1038,119 @@ pub(crate) fn export_ffi_pcc_manifest_json() -> String {
 /// for preventing a startup crash.
 static MODE_LOG_READY: AtomicU8 = AtomicU8::new(0);
 
+#[derive(Clone, Copy)]
+struct ModeEventRecord {
+    decision_id: u64,
+    unix_secs: u64,
+    subsec_millis: u32,
+    level: Option<&'static str>,
+    event: Option<&'static str>,
+    resolved_mode: u8,
+    requested_mode: u8,
+}
+
+impl ModeEventRecord {
+    const EMPTY: Self = Self {
+        decision_id: 0,
+        unix_secs: 0,
+        subsec_millis: 0,
+        level: None,
+        event: None,
+        resolved_mode: 0,
+        requested_mode: 0,
+    };
+
+    #[inline]
+    fn encode_mode(mode: SafetyLevel) -> u8 {
+        match mode {
+            SafetyLevel::Strict => 1,
+            SafetyLevel::Hardened => 2,
+            SafetyLevel::Off => 3,
+        }
+    }
+
+    #[inline]
+    fn decode_mode(code: u8) -> Option<SafetyLevel> {
+        match code {
+            1 => Some(SafetyLevel::Strict),
+            2 => Some(SafetyLevel::Hardened),
+            3 => Some(SafetyLevel::Off),
+            _ => None,
+        }
+    }
+
+    fn format_jsonl(&self) -> String {
+        let days = (self.unix_secs / 86_400) as i64;
+        let seconds_of_day = self.unix_secs % 86_400;
+        let (year, month, day) = frankenlibc_membrane::util::civil_date_from_unix_days(days);
+        let timestamp = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            year,
+            month,
+            day,
+            seconds_of_day / 3_600,
+            (seconds_of_day % 3_600) / 60,
+            seconds_of_day % 60,
+            self.subsec_millis,
+        );
+        let decision_id = self.decision_id;
+        let trace_id = format!("runtime_policy::mode::{decision_id:016x}");
+        let resolved_mode = Self::decode_mode(self.resolved_mode).unwrap_or(SafetyLevel::Strict);
+        let requested_mode = Self::decode_mode(self.requested_mode)
+            .map(|mode| format!("\"{}\"", mode_name(mode)))
+            .unwrap_or_else(|| "null".to_string());
+        let level = self.level.unwrap_or("");
+        let event = self.event.unwrap_or("");
+        format!(
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{trace_id}\",\"decision_id\":{decision_id},\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"{CONTROLLER_ID_RUNTIME_MODE}\",\"decision_path\":\"mode->cache->immutable\",\"mode\":\"{}\",\"requested_mode\":{requested_mode},\"artifact_refs\":[\"{MODE_LOG_ARTIFACT}\"]}}",
+            mode_name(resolved_mode),
+        )
+    }
+}
+
+struct ModeEventRing {
+    entries: [ModeEventRecord; MODE_LOG_CAPACITY],
+    start: usize,
+    len: usize,
+}
+
+impl ModeEventRing {
+    const fn new() -> Self {
+        Self {
+            entries: [ModeEventRecord::EMPTY; MODE_LOG_CAPACITY],
+            start: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, record: ModeEventRecord) {
+        if self.len < MODE_LOG_CAPACITY {
+            let idx = (self.start + self.len) % MODE_LOG_CAPACITY;
+            self.entries[idx] = record;
+            self.len += 1;
+        } else {
+            self.entries[self.start] = record;
+            self.start = (self.start + 1) % MODE_LOG_CAPACITY;
+        }
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.start = 0;
+        self.len = 0;
+    }
+
+    fn export_jsonl(&self) -> String {
+        let mut lines = Vec::with_capacity(self.len);
+        for offset in 0..self.len {
+            let idx = (self.start + offset) % MODE_LOG_CAPACITY;
+            lines.push(self.entries[idx].format_jsonl());
+        }
+        lines.join("\n")
+    }
+}
+
 fn push_mode_event(
     level: &'static str,
     event: &'static str,
@@ -1052,27 +1163,27 @@ fn push_mode_event(
         return;
     }
 
-    // Logging can format timestamps and allocate through interposed helpers,
-    // including when adaptive math is disabled. None of that work may change
-    // the caller's floating-point flags or rounding mode.
+    // Record compact event metadata without allocating on the heap so `.init_array`
+    // (`try_signal_runtime_ready`) does not initialize the 306 MiB segment arena
+    // in processes that never call `malloc`.
     let _floating_environment =
         frankenlibc_membrane::runtime_math::RuntimeMathEnvironmentGuard::enter();
     let decision_id = MODE_LOG_DECISION_SEQ.fetch_add(1, AtomicOrdering::Relaxed) + 1;
-    let trace_id = format!("runtime_policy::mode::{decision_id:016x}");
-    let requested_mode = requested_mode
-        .map(|mode| format!("\"{}\"", mode_name(mode)))
-        .unwrap_or_else(|| "null".to_string());
-    let timestamp = now_utc_iso_like();
-    let line = format!(
-        "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{trace_id}\",\"decision_id\":{decision_id},\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"{CONTROLLER_ID_RUNTIME_MODE}\",\"decision_path\":\"mode->cache->immutable\",\"mode\":\"{}\",\"requested_mode\":{requested_mode},\"artifact_refs\":[\"{MODE_LOG_ARTIFACT}\"]}}",
-        mode_name(resolved_mode),
-    );
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let record = ModeEventRecord {
+        decision_id,
+        unix_secs: duration.as_secs(),
+        subsec_millis: duration.subsec_millis(),
+        level: Some(level),
+        event: Some(event),
+        resolved_mode: ModeEventRecord::encode_mode(resolved_mode),
+        requested_mode: requested_mode.map_or(0, ModeEventRecord::encode_mode),
+    };
 
     if let Ok(mut logs) = MODE_EVENT_LOGS.lock() {
-        if logs.len() >= MODE_LOG_CAPACITY {
-            let _ = logs.pop_front();
-        }
-        logs.push_back(line);
+        logs.push(record);
     }
 }
 
@@ -1116,7 +1227,7 @@ pub(crate) fn export_mode_event_log_jsonl() -> String {
     MODE_EVENT_LOGS
         .lock()
         .ok()
-        .map(|logs| logs.iter().cloned().collect::<Vec<_>>().join("\n"))
+        .map(|logs| logs.export_jsonl())
         .unwrap_or_default()
 }
 
