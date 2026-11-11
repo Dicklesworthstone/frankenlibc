@@ -32,9 +32,9 @@ fn known_locale_string_remaining(ptr: usize) -> Option<usize> {
 
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory.
-/// Returns `None` for null, empty, or unterminated input. (bd-z4k96)
+/// Returns `None` for null or unterminated input. (bd-z4k96)
 #[inline]
-unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+unsafe fn bounded_cstr_slice<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     if ptr.is_null() {
         return None;
     }
@@ -43,8 +43,12 @@ unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
     if !terminated {
         return None;
     }
-    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
-    Some(bytes.to_vec())
+    Some(unsafe { core::slice::from_raw_parts(ptr as *const u8, len) })
+}
+
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    unsafe { bounded_cstr_slice(ptr) }.map(|bytes| bytes.to_vec())
 }
 
 /// Canonical name for the UTF-8 locale.
@@ -309,7 +313,7 @@ fn charset_for_request(name: &[u8]) -> Option<Charset> {
 // Named locales: glibc's compiled locale data
 // ---------------------------------------------------------------------------
 
-use frankenlibc_core::locale::data::{CategoryBlob, LocaleArchive, name_candidates};
+use frankenlibc_core::locale::data::{CategoryBlob, LocaleArchive};
 
 /// One category of a named locale: the name `setlocale` reports (as the
 /// caller spelled it, NUL-terminated) and the compiled blob. Loaded once per
@@ -325,8 +329,8 @@ struct NamedCategory {
     /// For a supported single-byte LC_CTYPE: native byte/Unicode conversion.
     /// Classification tables alone do not describe the external encoding.
     single_byte_codec: Option<frankenlibc_core::iconv::SingleByteCodec>,
-    /// For LC_COLLATE: pre-parsed collation tables.
-    collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
+    /// For LC_COLLATE: lazily parsed collation tables.
+    collate: OnceLock<Option<frankenlibc_core::locale::collate::CollateTables<'static>>>,
 }
 
 /// A named LC_CTYPE's single-byte tables, glibc's `_NL_CTYPE_CLASS`,
@@ -487,13 +491,24 @@ fn named(category: c_int) -> Option<&'static NamedCategory> {
 
 /// Map a whole file read-only for the process lifetime.
 fn map_file(path: &[u8]) -> Option<&'static [u8]> {
-    let mut cpath = path.to_vec();
-    cpath.push(0);
+    let mut stack_buf = [0u8; 512];
+    let heap_buf;
+    let cpath_ptr = if path.len() < stack_buf.len() {
+        stack_buf[..path.len()].copy_from_slice(path);
+        stack_buf[path.len()] = 0;
+        stack_buf.as_ptr()
+    } else {
+        let mut v = Vec::with_capacity(path.len() + 1);
+        v.extend_from_slice(path);
+        v.push(0);
+        heap_buf = v;
+        heap_buf.as_ptr()
+    };
     // SAFETY: NUL-terminated path; the mapping is never unmapped.
     unsafe {
         let fd = frankenlibc_core::syscall::sys_openat(
             libc::AT_FDCWD,
-            cpath.as_ptr(),
+            cpath_ptr,
             libc::O_RDONLY | libc::O_CLOEXEC,
             0,
         )
@@ -561,13 +576,76 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         return Some(hit);
     }
     let file = category_file(category)?;
-    let locpath = std::env::var_os("LOCPATH").filter(|v| !v.is_empty());
+    #[cfg(not(test))]
+    let locpath_bytes: Option<&[u8]> = unsafe {
+        crate::stdlib_abi::native_getenv(b"LOCPATH").and_then(|ptr| {
+            let s = CStr::from_ptr(ptr).to_bytes();
+            (!s.is_empty()).then_some(s)
+        })
+    };
+    #[cfg(test)]
+    let locpath_os = std::env::var_os("LOCPATH").filter(|v| !v.is_empty());
+    #[cfg(test)]
+    let locpath_bytes: Option<&[u8]> = locpath_os.as_deref().map( std::os::unix::ffi::OsStrExt::as_bytes);
     let mut blob = None;
-    let candidates = name_candidates(name);
-    if locpath.is_none()
+    let mut norm_buf = [0u8; 128];
+    let mut norm_heap: Option<Vec<u8>> = None;
+    let mut second_candidate: Option<&[u8]> = None;
+    if let Some(dot) = name.iter().position(|&b| b == b'.') {
+        let rest = &name[dot + 1..];
+        let (codeset, modifier) = match rest.iter().position(|&b| b == b'@') {
+            Some(at) => (&rest[..at], &rest[at..]),
+            None => (rest, &[][..]),
+        };
+        let mut cs_stack = [0u8; 64];
+        let cs_heap;
+        let norm_codeset: &[u8] = if codeset.len() <= 60 {
+            let mut n = 0usize;
+            let mut all_digit = true;
+            for &b in codeset {
+                if b.is_ascii_alphanumeric() {
+                    let lower = b.to_ascii_lowercase();
+                    if !lower.is_ascii_digit() {
+                        all_digit = false;
+                    }
+                    cs_stack[n] = lower;
+                    n += 1;
+                }
+            }
+            if n > 0 && all_digit {
+                cs_stack.copy_within(0..n, 3);
+                cs_stack[..3].copy_from_slice(b"iso");
+                n += 3;
+            }
+            &cs_stack[..n]
+        } else {
+            cs_heap = frankenlibc_core::locale::data::normalize_codeset(codeset);
+            &cs_heap
+        };
+        let total = (dot + 1) + norm_codeset.len() + modifier.len();
+        if total <= norm_buf.len() {
+            norm_buf[..=dot].copy_from_slice(&name[..=dot]);
+            norm_buf[dot + 1..dot + 1 + norm_codeset.len()].copy_from_slice(norm_codeset);
+            norm_buf[dot + 1 + norm_codeset.len()..total].copy_from_slice(modifier);
+            if &norm_buf[..total] != name {
+                second_candidate = Some(&norm_buf[..total]);
+            }
+        } else {
+            let mut v = Vec::with_capacity(total);
+            v.extend_from_slice(&name[..=dot]);
+            v.extend_from_slice(norm_codeset);
+            v.extend_from_slice(modifier);
+            if v.as_slice() != name {
+                norm_heap = Some(v);
+                second_candidate = norm_heap.as_deref();
+            }
+        }
+    }
+    let candidates = [Some(name), second_candidate];
+    if locpath_bytes.is_none()
         && let Some(archive) = locale_archive()
     {
-        for candidate in &candidates {
+        for candidate in candidates.into_iter().flatten() {
             if let Some(blobs) = archive.find(candidate)
                 && let Some(b) = blobs[category as usize]
             {
@@ -577,34 +655,54 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         }
     }
     if blob.is_none() {
-        let dirs: Vec<&[u8]> = match &locpath {
-            Some(paths) => paths
-                .as_bytes()
-                .split(|&b| b == b':')
-                .filter(|d| !d.is_empty())
-                .collect(),
-            None => vec![b"/usr/lib/locale"],
-        };
-        'search: for dir in dirs {
-            for candidate in &candidates {
-                let mut path = Vec::with_capacity(dir.len() + candidate.len() + file.len() + 2);
-                path.extend_from_slice(dir);
-                path.push(b'/');
-                path.extend_from_slice(candidate);
-                path.push(b'/');
-                path.extend_from_slice(file);
-                if let Some(bytes) = map_file(&path)
+        let search_dir = |dir: &[u8]| -> Option<CategoryBlob<'static>> {
+            for candidate in candidates.into_iter().flatten() {
+                let total_len = dir.len() + 1 + candidate.len() + 1 + file.len();
+                let mut stack_path = [0u8; 512];
+                let bytes = if total_len <= stack_path.len() {
+                    let mut pos = 0;
+                    stack_path[pos..pos + dir.len()].copy_from_slice(dir);
+                    pos += dir.len();
+                    stack_path[pos] = b'/';
+                    pos += 1;
+                    stack_path[pos..pos + candidate.len()].copy_from_slice(candidate);
+                    pos += candidate.len();
+                    stack_path[pos] = b'/';
+                    pos += 1;
+                    stack_path[pos..pos + file.len()].copy_from_slice(file);
+                    map_file(&stack_path[..total_len])
+                } else {
+                    let mut path = Vec::with_capacity(total_len);
+                    path.extend_from_slice(dir);
+                    path.push(b'/');
+                    path.extend_from_slice(candidate);
+                    path.push(b'/');
+                    path.extend_from_slice(file);
+                    map_file(&path)
+                };
+                if let Some(bytes) = bytes
                     && let Some(b) = CategoryBlob::parse(category as usize, bytes)
                 {
-                    blob = Some(b);
-                    break 'search;
+                    return Some(b);
                 }
             }
+            None
+        };
+        if let Some(paths) = locpath_bytes {
+            for dir in paths.split(|&b| b == b':').filter(|d| !d.is_empty()) {
+                if let Some(b) = search_dir(dir) {
+                    blob = Some(b);
+                    break;
+                }
+            }
+        } else {
+            blob = search_dir(b"/usr/lib/locale");
         }
     }
-    let mut stored = name.to_vec();
-    stored.push(0);
     let blob = blob?;
+    let mut stored = Vec::with_capacity(name.len() + 1);
+    stored.extend_from_slice(name);
+    stored.push(0);
     let single_byte_codec = if category == locale_core::LC_CTYPE {
         let codeset = blob.string(14)?;
         if codeset.eq_ignore_ascii_case(b"UTF-8") {
@@ -631,11 +729,6 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     } else {
         (None, None)
     };
-    let collate = if category == locale_core::LC_COLLATE {
-        frankenlibc_core::locale::collate::CollateTables::from_blob(&blob)
-    } else {
-        None
-    };
     let entry: &'static NamedCategory = Box::leak(Box::new(NamedCategory {
         category,
         name: stored.into_boxed_slice(),
@@ -643,8 +736,11 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         ctype,
         bytes,
         single_byte_codec,
-        collate,
+        collate: OnceLock::new(),
     }));
+    if loaded.is_empty() {
+        loaded.reserve(24);
+    }
     loaded.push(entry);
     Some(entry)
 }
@@ -899,47 +995,69 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
 
     // Parse the locale name with a known-region bound. A non-NUL-terminated
     // pointer must be rejected instead of walking unbounded memory. (bd-z4k96)
-    let Some(name) = (unsafe { read_bounded_cstr(locale) }) else {
+    let Some(name) = (unsafe { bounded_cstr_slice(locale) }) else {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, true);
         return std::ptr::null();
     };
 
+    if category != locale_core::LC_ALL {
+        let env_req;
+        let req: &[u8] = if name.is_empty() {
+            env_req = env_name_for_category(category);
+            &env_req
+        } else {
+            name
+        };
+        let Some(r) = resolve_category(category, req) else {
+            unsafe { set_abi_errno(libc::ENOENT) };
+            runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+            return std::ptr::null();
+        };
+        apply_category(category, r);
+        bump_catalog_counter();
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
+        return category_name(category).as_ptr() as *const c_char;
+    }
+
+    if !name.is_empty() && !name.contains(&b'=') {
+        let mut resolved =
+            [(0 as c_int, Resolved::Builtin(Charset::Ascii)); locale_core::COMPOSITE_ORDER.len()];
+        for (slot, &(_, cat)) in locale_core::COMPOSITE_ORDER.iter().enumerate() {
+            let Some(r) = resolve_category(cat, name) else {
+                unsafe { set_abi_errno(libc::ENOENT) };
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+                return std::ptr::null();
+            };
+            resolved[slot] = (cat, r);
+        }
+        for (cat, r) in resolved {
+            apply_category(cat, r);
+        }
+        bump_catalog_counter();
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
+        return lc_all_report();
+    }
+
     // Resolve every affected category first and apply only if all load:
     // glibc leaves the locale untouched when any part of a request fails.
-    let requests: Vec<(c_int, Vec<u8>)> = if category == locale_core::LC_ALL {
-        if name.is_empty() {
-            locale_core::COMPOSITE_ORDER
-                .iter()
-                .map(|(_, cat)| (*cat, env_name_for_category(*cat)))
-                .collect()
-        } else if name.contains(&b'=') {
-            match parse_composite(&name) {
-                Some(fields) => fields,
-                None => {
-                    unsafe { set_abi_errno(libc::ENOENT) };
-                    runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-                    return std::ptr::null();
-                }
-            }
-        } else {
-            locale_core::COMPOSITE_ORDER
-                .iter()
-                .map(|(_, cat)| (*cat, name.clone()))
-                .collect()
-        }
-    } else if name.is_empty() {
-        vec![(category, env_name_for_category(category))]
+    let requests: Vec<(c_int, Vec<u8>)> = if name.is_empty() {
+        locale_core::COMPOSITE_ORDER
+            .iter()
+            .map(|(_, cat)| (*cat, env_name_for_category(*cat)))
+            .collect()
     } else {
-        vec![(category, name.clone())]
+        match parse_composite(name) {
+            Some(fields) => fields,
+            None => {
+                unsafe { set_abi_errno(libc::ENOENT) };
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+                return std::ptr::null();
+            }
+        }
     };
 
     let mut resolved = Vec::with_capacity(requests.len());
     for (cat, req) in &requests {
-        // Unavailable in both modes: NULL, as glibc. Hardened used to return
-        // the current locale's name as if the switch had worked -- a silent
-        // lie that made programs (CPython's locale tests, strptime, re)
-        // believe de_DE/fr_FR/ja_JP were active. The current locale is left
-        // untouched either way, so nothing is re-encoded.
         match resolve_category(*cat, req) {
             Some(r) => resolved.push((*cat, r)),
             None => {
@@ -954,11 +1072,7 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     }
     bump_catalog_counter();
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
-    if category == locale_core::LC_ALL {
-        lc_all_report()
-    } else {
-        category_name(category).as_ptr() as *const c_char
-    }
+    lc_all_report()
 }
 
 /// The maximum multibyte width of the ACTIVE conversion codec.
@@ -1009,7 +1123,9 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
-    named(locale_core::LC_COLLATE)?.collate
+    let n = named(locale_core::LC_COLLATE)?;
+    *n.collate
+        .get_or_init(|| frankenlibc_core::locale::collate::CollateTables::from_blob(&n.blob))
 }
 
 /// LC_TIME strings for `strftime` when LC_TIME is on a named locale.
@@ -2899,7 +3015,7 @@ pub unsafe extern "C" fn newlocale(
 
     // Bounded read rejects non-NUL-terminated pointers at the boundary
     // instead of walking memory through CStr::from_ptr. (bd-z4k96)
-    let Some(name) = (unsafe { read_bounded_cstr(locale) }) else {
+    let Some(name) = (unsafe { bounded_cstr_slice(locale) }) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         return std::ptr::null_mut();
@@ -2929,12 +3045,14 @@ pub unsafe extern "C" fn newlocale(
         if mask & (1 << category) == 0 {
             continue;
         }
-        let request = if name.is_empty() {
-            env_name_for_category(category)
+        let env_req;
+        let request: &[u8] = if name.is_empty() {
+            env_req = env_name_for_category(category);
+            &env_req
         } else {
-            name.clone()
+            name
         };
-        let Some(resolved) = resolve_category(category, &request) else {
+        let Some(resolved) = resolve_category(category, request) else {
             unsafe { set_abi_errno(libc::ENOENT) };
             runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
             return std::ptr::null_mut();
