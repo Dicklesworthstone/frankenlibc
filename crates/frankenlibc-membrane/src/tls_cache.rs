@@ -816,6 +816,20 @@ impl TlsValidationCache {
 
 impl Drop for TlsValidationCache {
     fn drop(&mut self) {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        #[allow(unsafe_code)]
+        {
+            let cache_ptr = TLS_CACHE_FAST_PTR.get();
+            if !cache_ptr.is_null() {
+                // SAFETY: `cache_ptr` points to this thread's live `TLS_CACHE`
+                // `RefCell<TlsValidationCache>` until cleared here; `as_ptr()` only
+                // computes the `UnsafeCell` payload address without borrowing.
+                let tracked_inner = unsafe { (*cache_ptr).as_ptr() };
+                if std::ptr::eq(tracked_inner, self) {
+                    TLS_CACHE_FAST_PTR.set(std::ptr::null());
+                }
+            }
+        }
         self.flush_pipeline_hits();
     }
 }
@@ -897,6 +911,7 @@ where
 {
     let mut maybe_f = Some(f);
     let result = TLS_CACHE.try_with(|cache| {
+        TLS_CACHE_FAST_PTR.set(std::ptr::from_ref(cache));
         match cache.try_borrow_mut() {
             Ok(mut borrowed) => {
                 let action = maybe_f
@@ -925,16 +940,46 @@ where
 /// Fast hit-only access to the thread-local validation cache without constructing
 /// a 240-byte fallback `TlsValidationCache::unbacked()` frame or wrapping the
 /// return value in `Option<R>`.
+///
+/// Uses the `!Drop` `TLS_CACHE_FAST_PTR` (`statik::Key`) once initialized on the
+/// current thread so steady-state hit lookups bypass `fast_local::Key::try_with`
+/// state dispatch while still coordinating reentrancy through `RefCell::try_borrow_mut`.
 #[cfg(not(feature = "owned-tls-cache"))]
 #[inline(always)]
+#[allow(unsafe_code)]
 pub(crate) fn try_with_tls_cache_hit<F, R: Copy>(default: R, f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
-    TLS_CACHE
-        .try_with(|cache| match cache.try_borrow_mut() {
+    let cache_ptr = TLS_CACHE_FAST_PTR.get();
+    if !cache_ptr.is_null() {
+        // SAFETY: `cache_ptr` points to this thread's live `TLS_CACHE`
+        // `RefCell<TlsValidationCache>`, populated after `TLS_CACHE` initialization
+        // on this thread and cleared in `TlsValidationCache::drop` before teardown.
+        // `RefCell::try_borrow_mut` prevents mutable aliasing across reentrant calls.
+        let cache = unsafe { &*cache_ptr };
+        return match cache.try_borrow_mut() {
             Ok(mut borrowed) => f(&mut borrowed),
             Err(_) => default,
+        };
+    }
+    try_with_tls_cache_hit_slow(default, f)
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[cold]
+#[inline(never)]
+fn try_with_tls_cache_hit_slow<F, R: Copy>(default: R, f: F) -> R
+where
+    F: FnOnce(&mut TlsValidationCache) -> R,
+{
+    TLS_CACHE
+        .try_with(|cache| {
+            TLS_CACHE_FAST_PTR.set(std::ptr::from_ref(cache));
+            match cache.try_borrow_mut() {
+                Ok(mut borrowed) => f(&mut borrowed),
+                Err(_) => default,
+            }
         })
         .unwrap_or(default)
 }
@@ -949,9 +994,17 @@ pub(crate) fn flush_current_thread_hit_metrics() {
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
+const _: () = assert!(!std::mem::needs_drop::<
+    std::cell::Cell<*const std::cell::RefCell<TlsValidationCache>>,
+>());
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static TLS_CACHE: std::cell::RefCell<TlsValidationCache> = const {
         std::cell::RefCell::new(TlsValidationCache::const_new())
+    };
+    static TLS_CACHE_FAST_PTR: std::cell::Cell<*const std::cell::RefCell<TlsValidationCache>> = const {
+        std::cell::Cell::new(std::ptr::null())
     };
 }
 

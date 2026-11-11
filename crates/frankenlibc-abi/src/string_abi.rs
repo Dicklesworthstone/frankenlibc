@@ -4901,6 +4901,11 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         return dst;
     }
 
+    unsafe { memmove_validating(dst, src, n) }
+}
+
+#[inline(never)]
+unsafe fn memmove_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memmove semantics.
         unsafe {
@@ -4909,9 +4914,9 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         return dst;
     };
 
-    let (dst_rem, src_rem) =
-        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
-    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    let (dst_rem_fast, src_rem_fast) =
+        crate::malloc_abi::known_remaining_pair_fast_in_guarded_string(dst as usize, src as usize);
+    let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
     if cfg!(not(test))
         && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
             runtime_policy::FFI_PCC_MEMMOVE_INDEX,
@@ -4921,13 +4926,13 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
             bloom_negative,
         )
     {
-        let (copy_len, clamped) = maybe_clamp_copy_len(
+        let (copy_len, clamped) = maybe_clamp_copy_len_fast(
             "memmove",
             n,
             dst as usize,
-            dst_rem,
+            dst_rem_fast,
             Some(src as usize),
-            src_rem,
+            src_rem_fast,
             mode.heals_enabled(),
         );
         if copy_len == 0 {
@@ -4954,6 +4959,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         }
         return dst;
     }
+    let (dst_rem, src_rem) = (dst_rem_fast.into_option(), src_rem_fast.into_option());
 
     let _trace_scope = runtime_policy::entrypoint_scope("memmove");
     let (aligned, recent_page, ordering) =
@@ -5273,6 +5279,21 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
             return 0;
         }
         // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
+        if cmp_len >= 8 {
+            let hx = u64::from_be(unsafe { core::ptr::read_unaligned(s1.cast::<u64>()) });
+            let hy = u64::from_be(unsafe { core::ptr::read_unaligned(s2.cast::<u64>()) });
+            if hx != hy {
+                if cmp_len < n {
+                    runtime_policy::observe(
+                        ApiFamily::StringMemory,
+                        ValidationProfile::Fast,
+                        runtime_policy::scaled_cost(6, cmp_len),
+                        true,
+                    );
+                }
+                return if hx < hy { -1 } else { 1 };
+            }
+        }
         let out = unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), cmp_len) };
         if cmp_len < n {
             runtime_policy::observe(

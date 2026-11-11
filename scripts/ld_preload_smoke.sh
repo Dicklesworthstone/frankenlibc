@@ -641,10 +641,16 @@ run_case() {
   local valgrind_stdout="${case_dir}/valgrind.stdout.txt"
   local valgrind_stderr="${case_dir}/valgrind.stderr.txt"
 
+  # Spawn baseline through the same `timeout -> env -> "$@"` wrapper chain as
+  # preload so single-shot `PERF_RATIO_MAX_PPM=2000000` (`2.0x`) measures
+  # `LD_PRELOAD` overhead rather than `/usr/bin/env` startup asymmetry (on
+  # Ubuntu 25.10, `uutils/coreutils` `/usr/bin/env` alone costs ~12 ms vs
+  # `libfrankenlibc_abi.so`'s `0.05 ms` `LD_DEBUG=statistics` relocation/init
+  # cost, turning 11 ms single-shot fixtures into `2.01x-2.44x` false ratios).
   local baseline_start_ns
   baseline_start_ns="$(date +%s%N)"
   set +e
-  timeout --kill-after=2s "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" env "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
   local baseline_rc=$?
   set -e
   local baseline_end_ns

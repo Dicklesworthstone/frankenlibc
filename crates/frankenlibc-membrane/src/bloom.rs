@@ -49,6 +49,22 @@ struct BloomSlab {
     num_hashes: u32,
 }
 
+#[allow(unsafe_code)]
+fn alloc_zeroed_atomic_u64_slice(num_words: usize) -> Box<[AtomicU64]> {
+    const _: () = {
+        assert!(std::mem::size_of::<AtomicU64>() == std::mem::size_of::<u64>());
+        assert!(std::mem::align_of::<AtomicU64>() == std::mem::align_of::<u64>());
+    };
+    // `vec![0u64; num_words]` uses `alloc_zeroed` (`calloc`), keeping large
+    // `MAP_ANONYMOUS` pages demand-zeroed instead of faulting every page during
+    // `ValidationPipeline` initialization.
+    let zeroed: Box<[u64]> = vec![0u64; num_words].into_boxed_slice();
+    let raw = Box::into_raw(zeroed) as *mut [AtomicU64];
+    // SAFETY: `AtomicU64` has the exact same size, alignment, and all-zero bit
+    // validity as `u64`, and slice fat-pointer metadata is element count.
+    unsafe { Box::from_raw(raw) }
+}
+
 impl BloomSlab {
     fn new(expected_items: usize, fp_rate: f64) -> Self {
         let fp_rate = fp_rate.clamp(1e-10, 0.5);
@@ -67,10 +83,8 @@ impl BloomSlab {
         let num_words = m.div_ceil(64).next_power_of_two();
         let num_bits = num_words * 64;
 
-        let bits: Vec<AtomicU64> = (0..num_words).map(|_| AtomicU64::new(0)).collect();
-
         Self {
-            bits: bits.into_boxed_slice(),
+            bits: alloc_zeroed_atomic_u64_slice(num_words),
             num_bits,
             num_hashes: k,
         }
