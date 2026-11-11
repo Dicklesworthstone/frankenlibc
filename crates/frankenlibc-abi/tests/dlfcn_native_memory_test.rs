@@ -1016,6 +1016,363 @@ fn memory_runtime_sort_and_search_invoke_c_comparators() {
     );
 }
 
+
+struct AdjacentUnwindFixture {
+    fixture: Fixture,
+    bytes: Vec<u8>,
+    header: usize,
+    header_ph: usize,
+    frame: usize,
+    note: usize,
+    property_ph: usize,
+    count: usize,
+}
+
+fn unwind_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+}
+
+fn unwind_i32(bytes: &[u8], at: usize) -> i32 {
+    i32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+}
+
+fn unwind_relative(bytes: &mut [u8], at: usize, target: usize, base: usize) {
+    let value = i32::try_from(target as i64 - base as i64).unwrap();
+    bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn unwind_program_header(
+    bytes: &mut [u8],
+    at: usize,
+    typ: u32,
+    region: (usize, usize, usize),
+    alignment: u64,
+) {
+    let (offset, address, length) = region;
+    bytes[at..at + 4].copy_from_slice(&typ.to_le_bytes());
+    bytes[at + 4..at + 8].copy_from_slice(&4_u32.to_le_bytes()); // PF_R
+    for (field, value) in [
+        (8, offset as u64),
+        (16, address as u64),
+        (24, address as u64),
+        (32, length as u64),
+        (40, length as u64),
+        (48, alignment),
+    ] {
+        bytes[at + field..at + field + 8].copy_from_slice(&value.to_le_bytes());
+    }
+}
+
+fn adjacent_unwind_fixture() -> AdjacentUnwindFixture {
+    use frankenlibc_core::elf::ProgramType;
+
+    let fixture = Fixture::new(&[]);
+    let source = fixture.dir.join("adjacent-unwind.c");
+    std::fs::write(
+        &source,
+        r#"
+const unsigned char unwind_storage[4096] __attribute__((aligned(8))) = { 0x5a };
+__attribute__((noinline)) int unwind_probe(void) { return 19; }
+__attribute__((noinline)) int unwind_callback(int (*callback)(void)) {
+    volatile int value = 7;
+    return callback() + value;
+}
+"#,
+    )
+    .unwrap();
+    compile(
+        &source,
+        &fixture.path,
+        &[
+            "-fno-plt",
+            "-fno-optimize-sibling-calls",
+            "-fasynchronous-unwind-tables",
+            "-fcf-protection=none",
+            "-Wl,--build-id=sha1",
+        ],
+    );
+    let original = std::fs::read(&fixture.path).unwrap();
+    let object = ElfLoader::new(0).parse(&original).unwrap();
+    assert!(object.needed_libraries.is_empty());
+    assert!(object.dynsym.iter().all(|symbol| {
+        !symbol.is_undefined() || object.symbol_name(symbol).is_none_or(str::is_empty)
+    }));
+    let file_offset = |address: usize| {
+        let load = object
+            .program_headers
+            .iter()
+            .find(|load| {
+                load.is_load()
+                    && load.p_vaddr <= address as u64
+                    && (address as u64) < load.p_vaddr + load.p_filesz
+            })
+            .unwrap();
+        (load.p_offset + address as u64 - load.p_vaddr) as usize
+    };
+    let (header_index, old_header) = object
+        .program_headers
+        .iter()
+        .enumerate()
+        .find(|(_, header)| header.p_type == ProgramType::GnuEhFrame)
+        .unwrap();
+    let property_index = object
+        .program_headers
+        .iter()
+        .position(|header| header.p_type == ProgramType::GnuProperty)
+        .or_else(|| {
+            object
+                .program_headers
+                .iter()
+                .position(|header| header.p_type == ProgramType::Note)
+        })
+        .expect("the requested build id supplies a reusable note header");
+    let old_at = old_header.p_offset as usize;
+    assert_eq!(&original[old_at..old_at + 4], &[1, 0x1b, 3, 0x3b]);
+    let count = unwind_u32(&original, old_at + 8) as usize;
+    assert!(count >= 2);
+    let header_length = 12 + count * 8;
+    assert_eq!(old_header.p_filesz as usize, header_length);
+    let old_frame_address = (old_header.p_vaddr as usize + 4)
+        .checked_add_signed(unwind_i32(&original, old_at + 4) as isize)
+        .unwrap();
+    let old_frame = file_offset(old_frame_address);
+    assert_eq!(
+        &original[old_frame + 8..old_frame + 17],
+        &[1, b'z', b'R', 0, 1, 0x78, 16, 1, 0x1b]
+    );
+    let mut end = 0;
+    let mut fdes = Vec::new();
+    while fdes.len() < count {
+        let length = unwind_u32(&original, old_frame + end) as usize;
+        assert!(length >= 4);
+        if unwind_u32(&original, old_frame + end + 4) != 0 {
+            assert_eq!(unwind_u32(&original, old_frame + end + 4) as usize, end + 4);
+            assert!(length >= 13);
+            assert_eq!(original[old_frame + end + 16], 0);
+            fdes.push(end);
+        } else {
+            assert_eq!(end, 0, "the tiny fixture uses one standard CIE");
+        }
+        end += 4 + length;
+    }
+    let storage = object
+        .dynsym
+        .iter()
+        .find(|symbol| object.symbol_name(symbol) == Some("unwind_storage"))
+        .unwrap();
+    assert_eq!(storage.st_size, 4096);
+    let address = storage.st_value as usize;
+    let at = file_offset(address);
+    assert_eq!(file_offset(address + 4095), at + 4095);
+    let frame_offset = (header_length + 7) & !7;
+    let note_offset = (frame_offset + end + 7) & !7;
+    assert!(note_offset + 32 <= 4096);
+    let mut bytes = original.clone();
+    bytes[at..at + 4096].fill(0xa5);
+    bytes[at..at + header_length].copy_from_slice(&original[old_at..old_at + header_length]);
+    bytes[at + frame_offset..at + frame_offset + end]
+        .copy_from_slice(&original[old_frame..old_frame + end]);
+    // Padding belongs to the final FDE as DW_CFA_nop, so the next record is
+    // deterministically the nonzero property note, never a zero terminator.
+    bytes[at + frame_offset + end..at + note_offset].fill(0);
+    let last = *fdes.last().unwrap();
+    let last_length = note_offset - frame_offset - last - 4;
+    bytes[at + frame_offset + last..at + frame_offset + last + 4]
+        .copy_from_slice(&(last_length as u32).to_le_bytes());
+    for &fde in &fdes {
+        let pc = (old_frame_address + fde + 8)
+            .checked_add_signed(unwind_i32(&original, old_frame + fde + 8) as isize)
+            .unwrap();
+        unwind_relative(
+            &mut bytes,
+            at + frame_offset + fde + 8,
+            pc,
+            address + frame_offset + fde + 8,
+        );
+    }
+    unwind_relative(&mut bytes, at + 4, address + frame_offset, address + 4);
+    for entry in 0..count {
+        let field = 12 + entry * 8;
+        let pc = (old_header.p_vaddr as usize)
+            .checked_add_signed(unwind_i32(&original, old_at + field) as isize)
+            .unwrap();
+        let old_fde = (old_header.p_vaddr as usize)
+            .checked_add_signed(unwind_i32(&original, old_at + field + 4) as isize)
+            .unwrap();
+        let relative = old_fde.checked_sub(old_frame_address).unwrap();
+        assert!(fdes.contains(&relative));
+        unwind_relative(&mut bytes, at + field, pc, address);
+        unwind_relative(
+            &mut bytes,
+            at + field + 4,
+            address + frame_offset + relative,
+            address,
+        );
+    }
+    let note = at + note_offset;
+    // NT_GNU_PROPERTY_TYPE_0 with an empty x86 feature requirement. Keeping
+    // the property valid exercises framing rather than rejecting a bad ELF.
+    for (index, value) in [4_u32, 16, 5, 0x0055_4e47, 0xc000_0002, 4, 0, 0]
+        .into_iter()
+        .enumerate()
+    {
+        bytes[note + index * 4..note + index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+    let phsize = u16::from_le_bytes(bytes[54..56].try_into().unwrap()) as usize;
+    let header_ph = phoff + header_index * phsize;
+    let property_ph = phoff + property_index * phsize;
+    unwind_program_header(
+        &mut bytes,
+        header_ph,
+        0x6474_e550,
+        (at, address, header_length),
+        4,
+    );
+    unwind_program_header(
+        &mut bytes,
+        property_ph,
+        0x6474_e553,
+        (note, address + note_offset, 32),
+        8,
+    );
+    bytes[40..48].fill(0); // e_shoff
+    bytes[58..64].fill(0); // e_shentsize, e_shnum, e_shstrndx
+    std::fs::write(&fixture.path, &bytes).unwrap();
+    AdjacentUnwindFixture {
+        fixture,
+        bytes,
+        header: at,
+        header_ph,
+        frame: at + frame_offset,
+        note,
+        property_ph,
+        count,
+    }
+}
+
+#[test]
+fn memory_runtime_adjacent_property_frames_unwind_and_unregister() {
+    isolated(
+        "memory_runtime_adjacent_property_frames_unwind_and_unregister",
+        false,
+        |api| {
+            type Compare = unsafe extern "C-unwind" fn() -> c_int;
+            type Callback = unsafe extern "C-unwind" fn(Compare) -> c_int;
+            unsafe extern "C-unwind" fn value() -> c_int {
+                5
+            }
+            unsafe extern "C-unwind" fn stop() -> c_int {
+                std::panic::panic_any(0x5a17_u32);
+            }
+            #[repr(C)]
+            #[derive(Default)]
+            struct Bases {
+                text: usize,
+                data: usize,
+                function: usize,
+            }
+            unsafe extern "C" {
+                fn _Unwind_Find_FDE(pc: *const c_void, bases: *mut Bases) -> *const c_void;
+            }
+            let prepared = adjacent_unwind_fixture();
+            for _ in 0..2 {
+                let handle = api.open(&prepared.fixture.path, 0);
+                assert_eq!(api.run(handle, c"unwind_probe"), 19);
+                let address = api.symbol(handle, c"unwind_callback");
+                // SAFETY: the fixture defines this exact callback ABI.
+                let callback: Callback = unsafe { std::mem::transmute(address) };
+                let mut bases = Bases::default();
+                // SAFETY: the loaded function is live and bases is writable.
+                assert!(!unsafe { _Unwind_Find_FDE(address, &mut bases) }.is_null());
+                assert_eq!(bases.function, address as usize);
+                assert_eq!(unsafe { callback(value) }, 12);
+                let result = std::panic::catch_unwind(|| unsafe { callback(stop) });
+                let payload = result.expect_err("panic must cross the actual plugin frame");
+                assert_eq!(payload.downcast_ref::<u32>(), Some(&0x5a17_u32));
+                assert_eq!(unsafe { callback(value) }, 12);
+                api.close(handle);
+                // The unwinder treats PC as an address key, not a dereference.
+                assert!(
+                    unsafe { _Unwind_Find_FDE(address, &mut bases) }.is_null(),
+                    "unload must deregister owned frame storage before releasing it"
+                );
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_adjacent_property_rejects_inconsistent_frames() {
+    isolated(
+        "memory_runtime_adjacent_property_rejects_inconsistent_frames",
+        true,
+        |api| {
+            let prepared = adjacent_unwind_fixture();
+            let name = CString::new(prepared.fixture.path.as_os_str().as_bytes()).unwrap();
+            for case in 0..9 {
+                let mut bytes = prepared.bytes.clone();
+                match case {
+                    0 => {
+                        let value = unwind_i32(&bytes, prepared.header + 12) + 1;
+                        bytes[prepared.header + 12..prepared.header + 16]
+                            .copy_from_slice(&value.to_le_bytes());
+                    }
+                    1 => {
+                        let value = i32::try_from(prepared.frame + 4 - prepared.header).unwrap();
+                        bytes[prepared.header + 16..prepared.header + 20]
+                            .copy_from_slice(&value.to_le_bytes());
+                    }
+                    2 => {
+                        let first = bytes[prepared.header + 12..prepared.header + 20].to_vec();
+                        bytes[prepared.header + 20..prepared.header + 28].copy_from_slice(&first);
+                    }
+                    3 => {
+                        // A shortened but internally sized index must not hide
+                        // complete trailing FDEs before the independent note.
+                        let count = prepared.count - 1;
+                        bytes[prepared.header + 8..prepared.header + 12]
+                            .copy_from_slice(&(count as u32).to_le_bytes());
+                        for field in [32, 40] {
+                            bytes[prepared.header_ph + field..prepared.header_ph + field + 8]
+                                .copy_from_slice(&((12 + count * 8) as u64).to_le_bytes());
+                        }
+                    }
+                    4 => bytes[prepared.frame + 17] = 1, // DW_CFA_set_loc
+                    5 => bytes[prepared.frame + 17] = 15, // DW_CFA_def_cfa_expression
+                    6 => bytes[prepared.note + 12] = b'X', // wrong note owner
+                    7 => {
+                        for field in [32, 40] {
+                            bytes[prepared.property_ph + field..prepared.property_ph + field + 8]
+                                .copy_from_slice(&16_u64.to_le_bytes());
+                        }
+                    }
+                    8 => {
+                        // Arbitrary trailing bytes do not provide an
+                        // independently declared GNU property boundary.
+                        bytes[prepared.property_ph..prepared.property_ph + 4]
+                            .copy_from_slice(&4_u32.to_le_bytes()); // PT_NOTE
+                    }
+                    _ => unreachable!(),
+                }
+                std::fs::write(&prepared.fixture.path, bytes).unwrap();
+                // SAFETY: the filename is live and each failed admission must
+                // leave no published object or externally executable handle.
+                let rejected = unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) };
+                assert!(rejected.is_null(), "adjacent unwind case {case} admitted");
+                assert!(
+                    unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }
+                        .is_null()
+                );
+                std::fs::write(&prepared.fixture.path, &prepared.bytes).unwrap();
+                let handle = api.open(&prepared.fixture.path, 0);
+                assert_eq!(api.run(handle, c"unwind_probe"), 19);
+                api.close(handle);
+            }
+        },
+    );
+}
+
 #[test]
 fn memory_runtime_comparator_unwind_returns_through_native_imports() {
     isolated(
