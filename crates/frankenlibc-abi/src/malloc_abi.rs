@@ -6579,7 +6579,7 @@ fn record_retired_allocation_corruption(addr: usize, action: &HealingAction, rea
         _ => 0,
     };
     let mut line = RuntimeLogBuffer::new();
-    if writeln!(
+    if write!(
         line,
         "{{\"schema_version\":\"{}\",\"event\":\"allocation_corruption_quarantined\",\"api_family\":\"allocator\",\"symbol\":\"free\",\"reason\":\"{}\",\"address\":{},\"action\":\"ClampSize\",\"requested\":{},\"clamped\":0}}",
         MEMBRANE_SCHEMA_VERSION, reason, addr, requested

@@ -2239,6 +2239,14 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
     runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
 }
 
+/// Read-only bounds checks keep the allocation's bounded sampling cadence.
+/// A writer must additionally authenticate before reaching its final cache line.
+#[derive(Clone, Copy)]
+enum PrimaryAccess {
+    Read,
+    Write,
+}
+
 #[inline(always)]
 fn maybe_clamp_copy_len_fast(
     symbol: &'static str,
@@ -2247,12 +2255,14 @@ fn maybe_clamp_copy_len_fast(
     primary_remaining: crate::malloc_abi::KnownRemaining,
     secondary_addr: Option<usize>,
     secondary_remaining: crate::malloc_abi::KnownRemaining,
+    primary_access: PrimaryAccess,
     enable_repair: bool,
 ) -> (usize, bool) {
     if !enable_repair {
         return (requested, false);
     }
-    let boundary_write = !primary_remaining.is_none()
+    let boundary_write = matches!(primary_access, PrimaryAccess::Write)
+        && !primary_remaining.is_none()
         && requested != 0
         && requested >= primary_remaining.raw().saturating_sub(64);
     if !boundary_write && requested <= primary_remaining.min(secondary_remaining).raw() {
@@ -2265,6 +2275,7 @@ fn maybe_clamp_copy_len_fast(
         primary_remaining.into_option(),
         secondary_addr,
         secondary_remaining.into_option(),
+        primary_access,
         true,
     )
 }
@@ -2302,13 +2313,18 @@ fn maybe_clamp_copy_len(
     primary_remaining: Option<usize>,
     secondary_addr: Option<usize>,
     secondary_remaining: Option<usize>,
+    primary_access: PrimaryAccess,
     enable_repair: bool,
 ) -> (usize, bool) {
     if !enable_repair || requested == 0 {
         return (requested, false);
     }
 
-    let primary_remaining = recheck_write_boundary(primary_addr, requested, primary_remaining);
+    let primary_remaining = if matches!(primary_access, PrimaryAccess::Write) {
+        recheck_write_boundary(primary_addr, requested, primary_remaining)
+    } else {
+        primary_remaining
+    };
     let action =
         global_healing_policy().heal_copy_bounds(requested, secondary_remaining, primary_remaining);
     match action {
@@ -4796,6 +4812,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
             dst_rem_fast,
             Some(src as usize),
             src_rem_fast,
+            PrimaryAccess::Write,
             mode.heals_enabled(),
         );
         if copy_len == 0 {
@@ -4866,6 +4883,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
         dst_rem,
         Some(src as usize),
         src_rem,
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -4960,6 +4978,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
             dst_rem,
             Some(src as usize),
             src_rem,
+            PrimaryAccess::Write,
             mode.heals_enabled(),
         );
         if copy_len == 0 {
@@ -5022,6 +5041,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         dst_rem,
         Some(src as usize),
         src_rem,
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -5112,6 +5132,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
             dst_rem,
             None,
             None,
+            PrimaryAccess::Write,
             mode.heals_enabled(),
         );
         if fill_len == 0 {
@@ -5173,6 +5194,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         dst_rem,
         None,
         None,
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if fill_len == 0 {
@@ -5293,6 +5315,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
             lhs_fast,
             Some(s2 as usize),
             rhs_fast,
+            PrimaryAccess::Read,
             mode.heals_enabled(),
         );
         if cmp_len == 0 {
@@ -5372,6 +5395,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
         lhs_remaining,
         Some(s2 as usize),
         rhs_remaining,
+        PrimaryAccess::Read,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if cmp_len == 0 {
@@ -5641,6 +5665,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
             rem,
             None,
             None,
+            PrimaryAccess::Read,
             mode.heals_enabled(),
         );
         if scan_len == 0 {
@@ -5702,6 +5727,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         rem,
         None,
         None,
+        PrimaryAccess::Read,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if scan_len == 0 {
@@ -5836,6 +5862,7 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
             rem,
             None,
             None,
+            PrimaryAccess::Read,
             mode.heals_enabled(),
         );
         if scan_len == 0 {
@@ -5900,6 +5927,7 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
         rem,
         None,
         None,
+        PrimaryAccess::Read,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if scan_len == 0 {
@@ -10238,6 +10266,7 @@ pub unsafe extern "C" fn memmem(
         known_remaining(haystack as usize),
         None,
         None,
+        PrimaryAccess::Read,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
     let (needle_scan, _clamped_n) = maybe_clamp_copy_len(
@@ -10247,6 +10276,7 @@ pub unsafe extern "C" fn memmem(
         known_remaining(needle as usize),
         None,
         None,
+        PrimaryAccess::Read,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
 
@@ -10365,6 +10395,7 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
         known_remaining(dst as usize),
         Some(src as usize),
         known_remaining(src as usize),
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -10765,6 +10796,7 @@ pub unsafe extern "C" fn memccpy(
         known_remaining(dst as usize),
         Some(src as usize),
         known_remaining(src as usize),
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
@@ -10862,6 +10894,7 @@ pub unsafe extern "C" fn bzero(s: *mut c_void, n: usize) {
         known_remaining(s as usize),
         None,
         None,
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
@@ -11067,6 +11100,7 @@ pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, isize_n: isi
         known_remaining(dst as usize),
         Some(src as usize),
         known_remaining(src as usize),
+        PrimaryAccess::Write,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
