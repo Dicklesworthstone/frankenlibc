@@ -478,13 +478,20 @@ const EMPTY_POLL: libc::pollfd = libc::pollfd {
     events: libc::POLLIN,
     revents: 0,
 };
+const ZERO_POLL: libc::pollfd = libc::pollfd {
+    fd: 0,
+    events: 0,
+    revents: 0,
+};
 struct PollSnapshot {
     entries: [libc::pollfd; LIMIT],
 }
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static POLL_SNAPSHOT: UnsafeCell<PollSnapshot> = const {
-        UnsafeCell::new(PollSnapshot { entries: [EMPTY_POLL; LIMIT] })
+        // Zero-initialized so the 8 KiB per-thread snapshot resides in `.tbss`
+        // rather than `.tdata`; `refresh()` always fills `EMPTY_POLL` before use.
+        UnsafeCell::new(PollSnapshot { entries: [ZERO_POLL; LIMIT] })
     };
 }
 #[cfg(feature = "owned-tls-cache")]
@@ -493,7 +500,7 @@ static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
 #[cfg(feature = "owned-tls-cache")]
 fn empty_snapshot() -> PollSnapshot {
     PollSnapshot {
-        entries: [EMPTY_POLL; LIMIT],
+        entries: [ZERO_POLL; LIMIT],
     }
 }
 fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {

@@ -252,10 +252,11 @@ impl Cache {
     }
 }
 
-static CACHE: Mutex<Cache> = Mutex::new(Cache::new());
+static CACHE: std::sync::OnceLock<Mutex<Box<Cache>>> = std::sync::OnceLock::new();
 
-fn cache() -> MutexGuard<'static, Cache> {
+fn cache() -> MutexGuard<'static, Box<Cache>> {
     CACHE
+        .get_or_init(|| Mutex::new(Box::new(Cache::new())))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
