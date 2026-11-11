@@ -116,7 +116,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   elif [[ "${LOCKS_ONLY}" -eq 1 ]]; then
     error_kind=locks
     error_mode=locks
-    error_cases=86
+    error_cases=105
     error_option=--locks
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"

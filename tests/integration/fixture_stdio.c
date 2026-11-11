@@ -1932,12 +1932,12 @@ enum stream_lock_operation {
     LOCK_FSEEK, LOCK_FTELL, LOCK_REWIND, LOCK_FGETPOS, LOCK_FSETPOS,
     LOCK_FEOF, LOCK_FERROR, LOCK_CLEARERR, LOCK_UNGETC, LOCK_SETVBUF,
     LOCK_FCLOSE, LOCK_FREOPEN, LOCK_FPRINTF, LOCK_FSCANF, LOCK_GETLINE,
-    LOCK_FGETWC, LOCK_FGETWS, LOCK_FPUTWC, LOCK_FPUTWS,
+    LOCK_FGETWC, LOCK_GETWC, LOCK_FGETWS, LOCK_FPUTWC, LOCK_PUTWC, LOCK_FPUTWS,
     LOCK_FWPRINTF, LOCK_FWSCANF, LOCK_UNGETWC,
     UNLOCK_FGETC, UNLOCK_GETC, UNLOCK_FGETS, UNLOCK_FREAD,
     UNLOCK_FPUTC, UNLOCK_PUTC, UNLOCK_FPUTS, UNLOCK_FWRITE,
     UNLOCK_FFLUSH, UNLOCK_FEOF, UNLOCK_FERROR, UNLOCK_CLEARERR,
-    UNLOCK_FGETWC, UNLOCK_FGETWS, UNLOCK_FPUTWC, UNLOCK_FPUTWS,
+    UNLOCK_FGETWC, UNLOCK_GETWC, UNLOCK_FGETWS, UNLOCK_FPUTWC, UNLOCK_PUTWC, UNLOCK_FPUTWS,
     LOCK_FGETS_CHK, UNLOCK_FGETS_CHK, LOCK_FGETWS_CHK, UNLOCK_FGETWS_CHK,
 };
 
@@ -1997,8 +1997,10 @@ static void *run_stream_lock_operation(void *opaque) {
         break;
     }
     case LOCK_FGETWC: state->failed |= fgetwc(fp) != L'a'; break;
+    case LOCK_GETWC: state->failed |= getwc(fp) != L'a'; break;
     case LOCK_FGETWS: state->failed |= !fgetws(wide, 16, fp) || wcscmp(wide, L"abc\n"); break;
     case LOCK_FPUTWC: state->failed |= fputwc(L'x', fp) != L'x'; break;
+    case LOCK_PUTWC: state->failed |= putwc(L'x', fp) != L'x'; break;
     case LOCK_FPUTWS: state->failed |= fputws(L"xyz", fp) == EOF; break;
     case LOCK_FWPRINTF: state->failed |= fwprintf(fp, L"%ls:%d", L"x", 7) != 3; break;
     case LOCK_FWSCANF: state->failed |= fwscanf(fp, L"%3ls", wide) != 1 || wcscmp(wide, L"abc"); break;
@@ -2060,10 +2062,30 @@ static void *run_stream_lock_operation(void *opaque) {
         else state->failed = 1;
         break;
     }
-    case UNLOCK_FGETWC: state->failed |= fgetwc_unlocked(fp) != L'a'; break;
-    case UNLOCK_FGETWS: state->failed |= fgetws_unlocked(wide, 16, fp) == NULL || wcscmp(wide, L"abc\n"); break;
-    case UNLOCK_FPUTWC: state->failed |= fputwc_unlocked(L'x', fp) != L'x'; break;
-    case UNLOCK_FPUTWS: state->failed |= fputws_unlocked(L"xyz", fp) == EOF; break;
+    case UNLOCK_FGETWC:
+    case UNLOCK_GETWC: {
+        const char *name = state->operation == UNLOCK_FGETWC ? "fgetwc_unlocked" : "getwc_unlocked";
+        wint_t (*call)(FILE *) = dlsym(RTLD_DEFAULT, name);
+        state->failed |= !call || call(fp) != L'a';
+        break;
+    }
+    case UNLOCK_FGETWS: {
+        wchar_t *(*call)(wchar_t *, int, FILE *) = dlsym(RTLD_DEFAULT, "fgetws_unlocked");
+        state->failed |= !call || !call(wide, 16, fp) || wcscmp(wide, L"abc\n");
+        break;
+    }
+    case UNLOCK_FPUTWC:
+    case UNLOCK_PUTWC: {
+        const char *name = state->operation == UNLOCK_FPUTWC ? "fputwc_unlocked" : "putwc_unlocked";
+        wint_t (*call)(wchar_t, FILE *) = dlsym(RTLD_DEFAULT, name);
+        state->failed |= !call || call(L'x', fp) != L'x';
+        break;
+    }
+    case UNLOCK_FPUTWS: {
+        int (*call)(const wchar_t *, FILE *) = dlsym(RTLD_DEFAULT, "fputws_unlocked");
+        state->failed |= !call || call(L"xyz", fp) == EOF;
+        break;
+    }
     case LOCK_FGETS_CHK:
     case UNLOCK_FGETS_CHK: {
         const char *name = state->operation == LOCK_FGETS_CHK ? "__fgets_chk" : "__fgets_unlocked_chk";
@@ -2244,12 +2266,14 @@ static int test_stream_locking(void) {
         LOCK_CASE(FGETPOS), LOCK_CASE(FSETPOS), LOCK_CASE(FEOF), LOCK_CASE(FERROR),
         LOCK_CASE(CLEARERR), LOCK_CASE(UNGETC), LOCK_CASE(SETVBUF), LOCK_CASE(FCLOSE),
         LOCK_CASE(FREOPEN), LOCK_CASE(FPRINTF), LOCK_CASE(FSCANF), LOCK_CASE(GETLINE),
-        LOCK_CASE(FGETWC), LOCK_CASE(FGETWS), LOCK_CASE(FPUTWC), LOCK_CASE(FPUTWS),
+        LOCK_CASE(FGETWC), LOCK_CASE(GETWC), LOCK_CASE(FGETWS),
+        LOCK_CASE(FPUTWC), LOCK_CASE(PUTWC), LOCK_CASE(FPUTWS),
         LOCK_CASE(FWPRINTF), LOCK_CASE(FWSCANF), LOCK_CASE(UNGETWC),
         UNLOCK_CASE(FGETC), UNLOCK_CASE(GETC), UNLOCK_CASE(FGETS), UNLOCK_CASE(FREAD),
         UNLOCK_CASE(FPUTC), UNLOCK_CASE(PUTC), UNLOCK_CASE(FPUTS), UNLOCK_CASE(FWRITE),
         UNLOCK_CASE(FFLUSH), UNLOCK_CASE(FEOF), UNLOCK_CASE(FERROR), UNLOCK_CASE(CLEARERR),
-        UNLOCK_CASE(FGETWC), UNLOCK_CASE(FGETWS), UNLOCK_CASE(FPUTWC), UNLOCK_CASE(FPUTWS),
+        UNLOCK_CASE(FGETWC), UNLOCK_CASE(GETWC), UNLOCK_CASE(FGETWS),
+        UNLOCK_CASE(FPUTWC), UNLOCK_CASE(PUTWC), UNLOCK_CASE(FPUTWS),
         LOCK_CASE(FGETS_CHK), UNLOCK_CASE(FGETS_CHK), LOCK_CASE(FGETWS_CHK), UNLOCK_CASE(FGETWS_CHK),
 #undef LOCK_CASE
 #undef UNLOCK_CASE
@@ -2266,6 +2290,11 @@ static int test_stream_locking(void) {
         HOST_UNLOCK_CASE(FGETC), HOST_UNLOCK_CASE(GETC), HOST_UNLOCK_CASE(FGETS), HOST_UNLOCK_CASE(FREAD),
         HOST_UNLOCK_CASE(FPUTC), HOST_UNLOCK_CASE(PUTC), HOST_UNLOCK_CASE(FPUTS), HOST_UNLOCK_CASE(FWRITE),
         HOST_UNLOCK_CASE(FFLUSH), HOST_UNLOCK_CASE(FEOF), HOST_UNLOCK_CASE(FERROR), HOST_UNLOCK_CASE(CLEARERR),
+        HOST_LOCK_CASE(FGETWC), HOST_LOCK_CASE(GETWC), HOST_LOCK_CASE(FGETWS),
+        HOST_LOCK_CASE(FPUTWC), HOST_LOCK_CASE(PUTWC), HOST_LOCK_CASE(FPUTWS), HOST_LOCK_CASE(UNGETWC),
+        HOST_UNLOCK_CASE(FGETWC), HOST_UNLOCK_CASE(GETWC), HOST_UNLOCK_CASE(FGETWS),
+        HOST_UNLOCK_CASE(FPUTWC), HOST_UNLOCK_CASE(PUTWC), HOST_UNLOCK_CASE(FPUTWS),
+        HOST_LOCK_CASE(FGETWS_CHK), HOST_UNLOCK_CASE(FGETWS_CHK),
 #undef HOST_LOCK_CASE
 #undef HOST_UNLOCK_CASE
     };
@@ -2286,11 +2315,11 @@ int main(int argc, char **argv) {
             "fgetc", "getc", "fgets", "fread", "fputc", "putc", "fputs", "fwrite", "fflush",
             "fseek", "ftell", "rewind", "fgetpos", "fsetpos", "feof", "ferror", "clearerr",
             "ungetc", "setvbuf", "fclose", "freopen", "fprintf", "__isoc99_fscanf", "getline",
-            "fgetwc", "fgetws", "fputwc", "fputws", "fwprintf", "__isoc99_fwscanf", "ungetwc",
+            "fgetwc", "getwc", "fgetws", "fputwc", "putwc", "fputws", "fwprintf", "__isoc99_fwscanf", "ungetwc",
             "fgetc_unlocked", "__uflow", "fgets_unlocked", "fread_unlocked", "fputc_unlocked",
             "__overflow", "fputs_unlocked", "fwrite_unlocked", "fflush_unlocked", "feof_unlocked",
-            "ferror_unlocked", "clearerr_unlocked", "fgetwc_unlocked", "fgetws_unlocked",
-            "fputwc_unlocked", "fputws_unlocked", "__fgets_chk", "__fgets_unlocked_chk",
+            "ferror_unlocked", "clearerr_unlocked", "fgetwc_unlocked", "getwc_unlocked", "fgetws_unlocked",
+            "fputwc_unlocked", "putwc_unlocked", "fputws_unlocked", "__fgets_chk", "__fgets_unlocked_chk",
             "__fgetws_chk", "__fgetws_unlocked_chk", "fmemopen", "open_memstream", "fopencookie", "puts"};
         if (argc != 3 || check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;

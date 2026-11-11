@@ -653,13 +653,16 @@ impl Api {
         }
     }
     fn open(self, path: &Path, flags: c_int) -> *mut c_void {
-        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
-        let handle = unsafe { (self.open)(path.as_ptr(), flags | libc::RTLD_NOW) };
-        assert!(!handle.is_null(), "dlopen {path:?}");
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let handle = unsafe { (self.open)(name.as_ptr(), flags | libc::RTLD_NOW) };
+        if self.native && !dl::native_dso_handle_for_tests(handle) {
+            report_native_load_failure(path);
+        }
+        assert!(!handle.is_null(), "dlopen {name:?}");
         if self.native {
             assert!(
                 dl::native_dso_handle_for_tests(handle),
-                "host fallback: {path:?}"
+                "host fallback: {name:?}"
             );
         }
         handle
@@ -681,6 +684,33 @@ impl Api {
             self.close(handle);
             true
         }
+    }
+}
+
+// Emit the rejected fixture's bounded ELF metadata in the failing test log,
+// including when native rejection was hidden by a disallowed host fallback.
+fn report_native_load_failure(path: &Path) {
+    // SAFETY: dlerror returns this thread's terminated message, valid until
+    // another loader error call. Read it before spawning the diagnostic tool.
+    let error = unsafe { dl::dlerror() };
+    if error.is_null() {
+        eprintln!("native load failure {path:?}: dlerror unavailable");
+    } else {
+        let message = unsafe { CStr::from_ptr(error) };
+        eprintln!("native load failure {path:?}: {message:?}");
+    }
+    match Command::new("readelf")
+        .args(["-lW", "-x", ".eh_frame_hdr", "-x", ".eh_frame"])
+        .arg(path)
+        .output()
+    {
+        Ok(output) => eprintln!(
+            "native load fixture {path:?}: readelf status={}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(error) => eprintln!("native load fixture {path:?}: readelf failed: {error}"),
     }
 }
 

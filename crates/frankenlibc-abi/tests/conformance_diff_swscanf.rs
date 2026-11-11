@@ -1341,6 +1341,253 @@ mod locale_scanning {
         }
     }
 
+    // Every stream in this matrix is opened, oriented and inspected through
+    // GNU. Only the I/O operation changes provider. A native-created FILE would
+    // miss the foreign-buffer and retained-conversion-state contract entirely.
+    fn foreign_wide_io_engines() -> [WideIoEngine; 5] {
+        unsafe extern "C-unwind" fn get_unlocked(stream: *mut c_void) -> u32 {
+            unsafe { fl::fgetwc_unlocked(stream.cast()) }
+        }
+        unsafe extern "C-unwind" fn get_alias(stream: *mut c_void) -> u32 {
+            unsafe { fl::getwc(stream.cast()) }
+        }
+        unsafe extern "C-unwind" fn get_alias_unlocked(stream: *mut c_void) -> u32 {
+            unsafe { fl::getwc_unlocked(stream.cast()) }
+        }
+        unsafe extern "C-unwind" fn put_unlocked(wc: u32, stream: *mut c_void) -> u32 {
+            unsafe { fl::fputwc_unlocked(wc as Wc, stream.cast()) }
+        }
+        unsafe extern "C-unwind" fn put_alias(wc: u32, stream: *mut c_void) -> u32 {
+            unsafe { fl::putwc(wc as Wc, stream.cast()) }
+        }
+        unsafe extern "C-unwind" fn gets_unlocked(
+            ws: *mut Wc,
+            n: c_int,
+            stream: *mut c_void,
+        ) -> *mut Wc {
+            unsafe { fl::fgetws_unlocked(ws, n, stream.cast()) }
+        }
+        unsafe extern "C-unwind" fn puts_unlocked(ws: *const Wc, stream: *mut c_void) -> c_int {
+            unsafe { fl::fputws_unlocked(ws, stream.cast()) }
+        }
+
+        let [host, _] = wide_io_engines();
+        let locked = WideIoEngine {
+            name: "foreign_locked",
+            errno: errno_abi::__errno_location,
+            get: fl::fgetwc,
+            unget: fl::ungetwc,
+            gets: fl::fgetws,
+            put: fl::fputwc,
+            puts: fl::fputws,
+            ..host
+        };
+        let unlocked = WideIoEngine {
+            name: "foreign_unlocked",
+            get: get_unlocked,
+            gets: gets_unlocked,
+            put: put_unlocked,
+            puts: puts_unlocked,
+            ..locked
+        };
+        [
+            host,
+            locked,
+            unlocked,
+            WideIoEngine {
+                name: "foreign_alias",
+                get: get_alias,
+                put: put_alias,
+                ..locked
+            },
+            WideIoEngine {
+                name: "foreign_alias_unlocked",
+                get: get_alias_unlocked,
+                put: fl::putwc_unlocked,
+                ..unlocked
+            },
+        ]
+    }
+
+    #[test]
+    fn foreign_wide_streams_keep_orientation_and_codec() {
+        if !isolated("foreign_wide_streams_keep_orientation_and_codec") {
+            return;
+        }
+        for engine in foreign_wide_io_engines() {
+            for (bound, active, input, encoded) in [
+                (
+                    c"C.UTF-8",
+                    c"fr_FR",
+                    "éAé\n".as_bytes(),
+                    b"\xc3\xa9".as_slice(),
+                ),
+                (c"C.UTF-8", c"C", "éAé\n".as_bytes(), b"\xc3\xa9".as_slice()),
+                (
+                    c"fr_FR",
+                    c"C.UTF-8",
+                    b"\xe9A\xe9\n".as_slice(),
+                    b"\xe9".as_slice(),
+                ),
+            ] {
+                select(bound);
+                let (_, path) = wide_stream_path(engine.name, input);
+                // SAFETY: GNU owns the FILE until its matching close. Every
+                // buffer below has the stated capacity, and the scalar values
+                // are representable in the codec bound before the locale change.
+                let stream = unsafe { (engine.open)(path.as_ptr(), c"r".as_ptr()) };
+                assert!(!stream.is_null(), "{} foreign input", engine.name);
+                assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                select(active);
+                unsafe {
+                    *(engine.errno)() = 23;
+                    assert_eq!((engine.get)(stream), 0xe9, "{} bound read", engine.name);
+                    assert_eq!((engine.tell)(stream), encoded.len() as libc::c_long);
+                    assert_eq!((engine.unget)(0xe9, stream), 0xe9, "{} pushback", engine.name);
+                    assert_eq!((engine.get)(stream), 0xe9);
+                    assert_eq!((engine.tell)(stream), encoded.len() as libc::c_long);
+                    let mut line = [SENTINEL as Wc; 8];
+                    assert_eq!(
+                        (engine.gets)(line.as_mut_ptr(), line.len() as c_int, stream),
+                        line.as_mut_ptr(),
+                        "{} bound line",
+                        engine.name
+                    );
+                    assert_eq!(&line[..4], &[Wc::from(b'A'), 0xe9, Wc::from(b'\n'), 0]);
+                    assert!(line[4..].iter().all(|&wc| wc == SENTINEL));
+                    assert_eq!((engine.tell)(stream), input.len() as libc::c_long);
+                    assert!((engine.orient)(stream, 0) > 0, "{} host orientation", engine.name);
+                    assert_eq!((engine.error)(stream), 0);
+                    assert_eq!(*(engine.errno)(), 23, "{} success errno", engine.name);
+                    assert_eq!((engine.get)(stream), u32::MAX);
+                    assert_ne!((engine.eof)(stream), 0);
+                    assert_eq!((engine.error)(stream), 0);
+                    assert_eq!(*(engine.errno)(), 23, "{} clean EOF errno", engine.name);
+                    line.fill(SENTINEL);
+                    assert!((engine.gets)(line.as_mut_ptr(), 8, stream).is_null());
+                    assert_eq!(line, [SENTINEL; 8]);
+                    assert_eq!((engine.close)(stream), 0);
+                }
+
+                select(bound);
+                let (output_path, path) = wide_stream_path(engine.name, b"");
+                let stream = unsafe { (engine.open)(path.as_ptr(), c"w".as_ptr()) };
+                assert!(!stream.is_null(), "{} foreign output", engine.name);
+                assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+                select(active);
+                let line = w("abcdefghijklmnopéé\n");
+                unsafe {
+                    *(engine.errno)() = 23;
+                    assert_eq!((engine.put)(0xe9, stream), 0xe9, "{} bound write", engine.name);
+                    assert!(
+                        (engine.puts)(line.as_ptr(), stream) >= 0,
+                        "{} bound string",
+                        engine.name
+                    );
+                    assert_eq!((engine.flush)(stream), 0);
+                    assert!((engine.orient)(stream, 0) > 0);
+                    assert_eq!((engine.error)(stream), 0);
+                    assert_eq!(*(engine.errno)(), 23, "{} output errno", engine.name);
+                    assert_eq!((engine.close)(stream), 0);
+                }
+                let mut expected = encoded.to_vec();
+                expected.extend_from_slice(b"abcdefghijklmnop");
+                expected.extend_from_slice(encoded);
+                expected.extend_from_slice(encoded);
+                expected.push(b'\n');
+                assert_eq!(
+                    std::fs::read(output_path).unwrap(),
+                    expected,
+                    "{} {bound:?}->{active:?} host bytes",
+                    engine.name
+                );
+            }
+
+            // The first wide call must orient the actual host FILE, not only
+            // decode bytes in a temporary native context.
+            select(c"C.UTF-8");
+            let (_, path) = wide_stream_path(engine.name, "é".as_bytes());
+            unsafe {
+                let stream = (engine.open)(path.as_ptr(), c"r".as_ptr());
+                assert!(!stream.is_null());
+                assert_eq!((engine.orient)(stream, 0), 0);
+                assert_eq!((engine.get)(stream), 0xe9, "{} initial read", engine.name);
+                assert!((engine.orient)(stream, 0) > 0);
+                assert_eq!((engine.close)(stream), 0);
+            }
+            let (output_path, path) = wide_stream_path(engine.name, b"");
+            unsafe {
+                let stream = (engine.open)(path.as_ptr(), c"w".as_ptr());
+                assert!(!stream.is_null());
+                assert_eq!((engine.orient)(stream, 0), 0);
+                assert_eq!((engine.put)(0xe9, stream), 0xe9, "{} initial write", engine.name);
+                assert!((engine.orient)(stream, 0) > 0);
+                assert_eq!((engine.close)(stream), 0);
+            }
+            assert_eq!(std::fs::read(output_path).unwrap(), "é".as_bytes());
+        }
+    }
+
+    #[test]
+    fn foreign_wide_streams_preserve_error_state() {
+        if !isolated("foreign_wide_streams_preserve_error_state") {
+            return;
+        }
+        for engine in foreign_wide_io_engines() {
+            select(c"C.UTF-8");
+            let (_, path) = wide_stream_path(engine.name, b"A\xffZ");
+            let stream = unsafe { (engine.open)(path.as_ptr(), c"r".as_ptr()) };
+            assert!(!stream.is_null());
+            assert!(unsafe { (engine.orient)(stream, 1) } > 0);
+            // 0xff is valid Latin-1 but invalid in this FILE's retained UTF-8
+            // codec. Using the active locale would silently consume it.
+            select(c"fr_FR");
+            // SAFETY: the host FILE and each destination remain live throughout
+            // the read/error/recovery sequence. GNU queries inspect its state.
+            unsafe {
+                *(engine.errno)() = 23;
+                assert_eq!((engine.get)(stream), u32::from(b'A'));
+                assert_eq!((engine.get)(stream), u32::MAX, "{} invalid encoding", engine.name);
+                assert_eq!(*(engine.errno)(), libc::EILSEQ);
+                assert_ne!((engine.error)(stream), 0);
+                assert_eq!((engine.eof)(stream), 0);
+                assert_eq!((engine.tell)(stream), 1);
+                assert_eq!((engine.seek)(stream, 2, libc::SEEK_SET), 0);
+                assert_ne!((engine.error)(stream), 0, "{} sticky error", engine.name);
+
+                *(engine.errno)() = 23;
+                let mut line = [SENTINEL as Wc; 4];
+                assert_eq!(
+                    (engine.gets)(line.as_mut_ptr(), 4, stream),
+                    line.as_mut_ptr(),
+                    "{} recovery after seek",
+                    engine.name
+                );
+                assert_eq!(line, [Wc::from(b'Z'), 0, SENTINEL, SENTINEL]);
+                assert_ne!((engine.error)(stream), 0);
+                assert_ne!((engine.eof)(stream), 0);
+                assert_eq!(*(engine.errno)(), 23);
+                assert_eq!((engine.close)(stream), 0);
+            }
+
+            // A foreign write-only FILE must report the host's read error,
+            // without consuming its descriptor or silently returning clean EOF.
+            let (_, path) = wide_stream_path(engine.name, b"");
+            unsafe {
+                let stream = (engine.open)(path.as_ptr(), c"w".as_ptr());
+                assert!(!stream.is_null());
+                assert!((engine.orient)(stream, 1) > 0);
+                *(engine.errno)() = 23;
+                assert_eq!((engine.get)(stream), u32::MAX);
+                assert_eq!(*(engine.errno)(), libc::EBADF, "{} access error", engine.name);
+                assert_ne!((engine.error)(stream), 0);
+                assert_eq!((engine.eof)(stream), 0);
+                assert_eq!((engine.tell)(stream), 0);
+                assert_eq!((engine.close)(stream), 0);
+            }
+        }
+    }
+
     #[test]
     fn wide_character_read_checks_stream_mode() {
         use std::os::fd::IntoRawFd;

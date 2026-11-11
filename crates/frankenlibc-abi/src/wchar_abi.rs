@@ -6879,17 +6879,189 @@ unsafe fn wide_input_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
     buf
 }
 
+// Host FILE objects own their conversion state as well as their buffers.
+// Calling a byte operation on one after fwide(..., 1) loses that state and is
+// not a valid implementation of wide I/O. Resolve the matching wide operation
+// only for a foreign handle, before taking any native FILE lock.
+#[cfg(not(feature = "standalone"))]
+unsafe fn try_host_wide_io<R>(
+    stream: *mut c_void,
+    slot: &OnceLock<usize>,
+    symbol: &'static str,
+    failure: R,
+    call: impl FnOnce(usize) -> R,
+) -> Option<R> {
+    if stream.is_null() {
+        return None;
+    }
+    // SAFETY: the ABI accessor returns this thread's writable errno cell.
+    let entry_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let id = super::stdio_abi::stream_id_from_handle(stream);
+    if !super::stdio_abi::may_delegate_to_host(stream, id) {
+        // Ownership checks must not change a native operation's entry errno.
+        unsafe { set_abi_errno(entry_errno) };
+        return None;
+    }
+    let Some(address) = crate::host_resolve::resolve_host_symbol_cached(slot, symbol) else {
+        // A foreign wide stream must never fall through to native byte I/O.
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return Some(failure);
+    };
+    let Some(errno_location) = crate::host_resolve::host_errno_location_raw() else {
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return Some(failure);
+    };
+    // SAFETY: this is the resolved host accessor for the calling thread.
+    let host_errno = unsafe { errno_location() };
+    if host_errno.is_null() {
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return Some(failure);
+    }
+    // Resolution may allocate or inspect mappings. Start the host operation
+    // with the caller's errno, including when native threads own another cell.
+    unsafe { *host_errno = entry_errno };
+    let result = call(address);
+    // Capture errno before bookkeeping can allocate, and preserve clean EOF's
+    // unchanged errno as well as genuine read/write/conversion failures.
+    let error = unsafe { *host_errno };
+    super::stdio_abi::mark_host_io_started(stream);
+    unsafe { set_abi_errno(error) };
+    Some(result)
+}
+
+#[cfg(not(feature = "standalone"))]
+unsafe fn try_host_fgetwc(stream: *mut c_void, unlocked: bool) -> Option<u32> {
+    static LOCKED: OnceLock<usize> = OnceLock::new();
+    static UNLOCKED: OnceLock<usize> = OnceLock::new();
+    let (slot, symbol) = if unlocked {
+        (&UNLOCKED, "fgetwc_unlocked")
+    } else {
+        (&LOCKED, "fgetwc")
+    };
+    let call = |address| {
+        // SAFETY: the exact host symbol has this ABI; the caller keeps its
+        // foreign FILE alive. The unlocked form must not acquire a FILE lock.
+        let host: unsafe extern "C-unwind" fn(*mut c_void) -> u32 =
+            unsafe { std::mem::transmute(address) };
+        unsafe { host(stream) }
+    };
+    // SAFETY: ownership and symbol checks precede the matching host operation.
+    unsafe { try_host_wide_io(stream, slot, symbol, WEOF_VALUE, call) }
+}
+
+#[cfg(not(feature = "standalone"))]
+unsafe fn try_host_fputwc(wc: u32, stream: *mut c_void, unlocked: bool) -> Option<u32> {
+    static LOCKED: OnceLock<usize> = OnceLock::new();
+    static UNLOCKED: OnceLock<usize> = OnceLock::new();
+    let (slot, symbol) = if unlocked {
+        (&UNLOCKED, "fputwc_unlocked")
+    } else {
+        (&LOCKED, "fputwc")
+    };
+    let call = |address| {
+        // SAFETY: this is the GNU wchar_t/FILE ABI for the selected operation,
+        // with a live foreign FILE and its own retained output codec.
+        let host: unsafe extern "C-unwind" fn(libc::wchar_t, *mut c_void) -> u32 =
+            unsafe { std::mem::transmute(address) };
+        unsafe { host(wc as libc::wchar_t, stream) }
+    };
+    // SAFETY: ownership and symbol checks precede the matching host operation.
+    unsafe { try_host_wide_io(stream, slot, symbol, WEOF_VALUE, call) }
+}
+
+#[cfg(not(feature = "standalone"))]
+unsafe fn try_host_ungetwc(wc: u32, stream: *mut c_void) -> Option<u32> {
+    if wc == WEOF_VALUE {
+        return None;
+    }
+    static HOST: OnceLock<usize> = OnceLock::new();
+    let call = |address| {
+        // SAFETY: the resolved pushback operation owns this live foreign FILE.
+        let host: unsafe extern "C" fn(u32, *mut c_void) -> u32 =
+            unsafe { std::mem::transmute(address) };
+        unsafe { host(wc, stream) }
+    };
+    // SAFETY: ownership and symbol checks precede the matching host operation.
+    unsafe { try_host_wide_io(stream, &HOST, "ungetwc", WEOF_VALUE, call) }
+}
+
+#[cfg(not(feature = "standalone"))]
+unsafe fn try_host_fgetws(
+    ws: *mut libc::wchar_t,
+    n: c_int,
+    stream: *mut c_void,
+    unlocked: bool,
+) -> Option<*mut libc::wchar_t> {
+    if ws.is_null() || n <= 0 {
+        return None;
+    }
+    static LOCKED: OnceLock<usize> = OnceLock::new();
+    static UNLOCKED: OnceLock<usize> = OnceLock::new();
+    let (slot, symbol) = if unlocked {
+        (&UNLOCKED, "fgetws_unlocked")
+    } else {
+        (&LOCKED, "fgetws")
+    };
+    let call = |address| {
+        // SAFETY: the caller supplies n writable wchar_t elements and a live
+        // FILE; the selected host line reader has this exact ABI.
+        let host: unsafe extern "C-unwind" fn(
+            *mut libc::wchar_t,
+            c_int,
+            *mut c_void,
+        ) -> *mut libc::wchar_t = unsafe { std::mem::transmute(address) };
+        unsafe { host(ws, n, stream) }
+    };
+    // SAFETY: ownership and symbol checks precede the matching host operation.
+    unsafe { try_host_wide_io(stream, slot, symbol, std::ptr::null_mut(), call) }
+}
+
+#[cfg(not(feature = "standalone"))]
+unsafe fn try_host_fputws(
+    ws: *const libc::wchar_t,
+    stream: *mut c_void,
+    unlocked: bool,
+) -> Option<c_int> {
+    if ws.is_null() {
+        return None;
+    }
+    static LOCKED: OnceLock<usize> = OnceLock::new();
+    static UNLOCKED: OnceLock<usize> = OnceLock::new();
+    let (slot, symbol) = if unlocked {
+        (&UNLOCKED, "fputws_unlocked")
+    } else {
+        (&LOCKED, "fputws")
+    };
+    let call = |address| {
+        // SAFETY: ws is a terminated wide string and the foreign FILE remains
+        // live; conversion and buffering belong to this exact host operation.
+        let host: unsafe extern "C-unwind" fn(*const libc::wchar_t, *mut c_void) -> c_int =
+            unsafe { std::mem::transmute(address) };
+        unsafe { host(ws, stream) }
+    };
+    // SAFETY: ownership and symbol checks precede the matching host operation.
+    unsafe { try_host_wide_io(stream, slot, symbol, libc::EOF, call) }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
     unsafe { fgetwc_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 pub(crate) unsafe fn fgetwc_for_caller(stream: *mut std::ffi::c_void, caller: usize) -> u32 {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fgetwc(stream, false) } {
+        return result;
+    }
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     unsafe { fgetwc_unlocked_for_caller(stream, caller) }
 }
 
 pub(crate) unsafe fn fgetwc_unlocked_for_caller(stream: *mut c_void, caller: usize) -> u32 {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fgetwc(stream, true) } {
+        return result;
+    }
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
@@ -6946,6 +7118,10 @@ pub(crate) unsafe fn fputwc_for_caller(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> u32 {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fputwc(wc, stream, false) } {
+        return result;
+    }
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     unsafe { fputwc_unlocked_for_caller(wc, stream, caller) }
 }
@@ -6955,6 +7131,10 @@ pub(crate) unsafe fn fputwc_unlocked_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> u32 {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fputwc(wc, stream, true) } {
+        return result;
+    }
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
@@ -6999,11 +7179,19 @@ pub(crate) unsafe fn fputwc_unlocked_for_caller(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_ungetwc(wc, stream) } {
+        return result;
+    }
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     unsafe { ungetwc_without_lock(wc, stream) }
 }
 
 pub(crate) unsafe fn ungetwc_without_lock(wc: u32, stream: *mut c_void) -> u32 {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_ungetwc(wc, stream) } {
+        return result;
+    }
     if stream.is_null() || wc == WEOF_VALUE || !super::stdio_abi::orient_stream_ungetwc(stream) {
         return WEOF_VALUE;
     }
@@ -7046,6 +7234,10 @@ pub(crate) unsafe fn fgetws_for_caller(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> *mut libc::wchar_t {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fgetws(ws, n, stream, false) } {
+        return result;
+    }
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     unsafe { fgetws_unlocked_for_caller(ws, n, stream, caller) }
 }
@@ -7056,6 +7248,10 @@ pub(crate) unsafe fn fgetws_unlocked_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> *mut libc::wchar_t {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fgetws(ws, n, stream, true) } {
+        return result;
+    }
     if ws.is_null() || stream.is_null() || n <= 0 || !super::stdio_abi::orient_stream_wide(stream) {
         return std::ptr::null_mut();
     }
@@ -7173,6 +7369,10 @@ pub(crate) unsafe fn fputws_for_caller(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> c_int {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fputws(ws, stream, false) } {
+        return result;
+    }
     let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     unsafe { fputws_unlocked_for_caller(ws, stream, caller) }
 }
@@ -7182,6 +7382,10 @@ pub(crate) unsafe fn fputws_unlocked_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> c_int {
+    #[cfg(not(feature = "standalone"))]
+    if let Some(result) = unsafe { try_host_fputws(ws, stream, true) } {
+        return result;
+    }
     if ws.is_null() || stream.is_null() {
         return libc::EOF;
     }
