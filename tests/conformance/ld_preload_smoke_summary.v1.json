@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-rc0923-epic-eeuy4f.4",
-  "source_report_path": "target/ld_preload_smoke/20261111T045420Z-4186424/abi_compat_report.json",
-  "run_id": "20261111T045420Z-4186424",
-  "checked_at_utc": "2026-11-11T04:56:46Z",
+  "source_report_path": "target/ld_preload_smoke/20261111T134243Z-2744068/abi_compat_report.json",
+  "run_id": "20261111T134243Z-2744068",
+  "checked_at_utc": "2026-11-11T13:45:09Z",
   "checked_date_display": "November 11, 2026",
   "lib_path": "target/release/libfrankenlibc_abi.so",
   "timeout_seconds": 10,
   "stress_iters": 5,
   "summary": {
-    "total_cases": 348,
-    "passes": 344,
+    "total_cases": 352,
+    "passes": 348,
     "fails": 0,
     "skips": 4,
     "signature_guard_failures": 0,
@@ -21,8 +21,8 @@
   },
   "modes": {
     "strict": {
-      "total_cases": 175,
-      "passes": 173,
+      "total_cases": 177,
+      "passes": 175,
       "fails": 0,
       "skips": 2,
       "signature_guard_failures": 0,
@@ -33,8 +33,8 @@
       "xfails": 0
     },
     "hardened": {
-      "total_cases": 173,
-      "passes": 171,
+      "total_cases": 175,
+      "passes": 173,
       "fails": 0,
       "skips": 2,
       "signature_guard_failures": 0,
@@ -51,9 +51,9 @@
   ],
   "notes": [
     "This checked-in summary is the canonical source for README smoke-status claims; regenerate it only from an executed run (scripts/check_ld_preload_smoke_regeneration.sh).",
-    "Since bd-rc0923-epic-eeuy4f.4 the battery includes a real-world corpus: GNU FILE-layout fixture (10 constructors), sed, grep, awk, find, tar gzip/xz round-trips, gzip, make, perl, git log/status/diff, a C++ runtime program, Python C extensions and subprocess, getent/NSS, iconv, argp, TZ formatting, named-locale formatting, pthread cancellation/robust/pshared/PI, dlopen/dlclose TLS, and deployed-overhead macrobenchmarks.",
-    "Parity and startup latency gates are enforced in strict AND hardened mode. The four skips are the optional redis-cli/nginx probes. All 344 executed cases pass with zero xfails."
+    "Since bd-rc0923-epic-eeuy4f.4 the battery includes a real-world corpus: GNU FILE-layout fixture (10 constructors), sed, grep, awk, find, tar gzip/xz round-trips, gzip, make, perl, git log/status/diff, a C++ runtime program, Python C extensions and subprocess, getent/NSS, iconv, argp, TZ formatting, named-locale formatting, pthread cancellation/robust/pshared/PI, dlopen/dlclose TLS, ELF VM-geometry (.bss/.tbss) + RLIMIT_DATA=10MB gates, and deployed-overhead macrobenchmarks.",
+    "Parity and startup latency gates are enforced in strict AND hardened mode. The four skips are the optional redis-cli/nginx probes. All 348 executed cases pass with zero xfails."
   ],
-  "source_commit": "b70205895998491fc13ab3ca4a420efaf5d2d1fa",
-  "lib_sha256": "041f208b8abef3876d1a00be0b9068f97bbfe40d89040aa2a77db9b8f86fad43"
+  "source_commit": "44a61541a4d6d61a62125095d1d078e69f3b83a9",
+  "lib_sha256": "3a16a270ff92e03a38318854b0b518325cec7214fcbe407becad1128aa88fe74"
 }
