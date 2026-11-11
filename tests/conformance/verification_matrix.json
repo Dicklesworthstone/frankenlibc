@@ -34323,6 +34323,393 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.4.1",
+      "title": "Eliminate 94 membrane GOT self-interposed math_abi calls/errno clobber and restore reachable UpgradeToSafeVariant + live QuarantineController/SOS telemetry",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "errno",
+        "membrane",
+        "reality-check-202611",
+        "runtime-math",
+        "self-interposition"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.4"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "pure-Rust IEEE-754 transcendentals <=2 ULP, non-tautological rational LDL^T SOS witness check, live SOS certificate evaluation"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened LD_PRELOAD errno/FPU transparency probe"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "runtime_math_upgrade_to_safe_variant and quarantine_depth_transition JSONL records"
+        },
+        "perf_evidence": {
+          "required": true,
+          "scope": "check_membrane_access.py --benchmark sort100k <= 2.5x glibc and <= 2.0x strict"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test --release -p frankenlibc-membrane --test sos_barrier_arch_independence_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-membrane/src/runtime_math/mod.rs"
+        },
+        "perf_evidence": {
+          "status": "complete",
+          "artifacts": "scripts/check_membrane_access.py"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.4.1",
+        "stream": "membrane",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-membrane --lib",
+          "cargo test --release -p frankenlibc-membrane --test sos_barrier_arch_independence_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "bash scripts/ld_preload_smoke.sh",
+          "python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --benchmark"
+        ],
+        "expected_assertions": [
+          "0 membrane->libm GOT calls, 1483/1483 membrane lib tests pass, rational LDL^T SOS witness check rejects non-SOS counterexamples, live FRAGMENTATION/THREAD_SAFETY/SIZE_CLASS SOS telemetry active, sort100k-lexical hardened_over_strict=1.8974<=2.0"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-membrane/src/util.rs",
+          "crates/frankenlibc-membrane/build.rs",
+          "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+          "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+          "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs",
+          "target/closure_receipts/wave3_20261111T1842Z/bd-reality-202609-lx578q.4.1/receipt.json"
+        ],
+        "perf_proof_refs": [
+          "scripts/check_membrane_access.py"
+        ],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 782ccfb96cedddf7cf556c311bddd012eee4108b.",
+        "result_receipts": [
+          "target/closure_receipts/wave3_20261111T1842Z/bd-reality-202609-lx578q.4.1/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Eliminate all 94 membrane GOT self-interposed libm/math_abi calls via pure-Rust IEEE-754 transcendentals, restore causally reachable UpgradeToSafeVariant and live QuarantineController/SOS allocator telemetry in cfg(not(test)), and enforce exact rational LDL^T SOS witness verification in membrane/build.rs",
+          "acceptance_sha256": "aa7423857d873fe36e795b8f9b02a92f4f05863dbe9eac253ca69e2a88659dd2",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-membrane/build.rs",
+            "crates/frankenlibc-membrane/src/ebr.rs",
+            "crates/frankenlibc-membrane/src/util.rs",
+            "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+            "crates/frankenlibc-membrane/src/runtime_math/design.rs",
+            "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+            "crates/frankenlibc-abi/src/malloc_abi.rs",
+            "crates/frankenlibc-abi/src/runtime_policy.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs",
+            "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs"
+          ],
+          "source": {
+            "commit": "782ccfb96cedddf7cf556c311bddd012eee4108b",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "c1107a51902a43028bf951bb65a1b3b44e3cecafb30e688da94b55cd8782b990",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "2b01d4bb60a945bea6f862ec5799185b5f3317406df3013b5a8ae4ccdb945008",
+              "crates/frankenlibc-membrane/Cargo.toml": "b9c91993f3b9c584ee9d1624bca2c078c71e09345f1dbb4acf60a5a9c7a8eb4a",
+              "crates/frankenlibc-membrane/build.rs": "f24f6880e12b5b438a88959e33c0dfe08a9d3beb3401f54788cd26950d0fd7a3",
+              "crates/frankenlibc-membrane/src/ebr.rs": "87fe99cd9b4e7b51e39f7d008e006cca1d380ff901934f44958b242ead4f10ff",
+              "crates/frankenlibc-membrane/src/runtime_math/control.rs": "ebed6ddfbe8b7b119b093150a315c7977529d68b3b9c34664a30725452db4e4a",
+              "crates/frankenlibc-membrane/src/runtime_math/design.rs": "220378e75d19b9889b97cb983613929d6bae89999378cebd3e609b674715da09",
+              "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "6e6e8cf45340dad911338043baab8b235dc9500fe1928f1e59abf804b25f6a7e",
+              "crates/frankenlibc-membrane/src/util.rs": "18e78c65483759a2f2ae7b56530986d0b36fb7475e1941a71d8b9109f54fe8aa",
+              "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs": "528429f85c7354f1c5becc47879a4afbb6a45968cb9fb5e1a03b248c22820160",
+              "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs": "1b7226f44dde9ed8c6c5055cf520d7c99ceb9a4e8d0037a31ef2e6ccfadf8abb",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/ld_preload_smoke.sh": "e3f16a82e6ceeca6408753a49ccecf3bd4ff14f109e909ca759a728458682632",
+              "tests/integration/fixture_malloc.c": "a71187f9f08dc7ec145aa78abd94ac4b4a6af336f6dcbefafea1f96efc653a9e"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "release",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T18:40:00+00:00",
+          "gate": {
+            "command": [
+              "/data/tmp/fl-wave3-rcpt/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/tmp/fl-wave3-rcpt",
+              "--release",
+              "-p",
+              "frankenlibc-membrane",
+              "--test",
+              "sos_barrier_arch_independence_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/tmp/fl-wave3-rcpt/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "build_script_sos_witness_accepts_production_certificates_and_rejects_counterexamples",
+              "runtime_math_kernel_evaluates_live_allocator_sos_certificates_and_detects_violations"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.4.2",
+      "title": "[RC-202609 tests] Verify zero membrane math_abi relocations, errno transparency under underflow, and cfg(not(test)) controller state reachability",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "errno",
+        "membrane",
+        "reality-check-202611",
+        "runtime-math",
+        "verification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.4",
+        "bd-reality-202609-lx578q.4.1"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "ELF GOT disassembly audit + synthetic GOT negative control + cfg(not(test)) UpgradeToSafeVariant and QuarantineController JSONL reachability"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "fixture_malloc --errno-fenv-case membrane-churn wired into ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "runtime_math_upgrade_to_safe_variant and quarantine_depth_transition JSONL emission"
+        },
+        "perf_evidence": {
+          "required": true,
+          "scope": "deployed sort100k hardened_over_glibc<=2.5 and hardened_over_strict<=2.0"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test --release -p frankenlibc-membrane --test runtime_math_dual_mode_e2e_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs"
+        },
+        "perf_evidence": {
+          "status": "complete",
+          "artifacts": "scripts/check_membrane_access.py"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.4.2",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test --release -p frankenlibc-membrane --test runtime_math_dual_mode_e2e_test -- --test-threads=1",
+          "cargo test -p frankenlibc-membrane --lib"
+        ],
+        "e2e_cmds": [
+          "bash scripts/ld_preload_smoke.sh",
+          "python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --benchmark"
+        ],
+        "expected_assertions": [
+          "0 membrane->libm GOT/PLT calls in release libfrankenlibc_abi.so, synthetic GOT detector catches log+exp, UpgradeToSafeVariant and QuarantineController (8192->28046) emit JSONL in cfg(not(test)), errno/FPU 12/12 pass in strict and hardened"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs",
+          "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs",
+          "tests/integration/fixture_malloc.c",
+          "scripts/ld_preload_smoke.sh",
+          "target/closure_receipts/wave3_4_2_20261111/bd-reality-202609-lx578q.4.2/receipt.json"
+        ],
+        "perf_proof_refs": [
+          "scripts/check_membrane_access.py"
+        ],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 782ccfb96cedddf7cf556c311bddd012eee4108b.",
+        "result_receipts": [
+          "target/closure_receipts/wave3_4_2_20261111/bd-reality-202609-lx578q.4.2/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Verify zero membrane-to-libm/math_abi GOT/PLT calls on release libfrankenlibc_abi.so with synthetic relocation negative control, deployed LD_PRELOAD errno and MXCSR/x87 transparency across QuarantineController epoch rollover, and cfg(not(test)) UpgradeToSafeVariant + QuarantineController JSONL emission",
+          "acceptance_sha256": "afe97f5e48783b5b99569417a3982927cacec67fc145289fee4b19b1823bb1ea",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-membrane/src/util.rs",
+            "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+            "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+            "scripts/ld_preload_smoke.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs",
+            "tests/integration/fixture_malloc.c"
+          ],
+          "source": {
+            "commit": "782ccfb96cedddf7cf556c311bddd012eee4108b",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "c1107a51902a43028bf951bb65a1b3b44e3cecafb30e688da94b55cd8782b990",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "2b01d4bb60a945bea6f862ec5799185b5f3317406df3013b5a8ae4ccdb945008",
+              "crates/frankenlibc-membrane/Cargo.toml": "b9c91993f3b9c584ee9d1624bca2c078c71e09345f1dbb4acf60a5a9c7a8eb4a",
+              "crates/frankenlibc-membrane/build.rs": "f24f6880e12b5b438a88959e33c0dfe08a9d3beb3401f54788cd26950d0fd7a3",
+              "crates/frankenlibc-membrane/src/ebr.rs": "87fe99cd9b4e7b51e39f7d008e006cca1d380ff901934f44958b242ead4f10ff",
+              "crates/frankenlibc-membrane/src/runtime_math/control.rs": "ebed6ddfbe8b7b119b093150a315c7977529d68b3b9c34664a30725452db4e4a",
+              "crates/frankenlibc-membrane/src/runtime_math/design.rs": "220378e75d19b9889b97cb983613929d6bae89999378cebd3e609b674715da09",
+              "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "6e6e8cf45340dad911338043baab8b235dc9500fe1928f1e59abf804b25f6a7e",
+              "crates/frankenlibc-membrane/src/util.rs": "18e78c65483759a2f2ae7b56530986d0b36fb7475e1941a71d8b9109f54fe8aa",
+              "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs": "528429f85c7354f1c5becc47879a4afbb6a45968cb9fb5e1a03b248c22820160",
+              "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs": "1b7226f44dde9ed8c6c5055cf520d7c99ceb9a4e8d0037a31ef2e6ccfadf8abb",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/ld_preload_smoke.sh": "e3f16a82e6ceeca6408753a49ccecf3bd4ff14f109e909ca759a728458682632",
+              "tests/integration/fixture_malloc.c": "a71187f9f08dc7ec145aa78abd94ac4b4a6af336f6dcbefafea1f96efc653a9e"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "release",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T18:40:00+00:00",
+          "gate": {
+            "command": [
+              "/data/tmp/fl-wave3-rcpt/release/build/frankenlibc-membrane/80c74fac31b3ed39/out/runtime_math_dual_mode_e2e_test-80c74fac31b3ed39",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/tmp/fl-wave3-rcpt",
+              "--release",
+              "-p",
+              "frankenlibc-membrane",
+              "--test",
+              "runtime_math_dual_mode_e2e_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/tmp/fl-wave3-rcpt/release/build/frankenlibc-membrane/80c74fac31b3ed39/out/runtime_math_dual_mode_e2e_test-80c74fac31b3ed39"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "elf_got_disassembly_detector_catches_direct_and_indirect_libm_calls",
+              "release_libfrankenlibc_abi_has_zero_membrane_to_libm_calls",
+              "e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl"
+            ]
+          }
+        }
+      }
     }
   ]
 }
