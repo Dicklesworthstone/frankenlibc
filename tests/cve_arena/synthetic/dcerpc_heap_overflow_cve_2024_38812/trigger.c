@@ -206,7 +206,7 @@ static int process_dcerpc_packet(const struct network_packet *pkt)
         return 1;
     }
     printf("  STATUS: SAFE -- ClampSize prevented 192-byte heap overflow\n");
-    return result;
+    return 0;
 }
 
 /* ---------------------------------------------------------------------------

@@ -241,6 +241,7 @@ tests/cve_arena/**/trigger
 tests/cve_arena/results/*.result.json
 tests/cve_arena/results/REPORT.md
 tests/cve_arena/results/summary.json
+tests/cve_arena/results/logs/
 tests/conformance/*.bak
 .beads/.br-wal-index-*/
 

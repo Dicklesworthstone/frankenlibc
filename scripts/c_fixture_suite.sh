@@ -235,6 +235,8 @@ for src in "${matched_sources[@]}"; do
     ldflags="-pthread"
   elif [[ "${name}" == "fixture_math" ]]; then
     ldflags="-lm"
+  elif [[ "${name}" == "fixture_stdio_printf" ]]; then
+    ldflags="-lm -pthread"
   fi
   if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
     cflags+=" -fno-builtin-strlen"

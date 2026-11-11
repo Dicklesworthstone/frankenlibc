@@ -1436,8 +1436,8 @@ fn empty_res_state() -> ResStateBuf {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static RES_STATE: std::cell::UnsafeCell<ResStateBuf> =
-        const { std::cell::UnsafeCell::new(ResStateBuf([0u8; 640])) };
+    static RES_STATE: Box<std::cell::UnsafeCell<ResStateBuf>> =
+        Box::new(std::cell::UnsafeCell::new(ResStateBuf([0u8; 640])));
 }
 
 #[inline]
@@ -7583,7 +7583,8 @@ fn empty_sgetspent_state() -> SgetspentState {
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SGETSPENT_BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
-    static SGETSPENT_SP: std::cell::RefCell<libc::spwd> = const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
+    static SGETSPENT_SP: Box<std::cell::RefCell<libc::spwd>> =
+        Box::new(std::cell::RefCell::new(unsafe { std::mem::zeroed() }));
 }
 
 #[inline]

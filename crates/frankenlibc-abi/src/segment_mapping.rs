@@ -23,6 +23,17 @@ impl WritablePages {
         }
     }
 
+    /// True if all granules intersecting `[start, end)` within a reservation of
+    /// length `len` have already been upgraded and published. Never touches the
+    /// underlying memory or issues a syscall.
+    #[inline]
+    pub(super) fn is_ready(&self, len: usize, start: usize, end: usize) -> bool {
+        let Some((_addr, _bytes, mask)) = range(GRANULE, len, start, end) else {
+            return false;
+        };
+        self.ready.load(Ordering::Acquire) & mask == mask
+    }
+
     /// Enable the granules intersecting [start, end) within one reservation.
     ///
     /// # Safety
@@ -95,9 +106,9 @@ fn range(base: usize, len: usize, start: usize, end: usize) -> Option<(usize, us
 #[doc(hidden)]
 pub mod tests {
     use super::super::{
-        SEGMENT_COUNT, SEGMENT_DESCRIPTORS, SEGMENT_HEADER_BYTES, SEGMENT_OWNED_BITMAP,
-        SEGMENT_SIZE, SEGMENT_SLOT_FREE, claim_segment_bump_chunk, initialize_segment,
-        segment_base, segment_header, segment_remaining, segment_slot_view_at,
+        SEGMENT_COUNT, SEGMENT_HEADER_BYTES, SEGMENT_OWNED_BITMAP, SEGMENT_SIZE, SEGMENT_SLOT_FREE,
+        claim_segment_bump_chunk, initialize_segment, segment_base, segment_descriptor,
+        segment_header, segment_remaining, segment_slot_view_at,
     };
     use super::*;
     use std::sync::{Arc, Barrier};
@@ -233,7 +244,8 @@ pub mod tests {
         assert_eq!(&permissions(first.user_base)[..3], "rw-");
         assert_eq!(&permissions(base + SEGMENT_SIZE - 1)[..3], "---");
         assert_eq!(
-            SEGMENT_DESCRIPTORS[index]
+            segment_descriptor(index)
+                .unwrap()
                 .writable
                 .ready
                 .load(Ordering::Acquire),
@@ -271,7 +283,8 @@ pub mod tests {
             }
         }
         assert_eq!(
-            SEGMENT_DESCRIPTORS[index]
+            segment_descriptor(index)
+                .unwrap()
                 .writable
                 .ready
                 .load(Ordering::Acquire),

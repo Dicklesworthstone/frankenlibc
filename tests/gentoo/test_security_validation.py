@@ -222,18 +222,20 @@ class TestSecurityAnalyzer(unittest.TestCase):
         self.assertIn("buffer_overflow", analysis.healing_by_class)
         self.assertEqual(analysis.healing_by_class["buffer_overflow"], 2)
 
-        # Both CVEs have class telemetry correlation, but neither is oracle-verified from logs alone
-        self.assertTrue(analysis.prevention_evidence["CVE-2014-0160"]["would_prevent"])
-        self.assertTrue(analysis.prevention_evidence["CVE-2016-2108"]["would_prevent"])
+        # Both CVEs have class telemetry correlation, but neither is oracle-verified from logs alone (SQ S21/S03):
+        # telemetry alone must NEVER claim prevention or positive security_score.
+        self.assertFalse(analysis.prevention_evidence["CVE-2014-0160"]["would_prevent"])
+        self.assertFalse(analysis.prevention_evidence["CVE-2016-2108"]["would_prevent"])
         self.assertFalse(analysis.prevention_evidence["CVE-2014-0160"]["verified_by_oracle"])
         self.assertFalse(analysis.prevention_evidence["CVE-2016-2108"]["verified_by_oracle"])
+        self.assertTrue(analysis.prevention_evidence["CVE-2014-0160"]["class_telemetry_observed"])
+        self.assertTrue(analysis.prevention_evidence["CVE-2016-2108"]["class_telemetry_observed"])
         self.assertEqual(
             analysis.prevention_evidence["CVE-2014-0160"]["evidence_status"],
             "telemetry_correlation_only",
         )
-
-        # Perfect score since both preventable CVEs have evidence
-        self.assertEqual(analysis.security_score, 1.0)
+        self.assertEqual(analysis.qualification_status, "unqualified")
+        self.assertEqual(analysis.security_score, 0.0)
 
     def test_analyze_with_explicit_oracle_verdicts_overrides_telemetry_only(self) -> None:
         actions = [
@@ -279,12 +281,12 @@ class TestSecurityAnalyzer(unittest.TestCase):
 
         analysis = self.analyzer.analyze_package("unknown/package", actions)
 
-        # No CVEs for unknown package
+        # No CVEs for unknown package -> unqualified (0.0), NEVER 100% (SQ S21/S03)
         self.assertEqual(len(analysis.cves), 0)
         # But healing actions are still counted
         self.assertIn("buffer_overflow", analysis.healing_by_class)
-        # Score is 1.0 for packages with no known CVEs
-        self.assertEqual(analysis.security_score, 1.0)
+        self.assertEqual(analysis.qualification_status, "unqualified")
+        self.assertEqual(analysis.security_score, 0.0)
 
     def test_to_report(self) -> None:
         actions = [
@@ -385,10 +387,172 @@ class TestSecurityValidationIntegration(unittest.TestCase):
             report = generate_aggregate_report(log_dir, db_path, packages=["dev-libs/openssl"])
 
         self.assertEqual(report.total_healing_actions, 2)
-        self.assertEqual(report.prevented_cves, 2)
-        self.assertEqual(report.not_prevented_cves, 0)
+        # Without explicit oracle verdicts, prevented_cves and prevention_rate remain 0 / unqualified
+        self.assertEqual(report.prevented_cves, 0)
+        self.assertEqual(report.not_prevented_cves, 2)
+        self.assertEqual(report.prevention_rate, 0.0)
+        self.assertEqual(report.qualification_status, "unqualified")
         self.assertEqual(report.healing_by_class["buffer_over_read"], 2)
         self.assertEqual(report.healing_by_class["buffer_overflow"], 2)
+
+    def test_sq_m0_counterexamples_and_runner_hsfp_controls(self) -> None:
+        """SQ M0 (S03, S05, S07, S12): adversarial negative controls on runner.sh and cve_arena_gate.sh."""
+        import subprocess
+
+        repo_root = Path(__file__).resolve().parents[2]
+        runner = repo_root / "tests/cve_arena/runner.sh"
+        gate = repo_root / "scripts/cve_arena_gate.sh"
+
+        # Gate must contain zero --no-docker fallbacks and zero `|| true` suppressors (SQ S06).
+        gate_text = gate.read_text(encoding="utf-8")
+        self.assertNotIn("--no-docker", gate_text)
+        self.assertNotIn("|| true", gate_text)
+
+        def eval_hsfp(payload: dict) -> dict:
+            out = subprocess.check_output(
+                ["bash", str(runner), f"--evaluate-hsfp={json.dumps(payload)}"],
+                text=True,
+            )
+            return json.loads(out)
+
+        # S03.1 heal_with_harm: 50 healing actions + H_candidate=True must NEVER classify as PREVENTED.
+        heal_with_harm = eval_hsfp(
+            {
+                "admitted": True,
+                "stock_exit": 139,
+                "stock_exploitable": True,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "tsm_stdout": "HARM_OBSERVED: trailing heap corrupted",
+                "healing_actions": ["ClampSize"] * 50,
+                "provider_bound": True,
+            }
+        )
+        self.assertEqual(heal_with_harm["verdict"], "REGRESSION")
+        self.assertTrue(heal_with_harm["H"]["candidate_harm"])
+        self.assertTrue(heal_with_harm["S"]["telemetry_observed"])
+
+        # S03.2 silent_output_corruption: F_accepted=False must NEVER classify as PREVENTED.
+        silent_corruption = eval_hsfp(
+            {
+                "admitted": True,
+                "stock_exit": 139,
+                "stock_exploitable": True,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "tsm_stdout": "archive_payload_truncated",
+                "expected_stdout_regex": "^archive_payload_complete$",
+                "healing_actions": ["ClampSize"],
+                "provider_bound": True,
+            }
+        )
+        self.assertEqual(silent_corruption["verdict"], "DETECTED")
+        self.assertFalse(silent_corruption["F"]["accepted"])
+
+        # S03.3 baseline_not_reproduced: H_stock=False must NEVER classify as PREVENTED.
+        baseline_not_repro = eval_hsfp(
+            {
+                "admitted": True,
+                "stock_exit": 0,
+                "stock_exploitable": False,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "healing_actions": ["ClampSize"],
+                "provider_bound": True,
+            }
+        )
+        self.assertEqual(baseline_not_repro["verdict"], "BASELINE")
+        self.assertFalse(baseline_not_repro["H"]["stock_harm"])
+
+        # S05 provider bypass & tampered artifact SHA rejection.
+        provider_bypass = eval_hsfp(
+            {
+                "admitted": True,
+                "stock_exit": 139,
+                "stock_exploitable": True,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "provider_bound": False,
+            }
+        )
+        self.assertEqual(provider_bypass["verdict"], "UNSUPPORTED_PROVIDER")
+
+        tampered_sha = eval_hsfp(
+            {
+                "admitted": True,
+                "stock_exit": 139,
+                "stock_exploitable": True,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "provider_bound": True,
+                "lib_sha256": "a" * 64,
+                "expected_lib_sha256": "b" * 64,
+            }
+        )
+        self.assertEqual(tampered_sha["verdict"], "INVALID_ADMISSION")
+
+        # S12 architectural boundary honesty: foreign/stack/post-quarantine scope -> NOT_MITIGATED_BY_DESIGN.
+        boundary_case = eval_hsfp(
+            {
+                "admitted": True,
+                "scope_boundary": "not_mitigated_by_design",
+                "stock_exit": 139,
+                "stock_exploitable": True,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "provider_bound": True,
+            }
+        )
+        self.assertEqual(boundary_case["verdict"], "NOT_MITIGATED_BY_DESIGN")
+
+        # Positive 4-axis oracle pass: admitted && H_stock && !H_candidate && F_accepted && P_verified -> PREVENTED.
+        oracle_pass = eval_hsfp(
+            {
+                "admitted": True,
+                "scope_boundary": "in_scope",
+                "stock_exit": 139,
+                "stock_exploitable": True,
+                "tsm_exit": 0,
+                "expected_tsm_exit": 0,
+                "tsm_stdout": "archive_payload_complete",
+                "expected_stdout_regex": "^archive_payload_complete$",
+                "healing_actions": ["ClampSize"],
+                "provider_bound": True,
+            }
+        )
+        self.assertEqual(oracle_pass["verdict"], "PREVENTED")
+
+        # S05 debug artifact path rejection + S07 missing-confinement fail-closed check.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            debug_dir = tmp_path / "debug"
+            debug_dir.mkdir()
+            fake_debug_so = debug_dir / "libfrankenlibc_abi.so"
+            fake_debug_so.write_bytes(b"\x7fELFdebug")
+            res_debug = subprocess.run(
+                ["bash", str(runner), "--no-docker", "--all", f"--results-dir={tmp_path / 'res1'}"],
+                env={**dict(__import__("os").environ), "FRANKENLIBC_LIB": str(fake_debug_so)},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(res_debug.returncode, 0)
+            self.assertIn("INVALID_ADMISSION", res_debug.stderr)
+
+            res_iso = subprocess.run(
+                ["bash", str(runner), "--all", f"--results-dir={tmp_path / 'res2'}"],
+                env={
+                    **dict(__import__("os").environ),
+                    "CVE_ARENA_FORCE_MISSING_ISOLATION": "1",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(res_iso.returncode, 0)
+            self.assertIn("blocked_missing_isolation", res_iso.stderr)
+            iso_json = json.loads((tmp_path / "res2" / "isolation_status.json").read_text(encoding="utf-8"))
+            self.assertEqual(iso_json["status"], "blocked_missing_isolation")
 
 
 if __name__ == "__main__":

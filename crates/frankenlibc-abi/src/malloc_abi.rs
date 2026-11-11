@@ -121,7 +121,7 @@ struct AllocatorReentrySlot {
     /// `fallback_table_entered_on_this_thread`.
     in_fallback_table: AtomicBool,
     /// Set (by this thread only) while `StringMembraneGuard` is active on this
-    /// thread, avoiding a separate `thread_local!` lookup on entry and drop.
+    /// thread, avoiding a separate TLS macro lookup on entry and drop.
     #[cfg(not(feature = "owned-tls-cache"))]
     string_membrane_active: AtomicBool,
     /// Stack address of the innermost user signal handler frame entered on
@@ -238,36 +238,241 @@ pub(crate) fn enter_signal_handler_alloc_scope() -> SignalHandlerAllocScope {
     SignalHandlerAllocScope { slot, previous }
 }
 
-static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
-    [const { AllocatorReentrySlot::new() }; ALLOCATOR_REENTRY_SLOT_COUNT];
+const DEMAND_WORD_SPAN: usize = 64 * segment_mapping::GRANULE;
+
+/// Demand-paged `PROT_NONE` virtual reservation upgraded in 64 KiB granules via
+/// `sys_mprotect(PROT_READ | PROT_WRITE)`.
+///
+/// Linux `may_expand_vm` charges private writable VMAs (including static `.bss`)
+/// immediately against `RLIMIT_DATA`, whereas `PROT_NONE` reservations cost zero
+/// `RLIMIT_DATA` until individual granules are promoted. Base initialization is
+/// lock-free and fork-safe (`CAS(0 -> aligned)` with `sys_munmap` on race loss).
+struct DemandSlab<const WORDS: usize> {
+    base: AtomicUsize,
+    len: usize,
+    writable: [segment_mapping::WritablePages; WORDS],
+}
+
+impl<const WORDS: usize> DemandSlab<WORDS> {
+    const fn new(raw_len: usize) -> Self {
+        let len = raw_len.next_multiple_of(segment_mapping::GRANULE);
+        assert!(len > 0 && len <= WORDS * DEMAND_WORD_SPAN);
+        Self {
+            base: AtomicUsize::new(0),
+            len,
+            writable: [const { segment_mapping::WritablePages::new() }; WORDS],
+        }
+    }
+
+    #[inline]
+    fn base_if_ready(&self) -> Option<usize> {
+        let base = self.base.load(Ordering::Acquire);
+        if base == 0 { None } else { Some(base) }
+    }
+
+    #[cold]
+    fn ensure_base(&self) -> Option<usize> {
+        if let Some(base) = self.base_if_ready() {
+            return Some(base);
+        }
+        let reserve_len = self.len.checked_add(segment_mapping::GRANULE)?;
+        // SAFETY: raw anonymous `PROT_NONE` reservation cannot recurse into libc.
+        let raw = unsafe {
+            raw_syscall::sys_mmap(
+                std::ptr::null_mut(),
+                reserve_len,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        }
+        .ok()? as usize;
+        let aligned = (raw + segment_mapping::GRANULE - 1) & !(segment_mapping::GRANULE - 1);
+        match self
+            .base
+            .compare_exchange(0, aligned, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => {
+                if aligned > raw {
+                    // SAFETY: trimming unused head slack outside `[aligned, aligned + len)`.
+                    let _ = unsafe { raw_syscall::sys_munmap(raw as *mut u8, aligned - raw) };
+                }
+                let end = aligned + self.len;
+                let raw_end = raw + reserve_len;
+                if raw_end > end {
+                    // SAFETY: trimming unused tail slack outside `[aligned, aligned + len)`.
+                    let _ = unsafe { raw_syscall::sys_munmap(end as *mut u8, raw_end - end) };
+                }
+                Some(aligned)
+            }
+            Err(winner) => {
+                // SAFETY: another thread published first; discard our private reservation.
+                let _ = unsafe { raw_syscall::sys_munmap(raw as *mut u8, reserve_len) };
+                Some(winner)
+            }
+        }
+    }
+
+    /// Returns `Some(base)` iff `[start, end)` has already been promoted RW.
+    /// Never faults or issues a syscall; unwritten granules are provably all-zero.
+    #[inline]
+    fn writable_base_if_ready(&self, start: usize, end: usize) -> Option<usize> {
+        if start >= end || end > self.len {
+            return None;
+        }
+        let base = self.base_if_ready()?;
+        let first_word = start / DEMAND_WORD_SPAN;
+        let last_word = (end - 1) / DEMAND_WORD_SPAN;
+        for w in first_word..=last_word {
+            let w_offset = w * DEMAND_WORD_SPAN;
+            let w_len = (self.len - w_offset).min(DEMAND_WORD_SPAN);
+            let local_start = start.saturating_sub(w_offset);
+            let local_end = (end - w_offset).min(w_len);
+            if !self.writable[w].is_ready(w_len, local_start, local_end) {
+                return None;
+            }
+        }
+        Some(base)
+    }
+
+    #[inline]
+    fn ensure_writable(&self, start: usize, end: usize) -> Option<usize> {
+        if let Some(base) = self.writable_base_if_ready(start, end) {
+            return Some(base);
+        }
+        self.ensure_writable_slow(start, end)
+    }
+
+    #[cold]
+    fn ensure_writable_slow(&self, start: usize, end: usize) -> Option<usize> {
+        if start >= end || end > self.len {
+            return None;
+        }
+        let base = self.ensure_base()?;
+        let first_word = start / DEMAND_WORD_SPAN;
+        let last_word = (end - 1) / DEMAND_WORD_SPAN;
+        for w in first_word..=last_word {
+            let w_offset = w * DEMAND_WORD_SPAN;
+            let w_len = (self.len - w_offset).min(DEMAND_WORD_SPAN);
+            let local_start = start.saturating_sub(w_offset);
+            let local_end = (end - w_offset).min(w_len);
+            // SAFETY: `[base + w_offset, base + w_offset + w_len)` is an owned,
+            // GRANULE-aligned sub-reservation whose permissions only increase.
+            if !unsafe { self.writable[w].enable(base + w_offset, w_len, local_start, local_end) } {
+                return None;
+            }
+        }
+        Some(base)
+    }
+}
+
+const REENTRY_SLOTS_BYTES: usize =
+    ALLOCATOR_REENTRY_SLOT_COUNT * std::mem::size_of::<AllocatorReentrySlot>();
+const REENTRY_COMPACT_GRANULE_SLOTS: usize = 16;
+const _: () = assert!(
+    REENTRY_COMPACT_GRANULE_SLOTS * std::mem::size_of::<AllocatorReentrySlot>()
+        <= segment_mapping::GRANULE
+);
+
+/// Primary inline reentry slots (`16 * 3,808 B = 59.5 KiB` `.bss`, demand-paged at 4 KiB)
+/// so processes with <= 16 concurrent threads claim a slot with zero `mmap`/`mprotect` syscalls.
+static PRIMARY_REENTRY_SLOTS: [AllocatorReentrySlot; REENTRY_COMPACT_GRANULE_SLOTS] =
+    [const { AllocatorReentrySlot::new() }; REENTRY_COMPACT_GRANULE_SLOTS];
+static REENTRY_SLOTS_SLAB: DemandSlab<4> = DemandSlab::new(REENTRY_SLOTS_BYTES);
+/// Single static fallback slot used only if `REENTRY_SLOTS_SLAB` cannot map under
+/// extreme pre-existing `RLIMIT_AS` exhaustion.
+static BOOTSTRAP_REENTRY_SLOT: AllocatorReentrySlot = AllocatorReentrySlot::new();
+static BOOTSTRAP_SLOT_CLAIMED: AtomicBool = AtomicBool::new(false);
+
+/// Raw ELF TLS pointer (`-Cllvm-args=-enable-tlsdesc`, zero `Drop` glue) caching
+/// the current thread's claimed `AllocatorReentrySlot` address. Safe during
+/// pthread TLS destructor teardown because no `__cxa_thread_atexit_impl` hook is
+/// registered and the word lives directly in the TCB block.
+#[cfg(not(feature = "owned-tls-cache"))]
+#[thread_local]
+static TLS_REENTRY_SLOT_PTR: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+fn reentry_slot_if_ready(index: usize) -> Option<&'static AllocatorReentrySlot> {
+    if let Some(slot) = PRIMARY_REENTRY_SLOTS.get(index) {
+        return Some(slot);
+    }
+    if index >= ALLOCATOR_REENTRY_SLOT_COUNT {
+        return None;
+    }
+    let start = index * std::mem::size_of::<AllocatorReentrySlot>();
+    let end = start + std::mem::size_of::<AllocatorReentrySlot>();
+    let base = REENTRY_SLOTS_SLAB.writable_base_if_ready(start, end)?;
+    // SAFETY: `start..end` is verified writable and zero-initialized (`AllocatorReentrySlot::new()`).
+    Some(unsafe { &*((base + start) as *const AllocatorReentrySlot) })
+}
+
+#[inline]
+fn ensure_reentry_slot(index: usize) -> Option<&'static AllocatorReentrySlot> {
+    if let Some(slot) = PRIMARY_REENTRY_SLOTS.get(index) {
+        return Some(slot);
+    }
+    if index >= ALLOCATOR_REENTRY_SLOT_COUNT {
+        return None;
+    }
+    let start = index * std::mem::size_of::<AllocatorReentrySlot>();
+    let end = start + std::mem::size_of::<AllocatorReentrySlot>();
+    let base = REENTRY_SLOTS_SLAB.ensure_writable(start, end)?;
+    // SAFETY: `start..end` is promoted RW in our immortal demand-zero slab, and
+    // all-zero bytes equal `AllocatorReentrySlot::new()`.
+    Some(unsafe { &*((base + start) as *const AllocatorReentrySlot) })
+}
+
+#[inline]
+fn reentry_slot_index(slot: &AllocatorReentrySlot) -> usize {
+    let slot_addr = slot as *const AllocatorReentrySlot as usize;
+    let primary_base = PRIMARY_REENTRY_SLOTS.as_ptr() as usize;
+    let primary_end = primary_base + std::mem::size_of_val(&PRIMARY_REENTRY_SLOTS);
+    if (primary_base..primary_end).contains(&slot_addr) {
+        return (slot_addr - primary_base) / std::mem::size_of::<AllocatorReentrySlot>();
+    }
+    if std::ptr::eq(slot, &BOOTSTRAP_REENTRY_SLOT) {
+        return ALLOCATOR_REENTRY_SLOT_COUNT;
+    }
+    let base = REENTRY_SLOTS_SLAB.base.load(Ordering::Relaxed);
+    if base == 0 {
+        return ALLOCATOR_REENTRY_SLOT_COUNT;
+    }
+    (slot_addr - base) / std::mem::size_of::<AllocatorReentrySlot>()
+}
 
 /// One bit per slot that has ever been claimed (by thread key or by tid); bits
 /// are never cleared. Only a claimed slot can have its stats lock taken, so
 /// walks that must visit every possibly-locked slot use this instead of
-/// touching all of `ALLOCATOR_REENTRY_SLOTS`: the table is ~7.4 MiB of
-/// initialized data, and storing to every slot in a fork child dirtied ~1800
-/// pages per fork (12 ms per fork+exit+wait vs glibc 0.37 ms).
+/// touching unclaimed granules.
 static ALLOCATOR_REENTRY_SLOTS_CLAIMED: [AtomicU64; ALLOCATOR_REENTRY_SLOT_COUNT / 64] =
     [const { AtomicU64::new(0) }; ALLOCATOR_REENTRY_SLOT_COUNT / 64];
 
-/// Record that `slot` has been claimed.
+/// Record that `slot` at `index` has been claimed.
 #[inline]
-fn note_slot_claimed(slot: &AllocatorReentrySlot) {
-    let index = (slot as *const AllocatorReentrySlot as usize
-        - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
-        / std::mem::size_of::<AllocatorReentrySlot>();
-    ALLOCATOR_REENTRY_SLOTS_CLAIMED[index / 64].fetch_or(1 << (index % 64), Ordering::Release);
+fn note_slot_claimed_index(index: usize) {
+    if index < ALLOCATOR_REENTRY_SLOT_COUNT {
+        ALLOCATOR_REENTRY_SLOTS_CLAIMED[index / 64].fetch_or(1 << (index % 64), Ordering::Release);
+    } else {
+        BOOTSTRAP_SLOT_CLAIMED.store(true, Ordering::Release);
+    }
 }
 
 /// Call `f` on every slot that has ever been claimed.
 #[inline]
 fn for_each_claimed_slot(mut f: impl FnMut(&'static AllocatorReentrySlot)) {
+    if BOOTSTRAP_SLOT_CLAIMED.load(Ordering::Acquire) {
+        f(&BOOTSTRAP_REENTRY_SLOT);
+    }
     for (word_index, word) in ALLOCATOR_REENTRY_SLOTS_CLAIMED.iter().enumerate() {
         let mut bits = word.load(Ordering::Acquire);
         while bits != 0 {
             let bit = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            f(&ALLOCATOR_REENTRY_SLOTS[word_index * 64 + bit]);
+            if let Some(slot) = reentry_slot_if_ready(word_index * 64 + bit) {
+                f(slot);
+            }
         }
     }
 }
@@ -364,9 +569,16 @@ fn note_thread_key(key: usize) {
 /// thread that inherits a dead thread's TCB inherits its idle slot and local caches.
 /// Unlike tids, TCBs are recycled by thread churn, which keeps the table from filling.
 fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentrySlot> {
-    let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
-    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
-        let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
+    let hash = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87);
+    // Probe Granule 0 (first 16 slots = 60,928 B <= 64 KiB) first so processes
+    // with <= 16 concurrent threads only ever promote a single 64 KiB granule
+    // while still recycling dead TCB addresses deterministically.
+    let compact_start = (hash >> 60) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+    for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
+        let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+        let Some(slot) = ensure_reentry_slot(idx) else {
+            break;
+        };
         match slot.tid.load(Ordering::Acquire) {
             KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => {
                 return Some(slot);
@@ -376,14 +588,52 @@ fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentr
                 .compare_exchange(0, KEY_CLAIMED_TID, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok() =>
             {
-                note_slot_claimed(slot);
+                note_slot_claimed_index(idx);
                 bind_slot_to_thread_key(slot, Some(key));
                 return Some(slot);
             }
             _ => {}
         }
     }
-    None
+
+    let start = hash >> 52;
+    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
+        let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
+        let Some(slot) = ensure_reentry_slot(idx) else {
+            break;
+        };
+        match slot.tid.load(Ordering::Acquire) {
+            KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => {
+                return Some(slot);
+            }
+            0 if slot
+                .tid
+                .compare_exchange(0, KEY_CLAIMED_TID, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok() =>
+            {
+                note_slot_claimed_index(idx);
+                bind_slot_to_thread_key(slot, Some(key));
+                return Some(slot);
+            }
+            _ => {}
+        }
+    }
+
+    // Extreme RLIMIT_AS fallback when anonymous slab mapping is denied.
+    let slot = &BOOTSTRAP_REENTRY_SLOT;
+    match slot.tid.load(Ordering::Acquire) {
+        KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => Some(slot),
+        0 if slot
+            .tid
+            .compare_exchange(0, KEY_CLAIMED_TID, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok() =>
+        {
+            note_slot_claimed_index(ALLOCATOR_REENTRY_SLOT_COUNT);
+            bind_slot_to_thread_key(slot, Some(key));
+            Some(slot)
+        }
+        _ => None,
+    }
 }
 
 #[inline]
@@ -469,9 +719,13 @@ fn allocator_reentry_slot_for_tid(
     if tid <= 0 {
         return None;
     }
-    let start = allocator_reentry_slot_start(tid);
-    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
-        let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
+    let compact_start =
+        (tid as usize).wrapping_mul(0x9e37_79b1_85eb_ca87) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+    for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
+        let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+        let Some(slot) = ensure_reentry_slot(idx) else {
+            break;
+        };
         let observed = slot.tid.load(Ordering::Acquire);
         if observed == tid {
             bind_slot_to_thread_key(slot, thread_key);
@@ -483,7 +737,7 @@ fn allocator_reentry_slot_for_tid(
                 .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
             {
                 Ok(_) => {
-                    note_slot_claimed(slot);
+                    note_slot_claimed_index(idx);
                     bind_slot_to_thread_key(slot, thread_key);
                     return Some(slot);
                 }
@@ -495,41 +749,79 @@ fn allocator_reentry_slot_for_tid(
             }
         }
     }
+
+    let start = allocator_reentry_slot_start(tid);
+    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
+        let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
+        let Some(slot) = ensure_reentry_slot(idx) else {
+            break;
+        };
+        let observed = slot.tid.load(Ordering::Acquire);
+        if observed == tid {
+            bind_slot_to_thread_key(slot, thread_key);
+            return Some(slot);
+        }
+        if observed == 0 {
+            match slot
+                .tid
+                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => {
+                    note_slot_claimed_index(idx);
+                    bind_slot_to_thread_key(slot, thread_key);
+                    return Some(slot);
+                }
+                Err(actual) if actual == tid => {
+                    bind_slot_to_thread_key(slot, thread_key);
+                    return Some(slot);
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    let slot = &BOOTSTRAP_REENTRY_SLOT;
+    let observed = slot.tid.load(Ordering::Acquire);
+    if observed == tid {
+        bind_slot_to_thread_key(slot, thread_key);
+        return Some(slot);
+    }
+    if observed == 0
+        && slot
+            .tid
+            .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        note_slot_claimed_index(ALLOCATOR_REENTRY_SLOT_COUNT);
+        bind_slot_to_thread_key(slot, thread_key);
+        return Some(slot);
+    }
     None
 }
 
 /// Get the reentry slot for the current thread, without a syscall unless FrankenLibC's
 /// own thread backend is in use.
-///
-/// Keyed path (the normal case): the slot is found by the TCB self pointer, which is
-/// unique among live threads. A global last-thread cache short-circuits the probe while
-/// single-threaded. This used to cost a `gettid` syscall per allocation once a second
-/// thread existed: multi-threaded malloc+free ran 36x (1 worker) to 490x (4 workers)
-/// slower than glibc (bd-rc0923-epic-eeuy4f.26).
-///
-/// Tid path: when no TCB is set up yet, or after `note_native_thread_backend`, the slot
-/// is keyed by kernel tid (one syscall). The single-threaded cache still applies, and is
-/// bypassed once `MULTI_THREADED` latches, since a recycled TCB can then give a new
-/// thread an exited thread's key (bd-35hjg.3.1).
 #[inline(always)]
 fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
     let keyed = thread_key.is_some() && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
 
-    // Once the current thread has claimed its TCB-keyed slot, the normal
-    // glibc-backed thread path is a stable TCB-key lookup. The first probe is
-    // overwhelmingly the hit, in both single-threaded and multi-threaded
-    // processes; keeping it behind `current_allocator_reentry_slot_slow` made
-    // every hardened string call pay an out-of-line call. Any unclaimed key
-    // (including the first call on a new thread) misses this check and goes
-    // through `current_allocator_reentry_slot_slow` -> `note_thread_key`.
+    // Direct TLS-descriptor fast path: once a thread with a valid TCB (`%fs:0 != 0`)
+    // has claimed its slot, `TLS_REENTRY_SLOT_PTR` holds the static slot address
+    // directly (zero hash/index arithmetic and zero `Drop` glue during TLS teardown).
+    #[cfg(not(feature = "owned-tls-cache"))]
     if keyed && let Some(key) = thread_key {
-        let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
-        let slot = &ALLOCATOR_REENTRY_SLOTS[start & ALLOCATOR_REENTRY_SLOT_MASK];
-        if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
-            && slot.thread_key.load(Ordering::Acquire) == key
-        {
-            return Some(slot);
+        let cached_ptr = TLS_REENTRY_SLOT_PTR.load(Ordering::Relaxed);
+        if cached_ptr != 0 {
+            // SAFETY: `TLS_REENTRY_SLOT_PTR` only ever stores static-lifetime
+            // `AllocatorReentrySlot` addresses from `REENTRY_SLOTS_SLAB` or
+            // `BOOTSTRAP_REENTRY_SLOT`.
+            let slot = unsafe { &*(cached_ptr as *const AllocatorReentrySlot) };
+            if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+                && slot.thread_key.load(Ordering::Acquire) == key
+            {
+                return Some(slot);
+            }
         }
     }
 
@@ -541,32 +833,37 @@ fn current_allocator_reentry_slot_slow(
     thread_key: Option<usize>,
     keyed: bool,
 ) -> Option<&'static AllocatorReentrySlot> {
-    // The global cache is written only before multi-threading latches. After
-    // that point it names at most one historical thread, so nearly every
-    // allocator call from every other worker paid a doomed large-slot probe
-    // before doing the keyed lookup below. Keep the race-safe validation for a
-    // call that observed the old single-threaded state while another thread was
-    // latching it, but skip the cache entirely in the steady multi-threaded
-    // state.
     if !MULTI_THREADED.load(Ordering::Relaxed) {
         let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
         if cached != 0 {
             let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
-            if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
-                let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
-                if slot_matches_thread_key(slot, thread_key)
-                    && (!MULTI_THREADED.load(Ordering::Relaxed)
-                        || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
-                {
-                    return Some(slot);
+            let maybe_slot = if cached_slot_idx == ALLOCATOR_REENTRY_SLOT_COUNT {
+                BOOTSTRAP_SLOT_CLAIMED
+                    .load(Ordering::Acquire)
+                    .then_some(&BOOTSTRAP_REENTRY_SLOT)
+            } else {
+                reentry_slot_if_ready(cached_slot_idx)
+            };
+            if let Some(slot) = maybe_slot
+                && slot_matches_thread_key(slot, thread_key)
+                && (!MULTI_THREADED.load(Ordering::Relaxed)
+                    || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
+            {
+                #[cfg(not(feature = "owned-tls-cache"))]
+                if keyed {
+                    TLS_REENTRY_SLOT_PTR.store(slot as *const _ as usize, Ordering::Relaxed);
                 }
+                return Some(slot);
             }
         }
     }
 
     let slot = if let (true, Some(key)) = (keyed, thread_key) {
         note_thread_key(key);
-        allocator_reentry_slot_for_key(key)?
+        let claimed = allocator_reentry_slot_for_key(key)?;
+        #[cfg(not(feature = "owned-tls-cache"))]
+        TLS_REENTRY_SLOT_PTR.store(claimed as *const _ as usize, Ordering::Relaxed);
+        claimed
     } else {
         let tid = raw_syscall::sys_gettid();
         if tid <= 0 {
@@ -581,8 +878,7 @@ fn current_allocator_reentry_slot_slow(
     // Only while single-threaded: once several threads allocate, a shared last-thread
     // word would bounce between their caches on every miss.
     if !MULTI_THREADED.load(Ordering::Relaxed) {
-        let slot_idx = (slot as *const _ as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
-            / std::mem::size_of::<AllocatorReentrySlot>();
+        let slot_idx = reentry_slot_index(slot);
         LAST_THREAD_CACHE.store(slot_idx as u64 | (1 << 32), Ordering::Relaxed);
     }
     Some(slot)
@@ -624,31 +920,34 @@ fn enter_native_reentry_guard_for_slot(
 }
 
 static BUMP_POS: AtomicUsize = AtomicUsize::new(0);
+static EARLY_BUMP_POS: AtomicUsize = AtomicUsize::new(0);
+const EARLY_BUMP_SIZE: usize = 16 * 1024;
 /// Standalone builds have no host allocator: the bump heap is all there is.
 #[cfg(feature = "standalone")]
 const BUMP_SIZE: usize = 256 * 1024 * 1024;
 /// Preloaded, the bump heap only serves allocations made before the host
 /// allocator resolves or re-entrantly inside it: 0 bytes for echo, sort, git,
-/// perl, bash, python3 and claude in strict mode, 52 KiB in hardened
-/// (measured 2026-10-04); anything beyond spills into reclaimable overflow
-/// mappings. Its size is address space every process pays for: at 256 MiB the
-/// library alone exceeded the `ulimit -v` budgets programs and test suites set
-/// (coreutils cut-huge-range, printf-surprise), so nothing could even load.
+/// perl, bash, python3 and claude in strict mode, ~52 KiB in hardened;
+/// anything beyond spills into reclaimable overflow mappings. Backed by a
+/// demand-paged `PROT_NONE` slab so untouched capacity costs 0 `.bss` and 0
+/// `RLIMIT_DATA`.
 #[cfg(not(feature = "standalone"))]
 const BUMP_SIZE: usize = 8 * 1024 * 1024;
+const BUMP_SLAB_WORDS: usize = BUMP_SIZE
+    .next_multiple_of(segment_mapping::GRANULE)
+    .div_ceil(DEMAND_WORD_SPAN);
 const BUMP_ALIGN: usize = 16;
 const BUMP_HEADER_WORDS: usize = 2;
 const BUMP_HEADER_SIZE: usize = std::mem::size_of::<usize>() * BUMP_HEADER_WORDS;
 const BUMP_MAGIC: usize = 0x4652_414E_4B42_554D;
 
-/// Bump heap uses `UnsafeCell` to avoid mutable-static references
-/// (forbidden in Rust 2024 edition).  Access is synchronized via
-/// `BUMP_POS` atomic CAS — only one thread can advance the position.
 #[repr(align(16))]
-struct BumpHeap(std::cell::UnsafeCell<[u8; BUMP_SIZE]>);
-// SAFETY: concurrent access is serialized by BUMP_POS atomic CAS.
-unsafe impl Sync for BumpHeap {}
-static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE]));
+struct EarlyBumpHeap(std::cell::UnsafeCell<[u8; EARLY_BUMP_SIZE]>);
+// SAFETY: concurrent access is serialized by EARLY_BUMP_POS atomic CAS.
+unsafe impl Sync for EarlyBumpHeap {}
+static EARLY_BUMP_HEAP: EarlyBumpHeap =
+    EarlyBumpHeap(std::cell::UnsafeCell::new([0u8; EARLY_BUMP_SIZE]));
+static BUMP_HEAP_SLAB: DemandSlab<BUMP_SLAB_WORDS> = DemandSlab::new(BUMP_SIZE);
 
 // ---------------------------------------------------------------------------
 // Strict-mode small-allocation segment heap
@@ -834,17 +1133,16 @@ impl SegmentSlotMeta {
     }
 }
 
-struct SegmentDescriptor {
+pub(super) struct SegmentDescriptor {
     // Only chunk refills consult this permission bitmap.
     writable: segment_mapping::WritablePages,
     meta_base: AtomicUsize,
     // Threads claim disjoint fixed-size ranges only when their private cursor
     // empties.  The atomic never participates in the warmed depth-one cycle.
     next_unused_slot: AtomicU32,
-    // Local magazines own the common free path.  Overflow/reentrant frees set
-    // one bit here; a local miss claims a bit with CAS.  No pointer links live
-    // in per-slot metadata and no spill word is touched on depth-one churn.
-    spill: [AtomicU64; SEGMENT_SPILL_WORDS],
+    // Set once at least one spill bit has been published into `SEGMENT_SPILL_SLAB`
+    // for this segment, keeping both `.bss` (1.5 KiB total) and cold `VmData` tiny.
+    has_spills: AtomicU32,
 }
 
 impl SegmentDescriptor {
@@ -853,13 +1151,27 @@ impl SegmentDescriptor {
             writable: segment_mapping::WritablePages::new(),
             meta_base: AtomicUsize::new(0),
             next_unused_slot: AtomicU32::new(0),
-            spill: [const { AtomicU64::new(0) }; SEGMENT_SPILL_WORDS],
+            has_spills: AtomicU32::new(0),
         }
     }
 }
 
 static SEGMENT_DESCRIPTORS: [SegmentDescriptor; SEGMENT_COUNT] =
     [const { SegmentDescriptor::new() }; SEGMENT_COUNT];
+
+const SEGMENT_SPILL_SEGMENT_BYTES: usize = SEGMENT_SPILL_WORDS * std::mem::size_of::<AtomicU64>();
+const SEGMENT_SPILL_TOTAL_BYTES: usize = SEGMENT_COUNT * SEGMENT_SPILL_SEGMENT_BYTES;
+static SEGMENT_SPILL_SLAB: DemandSlab<1> = DemandSlab::new(SEGMENT_SPILL_TOTAL_BYTES);
+
+#[inline]
+pub(super) fn segment_descriptor(index: usize) -> Option<&'static SegmentDescriptor> {
+    SEGMENT_DESCRIPTORS.get(index)
+}
+
+#[inline]
+fn ensure_segment_descriptor(index: usize) -> Option<&'static SegmentDescriptor> {
+    SEGMENT_DESCRIPTORS.get(index)
+}
 
 /// A retired slot cached by one thread for its next allocation in this class.
 ///
@@ -1218,7 +1530,7 @@ fn segment_slot_meta(
     if slot_index >= slot_count {
         return None;
     }
-    let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
+    let descriptor = segment_descriptor(segment_index)?;
     let meta_base = descriptor.meta_base.load(Ordering::Acquire);
     if meta_base == 0 {
         return None;
@@ -1344,51 +1656,38 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     if meta_bytes > SEGMENT_SIDECAR_STRIDE {
         return None;
     }
+    let descriptor = ensure_segment_descriptor(raw_index)?;
     // This segment's sidecar, in the arena reservation past the segments
     // themselves: private to the allocator and, like the reservation,
     // immortal.
     let meta_base = arena_base + SEGMENT_ARENA_SIZE + raw_index * SEGMENT_SIDECAR_STRIDE;
     // Every slot lookup in an owned segment may read its metadata, even
-    // when that slot has never been allocated. Enable the complete sidecar
-    // before publishing ownership, but leave unused payload inaccessible.
+    // when that slot has never been allocated. Enable only this segment's
+    // required `meta_bytes` (page-aligned on 4 KiB x86_64, granule-aligned
+    // elsewhere) rather than a 16 MiB 32-sidecar batch: Linux `may_expand_vm`
+    // charges private RW `mprotect` spans immediately against `RLIMIT_DATA`,
+    // so a 16 MiB batch broke `ulimit -d 10240` on the very first malloc.
     if SEGMENT_SIDECAR_WRITABLE.load(Ordering::Acquire) & (1u64 << raw_index) == 0 {
-        let batch_index = raw_index & !31;
-        let batch_base = arena_base + SEGMENT_ARENA_SIZE + batch_index * SEGMENT_SIDECAR_STRIDE;
-        let batch_bytes = 32 * SEGMENT_SIDECAR_STRIDE;
-        // Batch-enable 32 contiguous sidecars (16 MiB of demand-zero virtual
-        // reservation, 0 RSS until touched) in a single mprotect syscall so
-        // startup across ~20 size classes neither issues 20 mprotect syscalls
-        // nor splits the sidecar region into ~40 alternating RW/PROT_NONE VMAs
-        // that every subsequent fork() must duplicate. Fall back to the single
-        // segment's sidecar if a tight RLIMIT_DATA rejects the batch.
+        #[cfg(target_arch = "x86_64")]
+        const MIN_SIDE_PAGE: usize = 4096;
+        #[cfg(not(target_arch = "x86_64"))]
+        const MIN_SIDE_PAGE: usize = segment_mapping::GRANULE;
+        let meta_writable = meta_bytes.checked_next_multiple_of(MIN_SIDE_PAGE)?;
+        // SAFETY: this uniquely claimed, unpublished sidecar lies wholly inside
+        // our immortal reservation (`SEGMENT_SIDECAR_STRIDE` is 64 KiB-aligned).
+        // No libc trampoline or allocator is entered.
         if unsafe {
             raw_syscall::sys_mprotect(
-                batch_base as *mut u8,
-                batch_bytes,
+                meta_base as *mut u8,
+                meta_writable,
                 libc::PROT_READ | libc::PROT_WRITE,
             )
         }
-        .is_ok()
+        .is_err()
         {
-            SEGMENT_SIDECAR_WRITABLE
-                .fetch_or(u64::from(u32::MAX) << batch_index, Ordering::Release);
-        } else {
-            let meta_writable = meta_bytes.checked_next_multiple_of(segment_mapping::GRANULE)?;
-            // SAFETY: this uniquely claimed, unpublished sidecar lies wholly inside
-            // our immortal reservation. No libc trampoline or allocator is entered.
-            if unsafe {
-                raw_syscall::sys_mprotect(
-                    meta_base as *mut u8,
-                    meta_writable,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                )
-            }
-            .is_err()
-            {
-                return None;
-            }
-            SEGMENT_SIDECAR_WRITABLE.fetch_or(1u64 << raw_index, Ordering::Release);
+            return None;
         }
+        SEGMENT_SIDECAR_WRITABLE.fetch_or(1u64 << raw_index, Ordering::Release);
     }
     // The reservation is demand-zero, and an all-zero word IS
     // `SegmentSlotMeta::new()` (`requested_size` 0 = never used), so every slot
@@ -1414,7 +1713,6 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
         .store(slot_reciprocal, Ordering::Relaxed);
     header.slot_count.store(slot_count, Ordering::Release);
 
-    let descriptor = &SEGMENT_DESCRIPTORS[raw_index];
     descriptor.meta_base.store(meta_base, Ordering::Release);
     descriptor.next_unused_slot.store(0, Ordering::Relaxed);
     SEGMENT_OWNED_BITMAP.fetch_or(1u64 << raw_index, Ordering::Release);
@@ -1427,15 +1725,15 @@ fn claim_segment_bump_chunk(segment_index: usize, class_index: usize) -> Option<
     if header.class_index as usize != class_index {
         return None;
     }
-    let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
+    let descriptor = segment_descriptor(segment_index)?;
     loop {
         let start = descriptor.next_unused_slot.load(Ordering::Acquire);
         if start >= header.slot_count {
             return None;
         }
-        let end = start
-            .saturating_add(SEGMENT_BUMP_CHUNK)
-            .min(header.slot_count);
+        let chunk_slots = (segment_mapping::GRANULE / header.class_size as usize)
+            .clamp(1, SEGMENT_BUMP_CHUNK as usize) as u32;
+        let end = start.saturating_add(chunk_slots).min(header.slot_count);
         let base = segment_base(segment_index)?;
         let first_byte = SEGMENT_HEADER_BYTES + start as usize * header.class_size as usize;
         let end_byte = SEGMENT_HEADER_BYTES + end as usize * header.class_size as usize;
@@ -1572,14 +1870,24 @@ fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<Segment
 
 #[cold]
 fn spill_segment_slot(view: SegmentSlotView) {
-    let Some(descriptor) = SEGMENT_DESCRIPTORS.get(view.segment_index) else {
+    let Some(descriptor) = segment_descriptor(view.segment_index) else {
         return;
     };
     let word_index = view.slot_index as usize >> 6;
-    let Some(word) = descriptor.spill.get(word_index) else {
+    if word_index >= SEGMENT_SPILL_WORDS {
+        return;
+    }
+    let byte_offset = view.segment_index * SEGMENT_SPILL_SEGMENT_BYTES
+        + word_index * std::mem::size_of::<AtomicU64>();
+    let Some(base) = SEGMENT_SPILL_SLAB
+        .ensure_writable(byte_offset, byte_offset + std::mem::size_of::<AtomicU64>())
+    else {
         return;
     };
+    // SAFETY: `byte_offset..+8` is aligned and promoted RW in `SEGMENT_SPILL_SLAB`.
+    let word = unsafe { &*((base + byte_offset) as *const AtomicU64) };
     word.fetch_or(1u64 << (view.slot_index & 63), Ordering::Release);
+    descriptor.has_spills.store(1, Ordering::Release);
 }
 
 #[cold]
@@ -1595,12 +1903,24 @@ fn allocate_from_spill(class_index: usize, requested: usize, zeroed: bool) -> Op
         if header.class_index as usize != class_index {
             continue;
         }
-        let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
-        let word_count = (header.slot_count as usize).div_ceil(64);
+        let descriptor = segment_descriptor(segment_index)?;
+        if descriptor.has_spills.load(Ordering::Acquire) == 0 {
+            continue;
+        }
+        let word_count = (header.slot_count as usize)
+            .div_ceil(64)
+            .min(SEGMENT_SPILL_WORDS);
         for word_index in 0..word_count {
-            let Some(word) = descriptor.spill.get(word_index) else {
-                break;
+            let byte_offset = segment_index * SEGMENT_SPILL_SEGMENT_BYTES
+                + word_index * std::mem::size_of::<AtomicU64>();
+            let Some(base) = SEGMENT_SPILL_SLAB.writable_base_if_ready(
+                byte_offset,
+                byte_offset + std::mem::size_of::<AtomicU64>(),
+            ) else {
+                continue;
             };
+            // SAFETY: `byte_offset..+8` is aligned and verified writable in `SEGMENT_SPILL_SLAB`.
+            let word = unsafe { &*((base + byte_offset) as *const AtomicU64) };
             loop {
                 let observed = word.load(Ordering::Acquire);
                 if observed == 0 {
@@ -1991,7 +2311,7 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
         return Some(ptr);
     }
 
-    if let Some(pipeline) = crate::membrane_state::try_global_pipeline()
+    if let Some(pipeline) = crate::membrane_state::ready_pipeline()
         && let Some(slot) = pipeline.arena.lookup(ptr as usize)
     {
         // Arena allocations include a private header and cannot be passed to
@@ -2049,20 +2369,46 @@ pub(crate) fn finish_host_realloc_buffer(ptr: *mut c_void, capacity: usize) {
 unsafe fn bump_alloc(size: usize) -> *mut c_void {
     let request = size.max(1);
     let total = BUMP_HEADER_SIZE.saturating_add(request);
+    if total <= EARLY_BUMP_SIZE {
+        loop {
+            let pos = EARLY_BUMP_POS.load(Ordering::Relaxed);
+            let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
+            let new_pos = aligned_pos.saturating_add(total);
+            if new_pos > EARLY_BUMP_SIZE {
+                break;
+            }
+            if EARLY_BUMP_POS
+                .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                let base = EARLY_BUMP_HEAP.0.get().cast::<u8>();
+                // SAFETY: aligned_pos..new_pos is reserved in EARLY_BUMP_HEAP.
+                unsafe {
+                    let header = base.add(aligned_pos).cast::<usize>();
+                    header.write(BUMP_MAGIC);
+                    header.add(1).write(request);
+                    return header.add(BUMP_HEADER_WORDS).cast();
+                }
+            }
+        }
+    }
     loop {
         let pos = BUMP_POS.load(Ordering::Relaxed);
         let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
         let new_pos = aligned_pos.saturating_add(total);
         if new_pos > BUMP_SIZE {
-            // Static bump heap exhausted — create a reclaimable overflow mapping.
+            // Demand-paged bump slab exhausted — create a reclaimable overflow mapping.
             return unsafe { bump_alloc_overflow(request, BUMP_ALIGN) };
         }
+        let Some(base_addr) = BUMP_HEAP_SLAB.ensure_writable(aligned_pos, new_pos) else {
+            return unsafe { bump_alloc_overflow(request, BUMP_ALIGN) };
+        };
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
         {
-            let base = BUMP_HEAP.0.get().cast::<u8>();
-            // SAFETY: aligned_pos..new_pos is reserved for this allocation.
+            let base = base_addr as *mut u8;
+            // SAFETY: aligned_pos..new_pos is promoted RW and uniquely reserved.
             unsafe {
                 let header = base.add(aligned_pos).cast::<usize>();
                 header.write(BUMP_MAGIC);
@@ -2082,22 +2428,51 @@ unsafe fn bump_alloc_aligned(size: usize, alignment: usize) -> *mut c_void {
     let total = request
         .saturating_add(alignment)
         .saturating_add(BUMP_HEADER_SIZE);
+    if total <= EARLY_BUMP_SIZE {
+        loop {
+            let pos = EARLY_BUMP_POS.load(Ordering::Relaxed);
+            let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
+            let new_pos = aligned_pos.saturating_add(total);
+            if new_pos > EARLY_BUMP_SIZE {
+                break;
+            }
+            if EARLY_BUMP_POS
+                .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                let base = EARLY_BUMP_HEAP.0.get().cast::<u8>();
+                // SAFETY: aligned_pos..new_pos is reserved in EARLY_BUMP_HEAP.
+                unsafe {
+                    let reservation = base.add(aligned_pos) as usize;
+                    let user_addr =
+                        (reservation + BUMP_HEADER_SIZE + alignment - 1) & !(alignment - 1);
+                    let header = (user_addr - BUMP_HEADER_SIZE) as *mut usize;
+                    header.write(BUMP_MAGIC);
+                    header.add(1).write(request);
+                    return user_addr as *mut c_void;
+                }
+            }
+        }
+    }
     loop {
         let pos = BUMP_POS.load(Ordering::Relaxed);
         let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
         let new_pos = aligned_pos.saturating_add(total);
         if new_pos > BUMP_SIZE {
-            // Static bump heap exhausted — create a reclaimable overflow mapping.
+            // Demand-paged bump slab exhausted — create a reclaimable overflow mapping.
             // (bd-ummyux: this used to return NULL, while the unaligned sibling
             // returned an unmanaged mmap. Both now share one owned lifecycle.)
             return unsafe { bump_alloc_overflow(request, alignment) };
         }
+        let Some(base_addr) = BUMP_HEAP_SLAB.ensure_writable(aligned_pos, new_pos) else {
+            return unsafe { bump_alloc_overflow(request, alignment) };
+        };
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
         {
-            let base = BUMP_HEAP.0.get().cast::<u8>();
-            // SAFETY: aligned_pos..new_pos is reserved for this allocation.
+            let base = base_addr as *mut u8;
+            // SAFETY: aligned_pos..new_pos is promoted RW and uniquely reserved.
             // The header is written immediately before the aligned user
             // pointer so the existing bump metadata lookup still works.
             unsafe {
@@ -2198,19 +2573,33 @@ struct BumpMmapRecordSlot {
     requested: AtomicUsize,
 }
 
-impl BumpMmapRecordSlot {
-    const fn new() -> Self {
-        Self {
-            key: AtomicUsize::new(BUMP_MMAP_RECORD_EMPTY),
-            mapping_base: AtomicUsize::new(0),
-            mapping_len: AtomicUsize::new(0),
-            requested: AtomicUsize::new(0),
-        }
+const BUMP_MMAP_RECORDS_BYTES: usize =
+    BUMP_MMAP_RECORD_SLOTS * std::mem::size_of::<BumpMmapRecordSlot>();
+static BUMP_MMAP_RECORDS_SLAB: DemandSlab<1> = DemandSlab::new(BUMP_MMAP_RECORDS_BYTES);
+
+#[inline]
+fn bump_mmap_slot_if_ready(index: usize) -> Option<&'static BumpMmapRecordSlot> {
+    if index >= BUMP_MMAP_RECORD_SLOTS {
+        return None;
     }
+    let start = index * std::mem::size_of::<BumpMmapRecordSlot>();
+    let end = start + std::mem::size_of::<BumpMmapRecordSlot>();
+    let base = BUMP_MMAP_RECORDS_SLAB.writable_base_if_ready(start, end)?;
+    // SAFETY: `start..end` is verified writable and demand-zeroed (`BumpMmapRecordSlot::new()`).
+    Some(unsafe { &*((base + start) as *const BumpMmapRecordSlot) })
 }
 
-static BUMP_MMAP_RECORDS: [BumpMmapRecordSlot; BUMP_MMAP_RECORD_SLOTS] =
-    [const { BumpMmapRecordSlot::new() }; BUMP_MMAP_RECORD_SLOTS];
+#[cold]
+fn ensure_bump_mmap_slot(index: usize) -> Option<&'static BumpMmapRecordSlot> {
+    if index >= BUMP_MMAP_RECORD_SLOTS {
+        return None;
+    }
+    let start = index * std::mem::size_of::<BumpMmapRecordSlot>();
+    let end = start + std::mem::size_of::<BumpMmapRecordSlot>();
+    let base = BUMP_MMAP_RECORDS_SLAB.ensure_writable(start, end)?;
+    // SAFETY: `start..end` is promoted RW in our immortal demand-zero slab.
+    Some(unsafe { &*((base + start) as *const BumpMmapRecordSlot) })
+}
 /// One-way publication gate. It is a correctness gate, so readers use Acquire.
 static BUMP_OVERFLOW_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BUMP_MMAP_MAPPINGS_CREATED: AtomicUsize = AtomicUsize::new(0);
@@ -2317,7 +2706,9 @@ fn bump_mmap_register(
     }
     let start = bump_mmap_record_start(user_key);
     for probe in 0..BUMP_MMAP_RECORD_SLOTS {
-        let slot = &BUMP_MMAP_RECORDS[(start + probe) & BUMP_MMAP_RECORD_MASK];
+        let Some(slot) = ensure_bump_mmap_slot((start + probe) & BUMP_MMAP_RECORD_MASK) else {
+            return false;
+        };
         let observed = slot.key.load(Ordering::Acquire);
         if observed == user_key {
             return false;
@@ -2361,7 +2752,9 @@ fn bump_mmap_record(ptr: *mut c_void) -> Option<BumpMmapRecord> {
     let start = bump_mmap_record_start(key);
     for probe in 0..BUMP_MMAP_RECORD_SLOTS {
         let index = (start + probe) & BUMP_MMAP_RECORD_MASK;
-        let slot = &BUMP_MMAP_RECORDS[index];
+        let Some(slot) = bump_mmap_slot_if_ready(index) else {
+            return None;
+        };
         let observed = slot.key.load(Ordering::Acquire);
         if observed == key {
             return Some(BumpMmapRecord {
@@ -2387,15 +2780,25 @@ fn bump_mmap_remaining(addr: usize) -> Option<usize> {
     if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) {
         return None;
     }
-    for slot in BUMP_MMAP_RECORDS.iter() {
-        let base = slot.key.load(Ordering::Acquire);
-        if base <= BUMP_MMAP_RECORD_TOMBSTONE {
+    let slots_per_granule = segment_mapping::GRANULE / std::mem::size_of::<BumpMmapRecordSlot>();
+    for chunk_base in (0..BUMP_MMAP_RECORD_SLOTS).step_by(slots_per_granule) {
+        let chunk_end = (chunk_base + slots_per_granule).min(BUMP_MMAP_RECORD_SLOTS);
+        if bump_mmap_slot_if_ready(chunk_base).is_none() {
             continue;
         }
-        let requested = slot.requested.load(Ordering::Relaxed);
-        let end = base.checked_add(requested)?;
-        if base <= addr && addr < end {
-            return Some(end - addr);
+        for index in chunk_base..chunk_end {
+            let Some(slot) = bump_mmap_slot_if_ready(index) else {
+                break;
+            };
+            let base = slot.key.load(Ordering::Acquire);
+            if base <= BUMP_MMAP_RECORD_TOMBSTONE {
+                continue;
+            }
+            let requested = slot.requested.load(Ordering::Relaxed);
+            let end = base.checked_add(requested)?;
+            if base <= addr && addr < end {
+                return Some(end - addr);
+            }
         }
     }
     None
@@ -2410,7 +2813,7 @@ fn bump_mmap_remaining(addr: usize) -> Option<usize> {
 unsafe fn bump_mmap_release(ptr: *mut c_void) -> Option<usize> {
     let key = ptr as usize;
     let record = bump_mmap_record(ptr)?;
-    let slot = &BUMP_MMAP_RECORDS[record.index];
+    let slot = bump_mmap_slot_if_ready(record.index)?;
     slot.key
         .compare_exchange(
             key,
@@ -2456,7 +2859,9 @@ pub fn malloc_bump_overflow_stats() -> BumpOverflowStats {
         mappings_released: BUMP_MMAP_MAPPINGS_RELEASED.load(Ordering::Relaxed),
         live_mappings: BUMP_MMAP_LIVE.load(Ordering::Relaxed),
         failures: BUMP_OVERFLOW_FAILURES.load(Ordering::Relaxed),
-        static_bytes_used: BUMP_POS.load(Ordering::Relaxed),
+        static_bytes_used: EARLY_BUMP_POS
+            .load(Ordering::Relaxed)
+            .saturating_add(BUMP_POS.load(Ordering::Relaxed)),
     }
 }
 
@@ -2539,15 +2944,27 @@ pub unsafe fn malloc_bump_allocation_size_for_tests(ptr: *mut c_void) -> Option<
 #[inline]
 fn is_static_bump_ptr(ptr: *mut c_void) -> bool {
     let addr = ptr as usize;
-    let base = BUMP_HEAP.0.get() as usize;
-    if addr < base + BUMP_HEADER_SIZE || addr >= base + BUMP_SIZE {
-        return false;
+    let early_base = EARLY_BUMP_HEAP.0.get() as usize;
+    if addr >= early_base + BUMP_HEADER_SIZE && addr < early_base + EARLY_BUMP_SIZE {
+        // SAFETY: range check proves the header lies inside EARLY_BUMP_HEAP.
+        let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
+        return unsafe { header.read() == BUMP_MAGIC };
     }
-    // Verify magic sentinel to prevent false positives if a host pointer
-    // happens to fall in the bump heap address range.
-    // SAFETY: the range check proves the header lies inside the static heap.
-    let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
-    unsafe { header.read() == BUMP_MAGIC }
+    if let Some(slab_base) = BUMP_HEAP_SLAB.base_if_ready()
+        && addr >= slab_base + BUMP_HEADER_SIZE
+        && addr < slab_base + BUMP_SIZE
+    {
+        let header_off = (addr - BUMP_HEADER_SIZE) - slab_base;
+        if BUMP_HEAP_SLAB
+            .writable_base_if_ready(header_off, header_off + BUMP_HEADER_SIZE)
+            .is_some()
+        {
+            // SAFETY: `writable_base_if_ready` proves the header granule is promoted RW.
+            let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
+            return unsafe { header.read() == BUMP_MAGIC };
+        }
+    }
+    false
 }
 
 #[inline]
@@ -3123,13 +3540,28 @@ pub(crate) fn install_arena_block_allocator() {
     );
 }
 
+static HEADROOM_PREWARMED: AtomicBool = AtomicBool::new(false);
+
 /// Reserve and immediately release a 96 KiB block in the host `main_arena`
 /// (`< M_MMAP_THRESHOLD = 128 KiB` and `< M_TRIM_THRESHOLD = 128 KiB`), pinned
 /// below a 16-byte fencepost chunk so glibc's `_int_free` places the 96 KiB
 /// chunk in `unsorted_chunks` instead of coalescing into `top` and trimming it
 /// back via `systrim`. This keeps 96 KiB of mapped `sbrk` heap available for
-/// programs that immediately cap `RLIMIT_AS` in `main`.
+/// programs that immediately cap `RLIMIT_AS` or `RLIMIT_DATA` in `main`.
+///
+/// Guarded by `HEADROOM_PREWARMED` so callers like gnulib's
+/// `get_rusage_as_via_setrlimit` (64 bisection `setrlimit` calls) do not leak
+/// 64 fencepost chunks. In hardened mode, also pre-initializes the global
+/// validation pipeline before the caller clamps `RLIMIT_AS`.
 pub(crate) fn prewarm_host_heap_headroom() {
+    if !strict_allocator_host_path_active()
+        && !crate::membrane_state::pipeline_initialization_active()
+    {
+        let _ = crate::membrane_state::try_global_pipeline();
+    }
+    if HEADROOM_PREWARMED.swap(true, Ordering::AcqRel) {
+        return;
+    }
     const HEADROOM_BYTES: usize = 96 * 1024;
     // SAFETY: transient host allocation + immediate release below a 16-byte
     // fencepost chunk that remains live for process lifetime.
@@ -4132,10 +4564,40 @@ pub fn export_alloc_stats_snapshot_jsonl(bead_id: &str, run_id: &str, mode: &str
 const FALLBACK_ALLOC_TABLE_SLOTS: usize = 262144;
 const FALLBACK_SLOT_EMPTY: usize = 0;
 const FALLBACK_SLOT_TOMBSTONE: usize = 1;
-static FALLBACK_ALLOC_PTRS: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
-    [const { AtomicUsize::new(FALLBACK_SLOT_EMPTY) }; FALLBACK_ALLOC_TABLE_SLOTS];
-static FALLBACK_ALLOC_SIZES: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
-    [const { AtomicUsize::new(0) }; FALLBACK_ALLOC_TABLE_SLOTS];
+
+#[repr(C)]
+struct FallbackAllocSlot {
+    ptr: AtomicUsize,
+    size: AtomicUsize,
+}
+
+const FALLBACK_TABLE_BYTES: usize =
+    FALLBACK_ALLOC_TABLE_SLOTS * std::mem::size_of::<FallbackAllocSlot>();
+static FALLBACK_TABLE_SLAB: DemandSlab<1> = DemandSlab::new(FALLBACK_TABLE_BYTES);
+
+#[inline]
+fn fallback_slot_if_ready(idx: usize) -> Option<&'static FallbackAllocSlot> {
+    if idx >= FALLBACK_ALLOC_TABLE_SLOTS {
+        return None;
+    }
+    let start = idx * std::mem::size_of::<FallbackAllocSlot>();
+    let end = start + std::mem::size_of::<FallbackAllocSlot>();
+    let base = FALLBACK_TABLE_SLAB.writable_base_if_ready(start, end)?;
+    // SAFETY: `start..end` is verified writable and demand-zeroed (`ptr = EMPTY, size = 0`).
+    Some(unsafe { &*((base + start) as *const FallbackAllocSlot) })
+}
+
+#[inline]
+fn ensure_fallback_slot(idx: usize) -> Option<&'static FallbackAllocSlot> {
+    if idx >= FALLBACK_ALLOC_TABLE_SLOTS {
+        return None;
+    }
+    let start = idx * std::mem::size_of::<FallbackAllocSlot>();
+    let end = start + std::mem::size_of::<FallbackAllocSlot>();
+    let base = FALLBACK_TABLE_SLAB.ensure_writable(start, end)?;
+    // SAFETY: `start..end` is promoted RW in our immortal demand-zero slab.
+    Some(unsafe { &*((base + start) as *const FallbackAllocSlot) })
+}
 /// Reader-writer spin lock over the fallback table: the low bits count
 /// readers, `FALLBACK_TABLE_WRITER` marks the exclusive holder and
 /// `FALLBACK_TABLE_WRITER_WAITING` stops new readers so a writer (malloc /
@@ -4311,9 +4773,12 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let Some(entry) = fallback_slot_if_ready(idx) else {
+            return false;
+        };
+        let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
-            return FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) != 0;
+            return entry.size.load(Ordering::Relaxed) != 0;
         }
         if slot == FALLBACK_SLOT_EMPTY {
             return false;
@@ -4365,20 +4830,34 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
     let mut first_reusable: Option<usize> = None;
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let Some(entry) = fallback_slot_if_ready(idx) else {
+            if let Some(reusable_idx) = first_reusable
+                && let Some(reusable) = fallback_slot_if_ready(reusable_idx)
+            {
+                publish_fallback_range(key, size);
+                reusable.size.store(size, Ordering::Relaxed);
+                reusable.ptr.store(key, Ordering::Release);
+                return Some(reusable_idx);
+            }
+            let new_entry = ensure_fallback_slot(idx)?;
+            publish_fallback_range(key, size);
+            new_entry.size.store(size, Ordering::Relaxed);
+            new_entry.ptr.store(key, Ordering::Release);
+            return Some(idx);
+        };
+        let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
             // A zero-sized entry is a retired key, not a live allocation.
             // Reactivating the exact key preserves the table's uniqueness
             // invariant while avoiding a tombstone-chain scan on tcache reuse.
             if size != 0 {
                 publish_fallback_range(key, size);
-                FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
+                entry.size.store(size, Ordering::Relaxed);
             }
             return Some(idx);
         }
         if slot == FALLBACK_SLOT_TOMBSTONE
-            || (slot != FALLBACK_SLOT_EMPTY
-                && FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) == 0)
+            || (slot != FALLBACK_SLOT_EMPTY && entry.size.load(Ordering::Relaxed) == 0)
         {
             if first_reusable.is_none() {
                 first_reusable = Some(idx);
@@ -4386,23 +4865,27 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
             continue;
         }
         if slot == FALLBACK_SLOT_EMPTY {
-            if let Some(reusable_idx) = first_reusable {
+            if let Some(reusable_idx) = first_reusable
+                && let Some(reusable) = fallback_slot_if_ready(reusable_idx)
+            {
                 publish_fallback_range(key, size);
-                FALLBACK_ALLOC_SIZES[reusable_idx].store(size, Ordering::Relaxed);
-                FALLBACK_ALLOC_PTRS[reusable_idx].store(key, Ordering::Release);
+                reusable.size.store(size, Ordering::Relaxed);
+                reusable.ptr.store(key, Ordering::Release);
                 return Some(reusable_idx);
             }
             publish_fallback_range(key, size);
-            FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
-            FALLBACK_ALLOC_PTRS[idx].store(key, Ordering::Release);
+            entry.size.store(size, Ordering::Relaxed);
+            entry.ptr.store(key, Ordering::Release);
             return Some(idx);
         }
     }
 
-    if let Some(reusable_idx) = first_reusable {
+    if let Some(reusable_idx) = first_reusable
+        && let Some(reusable) = fallback_slot_if_ready(reusable_idx)
+    {
         publish_fallback_range(key, size);
-        FALLBACK_ALLOC_SIZES[reusable_idx].store(size, Ordering::Relaxed);
-        FALLBACK_ALLOC_PTRS[reusable_idx].store(key, Ordering::Release);
+        reusable.size.store(size, Ordering::Relaxed);
+        reusable.ptr.store(key, Ordering::Release);
         return Some(reusable_idx);
     }
     None
@@ -4474,15 +4957,15 @@ fn fallback_remove_sized_for_slot(
     if !MULTI_THREADED.load(Ordering::Relaxed) {
         let cached = slot.fallback_cache_index.load(Ordering::Acquire);
         if let Some(cached_idx) = cached.checked_sub(1) {
-            if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
-                let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+            if let Some(entry) = fallback_slot_if_ready(cached_idx) {
+                let slot_key = entry.ptr.load(Ordering::Acquire);
                 if slot_key == key {
-                    let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
+                    let size = entry.size.load(Ordering::Relaxed);
                     clear_fallback_cache(slot);
                     if size != 0 {
                         // Keep the key as an inactive marker. The next host tcache
                         // reuse can reactivate it without probing past a tombstone.
-                        FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
+                        entry.size.store(0, Ordering::Release);
                         return Some(size);
                     }
                     return None;
@@ -4500,9 +4983,12 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let Some(entry) = fallback_slot_if_ready(idx) else {
+            return None;
+        };
+        let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
-            let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+            let size = entry.size.load(Ordering::Relaxed);
             if size == 0 {
                 return None;
             }
@@ -4510,7 +4996,7 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
             // non-zero size before treating the entry as live. Keeping the key
             // turns the common same-address host tcache reuse into a first-probe
             // reactivation rather than accumulating another tombstone.
-            FALLBACK_ALLOC_SIZES[idx].store(0, Ordering::Release);
+            entry.size.store(0, Ordering::Release);
             return Some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
@@ -4533,14 +5019,17 @@ fn fallback_update_size(ptr: *mut c_void, new_size: usize) -> bool {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let Some(entry) = fallback_slot_if_ready(idx) else {
+            return false;
+        };
+        let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
-            if FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) == 0 {
+            if entry.size.load(Ordering::Relaxed) == 0 {
                 return false;
             }
             if new_size != 0 {
                 publish_fallback_range(key, new_size);
-                FALLBACK_ALLOC_SIZES[idx].store(new_size, Ordering::Relaxed);
+                entry.size.store(new_size, Ordering::Relaxed);
             }
             return true;
         }
@@ -4571,9 +5060,12 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let Some(entry) = fallback_slot_if_ready(idx) else {
+            return None;
+        };
+        let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
-            let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+            let size = entry.size.load(Ordering::Relaxed);
             return (size != 0).then_some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
@@ -4864,11 +5356,14 @@ pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {
-        let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
-        if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
-            let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
-            if slot_key == key {
-                return Some(FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed));
+        let cached = slot.fallback_cache_index.load(Ordering::Acquire);
+        if let Some(cached_idx) = cached.checked_sub(1) {
+            if let Some(entry) = fallback_slot_if_ready(cached_idx) {
+                let slot_key = entry.ptr.load(Ordering::Acquire);
+                if slot_key == key {
+                    let size = entry.size.load(Ordering::Relaxed);
+                    return (size != 0).then_some(size);
+                }
             }
             clear_fallback_cache(slot);
         }
@@ -4928,7 +5423,10 @@ fn fallback_remaining_probe(addr: usize) -> Option<usize> {
     let start = fallback_start_index(addr);
     for i in 0..64 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let base = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        let Some(entry) = fallback_slot_if_ready(idx) else {
+            return None;
+        };
+        let base = entry.ptr.load(Ordering::Relaxed);
         if base == FALLBACK_SLOT_EMPTY {
             // No more entries in this probe sequence
             return None;
@@ -4936,7 +5434,7 @@ fn fallback_remaining_probe(addr: usize) -> Option<usize> {
         if base <= FALLBACK_SLOT_TOMBSTONE {
             continue;
         }
-        let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+        let size = entry.size.load(Ordering::Relaxed);
         if size == 0 {
             continue;
         }
@@ -5070,10 +5568,7 @@ pub fn malloc_restore_reentry_depth_for_tests(previous: u32) {
 /// index, and the index is stable for the lifetime of a live thread.
 #[doc(hidden)]
 pub fn malloc_current_reentry_slot_index_for_tests() -> Option<usize> {
-    current_allocator_reentry_slot().map(|slot| {
-        (slot as *const AllocatorReentrySlot as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
-            / std::mem::size_of::<AllocatorReentrySlot>()
-    })
+    current_allocator_reentry_slot().map(reentry_slot_index)
 }
 
 /// Test hook (bd-35hjg.3.1): reports whether a second distinct thread has been
@@ -5148,7 +5643,7 @@ pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
         return MCHECK_OK;
     }
 
-    let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
+    let Some(pipeline) = crate::membrane_state::ready_pipeline() else {
         return MCHECK_HEAD;
     };
     let Some(slot) = pipeline.arena.lookup(ptr as usize) else {
@@ -6558,7 +7053,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             return out;
         }
 
-        if let Some(pipeline) = crate::membrane_state::try_global_pipeline()
+        if let Some(pipeline) = crate::membrane_state::ready_pipeline()
             && let Some(slot) = pipeline.arena.lookup(ptr as usize)
             && slot.user_base == ptr as usize
         {
@@ -7311,7 +7806,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     let addr = ptr as usize;
 
     // Look up in membrane arena first
-    if let Some(pipeline) = crate::membrane_state::try_global_pipeline()
+    if let Some(pipeline) = crate::membrane_state::ready_pipeline()
         && let Some(slot) = pipeline.arena.lookup(addr)
         && slot.user_base == addr
     {

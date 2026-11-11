@@ -699,20 +699,20 @@ static PROTOCOL_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Protocol
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static HOSTS_BACKEND_TLS: RefCell<BackendFileCache> =
-        RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV));
-    static SERVICES_BACKEND_TLS: RefCell<BackendFileCache> =
-        RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV));
-    static PROTOCOLS_BACKEND_TLS: RefCell<BackendFileCache> =
-        RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV));
-    static PROC_NET_ROUTE_TLS: RefCell<BackendFileCache> =
-        RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV));
-    static PROC_NET_IF_INET6_TLS: RefCell<BackendFileCache> =
-        RefCell::new(BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV));
-    static SERVICE_LOOKUP_TLS: RefCell<ServiceLookupCache> =
-        RefCell::new(ServiceLookupCache::new());
-    static PROTOCOL_LOOKUP_TLS: RefCell<ProtocolLookupCache> =
-        RefCell::new(ProtocolLookupCache::new());
+    static HOSTS_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)));
+    static SERVICES_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)));
+    static PROTOCOLS_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)));
+    static PROC_NET_ROUTE_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)));
+    static PROC_NET_IF_INET6_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)));
+    static SERVICE_LOOKUP_TLS: Box<RefCell<ServiceLookupCache>> =
+        Box::new(RefCell::new(ServiceLookupCache::new()));
+    static PROTOCOL_LOOKUP_TLS: Box<RefCell<ProtocolLookupCache>> =
+        Box::new(RefCell::new(ProtocolLookupCache::new()));
 }
 
 fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
@@ -2192,8 +2192,8 @@ static GETHOSTBYNAME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostentTls
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GETHOSTBYNAME_TLS: RefCell<HostentTlsStorage> =
-        RefCell::new(HostentTlsStorage::new());
+    static GETHOSTBYNAME_TLS: Box<RefCell<HostentTlsStorage>> =
+        Box::new(RefCell::new(HostentTlsStorage::new()));
 }
 
 fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
@@ -8686,8 +8686,8 @@ static LOC_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; LOC_NT
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static LOC_NTOA_BUF: RefCell<[u8; LOC_NTOA_BUF_LEN]> =
-        const { RefCell::new([0u8; LOC_NTOA_BUF_LEN]) };
+    static LOC_NTOA_BUF: Box<RefCell<[u8; LOC_NTOA_BUF_LEN]>> =
+        Box::new(RefCell::new([0u8; LOC_NTOA_BUF_LEN]));
 }
 
 fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {

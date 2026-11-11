@@ -219,6 +219,14 @@ impl<T> NoPoisonRwLock<T> {
         }
     }
 
+    pub(crate) fn try_read(&self) -> Option<NoPoisonRwLockReadGuard<'_, T>> {
+        match self.0.try_read() {
+            Ok(guard) => Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
+        }
+    }
+
     pub(crate) fn write(&self) -> NoPoisonRwLockWriteGuard<'_, T> {
         match self.0.write() {
             Ok(guard) => guard,

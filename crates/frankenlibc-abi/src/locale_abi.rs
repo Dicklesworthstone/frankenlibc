@@ -2702,16 +2702,14 @@ std::thread_local! {
     // Copy the immutable view when selecting a handle. Locale-sensitive hot
     // paths need neither a registry lock nor a dereference of a caller handle.
     // None denotes the LIVE global locale, not a frozen copy of it.
-    static THREAD_LOCALE: std::cell::Cell<Option<LocaleSelection>> = const {
-        std::cell::Cell::new(None)
-    };
+    static THREAD_LOCALE: Box<std::cell::Cell<Option<LocaleSelection>>> =
+        Box::new(std::cell::Cell::new(None));
     // 2-entry per-thread MRU cache of custom `locale_t` handles so repeated
     // `uselocale(loc)` / `*_l(..., loc)` calls resolve without taking the
     // process-wide `locale_objects().lock()` mutex (bd-rc0923-epic-eeuy4f.30).
     // Invalidated whenever `retire_locale` bumps `LOCALE_OBJECTS_EPOCH`.
-    static THREAD_HANDLE_CACHE: std::cell::Cell<[Option<CachedLocaleHandle>; 2]> = const {
-        std::cell::Cell::new([None, None])
-    };
+    static THREAD_HANDLE_CACHE: Box<std::cell::Cell<[Option<CachedLocaleHandle>; 2]>> =
+        Box::new(std::cell::Cell::new([None, None]));
 }
 
 #[inline]

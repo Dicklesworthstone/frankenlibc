@@ -506,7 +506,7 @@ static PWD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PwdStorage> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static PWD_TLS: RefCell<PwdStorage> = RefCell::new(PwdStorage::new());
+    static PWD_TLS: Box<RefCell<PwdStorage>> = Box::new(RefCell::new(PwdStorage::new()));
 }
 
 fn with_pwd_storage<R>(callback: impl FnOnce(&mut PwdStorage) -> R) -> R {
@@ -678,7 +678,8 @@ thread_local! {
     /// Multi-source `getpwent` position, and an entry `getpwent_r` could not
     /// fit into the caller's buffer (returned again on the next call).
     static PW_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static PW_PENDING: RefCell<Option<frankenlibc_core::pwd::Passwd>> = const { RefCell::new(None) };
+    static PW_PENDING: Box<RefCell<Option<frankenlibc_core::pwd::Passwd>>> =
+        Box::new(RefCell::new(None));
 }
 
 /// Next entry of a multi-source enumeration: `Err(None)` at the end,
@@ -1319,7 +1320,8 @@ static SHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ShadowTlsStorage>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static SHADOW_TLS: RefCell<ShadowTlsStorage> = RefCell::new(ShadowTlsStorage::new());
+    static SHADOW_TLS: Box<RefCell<ShadowTlsStorage>> =
+        Box::new(RefCell::new(ShadowTlsStorage::new()));
 }
 
 fn with_shadow_storage<R>(callback: impl FnOnce(&mut ShadowTlsStorage) -> R) -> R {
@@ -1625,8 +1627,8 @@ thread_local! {
     /// `getspent` position across the configured shadow sources, and an entry
     /// `getspent_r` could not fit into the caller's buffer.
     static SP_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static SP_PENDING: RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>> =
-        const { RefCell::new(None) };
+    static SP_PENDING: Box<RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>> =
+        Box::new(RefCell::new(None));
 }
 
 /// Next shadow entry: `Err(None)` at the end, `Err(Some(errno))` when a
@@ -1913,7 +1915,8 @@ static GSHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GshadowTlsStorag
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GSHADOW_TLS: RefCell<GshadowTlsStorage> = RefCell::new(GshadowTlsStorage::new());
+    static GSHADOW_TLS: Box<RefCell<GshadowTlsStorage>> =
+        Box::new(RefCell::new(GshadowTlsStorage::new()));
 }
 
 fn with_gshadow_storage<R>(callback: impl FnOnce(&mut GshadowTlsStorage) -> R) -> R {

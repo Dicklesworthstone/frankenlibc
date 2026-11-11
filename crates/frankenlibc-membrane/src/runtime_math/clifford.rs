@@ -430,15 +430,13 @@ impl CachedCliffordCert {
     };
 }
 
-thread_local! {
-    /// 16 slots × 32 B = 512 B per thread (down from 5,128 B so `PT_TLS` leaves
-    /// room on 32 KiB worker stacks). The insertion age fits the existing entry
-    /// padding. Primary hits stay direct; other entries absorb collisions, and
-    /// FIFO replacement retires startup entries once the table fills. Holds no
-    /// owned allocation and registers no destructor.
-    static CERT_CACHE: core::cell::RefCell<[CachedCliffordCert; CERT_CACHE_SLOTS]> =
-        const { core::cell::RefCell::new([CachedCliffordCert::EMPTY; CERT_CACHE_SLOTS]) };
-}
+/// Process-shared 16-slot Clifford certificate memo table (0 bytes of `PT_TLS`
+/// and 0 heap allocations inside membrane validation). `certify_simd_string_operation`
+/// is a pure function of its determining inputs, so non-blocking `try_read` /
+/// `try_write` reuses certificates across worker threads while degrading cleanly
+/// to recomputation under contention.
+static CERT_CACHE: crate::util::NoPoisonRwLock<[CachedCliffordCert; CERT_CACHE_SLOTS]> =
+    crate::util::NoPoisonRwLock::new([CachedCliffordCert::EMPTY; CERT_CACHE_SLOTS]);
 
 /// FNV-1a over the exact inputs that determine the certificate.
 fn cert_cache_key(
@@ -509,20 +507,20 @@ pub fn certify_simd_string_operation(
         candidate_obs,
         overlap,
     );
-    if let Some(hit) = CERT_CACHE.with(|c| {
-        c.try_borrow().ok().and_then(|slots| {
-            let primary = slots[(cache_key as usize) % CERT_CACHE_SLOTS];
-            let entry = if primary.present && primary.key == cache_key {
-                primary
-            } else {
-                // IEEE length-regime bits can differ only high in the hash,
-                // leaving common lengths in the same low-bit primary bucket.
-                slots
-                    .iter()
-                    .find(|entry| entry.present && entry.key == cache_key)
-                    .copied()?
-            };
-            Some(CliffordIsomorphismCertificate {
+    if let Some(slots) = CERT_CACHE.try_read() {
+        let primary = slots[(cache_key as usize) % CERT_CACHE_SLOTS];
+        let maybe_entry = if primary.present && primary.key == cache_key {
+            Some(primary)
+        } else {
+            // IEEE length-regime bits can differ only high in the hash,
+            // leaving common lengths in the same low-bit primary bucket.
+            slots
+                .iter()
+                .find(|entry| entry.present && entry.key == cache_key)
+                .copied()
+        };
+        if let Some(entry) = maybe_entry {
+            return CliffordIsomorphismCertificate {
                 operation,
                 reference_isa: SimdIsa::Scalar,
                 candidate_isa,
@@ -534,10 +532,8 @@ pub fn certify_simd_string_operation(
                 parity_imbalance: entry.parity_imbalance,
                 overlap_fraction,
                 rationale: CERT_RATIONALES[usize::from(entry.rationale_idx) & 3],
-            })
-        })
-    }) {
-        return hit;
+            };
+        }
     }
 
     // 64 reference observations, then 64 candidate ones. The certificate reads
@@ -578,43 +574,40 @@ pub fn certify_simd_string_operation(
         rationale,
     };
 
-    // Publish for the next call in this regime. `try_borrow_mut` rather than `borrow_mut`:
-    // a failure here must degrade to "recompute next time", never panic on a hot membrane
-    // path if this thread is somehow already inside the cell.
-    CERT_CACHE.with(|c| {
-        if let Ok(mut slots) = c.try_borrow_mut() {
-            let primary = (cache_key as usize) % CERT_CACHE_SLOTS;
-            let index = if !slots[primary].present {
-                primary
-            } else {
-                slots
-                    .iter()
-                    .position(|entry| !entry.present)
-                    .unwrap_or_else(|| {
-                        slots
-                            .iter()
-                            .enumerate()
-                            .max_by_key(|(_, entry)| entry.insertion_age)
-                            .map_or(primary, |(index, _)| index)
-                    })
-            };
-            // Ages change only on insertion. Hits need no mutable borrow or
-            // extra writes, and no separate TLS replacement cursor is needed.
-            for entry in slots.iter_mut().filter(|entry| entry.present) {
-                entry.insertion_age = entry.insertion_age.saturating_add(1);
-            }
-            slots[index] = CachedCliffordCert {
-                key: cache_key,
-                grade2_energy: summary.grade2_energy,
-                parity_imbalance: summary.parity_imbalance,
-                state: summary.state,
-                equivalent,
-                rationale_idx,
-                present: true,
-                insertion_age: 0,
-            };
+    // Publish for the next call in this regime. `try_write` rather than blocking:
+    // contention degrades to "recompute next time", never blocking on a hot membrane path.
+    if let Some(mut slots) = CERT_CACHE.try_write() {
+        let primary = (cache_key as usize) % CERT_CACHE_SLOTS;
+        let index = if !slots[primary].present {
+            primary
+        } else {
+            slots
+                .iter()
+                .position(|entry| !entry.present)
+                .unwrap_or_else(|| {
+                    slots
+                        .iter()
+                        .enumerate()
+                        .max_by_key(|(_, entry)| entry.insertion_age)
+                        .map_or(primary, |(index, _)| index)
+                })
+        };
+        // Ages change only on insertion. Hits need no mutable borrow or
+        // extra writes, and no separate TLS replacement cursor is needed.
+        for entry in slots.iter_mut().filter(|entry| entry.present) {
+            entry.insertion_age = entry.insertion_age.saturating_add(1);
         }
-    });
+        slots[index] = CachedCliffordCert {
+            key: cache_key,
+            grade2_energy: summary.grade2_energy,
+            parity_imbalance: summary.parity_imbalance,
+            state: summary.state,
+            equivalent,
+            rationale_idx,
+            present: true,
+            insertion_age: 0,
+        };
+    }
 
     certificate
 }
@@ -912,7 +905,7 @@ mod tests {
         // Short formatted bodies alternate with padded output in real snprintf
         // calls. Their f64 regime bits differ above the low bits of the hash.
         let lengths = [3, 5, 7, 8, 13, 400];
-        let reset = || CERT_CACHE.with(|cache| cache.borrow_mut().fill(CachedCliffordCert::EMPTY));
+        let reset = || CERT_CACHE.write().fill(CachedCliffordCert::EMPTY);
         let certify = |len| {
             certify_simd_string_operation(
                 SimdStringOperation::Memcpy,
@@ -945,8 +938,8 @@ mod tests {
         for &len in &lengths {
             let _ = certify(len);
         }
-        CERT_CACHE.with(|cache| {
-            let cache = cache.borrow();
+        {
+            let cache = CERT_CACHE.read();
             let reference = SimdCliffordProfile::reference(SimdStringOperation::Memcpy);
             let candidate =
                 SimdCliffordProfile::candidate(SimdStringOperation::Memcpy, SimdIsa::Sse42);
@@ -963,7 +956,7 @@ mod tests {
                     "mixed-length memo evicted length {len} before exhausting its capacity"
                 );
             }
-        });
+        }
         for (&len, expected) in lengths.iter().zip(cold) {
             let warm = certify(len);
             assert_eq!(warm, expected);
@@ -981,7 +974,7 @@ mod tests {
     #[test]
     fn certificate_memo_distinguishes_overlap_contract() {
         for first_overlap in [false, true] {
-            CERT_CACHE.with(|cache| cache.borrow_mut().fill(CachedCliffordCert::EMPTY));
+            CERT_CACHE.write().fill(CachedCliffordCert::EMPTY);
             for overlap in [first_overlap, !first_overlap] {
                 let cert = certify_simd_string_operation(
                     SimdStringOperation::Memcpy,

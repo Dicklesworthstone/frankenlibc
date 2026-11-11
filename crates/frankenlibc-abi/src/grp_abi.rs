@@ -522,7 +522,7 @@ static GRP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GrpStorage> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GRP_TLS: RefCell<GrpStorage> = RefCell::new(GrpStorage::new());
+    static GRP_TLS: Box<RefCell<GrpStorage>> = Box::new(RefCell::new(GrpStorage::new()));
 }
 
 fn with_grp_storage<R>(callback: impl FnOnce(&mut GrpStorage) -> R) -> R {
@@ -682,7 +682,8 @@ thread_local! {
     /// Multi-source `getgrent` position, and an entry `getgrent_r` could not
     /// fit into the caller's buffer (returned again on the next call).
     static GR_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static GR_PENDING: RefCell<Option<frankenlibc_core::grp::Group>> = const { RefCell::new(None) };
+    static GR_PENDING: Box<RefCell<Option<frankenlibc_core::grp::Group>>> =
+        Box::new(RefCell::new(None));
 }
 
 /// Next entry of a multi-source enumeration: `Err(None)` at the end,

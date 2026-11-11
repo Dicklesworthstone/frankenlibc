@@ -385,7 +385,7 @@ impl SignalHandlerSlot {
     }
 }
 
-const DEFERRED_SIGINFO_SLOTS: usize = 4;
+const DEFERRED_SIGINFO_SLOTS: usize = 2;
 
 struct DeferredSiginfoSlot {
     signum: AtomicU8,
@@ -402,14 +402,14 @@ impl DeferredSiginfoSlot {
 }
 
 struct DeferredSignalTable {
-    counts: [AtomicU32; MAX_TRACKED_SIGNAL + 1],
+    counts: [std::sync::atomic::AtomicU16; MAX_TRACKED_SIGNAL + 1],
     siginfos: [DeferredSiginfoSlot; DEFERRED_SIGINFO_SLOTS],
 }
 
 impl DeferredSignalTable {
     const fn new() -> Self {
         Self {
-            counts: [const { AtomicU32::new(0) }; MAX_TRACKED_SIGNAL + 1],
+            counts: [const { std::sync::atomic::AtomicU16::new(0) }; MAX_TRACKED_SIGNAL + 1],
             siginfos: [const { DeferredSiginfoSlot::new() }; DEFERRED_SIGINFO_SLOTS],
         }
     }
@@ -726,7 +726,7 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
         while bits != 0 {
             let signum = bits.trailing_zeros() as c_int + 1;
             bits &= bits - 1;
-            let count = pending.counts[signum as usize].swap(0, Ordering::Relaxed);
+            let count = u32::from(pending.counts[signum as usize].swap(0, Ordering::Relaxed));
             if count != 0 {
                 let sig_u8 = signum as u8;
                 let mut siginfo = None;

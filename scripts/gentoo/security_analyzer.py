@@ -58,6 +58,7 @@ class SecurityAnalysis:
     prevention_evidence: Dict[str, Dict[str, object]]
     security_score: float
     analysis_timestamp: str
+    qualification_status: str = "unqualified"
 
 
 class CVEDatabase:
@@ -186,6 +187,7 @@ class SecurityAnalyzer:
         # Build prevention evidence
         prevention_evidence: Dict[str, Dict[str, object]] = {}
         prevented_count = 0
+        oracle_evaluated_preventable = 0
 
         for cve in cves:
             cve_class = cve.cve_class
@@ -195,17 +197,18 @@ class SecurityAnalyzer:
             if oracle_verdicts is not None and cve.id in oracle_verdicts:
                 verified_by_oracle = bool(oracle_verdicts[cve.id])
                 would_prevent = verified_by_oracle
-                if verified_by_oracle:
-                    prevented_count += 1
+                if cve.expected_prevention:
+                    oracle_evaluated_preventable += 1
+                    if verified_by_oracle:
+                        prevented_count += 1
                 confidence = 1.0 if verified_by_oracle else 0.0
                 evidence_status = (
                     "verified_oracle_pass" if verified_by_oracle else "verified_oracle_fail"
                 )
             elif class_telemetry_observed:
                 verified_by_oracle = False
-                would_prevent = True
-                prevented_count += 1
-                confidence = min(1.0, healing_count / 10)
+                would_prevent = False
+                confidence = 0.0
                 evidence_status = "telemetry_correlation_only"
             elif cve.expected_prevention:
                 verified_by_oracle = False
@@ -215,7 +218,7 @@ class SecurityAnalyzer:
             else:
                 verified_by_oracle = False
                 would_prevent = False
-                confidence = 1.0
+                confidence = 0.0
                 evidence_status = "out_of_scope_for_membrane"
 
             prevention_evidence[cve.id] = {
@@ -229,15 +232,19 @@ class SecurityAnalyzer:
                 "cve_class": cve_class,
             }
 
-        # Calculate security score
-        if cves:
-            preventable_cves = [c for c in cves if c.expected_prevention]
-            if preventable_cves:
-                security_score = prevented_count / len(preventable_cves)
-            else:
-                security_score = 1.0  # No preventable CVEs = 100%
+        # Calculate security score strictly from explicit oracle verdicts (SQ S21):
+        # telemetry correlation or empty CVE sets are NEVER credited as prevention.
+        preventable_cves = [c for c in cves if c.expected_prevention]
+        if preventable_cves and oracle_evaluated_preventable > 0:
+            security_score = prevented_count / len(preventable_cves)
+            qualification_status = (
+                "oracle_qualified"
+                if oracle_evaluated_preventable == len(preventable_cves)
+                else "partially_oracle_qualified"
+            )
         else:
-            security_score = 1.0  # No known CVEs = 100%
+            security_score = 0.0
+            qualification_status = "unqualified"
 
         return SecurityAnalysis(
             package=package,
@@ -247,6 +254,7 @@ class SecurityAnalyzer:
             prevention_evidence=prevention_evidence,
             security_score=round(security_score, 2),
             analysis_timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            qualification_status=qualification_status,
         )
 
     def to_report(self, analysis: SecurityAnalysis) -> Dict[str, object]:
@@ -254,6 +262,7 @@ class SecurityAnalyzer:
         return {
             "package": analysis.package,
             "timestamp": analysis.analysis_timestamp,
+            "qualification_status": analysis.qualification_status,
             "known_cves": [
                 {
                     "id": cve.id,

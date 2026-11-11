@@ -2538,10 +2538,14 @@ static TIME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TimeTls> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GMTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
-    static LOCALTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
-    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]) };
-    static CTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]) };
+    static GMTIME_BUF: Box<std::cell::UnsafeCell<libc::tm>> =
+        Box::new(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
+    static LOCALTIME_BUF: Box<std::cell::UnsafeCell<libc::tm>> =
+        Box::new(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
+    static ASCTIME_BUF: Box<std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]>> =
+        Box::new(std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]));
+    static CTIME_BUF: Box<std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]>> =
+        Box::new(std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]));
 }
 
 #[inline]

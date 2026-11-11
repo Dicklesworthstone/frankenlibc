@@ -192,7 +192,7 @@ fn publish_tls_slot(index: usize, values_ptr: *mut TlsEntry, generation: u64) {
 // rejected ordinary small stacks with EINVAL (node/libuv 32 KiB stacks;
 // bd-rc0923-epic-eeuy4f.9). Reads of unset high keys never allocate.
 #[cfg(not(feature = "owned-tls-cache"))]
-const FALLBACK_INLINE_KEYS: usize = 32;
+const FALLBACK_INLINE_KEYS: usize = 4;
 
 #[cfg(not(feature = "owned-tls-cache"))]
 struct FallbackTls {

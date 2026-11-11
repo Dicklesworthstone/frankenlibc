@@ -9503,7 +9503,8 @@ fn empty_crypt_buf() -> [u8; 256] {
 // Thread-local buffer for crypt() result (POSIX allows static return).
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static CRYPT_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
+    static CRYPT_BUF: Box<std::cell::RefCell<[u8; 256]>> =
+        Box::new(std::cell::RefCell::new([0u8; 256]));
 }
 
 #[inline]
@@ -14603,8 +14604,8 @@ static UTMP_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<UtmpState> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static UTMP_TLS: std::cell::UnsafeCell<UtmpState> =
-        const { std::cell::UnsafeCell::new(UtmpState::new()) };
+    static UTMP_TLS: Box<std::cell::UnsafeCell<UtmpState>> =
+        Box::new(std::cell::UnsafeCell::new(UtmpState::new()));
 }
 
 #[inline]
@@ -17855,7 +17856,8 @@ static GETPASS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[c_char; GET
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GETPASS_BUF: std::cell::RefCell<[c_char; GETPASS_MAX]> = const { std::cell::RefCell::new([0; GETPASS_MAX]) };
+    static GETPASS_BUF: Box<std::cell::RefCell<[c_char; GETPASS_MAX]>> =
+        Box::new(std::cell::RefCell::new([0; GETPASS_MAX]));
 }
 
 #[inline]
@@ -23889,9 +23891,8 @@ static UTMPX_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::utmpx> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static UTMPX_BUF: std::cell::UnsafeCell<libc::utmpx> = const {
-        std::cell::UnsafeCell::new(empty_utmpx_buf())
-    };
+    static UTMPX_BUF: Box<std::cell::UnsafeCell<libc::utmpx>> =
+        Box::new(std::cell::UnsafeCell::new(empty_utmpx_buf()));
 }
 
 #[inline]
@@ -30104,8 +30105,8 @@ static GETDATE_TM_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetdateTm> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GETDATE_TM: std::cell::UnsafeCell<libc::tm> =
-        const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
+    static GETDATE_TM: Box<std::cell::UnsafeCell<libc::tm>> =
+        Box::new(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
 }
 
 #[inline]

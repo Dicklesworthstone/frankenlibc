@@ -578,32 +578,32 @@ positive/negative tests, dependency purpose and closure evidence. Existing owner
 keep their implementation tasks. IDs S01–S24 below are stable plan keys; the bead
 mapping is filled after conversion, without changing task scope to fit a count.
 
-| Key | Deliverable | Prerequisites | Main consumer |
-|---|---|---|---|
-| S01 | Freeze threat/profile/claim and experiment protocol | Existing source review | Every package |
-| S02 | Preserve observations and implement conservative outcome contract | S01 | S03, runner, reports |
-| S03 | Execute false-positive and outcome-classifier controls | S02 | Both case qualifications, final gate |
-| S04 | Bind actual release/application/providers/builds | S01 | S05, cases, bundle |
-| S05 | Reject wrong/stale/partial artifact and provider admission | S02, S04 | Case qualifications, profile tests |
-| S06 | Enforce isolated bounded execution and raw child outcomes | S01, S02 | S07, corpus, profile |
-| S07 | Execute missing-confinement, timeout and process-tree controls | S06 | Both cases, final gate |
-| S08 | Pin/build ordinary vulnerable and patched ZIP case inputs | S01 | S09, legitimate corpus |
-| S09 | Establish ZIP baseline harm and execute H/S/F/P | S03, S05, S07, S08 | Repair tests, replication, demo |
-| S10 | Execute useful benign archive semantics across arms | S04, S06, S08 | S11, profile, performance |
-| S11 | Reject harmful truncation and incorrect output publication | S09, S10 | Profile and final acceptance |
-| S12 | Preserve known bypass/temporal limits and holdout challenges | S03, S05, S07 | Profile tests, final gate |
-| S13 | Pin and admit the independent RAR read-boundary candidate | S01 | S14 |
-| S14 | Execute RAR harm/disclosure/oracle controls across arms | S03, S05, S07, S13 | Replication and final acceptance |
-| S15 | Measure useful work, protection and live-incumbent costs | S09, S10, S11, S14 | Operator acceptance |
-| S16 | Implement exact profile admission, staging and job lifecycle | S02, S06, S10, S11 | S17, revocation, final gate |
-| S17 | Execute operator lifecycle and publication failure controls | S05, S07, S12, S16 | Final gate |
-| S18 | Export and verify portable, complete evidence bundles | S02, S04, S06 | Replication, demonstration |
-| S19 | Independently reproduce from a clean authorized environment | S09, S11, S14, S18 | Final acceptance |
-| S20 | Produce the concise real-program demo and full report | S09, S11, S18 | Final acceptance and readers |
-| S21 | Repair prevention/confidence consumers and security prose | S02, S03 | Final gate and user claims |
-| S22 | Execute integrated profile acceptance or an honest non-qualification | All named acceptances below | Epic outcome / RC.47 input |
-| S23 | Replay independently prepared adversarial holdout and mutations | S09, S14 | Final acceptance |
-| S24 | Test changed-artifact, supersession and revocation admission | S16, S18 | Final acceptance |
+| Key | Deliverable | Prerequisites | Main consumer | Mapped Bead (`2026-11-11`) |
+|---|---|---|---|---|
+| S01 | Freeze threat/profile/claim and experiment protocol | Existing source review | Every package | `VR.15.1` (`bd-reality-202609-lx578q.15.1`) |
+| S02 | Preserve observations and implement conservative outcome contract | S01 | S03, runner, reports | `VR.15.1` (`bd-reality-202609-lx578q.15.1`) |
+| S03 | Execute false-positive and outcome-classifier controls | S02 | Both case qualifications, final gate | `VR.15.2` (`bd-reality-202609-lx578q.15.2`) |
+| S04 | Bind actual release/application/providers/builds | S01 | S05, cases, bundle | `VR.15.1` (`bd-reality-202609-lx578q.15.1`) |
+| S05 | Reject wrong/stale/partial artifact and provider admission | S02, S04 | Case qualifications, profile tests | `VR.15.2` (`bd-reality-202609-lx578q.15.2`) |
+| S06 | Enforce isolated bounded execution and raw child outcomes | S01, S02 | S07, corpus, profile | `VR.15.1` (`bd-reality-202609-lx578q.15.1`) |
+| S07 | Execute missing-confinement, timeout and process-tree controls | S06 | Both cases, final gate | `VR.15.2` (`bd-reality-202609-lx578q.15.2`) |
+| S08 | Pin/build ordinary vulnerable and patched ZIP case inputs | S01 | S09, legitimate corpus | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S09 | Establish ZIP baseline harm and execute H/S/F/P | S03, S05, S07, S08 | Repair tests, replication, demo | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S10 | Execute useful benign archive semantics across arms | S04, S06, S08 | S11, profile, performance | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S11 | Reject harmful truncation and incorrect output publication | S09, S10 | Profile and final acceptance | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S12 | Preserve known bypass/temporal limits and holdout challenges | S03, S05, S07 | Profile tests, final gate | `VR.15.2` (`bd-reality-202609-lx578q.15.2`) |
+| S13 | Pin and admit the independent RAR read-boundary candidate | S01 | S14 | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S14 | Execute RAR harm/disclosure/oracle controls across arms | S03, S05, S07, S13 | Replication and final acceptance | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S15 | Measure useful work, protection and live-incumbent costs | S09, S10, S11, S14 | Operator acceptance | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S16 | Implement exact profile admission, staging and job lifecycle | S02, S06, S10, S11 | S17, revocation, final gate | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S17 | Execute operator lifecycle and publication failure controls | S05, S07, S12, S16 | Final gate | `VR.15.3` (`bd-reality-202609-lx578q.15.3`) |
+| S18 | Export and verify portable, complete evidence bundles | S02, S04, S06 | Replication, demonstration | `VR.15.4` (`bd-reality-202609-lx578q.15.4`) |
+| S19 | Independently reproduce from a clean authorized environment | S09, S11, S14, S18 | Final acceptance | `VR.15.4` (`bd-reality-202609-lx578q.15.4`) |
+| S20 | Produce the concise real-program demo and full report | S09, S11, S18 | Final acceptance and readers | `VR.15.4` (`bd-reality-202609-lx578q.15.4`) |
+| S21 | Repair prevention/confidence consumers and security prose | S02, S03 | Final gate and user claims | `VR.15.1` (`bd-reality-202609-lx578q.15.1`) |
+| S22 | Execute integrated profile acceptance or an honest non-qualification | All named acceptances below | Epic outcome / RC.47 input | `VR.15.4` (`bd-reality-202609-lx578q.15.4`) |
+| S23 | Replay independently prepared adversarial holdout and mutations | S09, S14 | Final acceptance | `VR.15.4` (`bd-reality-202609-lx578q.15.4`) |
+| S24 | Test changed-artifact, supersession and revocation admission | S16, S18 | Final acceptance | `VR.15.4` (`bd-reality-202609-lx578q.15.4`) |
 
 S22 requires S03, S05, S07, S11, S12, S14, S15, S17, S19, S20, S21, S23,
 S24 and existing VR.8.2. Parent-child edges organize work; only real prerequisites
@@ -771,25 +771,25 @@ Prefixes used below: `VR = bd-reality-202609-lx578q` and `RC = bd-rc0923-epic-ee
 Every gap identified above is assigned to an explicit implementation + verification pair with clear non-overlapping ownership:
 
 - **WS-A — Zero-`.bss` Lazy VM Geometry, `RLIMIT_DATA` Compliance & Deterministic `<2.0x` Smoke Gate (`RC.49` + `RC.50`, linked to `bd-4n397c`, blocking `RC.47`):**
-  - Replace static `.bss` arrays in `crates/frankenlibc-abi/src/malloc_abi.rs` (`ALLOCATOR_REENTRY_SLOTS` `14.88 MiB`, `BUMP_HEAP` `8.00 MiB`, `FALLBACK_ALLOC_SIZES` `2.00 MiB`, `FALLBACK_ALLOC_PTRS` `2.00 MiB`, `SEGMENT_DESCRIPTORS` `1.97 MiB`) with lazy `mmap(PROT_NONE)` virtual reservations + on-demand `mprotect(PROT_READ | PROT_WRITE)` page materialization and TLS-descriptor per-thread reentry slots; replace the `8 KiB`/thread `POLL_SNAPSHOT` `.tbss` array in `rpc_svc.rs` with heap/on-demand storage.
+  - Replace static `.bss` arrays in `crates/frankenlibc-abi/src/malloc_abi.rs` (`ALLOCATOR_REENTRY_SLOTS` `14.88 MiB`, `BUMP_HEAP` `8.00 MiB`, `FALLBACK_ALLOC_SIZES` `2.00 MiB`, `FALLBACK_ALLOC_PTRS` `2.00 MiB`, `SEGMENT_DESCRIPTORS` `1.97 MiB`) with bounded/growable `mmap(PROT_NONE, MAP_NORESERVE)` chunks (safe under both `RLIMIT_DATA` and tight `RLIMIT_AS`) + on-demand `mprotect(PROT_READ | PROT_WRITE)` page materialization and a raw `#[thread_local]` POD reentry slot (`-enable-tlsdesc`, `const`-initialized with **no `Drop` destructor** so pthread TLS teardown never allocates, plus a static `BOOTSTRAP_REENTRY_SLOT` before TP init); replace the `8 KiB`/thread `POLL_SNAPSHOT` `.tbss` array in `rpc_svc.rs` with lazy heap storage.
   - Trim cold-startup relocation/constructor work so `stdio_file_layout_fdopen` and `date_tz_new_york` run deterministically `< 1.8x` host glibc, regenerate `tests/conformance/ld_preload_smoke_summary.v1.json` at `HEAD` (eliminating orphaned SHA `b70205895`), and enforce `ulimit -d 10240 /bin/echo` + gnulib `RLIMIT_DATA` probes in `RC.50`.
 - **WS-B — Hardened Membrane Canary Domain Separation, CSPRNG Keying & Warm-TLS Re-verification (`VR.8.3` + `VR.8.4`, under `VR.8`, blocking `RC.47`):**
-  - Seed `SIP_KEY_0`/`SIP_KEY_1` from Linux `AT_RANDOM` / `sys_getrandom` with domain-separated keys (`K_hdr` vs `K_tail`) so `Canary` is an independent 64-bit MAC over `(user_base, user_size, generation)` rather than a public XOR of plaintext `AllocationFingerprint.hash` at `user_base - 24`.
-  - Add bounded write-boundary and epoch-cadence header+tail canary verification to warm `TLS_CACHE` hits (`ptr_validator.rs:919-957`, `tls_cache.rs`) without regressing `<200 ns` micro / `<2.5x` `sort` budgets, emit structured `HealAction` audit records on `FreedWithCanaryCorruption`, and wire `fixture_malloc --canary-case` (expanded with `corrupt-after-warm-tls` and `header-leak-non-derivable-tail` cases) into local CI gates (`VR.8.4`).
+  - Seed 256-bit key material (`K_hdr` vs `K_tail`) via allocation-free `sys_getrandom(..., GRND_NONBLOCK)` (safe before `main` when `environ == NULL` during `ld.so` preload bootstrap, and inherited across `fork()` so parent-allocated chunks remain valid in child processes while `execve` re-seeds fresh keys) so `Canary` is an independent 64-bit MAC over `(user_base, user_size, generation, H)` rather than a public XOR of plaintext `AllocationFingerprint.hash` at `user_base - 24`.
+  - Add bounded write-entrypoint (`known_remaining_write_in_guarded_string(dst, req_len)`) and `1-in-16` thread-local cadence canary re-verification (`*(user_base + user_size) == cached.expected_canary`) on warm `TLS_CACHE` hits (`ptr_validator.rs:919-957`, `tls_cache.rs`) without regressing read-only `strlen`/`memcmp` (`<200 ns` micro / `<2.5x` `sort`), emit structured `HealAction` audit records on `FreedWithCanaryCorruption`, and wire `fixture_malloc --canary-case` (expanded with `corrupt-after-warm-tls-write`, `corrupt-header-after-warm-tls`, and `fork-preserves-canary-exec-reseeds`) into local CI gates (`VR.8.4`).
 - **WS-C — Membrane Self-Interposition Elimination, `errno` Transparency & Reachable Controller Wiring (`VR.4.1` + `VR.4.2`, under `VR.4`):**
   - Replace all `94` GOT-dispatched `f64` `log`/`exp`/`log2`/`log1p`/`acos` calls inside `frankenlibc-membrane` with pure-Rust internal polynomial/LUT routines (zero C-symbol linkage to `math_abi.rs`, zero `errno` mutation, zero `fnstenv`/`fldenv` FPU stalls in `ValidationPipeline`), and upgrade `decide_has_no_transcendentals_or_allocations` (`runtime_math/mod.rs:8620`) to inspect the compiled `.so` symbol/relocation graph (`VR.4.2`).
   - Repair the `control.rs:101-115` / `bandit.rs:68` threshold inversion so `UpgradeToSafeVariant` (`runtime_math/mod.rs:2398`) is reachable on medium-risk hardened calls, feed bounded adverse/cadence allocator signals into `QuarantineController` and `FRAGMENTATION`/`SIZE_CLASS` SOS evaluators in `cfg(not(test))`, and replace the tautological $(B-\sigma)+\sigma=B$ check in `membrane/build.rs:424` with honest Cholesky-PSD / monomial-certificate reporting.
 - **WS-D — `L1` Stub Promotion, Taxonomy Reconciliation, Canonical Docs & Durable Closure Receipts (`RC.33`–`RC.38`, `RC.44`, plus new `RC.51` + `RC.52`, blocking `RC.47`):**
   - Qualify the native `register_printf_*` (`RC.33`/`.34`) and `14` SunRPC (`RC.35`/`.36`) implementations, reconcile `host_delegation_census.v1.json` and the `1,092` `support_matrix.json` mismatches (`RC.37`/`.38`).
   - In `RC.51`/`.52`: format the 5 `rustfmt`-drifted files, update the 5 stale `line_marker`s + export surface in `semantic_contract_inventory.v1.json`, reconcile all prose/count/SHA/bead-status drift across `README.md`, `AGENTS.md`, `DEPLOYMENT.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, `FEATURE_PARITY.md`, `COMPATIBILITY.md`, `PARITY-COVERAGE.md`, `crates/frankenlibc-core/src/lib.rs`, and `replacement_levels.json:235`, harden `check_docs_semantic_claims.sh` with multi-occurrence & cross-guide negative counterexamples, and re-execute/commit durable repo-relative closure receipts so `check_closure_gate.sh` reaches `POST_FAIL=0`.
-- **WS-E — Executable Bounded Security Qualification (`SQ.0–SQ.13` / `S01–S24` → `VR.15` + `VR.15.1`–`.15.4`):**
-  - Materialize `SQ.0–SQ.13` (`S01–S24`) in `.beads/issues.jsonl` under epic `VR.15`:
-    - `VR.15.1` (`S01`–`S05`, `S21`): Repair `security_analyzer.py:204-241` (`would_prevent = False` and excluded from `security_score` whenever `verified_by_oracle == False`), repair `runner.sh:661-677` (`compute_verdict` requires independent harm-absence + output-contract oracle before `PREVENTED`), and remove `--no-docker` / `|| true` fail-open behavior in `cve_arena_gate.sh:87`.
-    - `VR.15.2` (`S06`, `S15`, `S16`, `S22`): Adversarial negative-control & schema/consumer test suite proving heal-only, silent-corruption, exit-0-with-harm, and unconfined runs can never classify as `PREVENTED` or inflate Gentoo security scores.
-    - `VR.15.3` (`S07`–`S14`, `S17`, `S18`): Execute M0/M1/M2 confined `libarchive` ZIP-writer and RAR-reader H/S/F/P counterfactual experiments (`stock` vs `FrankenLibC strict` vs `FrankenLibC hardened`) + legitimate archive-conversion utility corpus.
-    - `VR.15.4` (`S19`, `S20`, `S23`, `S24`): Clean-directory portable evidence bundle relocation verification + bounded `SECURITY.md` / `DEPLOYMENT.md` operator recommendation (including honest negative/unsupported dispositions where observed).
+- **WS-E — Executable Bounded Security Qualification (`SQ.0–SQ.13` / Exact `S01–S24` Bijection → `VR.15` + `VR.15.1`–`.15.4`):**
+  - Materialize all 24 packages `S01–S24` (`SQ.12`) in `.beads/issues.jsonl` under epic `VR.15`:
+    - `VR.15.1` (`M0` Foundations & Consumer Repair — `S01, S02, S04, S06, S21`): Freeze protocol (`S01`), conservative `(H, S, F, P)` observation/verdict contract in `runner.sh:661-677` (`S02`), release/provider binding (`S04`), isolated bounded execution removing `--no-docker || true` in `cve_arena_gate.sh:87` (`S06`), and zero-oracle refusal in `security_analyzer.py:204-241` (`S21`).
+    - `VR.15.2` (`M0` Adversarial Admission & Classifier Controls — `S03, S05, S07, S12`): False-positive classifier counterexamples (`S03`), wrong/stale/partial provider admission rejection (`S05`), missing-confinement/timeout/process-tree controls (`S07`), and known bypass/temporal limit preservation (`S12`). Blocks `RC.47` on honest security-claim gating.
+    - `VR.15.3` (`M1–M2` Confined `libarchive` Counterfactuals & Staging Lifecycle — `S08–S11, S13–S17`): Pin/run 4-arm ZIP-writer (`S08, S09`) and RAR read-boundary (`S13, S14`) `H/S/F/P` experiments, benign archive utility & truncation/publication rejection (`S10, S11`), live-incumbent cost measurement (`S15`), and exact profile admission/staging/lifecycle failure controls (`S16, S17`).
+    - `VR.15.4` (`M3–M4` Portable Bundle, Holdout, Revocation & Integrated `S22` Disposition — `S18–S20, S22–S24`): Portable bundle export (`S18`), clean-room external replication (`S19`), demo/report (`S20`), adversarial holdout & mutations (`S23`), supersession/revocation admission (`S24`), and integrated `S22` profile acceptance or honest non-qualification (`SECURITY.md` / `DEPLOYMENT.md`).
 - **WS-F — Standalone `_IO_2_1_std*` Objects, `libgcc_s`-Free Forced Unwind & `605`-Symbol Host Burndown (`VR.6.4` + `VR.6.5`, integrated with `VR.1`, `VR.6.1`–`.6.3`, `RC.24`):**
-  - Export ABI-sized `_IO_2_1_stdin_`, `_IO_2_1_stdout_`, `_IO_2_1_stderr_` objects in release `stdio_abi.rs` + `version_scripts/libc.map` (`GLIBC_2.2.5`), implement DWARF CFI `_Unwind_ForcedUnwind` and `_Unwind_GetCFA` in `owned_unwind_abi.rs` so native `pthread_cancel`/`pthread_exit` runs C++/Rust destructors without `libgcc_s.so.1`, fix `unregister_native_cleanup` (`pthread_abi.rs:11039`) nested cancel-type restoration, and burn down the `605` reachable host dependencies blocking `--features standalone`.
+  - Export ABI-sized (`224`B `_IO_FILE_plus`) `_IO_2_1_stdin_`, `_IO_2_1_stdout_`, `_IO_2_1_stderr_` objects in release `stdio_abi.rs` + `version_scripts/libc.map` (`GLIBC_2.2.5`) using GOT-resolved symbol identity (so `-no-pie` `R_X86_64_COPY` relocations in main executable `.bss` resolve as standard streams), implement DWARF CFI `_Unwind_ForcedUnwind` and `_Unwind_GetCFA` in `owned_unwind_abi.rs` so native `pthread_cancel`/`pthread_exit` runs C++/Rust destructors without `libgcc_s.so.1`, fix `unregister_native_cleanup` (`pthread_abi.rs:11039`) nested cancel-type restoration, and burn down the `605` reachable host dependencies blocking `--features standalone`.
 - **WS-G — Real `/dp/asupersync` Lab & `/dp/frankentui` Harness Execution (`VR.16` + `VR.16.1`):**
   - Replace the `Path::is_dir` + `Vec<String>` façade in `crates/frankenlibc-harness/src/asupersync_lab_replay.rs` with real `asupersync-conformance` deterministic seed/schedule execution over multi-threaded libc conformance traces, enable `frankentui-ui` snapshot/diff rendering in default harness verification, and keep `check_tooling_dependency_boundary.sh` green.
 

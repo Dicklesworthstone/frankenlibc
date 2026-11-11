@@ -25,14 +25,19 @@
 //!   pattern: callers enumerate the current live set, hand it to the bloom,
 //!   and the bloom replaces its bit pattern in place.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Default expected number of insertions. Sized for long-running consumers
-/// (4M items at 0.1% false-positive rate ≈ 7.2 MB of bit array). Callers
-/// expecting much higher allocation churn should construct the filter via
-/// `with_capacity` and arrange periodic `rebuild_from` rebuilds from the
-/// arena's live set.
+/// (4M items at 0.1% false-positive rate). Short-lived CLI processes only
+/// pay for [`TIER0_EXPECTED_ITEMS`] (~128 KiB, L2-resident) unless they cross
+/// 65,536 insertions, at which point the overflow slab is initialized lazily.
 const DEFAULT_EXPECTED_ITEMS: usize = 4_000_000;
+
+/// Initial primary-tier capacity for [`PointerBloomFilter::new`]: 65,536 items
+/// at 0.1% FP = 16,384 `u64` words (128 KiB), keeping `VmData` well below tight
+/// `RLIMIT_DATA` caps (e.g. 10 MiB) while fitting inside L2 cache.
+const TIER0_EXPECTED_ITEMS: usize = 65_536;
 
 /// Bits per block of the blocked layout: one 64-byte cache line.
 const BLOOM_BLOCK_BITS: usize = 512;
@@ -40,34 +45,14 @@ const BLOOM_BLOCK_BITS: usize = 512;
 /// Default false positive rate target.
 const DEFAULT_FP_RATE: f64 = 0.001; // 0.1%
 
-/// Bloom filter for pointer ownership queries.
-///
-/// Thread-safe via atomic bit operations on the underlying array.
-pub struct PointerBloomFilter {
-    /// Bit array stored as atomic u64 words.
+struct BloomSlab {
     bits: Box<[AtomicU64]>,
-    /// Number of bits in the filter.
     num_bits: usize,
-    /// Number of hash functions.
     num_hashes: u32,
-    /// Sizing target the filter was constructed with — used by saturation
-    /// diagnostics so callers can decide when to drive a `rebuild_from`.
-    expected_items: usize,
-    /// Monotonic counter of successful `insert` calls. Reset by `clear` /
-    /// `rebuild_from`.
-    insert_count: AtomicU64,
 }
 
-impl PointerBloomFilter {
-    /// Create a new bloom filter with default parameters.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::with_capacity(DEFAULT_EXPECTED_ITEMS, DEFAULT_FP_RATE)
-    }
-
-    /// Create a bloom filter with specific capacity and false positive rate.
-    #[must_use]
-    pub fn with_capacity(expected_items: usize, fp_rate: f64) -> Self {
+impl BloomSlab {
+    fn new(expected_items: usize, fp_rate: f64) -> Self {
         let fp_rate = fp_rate.clamp(1e-10, 0.5);
         let n = expected_items.max(1) as f64;
 
@@ -90,14 +75,11 @@ impl PointerBloomFilter {
             bits: bits.into_boxed_slice(),
             num_bits,
             num_hashes: k,
-            expected_items: expected_items.max(1),
-            insert_count: AtomicU64::new(0),
         }
     }
 
-    /// Insert a pointer into the bloom filter.
-    pub fn insert(&self, ptr: usize) {
-        let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
+    #[inline]
+    fn insert_hashes(&self, h1: usize, h2: usize) {
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
             let word = &self.bits[bit_idx / 64];
@@ -109,16 +91,10 @@ impl PointerBloomFilter {
                 word.fetch_or(mask, Ordering::Relaxed);
             }
         }
-        self.insert_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Query whether a pointer might be in the filter.
-    ///
-    /// Returns `true` if the pointer might be ours (may be false positive).
-    /// Returns `false` if the pointer is definitely not ours (no false negatives).
-    #[must_use]
-    pub fn might_contain(&self, ptr: usize) -> bool {
-        let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
+    #[inline]
+    fn might_contain_hashes(&self, h1: usize, h2: usize) -> bool {
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
             let word_idx = bit_idx / 64;
@@ -130,16 +106,125 @@ impl PointerBloomFilter {
         true
     }
 
-    /// Number of bits in the filter.
+    fn clear(&self) {
+        for word in self.bits.iter() {
+            word.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Bit `i` of a key with base hashes `h1`, `h2`.
+    ///
+    /// BLOCKED: every bit of one key lies in the same 512-bit (64-byte) block,
+    /// chosen by `h1`, so an insert or query touches ONE cache line instead of
+    /// `num_hashes` random lines of a multi-megabyte array -- the hardened
+    /// allocator inserts every fresh (quarantine-rotated) address, and those
+    /// misses were its largest self cost (bd-rc0923-epic-eeuy4f.9). Filters
+    /// smaller than a block use plain double hashing over the whole array.
+    #[inline]
+    fn bit_index(&self, h1: usize, h2: usize, i: u32) -> usize {
+        if self.num_bits < BLOOM_BLOCK_BITS {
+            // Double hashing; `num_bits` is a power of two.
+            return h1.wrapping_add((i as usize).wrapping_mul(h2)) & (self.num_bits - 1);
+        }
+        let block = h1 & (self.num_bits - 1) & !(BLOOM_BLOCK_BITS - 1);
+        let step = (h2 >> 32) | 1;
+        block + ((h2 >> 1).wrapping_add((i as usize).wrapping_mul(step)) & (BLOOM_BLOCK_BITS - 1))
+    }
+}
+
+/// Bloom filter for pointer ownership queries.
+///
+/// Thread-safe via atomic bit operations on the underlying array.
+pub struct PointerBloomFilter {
+    /// Compact primary L2-resident slab (always present).
+    tier0: BloomSlab,
+    /// Design capacity of the lazy overflow slab (`0` for single-tier `with_capacity`).
+    overflow_capacity: usize,
+    /// Fast acquire/release flag avoiding `OnceLock` inspection while `< TIER0_EXPECTED_ITEMS`.
+    overflow_active: AtomicBool,
+    /// Lazily allocated 4M-item overflow slab for long-running processes.
+    overflow: OnceLock<BloomSlab>,
+    /// Sizing target the filter was constructed with — used by saturation
+    /// diagnostics so callers can decide when to drive a `rebuild_from`.
+    expected_items: usize,
+    /// Monotonic counter of successful `insert` calls. Reset by `clear` /
+    /// `rebuild_from`.
+    insert_count: AtomicU64,
+}
+
+impl PointerBloomFilter {
+    /// Create a new two-tier bloom filter with compact 128 KiB initial footprint
+    /// and lazy 4M-item overflow promotion.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            tier0: BloomSlab::new(TIER0_EXPECTED_ITEMS, DEFAULT_FP_RATE),
+            overflow_capacity: DEFAULT_EXPECTED_ITEMS,
+            overflow_active: AtomicBool::new(false),
+            overflow: OnceLock::new(),
+            expected_items: DEFAULT_EXPECTED_ITEMS,
+            insert_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Create a bloom filter with specific capacity and false positive rate.
+    #[must_use]
+    pub fn with_capacity(expected_items: usize, fp_rate: f64) -> Self {
+        Self {
+            tier0: BloomSlab::new(expected_items, fp_rate),
+            overflow_capacity: 0,
+            overflow_active: AtomicBool::new(false),
+            overflow: OnceLock::new(),
+            expected_items: expected_items.max(1),
+            insert_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Insert a pointer into the bloom filter.
+    pub fn insert(&self, ptr: usize) {
+        let (h1, h2) = (Self::hash1(ptr), Self::hash2(ptr));
+        if self.overflow_capacity > 0
+            && self.insert_count.load(Ordering::Relaxed) >= TIER0_EXPECTED_ITEMS as u64
+        {
+            let ov = self
+                .overflow
+                .get_or_init(|| BloomSlab::new(self.overflow_capacity, DEFAULT_FP_RATE));
+            self.overflow_active.store(true, Ordering::Release);
+            ov.insert_hashes(h1, h2);
+        } else {
+            self.tier0.insert_hashes(h1, h2);
+        }
+        self.insert_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Query whether a pointer might be in the filter.
+    ///
+    /// Returns `true` if the pointer might be ours (may be false positive).
+    /// Returns `false` if the pointer is definitely not ours (no false negatives).
+    #[must_use]
+    pub fn might_contain(&self, ptr: usize) -> bool {
+        let (h1, h2) = (Self::hash1(ptr), Self::hash2(ptr));
+        if self.tier0.might_contain_hashes(h1, h2) {
+            return true;
+        }
+        if !self.overflow_active.load(Ordering::Acquire) {
+            return false;
+        }
+        self.overflow
+            .get()
+            .is_some_and(|ov| ov.might_contain_hashes(h1, h2))
+    }
+
+    /// Number of bits currently allocated in the filter.
     #[must_use]
     pub fn num_bits(&self) -> usize {
-        self.num_bits
+        self.tier0.num_bits + self.overflow.get().map_or(0, |ov| ov.num_bits)
     }
 
     /// Number of hash functions.
     #[must_use]
     pub fn num_hashes(&self) -> u32 {
-        self.num_hashes
+        self.tier0.num_hashes
     }
 
     /// Sizing target the filter was constructed with.
@@ -184,9 +269,11 @@ impl PointerBloomFilter {
     /// from the caller's live truth set, and bumps the insert counter so
     /// observers never see an empty filter.
     pub fn clear(&self) {
-        for word in self.bits.iter() {
-            word.store(0, Ordering::Relaxed);
+        self.tier0.clear();
+        if let Some(ov) = self.overflow.get() {
+            ov.clear();
         }
+        self.overflow_active.store(false, Ordering::Release);
         self.insert_count.store(0, Ordering::Relaxed);
     }
 
@@ -215,44 +302,30 @@ impl PointerBloomFilter {
     {
         // Zero first, then refill. Inserts during this window may race; the
         // contract above documents the requirement that callers quiesce.
-        for word in self.bits.iter() {
-            word.store(0, Ordering::Relaxed);
+        self.tier0.clear();
+        if let Some(ov) = self.overflow.get() {
+            ov.clear();
         }
+        self.overflow_active.store(false, Ordering::Release);
         let mut count: u64 = 0;
         for ptr in items {
-            let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
-            for i in 0..self.num_hashes {
-                let bit_idx = self.bit_index(h1, h2, i);
-                let word_idx = bit_idx / 64;
-                let bit_pos = bit_idx % 64;
-                self.bits[word_idx].fetch_or(1u64 << bit_pos, Ordering::Relaxed);
+            let (h1, h2) = (Self::hash1(ptr), Self::hash2(ptr));
+            if self.overflow_capacity > 0 && count >= TIER0_EXPECTED_ITEMS as u64 {
+                let ov = self
+                    .overflow
+                    .get_or_init(|| BloomSlab::new(self.overflow_capacity, DEFAULT_FP_RATE));
+                self.overflow_active.store(true, Ordering::Release);
+                ov.insert_hashes(h1, h2);
+            } else {
+                self.tier0.insert_hashes(h1, h2);
             }
             count = count.saturating_add(1);
         }
         self.insert_count.store(count, Ordering::Relaxed);
     }
 
-    /// Bit `i` of a key with base hashes `h1`, `h2`.
-    ///
-    /// BLOCKED: every bit of one key lies in the same 512-bit (64-byte) block,
-    /// chosen by `h1`, so an insert or query touches ONE cache line instead of
-    /// `num_hashes` random lines of a multi-megabyte array -- the hardened
-    /// allocator inserts every fresh (quarantine-rotated) address, and those
-    /// misses were its largest self cost (bd-rc0923-epic-eeuy4f.9). Filters
-    /// smaller than a block use plain double hashing over the whole array.
-    #[inline]
-    fn bit_index(&self, h1: usize, h2: usize, i: u32) -> usize {
-        if self.num_bits < BLOOM_BLOCK_BITS {
-            // Double hashing; `num_bits` is a power of two.
-            return h1.wrapping_add((i as usize).wrapping_mul(h2)) & (self.num_bits - 1);
-        }
-        let block = h1 & (self.num_bits - 1) & !(BLOOM_BLOCK_BITS - 1);
-        let step = (h2 >> 32) | 1;
-        block + ((h2 >> 1).wrapping_add((i as usize).wrapping_mul(step)) & (BLOOM_BLOCK_BITS - 1))
-    }
-
     /// Primary hash function (based on multiplicative hashing).
-    fn hash1(&self, ptr: usize) -> usize {
+    fn hash1(ptr: usize) -> usize {
         let mut x = ptr as u64;
         x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         x ^= x >> 30;
@@ -262,7 +335,7 @@ impl PointerBloomFilter {
     }
 
     /// Secondary hash function.
-    fn hash2(&self, ptr: usize) -> usize {
+    fn hash2(ptr: usize) -> usize {
         let mut x = ptr as u64;
         x ^= x >> 33;
         x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
@@ -330,6 +403,30 @@ mod tests {
         let filter = PointerBloomFilter::new();
         assert!(!filter.might_contain(0x1000));
         assert!(!filter.might_contain(0xDEAD_BEEF));
+        // Compact primary tier only (16,384 u64 words = 128 KiB = 1,048,576 bits).
+        assert_eq!(filter.num_bits(), 1_048_576);
+        assert_eq!(filter.expected_items(), DEFAULT_EXPECTED_ITEMS);
+    }
+
+    #[test]
+    fn default_filter_promotes_overflow_tier_without_false_negatives() {
+        let filter = PointerBloomFilter::new();
+        let total = TIER0_EXPECTED_ITEMS + 2_048;
+        for i in 0..total {
+            filter.insert(0x4000_0000 + i * 32);
+        }
+        assert!(filter.num_bits() > 1_048_576);
+        for i in 0..total {
+            let p = 0x4000_0000 + i * 32;
+            assert!(
+                filter.might_contain(p),
+                "false negative across tier0/overflow boundary at {i}"
+            );
+        }
+        filter.clear();
+        assert_eq!(filter.insert_count(), 0);
+        assert!(!filter.might_contain(0x4000_0000));
+        assert!(!filter.might_contain(0x4000_0000 + TIER0_EXPECTED_ITEMS * 32));
     }
 
     #[test]

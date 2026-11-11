@@ -2873,8 +2873,8 @@ fn empty_rpc_svc_fdset() -> RpcSvcFdSetBuf {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RPC_SVC_FDSET_TLS: std::cell::UnsafeCell<RpcSvcFdSetBuf> =
-        const { std::cell::UnsafeCell::new(RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])) };
+    static RPC_SVC_FDSET_TLS: Box<std::cell::UnsafeCell<RpcSvcFdSetBuf>> =
+        Box::new(std::cell::UnsafeCell::new(RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])));
 }
 
 #[inline]

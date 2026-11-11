@@ -29,12 +29,14 @@ class AggregateSecurityReport:
     by_severity: Dict[str, Dict[str, int]]
     package_reports: List[Dict[str, object]]
     methodology: Dict[str, object]
+    qualification_status: str = "unqualified"
 
 
 def generate_aggregate_report(
     log_dir: Path,
     cve_db_path: Path,
     packages: List[str] | None = None,
+    oracle_verdicts_by_package: Dict[str, Dict[str, bool]] | None = None,
 ) -> AggregateSecurityReport:
     """Generate aggregate security report."""
     cve_db = CVEDatabase(cve_db_path)
@@ -72,7 +74,12 @@ def generate_aggregate_report(
                 seen_log_files.add(resolved)
                 actions.extend(parser.parse_file(log_file))
 
-        analysis = analyzer.analyze_package(package, actions)
+        pkg_oracle = (
+            oracle_verdicts_by_package.get(package)
+            if oracle_verdicts_by_package is not None
+            else None
+        )
+        analysis = analyzer.analyze_package(package, actions, oracle_verdicts=pkg_oracle)
         report = analyzer.to_report(analysis)
         package_reports.append(report)
 
@@ -88,12 +95,23 @@ def generate_aggregate_report(
 
             for cve in analysis.cves:
                 evidence = analysis.prevention_evidence.get(cve.id, {})
-                if evidence.get("would_prevent", False):
+                if evidence.get("verified_by_oracle", False) and evidence.get(
+                    "would_prevent", False
+                ):
                     prevented_cves += 1
                     by_severity[cve.severity]["prevented"] += 1
                 by_severity[cve.severity]["total"] += 1
 
-    prevention_rate = prevented_cves / total_cves if total_cves > 0 else 1.0
+    any_oracle_qualified = any(
+        pkg.get("qualification_status") in {"oracle_qualified", "partially_oracle_qualified"}
+        for pkg in package_reports
+    )
+    if total_cves > 0 and any_oracle_qualified:
+        prevention_rate = prevented_cves / total_cves
+        qualification_status = "oracle_qualified"
+    else:
+        prevention_rate = 0.0
+        qualification_status = "unqualified"
 
     return AggregateSecurityReport(
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -107,6 +125,7 @@ def generate_aggregate_report(
         healing_by_class=aggregate_healing_by_class,
         by_severity=by_severity,
         package_reports=package_reports,
+        qualification_status=qualification_status,
         methodology={
             "description": "Security analysis correlates FrankenLibC healing actions with known CVEs",
             "evidence_classification": "runtime_repair_telemetry_not_cve_proof",
@@ -139,10 +158,15 @@ def render_markdown(report: AggregateSecurityReport) -> str:
         "",
         "## Executive Summary",
         "",
+        f"- **Qualification Status:** {report.qualification_status}",
         f"- **Total Packages Analyzed:** {report.total_packages}",
         f"- **Packages with Known CVEs:** {report.packages_with_cves}",
         f"- **Total CVEs Analyzed:** {report.total_cves}",
-        f"- **CVEs Prevented:** {report.prevented_cves} ({report.prevention_rate:.0%})",
+        (
+            f"- **CVEs Prevented (Oracle-Verified):** {report.prevented_cves} ({report.prevention_rate:.0%})"
+            if report.qualification_status != "unqualified"
+            else f"- **CVEs Prevented (Oracle-Verified):** {report.prevented_cves} (unqualified — 0 oracle-evaluated CVEs)"
+        ),
         f"- **CVEs Not Prevented:** {report.not_prevented_cves}",
         f"- **Total Healing Actions Observed:** {report.total_healing_actions}",
         "",
@@ -183,12 +207,16 @@ def render_markdown(report: AggregateSecurityReport) -> str:
     for pkg_report in sorted(report.package_reports, key=lambda x: x["package"]):
         pkg = pkg_report["package"]
         score = pkg_report["security_score"]
+        qual = pkg_report.get("qualification_status", "unqualified")
         cve_count = len(pkg_report["known_cves"])
         actions = pkg_report["total_healing_actions"]
 
         lines.append(f"### {pkg}")
         lines.append("")
-        lines.append(f"- **Security Score:** {score:.0%}")
+        if qual == "unqualified":
+            lines.append("- **Security Score:** unqualified (telemetry-only / 0 oracle verdicts)")
+        else:
+            lines.append(f"- **Security Score:** {score:.0%} ({qual})")
         lines.append(f"- **Known CVEs:** {cve_count}")
         lines.append(f"- **Healing Actions:** {actions}")
 
@@ -241,6 +269,7 @@ def main() -> int:
     # Convert to dict for JSON
     report_dict = {
         "timestamp": report.timestamp,
+        "qualification_status": report.qualification_status,
         "total_packages": report.total_packages,
         "packages_with_cves": report.packages_with_cves,
         "total_cves": report.total_cves,

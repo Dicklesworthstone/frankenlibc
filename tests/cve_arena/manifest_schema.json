@@ -310,6 +310,59 @@
     "uaf_sequence": {
       "type": "object",
       "description": "For UAF tests: step-by-step allocation/free/use sequence."
+    },
+    "qualification_protocol": {
+      "type": "object",
+      "description": "SQ.11 / S01 four-axis (H, S, F, P) conservative security-qualification contract.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "enum": ["sq-hsfp-v1"],
+          "default": "sq-hsfp-v1"
+        },
+        "threat_profile": {
+          "type": "string",
+          "enum": ["memory_corruption", "allocator_temporal", "bounds_overflow", "format_string", "untrusted_input"]
+        },
+        "scope_boundary": {
+          "type": "string",
+          "enum": ["in_scope", "not_mitigated_by_design"],
+          "default": "in_scope"
+        },
+        "harm_oracle": {
+          "type": "object",
+          "properties": {
+            "forbidden_regex": { "type": "string" },
+            "require_stock_harm": { "type": "boolean", "default": true }
+          },
+          "additionalProperties": false
+        },
+        "output_validator": {
+          "type": "object",
+          "properties": {
+            "expected_stdout_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "expected_stdout_regex": { "type": "string" },
+            "forbidden_stdout_regex": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "provider_binding": {
+          "type": "object",
+          "properties": {
+            "require_release_artifact": { "type": "boolean", "default": true },
+            "require_ld_bindings": { "type": "boolean", "default": true },
+            "expected_lib_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

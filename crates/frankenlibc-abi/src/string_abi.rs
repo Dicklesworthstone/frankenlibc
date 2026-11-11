@@ -10495,7 +10495,8 @@ static STRERROR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> 
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static STRERROR_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
+    static STRERROR_BUF: Box<std::cell::RefCell<[u8; 256]>> =
+        Box::new(std::cell::RefCell::new([0u8; 256]));
 }
 
 pub(crate) fn rendered_strerror_message(errnum: c_int) -> (String, bool) {
@@ -10557,7 +10558,8 @@ static STRSIGNAL_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> 
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static STRSIGNAL_BUF: std::cell::RefCell<[u8; 64]> = const { std::cell::RefCell::new([0u8; 64]) };
+    static STRSIGNAL_BUF: Box<std::cell::RefCell<[u8; 64]>> =
+        Box::new(std::cell::RefCell::new([0u8; 64]));
 }
 
 fn with_strsignal_buffer<R>(callback: impl FnOnce(&mut [u8; 64]) -> R) -> R {

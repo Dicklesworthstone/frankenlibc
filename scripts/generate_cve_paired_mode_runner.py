@@ -43,20 +43,48 @@ def find_repo_root():
     return Path.cwd()
 
 
+_BUILT_RELEASE_LIB = False
+
+
 def find_preload_lib(root):
+    global _BUILT_RELEASE_LIB
     candidates = []
     env_lib = os.environ.get("FRANKENLIBC_LIB")
     if env_lib:
         candidates.append(Path(env_lib))
+    cargo_target = os.environ.get("CARGO_TARGET_DIR")
+    if cargo_target:
+        candidates.append(Path(cargo_target) / "release" / "libfrankenlibc_abi.so")
     candidates.extend([
         Path("/data/tmp/cargo-target/release/libfrankenlibc_abi.so"),
         root / "target" / "release" / "libfrankenlibc_abi.so",
+    ])
+    candidates.extend(sorted(root.glob(".rch-target-*/release/libfrankenlibc_abi.so")))
+    if cargo_target:
+        candidates.append(Path(cargo_target) / "debug" / "libfrankenlibc_abi.so")
+    candidates.extend([
         Path("/data/tmp/cargo-target/debug/libfrankenlibc_abi.so"),
         root / "target" / "debug" / "libfrankenlibc_abi.so",
     ])
     for cand in candidates:
         if cand.exists():
             return cand
+    if not _BUILT_RELEASE_LIB:
+        _BUILT_RELEASE_LIB = True
+        try:
+            subprocess.run(
+                ["cargo", "build", "-p", "frankenlibc-abi", "--release"],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        for cand in candidates:
+            if cand.exists():
+                return cand
     return None
 
 

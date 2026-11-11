@@ -4347,7 +4347,8 @@ mod tests {
             .expect("record_semantic_deny() must exist");
         let body = &src[start..];
         let end = body
-            .find("\n}\n\n#[cold]\nfn append_deny_record")
+            .find("\n}\n\n#[cold]\n#[allow(clippy::too_many_arguments)]\nfn append_deny_record")
+            .or_else(|| body.find("\n}\n\n#[cold]\nfn append_deny_record"))
             .expect("record_semantic_deny() must end before append_deny_record()");
         let body = &body[..end];
         let guard_at = body

@@ -7168,9 +7168,9 @@ fn with_qecvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         thread_local! {
-            static BUF: RefCell<[u8; 128]> = const { RefCell::new([0u8; 128]) };
+            static BUF: Box<RefCell<[u8; 128]>> = Box::new(RefCell::new([0u8; 128]));
         }
-        BUF.with(f)
+        BUF.with(|b| f(b))
     }
 }
 
@@ -7182,9 +7182,9 @@ fn with_qfcvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         thread_local! {
-            static BUF: RefCell<[u8; 128]> = const { RefCell::new([0u8; 128]) };
+            static BUF: Box<RefCell<[u8; 128]>> = Box::new(RefCell::new([0u8; 128]));
         }
-        BUF.with(f)
+        BUF.with(|b| f(b))
     }
 }
 

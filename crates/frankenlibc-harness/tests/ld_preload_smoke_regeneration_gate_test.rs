@@ -184,6 +184,15 @@ fn fake_report(canonical: &Value) -> Value {
         "enforce_parity_modes": ["strict"],
         "enforce_perf_modes": ["strict"],
         "perf_ratio_max_ppm": 2000000,
+        "elf_vm_geometry": {
+            "bss_bytes": 200_000,
+            "tbss_bytes": 3_200,
+            "tdata_bytes": 0,
+            "tls_bytes": 3_200,
+            "max_bss_bytes": 2_097_152,
+            "max_tls_bytes": 4_096,
+            "passed": true
+        },
         "valgrind_policy": "off",
         "summary": canonical["summary"],
         "modes": {
@@ -276,6 +285,9 @@ fn run_gate(
         .current_dir(&root)
         .env("FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_REPORT", &gate_report)
         .env("FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_LOG", &gate_log);
+    if let Some(src) = option_env!("RCH_BUILD_SOURCE") {
+        command.env("RCH_BUILD_SOURCE", src);
+    }
     if let Some(path) = canonical {
         command.env("FRANKENLIBC_LD_PRELOAD_SMOKE_CANONICAL", path);
     }
@@ -686,6 +698,117 @@ fn validate_only_rejects_trace_multiplicity_shortfall_for_duplicate_cases() -> T
                 && error.contains("expected 2, saw 1")
         }),
         "failure should identify the duplicate case trace multiplicity shortfall"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_only_rejects_orphaned_canonical_source_commit() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let report_value = fake_report(&canonical);
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-orphan-commit");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    let edited_canonical = temp.join("ld_preload_smoke_summary.v1.json");
+    let mut mutated = canonical.clone();
+    mutated["source_commit"] = json!("b70205895998491fc13ab3ca4a420efaf5d2d1fa");
+    write_json(&report, &report_value);
+    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
+    write_json(&edited_canonical, &mutated);
+
+    // Ensure a real local git repository is present even when RCH executes the
+    // test binary on a remote worker whose `.git` directory was excluded.
+    let git_repo = temp.join("repo");
+    std::fs::create_dir_all(&git_repo).expect("create temp git repo");
+    assert!(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&git_repo)
+            .status()
+            .expect("git init")
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "root",
+            ])
+            .current_dir(&git_repo)
+            .status()
+            .expect("git commit")
+            .success()
+    );
+
+    let gate_report = temp.join("gate.report.json");
+    let gate_log = temp.join("gate.log.jsonl");
+    let output = Command::new(root.join(GATE_SCRIPT))
+        .arg("--validate-only")
+        .arg("--report")
+        .arg(&report)
+        .arg("--trace")
+        .arg(&trace)
+        .current_dir(&root)
+        .env("GIT_DIR", git_repo.join(".git"))
+        .env_remove("RCH_BUILD_SOURCE")
+        .env("FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_REPORT", &gate_report)
+        .env("FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_LOG", &gate_log)
+        .env("FRANKENLIBC_LD_PRELOAD_SMOKE_CANONICAL", &edited_canonical)
+        .output()
+        .expect("gate script should execute");
+    assert!(
+        !output.status.success(),
+        "gate should fail when canonical source_commit is orphaned / not an ancestor of HEAD"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["errors"].as_array().unwrap().iter().any(|error| {
+            let error = error.as_str().unwrap_or("");
+            error.contains("canonical.source_commit") && error.contains("not an ancestor")
+        }),
+        "failure should identify orphaned canonical.source_commit"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_only_rejects_elf_bss_ceiling_breach() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let mut report_value = fake_report(&canonical);
+    report_value["elf_vm_geometry"]["bss_bytes"] = json!(30_571_416);
+    report_value["elf_vm_geometry"]["passed"] = json!(false);
+
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-bss-ceiling");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    write_json(&report, &report_value);
+    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
+
+    let (gate_report, _gate_log, output) = run_gate(&temp, &report, &trace, None);
+    assert!(
+        !output.status.success(),
+        "gate should fail when ELF .bss exceeds the 2 MiB ceiling"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["errors"].as_array().unwrap().iter().any(|error| {
+            error
+                .as_str()
+                .unwrap_or("")
+                .contains("smoke_report.elf_vm_geometry.bss_bytes")
+        }),
+        "failure should identify the ELF .bss ceiling breach"
     );
     Ok(())
 }

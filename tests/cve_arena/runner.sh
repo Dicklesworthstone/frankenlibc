@@ -109,6 +109,7 @@ OPT_CATEGORY=""
 OPT_CVE_DIR=""
 OPT_NO_DOCKER=false
 OPT_VERBOSE=false
+OPT_EVALUATE_HSFP=""
 OPT_TIMEOUT="${CVE_ARENA_TIMEOUT:-${DEFAULT_TIMEOUT}}"
 OPT_IMAGE="${CVE_ARENA_IMAGE:-${DEFAULT_IMAGE}}"
 
@@ -178,6 +179,14 @@ parse_args() {
                 OPT_IMAGE="${1#--image=}"
                 shift
                 ;;
+            --evaluate-hsfp=*)
+                OPT_EVALUATE_HSFP="${1#--evaluate-hsfp=}"
+                shift
+                ;;
+            --evaluate-hsfp)
+                OPT_EVALUATE_HSFP="${2:-}"
+                shift 2
+                ;;
             --help|-h)
                 usage
                 ;;
@@ -215,6 +224,10 @@ parse_args() {
         fi
     fi
 
+    if [[ -n "${OPT_EVALUATE_HSFP}" ]]; then
+        return 0
+    fi
+
     # Ensure exactly one selection mode.
     local modes=0
     [[ "${OPT_ALL}" == "true" ]] && (( modes++ )) || true
@@ -234,40 +247,39 @@ parse_args() {
 # ---------------------------------------------------------------------------
 
 resolve_FrankenLibC_lib() {
+    local candidate=""
     if [[ -n "${FRANKENLIBC_LIB:-}" ]]; then
         if [[ ! -f "${FRANKENLIBC_LIB}" ]]; then
-            log_fatal "FRANKENLIBC_LIB points to missing file: ${FRANKENLIBC_LIB}"
+            log_fatal "INVALID_ADMISSION: FRANKENLIBC_LIB points to missing file: ${FRANKENLIBC_LIB}"
         fi
-        echo "${FRANKENLIBC_LIB}"
-        return
+        candidate="${FRANKENLIBC_LIB}"
+    elif [[ -n "${CARGO_TARGET_DIR:-}" && -f "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so" ]]; then
+        candidate="${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+    elif [[ -f "/data/tmp/cargo-target/release/libfrankenlibc_abi.so" ]]; then
+        candidate="/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
+    elif [[ -f "${PROJECT_ROOT}/target/release/libfrankenlibc_abi.so" ]]; then
+        candidate="${PROJECT_ROOT}/target/release/libfrankenlibc_abi.so"
+    elif [[ -f "${PROJECT_ROOT}/target/debug/libfrankenlibc_abi.so" ]]; then
+        log_fatal "INVALID_ADMISSION: debug build rejected (${PROJECT_ROOT}/target/debug/libfrankenlibc_abi.so); release libfrankenlibc_abi.so required"
+    else
+        log_fatal "INVALID_ADMISSION: Cannot find release libfrankenlibc_abi.so"
     fi
 
-    if [[ -n "${CARGO_TARGET_DIR:-}" && -f "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so" ]]; then
-        echo "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
-        return
+    # SQ S05: Reject debug artifacts and verify expected SHA-256 when pinned.
+    case "${candidate}" in
+        */debug/*|*/debug/libfrankenlibc_abi.so)
+            log_fatal "INVALID_ADMISSION: debug build rejected (${candidate}); release artifact required"
+            ;;
+    esac
+    if [[ -n "${FRANKENLIBC_EXPECTED_LIB_SHA256:-}" ]]; then
+        local actual_sha
+        actual_sha=$(sha256sum "${candidate}" | awk '{print $1}')
+        if [[ "${actual_sha,,}" != "${FRANKENLIBC_EXPECTED_LIB_SHA256,,}" ]]; then
+            log_fatal "INVALID_ADMISSION: candidate SHA-256 mismatch (expected ${FRANKENLIBC_EXPECTED_LIB_SHA256}, got ${actual_sha})"
+        fi
     fi
 
-    if [[ -f "/data/tmp/cargo-target/release/libfrankenlibc_abi.so" ]]; then
-        echo "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
-        return
-    fi
-
-    # Default: project build output.
-    local default_path="${PROJECT_ROOT}/target/release/libfrankenlibc_abi.so"
-    if [[ -f "${default_path}" ]]; then
-        echo "${default_path}"
-        return
-    fi
-
-    # Fallback: check debug build.
-    local debug_path="${PROJECT_ROOT}/target/debug/libfrankenlibc_abi.so"
-    if [[ -f "${debug_path}" ]]; then
-        log_warn "Using debug build of libfrankenlibc_abi.so (consider building release)"
-        echo "${debug_path}"
-        return
-    fi
-
-    log_fatal "Cannot find libfrankenlibc_abi.so. Build with: cargo build --release -p frankenlibc-abi"
+    echo "${candidate}"
 }
 
 # ---------------------------------------------------------------------------
@@ -451,9 +463,17 @@ run_single_mode() {
 
     if [[ "${OPT_NO_DOCKER}" == "true" ]]; then
         # ---------------------------------------------------------------
-        # No-Docker mode: run directly on host
+        # Staged local-confinement mode: private staging copy + process-group timeout
         # ---------------------------------------------------------------
-        log_info "  [${mode}] Running on host (no Docker)..."
+        log_info "  [${mode}] Running in private staged directory (no Docker)..."
+        local stage_dir="${logs_dir}/stage_${stem}_${mode}_$$"
+        local stage_src="${stage_dir}/src"
+        local stage_work="${stage_dir}/work"
+        mkdir -p "${stage_src}" "${stage_work}"
+        cp -a "${test_dir}/." "${stage_src}/"
+        chmod -R a-w "${stage_src}" 2>/dev/null || true
+        cp -a "${test_dir}/." "${stage_work}/"
+        chmod -R u+rwX "${stage_work}" 2>/dev/null || true
 
         # Build the test if a build command is specified.
         if [[ -n "${build_cmd}" && "${build_cmd}" != "null" ]]; then
@@ -462,28 +482,34 @@ run_single_mode() {
                 effective_build_cmd="${effective_build_cmd} -fno-builtin"
             fi
             log_info "  [${mode}] Building: ${effective_build_cmd}"
-            if ! (cd "${test_dir}" && eval "${effective_build_cmd}") >"${stdout_file}" 2>"${stderr_file}"; then
+            if ! (cd "${stage_work}" && eval "${effective_build_cmd}") >"${stdout_file}" 2>"${stderr_file}"; then
                 log_error "  [${mode}] Build failed."
                 cat "${stderr_file}" >&2
-                echo '{"exit_code": 2, "signal": null, "stdout": "", "stderr": "BUILD FAILED", "duration_ms": 0, "exploitable": false}'
+                echo '{"exit_code": 2, "signal": null, "stdout": "", "stderr": "BUILD FAILED", "duration_ms": 0, "exploitable": false, "provider_bound": false}'
                 return
             fi
         fi
 
-        # Execute with timeout and signal wrapper.
+        # Execute in a dedicated session/process group so timeout kills forked children too (SQ S06/S07).
+        local ld_bind_prefix="${logs_dir}/${stem}_${mode}.ld_bindings"
         start_ns=$(date +%s%N)
         set +e
-        (
-            cd "${test_dir}"
-            if [[ "${mode}" == "tsm" && -n "${glibc_lib}" ]]; then
-                export LD_PRELOAD="${glibc_lib}"
-                export FRANKENLIBC_MODE="hardened"
-                export FRANKENLIBC_LOG="${log_file}"
-                export FRANKENLIBC_LOG_FILE="${log_file}"
+        setsid timeout --kill-after=2s "${OPT_TIMEOUT}" bash -c '
+            set -e
+            cd "$1"
+            ulimit -c 0 2>/dev/null || true
+            ulimit -f 65536 2>/dev/null || true
+            if [[ "$2" == "tsm" && -n "$3" ]]; then
+                export LD_PRELOAD="$3"
+                export FRANKENLIBC_MODE="${FRANKENLIBC_CVE_MODE:-hardened}"
+                export FRANKENLIBC_LOG="$4"
+                export FRANKENLIBC_LOG_FILE="$4"
+                export LD_DEBUG="bindings"
+                export LD_DEBUG_OUTPUT="$5"
             fi
-            timeout "${OPT_TIMEOUT}" bash -c "${run_cmd}" \
-                >"${stdout_file}" 2>"${stderr_file}"
-        )
+            exec bash -c "$6"
+        ' _ "${stage_work}" "${mode}" "${glibc_lib}" "${log_file}" "${ld_bind_prefix}" "${run_cmd}" \
+            >"${stdout_file}" 2>"${stderr_file}"
         exit_code=$?
         set -e
         end_ns=$(date +%s%N)
@@ -589,17 +615,31 @@ run_single_mode() {
         fi
     fi
 
-    # JSON-escape the output strings.
-    local stdout_json stderr_json
+    # JSON-escape the output strings and compute digests (SQ S02 / S04).
+    local stdout_json stderr_json stdout_sha256 stderr_sha256
     stdout_json=$(printf '%s' "${stdout_content}" | jq -Rs '.')
     stderr_json=$(printf '%s' "${stderr_content}" | jq -Rs '.')
+    stdout_sha256=$(sha256sum "${stdout_file}" 2>/dev/null | awk '{print $1}')
+    stderr_sha256=$(sha256sum "${stderr_file}" 2>/dev/null | awk '{print $1}')
 
     # Build the JSON result for this mode.
     if [[ "${mode}" == "tsm" ]]; then
-        local healing_actions tsm_log_json combined_log
+        local healing_actions tsm_log_json combined_log provider_bound lib_sha256
         combined_log="${stderr_content}"$'\n'"${log_content}"
         healing_actions=$(extract_healing_actions "${combined_log}")
         tsm_log_json=$(printf '%s' "${combined_log}" | jq -Rs '.')
+        lib_sha256=""
+        if [[ -n "${glibc_lib}" && -f "${glibc_lib}" ]]; then
+            lib_sha256=$(sha256sum "${glibc_lib}" | awk '{print $1}')
+        fi
+        provider_bound="false"
+        if compgen -G "${logs_dir}/${stem}_${mode}.ld_bindings*" >/dev/null; then
+            if grep -qE "to .*libfrankenlibc_abi\.so" "${logs_dir}/${stem}_${mode}.ld_bindings"* 2>/dev/null; then
+                provider_bound="true"
+            fi
+        elif [[ "${OPT_NO_DOCKER}" != "true" && -n "${glibc_lib}" ]]; then
+            provider_bound="true"
+        fi
 
         cat <<EOFJSON
 {
@@ -607,6 +647,10 @@ run_single_mode() {
     "signal": $(if [[ "${signal}" == "null" ]]; then echo 'null'; else echo "\"${signal}\""; fi),
     "stdout": ${stdout_json},
     "stderr": ${stderr_json},
+    "stdout_sha256": "${stdout_sha256}",
+    "stderr_sha256": "${stderr_sha256}",
+    "lib_sha256": "${lib_sha256}",
+    "provider_bound": ${provider_bound},
     "duration_ms": ${duration_ms},
     "exploitable": ${exploitable},
     "healing_actions": ${healing_actions},
@@ -620,6 +664,8 @@ EOFJSON
     "signal": $(if [[ "${signal}" == "null" ]]; then echo 'null'; else echo "\"${signal}\""; fi),
     "stdout": ${stdout_json},
     "stderr": ${stderr_json},
+    "stdout_sha256": "${stdout_sha256}",
+    "stderr_sha256": "${stderr_sha256}",
     "duration_ms": ${duration_ms},
     "exploitable": ${exploitable}
 }
@@ -638,6 +684,132 @@ EOFJSON
 #   DETECTED   - Stock crashes/exploits, FrankenLibC catches it (exit non-zero, no crash signal)
 #   REGRESSION - FrankenLibC crashes with a signal (bug in our implementation)
 #   BASELINE   - Stock also succeeds (test may not be triggering the bug)
+compute_hsfp_json() {
+    local payload_json="$1"
+    python3 - "${payload_json}" <<'PY'
+import hashlib
+import json
+import re
+import sys
+
+data = json.loads(sys.argv[1])
+admitted = bool(data.get("admitted", True))
+scope_boundary = str(data.get("scope_boundary") or "in_scope")
+stock_exit = int(data.get("stock_exit", 0))
+tsm_exit = int(data.get("tsm_exit", 0))
+expected_tsm_exit = int(data.get("expected_tsm_exit", 0))
+stock_exploitable = bool(data.get("stock_exploitable", False))
+tsm_exploitable = bool(data.get("tsm_exploitable", False))
+stock_stdout = str(data.get("stock_stdout") or "")
+stock_stderr = str(data.get("stock_stderr") or "")
+tsm_stdout = str(data.get("tsm_stdout") or "")
+tsm_stderr = str(data.get("tsm_stderr") or "")
+healing_actions = list(data.get("healing_actions") or [])
+provider_bound = bool(data.get("provider_bound", True))
+lib_sha256 = str(data.get("lib_sha256") or "")
+expected_lib_sha256 = str(data.get("expected_lib_sha256") or "")
+expected_stdout_sha256 = str(data.get("expected_stdout_sha256") or "")
+expected_stdout_regex = str(data.get("expected_stdout_regex") or "")
+forbidden_stdout_regex = str(data.get("forbidden_stdout_regex") or "")
+harm_forbidden_regex = str(data.get("harm_forbidden_regex") or "")
+
+HARM_RE = re.compile(
+    r"EXPLOITABLE|VULNERABLE|SAME ADDRESS|HEAP CORRUPTION|ERROR: AddressSanitizer|"
+    r"HARM_OBSERVED|CANARY_CORRUPTED_SILENT",
+    re.IGNORECASE,
+)
+CORRUPT_OUT_RE = re.compile(
+    r"CORRUPTED_OUTPUT|SILENT_CORRUPTION|INVALID_ARCHIVE",
+    re.IGNORECASE,
+)
+
+stock_combined = f"{stock_stdout}\n{stock_stderr}"
+tsm_combined = f"{tsm_stdout}\n{tsm_stderr}"
+
+h_stock = bool(
+    data["h_stock"]
+    if "h_stock" in data
+    else (stock_exploitable or bool(HARM_RE.search(stock_combined)))
+)
+h_candidate = bool(
+    data["h_candidate"]
+    if "h_candidate" in data
+    else (
+        tsm_exploitable
+        or tsm_exit in (124, 137)
+        or bool(HARM_RE.search(tsm_combined))
+        or (bool(harm_forbidden_regex) and bool(re.search(harm_forbidden_regex, tsm_combined)))
+    )
+)
+
+s_telemetry = len(healing_actions) > 0
+
+actual_stdout_sha256 = hashlib.sha256(tsm_stdout.encode("utf-8")).hexdigest()
+if "f_accepted" in data:
+    f_accepted = bool(data["f_accepted"])
+else:
+    f_accepted = (tsm_exit == expected_tsm_exit) and not bool(CORRUPT_OUT_RE.search(tsm_stdout))
+    if f_accepted and expected_stdout_sha256:
+        f_accepted = actual_stdout_sha256.lower() == expected_stdout_sha256.lower()
+    if f_accepted and expected_stdout_regex:
+        f_accepted = bool(re.search(expected_stdout_regex, tsm_stdout))
+    if f_accepted and forbidden_stdout_regex:
+        f_accepted = not bool(re.search(forbidden_stdout_regex, tsm_stdout))
+
+if "p_verified" in data:
+    p_verified = bool(data["p_verified"])
+else:
+    p_verified = provider_bound
+    if p_verified and expected_lib_sha256:
+        p_verified = bool(lib_sha256) and lib_sha256.lower() == expected_lib_sha256.lower()
+
+if expected_lib_sha256 and lib_sha256 and lib_sha256.lower() != expected_lib_sha256.lower():
+    admitted = False
+
+if not admitted:
+    verdict = "INVALID_ADMISSION"
+elif not p_verified:
+    verdict = "UNSUPPORTED_PROVIDER"
+elif scope_boundary == "not_mitigated_by_design":
+    verdict = "NOT_MITIGATED_BY_DESIGN"
+elif h_candidate:
+    verdict = "REGRESSION"
+elif not h_stock:
+    verdict = "BASELINE"
+elif f_accepted:
+    # SQ.11 conservative rule: admitted && H_stock && !H_candidate && F_accepted && P_verified
+    verdict = "PREVENTED"
+else:
+    verdict = "DETECTED"
+
+result = {
+    "verdict": verdict,
+    "admitted": admitted,
+    "scope_boundary": scope_boundary,
+    "H": {
+        "stock_harm": h_stock,
+        "candidate_harm": h_candidate,
+    },
+    "S": {
+        "telemetry_observed": s_telemetry,
+        "healing_actions": healing_actions,
+    },
+    "F": {
+        "accepted": f_accepted,
+        "expected_exit": expected_tsm_exit,
+        "actual_exit": tsm_exit,
+        "stdout_sha256": actual_stdout_sha256,
+    },
+    "P": {
+        "verified": p_verified,
+        "provider_bound": provider_bound,
+        "lib_sha256": lib_sha256,
+    },
+}
+print(json.dumps(result))
+PY
+}
+
 compute_verdict() {
     local stock_exit="$1"
     local tsm_exit="$2"
@@ -645,51 +817,64 @@ compute_verdict() {
     local tsm_stdout="${4:-}"
     local tsm_healing="${5:-[]}"
     local expected_tsm_exit="${6:-0}"
+    local provider_bound="${7:-true}"
+    local scope_boundary="${8:-in_scope}"
+    local stock_stderr="${9:-}"
+    local tsm_stderr="${10:-}"
+    local lib_sha256="${11:-}"
+    local expected_lib_sha256="${12:-}"
+    local expected_stdout_sha256="${13:-}"
+    local expected_stdout_regex="${14:-}"
+    local forbidden_stdout_regex="${15:-}"
+    local harm_forbidden_regex="${16:-}"
 
-    local stock_signal tsm_signal stock_exploitable tsm_exploitable
-    stock_signal=$(exit_code_to_signal "${stock_exit}")
-    tsm_signal=$(exit_code_to_signal "${tsm_exit}")
+    local stock_exploitable tsm_exploitable payload hsfp_json
     stock_exploitable=$(is_exploitable_exit "${stock_exit}")
     tsm_exploitable=$(is_exploitable_exit "${tsm_exit}")
 
-    # Case 1: FrankenLibC itself crashes -- always a regression regardless of stock.
-    if [[ "${tsm_exploitable}" == "true" ]]; then
-        echo "REGRESSION"
-        return
-    fi
-
-    # Case 2: Stock crashes/exploits, FrankenLibC does not crash.
-    if [[ "${stock_exploitable}" == "true" ]]; then
-        if [[ ${tsm_exit} -eq ${expected_tsm_exit} ]]; then
-            echo "PREVENTED"
-        else
-            echo "DETECTED"
-        fi
-        return
-    fi
-
-    # Case 3: Stock exits non-zero (but no crash signal), FrankenLibC exits cleanly with expected exit code.
-    if [[ ${stock_exit} -ne 0 ]]; then
-        if [[ ${tsm_exit} -eq ${expected_tsm_exit} ]]; then
-            echo "PREVENTED"
-            return
-        fi
-    fi
-
-    # Case 4: Both exit with expected_tsm_exit (e.g. multi-vector harness catching signals or checking reuse),
-    # and the harness explicitly reports vulnerability in stock mode vs mitigation in TSM mode without
-    # any residual EXPLOITABLE/VULNERABLE status in TSM output.
-    if [[ ${stock_exit} -eq ${expected_tsm_exit} && ${tsm_exit} -eq ${expected_tsm_exit} ]]; then
-        if echo "${stock_stdout}" | grep -qiE 'EXPLOITABLE|VULNERABLE|SAME ADDRESS|HEAP CORRUPTION' && \
-           ! echo "${tsm_stdout}" | grep -qiE 'EXPLOITABLE|VULNERABLE|SAME ADDRESS|HEAP CORRUPTION' && \
-           echo "${tsm_stdout}" | grep -qiE 'quarantine working|Prevented|SAFE|mitigated|DETECTED'; then
-            echo "PREVENTED"
-            return
-        fi
-    fi
-
-    # Case 5: Both succeed or both fail the same way.
-    echo "BASELINE"
+    payload=$(jq -n \
+        --argjson stock_exit "${stock_exit}" \
+        --argjson tsm_exit "${tsm_exit}" \
+        --argjson expected_tsm_exit "${expected_tsm_exit}" \
+        --argjson stock_exploitable "${stock_exploitable}" \
+        --argjson tsm_exploitable "${tsm_exploitable}" \
+        --arg stock_stdout "${stock_stdout}" \
+        --arg stock_stderr "${stock_stderr}" \
+        --arg tsm_stdout "${tsm_stdout}" \
+        --arg tsm_stderr "${tsm_stderr}" \
+        --argjson healing_actions "${tsm_healing}" \
+        --argjson provider_bound "${provider_bound}" \
+        --arg scope_boundary "${scope_boundary}" \
+        --arg lib_sha256 "${lib_sha256}" \
+        --arg expected_lib_sha256 "${expected_lib_sha256}" \
+        --arg expected_stdout_sha256 "${expected_stdout_sha256}" \
+        --arg expected_stdout_regex "${expected_stdout_regex}" \
+        --arg forbidden_stdout_regex "${forbidden_stdout_regex}" \
+        --arg harm_forbidden_regex "${harm_forbidden_regex}" \
+        '{
+            admitted: true,
+            scope_boundary: $scope_boundary,
+            stock_exit: $stock_exit,
+            tsm_exit: $tsm_exit,
+            expected_tsm_exit: $expected_tsm_exit,
+            stock_exploitable: $stock_exploitable,
+            tsm_exploitable: $tsm_exploitable,
+            stock_stdout: $stock_stdout,
+            stock_stderr: $stock_stderr,
+            tsm_stdout: $tsm_stdout,
+            tsm_stderr: $tsm_stderr,
+            healing_actions: $healing_actions,
+            provider_bound: $provider_bound,
+            lib_sha256: $lib_sha256,
+            expected_lib_sha256: $expected_lib_sha256,
+            expected_stdout_sha256: $expected_stdout_sha256,
+            expected_stdout_regex: $expected_stdout_regex,
+            forbidden_stdout_regex: $forbidden_stdout_regex,
+            harm_forbidden_regex: $harm_forbidden_regex
+        }')
+    hsfp_json=$(compute_hsfp_json "${payload}")
+    LAST_HSFP_JSON="${hsfp_json}"
+    echo "${hsfp_json}" | jq -r '.verdict'
 }
 
 # ---------------------------------------------------------------------------
@@ -747,24 +932,58 @@ run_cve_test() {
     log_info "Running stock glibc mode..."
     local stock_json
     stock_json=$(run_single_mode "${test_dir}" "stock" "${run_cmd_stock}" "${build_cmd}" "" "${stem}")
-    local stock_exit stock_stdout
+    local stock_exit stock_stdout stock_stderr
     stock_exit=$(echo "${stock_json}" | jq -r '.exit_code')
     stock_stdout=$(echo "${stock_json}" | jq -r '.stdout // ""')
+    stock_stderr=$(echo "${stock_json}" | jq -r '.stderr // ""')
     log_info "  Stock exit code: ${stock_exit}"
 
     # Run TSM mode.
     log_info "Running FrankenLibC (TSM) mode..."
     local tsm_json
     tsm_json=$(run_single_mode "${test_dir}" "tsm" "${run_cmd_tsm}" "${build_cmd}" "${glibc_lib}" "${stem}")
-    local tsm_exit tsm_stdout tsm_healing
+    local tsm_exit tsm_stdout tsm_stderr tsm_healing tsm_provider_bound tsm_lib_sha256
     tsm_exit=$(echo "${tsm_json}" | jq -r '.exit_code')
     tsm_stdout=$(echo "${tsm_json}" | jq -r '.stdout // ""')
+    tsm_stderr=$(echo "${tsm_json}" | jq -r '.stderr // ""')
     tsm_healing=$(echo "${tsm_json}" | jq -c '.healing_actions // []')
-    log_info "  TSM exit code: ${tsm_exit} (healing=${tsm_healing})"
+    tsm_provider_bound=$(echo "${tsm_json}" | jq -r '.provider_bound // true')
+    tsm_lib_sha256=$(echo "${tsm_json}" | jq -r '.lib_sha256 // ""')
+    log_info "  TSM exit code: ${tsm_exit} (healing=${tsm_healing}, provider_bound=${tsm_provider_bound})"
 
-    # Compute verdict.
-    local verdict
-    verdict=$(compute_verdict "${stock_exit}" "${tsm_exit}" "${stock_stdout}" "${tsm_stdout}" "${tsm_healing}" "${expected_tsm_exit}")
+    # Read optional SQ S01 / S02 / S04 / S12 protocol contracts from manifest.
+    local scope_boundary expected_lib_sha256 expected_stdout_sha256 expected_stdout_regex forbidden_stdout_regex harm_forbidden_regex
+    scope_boundary=$(jq -r '.qualification_protocol.scope_boundary // "in_scope"' < "${manifest}")
+    expected_lib_sha256=$(jq -r '.qualification_protocol.provider_binding.expected_lib_sha256 // ""' < "${manifest}")
+    expected_stdout_sha256=$(jq -r '.qualification_protocol.output_validator.expected_stdout_sha256 // ""' < "${manifest}")
+    expected_stdout_regex=$(jq -r '.qualification_protocol.output_validator.expected_stdout_regex // ""' < "${manifest}")
+    forbidden_stdout_regex=$(jq -r '.qualification_protocol.output_validator.forbidden_stdout_regex // ""' < "${manifest}")
+    harm_forbidden_regex=$(jq -r '.qualification_protocol.harm_oracle.forbidden_regex // ""' < "${manifest}")
+
+    # Compute conservative 4-axis (H, S, F, P) verdict.
+    local verdict hsfp_json
+    LAST_HSFP_JSON=""
+    verdict=$(compute_verdict \
+        "${stock_exit}" \
+        "${tsm_exit}" \
+        "${stock_stdout}" \
+        "${tsm_stdout}" \
+        "${tsm_healing}" \
+        "${expected_tsm_exit}" \
+        "${tsm_provider_bound}" \
+        "${scope_boundary}" \
+        "${stock_stderr}" \
+        "${tsm_stderr}" \
+        "${tsm_lib_sha256}" \
+        "${expected_lib_sha256}" \
+        "${expected_stdout_sha256}" \
+        "${expected_stdout_regex}" \
+        "${forbidden_stdout_regex}" \
+        "${harm_forbidden_regex}")
+    hsfp_json="${LAST_HSFP_JSON}"
+    if [[ -z "${hsfp_json}" ]]; then
+        hsfp_json='{}'
+    fi
     log_verdict "${verdict}" "${cve_id}"
 
     # Read additional manifest metadata for the result JSON.
@@ -774,6 +993,8 @@ run_cve_test() {
     tsm_features=$(jq -c '.tsm_features_tested // []' < "${manifest}")
 
     local result_file="${RESULTS_DIR}/${stem}.result.json"
+    local hsfp_jsonl="${RESULTS_DIR}/logs/hsfp_verdicts.jsonl"
+    mkdir -p "${RESULTS_DIR}/logs"
 
     jq -n \
         --arg cve_id "${cve_id}" \
@@ -784,6 +1005,7 @@ run_cve_test() {
         --argjson stock "${stock_json}" \
         --argjson tsm "${tsm_json}" \
         --arg verdict "${verdict}" \
+        --argjson hsfp "${hsfp_json}" \
         --argjson cwe_ids "${cwe_ids}" \
         --argjson cvss_score "${cvss_score}" \
         --argjson tsm_features "${tsm_features}" \
@@ -806,6 +1028,7 @@ run_cve_test() {
             stock_glibc: $stock,
             FrankenLibC: $tsm,
             verdict: $verdict,
+            hsfp: $hsfp,
             metadata: {
                 cwe_ids: $cwe_ids,
                 cvss_score: $cvss_score,
@@ -813,6 +1036,13 @@ run_cve_test() {
                 test_directory: $test_dir
             }
         }' > "${result_file}"
+
+    jq -cn \
+        --arg cve_id "${cve_id}" \
+        --arg test_name "${test_name}" \
+        --arg timestamp "${timestamp}" \
+        --argjson hsfp "${hsfp_json}" \
+        '{cve_id: $cve_id, test_name: $test_name, timestamp: $timestamp} + $hsfp' >> "${hsfp_jsonl}"
 
     log_info "Result written to ${result_file}"
     return 0
@@ -917,6 +1147,11 @@ print_summary() {
 main() {
     parse_args "$@"
 
+    if [[ -n "${OPT_EVALUATE_HSFP}" ]]; then
+        compute_hsfp_json "${OPT_EVALUATE_HSFP}"
+        exit 0
+    fi
+
     log_info "CVE Arena Test Runner"
     log_info "Project root: ${PROJECT_ROOT}"
     log_info "Results dir:  ${RESULTS_DIR}"
@@ -926,12 +1161,20 @@ main() {
         log_fatal "jq is required but not installed. Install with: apt install jq"
     fi
 
-    if ! command -v docker &>/dev/null && [[ "${OPT_NO_DOCKER}" != "true" ]]; then
-        log_fatal "Docker is required (or use --no-docker for glibc-internal tests)."
+    # Create results directory early so confinement blocks leave machine-readable evidence (SQ S06/S07).
+    mkdir -p "${RESULTS_DIR}"
+
+    if [[ "${CVE_ARENA_FORCE_MISSING_ISOLATION:-0}" == "1" ]]; then
+        jq -n '{status: "blocked_missing_isolation", reason: "forced missing isolation negative control"}' > "${RESULTS_DIR}/isolation_status.json"
+        log_fatal "blocked_missing_isolation: isolation backend forced unavailable"
     fi
 
-    # Create results directory.
-    mkdir -p "${RESULTS_DIR}"
+    if [[ "${OPT_NO_DOCKER}" != "true" ]]; then
+        if ! command -v docker &>/dev/null || ! docker info &>/dev/null; then
+            jq -n '{status: "blocked_missing_isolation", reason: "docker daemon/cli unavailable"}' > "${RESULTS_DIR}/isolation_status.json"
+            log_fatal "blocked_missing_isolation: Docker isolation is required (daemon/CLI unavailable)"
+        fi
+    fi
 
     # Resolve the FrankenLibC library.
     local glibc_lib
@@ -987,8 +1230,8 @@ main() {
         log_warn "${errors} test(s) had execution errors."
     fi
 
-    # Exit with failure if any regressions occurred.
-    if [[ ${regression} -gt 0 ]]; then
+    # Exit with failure if any regressions, admission/provider rejections, or execution errors occurred.
+    if [[ ${regression} -gt 0 || ${errors} -gt 0 ]]; then
         exit 1
     fi
 

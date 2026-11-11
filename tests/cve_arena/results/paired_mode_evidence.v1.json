@@ -193,7 +193,7 @@
           "healing_actions_observed": []
         },
         "hardened": {
-          "rc": 1,
+          "rc": 0,
           "signal": null,
           "timed_out": false,
           "crashed": false,
@@ -318,7 +318,7 @@
           "healing_actions_observed": []
         },
         "hardened": {
-          "rc": 1,
+          "rc": 0,
           "signal": null,
           "timed_out": false,
           "crashed": false,
@@ -448,20 +448,23 @@
           "healing_actions_observed": []
         },
         "hardened": {
-          "rc": 1,
+          "rc": 0,
           "signal": null,
           "timed_out": false,
           "crashed": false,
           "stderr_snippet": "",
           "heal_counts": {
-            "ClampSize": 3
+            "ClampSize": 3,
+            "ReturnSafeDefault": 1
           },
           "healing_actions_observed": [
-            "ClampSize"
+            "ClampSize",
+            "ReturnSafeDefault"
           ]
         },
         "heal_counter_deltas": {
-          "ClampSize": 3
+          "ClampSize": 3,
+          "ReturnSafeDefault": 1
         },
         "hardened_healed": true
       },
@@ -688,7 +691,7 @@
           "healing_actions_observed": []
         },
         "strict": {
-          "rc": 0,
+          "rc": 1,
           "signal": null,
           "timed_out": false,
           "crashed": false,

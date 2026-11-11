@@ -40,6 +40,9 @@ ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES:-strict,hardened}"
 ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES:-strict}"
 PERF_RATIO_MAX_PPM="${PERF_RATIO_MAX_PPM:-2000000}"
 VALGRIND_POLICY="${VALGRIND_POLICY:-auto}" # auto|off|required
+MAX_BSS_BYTES="${FRANKENLIBC_SMOKE_MAX_BSS_BYTES:-2097152}"
+MAX_TLS_BYTES="${FRANKENLIBC_SMOKE_MAX_TLS_BYTES:-4096}"
+MAX_VMDATA_KB="${FRANKENLIBC_SMOKE_MAX_VMDATA_KB:-4096}"
 
 require_non_negative_integer() {
   local name="$1" value="$2"
@@ -61,9 +64,13 @@ require_positive_integer() {
 require_positive_integer "TIMEOUT_SECONDS" "${TIMEOUT_SECONDS}"
 require_non_negative_integer "STRESS_ITERS" "${STRESS_ITERS}"
 require_positive_integer "PERF_RATIO_MAX_PPM" "${PERF_RATIO_MAX_PPM}"
+require_positive_integer "FRANKENLIBC_SMOKE_MAX_BSS_BYTES" "${MAX_BSS_BYTES}"
+require_positive_integer "FRANKENLIBC_SMOKE_MAX_TLS_BYTES" "${MAX_TLS_BYTES}"
+require_positive_integer "FRANKENLIBC_SMOKE_MAX_VMDATA_KB" "${MAX_VMDATA_KB}"
 TRACE_FILE="${RUN_DIR}/trace.jsonl"
 CASE_TSV="${RUN_DIR}/abi_compat_cases.tsv"
 REPORT_FILE="${RUN_DIR}/abi_compat_report.json"
+ELF_GEOMETRY_FILE="${RUN_DIR}/elf_vm_geometry.json"
 TROUBLESHOOT_FILE="${RUN_DIR}/startup_troubleshooting.md"
 BEAD_ID="${BEAD_ID:-bd-1ah8}"
 FAILURE_SIGNATURE_DENYLIST="${FAILURE_SIGNATURE_DENYLIST:-startup_timeout,startup_segv,startup_abort,startup_symbol_lookup_error,startup_loader_missing_library,startup_glibc_version_mismatch,startup_elf_class_mismatch}"
@@ -1123,6 +1130,9 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "libm_f32_sample" "${LIBM_F32_SAMPLE_BIN}" || mode_failed=1
   # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
   run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
+  # RLIMIT_DATA = 10 MiB (ulimit -d 10240) across setrlimit+dprintf/fprintf and fresh ld.so execs (bd-rc0923-epic-eeuy4f.49/.50, bd-4n397c).
+  run_corpus_case "${mode}" "rlimit_data_10mb_fixture" "${RLIMIT_AS_FIRST_BIN}" rlimit_data || mode_failed=1
+  run_corpus_case "${mode}" "rlimit_data_10mb_shell_tools" bash -c "ulimit -d 10240 && /bin/echo echo_ok && /usr/bin/env LC_ALL=C /bin/grep -c alpha '${tree}/a.txt'" || mode_failed=1
   # flockfile(stdout) + putc from several threads: flockfile held the stream
   # registry lock while blocking on the stream lock (deadlock).
   run_corpus_case "${mode}" "flockfile_threads" "${FLOCKFILE_THREADS_BIN}" || mode_failed=1
@@ -1225,9 +1235,109 @@ echo "enforce_perf_modes=${ENFORCE_PERF_MODES}"
 echo "perf_ratio_max_ppm=${PERF_RATIO_MAX_PPM}"
 echo "valgrind_policy=${VALGRIND_POLICY}"
 
+check_elf_vm_geometry() {
+  python3 - "${LIB_PATH}" "${ELF_GEOMETRY_FILE}" "${TRACE_FILE}" "${RUN_ID}" "${MAX_BSS_BYTES}" "${MAX_TLS_BYTES}" "${MAX_VMDATA_KB}" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+lib_path = sys.argv[1]
+out_path = Path(sys.argv[2])
+trace_path = Path(sys.argv[3])
+run_id = sys.argv[4]
+max_bss_bytes = int(sys.argv[5])
+max_tls_bytes = int(sys.argv[6])
+max_vmdata_kb = int(sys.argv[7])
+
+readelf_out = subprocess.check_output(["readelf", "-SW", lib_path], text=True)
+sec_re = re.compile(r"^\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+")
+sections = {}
+for line in readelf_out.splitlines():
+    m = sec_re.match(line)
+    if m:
+        sections[m.group(1)] = int(m.group(2), 16)
+
+bss_bytes = sections.get(".bss", 0)
+tbss_bytes = sections.get(".tbss", 0)
+tdata_bytes = sections.get(".tdata", 0)
+tls_bytes = tbss_bytes + tdata_bytes
+relr_bytes = sections.get(".relr.dyn", 0)
+rela_bytes = sections.get(".rela.dyn", 0)
+
+def probe_vmdata_kb(mode: str) -> int:
+    env = os.environ.copy()
+    env["FRANKENLIBC_MODE"] = mode
+    env["LD_PRELOAD"] = lib_path
+    proc = subprocess.run(
+        ["/bin/grep", "^VmData:", "/proc/self/status"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return 1 << 30
+    parts = proc.stdout.strip().split()
+    return int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else (1 << 30)
+
+vm_data_kb_strict = probe_vmdata_kb("strict")
+vm_data_kb_hardened = probe_vmdata_kb("hardened")
+
+passed = (
+    bss_bytes <= max_bss_bytes
+    and tls_bytes <= max_tls_bytes
+    and vm_data_kb_strict < max_vmdata_kb
+    and vm_data_kb_hardened < max_vmdata_kb
+)
+geom = {
+    "bss_bytes": bss_bytes,
+    "tbss_bytes": tbss_bytes,
+    "tdata_bytes": tdata_bytes,
+    "tls_bytes": tls_bytes,
+    "relr_bytes": relr_bytes,
+    "rela_bytes": rela_bytes,
+    "vm_data_kb_strict": vm_data_kb_strict,
+    "vm_data_kb_hardened": vm_data_kb_hardened,
+    "max_bss_bytes": max_bss_bytes,
+    "max_tls_bytes": max_tls_bytes,
+    "max_vmdata_kb": max_vmdata_kb,
+    "passed": passed,
+}
+out_path.write_text(json.dumps(geom, indent=2) + "\n", encoding="utf-8")
+
+trace_event = {
+    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "level": "info" if passed else "error",
+    "event": "elf_vm_geometry",
+    "mode": "all",
+    "case": "elf_vm_geometry",
+    "status": "pass" if passed else "fail",
+    "run_id": run_id,
+    **geom,
+}
+with trace_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(trace_event) + "\n")
+
+if not passed:
+    print(
+        f"ld_preload_smoke: elf_vm_geometry FAILED: bss={bss_bytes} (max {max_bss_bytes}), "
+        f"tls={tls_bytes} (max {max_tls_bytes}), vm_data_kb=({vm_data_kb_strict}, {vm_data_kb_hardened}) "
+        f"(max <{max_vmdata_kb})",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+}
+
 emit_trace "info" "suite_start" "all" "all" "running" \
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 overall_failed=0
+check_elf_vm_geometry || overall_failed=1
 run_suite_for_mode strict || overall_failed=1
 run_suite_for_mode hardened || overall_failed=1
 deployed_overhead_exit=0
@@ -1239,6 +1349,7 @@ emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && 
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 
 export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_ELF_GEOMETRY_FILE="${ELF_GEOMETRY_FILE}"
 export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT="${deployed_overhead_exit}"
 export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT="${RUN_DIR}/deployed-overhead/benchmark.json"
 export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
@@ -1362,6 +1473,11 @@ payload = {
         "passed": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"] == "0",
         "report": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT"],
     },
+    "elf_vm_geometry": json.loads(
+        Path(env["LD_PRELOAD_SMOKE_ELF_GEOMETRY_FILE"]).read_text(encoding="utf-8")
+    )
+    if Path(env["LD_PRELOAD_SMOKE_ELF_GEOMETRY_FILE"]).exists()
+    else {},
     "valgrind_policy": env["LD_PRELOAD_SMOKE_VALGRIND_POLICY"],
     "summary": {
         "total_cases": len(cases),

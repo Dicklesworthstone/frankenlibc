@@ -82,11 +82,11 @@ if [[ "${SKIP_RUN}" != "1" ]]; then
             echo "${YELLOW}cve_arena_gate: cargo test exited ${CARGO_RC} (some CVE tests may intentionally fail on stock)${RESET}"
         fi
     else
-        echo "cve_arena_gate: running CVE Arena suite..."
+        echo "cve_arena_gate: running CVE Arena suite in isolated mode..."
         if [[ -n "${CATEGORY}" && "${CATEGORY}" != "all" ]]; then
-            "${RUNNER}" --no-docker --category="${CATEGORY}" --results-dir="${RESULTS_DIR}" || true
+            "${RUNNER}" --category="${CATEGORY}" --results-dir="${RESULTS_DIR}"
         else
-            "${RUNNER}" --no-docker --all --results-dir="${RESULTS_DIR}" || true
+            "${RUNNER}" --all --results-dir="${RESULTS_DIR}"
         fi
     fi
 fi
@@ -97,7 +97,7 @@ fi
 if [[ -x "${REPORTER}" ]]; then
     echo ""
     echo "cve_arena_gate: generating report..."
-    "${REPORTER}" "${RESULTS_DIR}" || true
+    "${REPORTER}" "${RESULTS_DIR}"
 fi
 
 # ---------------------------------------------------------------------------

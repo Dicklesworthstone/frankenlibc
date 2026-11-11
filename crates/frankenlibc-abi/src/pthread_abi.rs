@@ -3106,10 +3106,10 @@ impl TppThreadState {
 }
 
 std::thread_local! {
-    static ROBUST_HELD_SET: std::cell::RefCell<RobustHeldSet> =
-        const { std::cell::RefCell::new(RobustHeldSet::new()) };
-    static THREAD_TPP_STATE: std::cell::Cell<TppThreadState> =
-        const { std::cell::Cell::new(TppThreadState::new()) };
+    static ROBUST_HELD_SET: Box<std::cell::RefCell<RobustHeldSet>> =
+        Box::new(std::cell::RefCell::new(RobustHeldSet::new()));
+    static THREAD_TPP_STATE: Box<std::cell::Cell<TppThreadState>> =
+        Box::new(std::cell::Cell::new(TppThreadState::new()));
 }
 
 fn remember_robust_mutex_held(tid: i32, mutex: *mut libc::pthread_mutex_t) {

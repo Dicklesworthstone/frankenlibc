@@ -86,8 +86,13 @@ if [[ "${MODE}" == "run" ]]; then
   esac
   export RCH_REQUIRE_REMOTE=1
   echo "check_ld_preload_smoke_regeneration: building frankenlibc-abi through rch"
+  RCH_SMOKE_WORKER_ARGS=()
+  if [[ -n "${FRANKENLIBC_RCH_WORKER:-}" ]]; then
+    rch workers probe "${FRANKENLIBC_RCH_WORKER}" >/dev/null 2>&1 || true
+    RCH_SMOKE_WORKER_ARGS=(--worker "${FRANKENLIBC_RCH_WORKER}")
+  fi
   set +e
-  rch exec -- cargo build -p frankenlibc-abi --release > "${BUILD_LOG}" 2>&1
+  rch exec "${RCH_SMOKE_WORKER_ARGS[@]}" -- cargo build -p frankenlibc-abi --release > "${BUILD_LOG}" 2>&1
   build_rc=$?
   set -e
   if grep -q '\[RCH\] local' "${BUILD_LOG}"; then
@@ -132,6 +137,7 @@ python3 - "${ROOT}" "${CONTRACT}" "${CANONICAL}" "${SMOKE_REPORT}" "${SMOKE_TRAC
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -212,7 +218,21 @@ def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def source_commit() -> str:
+def git_has_commit(commit: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def source_commit() -> tuple[str, bool]:
+    declared = os.environ.get("RCH_BUILD_SOURCE", "").strip().removesuffix("-dirty")
     proc = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
@@ -221,10 +241,13 @@ def source_commit() -> str:
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    return proc.stdout.strip() or "unknown"
+    git_head = proc.stdout.strip()
+    if declared and (not git_head or not git_has_commit(declared)):
+        return declared, False
+    return (git_head or declared or "unknown"), bool(git_head)
 
 
-SOURCE_COMMIT = source_commit()
+SOURCE_COMMIT, GIT_METADATA_SYNCED = source_commit()
 
 
 def rel(path: str | Path) -> str:
@@ -451,6 +474,22 @@ def validate_report_summary(report: dict[str, Any], projection: dict[str, Any]) 
                 errors.append(
                     f"smoke_report.modes.{mode}.{field}={actual!r} does not match cases-derived {expected!r}"
                 )
+    elf_geom = report.get("elf_vm_geometry")
+    if isinstance(elf_geom, dict) and elf_geom:
+        max_bss = int(elf_geom.get("max_bss_bytes", 2_097_152))
+        max_tls = int(elf_geom.get("max_tls_bytes", 4_096))
+        bss_bytes = elf_geom.get("bss_bytes")
+        tls_bytes = elf_geom.get("tls_bytes")
+        if not isinstance(bss_bytes, int) or bss_bytes > max_bss:
+            errors.append(
+                f"smoke_report.elf_vm_geometry.bss_bytes={bss_bytes!r} exceeds ceiling {max_bss}"
+            )
+        if not isinstance(tls_bytes, int) or tls_bytes > max_tls:
+            errors.append(
+                f"smoke_report.elf_vm_geometry.tls_bytes={tls_bytes!r} exceeds ceiling {max_tls}"
+            )
+        if elf_geom.get("passed") is False:
+            errors.append("smoke_report.elf_vm_geometry.passed is false")
 
 
 def validate_canonical_summary(canonical: dict[str, Any]) -> None:
@@ -507,6 +546,23 @@ def validate_canonical_summary(canonical: dict[str, Any]) -> None:
     optional = canonical.get("optional_skip_binaries")
     if not isinstance(optional, list) or not all(isinstance(item, str) and item for item in optional):
         errors.append("canonical.optional_skip_binaries must be non-empty strings")
+    canonical_commit = canonical.get("source_commit")
+    if not isinstance(canonical_commit, str) or len(canonical_commit) < 7 or not all(
+        ch in "0123456789abcdefABCDEF" for ch in canonical_commit
+    ):
+        errors.append(f"canonical.source_commit={canonical_commit!r} must be a valid git commit SHA")
+    elif SOURCE_COMMIT != "unknown" and (GIT_METADATA_SYNCED or git_has_commit(canonical_commit)):
+        anc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", canonical_commit, "HEAD"],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if anc.returncode != 0:
+            errors.append(
+                f"canonical.source_commit={canonical_commit} is not an ancestor of HEAD ({SOURCE_COMMIT})"
+            )
 
 
 def compare_projection(canonical: dict[str, Any], projection: dict[str, Any]) -> list[dict[str, Any]]:

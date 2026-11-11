@@ -488,11 +488,8 @@ struct PollSnapshot {
 }
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static POLL_SNAPSHOT: UnsafeCell<PollSnapshot> = const {
-        // Zero-initialized so the 8 KiB per-thread snapshot resides in `.tbss`
-        // rather than `.tdata`; `refresh()` always fills `EMPTY_POLL` before use.
-        UnsafeCell::new(PollSnapshot { entries: [ZERO_POLL; LIMIT] })
-    };
+    static POLL_SNAPSHOT: Box<UnsafeCell<PollSnapshot>> =
+        Box::new(UnsafeCell::new(PollSnapshot { entries: [ZERO_POLL; LIMIT] }));
 }
 #[cfg(feature = "owned-tls-cache")]
 static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =

@@ -417,3 +417,146 @@ fn paired_fuzz_replay_seed_keys_are_deterministic() {
         assert_eq!(left["paired_fuzz_seed"], right["paired_fuzz_seed"]);
     }
 }
+
+#[test]
+fn sq_m0_hsfp_counterexamples_and_confinement_controls() {
+    let root = repo_root();
+    let runner = root.join("tests/cve_arena/runner.sh");
+    let gate = std::fs::read_to_string(root.join("scripts/cve_arena_gate.sh"))
+        .expect("cve_arena_gate.sh readable");
+    assert!(
+        !gate.contains("--no-docker"),
+        "cve_arena_gate.sh must not bypass isolation via --no-docker"
+    );
+    assert!(
+        !gate.contains("|| true"),
+        "cve_arena_gate.sh must not swallow runner/reporter failures via || true"
+    );
+
+    let eval_hsfp = |payload: serde_json::Value| -> serde_json::Value {
+        let out = Command::new("bash")
+            .arg(&runner)
+            .arg(format!("--evaluate-hsfp={payload}"))
+            .current_dir(&root)
+            .output()
+            .expect("runner.sh --evaluate-hsfp should execute");
+        assert!(
+            out.status.success(),
+            "runner --evaluate-hsfp failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).expect("valid HSFP JSON")
+    };
+
+    // S03: heal_with_harm, silent_output_corruption, and baseline_not_reproduced NEVER emit PREVENTED.
+    let heal_with_harm = eval_hsfp(serde_json::json!({
+        "admitted": true,
+        "stock_exit": 139,
+        "stock_exploitable": true,
+        "tsm_exit": 0,
+        "expected_tsm_exit": 0,
+        "h_candidate": true,
+        "healing_actions": ["ClampSize", "ClampSize", "TruncateWithNull"],
+        "provider_bound": true
+    }));
+    assert_eq!(heal_with_harm["verdict"].as_str(), Some("REGRESSION"));
+
+    let silent_corruption = eval_hsfp(serde_json::json!({
+        "admitted": true,
+        "stock_exit": 139,
+        "stock_exploitable": true,
+        "tsm_exit": 0,
+        "expected_tsm_exit": 0,
+        "f_accepted": false,
+        "healing_actions": ["ClampSize"],
+        "provider_bound": true
+    }));
+    assert_eq!(silent_corruption["verdict"].as_str(), Some("DETECTED"));
+
+    let baseline_not_repro = eval_hsfp(serde_json::json!({
+        "admitted": true,
+        "stock_exit": 0,
+        "stock_exploitable": false,
+        "tsm_exit": 0,
+        "expected_tsm_exit": 0,
+        "healing_actions": ["ClampSize"],
+        "provider_bound": true
+    }));
+    assert_eq!(baseline_not_repro["verdict"].as_str(), Some("BASELINE"));
+
+    // S05: unverified provider binding and mismatched candidate SHA-256 reject fail-closed.
+    let bypassed_provider = eval_hsfp(serde_json::json!({
+        "admitted": true,
+        "stock_exit": 139,
+        "stock_exploitable": true,
+        "tsm_exit": 0,
+        "expected_tsm_exit": 0,
+        "provider_bound": false
+    }));
+    assert_eq!(
+        bypassed_provider["verdict"].as_str(),
+        Some("UNSUPPORTED_PROVIDER")
+    );
+
+    let tampered_sha = eval_hsfp(serde_json::json!({
+        "admitted": true,
+        "stock_exit": 139,
+        "stock_exploitable": true,
+        "tsm_exit": 0,
+        "expected_tsm_exit": 0,
+        "provider_bound": true,
+        "lib_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "expected_lib_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    }));
+    assert_eq!(tampered_sha["verdict"].as_str(), Some("INVALID_ADMISSION"));
+
+    // S12: out-of-scope foreign/stack/post-quarantine boundary records NOT_MITIGATED_BY_DESIGN.
+    let boundary = eval_hsfp(serde_json::json!({
+        "admitted": true,
+        "scope_boundary": "not_mitigated_by_design",
+        "stock_exit": 139,
+        "stock_exploitable": true,
+        "tsm_exit": 0,
+        "expected_tsm_exit": 0,
+        "provider_bound": true
+    }));
+    assert_eq!(
+        boundary["verdict"].as_str(),
+        Some("NOT_MITIGATED_BY_DESIGN")
+    );
+
+    // S07: missing isolation fails closed before publication and records blocked_missing_isolation.
+    let iso_dir = unique_temp_path("sq_m0_missing_iso", "dir");
+    let iso_out = Command::new("bash")
+        .arg(&runner)
+        .arg("--all")
+        .arg(format!("--results-dir={}", iso_dir.display()))
+        .current_dir(&root)
+        .env("CVE_ARENA_FORCE_MISSING_ISOLATION", "1")
+        .output()
+        .expect("runner missing-isolation check should execute");
+    assert!(
+        !iso_out.status.success(),
+        "missing isolation must fail closed"
+    );
+    let iso_status = load_json(&iso_dir.join("isolation_status.json"));
+    assert_eq!(
+        iso_status["status"].as_str(),
+        Some("blocked_missing_isolation")
+    );
+
+    // S03 / S21 Python Gentoo negative controls must also pass end-to-end.
+    let py_out = Command::new("python3")
+        .arg("-m")
+        .arg("unittest")
+        .arg("tests/gentoo/test_security_validation.py")
+        .current_dir(&root)
+        .output()
+        .expect("python3 unittest should execute");
+    assert!(
+        py_out.status.success(),
+        "test_security_validation.py failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&py_out.stdout),
+        String::from_utf8_lossy(&py_out.stderr)
+    );
+}

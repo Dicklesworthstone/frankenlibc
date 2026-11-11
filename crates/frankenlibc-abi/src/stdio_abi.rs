@@ -17024,7 +17024,8 @@ static TMPNAM_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static TMPNAM_BUF: std::cell::UnsafeCell<[u8; 64]> = const { std::cell::UnsafeCell::new([0u8; 64]) };
+    static TMPNAM_BUF: Box<std::cell::UnsafeCell<[u8; 64]>> =
+        Box::new(std::cell::UnsafeCell::new([0u8; 64]));
 }
 
 fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
