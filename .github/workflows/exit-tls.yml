@@ -13,6 +13,7 @@ on:
       - 'tests/integration/fixture_exit_tls*'
       - 'tests/integration/fixture_startup_thread_exit.c'
       - 'tests/integration/fixture_pthread_cancel.c'
+      - 'crates/frankenlibc-abi/tests/conformance_diff_system_signals.rs'
       - 'scripts/check_exit_tls.py'
       - 'scripts/check_startup_thread_exit.py'
       - '.github/workflows/exit-tls.yml'
@@ -75,6 +76,45 @@ jobs:
           cargo test -p frankenlibc-abi --test dlfcn_native_cxa_test "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/cxa.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/cxa.log"
           git diff --exit-code -- crates/frankenlibc-abi/src tests/integration/fixture_exit_tls* tests/integration/fixture_startup_thread_exit.c tests/integration/fixture_pthread_cancel.c scripts/check_exit_tls.py scripts/check_startup_thread_exit.py
+      - name: Preserve system signal dispositions across concurrent calls and cancellation
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=artifacts/exit-tls/system-signals
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$library"
+          mkdir -p "$root"
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/integration/fixture_pthread_cancel.c -ldl -o "$root/probe"
+          sha256sum "$library" "$root/probe" tests/integration/fixture_pthread_cancel.c > "$root/inputs.sha256"
+          for scenario in inherited-int inherited-quit overlap-first overlap-second cancel-first cancel-second; do
+            env -u LD_PRELOAD -u FRANKENLIBC_TEST_LIBRARY -u FRANKENLIBC_MODE \
+              timeout --kill-after=2s 10s "$root/probe" system-signals "$scenario" \
+              > "$root/$scenario-host.out" 2> "$root/$scenario-host.err"
+            grep -qx "PASS system-signals $scenario" "$root/$scenario-host.out"
+            test ! -s "$root/$scenario-host.err"
+            for backend in 0 1; do
+              for mode in strict hardened; do
+                timeout --kill-after=2s 10s env LD_PRELOAD="$library" \
+                  FRANKENLIBC_TEST_LIBRARY="$library" FRANKENLIBC_MODE="$mode" \
+                  FRANKENLIBC_THREAD_NATIVE="$backend" \
+                  "$root/probe" system-signals "$scenario" \
+                  > "$root/$scenario-$backend-$mode.out" 2> "$root/$scenario-$backend-$mode.err"
+                cmp "$root/$scenario-host.out" "$root/$scenario-$backend-$mode.out"
+                cmp "$root/$scenario-host.err" "$root/$scenario-$backend-$mode.err"
+              done
+            done
+          done
+          set +e
+          env -u LD_PRELOAD FRANKENLIBC_TEST_LIBRARY="$library" \
+            timeout --kill-after=2s 10s "$root/probe" system-signals overlap-first \
+            > "$root/provider-negative.out" 2> "$root/provider-negative.err"
+          status=$?
+          set -e
+          test "$status" -eq 90
+          grep -qx 'system signal contract: wrong symbol provider' "$root/provider-negative.err"
+          echo 'system signals: 6 GNU cases, 24 candidate cases, 1 provider negative passed'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -230,7 +230,7 @@ int main(void) {
 
     f = fopen(path, "a+");
     char buf[64] = {0};
-    fgets(buf, sizeof buf, f);
+    if (fgets(buf, sizeof buf, f) == NULL) return 1;
     printf("a+ first read: %s", buf);
     fputs("appended\n", f);
     printf("a+ ftell after append: %ld\n", ftell(f));
@@ -247,7 +247,7 @@ int main(void) {
 
     int fd = open(path, O_RDONLY);
     f = fdopen(fd, "r");
-    fgets(buf, sizeof buf, f);
+    if (fgets(buf, sizeof buf, f) == NULL) return 1;
     printf("parent read: %s", buf);
     fflush(f);
     fflush(stdout);

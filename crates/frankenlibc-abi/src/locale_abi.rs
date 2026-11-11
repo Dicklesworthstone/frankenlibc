@@ -578,15 +578,22 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     let file = category_file(category)?;
     #[cfg(not(test))]
     let locpath_bytes: Option<&[u8]> = unsafe {
-        crate::stdlib_abi::native_getenv(b"LOCPATH").and_then(|ptr| {
+        let ptr = crate::stdlib_abi::native_getenv(b"LOCPATH");
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: native_getenv returns a NUL-terminated environment value
+            // when present. Its null sentinel must be checked before borrowing.
             let s = CStr::from_ptr(ptr).to_bytes();
             (!s.is_empty()).then_some(s)
-        })
+        }
     };
     #[cfg(test)]
     let locpath_os = std::env::var_os("LOCPATH").filter(|v| !v.is_empty());
     #[cfg(test)]
-    let locpath_bytes: Option<&[u8]> = locpath_os.as_deref().map( std::os::unix::ffi::OsStrExt::as_bytes);
+    let locpath_bytes: Option<&[u8]> = locpath_os
+        .as_deref()
+        .map(std::os::unix::ffi::OsStrExt::as_bytes);
     let mut blob = None;
     let mut norm_buf = [0u8; 128];
     let mut norm_heap: Option<Vec<u8>> = None;

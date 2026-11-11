@@ -3354,7 +3354,7 @@ const KSIG_SETSIZE: usize = core::mem::size_of::<u64>();
 
 /// Install SIG_IGN for `sig`, returning the previous kernel disposition (so it
 /// can be restored verbatim, preserving any restorer/flags the caller set).
-unsafe fn system_ignore_signal(sig: c_int) -> Option<KernelSigaction> {
+unsafe fn system_ignore_signal(sig: c_int) -> Result<KernelSigaction, c_int> {
     let act = KernelSigaction {
         handler: libc::SIG_IGN,
         flags: 0,
@@ -3375,8 +3375,8 @@ unsafe fn system_ignore_signal(sig: c_int) -> Option<KernelSigaction> {
             KSIG_SETSIZE,
         )
     } {
-        Ok(()) => Some(old),
-        Err(_) => None,
+        Ok(()) => Ok(old),
+        Err(error) => Err(error),
     }
 }
 
@@ -3410,6 +3410,101 @@ unsafe fn system_default_signal(sig: c_int) {
     };
 }
 
+/// Signal dispositions belong to the process, whereas the SIGCHLD mask
+/// belongs to each calling thread. Overlapping system calls must retain the
+/// dispositions from the first entrant until the last waiter leaves, including
+/// a waiter removed by cancellation. Saving SIG_IGN independently in a later
+/// caller would otherwise leave the process permanently ignoring interrupts.
+struct SystemSignalState {
+    users: usize,
+    saved: [KernelSigaction; 2],
+}
+
+static SYSTEM_SIGNALS: std::sync::Mutex<SystemSignalState> =
+    std::sync::Mutex::new(SystemSignalState {
+        users: 0,
+        saved: [KernelSigaction {
+            handler: libc::SIG_DFL,
+            flags: 0,
+            restorer: 0,
+            mask: 0,
+        }; 2],
+    });
+
+struct SystemSignalScope {
+    saved: [KernelSigaction; 2],
+    saved_mask: u64,
+}
+
+impl SystemSignalScope {
+    fn enter() -> Result<Self, c_int> {
+        let saved = {
+            let mut state = runtime_policy::lock_std_mutex_preserving_errno(&SYSTEM_SIGNALS);
+            if state.users == 0 {
+                // SAFETY: fixed catchable signal numbers and owned kernel
+                // records. Roll back the first change if the second fails.
+                state.saved[0] = unsafe { system_ignore_signal(libc::SIGINT) }?;
+                state.saved[1] = match unsafe { system_ignore_signal(libc::SIGQUIT) } {
+                    Ok(action) => action,
+                    Err(error) => {
+                        unsafe { system_restore_signal(libc::SIGINT, &state.saved[0]) };
+                        return Err(error);
+                    }
+                };
+            }
+            state.users += 1;
+            state.saved
+        };
+
+        let block_mask = 1u64 << (libc::SIGCHLD - 1);
+        let mut saved_mask = 0u64;
+        // SAFETY: the kernel reads/writes only these initialized local masks.
+        // No process-wide lock survives into a blocking syscall, fork child,
+        // application callback, or cancellation window.
+        if let Err(error) = unsafe {
+            raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_BLOCK,
+                std::ptr::from_ref(&block_mask).cast(),
+                std::ptr::from_mut(&mut saved_mask).cast(),
+                KSIG_SETSIZE,
+            )
+        } {
+            Self::leave();
+            return Err(error);
+        }
+        Ok(Self { saved, saved_mask })
+    }
+
+    fn leave() {
+        let mut state = runtime_policy::lock_std_mutex_preserving_errno(&SYSTEM_SIGNALS);
+        state.users -= 1;
+        if state.users == 0 {
+            // SAFETY: the last scope restores exactly the first entrant's
+            // process-wide actions, including flags, restorer and handler mask.
+            unsafe {
+                system_restore_signal(libc::SIGINT, &state.saved[0]);
+                system_restore_signal(libc::SIGQUIT, &state.saved[1]);
+            }
+        }
+    }
+}
+
+impl Drop for SystemSignalScope {
+    fn drop(&mut self) {
+        Self::leave();
+        // SAFETY: this guard remains on its entering thread's stack, including
+        // during forced unwind; restore that thread's complete original mask.
+        unsafe {
+            let _ = raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                std::ptr::from_ref(&self.saved_mask).cast(),
+                ptr::null_mut(),
+                KSIG_SETSIZE,
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // system
 // ---------------------------------------------------------------------------
@@ -3421,8 +3516,8 @@ unsafe fn system_default_signal(sig: c_int) {
 /// `system` is a cancellation point (POSIX; bd-rc0923-epic-eeuy4f.24): the
 /// wait for the shell runs in a cancellation window, and a cancelled caller
 /// does what glibc's cancel handler does -- SIGKILL and reap the shell, then
-/// restore SIGINT/SIGQUIT and the signal mask -- as [`SystemCancelCleanup`]
-/// runs during the forced unwind.
+/// release the shared signal scope and restore the thread's signal mask.
+/// [`SystemCancelCleanup`] reaps the child before [`SystemSignalScope`] leaves.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn system(command: *const c_char) -> c_int {
     unsafe { system_cp(command) }
@@ -3463,41 +3558,20 @@ pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
         return -1;
     }
 
-    // POSIX: ignore SIGINT/SIGQUIT and block SIGCHLD in the parent for the
-    // duration of the command, restoring them afterward. Save the previous
-    // dispositions and mask (copied into the child by fork) to restore.
-    let saved_int = unsafe { system_ignore_signal(libc::SIGINT) };
-    let saved_quit = unsafe { system_ignore_signal(libc::SIGQUIT) };
-    let block_mask: u64 = 1u64 << ((libc::SIGCHLD - 1) as u64);
-    let mut saved_mask: u64 = 0;
-    let _ = unsafe {
-        raw_syscall::sys_rt_sigprocmask(
-            libc::SIG_BLOCK,
-            &block_mask as *const u64 as *const u8,
-            &mut saved_mask as *mut u64 as *mut u8,
-            KSIG_SETSIZE,
-        )
-    };
-    let restore_parent = || unsafe {
-        if let Some(a) = saved_int {
-            system_restore_signal(libc::SIGINT, &a);
+    let signals = match SystemSignalScope::enter() {
+        Ok(scope) => scope,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
+            return -1;
         }
-        if let Some(a) = saved_quit {
-            system_restore_signal(libc::SIGQUIT, &a);
-        }
-        let _ = raw_syscall::sys_rt_sigprocmask(
-            libc::SIG_SETMASK,
-            &saved_mask as *const u64 as *const u8,
-            ptr::null_mut(),
-            KSIG_SETSIZE,
-        );
     };
 
     // SAFETY: fork via clone(SIGCHLD).
     let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(p) => p,
         Err(e) => {
-            restore_parent();
+            drop(signals);
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
             return -1;
@@ -3505,15 +3579,20 @@ pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
     };
 
     if pid == 0 {
-        // Child process: restore default signal handling and the caller's
-        // original mask (matching glibc's posix_spawn SETSIGDEF/SETSIGMASK) so
-        // the shell behaves normally, then exec /bin/sh -c command.
+        // The child inherits ignored actions unchanged, as fork+exec requires.
+        // Only previously caught/default actions become SIG_DFL; consult the
+        // first concurrent caller's snapshot, not the temporary shared SIG_IGN.
+        // No inherited mutex is acquired before the raw exec/exit below.
         unsafe {
-            system_default_signal(libc::SIGINT);
-            system_default_signal(libc::SIGQUIT);
+            if signals.saved[0].handler != libc::SIG_IGN {
+                system_default_signal(libc::SIGINT);
+            }
+            if signals.saved[1].handler != libc::SIG_IGN {
+                system_default_signal(libc::SIGQUIT);
+            }
             let _ = raw_syscall::sys_rt_sigprocmask(
                 libc::SIG_SETMASK,
-                &saved_mask as *const u64 as *const u8,
+                std::ptr::from_ref(&signals.saved_mask).cast(),
                 ptr::null_mut(),
                 KSIG_SETSIZE,
             );
@@ -3535,27 +3614,19 @@ pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
 
     // Parent: wait for child. Armed only while cancellation can unwind out
     // of the wait; disarmed before the normal restore below.
-    let mut cancel_cleanup = SystemCancelCleanup {
-        pid,
-        saved_int,
-        saved_quit,
-        saved_mask,
-        armed: true,
-    };
+    let mut cancel_cleanup = SystemCancelCleanup { pid, armed: true };
     let mut wstatus: c_int = 0;
     let wstatus_ptr = &mut wstatus as *mut c_int;
     loop {
         let ret = unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_wait4(pid, wstatus_ptr, 0, core::ptr::null_mut())
-            })
+            crate::pthread_abi::cancellation_point_wait4(pid, wstatus_ptr, 0, core::ptr::null_mut())
         };
         match ret {
             Ok(waited_pid) if waited_pid == pid => break,
             Ok(_) => continue, // Spurious wakeup, keep waiting
             Err(e) if e != libc::EINTR => {
                 cancel_cleanup.armed = false;
-                restore_parent();
+                drop(signals);
                 unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
                 return -1;
@@ -3565,7 +3636,7 @@ pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
     }
 
     cancel_cleanup.armed = false;
-    restore_parent();
+    drop(signals);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, false);
     wstatus
 }
@@ -3574,9 +3645,6 @@ pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
 /// cancellation unwind out of the wait (`armed`).
 struct SystemCancelCleanup {
     pid: i32,
-    saved_int: Option<KernelSigaction>,
-    saved_quit: Option<KernelSigaction>,
-    saved_mask: u64,
     armed: bool,
 }
 
@@ -3585,8 +3653,8 @@ impl Drop for SystemCancelCleanup {
         if !self.armed {
             return;
         }
-        // SAFETY: plain syscalls on the shell we forked and on this thread's
-        // own signal state, saved before the fork.
+        // SAFETY: plain syscalls on the shell we forked; no cancellation point
+        // interrupts teardown. The enclosing signal scope drops afterward.
         unsafe {
             let _ = raw_syscall::sys_kill(self.pid, libc::SIGKILL);
             let mut status: c_int = 0;
@@ -3596,18 +3664,6 @@ impl Drop for SystemCancelCleanup {
                 0,
                 core::ptr::null_mut(),
             ) {}
-            if let Some(a) = &self.saved_int {
-                system_restore_signal(libc::SIGINT, a);
-            }
-            if let Some(a) = &self.saved_quit {
-                system_restore_signal(libc::SIGQUIT, a);
-            }
-            let _ = raw_syscall::sys_rt_sigprocmask(
-                libc::SIG_SETMASK,
-                &self.saved_mask as *const u64 as *const u8,
-                ptr::null_mut(),
-                KSIG_SETSIZE,
-            );
         }
     }
 }

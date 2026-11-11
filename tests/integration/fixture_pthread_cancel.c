@@ -967,7 +967,218 @@ static void main_thread_cancelled(const char *argv0, const char *which) {
   fflush(stdout);
 }
 
+// A selectable, bounded system() contract test. Shell builtins exchange pipe
+// messages, so every overlap is established before a waiter returns/cancels;
+// there are no timing sleeps or grandchildren left behind by cancellation.
+static volatile sig_atomic_t system_signal_children[2];
+
+static void system_signal_timeout(int signal_number) {
+  (void)signal_number;
+  for (int i = 0; i < 2; ++i) {
+    if (system_signal_children[i] > 0) kill(system_signal_children[i], SIGKILL);
+  }
+  _exit(124);
+}
+
+static void system_signal_fail(const char *message) {
+  fprintf(stderr, "system signal contract: %s\n", message);
+  for (int i = 0; i < 2; ++i) {
+    if (system_signal_children[i] > 0) {
+      kill(system_signal_children[i], SIGKILL);
+      while (waitpid(system_signal_children[i], NULL, 0) < 0 && errno == EINTR) {}
+    }
+  }
+  _exit(1);
+}
+
+static void system_signal_require(int condition, const char *message) {
+  if (!condition) system_signal_fail(message);
+}
+
+static void system_signal_handler(int signal_number) { (void)signal_number; }
+
+static void system_signal_action(int signal_number, void (*handler)(int)) {
+  struct sigaction action = {0};
+  action.sa_handler = handler;
+  action.sa_flags = SA_RESTART;
+  sigemptyset(&action.sa_mask);
+  sigaddset(&action.sa_mask, SIGUSR2);
+  system_signal_require(sigaction(signal_number, &action, NULL) == 0,
+                        "install disposition");
+}
+
+static void system_signal_check(int signal_number, void (*handler)(int)) {
+  struct sigaction action;
+  system_signal_require(sigaction(signal_number, NULL, &action) == 0,
+                        "query disposition");
+  system_signal_require(action.sa_handler == handler, "wrong disposition");
+  if (handler == system_signal_handler) {
+    system_signal_require((action.sa_flags & SA_RESTART) != 0 &&
+                          sigismember(&action.sa_mask, SIGUSR2) == 1,
+                          "handler flags or mask were not restored");
+  }
+}
+
+struct system_signal_call {
+  pthread_t thread;
+  int entered[2];
+  int release[2];
+  int exit_code;
+  int block_child;
+  int status;
+  int mask_ok;
+  int normal_mask_ok;
+  int cleanup_ran;
+  sigset_t original_mask;
+};
+
+static int system_signal_mask_equal(const sigset_t *expected) {
+  sigset_t actual;
+  if (pthread_sigmask(SIG_SETMASK, NULL, &actual) != 0) return 0;
+  for (int signal_number = 1; signal_number < NSIG; ++signal_number) {
+    if (sigismember(expected, signal_number) !=
+        sigismember(&actual, signal_number)) return 0;
+  }
+  return 1;
+}
+
+static void system_signal_cleanup(void *opaque) {
+  struct system_signal_call *call = opaque;
+  sigset_t actual;
+  // The GNU cancellation unwind may still block SIGCHLD/SIGCANCEL because
+  // this thread is exiting. Preserve user mask bits without claiming that its
+  // temporary cancellation mask is the same as a normally returning call.
+  call->mask_ok = pthread_sigmask(SIG_SETMASK, NULL, &actual) == 0 &&
+                  sigismember(&actual, SIGUSR1) == 1 &&
+                  sigismember(&actual, SIGUSR2) == 0 &&
+                  (!call->block_child || sigismember(&actual, SIGCHLD) == 1);
+  call->cleanup_ran = 1;
+}
+
+static void *system_signal_worker(void *opaque) {
+  struct system_signal_call *call = opaque;
+  sigemptyset(&call->original_mask);
+  sigaddset(&call->original_mask, SIGUSR1);
+  // The bounded-process watchdog belongs to main. Do not turn the worker's
+  // child wait into a caught-signal/SA_RESTART scenario as a harness side effect.
+  sigaddset(&call->original_mask, SIGALRM);
+  if (call->block_child) sigaddset(&call->original_mask, SIGCHLD);
+  system_signal_require(pthread_sigmask(SIG_SETMASK, &call->original_mask, NULL) == 0,
+                        "set worker mask");
+  char command[160];
+  snprintf(command, sizeof command,
+           "printf '%%s\\n' $$ >&%d; read token <&%d; exit %d",
+           call->entered[1], call->release[0], call->exit_code);
+  pthread_cleanup_push(system_signal_cleanup, call);
+  call->status = system(command);
+  call->normal_mask_ok = system_signal_mask_equal(&call->original_mask);
+  pthread_cleanup_pop(1);
+  return NULL;
+}
+
+static void system_signal_start(struct system_signal_call *call, int index) {
+  system_signal_require(pipe(call->entered) == 0 && pipe(call->release) == 0,
+                        "create coordination pipes");
+  system_signal_require(pthread_create(&call->thread, NULL, system_signal_worker, call) == 0,
+                        "create system caller");
+  char pid_text[32] = {0};
+  size_t used = 0;
+  while (used + 1 < sizeof pid_text) {
+    struct pollfd ready_fd = {call->entered[0], POLLIN, 0};
+    system_signal_require(poll(&ready_fd, 1, 3000) == 1, "shell readiness timeout");
+    system_signal_require(read(call->entered[0], &pid_text[used], 1) == 1,
+                          "read shell readiness");
+    if (pid_text[used++] == '\n') break;
+  }
+  system_signal_children[index] = (pid_t)strtol(pid_text, NULL, 10);
+  system_signal_require(system_signal_children[index] > 0, "invalid shell pid");
+}
+
+static void system_signal_finish(struct system_signal_call *call, int index, int cancel) {
+  if (cancel) {
+    system_signal_require(pthread_cancel(call->thread) == 0, "cancel system caller");
+  } else {
+    system_signal_require(write(call->release[1], "go\n", 3) == 3, "release shell");
+  }
+  void *result = NULL;
+  system_signal_require(pthread_join(call->thread, &result) == 0, "join system caller");
+  system_signal_require(call->cleanup_ran && call->mask_ok, "caller signal mask not restored");
+  if (cancel) {
+    system_signal_require(result == PTHREAD_CANCELED, "system caller did not cancel");
+  } else {
+    system_signal_require(result == NULL && WIFEXITED(call->status) &&
+                          WEXITSTATUS(call->status) == call->exit_code &&
+                          call->normal_mask_ok,
+                          "wrong shell exit status");
+  }
+  errno = 0;
+  system_signal_require(waitpid(system_signal_children[index], NULL, WNOHANG) == -1 &&
+                        errno == ECHILD, "system did not reap its shell");
+  system_signal_children[index] = 0;
+  close(call->entered[0]);
+  close(call->entered[1]);
+  close(call->release[0]);
+  close(call->release[1]);
+}
+
+static int system_signal_scenario(const char *scenario) {
+  const char *expected_library = getenv("FRANKENLIBC_TEST_LIBRARY");
+  if (expected_library && *expected_library) {
+    Dl_info provider;
+    if (!dladdr((void *)system, &provider) ||
+        strcmp(provider.dli_fname, expected_library) != 0) {
+      fprintf(stderr, "system signal contract: wrong symbol provider\n");
+      return 90;
+    }
+  }
+  system_signal_action(SIGALRM, system_signal_timeout);
+  alarm(8);
+  system_signal_action(SIGINT, system_signal_handler);
+  system_signal_action(SIGQUIT, system_signal_handler);
+  if (strcmp(scenario, "inherited-int") == 0 || strcmp(scenario, "inherited-quit") == 0) {
+    int signal_number = strcmp(scenario, "inherited-int") == 0 ? SIGINT : SIGQUIT;
+    system_signal_action(signal_number, SIG_IGN);
+    int status = system(signal_number == SIGINT ? "kill -INT $$; exit 31"
+                                                : "kill -QUIT $$; exit 31");
+    system_signal_require(WIFEXITED(status) && WEXITSTATUS(status) == 31,
+                          "shell lost inherited SIG_IGN");
+    system_signal_check(signal_number, SIG_IGN);
+    system_signal_check(signal_number == SIGINT ? SIGQUIT : SIGINT, system_signal_handler);
+  } else {
+    int cancel = strncmp(scenario, "cancel-", 7) == 0;
+    int first = strstr(scenario, "second") != NULL ? 1 : 0;
+    system_signal_require(strcmp(scenario, "overlap-first") == 0 ||
+                          strcmp(scenario, "overlap-second") == 0 ||
+                          strcmp(scenario, "cancel-first") == 0 ||
+                          strcmp(scenario, "cancel-second") == 0, "unknown scenario");
+    struct system_signal_call calls[2] = {
+      {.exit_code = 23, .block_child = 0},
+      {.exit_code = 47, .block_child = 1},
+    };
+    sigset_t main_mask;
+    system_signal_require(pthread_sigmask(SIG_SETMASK, NULL, &main_mask) == 0,
+                          "save main mask");
+    system_signal_start(&calls[0], 0);
+    system_signal_start(&calls[1], 1);
+    system_signal_check(SIGINT, SIG_IGN);
+    system_signal_check(SIGQUIT, SIG_IGN);
+    system_signal_finish(&calls[first], first, cancel);
+    system_signal_check(SIGINT, SIG_IGN);
+    system_signal_check(SIGQUIT, SIG_IGN);
+    system_signal_finish(&calls[1 - first], 1 - first, 0);
+    system_signal_check(SIGINT, system_signal_handler);
+    system_signal_check(SIGQUIT, system_signal_handler);
+    system_signal_require(system_signal_mask_equal(&main_mask), "main thread mask changed");
+  }
+  alarm(0);
+  printf("PASS system-signals %s\n", scenario);
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 3 && strcmp(argv[1], "system-signals") == 0) {
+    return system_signal_scenario(argv[2]);
+  }
   if (argc == 3 && strcmp(argv[1], "main-thread") == 0) {
     return main_thread_scenario(argv[2]);
   }
