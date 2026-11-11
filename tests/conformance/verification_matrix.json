@@ -33028,6 +33028,923 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.49",
+      "title": "Eliminate 28.85 MiB malloc_abi static .bss + 8 KiB/thread POLL_SNAPSHOT .tbss and bring strict smoke startup <2.0x",
+      "priority": 0,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "l0-blocker",
+        "reality-check-202611",
+        "startup-perf",
+        "vm-footprint"
+      ],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened verification gates"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": ""
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test -- --nocapture"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "FRANKENLIBC_SMOKE_LIB_PATH=$PWD/target/release/libfrankenlibc_abi.so bash scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.49",
+        "stream": "perf",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test -- --nocapture",
+          "cargo test -p frankenlibc-membrane --lib -- tls_cache"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_SMOKE_LIB_PATH=$PWD/target/release/libfrankenlibc_abi.so bash scripts/ld_preload_smoke.sh",
+          "bash scripts/check_ld_preload_smoke_regeneration.sh --validate-only"
+        ],
+        "expected_assertions": [
+          "libfrankenlibc_abi.so .bss <= 2 MiB (277,232 B) and PT_TLS (.tbss + .tdata) <= 4 KiB (3,896 B)",
+          "LD_PRELOAD smoke battery passes 348/348 cases with 0 failures and deployed_overhead_passed=true"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-abi/src/rpc_svc.rs",
+          "crates/frankenlibc-abi/src/util.rs",
+          "crates/frankenlibc-abi/src/string_abi.rs",
+          "crates/frankenlibc-abi/src/stdlib_abi.rs",
+          "crates/frankenlibc-membrane/src/bloom.rs",
+          "crates/frankenlibc-membrane/src/tls_cache.rs",
+          "scripts/ld_preload_smoke.sh",
+          "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs",
+          "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "scripts/check_ld_preload_smoke_regeneration.sh",
+          "target/closure_receipts/wave1_20261111T1349Z/bd-rc0923-epic-eeuy4f.49/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c.",
+        "result_receipts": [
+          "target/closure_receipts/wave1_20261111T1349Z/bd-rc0923-epic-eeuy4f.49/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Eliminate 28.85 MiB malloc_abi static .bss via demand-paged slabs and POD TLS reentry slot, move 8 KiB/thread POLL_SNAPSHOT out of .tbss, and keep strict/hardened smoke startup and deployed overhead within budget",
+          "acceptance_sha256": "c00ef4d41986e2ffd861c3d7cda661b8ce31e58e91a00e108ac1e8b58915adfe",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/malloc_abi.rs",
+            "crates/frankenlibc-abi/src/rpc_svc.rs",
+            "crates/frankenlibc-abi/src/util.rs",
+            "crates/frankenlibc-abi/src/string_abi.rs",
+            "crates/frankenlibc-abi/src/stdlib_abi.rs",
+            "crates/frankenlibc-membrane/src/bloom.rs",
+            "crates/frankenlibc-membrane/src/tls_cache.rs",
+            "scripts/ld_preload_smoke.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs",
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "scripts/check_ld_preload_smoke_regeneration.sh"
+          ],
+          "source": {
+            "commit": "aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "ae1fce6fcbaa596c01339a884a0f212bd34350f12bbf99310e49a6e2964f6ed2",
+              "crates/frankenlibc-abi/src/rpc_svc.rs": "18ec4804b6584de0516502a78f415ac52b1054df66a2051e0a59fa3d4e67eae3",
+              "crates/frankenlibc-abi/src/stdlib_abi.rs": "a90dd4f550c9005f909b52a6b178a08a1b46f9cb6f36032bdd7ce170f56b0c02",
+              "crates/frankenlibc-abi/src/string_abi.rs": "ebb69242edc1b246934ad79c73e9fd77e91e41eed44d4c08a8c08424eb29aaaa",
+              "crates/frankenlibc-abi/src/util.rs": "5b9c8812121916b73a56f2f3243d193e3cefb1e478bc27b13d3e877b6b487443",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs": "d1e6c72ab2694a82bec98f29e1e02ca2b213276d5129c9091930987eda23a6e5",
+              "crates/frankenlibc-membrane/src/bloom.rs": "7497e961d163813220ec0a10efff3189fba7baf180b5de65bcb704ac5c61a834",
+              "crates/frankenlibc-membrane/src/tls_cache.rs": "aa18e7642d73be55c4ae3ab272f33d0c29230af80e60328727a4c6a5e00dd5cb",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_ld_preload_smoke_regeneration.sh": "899e897a4bebe86a806c4396ede423a2a71f6dcc74ca8417be812133bf36c723",
+              "scripts/ld_preload_smoke.sh": "025be88387255da83ecbbdf03ab0f410cab9cd901e374c5a52552378f938cb2e",
+              "tests/conformance/ld_preload_smoke_summary.v1.json": "1e30ffeaba832c7cff4f630daa3dcfb65220f2e89a9e6c20c1668a268f6a9ab5"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T13:48:43.856829+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/23dc8a3abde7788c/out/ld_preload_smoke_regeneration_gate_test-23dc8a3abde7788c",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "ld_preload_smoke_regeneration_gate_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/23dc8a3abde7788c/out/ld_preload_smoke_regeneration_gate_test-23dc8a3abde7788c"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "validate_only_accepts_report_matching_committed_summary",
+              "validate_only_rejects_elf_bss_ceiling_breach",
+              "validate_only_rejects_orphaned_canonical_source_commit",
+              "validate_only_rejects_regenerated_smoke_summary_drift"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.50",
+      "title": "[RC-1111 tests] Verify RLIMIT_DATA=10MB startup, ELF .bss/.tbss ceiling, and fresh HEAD smoke regeneration",
+      "priority": 0,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "reality-check-202611",
+        "startup-perf",
+        "verification",
+        "vm-footprint"
+      ],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f",
+        "bd-rc0923-epic-eeuy4f.49"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened verification gates"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": ""
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test -- --nocapture"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "FRANKENLIBC_SMOKE_LIB_PATH=$PWD/target/release/libfrankenlibc_abi.so bash scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.50",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test -- --nocapture"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_SMOKE_LIB_PATH=$PWD/target/release/libfrankenlibc_abi.so bash scripts/ld_preload_smoke.sh",
+          "bash scripts/check_ld_preload_smoke_regeneration.sh --validate-only --report target/ld_preload_smoke/20261111T134243Z-2744068/abi_compat_report.json --trace target/ld_preload_smoke/20261111T134243Z-2744068/trace.jsonl"
+        ],
+        "expected_assertions": [
+          "elf_vm_geometry passes (.bss=277,232 <= 2 MiB, tls=3,896 <= 4 KiB, VmData strict=3,760 KiB, hardened=2,400 KiB <= 4,096 KiB)",
+          "rlimit_data_10mb_fixture and rlimit_data_10mb_shell_tools pass in both strict and hardened modes",
+          "validate-only rejects orphaned canonical source_commit and ELF .bss ceiling breach"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "scripts/ld_preload_smoke.sh",
+          "scripts/check_ld_preload_smoke_regeneration.sh",
+          "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs",
+          "target/closure_receipts/wave1_20261111T1349Z/bd-rc0923-epic-eeuy4f.50/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c.",
+        "result_receipts": [
+          "target/closure_receipts/wave1_20261111T1349Z/bd-rc0923-epic-eeuy4f.50/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Verify ELF .bss/.tbss ceiling, RLIMIT_DATA=10MB strict+hardened execution, git ancestor provenance check, and canonical 348/348 LD_PRELOAD smoke summary regeneration",
+          "acceptance_sha256": "a8981d2bfb3d837e4881e8c4ccc6218e2302f69cfc72a93fbf882d8bbdb494bc",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "scripts/ld_preload_smoke.sh",
+            "scripts/check_ld_preload_smoke_regeneration.sh",
+            "tests/conformance/ld_preload_smoke_summary.v1.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs"
+          ],
+          "source": {
+            "commit": "aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs": "d1e6c72ab2694a82bec98f29e1e02ca2b213276d5129c9091930987eda23a6e5",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_ld_preload_smoke_regeneration.sh": "899e897a4bebe86a806c4396ede423a2a71f6dcc74ca8417be812133bf36c723",
+              "scripts/ld_preload_smoke.sh": "025be88387255da83ecbbdf03ab0f410cab9cd901e374c5a52552378f938cb2e",
+              "tests/conformance/ld_preload_smoke_summary.v1.json": "1e30ffeaba832c7cff4f630daa3dcfb65220f2e89a9e6c20c1668a268f6a9ab5"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T13:48:43.856829+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/23dc8a3abde7788c/out/ld_preload_smoke_regeneration_gate_test-23dc8a3abde7788c",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "ld_preload_smoke_regeneration_gate_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/23dc8a3abde7788c/out/ld_preload_smoke_regeneration_gate_test-23dc8a3abde7788c"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "validate_only_accepts_report_matching_committed_summary",
+              "validate_only_rejects_elf_bss_ceiling_breach",
+              "validate_only_rejects_orphaned_canonical_source_commit",
+              "validate_only_rejects_hand_edited_committed_summary_without_matching_report"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-4n397c",
+      "title": "gnulib dprintf-posix2/fprintf-posix3: RLIMIT_DATA 10 MB is below fl's private writable footprint (strict 328 MB, hardened 45 MB)",
+      "priority": 3,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f.49"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened verification gates"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": ""
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test -- --nocapture"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "FRANKENLIBC_SMOKE_LIB_PATH=$PWD/target/release/libfrankenlibc_abi.so bash scripts/ld_preload_smoke.sh"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-4n397c",
+        "stream": "syscall",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test -- --nocapture"
+        ],
+        "e2e_cmds": [
+          "FRANKENLIBC_SMOKE_LIB_PATH=$PWD/target/release/libfrankenlibc_abi.so bash scripts/ld_preload_smoke.sh"
+        ],
+        "expected_assertions": [
+          "ulimit -d 10240 dprintf/fprintf/grep/echo succeed in strict (VmData 3,760 KiB) and hardened (VmData 2,400 KiB) modes"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "crates/frankenlibc-membrane/src/bloom.rs",
+          "crates/frankenlibc-membrane/src/arena.rs",
+          "scripts/ld_preload_smoke.sh",
+          "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs",
+          "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "target/closure_receipts/wave1_20261111T1349Z/bd-4n397c/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c.",
+        "result_receipts": [
+          "target/closure_receipts/wave1_20261111T1349Z/bd-4n397c/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Bound FrankenLibC private writable footprint under RLIMIT_DATA=10MB via MAP_NORESERVE PROT_NONE demand slabs and zero-BSS allocator metadata so gnulib dprintf-posix2/fprintf-posix3 RLIMIT_DATA=10MB workloads succeed in strict and hardened modes",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/malloc_abi.rs",
+            "crates/frankenlibc-abi/src/runtime_policy.rs",
+            "crates/frankenlibc-membrane/src/bloom.rs",
+            "crates/frankenlibc-membrane/src/arena.rs",
+            "scripts/ld_preload_smoke.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs",
+            "tests/conformance/ld_preload_smoke_summary.v1.json"
+          ],
+          "source": {
+            "commit": "aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "ae1fce6fcbaa596c01339a884a0f212bd34350f12bbf99310e49a6e2964f6ed2",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "c184b8fe42bfe552f706396aa8399f058e92583810cb8ea0cef9283d1fde01f2",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs": "d1e6c72ab2694a82bec98f29e1e02ca2b213276d5129c9091930987eda23a6e5",
+              "crates/frankenlibc-membrane/src/arena.rs": "a6c36d92c5607a88aca3d1ab86d719ba250646b68644502048a4e8b5c7ad4923",
+              "crates/frankenlibc-membrane/src/bloom.rs": "7497e961d163813220ec0a10efff3189fba7baf180b5de65bcb704ac5c61a834",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/ld_preload_smoke.sh": "025be88387255da83ecbbdf03ab0f410cab9cd901e374c5a52552378f938cb2e",
+              "tests/conformance/ld_preload_smoke_summary.v1.json": "1e30ffeaba832c7cff4f630daa3dcfb65220f2e89a9e6c20c1668a268f6a9ab5"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T13:48:43.856829+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/23dc8a3abde7788c/out/ld_preload_smoke_regeneration_gate_test-23dc8a3abde7788c",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "ld_preload_smoke_regeneration_gate_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/23dc8a3abde7788c/out/ld_preload_smoke_regeneration_gate_test-23dc8a3abde7788c"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "validate_only_accepts_report_matching_committed_summary",
+              "validate_only_rejects_elf_bss_ceiling_breach"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.15.1",
+      "title": "[SQ M0: S01,S02,S04,S06,S21] Repair zero-oracle score inflation in security_analyzer.py, blind PREVENTED verdicts in runner.sh, and fail-open cve_arena_gate.sh",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "m0",
+        "oracle-integrity",
+        "reality-check-202611",
+        "security-qualification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.15"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened verification gates"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": ""
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test cve_paired_mode_runner_test -- --nocapture"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_cve_paired_mode_runner.sh"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.15.1",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test cve_paired_mode_runner_test -- --nocapture",
+          "python3 -m unittest tests/gentoo/test_security_validation.py"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_cve_paired_mode_runner.sh"
+        ],
+        "expected_assertions": [
+          "Zero-CVE and oracle-free runs emit unqualified status instead of 100% prevention score",
+          "runner.sh requires (H, S, F, P) oracle proof before emitting PREVENTED and cve_arena_gate.sh has no --no-docker or || true"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "scripts/gentoo/security_analyzer.py",
+          "scripts/gentoo/generate_security_report.py",
+          "tests/cve_arena/runner.sh",
+          "scripts/cve_arena_gate.sh",
+          "scripts/generate_cve_paired_mode_runner.py",
+          "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs",
+          "tests/gentoo/test_security_validation.py",
+          "tests/cve_arena/results/paired_mode_evidence.v1.json",
+          "target/closure_receipts/wave1_20261111T1349Z/bd-reality-202609-lx578q.15.1/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c.",
+        "result_receipts": [
+          "target/closure_receipts/wave1_20261111T1349Z/bd-reality-202609-lx578q.15.1/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Eliminate zero-oracle 100% score inflation in security_analyzer.py, enforce 4-part (H,S,F,P) oracle gating in tests/cve_arena/runner.sh, and remove --no-docker and || true fail-open patterns from scripts/cve_arena_gate.sh",
+          "acceptance_sha256": "291e77abbdce4d0f0026840d6e41690d8582576edaac415e1e3936cef2018084",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "scripts/gentoo/security_analyzer.py",
+            "scripts/gentoo/generate_security_report.py",
+            "tests/cve_arena/runner.sh",
+            "scripts/cve_arena_gate.sh",
+            "scripts/generate_cve_paired_mode_runner.py"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs",
+            "tests/gentoo/test_security_validation.py",
+            "tests/cve_arena/results/paired_mode_evidence.v1.json"
+          ],
+          "source": {
+            "commit": "aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs": "3ee561ab65a2d512fa30065b3eba012db12207b598635933174dd8eac380cf1c",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/cve_arena_gate.sh": "dcc2d70d2163af98cfec453a05cd2f618bd31d3ccf67b819c9b5906ede5536bc",
+              "scripts/generate_cve_paired_mode_runner.py": "470fb058b8ac4839d56615020a8e9161b3549c196a0e617983a8eb49ca8518b8",
+              "scripts/gentoo/generate_security_report.py": "41c877016ec0ef260bfc804f13ea54ec7208e77b22e2d539376f94fc021d52c7",
+              "scripts/gentoo/security_analyzer.py": "f5ceb245ec0ed7646f8bee3c182fc52ccca3630f6b103edd53db703161d213c1",
+              "tests/cve_arena/results/paired_mode_evidence.v1.json": "b296b096a154ef00f11d0795f2d0f81bb5451782ce72fcd2c7883a094a19f450",
+              "tests/cve_arena/runner.sh": "9e34abf4ac65cbd70ea9eb51cf82f8ac7506e65fcfabe4bad6250b1dca3e96a0",
+              "tests/gentoo/test_security_validation.py": "95843d5b14692257e2b38a80694405faef5891df384dc477247e3e2f07261e53"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T13:48:43.856829+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/df29064e6c96fe2e/out/cve_paired_mode_runner_test-df29064e6c96fe2e",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "cve_paired_mode_runner_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/df29064e6c96fe2e/out/cve_paired_mode_runner_test-df29064e6c96fe2e"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "paired_report_generates_successfully",
+              "paired_all_strict_detected",
+              "paired_all_hardened_prevented",
+              "sq_m0_hsfp_counterexamples_and_confinement_controls"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.15.2",
+      "title": "[SQ M0 tests: S03,S05,S07,S12] Adversarially verify harm/output/provider verdict counterexamples and fail-closed confinement admission",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "m0",
+        "reality-check-202611",
+        "security-qualification",
+        "verification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.15",
+        "bd-reality-202609-lx578q.15.1"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "happy-path, negative, adversarial, regression"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "strict and hardened verification gates"
+        },
+        "structured_logs": {
+          "required": false,
+          "scope": ""
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test cve_paired_mode_runner_test -- --nocapture"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_cve_paired_mode_runner.sh"
+        },
+        "structured_logs": {
+          "status": "not_required"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.15.2",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test cve_paired_mode_runner_test -- --nocapture",
+          "python3 -m unittest tests/gentoo/test_security_validation.py"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_cve_paired_mode_runner.sh"
+        ],
+        "expected_assertions": [
+          "heal_with_harm->REGRESSION, silent_corruption->DETECTED, baseline_not_repro->BASELINE, bypassed_provider->UNSUPPORTED_PROVIDER, tampered_sha->INVALID_ADMISSION, missing_isolation->blocked_missing_isolation, scope_boundary->NOT_MITIGATED_BY_DESIGN"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "tests/cve_arena/runner.sh",
+          "scripts/cve_arena_gate.sh",
+          "scripts/gentoo/security_analyzer.py",
+          "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs",
+          "tests/gentoo/test_security_validation.py",
+          "target/closure_receipts/wave1_20261111T1349Z/bd-reality-202609-lx578q.15.2/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c.",
+        "result_receipts": [
+          "target/closure_receipts/wave1_20261111T1349Z/bd-reality-202609-lx578q.15.2/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Adversarially verify S03 harm/silent-corruption/baseline-not-repro counterexamples, S05 unverified provider and candidate SHA-256 mismatch rejection, S07 fail-closed missing-isolation status, and S12 NOT_MITIGATED_BY_DESIGN scope boundary",
+          "acceptance_sha256": "0abce5613c0cd5ff336371b68b7c45b30f1f80f464a70bb8e20949cb258f3419",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "tests/cve_arena/runner.sh",
+            "scripts/cve_arena_gate.sh",
+            "scripts/gentoo/security_analyzer.py"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs",
+            "tests/gentoo/test_security_validation.py"
+          ],
+          "source": {
+            "commit": "aaf2c4fa3f60bc2c4426a9e9d4db97dc0b51487c",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/Cargo.toml": "24dcf7c64a861058979c55a032cf861a1b6318e8b925f5fb90ce5ba479639a46",
+              "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs": "3ee561ab65a2d512fa30065b3eba012db12207b598635933174dd8eac380cf1c",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/cve_arena_gate.sh": "dcc2d70d2163af98cfec453a05cd2f618bd31d3ccf67b819c9b5906ede5536bc",
+              "scripts/gentoo/security_analyzer.py": "f5ceb245ec0ed7646f8bee3c182fc52ccca3630f6b103edd53db703161d213c1",
+              "tests/cve_arena/runner.sh": "9e34abf4ac65cbd70ea9eb51cf82f8ac7506e65fcfabe4bad6250b1dca3e96a0",
+              "tests/gentoo/test_security_validation.py": "95843d5b14692257e2b38a80694405faef5891df384dc477247e3e2f07261e53"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "hardened",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T13:48:43.856829+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/df29064e6c96fe2e/out/cve_paired_mode_runner_test-df29064e6c96fe2e",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "hardened"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "-j1",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "cve_paired_mode_runner_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/df29064e6c96fe2e/out/cve_paired_mode_runner_test-df29064e6c96fe2e"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "sq_m0_hsfp_counterexamples_and_confinement_controls",
+              "paired_mode_checker_accepts_completion_debt_bindings"
+            ]
+          }
+        }
+      }
     }
   ]
 }
