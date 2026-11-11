@@ -1789,9 +1789,7 @@ unsafe fn getspent_r_impl(
 // Implementation reads /etc/gshadow using the core parser from
 // frankenlibc_core::pwd::gshadow.
 
-use frankenlibc_core::pwd::gshadow::{
-    Gshadow, parse_gshadow_file_line, parse_gshadow_line,
-};
+use frankenlibc_core::pwd::gshadow::{Gshadow, parse_gshadow_file_line, parse_gshadow_line};
 
 /// C-compatible struct sgrp layout (matches glibc <gshadow.h>).
 #[repr(C)]
@@ -1881,7 +1879,10 @@ impl GshadowTlsStorage {
             // GNU checks physical line capacity before skipping a comment or
             // malformed row. Keep that row for a larger-buffer retry.
             if capacity.is_some_and(|capacity| {
-                self.line.len().checked_add(2).is_none_or(|needed| needed > capacity)
+                self.line
+                    .len()
+                    .checked_add(2)
+                    .is_none_or(|needed| needed > capacity)
             }) {
                 return Err(libc::ERANGE);
             }
@@ -1970,7 +1971,10 @@ fn lookup_gshadow_record(
     }
     for physical_line in content.split_inclusive(|&byte| byte == b'\n') {
         if capacity.is_some_and(|capacity| {
-            physical_line.len().checked_add(2).is_none_or(|needed| needed > capacity)
+            physical_line
+                .len()
+                .checked_add(2)
+                .is_none_or(|needed| needed > capacity)
         }) {
             return Err(GshadowReadError::Read(libc::ERANGE));
         }
@@ -2013,10 +2017,7 @@ unsafe fn prepare_gshadow_output(
     }
     // SAFETY: result is a checked writable caller-provided pointer slot.
     unsafe { *result = ptr::null_mut() };
-    if result_buf.is_null()
-        || buffer.is_null()
-        || !tracked_object_fits(result_buf.cast::<Sgrp>())
-    {
+    if result_buf.is_null() || buffer.is_null() || !tracked_object_fits(result_buf.cast::<Sgrp>()) {
         return Err(libc::EINVAL);
     }
     Ok(effective_buffer_len(buffer, buflen))
@@ -2069,7 +2070,13 @@ unsafe fn pack_gshadow_caller(
         // two terminating NULL slots. Preserve its ERANGE boundary.
         let members_bytes = members.len().checked_add(2)?.checked_mul(pointer_size)?;
         let needed = members_offset.checked_add(members_bytes)?;
-        Some((name_end, names_offset, admins_offset, members_offset, needed))
+        Some((
+            name_end,
+            names_offset,
+            admins_offset,
+            members_offset,
+            needed,
+        ))
     })();
     let Some((name_end, mut cursor, admins_offset, members_offset, needed)) = layout else {
         return libc::ERANGE;
@@ -2270,9 +2277,7 @@ pub unsafe extern "C" fn getsgent_r(
     let saved_errno = gshadow_errno();
     let mut open_failure = false;
     // SAFETY: forward the same reentrant caller-storage contract.
-    let rc = unsafe {
-        files_getsgent_r(result_buf, buffer, buflen, result, &mut open_failure)
-    };
+    let rc = unsafe { files_getsgent_r(result_buf, buffer, buflen, result, &mut open_failure) };
     if open_failure {
         unsafe { set_abi_errno(saved_errno) };
         libc::ENOENT
@@ -2313,9 +2318,7 @@ pub unsafe extern "C" fn getsgnam_r(
 ) -> c_int {
     let mut open_failure = false;
     // SAFETY: the public and files-provider callers use the same output ABI.
-    unsafe {
-        files_getsgnam_r(name, result_buf, buffer, buflen, result, &mut open_failure)
-    }
+    unsafe { files_getsgnam_r(name, result_buf, buffer, buflen, result, &mut open_failure) }
 }
 
 pub(crate) unsafe fn files_getsgnam_r(
@@ -2444,25 +2447,34 @@ impl GshadowStreamReader {
             // getdelim may return positive partial bytes and still set ferror.
             // Such bytes are not a complete security-database record.
             if unsafe { crate::stdio_abi::ferror(self.stream) } != 0 {
-                return Err(if read_errno == 0 { libc::EIO } else { read_errno });
+                return Err(if read_errno == 0 {
+                    libc::EIO
+                } else {
+                    read_errno
+                });
             }
             if length < 0 {
                 // Allocation failures are errors even if no stream flag was set.
                 return if unsafe { crate::stdio_abi::feof(self.stream) } != 0 {
                     Ok(None)
                 } else {
-                    Err(if read_errno == 0 { libc::EIO } else { read_errno })
+                    Err(if read_errno == 0 {
+                        libc::EIO
+                    } else {
+                        read_errno
+                    })
                 };
             }
             if capacity.is_some_and(|capacity| {
-                (length as usize).checked_add(2).is_none_or(|needed| needed > capacity)
+                (length as usize)
+                    .checked_add(2)
+                    .is_none_or(|needed| needed > capacity)
             }) {
                 return Err(unsafe { self.rewind_error(position, libc::ERANGE) });
             }
             // SAFETY: getdelim returned this many initialized bytes.
-            let bytes = unsafe {
-                std::slice::from_raw_parts(self.line.cast::<u8>(), length as usize)
-            };
+            let bytes =
+                unsafe { std::slice::from_raw_parts(self.line.cast::<u8>(), length as usize) };
             let bytes = bytes.split(|&byte| byte == 0).next().unwrap_or_default();
             if let Some(entry) = parse_gshadow_file_line(bytes) {
                 return Ok(Some((

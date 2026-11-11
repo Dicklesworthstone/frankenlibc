@@ -155,8 +155,7 @@ struct ProcessSearchState {
 impl SearchContext {
     #[allow(dead_code)]
     pub(super) fn process() -> Self {
-        static PROCESS_STATE: std::sync::OnceLock<ProcessSearchState> =
-            std::sync::OnceLock::new();
+        static PROCESS_STATE: std::sync::OnceLock<ProcessSearchState> = std::sync::OnceLock::new();
         let state = PROCESS_STATE.get_or_init(|| {
             // Unknown security state is secure, never permission to use LD_*.
             let auxv = bounded_file("/proc/self/auxv", 65536);

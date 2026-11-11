@@ -955,7 +955,8 @@ impl NativeFile {
     #[allow(dead_code)]
     fn invalidate_unshared(&mut self) {
         if self._frankenlibc_state.std_lock_slot != 0 {
-            let guard = STD_STREAM_LOCKS[(self._frankenlibc_state.std_lock_slot - 1) as usize].lock();
+            let guard =
+                STD_STREAM_LOCKS[(self._frankenlibc_state.std_lock_slot - 1) as usize].lock();
             Self::reset_locked_state(&mut guard.borrow_mut());
         } else if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
             Self::reset_locked_state(lock.get_mut().get_mut());
