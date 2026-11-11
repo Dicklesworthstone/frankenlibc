@@ -1030,6 +1030,7 @@ struct system_signal_call {
   int normal_mask_ok;
   int cleanup_ran;
   sigset_t original_mask;
+  char command[160];
 };
 
 static int system_signal_mask_equal(const sigset_t *expected) {
@@ -1065,12 +1066,8 @@ static void *system_signal_worker(void *opaque) {
   if (call->block_child) sigaddset(&call->original_mask, SIGCHLD);
   system_signal_require(pthread_sigmask(SIG_SETMASK, &call->original_mask, NULL) == 0,
                         "set worker mask");
-  char command[160];
-  snprintf(command, sizeof command,
-           "printf '%%s\\n' $$ >&%d; read token <&%d; exit %d",
-           call->entered[1], call->release[0], call->exit_code);
   pthread_cleanup_push(system_signal_cleanup, call);
-  call->status = system(command);
+  call->status = system(call->command);
   call->normal_mask_ok = system_signal_mask_equal(&call->original_mask);
   pthread_cleanup_pop(1);
   return NULL;
@@ -1079,6 +1076,14 @@ static void *system_signal_worker(void *opaque) {
 static void system_signal_start(struct system_signal_call *call, int index) {
   system_signal_require(pipe(call->entered) == 0 && pipe(call->release) == 0,
                         "create coordination pipes");
+  // Prepare the command before starting its caller: this contract exercises
+  // system's signal scope and cleanup without also testing concurrent printf
+  // allocation on native clones that still inherit their creator's host TLS.
+  int length = snprintf(call->command, sizeof call->command,
+                        "printf '%%s\\n' $$ >&%d; read token <&%d; exit %d",
+                        call->entered[1], call->release[0], call->exit_code);
+  system_signal_require(length > 0 && (size_t)length < sizeof call->command,
+                        "format shell command");
   system_signal_require(pthread_create(&call->thread, NULL, system_signal_worker, call) == 0,
                         "create system caller");
   char pid_text[32] = {0};

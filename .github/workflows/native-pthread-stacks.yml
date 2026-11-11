@@ -88,6 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/signal-waits
+          git config --global --add safe.directory "$PWD"
           git rev-parse HEAD > artifacts/signal-waits/revision.txt
           getconf GNU_LIBC_VERSION > artifacts/signal-waits/gnu-libc.txt
           rustc --version --verbose > artifacts/signal-waits/rustc.txt

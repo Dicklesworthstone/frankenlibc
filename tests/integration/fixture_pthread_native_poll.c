@@ -329,13 +329,19 @@ static void capture_identity(struct state *state) {
      * owned-tls-cache feature. Replace this witness when it gains its own TCB. */
     REQUIRE(((uintptr_t)__builtin_thread_pointer() == creator_tp) == expect_native,
             "thread backend does not match inherited/native or hosted TP");
-    char target[104];
-    ssize_t length = readlink("/proc/thread-self", target, sizeof(target) - 1);
+    /* Keep the witness allocation-free: inherited GNU TLS makes formatted I/O
+     * in a native worker a separate runtime hazard, unrelated to its wait. */
+    state->proc_path[0] = '/';
+    state->proc_path[1] = 'p';
+    state->proc_path[2] = 'r';
+    state->proc_path[3] = 'o';
+    state->proc_path[4] = 'c';
+    state->proc_path[5] = '/';
+    ssize_t length = syscall(SYS_readlinkat, AT_FDCWD, "/proc/thread-self",
+                             state->proc_path + 6, sizeof(state->proc_path) - 7);
     if (length < 0) skip("proc-thread-self-unavailable");
-    REQUIRE((size_t)length < sizeof(target) - 1, "proc thread path truncated");
-    target[length] = 0;
-    int count = snprintf(state->proc_path, sizeof(state->proc_path), "/proc/%s", target);
-    REQUIRE(count > 0 && (size_t)count < sizeof(state->proc_path), "proc path capacity");
+    REQUIRE((size_t)length < sizeof(state->proc_path) - 7, "proc thread path truncated");
+    state->proc_path[6 + (size_t)length] = 0;
 }
 
 static void cleanup(void *argument) {
