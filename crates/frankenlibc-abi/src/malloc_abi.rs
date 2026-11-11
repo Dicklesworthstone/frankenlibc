@@ -3554,16 +3554,24 @@ static HEADROOM_PREWARMED: AtomicBool = AtomicBool::new(false);
 /// 64 fencepost chunks. In hardened mode, also pre-initializes the global
 /// validation pipeline before the caller clamps `RLIMIT_AS`.
 pub(crate) fn prewarm_host_heap_headroom() {
-    if !strict_allocator_host_path_active()
+    let maybe_pipeline = if !strict_allocator_host_path_active()
         && !crate::membrane_state::pipeline_initialization_active()
-        && let Some(pipeline) = crate::membrane_state::try_global_pipeline()
     {
-        pipeline.arena.prewarm_for_rlimit();
-    }
+        crate::membrane_state::try_global_pipeline()
+    } else {
+        None
+    };
     if HEADROOM_PREWARMED.swap(true, Ordering::AcqRel) {
         return;
     }
     let _ = BUMP_HEAP_SLAB.ensure_writable(0, segment_mapping::GRANULE);
+    if let Some(pipeline) = maybe_pipeline {
+        // Hold the allocator reentry guard while reserving `shard.slots` Vec
+        // storage under each shard mutex so `Global::alloc` routes to the
+        // lock-free bump heap instead of re-entering `pipeline.arena`.
+        let _reentry = enter_allocator_reentry_guard();
+        pipeline.arena.prewarm_for_rlimit();
+    }
     const HEADROOM_BYTES: usize = 96 * 1024;
     // SAFETY: transient host allocations + immediate release below 16-byte
     // fencepost chunks that remain live for process lifetime, keeping two
