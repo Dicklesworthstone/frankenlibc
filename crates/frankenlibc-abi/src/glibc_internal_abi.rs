@@ -4002,13 +4002,13 @@ pub unsafe extern "C-unwind" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     // "buffer full" handler would, cost one write(2) per character. Our
     // buffer is not full, so just append through the buffered path.
     if c == libc::EOF {
-        return if unsafe { crate::stdio_abi::fflush_for_caller(fp, caller) } == 0 {
+        return if unsafe { crate::stdio_abi::fflush_unlocked_for_caller(fp, caller) } == 0 {
             0
         } else {
             libc::EOF
         };
     }
-    let rc = unsafe { crate::stdio_abi::fputc_for_caller(c, fp, caller) };
+    let rc = unsafe { crate::stdio_abi::fputc_unlocked_for_caller(c, fp, caller) };
     // Publish the write window again (fputc's fast path clears it), so the
     // following inline putc_unlocked calls store straight into the buffer
     // until it fills -- the write-side twin of __uflow's republish.
@@ -5180,7 +5180,7 @@ pub unsafe extern "C-unwind" fn __uflow(fp: *mut c_void) -> c_int {
     // after the refill, publish the new window so the following bytes are
     // read inline (bd-ygc3li).
     let ch = unsafe {
-        crate::stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize)
+        crate::stdio_abi::fgetc_unlocked_for_caller(fp, core::intrinsics::return_address() as usize)
     };
     crate::stdio_abi::republish_read_window(fp);
     ch
@@ -5192,12 +5192,12 @@ pub unsafe extern "C-unwind" fn __underflow(fp: *mut c_void) -> c_int {
         return libc::EOF;
     }
     let ch = unsafe {
-        crate::stdio_abi::fgetc_for_caller(fp, core::intrinsics::return_address() as usize)
+        crate::stdio_abi::fgetc_unlocked_for_caller(fp, core::intrinsics::return_address() as usize)
     };
     if ch != libc::EOF {
         // Underflow peeks rather than consuming the byte. The cancellation
         // window, if needed, has already closed before the stream is changed.
-        let _ = unsafe { crate::stdio_abi::ungetc(ch, fp) };
+        let _ = unsafe { crate::stdio_abi::ungetc_without_lock(ch, fp) };
     }
     crate::stdio_abi::republish_read_window(fp);
     ch
@@ -5210,13 +5210,13 @@ pub unsafe extern "C-unwind" fn __woverflow(fp: *mut c_void, wc: WcharT) -> Wcha
     }
     let caller = core::intrinsics::return_address() as usize;
     if wc as u32 == u32::MAX {
-        return if unsafe { crate::stdio_abi::fflush_for_caller(fp, caller) } == 0 {
+        return if unsafe { crate::stdio_abi::fflush_unlocked_for_caller(fp, caller) } == 0 {
             0
         } else {
             u32::MAX as WcharT
         };
     }
-    unsafe { crate::wchar_abi::fputwc_for_caller(wc as u32, fp, caller) as WcharT }
+    unsafe { crate::wchar_abi::fputwc_unlocked_for_caller(wc as u32, fp, caller) as WcharT }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __wuflow(fp: *mut c_void) -> WcharT {
@@ -5225,8 +5225,10 @@ pub unsafe extern "C-unwind" fn __wuflow(fp: *mut c_void) -> WcharT {
         return usize::MAX as WcharT;
     }
     unsafe {
-        crate::wchar_abi::fgetwc_for_caller(fp, core::intrinsics::return_address() as usize)
-            as WcharT
+        crate::wchar_abi::fgetwc_unlocked_for_caller(
+            fp,
+            core::intrinsics::return_address() as usize,
+        ) as WcharT
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5236,10 +5238,13 @@ pub unsafe extern "C-unwind" fn __wunderflow(fp: *mut c_void) -> WcharT {
         return usize::MAX as WcharT;
     }
     let wc = unsafe {
-        crate::wchar_abi::fgetwc_for_caller(fp, core::intrinsics::return_address() as usize)
+        crate::wchar_abi::fgetwc_unlocked_for_caller(
+            fp,
+            core::intrinsics::return_address() as usize,
+        )
     };
     if wc != u32::MAX {
-        let _ = unsafe { crate::wchar_abi::ungetwc(wc, fp) };
+        let _ = unsafe { crate::wchar_abi::ungetwc_without_lock(wc, fp) };
     }
     wc as WcharT
 }

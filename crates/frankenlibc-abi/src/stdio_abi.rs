@@ -3069,7 +3069,14 @@ pub(crate) fn with_wide_memstream_write(
     // SAFETY: the caller supplies the live wide stream for this operation.
     // No registry or cell lock is held while waiting for the recursive lock.
     unsafe { flockfile(stream) };
-    let _file_lock = ExtensionStreamLock(stream);
+    let _file_lock = StdioLockGuard(stream);
+    with_wide_memstream_write_unlocked(stream, write)
+}
+
+pub(crate) fn with_wide_memstream_write_unlocked(
+    stream: *mut c_void,
+    write: impl FnOnce(&mut StdioStream) -> bool,
+) -> bool {
     let Some(cell) = stream_cell(canonical_stream_id(stream)) else {
         unsafe { set_abi_errno(errno::EBADF) };
         return false;
@@ -4564,6 +4571,9 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
         return rc;
     }
 
+    // Keep the public FILE lock across flush/callback work, but release it
+    // before retiring the handle: unlock must never inspect a reused slot.
+    let file_lock = unsafe { StdioLockGuard::acquire(stream) };
     let cell = {
         let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
         reg.ensure_std_stream(id);
@@ -4591,6 +4601,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
             .unwrap_or_else(|e| e.into_inner())
             .remove_stream(id);
         let rc = unsafe { cookie_stream_close(id) };
+        drop(file_lock);
         maybe_unregister_dynamic_native_stream(stream);
         return if flushed && rc == 0 { 0 } else { libc::EOF };
     }
@@ -4618,6 +4629,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove_stream(id);
+        drop(file_lock);
         maybe_unregister_dynamic_native_stream(stream);
         return if flush_ok && wide_ok { 0 } else { libc::EOF };
     }
@@ -4660,6 +4672,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove_stream(id);
+    drop(file_lock);
     maybe_unregister_dynamic_native_stream(stream);
     let status = if let Some(pid) = child {
         match wait_popen_child(pid) {
@@ -4691,6 +4704,11 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
 }
 
 pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fflush_unlocked_for_caller(stream, caller) }
+}
+
+pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usize) -> c_int {
     // MT-safe cell-cache fast path (see feof): a threaded fflush-per-write (durability-logging)
     // loop otherwise pays `canonical_stream_id` (×3) + decide + `stream_cell` PER CALL. A gen-valid
     // hit is a non-cookie non-mem fd stream (primed by the loop's fputc/write), so the slow path's
@@ -4853,6 +4871,11 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
 /// original caller explicit prevents internal libc I/O from becoming a
 /// cancellation point just because it reuses this implementation.
 pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fgetc_unlocked_for_caller(stream, caller) }
+}
+
+pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usize) -> c_int {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
         // Lock-free published read-window fast path: consumes directly from `_IO_read_ptr ..
         // _IO_read_end` without TLS or mutex overhead when single-threaded.
@@ -5067,6 +5090,15 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
 }
 
 pub(crate) unsafe fn fputc_for_caller(c: c_int, stream: *mut c_void, caller: usize) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fputc_unlocked_for_caller(c, stream, caller) }
+}
+
+pub(crate) unsafe fn fputc_unlocked_for_caller(
+    c: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
     let byte = c as u8;
 
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
@@ -5476,6 +5508,16 @@ pub(crate) unsafe fn fgets_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> *mut c_char {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fgets_unlocked_for_caller(buf, size, stream, caller) }
+}
+
+pub(crate) unsafe fn fgets_unlocked_for_caller(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> *mut c_char {
     if buf.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
@@ -5587,7 +5629,7 @@ pub(crate) unsafe fn fgets_for_caller(
         let mut had_error = false;
         let mut reached_eof = false;
         while written < max {
-            let byte = unsafe { fgetc_for_caller(stream, caller) };
+            let byte = unsafe { fgetc_unlocked_for_caller(stream, caller) };
             if byte != libc::EOF {
                 unsafe { *buf.add(written) = byte as c_char };
                 written += 1;
@@ -5704,6 +5746,15 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
 }
 
 pub(crate) unsafe fn fputs_for_caller(
+    s: *const c_char,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fputs_unlocked_for_caller(s, stream, caller) }
+}
+
+pub(crate) unsafe fn fputs_unlocked_for_caller(
     s: *const c_char,
     stream: *mut c_void,
     caller: usize,
@@ -5972,6 +6023,17 @@ pub(crate) unsafe fn fread_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> usize {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fread_unlocked_for_caller(ptr, size, nmemb, stream, caller) }
+}
+
+pub(crate) unsafe fn fread_unlocked_for_caller(
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
     let Some(total) = size.checked_mul(nmemb) else {
         unsafe { set_abi_errno(errno::EOVERFLOW) };
         return 0;
@@ -6178,6 +6240,17 @@ pub unsafe extern "C-unwind" fn fwrite(
 }
 
 pub(crate) unsafe fn fwrite_for_caller(
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fwrite_unlocked_for_caller(ptr, size, nmemb, stream, caller) }
+}
+
+pub(crate) unsafe fn fwrite_unlocked_for_caller(
     ptr: *const c_void,
     size: usize,
     nmemb: usize,
@@ -6441,6 +6514,7 @@ unsafe fn fd_seek_locked(
 /// POSIX `fseek`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whence: c_int) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -6635,6 +6709,7 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
 /// POSIX `ftell`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -6806,6 +6881,7 @@ pub unsafe extern "C-unwind" fn ftello(stream: *mut c_void) -> i64 {
 /// POSIX `rewind`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn rewind(stream: *mut c_void) {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     // rewind is fseek(stream, 0, SEEK_SET) + clearerr.
     unsafe { fseek(stream, 0, libc::SEEK_SET) };
 
@@ -6826,6 +6902,11 @@ pub unsafe extern "C-unwind" fn rewind(stream: *mut c_void) {
 /// POSIX `feof`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn feof(stream: *mut c_void) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { feof_without_lock(stream) }
+}
+
+unsafe fn feof_without_lock(stream: *mut c_void) -> c_int {
     // Single-threaded inline fast path: the pointer-keyed write cache only ever holds
     // non-cookie, non-mem fd streams, so `sync_fast_fixed_mem_read_to_stream` is a no-op
     // for a cached stream (fast_fixed_mem_read(id) == None) — reading `is_eof()` directly
@@ -6865,6 +6946,11 @@ pub unsafe extern "C-unwind" fn feof(stream: *mut c_void) -> c_int {
 /// POSIX `ferror`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn ferror(stream: *mut c_void) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { ferror_without_lock(stream) }
+}
+
+unsafe fn ferror_without_lock(stream: *mut c_void) -> c_int {
     // Single-threaded inline fast path (see feof): cached => non-mem fd stream => read
     // `is_error()` directly, skipping the 3 per-call locks. Byte-identical.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
@@ -6963,6 +7049,11 @@ fn clear_header_eof_err(stream: *mut c_void) {
 /// POSIX `clearerr`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn clearerr(stream: *mut c_void) {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { clearerr_without_lock(stream) }
+}
+
+unsafe fn clearerr_without_lock(stream: *mut c_void) {
     // Clear the caller-visible header bits too: not every path below mirrors
     // the stream state back (the standard streams' does not), and a bit set
     // there by gnulib's fseterr would otherwise be re-adopted by ferror.
@@ -7007,6 +7098,11 @@ pub unsafe extern "C-unwind" fn clearerr(stream: *mut c_void) {
 /// POSIX `ungetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { ungetc_without_lock(c, stream) }
+}
+
+pub(crate) unsafe fn ungetc_without_lock(c: c_int, stream: *mut c_void) -> c_int {
     if c == libc::EOF {
         return libc::EOF;
     }
@@ -7121,6 +7217,7 @@ pub unsafe extern "C-unwind" fn setvbuf(
     mode: c_int,
     size: usize,
 ) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     let Some(buf_mode) = BufMode::from_posix(mode) else {
         return -1;
     };
@@ -7254,6 +7351,9 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
 }
 
 pub(crate) unsafe fn puts_for_caller(s: *const c_char, caller: usize) -> c_int {
+    // The string and its trailing newline are one stdio operation. In
+    // particular, another puts/fprintf must not split them across lines.
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdout_stream()) };
     if s.is_null() {
         return libc::EOF;
     }
@@ -8366,9 +8466,24 @@ unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize)
     }
 }
 
-struct ExtensionStreamLock(*mut c_void);
+/// The POSIX stream lock is distinct from the mutex protecting StdioStream's
+/// Rust state. Hold it for a complete locked operation, including callbacks
+/// and multiple buffer flushes. The unlocked entrypoints deliberately skip
+/// this guard; their internal Rust-state synchronization is unchanged.
+pub(crate) struct StdioLockGuard(*mut c_void);
 
-impl Drop for ExtensionStreamLock {
+impl StdioLockGuard {
+    /// The caller keeps this FILE alive until the returned guard is dropped.
+    /// Closing paths must drop it before retiring the native FILE handle.
+    pub(crate) unsafe fn acquire(stream: *mut c_void) -> Self {
+        // flockfile resolves the provider and releases the registry lock
+        // before it waits. Reentrant calls by this thread share the same lock.
+        unsafe { flockfile(stream) };
+        Self(stream)
+    }
+}
+
+impl Drop for StdioLockGuard {
     fn drop(&mut self) {
         // SAFETY: this guard follows exactly one flockfile on the same stream.
         unsafe { funlockfile(self.0) };
@@ -8670,7 +8785,7 @@ pub(crate) unsafe fn registered_printf_stream_for_caller(
     // The FILE lock is recursive, so user callbacks can call fprintf on the
     // same stream. It is distinct from the registry lock, which is never held.
     unsafe { flockfile(stream) };
-    let _lock = ExtensionStreamLock(stream);
+    let _lock = StdioLockGuard(stream);
     match unsafe { extension_format_stream(stream, bytes, ap, wide, entry_errno, caller) } {
         Ok(count) => count,
         Err(error) => {
@@ -12477,6 +12592,7 @@ pub unsafe extern "C-unwind" fn fprintf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
@@ -12776,6 +12892,7 @@ pub unsafe extern "C-unwind" fn fprintf(
 /// POSIX `printf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdout_stream()) };
     let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
@@ -14136,6 +14253,7 @@ pub(crate) unsafe fn vfprintf_for_caller(
     ap: *mut c_void,
     caller: usize,
 ) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if format.is_null() {
         return -1;
     }
@@ -14392,6 +14510,7 @@ pub(crate) unsafe fn vprintf_for_caller(
     ap: *mut c_void,
     caller: usize,
 ) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdout_stream()) };
     if format.is_null() {
         return -1;
     }
@@ -15024,7 +15143,7 @@ unsafe fn scan_narrow_stream(
     // The recursive FILE lock covers parsing, assignments, and pushback, and
     // is released if a read or cookie callback unwinds through cancellation.
     unsafe { flockfile(stream) };
-    let _lock = ExtensionStreamLock(stream);
+    let _lock = StdioLockGuard(stream);
     if let Some(cell) = stream_cell(id)
         && !cell.lock().is_readable()
     {
@@ -15237,6 +15356,7 @@ pub unsafe extern "C-unwind" fn fscanf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     let caller = core::intrinsics::return_address() as usize;
     if stream.is_null() || format.is_null() {
         return -1;
@@ -15300,6 +15420,7 @@ pub unsafe extern "C-unwind" fn fscanf(
 /// POSIX `scanf` — scan formatted input from stdin.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdin_stream()) };
     let caller = core::intrinsics::return_address() as usize;
     if format.is_null() {
         return -1;
@@ -15487,6 +15608,7 @@ pub(crate) unsafe fn vfscanf_with_dialect(
     caller: usize,
     dialect: ScanfDialect,
 ) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if stream.is_null() || format.is_null() || ap.is_null() {
         return -1;
     }
@@ -15760,6 +15882,7 @@ pub unsafe extern "C-unwind" fn putc(c: c_int, stream: *mut c_void) -> c_int {
 /// Returns 0 on success, -1 on error with errno set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if stream.is_null() || pos.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -15817,6 +15940,7 @@ pub unsafe extern "C-unwind" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpo
 /// Returns 0 on success, -1 on error with errno set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if stream.is_null() || pos.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -16067,6 +16191,10 @@ pub unsafe extern "C-unwind" fn freopen(
         return result;
     }
 
+    // Native freopen keeps the FILE handle (and its recursive lock) alive
+    // while replacing the stream underneath it, including failure paths.
+    // Resolve and acquire before taking the stream registry mutex.
+    let _file_lock = unsafe { StdioLockGuard::acquire(stream) };
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
 
     // Close the old stream. Lock ordering: registry → cell (freopen only); no path
@@ -16439,6 +16567,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> isize {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
     if lineptr.is_null() || n.is_null() || stream.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -18026,22 +18155,22 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getc_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
+    unsafe { fgetc_unlocked_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+    unsafe { fputc_unlocked_for_caller(c, stream, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
+    unsafe { fgetc_unlocked_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+    unsafe { fputc_unlocked_for_caller(c, stream, core::intrinsics::return_address() as usize) }
 }
 
 /// POSIX `fmemopen` — open a memory buffer as a stream.
@@ -18484,19 +18613,19 @@ pub unsafe extern "C" fn funopen(
 /// GNU `feof_unlocked` — test end-of-file indicator without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn feof_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { feof(stream) }
+    unsafe { feof_without_lock(stream) }
 }
 
 /// GNU `ferror_unlocked` — test error indicator without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn ferror_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { ferror(stream) }
+    unsafe { ferror_without_lock(stream) }
 }
 
 /// GNU `fflush_unlocked` — flush stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fflush_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { fflush_for_caller(stream, core::intrinsics::return_address() as usize) }
+    unsafe { fflush_unlocked_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
 /// Test hook (bd-0ftdgt): reports whether the three standard streams are still
@@ -18641,7 +18770,7 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getchar_unlocked() -> c_int {
     unsafe {
-        fgetc_for_caller(
+        fgetc_unlocked_for_caller(
             active_stdin_stream(),
             core::intrinsics::return_address() as usize,
         )
@@ -18652,7 +18781,7 @@ pub unsafe extern "C-unwind" fn getchar_unlocked() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putchar_unlocked(c: c_int) -> c_int {
     unsafe {
-        fputc_for_caller(
+        fputc_unlocked_for_caller(
             c,
             active_stdout_stream(),
             core::intrinsics::return_address() as usize,
@@ -18669,7 +18798,7 @@ pub unsafe extern "C-unwind" fn fread_unlocked(
     stream: *mut c_void,
 ) -> usize {
     unsafe {
-        fread_for_caller(
+        fread_unlocked_for_caller(
             ptr,
             size,
             nmemb,
@@ -18688,7 +18817,7 @@ pub unsafe extern "C-unwind" fn fwrite_unlocked(
     stream: *mut c_void,
 ) -> usize {
     unsafe {
-        fwrite_for_caller(
+        fwrite_unlocked_for_caller(
             ptr,
             size,
             nmemb,
@@ -18706,7 +18835,7 @@ pub unsafe extern "C-unwind" fn fgets_unlocked(
     stream: *mut c_void,
 ) -> *mut c_char {
     unsafe {
-        fgets_for_caller(
+        fgets_unlocked_for_caller(
             buf,
             size,
             stream,
@@ -18718,13 +18847,13 @@ pub unsafe extern "C-unwind" fn fgets_unlocked(
 /// `fputs_unlocked` — put a string to stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputs_unlocked(s: *const c_char, stream: *mut c_void) -> c_int {
-    unsafe { fputs_for_caller(s, stream, core::intrinsics::return_address() as usize) }
+    unsafe { fputs_unlocked_for_caller(s, stream, core::intrinsics::return_address() as usize) }
 }
 
 /// `clearerr_unlocked` — clear stream error/EOF indicators without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn clearerr_unlocked(stream: *mut c_void) {
-    unsafe { clearerr(stream) }
+    unsafe { clearerr_without_lock(stream) }
 }
 
 /// `fileno_unlocked` — get file descriptor from stream without locking.

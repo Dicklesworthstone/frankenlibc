@@ -5,21 +5,20 @@
 
 #![cfg(target_os = "linux")]
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use frankenlibc_abi::stdio_abi::{
+    fclose, fflush, flockfile, fopen, fread, ftrylockfile, funlockfile, fwrite,
+};
+use std::ffi::{CString, c_void};
 use std::fs;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-// Import the ABI functions
-unsafe extern "C" {
-    fn fopen(pathname: *const c_char, mode: *const c_char) -> *mut c_void;
-    fn fclose(stream: *mut c_void) -> c_int;
-    fn fwrite(ptr: *const c_void, size: usize, nmemb: usize, stream: *mut c_void) -> usize;
-    fn fread(ptr: *mut c_void, size: usize, nmemb: usize, stream: *mut c_void) -> usize;
-    fn flockfile(stream: *mut c_void);
-    fn funlockfile(stream: *mut c_void);
-    fn ftrylockfile(stream: *mut c_void) -> c_int;
-    fn fflush(stream: *mut c_void) -> c_int;
+fn use_native_threaded_stdio() {
+    // The Rust harness creates host threads without going through our
+    // interposed pthread_create. Disable the native single-thread caches;
+    // extern declarations here used to exercise only host glibc in debug.
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(0, std::sync::atomic::Ordering::Release);
 }
 
 /// A wrapper to make FILE* Send+Sync for testing purposes.
@@ -50,6 +49,7 @@ fn temp_path(name: &str) -> std::path::PathBuf {
 /// If locking works correctly, no record should have mismatched check bytes.
 #[test]
 fn stress_32_threads_1024_records_each() {
+    use_native_threaded_stdio();
     const NUM_THREADS: usize = 32;
     const RECORDS_PER_THREAD: usize = 1024;
     const RECORD_SIZE: usize = 4;
@@ -166,6 +166,7 @@ fn stress_32_threads_1024_records_each() {
 /// Test ftrylockfile returns 0 when lock is available, -1 when held.
 #[test]
 fn ftrylockfile_returns_correct_values() {
+    use_native_threaded_stdio();
     let path = temp_path("trylock");
     let path_c = CString::new(path.to_str().unwrap()).unwrap();
 
@@ -191,6 +192,7 @@ fn ftrylockfile_returns_correct_values() {
 /// Test flockfile/funlockfile with nested calls (recursive locking).
 #[test]
 fn nested_flockfile_does_not_deadlock() {
+    use_native_threaded_stdio();
     let path = temp_path("nested");
     let path_c = CString::new(path.to_str().unwrap()).unwrap();
 
@@ -214,6 +216,7 @@ fn nested_flockfile_does_not_deadlock() {
 /// Test that writes are atomic at the record level when using flockfile.
 #[test]
 fn writes_are_record_atomic_with_locking() {
+    use_native_threaded_stdio();
     const NUM_THREADS: usize = 8;
     const ITERATIONS: usize = 100;
     const RECORD_SIZE: usize = 16;

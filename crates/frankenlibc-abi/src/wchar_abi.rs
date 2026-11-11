@@ -6885,6 +6885,11 @@ pub unsafe extern "C-unwind" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
 }
 
 pub(crate) unsafe fn fgetwc_for_caller(stream: *mut std::ffi::c_void, caller: usize) -> u32 {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
+    unsafe { fgetwc_unlocked_for_caller(stream, caller) }
+}
+
+pub(crate) unsafe fn fgetwc_unlocked_for_caller(stream: *mut c_void, caller: usize) -> u32 {
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
@@ -6898,14 +6903,14 @@ pub(crate) unsafe fn fgetwc_for_caller(stream: *mut std::ffi::c_void, caller: us
         let mut length = 0usize;
         loop {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            let next = unsafe { super::stdio_abi::fgetc_for_caller(stream, caller) };
+            let next = unsafe { super::stdio_abi::fgetc_unlocked_for_caller(stream, caller) };
             if next == libc::EOF {
                 if length != 0
                     && !super::stdio_abi::restore_wide_read(stream, &bytes[..length], true, false)
                 {
                     for &byte in bytes[..length].iter().rev() {
                         // SAFETY: restore consumed bytes to the same foreign stream.
-                        unsafe { super::stdio_abi::ungetc(byte as c_int, stream) };
+                        unsafe { super::stdio_abi::ungetc_without_lock(byte as c_int, stream) };
                     }
                 }
                 return WEOF_VALUE;
@@ -6919,7 +6924,7 @@ pub(crate) unsafe fn fgetwc_for_caller(stream: *mut std::ffi::c_void, caller: us
                     if !super::stdio_abi::restore_wide_read(stream, &bytes[..length], false, true) {
                         for &byte in bytes[..length].iter().rev() {
                             // SAFETY: restore consumed bytes to the same foreign stream.
-                            unsafe { super::stdio_abi::ungetc(byte as c_int, stream) };
+                            unsafe { super::stdio_abi::ungetc_without_lock(byte as c_int, stream) };
                         }
                     }
                     // SAFETY: thread-local errno update.
@@ -6941,11 +6946,20 @@ pub(crate) unsafe fn fputwc_for_caller(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> u32 {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
+    unsafe { fputwc_unlocked_for_caller(wc, stream, caller) }
+}
+
+pub(crate) unsafe fn fputwc_unlocked_for_caller(
+    wc: u32,
+    stream: *mut c_void,
+    caller: usize,
+) -> u32 {
     if stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return WEOF_VALUE;
     }
     if reserve_wide_output(stream, 0).is_some() {
-        let written = super::stdio_abi::with_wide_memstream_write(stream, |destination| {
+        let written = super::stdio_abi::with_wide_memstream_write_unlocked(stream, |destination| {
             if reserve_wide_output(stream, 1) == Some((0, true)) {
                 // SAFETY: exhaustion is local to this bounded formatting stream.
                 unsafe { set_abi_errno(libc::E2BIG) };
@@ -6973,7 +6987,7 @@ pub(crate) unsafe fn fputwc_for_caller(
 
         for &byte in &bytes[..encoded_len] {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            if unsafe { super::stdio_abi::fputc_for_caller(byte as c_int, stream, caller) }
+            if unsafe { super::stdio_abi::fputc_unlocked_for_caller(byte as c_int, stream, caller) }
                 == libc::EOF
             {
                 return WEOF_VALUE;
@@ -6985,6 +6999,11 @@ pub(crate) unsafe fn fputwc_for_caller(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
+    unsafe { ungetwc_without_lock(wc, stream) }
+}
+
+pub(crate) unsafe fn ungetwc_without_lock(wc: u32, stream: *mut c_void) -> u32 {
     if stream.is_null() || wc == WEOF_VALUE || !super::stdio_abi::orient_stream_ungetwc(stream) {
         return WEOF_VALUE;
     }
@@ -7003,7 +7022,8 @@ pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 
         }
         for &byte in bytes[..encoded_len].iter().rev() {
             // SAFETY: delegated to stdio ABI layer with validated stream handle.
-            if unsafe { super::stdio_abi::ungetc(byte as c_int, stream) } == libc::EOF {
+            if unsafe { super::stdio_abi::ungetc_without_lock(byte as c_int, stream) } == libc::EOF
+            {
                 return WEOF_VALUE;
             }
         }
@@ -7024,6 +7044,16 @@ pub(crate) unsafe fn fgetws_for_caller(
     ws: *mut libc::wchar_t,
     n: c_int,
     stream: *mut std::ffi::c_void,
+    caller: usize,
+) -> *mut libc::wchar_t {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
+    unsafe { fgetws_unlocked_for_caller(ws, n, stream, caller) }
+}
+
+pub(crate) unsafe fn fgetws_unlocked_for_caller(
+    ws: *mut libc::wchar_t,
+    n: c_int,
+    stream: *mut c_void,
     caller: usize,
 ) -> *mut libc::wchar_t {
     if ws.is_null() || stream.is_null() || n <= 0 || !super::stdio_abi::orient_stream_wide(stream) {
@@ -7052,15 +7082,15 @@ pub(crate) unsafe fn fgetws_for_caller(
         let mut hit_eof = false;
         while written + 1 < cap {
             // SAFETY: delegated to this ABI implementation with validated stream.
-            let wc = unsafe { fgetwc_for_caller(stream, caller) };
+            let wc = unsafe { fgetwc_unlocked_for_caller(stream, caller) };
             if wc == WEOF_VALUE {
                 // A new read/encoding error fails even after a valid prefix.
                 // Clean EOF may coexist with a sticky error from an earlier
                 // call; GNU also returns a prefix when a nonblocking read
                 // encounters EAGAIN. Neither case is a new line failure.
                 // SAFETY: the same validated stream remains live for this read.
-                let at_eof = unsafe { super::stdio_abi::feof(stream) } != 0;
-                let failed = unsafe { super::stdio_abi::ferror(stream) } != 0;
+                let at_eof = unsafe { super::stdio_abi::feof_unlocked(stream) } != 0;
+                let failed = unsafe { super::stdio_abi::ferror_unlocked(stream) } != 0;
                 let error = unsafe { *crate::errno_abi::__errno_location() };
                 if failed && !at_eof && error != libc::EAGAIN {
                     return std::ptr::null_mut();
@@ -7143,6 +7173,15 @@ pub(crate) unsafe fn fputws_for_caller(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> c_int {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
+    unsafe { fputws_unlocked_for_caller(ws, stream, caller) }
+}
+
+pub(crate) unsafe fn fputws_unlocked_for_caller(
+    ws: *const libc::wchar_t,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
     if ws.is_null() || stream.is_null() {
         return libc::EOF;
     }
@@ -7173,7 +7212,7 @@ unsafe fn fputws_impl(
         // Wide memory output has no encoding step. In particular, writing a
         // shorter encoding over a longer one must replace one wchar, without
         // leaving bytes from the old character behind it.
-        let written = super::stdio_abi::with_wide_memstream_write(stream, |destination| {
+        let written = super::stdio_abi::with_wide_memstream_write_unlocked(stream, |destination| {
             let mut offset = 0;
             loop {
                 let mut chunk = [0u32; 256];
@@ -7231,7 +7270,7 @@ unsafe fn fputws_impl(
                 }
                 // SAFETY: valid stream; `buf[..nbytes]` initialized by wcstombs.
                 return if unsafe {
-                    super::stdio_abi::fwrite_for_caller(
+                    super::stdio_abi::fwrite_unlocked_for_caller(
                         buf.as_ptr().cast(),
                         1,
                         nbytes,
@@ -7256,7 +7295,7 @@ unsafe fn fputws_impl(
                 return 0;
             }
             // SAFETY: delegated to this ABI implementation with validated stream.
-            if unsafe { fputwc_for_caller(wc, stream, caller) } == WEOF_VALUE {
+            if unsafe { fputwc_unlocked_for_caller(wc, stream, caller) } == WEOF_VALUE {
                 return libc::EOF;
             }
             idx += 1;
@@ -7527,6 +7566,9 @@ unsafe fn write_wprintf_rendered(
 /// Native `wprintf`: format to stdout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+    let _lock = unsafe {
+        super::stdio_abi::StdioLockGuard::acquire(super::stdio_abi::active_stdout_stream())
+    };
     let caller = core::intrinsics::return_address() as usize;
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
@@ -7573,6 +7615,7 @@ pub unsafe extern "C-unwind" fn fwprintf(
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     let caller = core::intrinsics::return_address() as usize;
     if format.is_null() || stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return -1;
@@ -7675,6 +7718,9 @@ pub(crate) unsafe fn vwprintf_for_caller(
     ap: *mut std::ffi::c_void,
     caller: usize,
 ) -> c_int {
+    let _lock = unsafe {
+        super::stdio_abi::StdioLockGuard::acquire(super::stdio_abi::active_stdout_stream())
+    };
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
         return -1;
@@ -7736,6 +7782,7 @@ pub(crate) unsafe fn vfwprintf_for_caller(
     ap: *mut std::ffi::c_void,
     caller: usize,
 ) -> c_int {
+    let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
     if format.is_null() || stream.is_null() || !super::stdio_abi::orient_stream_wide(stream) {
         return -1;
     }
@@ -10139,7 +10186,9 @@ pub unsafe extern "C-unwind" fn putwc(wc: libc::wchar_t, stream: *mut libc::FILE
 /// `fgetwc_unlocked` — unlocked fgetwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetwc_unlocked(stream: *mut libc::FILE) -> u32 {
-    unsafe { fgetwc_for_caller(stream.cast(), core::intrinsics::return_address() as usize) }
+    unsafe {
+        fgetwc_unlocked_for_caller(stream.cast(), core::intrinsics::return_address() as usize)
+    }
 }
 
 /// `fgetws_unlocked` — unlocked fgetws.
@@ -10150,7 +10199,7 @@ pub unsafe extern "C-unwind" fn fgetws_unlocked(
     stream: *mut libc::FILE,
 ) -> *mut libc::wchar_t {
     unsafe {
-        fgetws_for_caller(
+        fgetws_unlocked_for_caller(
             ws,
             n,
             stream.cast(),
@@ -10163,7 +10212,7 @@ pub unsafe extern "C-unwind" fn fgetws_unlocked(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fputwc_unlocked(wc: libc::wchar_t, stream: *mut libc::FILE) -> u32 {
     unsafe {
-        fputwc_for_caller(
+        fputwc_unlocked_for_caller(
             wc as u32,
             stream.cast(),
             core::intrinsics::return_address() as usize,
@@ -10178,7 +10227,7 @@ pub unsafe extern "C-unwind" fn fputws_unlocked(
     stream: *mut libc::FILE,
 ) -> std::ffi::c_int {
     unsafe {
-        fputws_for_caller(
+        fputws_unlocked_for_caller(
             ws,
             stream.cast(),
             core::intrinsics::return_address() as usize,
@@ -10189,14 +10238,16 @@ pub unsafe extern "C-unwind" fn fputws_unlocked(
 /// `getwc_unlocked` — unlocked getwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getwc_unlocked(stream: *mut libc::FILE) -> u32 {
-    unsafe { fgetwc_for_caller(stream.cast(), core::intrinsics::return_address() as usize) }
+    unsafe {
+        fgetwc_unlocked_for_caller(stream.cast(), core::intrinsics::return_address() as usize)
+    }
 }
 
 /// `getwchar_unlocked` — unlocked getwchar.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getwchar_unlocked() -> u32 {
     unsafe {
-        fgetwc_for_caller(
+        fgetwc_unlocked_for_caller(
             super::stdio_abi::active_stdin_stream(),
             core::intrinsics::return_address() as usize,
         )
@@ -10206,14 +10257,14 @@ pub unsafe extern "C-unwind" fn getwchar_unlocked() -> u32 {
 /// `putwc_unlocked` — unlocked putwc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putwc_unlocked(wc: u32, stream: *mut c_void) -> u32 {
-    unsafe { fputwc_for_caller(wc, stream, core::intrinsics::return_address() as usize) }
+    unsafe { fputwc_unlocked_for_caller(wc, stream, core::intrinsics::return_address() as usize) }
 }
 
 /// `putwchar_unlocked` — unlocked putwchar.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn putwchar_unlocked(wc: u32) -> u32 {
     unsafe {
-        fputwc_for_caller(
+        fputwc_unlocked_for_caller(
             wc,
             super::stdio_abi::active_stdout_stream(),
             core::intrinsics::return_address() as usize,

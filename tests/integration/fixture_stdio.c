@@ -1921,7 +1921,290 @@ static int test_internal_line_reads(void) {
     return failed != 0;
 }
 
+/* The public FILE lock must exclude ordinary operations, including cached
+ * reads and multi-byte/wide operations. Unlocked APIs must bypass it. The
+ * ready pipe confirms that the worker has observed the held lock before the
+ * bounded completion probes; releasing just one recursive acquisition must
+ * still leave ordinary operations blocked. */
+enum stream_lock_operation {
+    LOCK_FGETC, LOCK_GETC, LOCK_FGETS, LOCK_FREAD,
+    LOCK_FPUTC, LOCK_PUTC, LOCK_FPUTS, LOCK_FWRITE, LOCK_FFLUSH,
+    LOCK_FSEEK, LOCK_FTELL, LOCK_REWIND, LOCK_FGETPOS, LOCK_FSETPOS,
+    LOCK_FEOF, LOCK_FERROR, LOCK_CLEARERR, LOCK_UNGETC, LOCK_SETVBUF,
+    LOCK_FCLOSE, LOCK_FREOPEN, LOCK_FPRINTF, LOCK_FSCANF, LOCK_GETLINE,
+    LOCK_FGETWC, LOCK_FGETWS, LOCK_FPUTWC, LOCK_FPUTWS,
+    LOCK_FWPRINTF, LOCK_FWSCANF, LOCK_UNGETWC,
+    UNLOCK_FGETC, UNLOCK_GETC, UNLOCK_FGETS, UNLOCK_FREAD,
+    UNLOCK_FPUTC, UNLOCK_PUTC, UNLOCK_FPUTS, UNLOCK_FWRITE,
+    UNLOCK_FFLUSH, UNLOCK_FEOF, UNLOCK_FERROR, UNLOCK_CLEARERR,
+    UNLOCK_FGETWC, UNLOCK_FGETWS, UNLOCK_FPUTWC, UNLOCK_FPUTWS,
+    LOCK_FGETS_CHK, UNLOCK_FGETS_CHK, LOCK_FGETWS_CHK, UNLOCK_FGETWS_CHK,
+};
+
+struct stream_lock_case {
+    const char *name;
+    enum stream_lock_operation operation;
+    int unlocked;
+    int backing; /* fd, fixed memory, growable memory, read cookie */
+};
+
+struct stream_lock_worker {
+    FILE *stream;
+    enum stream_lock_operation operation;
+    int ready_fd, done_fd, failed;
+    fpos_t position;
+};
+
+static void *run_stream_lock_operation(void *opaque) {
+    struct stream_lock_worker *state = opaque;
+    FILE *fp = state->stream;
+    char buffer[16] = {0};
+    wchar_t wide[16] = {0};
+    int acquired = ftrylockfile(fp) == 0;
+    if (acquired) funlockfile(fp);
+    state->failed = acquired;
+    if (write(state->ready_fd, "r", 1) != 1) return NULL;
+
+    switch (state->operation) {
+    case LOCK_FGETC: state->failed |= fgetc(fp) != 'a'; break;
+    case LOCK_GETC: state->failed |= getc(fp) != 'a'; break;
+    case LOCK_FGETS: state->failed |= !fgets(buffer, sizeof(buffer), fp) || strcmp(buffer, "abc\n"); break;
+    case LOCK_FREAD: state->failed |= fread(buffer, 1, 4, fp) != 4 || memcmp(buffer, "abc\n", 4); break;
+    case LOCK_FPUTC: state->failed |= fputc('x', fp) != 'x'; break;
+    case LOCK_PUTC: state->failed |= putc('x', fp) != 'x'; break;
+    case LOCK_FPUTS: state->failed |= fputs("xyz", fp) == EOF; break;
+    case LOCK_FWRITE: state->failed |= fwrite("xyz", 1, 3, fp) != 3; break;
+    case LOCK_FFLUSH: state->failed |= fflush(fp) != 0; break;
+    case LOCK_FSEEK: state->failed |= fseek(fp, 0, SEEK_SET) != 0; break;
+    case LOCK_FTELL: state->failed |= ftell(fp) != 0; break;
+    case LOCK_REWIND: rewind(fp); break;
+    case LOCK_FGETPOS: state->failed |= fgetpos(fp, &state->position) != 0; break;
+    case LOCK_FSETPOS: state->failed |= fsetpos(fp, &state->position) != 0; break;
+    case LOCK_FEOF: state->failed |= feof(fp) != 0; break;
+    case LOCK_FERROR: state->failed |= ferror(fp) != 0; break;
+    case LOCK_CLEARERR: clearerr(fp); break;
+    case LOCK_UNGETC: state->failed |= ungetc('x', fp) != 'x'; break;
+    case LOCK_SETVBUF: state->failed |= setvbuf(fp, NULL, _IONBF, 0) != 0; break;
+    case LOCK_FCLOSE: state->failed |= fclose(fp) != 0; break;
+    case LOCK_FREOPEN: state->failed |= freopen("/dev/null", "r+", fp) != fp; break;
+    case LOCK_FPRINTF: state->failed |= fprintf(fp, "%s:%d", "x", 7) != 3; break;
+    case LOCK_FSCANF: state->failed |= fscanf(fp, "%3s", buffer) != 1 || strcmp(buffer, "abc"); break;
+    case LOCK_GETLINE: {
+        char *line = NULL;
+        size_t capacity = 0;
+        state->failed |= getline(&line, &capacity, fp) != 4 || !line || strcmp(line, "abc\n");
+        free(line);
+        break;
+    }
+    case LOCK_FGETWC: state->failed |= fgetwc(fp) != L'a'; break;
+    case LOCK_FGETWS: state->failed |= !fgetws(wide, 16, fp) || wcscmp(wide, L"abc\n"); break;
+    case LOCK_FPUTWC: state->failed |= fputwc(L'x', fp) != L'x'; break;
+    case LOCK_FPUTWS: state->failed |= fputws(L"xyz", fp) == EOF; break;
+    case LOCK_FWPRINTF: state->failed |= fwprintf(fp, L"%ls:%d", L"x", 7) != 3; break;
+    case LOCK_FWSCANF: state->failed |= fwscanf(fp, L"%3ls", wide) != 1 || wcscmp(wide, L"abc"); break;
+    case LOCK_UNGETWC: state->failed |= ungetwc(L'x', fp) != L'x'; break;
+    case UNLOCK_FGETC: state->failed |= (fgetc_unlocked)(fp) != 'a'; break;
+    case UNLOCK_GETC: state->failed |= getc_unlocked(fp) != 'a'; break;
+    case UNLOCK_FGETS: state->failed |= fgets_unlocked(buffer, sizeof(buffer), fp) == NULL || strcmp(buffer, "abc\n"); break;
+    case UNLOCK_FREAD: state->failed |= (fread_unlocked)(buffer, 1, 4, fp) != 4 || memcmp(buffer, "abc\n", 4); break;
+    case UNLOCK_FPUTC: state->failed |= (fputc_unlocked)('x', fp) != 'x'; break;
+    case UNLOCK_PUTC: state->failed |= putc_unlocked('x', fp) != 'x'; break;
+    case UNLOCK_FPUTS: state->failed |= fputs_unlocked("xyz", fp) == EOF; break;
+    case UNLOCK_FWRITE: state->failed |= (fwrite_unlocked)("xyz", 1, 3, fp) != 3; break;
+    case UNLOCK_FFLUSH: state->failed |= fflush_unlocked(fp) != 0; break;
+    case UNLOCK_FEOF: state->failed |= (feof_unlocked)(fp) != 0; break;
+    case UNLOCK_FERROR: state->failed |= (ferror_unlocked)(fp) != 0; break;
+    case UNLOCK_CLEARERR: clearerr_unlocked(fp); break;
+    case UNLOCK_FGETWC: state->failed |= fgetwc_unlocked(fp) != L'a'; break;
+    case UNLOCK_FGETWS: state->failed |= fgetws_unlocked(wide, 16, fp) == NULL || wcscmp(wide, L"abc\n"); break;
+    case UNLOCK_FPUTWC: state->failed |= fputwc_unlocked(L'x', fp) != L'x'; break;
+    case UNLOCK_FPUTWS: state->failed |= fputws_unlocked(L"xyz", fp) == EOF; break;
+    case LOCK_FGETS_CHK:
+    case UNLOCK_FGETS_CHK: {
+        const char *name = state->operation == LOCK_FGETS_CHK ? "__fgets_chk" : "__fgets_unlocked_chk";
+        char *(*checked)(char *, size_t, int, FILE *) = dlsym(RTLD_DEFAULT, name);
+        state->failed |= !checked || !checked(buffer, sizeof(buffer), sizeof(buffer), fp) || strcmp(buffer, "abc\n");
+        break;
+    }
+    case LOCK_FGETWS_CHK:
+    case UNLOCK_FGETWS_CHK: {
+        const char *name = state->operation == LOCK_FGETWS_CHK ? "__fgetws_chk" : "__fgetws_unlocked_chk";
+        wchar_t *(*checked)(wchar_t *, size_t, int, FILE *) = dlsym(RTLD_DEFAULT, name);
+        state->failed |= !checked || !checked(wide, 16, 16, fp) || wcscmp(wide, L"abc\n");
+        break;
+    }
+    }
+    if (write(state->done_fd, "d", 1) != 1) state->failed = 1;
+    return NULL;
+}
+
+static int stream_lock_wait(int fd, int timeout_ms) {
+    struct pollfd pollfd = {.fd = fd, .events = POLLIN};
+    int result;
+    do { result = poll(&pollfd, 1, timeout_ms); } while (result < 0 && errno == EINTR);
+    return result > 0 && (pollfd.revents & POLLIN);
+}
+
+static int test_stream_lock_case(const struct stream_lock_case *test) {
+    char backing[16] = "abc\n";
+    char *published = NULL;
+    size_t published_size = 0;
+    struct line_cookie cookie = {.data = (const unsigned char *)"abc\n", .length = 4};
+    FILE *fp;
+    if (test->backing == 1) fp = fmemopen(backing, 4, "r+");
+    else if (test->backing == 2) fp = open_memstream(&published, &published_size);
+    else if (test->backing == 3) {
+        cookie_io_functions_t functions = {.read = read_line_cookie, .close = close_line_cookie};
+        fp = fopencookie(&cookie, "r", functions);
+    } else fp = tmpfile();
+    if (!fp) return 1;
+    if (!test->backing && (write(fileno(fp), "abc\n", 4) != 4 || lseek(fileno(fp), 0, SEEK_SET) != 0)) {
+        fclose(fp);
+        return 1;
+    }
+    int ready[2], done[2];
+    if (pipe(ready) || pipe(done)) { fclose(fp); return 1; }
+    struct stream_lock_worker state = {
+        .stream = fp, .operation = test->operation, .ready_fd = ready[1], .done_fd = done[1],
+    };
+    if (test->operation == LOCK_FSETPOS && fgetpos(fp, &state.position)) return 1;
+    flockfile(fp);
+    flockfile(fp);
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, run_stream_lock_operation, &state)) {
+        funlockfile(fp); funlockfile(fp); fclose(fp);
+        close(ready[0]); close(ready[1]); close(done[0]); close(done[1]);
+        return 1;
+    }
+    int ready_seen = stream_lock_wait(ready[0], 2000);
+    int before_release = ready_seen && stream_lock_wait(done[0], test->unlocked ? 2000 : 40);
+    /* A broken fclose may already have destroyed the handle. The negative
+     * control must report that failure without unlocking freed storage. */
+    int closed_early = before_release && test->operation == LOCK_FCLOSE;
+    if (!closed_early) funlockfile(fp);
+    int after_one_release = before_release || stream_lock_wait(done[0], test->unlocked ? 0 : 40);
+    closed_early |= after_one_release && test->operation == LOCK_FCLOSE;
+    if (!closed_early) funlockfile(fp);
+    int completed = after_one_release || stream_lock_wait(done[0], 2000);
+    if (!completed) {
+        fprintf(stderr, "FAIL locks %s backing=%d: operation did not finish after unlock\n", test->name, test->backing);
+        _exit(3); /* do not join an unexpectedly deadlocked operation */
+    }
+    int failed = pthread_join(thread, NULL) != 0 || !ready_seen || state.failed;
+    failed |= test->unlocked ? !before_release : before_release || after_one_release;
+    if (test->operation != LOCK_FCLOSE) {
+        int locked = ftrylockfile(fp) == 0;
+        failed |= !locked;
+        if (locked) { funlockfile(fp); failed |= fclose(fp) != 0; }
+    }
+    if (test->backing == 3) failed |= cookie.closed != 1;
+    free(published);
+    close(ready[0]); close(ready[1]); close(done[0]); close(done[1]);
+    if (failed) fprintf(stderr, "FAIL locks %s backing=%d ready=%d before=%d recursive=%d operation=%d\n",
+                        test->name, test->backing, ready_seen, before_release, after_one_release, state.failed);
+    printf("locks %s backing=%d: %s\n", test->name, test->backing, failed ? "FAIL" : "PASS");
+    return failed != 0;
+}
+
+struct puts_lock_worker { char line[33]; int failed; };
+
+static void *run_atomic_puts(void *opaque) {
+    struct puts_lock_worker *state = opaque;
+    for (int i = 0; i < 500; ++i) state->failed |= puts(state->line) == EOF;
+    return NULL;
+}
+
+static int test_puts_records_are_atomic(void) {
+    FILE *capture = tmpfile();
+    if (!capture) return 1;
+    fflush(stdout);
+    int original = dup(STDOUT_FILENO);
+    if (original < 0 || dup2(fileno(capture), STDOUT_FILENO) < 0) return 1;
+    /* Every puts performs its body and newline writes separately, making the
+     * unbuffered case exercise the full-call atomicity boundary repeatedly. */
+    int failed = setvbuf(stdout, NULL, _IONBF, 0) != 0;
+    struct puts_lock_worker states[4] = {0};
+    pthread_t threads[4];
+    int created = 0;
+    for (int i = 0; i < 4; ++i) {
+        memset(states[i].line, 'A' + i, 32);
+        if (pthread_create(&threads[i], NULL, run_atomic_puts, &states[i])) { failed = 1; break; }
+        ++created;
+    }
+    for (int i = 0; i < created; ++i) {
+        failed |= pthread_join(threads[i], NULL) != 0 || states[i].failed;
+    }
+    failed |= fflush(stdout) != 0;
+    failed |= dup2(original, STDOUT_FILENO) < 0;
+    close(original);
+    int counts[4] = {0};
+    for (int i = 0; i < created * 500; ++i) {
+        char record[33];
+        if (pread(fileno(capture), record, sizeof(record), (off_t)i * 33) != 33) { failed = 1; break; }
+        int id = record[0] - 'A';
+        if (id < 0 || id >= created || record[32] != '\n') { failed = 1; break; }
+        for (int j = 1; j < 32; ++j) failed |= record[j] != record[0];
+        ++counts[id];
+    }
+    for (int i = 0; i < created; ++i) failed |= counts[i] != 500;
+    failed |= fclose(capture) != 0;
+    if (failed) fprintf(stderr, "FAIL locks puts: torn output records\n");
+    printf("locks puts records: %s\n", failed ? "FAIL" : "PASS");
+    return failed != 0;
+}
+
+static int test_stream_locking(void) {
+    const struct stream_lock_case cases[] = {
+#define LOCK_CASE(op) {#op, LOCK_##op, 0, 0}
+#define UNLOCK_CASE(op) {#op "_UNLOCKED", UNLOCK_##op, 1, 0}
+        LOCK_CASE(FGETC), LOCK_CASE(GETC), LOCK_CASE(FGETS), LOCK_CASE(FREAD),
+        LOCK_CASE(FPUTC), LOCK_CASE(PUTC), LOCK_CASE(FPUTS), LOCK_CASE(FWRITE),
+        LOCK_CASE(FFLUSH), LOCK_CASE(FSEEK), LOCK_CASE(FTELL), LOCK_CASE(REWIND),
+        LOCK_CASE(FGETPOS), LOCK_CASE(FSETPOS), LOCK_CASE(FEOF), LOCK_CASE(FERROR),
+        LOCK_CASE(CLEARERR), LOCK_CASE(UNGETC), LOCK_CASE(SETVBUF), LOCK_CASE(FCLOSE),
+        LOCK_CASE(FREOPEN), LOCK_CASE(FPRINTF), LOCK_CASE(FSCANF), LOCK_CASE(GETLINE),
+        LOCK_CASE(FGETWC), LOCK_CASE(FGETWS), LOCK_CASE(FPUTWC), LOCK_CASE(FPUTWS),
+        LOCK_CASE(FWPRINTF), LOCK_CASE(FWSCANF), LOCK_CASE(UNGETWC),
+        UNLOCK_CASE(FGETC), UNLOCK_CASE(GETC), UNLOCK_CASE(FGETS), UNLOCK_CASE(FREAD),
+        UNLOCK_CASE(FPUTC), UNLOCK_CASE(PUTC), UNLOCK_CASE(FPUTS), UNLOCK_CASE(FWRITE),
+        UNLOCK_CASE(FFLUSH), UNLOCK_CASE(FEOF), UNLOCK_CASE(FERROR), UNLOCK_CASE(CLEARERR),
+        UNLOCK_CASE(FGETWC), UNLOCK_CASE(FGETWS), UNLOCK_CASE(FPUTWC), UNLOCK_CASE(FPUTWS),
+        LOCK_CASE(FGETS_CHK), UNLOCK_CASE(FGETS_CHK), LOCK_CASE(FGETWS_CHK), UNLOCK_CASE(FGETWS_CHK),
+#undef LOCK_CASE
+#undef UNLOCK_CASE
+        {"FGETC", LOCK_FGETC, 0, 1}, {"FGETS", LOCK_FGETS, 0, 1},
+        {"FREAD", LOCK_FREAD, 0, 1}, {"FGETC_UNLOCKED", UNLOCK_FGETC, 1, 1},
+        {"FGETS_UNLOCKED", UNLOCK_FGETS, 1, 1}, {"FWRITE", LOCK_FWRITE, 0, 2},
+        {"FFLUSH", LOCK_FFLUSH, 0, 2}, {"FWRITE_UNLOCKED", UNLOCK_FWRITE, 1, 2},
+        {"FGETS", LOCK_FGETS, 0, 3}, {"FGETS_UNLOCKED", UNLOCK_FGETS, 1, 3},
+    };
+    alarm(25);
+    int failed = 0;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+        failed += test_stream_lock_case(&cases[i]);
+    failed += test_puts_records_are_atomic();
+    alarm(0);
+    printf("fixture_stdio locks: %s (%zu cases, %d failed)\n",
+           failed ? "FAIL" : "PASS", sizeof(cases) / sizeof(cases[0]) + 1, failed);
+    return failed != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "locks") == 0) {
+        const char *symbols[] = {"tmpfile", "flockfile", "funlockfile", "ftrylockfile",
+            "fgetc", "getc", "fgets", "fread", "fputc", "putc", "fputs", "fwrite", "fflush",
+            "fseek", "ftell", "rewind", "fgetpos", "fsetpos", "feof", "ferror", "clearerr",
+            "ungetc", "setvbuf", "fclose", "freopen", "fprintf", "__isoc99_fscanf", "getline",
+            "fgetwc", "fgetws", "fputwc", "fputws", "fwprintf", "__isoc99_fwscanf", "ungetwc",
+            "fgetc_unlocked", "__uflow", "fgets_unlocked", "fread_unlocked", "fputc_unlocked",
+            "__overflow", "fputs_unlocked", "fwrite_unlocked", "fflush_unlocked", "feof_unlocked",
+            "ferror_unlocked", "clearerr_unlocked", "fgetwc_unlocked", "fgetws_unlocked",
+            "fputwc_unlocked", "fputws_unlocked", "__fgets_chk", "__fgets_unlocked_chk",
+            "__fgetws_chk", "__fgetws_unlocked_chk", "fmemopen", "open_memstream", "fopencookie", "puts"};
+        if (argc != 3 || check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        return test_stream_locking();
+    }
     if (argc >= 2 && strcmp(argv[1], "internal-lines") == 0) {
         const char *symbols[] = {"_IO_getline_info", "_IO_getline", "fmemopen", "fdopen",
                                  "fwide", "fgetc", "ferror", "feof", "fclose"};

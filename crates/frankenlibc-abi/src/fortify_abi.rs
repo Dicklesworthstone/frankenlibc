@@ -136,7 +136,7 @@ use crate::stdio_abi::{
 // something else, which is the whole point of importing rather than declaring.
 use crate::unistd_abi::vsyslog;
 use crate::wchar_abi::{
-    fgetws_for_caller, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf_for_caller, vswprintf,
+    fgetws_unlocked_for_caller, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf_for_caller, vswprintf,
     vwprintf_for_caller, wcsnrtombs, wcsrtombs, wcstombs,
 };
 
@@ -535,13 +535,13 @@ unsafe fn fgets_chk_common(
     // cannot bound anything.
     if n <= 0 || buflen == usize::MAX {
         // SAFETY: caller's contract.
-        return unsafe { crate::stdio_abi::fgets_for_caller(buf, n, stream, caller) };
+        return unsafe { crate::stdio_abi::fgets_unlocked_for_caller(buf, n, stream, caller) };
     }
 
     // Inside glibc's bound: pass through untouched, which is what it does.
     if (n as usize) <= buflen {
         // SAFETY: caller's contract.
-        return unsafe { crate::stdio_abi::fgets_for_caller(buf, n, stream, caller) };
+        return unsafe { crate::stdio_abi::fgets_unlocked_for_caller(buf, n, stream, caller) };
     }
 
     // `n` exceeds the buffer, so bound the read to what it holds. `fgets` writes
@@ -549,7 +549,8 @@ unsafe fn fgets_chk_common(
     // `buflen` can never write past the buffer whatever the content is.
     let clamped = buflen.min(n as usize) as c_int;
     // SAFETY: `clamped` is at most the buffer's byte capacity.
-    let result = unsafe { crate::stdio_abi::fgets_for_caller(buf, clamped, stream, caller) };
+    let result =
+        unsafe { crate::stdio_abi::fgets_unlocked_for_caller(buf, clamped, stream, caller) };
     if result.is_null() {
         return result;
     }
@@ -578,6 +579,7 @@ pub unsafe extern "C-unwind" fn __fgets_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut c_char {
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
     // `n` is SIGNED, and `n as usize` turns a negative count into a huge one, so
     // this used to abort the process for `fgets(buf, -1, fp)` where glibc simply
     // returns NULL. Probed on host glibc 2.42 with fork isolation:
@@ -668,7 +670,7 @@ pub unsafe extern "C-unwind" fn __fread_unlocked_chk(
     // defense that can produce false positives when buflen doesn't match
     // the runtime reality (e.g., libsystemd's internal buffers).
     unsafe {
-        crate::stdio_abi::fread_for_caller(
+        crate::stdio_abi::fread_unlocked_for_caller(
             buf,
             size,
             nmemb,
@@ -1261,13 +1263,13 @@ unsafe fn fgetws_chk_common(
     // cannot bound anything.
     if n <= 0 || buflen == usize::MAX {
         // SAFETY: caller's contract.
-        return unsafe { fgetws_for_caller(buf, n, stream, caller) };
+        return unsafe { fgetws_unlocked_for_caller(buf, n, stream, caller) };
     }
 
     // Inside glibc's static bound: pass through untouched.
     if (n as usize) <= buflen {
         // SAFETY: caller's contract.
-        return unsafe { fgetws_for_caller(buf, n, stream, caller) };
+        return unsafe { fgetws_unlocked_for_caller(buf, n, stream, caller) };
     }
 
     // `n` exceeds the buffer, so bound the read to what the buffer holds,
@@ -1283,7 +1285,7 @@ unsafe fn fgetws_chk_common(
     }
     let clamped = cap_wide.min(n as usize) as c_int;
     // SAFETY: `clamped` is at most the buffer's wide-character capacity.
-    let result = unsafe { fgetws_for_caller(buf, clamped, stream, caller) };
+    let result = unsafe { fgetws_unlocked_for_caller(buf, clamped, stream, caller) };
     if result.is_null() {
         return result;
     }
@@ -1312,6 +1314,7 @@ pub unsafe extern "C-unwind" fn __fgetws_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
+    let _lock = unsafe { crate::stdio_abi::StdioLockGuard::acquire(stream) };
     // SAFETY: delegates to the shared rule; `fgetws` is fl's own wide reader.
     unsafe {
         fgetws_chk_common(

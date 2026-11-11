@@ -10,8 +10,9 @@ POPEN_ONLY=0
 FMEMOPEN_ONLY=0
 COOKIE_LINES_ONLY=0
 INTERNAL_LINES_ONLY=0
+LOCKS_ONLY=0
 if [[ "$#" -gt 1 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks]" >&2
   exit 2
 fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
@@ -30,8 +31,10 @@ elif [[ "${1:-}" == "--cookie-lines" ]]; then
   COOKIE_LINES_ONLY=1
 elif [[ "${1:-}" == "--internal-lines" ]]; then
   INTERNAL_LINES_ONLY=1
+elif [[ "${1:-}" == "--locks" ]]; then
+  LOCKS_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only|--read-errors|--write-errors|--popen|--fmemopen|--cookie-lines|--internal-lines|--locks]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
@@ -39,7 +42,7 @@ if [[ "${GNU_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-rc0923-epic-eeuy4f.34"
 elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2.1"
-elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 ]]; then
+elif [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.6.2"
 elif [[ "${FMEMOPEN_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-reality-202609-lx578q.7.5"
@@ -80,7 +83,7 @@ fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
-if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${INTERNAL_LINES_ONLY}" -eq 1 ]]; then
+if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ONLY}" -eq 1 || "${FMEMOPEN_ONLY}" -eq 1 || "${COOKIE_LINES_ONLY}" -eq 1 || "${INTERNAL_LINES_ONLY}" -eq 1 || "${LOCKS_ONLY}" -eq 1 ]]; then
   error_kind=read
   error_mode=fd-errors
   error_cases=112
@@ -110,6 +113,11 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
     error_mode=internal-lines
     error_cases=216
     error_option=--internal-lines
+  elif [[ "${LOCKS_ONLY}" -eq 1 ]]; then
+    error_kind=locks
+    error_mode=locks
+    error_cases=62
+    error_option=--locks
   fi
   error_bin="${BIN_DIR}/fixture_stdio_${error_kind}_errors.bin"
   "${CC:-cc}" -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
