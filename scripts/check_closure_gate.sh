@@ -81,6 +81,29 @@ def path(value):
     return p if p.is_absolute() else root / p
 
 
+def receipt_path(value):
+    require(isinstance(value, str) and value, 'non_portable_receipt_path')
+    rel = pathlib.Path(value)
+    require(not rel.is_absolute() and '..' not in rel.parts, 'non_portable_receipt_path')
+    candidate = root / rel
+    require(candidate.resolve().is_relative_to(root.resolve()), 'receipt_outside_checkout')
+    return candidate
+
+
+def receipt_member(base, value, error):
+    require(isinstance(value, str) and value, error)
+    rel = pathlib.Path(value)
+    require(not rel.is_absolute() and '..' not in rel.parts, error)
+    member = base / rel
+    require(member.resolve().is_relative_to(base.resolve()), error)
+    return member
+
+
+def norm_build_path(value):
+    p = pathlib.Path(value)
+    return os.path.normpath(str(p if p.is_absolute() else root / p))
+
+
 def contract_for(bid):
     bead = beads[bid]
     contract = entries.get(bid, {}).get('row', {}).get('closure_evidence')
@@ -244,16 +267,18 @@ def capture(bid, out):
     print(f'RECORDED {bid}: {out / "receipt.json"}')
 
 
-def verify(bid, receipt_path):
+def verify(bid, receipt_file):
     contract = contract_for(bid)
-    receipt = json.loads(receipt_path.read_text())
+    receipt = json.loads(receipt_file.read_text())
+    receipt_dir = receipt_file.parent
     require(receipt.get('schema_version') == 1 and receipt.get('bead_id') == bid, 'wrong_receipt_identity')
     require(receipt.get('contract') == contract, 'wrong_source_config_or_gate_contract')
     require(receipt.get('source_files') == contract['source']['files'], 'wrong_source_manifest')
     require(receipt.get('runner_architecture') == contract['configuration']['architecture'],
             'wrong_runner_architecture')
     for p, digest in contract['source']['files'].items():
-        require(sha(receipt_path.parent / 'source' / p) == digest, 'missing_or_changed_source_snapshot')
+        snap = receipt_member(receipt_dir, str(pathlib.Path('source') / p), 'missing_or_changed_source_snapshot')
+        require(sha(snap) == digest, 'missing_or_changed_source_snapshot')
     gate = contract['gate']
     lower = timestamp(contract['not_before'])
     upper = timestamp(beads[bid].get('closed_at') or now())
@@ -266,9 +291,10 @@ def verify(bid, receipt_path):
         start, finish = timestamp(result['started_at']), timestamp(result['finished_at'])
         require(lower <= start <= finish <= upper, f'stale_or_future_{name}_result')
         for stream in ('stdout', 'stderr'):
-            output = receipt_path.parent / result[stream]
+            output = receipt_member(receipt_dir, result.get(stream), f'missing_or_changed_{name}_{stream}')
             require(sha(output) == result[stream + '_sha256'], f'missing_or_changed_{name}_{stream}')
-        return result, (receipt_path.parent / result['stdout']).read_text(errors='replace')
+        stdout_file = receipt_member(receipt_dir, result.get('stdout'), f'missing_or_changed_{name}_stdout')
+        return result, stdout_file.read_text(errors='replace')
 
     build = None
     if gate.get('build_command'):
@@ -276,15 +302,15 @@ def verify(bid, receipt_path):
         if pathlib.Path(gate['build_command'][0]).name == 'cargo':
             messages = [json.loads(line) for line in build_stdout.splitlines() if line.strip()]
             produced = [m for m in messages if m.get('reason') == 'compiler-artifact']
-            reported = {str(path(p).resolve()) for m in produced for p in m.get('filenames', [])}
-            require(all(str(path(p).resolve()) in reported for p in gate['artifacts']),
+            reported = {norm_build_path(p) for m in produced for p in m.get('filenames', [])}
+            require(all(norm_build_path(p) in reported for p in gate['artifacts']),
                     'artifact_not_reported_by_build')
             if contract['evidence_class'] == 'executed_unit':
                 target = gate['build_command'][gate['build_command'].index('--test') + 1]
                 require(any(m.get('target', {}).get('name') == target and
                             'test' in m.get('target', {}).get('kind', []) and
                             m.get('executable') and
-                            path(m['executable']).resolve() == path(gate['command'][0]).resolve()
+                            norm_build_path(m['executable']) == norm_build_path(gate['command'][0])
                             for m in produced), 'executed_binary_not_produced_by_named_target')
     execution, stdout = phase('execution', gate['command'])
     if build:
@@ -293,9 +319,11 @@ def verify(bid, receipt_path):
     require(set(artifacts) == set(gate.get('artifacts', [])), 'missing_build_artifact')
     require(set(receipt.get('artifact_files', {})) == set(artifacts), 'missing_retained_build_artifact')
     for p, digest in artifacts.items():
-        require(sha(receipt_path.parent / receipt['artifact_files'][p]) == digest, 'missing_or_changed_build_artifact')
+        saved = receipt_member(receipt_dir, receipt['artifact_files'].get(p), 'missing_or_changed_build_artifact')
+        require(sha(saved) == digest, 'missing_or_changed_build_artifact')
     require(re.fullmatch('[0-9a-f]{64}', receipt.get('executable_sha256', '')), 'missing_executable_hash')
-    require(sha(receipt_path.parent / 'executable') == receipt['executable_sha256'], 'wrong_executed_binary')
+    exec_snap = receipt_member(receipt_dir, 'executable', 'wrong_executed_binary')
+    require(sha(exec_snap) == receipt['executable_sha256'], 'wrong_executed_binary')
     if contract['evidence_class'] == 'executed_unit':
         require(receipt['executable_sha256'] == artifacts[gate['command'][0]], 'wrong_executed_binary')
         summaries = re.findall(r'^test result: ok\. (\d+) passed; (\d+) failed;.*$', stdout, re.M)
@@ -341,7 +369,7 @@ try:
                 contract_for(bid)
                 refs = entries[bid]['row'].get('result_receipts', [])
                 require(refs, 'missing_stored_execution_result')
-                kinds = [verify(bid, path(ref)) for ref in refs]
+                kinds = [verify(bid, receipt_path(ref)) for ref in refs]
                 print(f'PASS {bid}: {", ".join(kinds)}; retained results verified')
                 passed += 1
             except (ValueError, KeyError, TypeError, OSError) as error:

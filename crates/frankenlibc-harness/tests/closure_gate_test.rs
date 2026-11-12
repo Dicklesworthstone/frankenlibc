@@ -445,7 +445,7 @@ impl EvidenceFixture {
             "row": {"unit_cmds": ["rustc --test behavior.rs"], "e2e_cmds": [],
                     "artifact_paths": [binary], "close_blockers": [],
                     "closure_evidence": contract,
-                    "result_receipts": [dir.join("run/receipt.json")]}
+                    "result_receipts": [dir.join("run/receipt.json").strip_prefix(&root).unwrap()]}
         }]});
         let bead = json!({"id": "bd-isolated-result", "issue_type": "task", "status": "in_progress",
                           "created_at": "2026-10-30T00:00:00Z", "acceptance_criteria": acceptance,
@@ -967,12 +967,12 @@ fn cargo_receipt_binds_named_artifact_and_rebuilds_backdated_source() {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|v| v["reason"] == "compiler-artifact" && v["target"]["name"] == "behavior")
         .expect("Cargo must identify the executable it built");
-    let binary = artifact["executable"].as_str().unwrap();
+    let binary = artifact["executable"].as_str().unwrap().to_owned();
     let contract = &mut f.matrix["entries"][0]["row"]["closure_evidence"];
     contract["configuration"]["features"] = json!(["default"]);
     contract["gate"]["build_command"] = json!(build);
-    contract["gate"]["command"] = json!([binary, "--test-threads=1"]);
-    contract["gate"]["artifacts"] = json!([binary]);
+    contract["gate"]["command"] = json!([&binary, "--test-threads=1"]);
+    contract["gate"]["artifacts"] = json!([&binary]);
     for input in [
         root.join("Cargo.toml"),
         root.join("Cargo.lock"),
@@ -1052,5 +1052,280 @@ fn cargo_receipt_binds_named_artifact_and_rebuilds_backdated_source() {
     }));
     println!(
         "CONTROL Cargo: 2 real tests admitted; unrelated executable rejected; same-size backdated wrong source rebuilt and both assertions failed"
+    );
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn actual_gate_rejects_non_portable_existing_receipt_paths_and_member_escapes() {
+    let mut f = EvidenceFixture::new("n + 1");
+    let root = workspace_root();
+    EvidenceFixture::assert_result(f.record(), true, "RECORDED");
+    f.close_now();
+    EvidenceFixture::assert_result(f.gate(&[]), true, "POST_PASS=1");
+
+    let ext_unique = format!(
+        "frankenlibc-closure-external-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let ext_dir = Path::new("/tmp").join(ext_unique).join("run");
+    copy_dir_all(&f.dir.join("run"), &ext_dir);
+    let ext_receipt = ext_dir.join("receipt.json");
+    assert!(ext_receipt.is_file());
+
+    let symlink_dir = f.dir.join("escaped-link");
+    std::os::unix::fs::symlink(&ext_dir, &symlink_dir).unwrap();
+    let symlink_rel = symlink_dir
+        .join("receipt.json")
+        .strip_prefix(&root)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    let dir_name = f.dir.file_name().unwrap().to_str().unwrap();
+    let dotdot_rel = format!("target/conformance/../conformance/{dir_name}/run/receipt.json");
+    assert!(root.join(&dotdot_rel).is_file());
+
+    for (bad_ref, expected) in [
+        (
+            ext_receipt.to_str().unwrap().to_owned(),
+            "non_portable_receipt_path",
+        ),
+        (
+            f.receipt.to_str().unwrap().to_owned(),
+            "non_portable_receipt_path",
+        ),
+        (dotdot_rel, "non_portable_receipt_path"),
+        (String::new(), "non_portable_receipt_path"),
+        (symlink_rel, "receipt_outside_checkout"),
+    ] {
+        f.matrix["entries"][0]["row"]["result_receipts"] = json!([bad_ref]);
+        f.save();
+        EvidenceFixture::assert_result(f.gate(&[]), false, expected);
+        EvidenceFixture::assert_result(f.gate(&["--admit", "bd-isolated-result"]), false, expected);
+    }
+
+    // Restore valid repo-relative receipt ref, then verify member path escapes fail.
+    let good_ref = f
+        .receipt
+        .strip_prefix(&root)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    f.matrix["entries"][0]["row"]["result_receipts"] = json!([good_ref]);
+    f.save();
+    let original: Value = serde_json::from_slice(&std::fs::read(&f.receipt).unwrap()).unwrap();
+    for bad_member in [
+        ext_dir
+            .join("execution.stdout")
+            .to_str()
+            .unwrap()
+            .to_owned(),
+        "../run/execution.stdout".to_owned(),
+    ] {
+        let mut tampered = original.clone();
+        tampered["execution"]["stdout"] = json!(bad_member);
+        f.write_receipt(&tampered);
+        EvidenceFixture::assert_result(f.gate(&[]), false, "missing_or_changed_execution_stdout");
+    }
+    f.write_receipt(&original);
+    EvidenceFixture::assert_result(f.gate(&[]), true, "POST_PASS=1");
+    println!(
+        "CONTROL non-portable existing receipt paths & member escapes: 7/7 rejected; repo-relative restored receipt admitted"
+    );
+}
+
+#[test]
+fn relocated_clean_checkout_verifies_cargo_receipt_without_build_tree() {
+    let mut f = EvidenceFixture::new("n + 1");
+    let root = workspace_root();
+    let manifest = f.dir.join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"closure-relocated\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+         [workspace]\n[features]\ndefault = []\n\
+         [[test]]\nname = \"behavior\"\npath = \"behavior.rs\"\n",
+    )
+    .unwrap();
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{lock:?}");
+    let build = vec![
+        "cargo".to_owned(),
+        "test".to_owned(),
+        "--offline".to_owned(),
+        "--locked".to_owned(),
+        "--no-run".to_owned(),
+        "--message-format=json".to_owned(),
+        "-Zchecksum-freshness".to_owned(),
+        "--config".to_owned(),
+        "build.fingerprint=\"content\"".to_owned(),
+        "--manifest-path".to_owned(),
+        manifest.to_str().unwrap().to_owned(),
+        "--target-dir".to_owned(),
+        f.dir.join("cargo-target").to_str().unwrap().to_owned(),
+        "--test".to_owned(),
+        "behavior".to_owned(),
+    ];
+    let output = Command::new(&build[0])
+        .args(&build[1..])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let artifact: Value = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|v| v["reason"] == "compiler-artifact" && v["target"]["name"] == "behavior")
+        .expect("Cargo must identify built test binary");
+    let binary = artifact["executable"].as_str().unwrap().to_owned();
+    let contract = &mut f.matrix["entries"][0]["row"]["closure_evidence"];
+    contract["configuration"]["features"] = json!(["default"]);
+    contract["gate"]["build_command"] = json!(build);
+    contract["gate"]["command"] = json!([&binary, "--test-threads=1"]);
+    contract["gate"]["artifacts"] = json!([&binary]);
+    for input in [
+        root.join("Cargo.toml"),
+        root.join("Cargo.lock"),
+        root.join("rust-toolchain.toml"),
+        root.join(".cargo/config.toml"),
+        manifest,
+        f.dir.join("Cargo.lock"),
+    ] {
+        let rel = input.strip_prefix(&root).unwrap().to_str().unwrap();
+        contract["source"]["files"][rel] = json!(digest(&std::fs::read(&input).unwrap()));
+    }
+    f.save();
+    EvidenceFixture::assert_result(f.record(), true, "RECORDED");
+    f.close_now();
+    std::fs::rename(
+        f.dir.join("cargo-target"),
+        f.dir.join("cargo-target-relocated-away"),
+    )
+    .unwrap();
+    assert!(!Path::new(&binary).exists());
+
+    let clean_unique = format!(
+        "frankenlibc-clean-checkout-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let clean_root = Path::new("/tmp").join(clean_unique);
+    std::fs::create_dir_all(clean_root.join("scripts")).unwrap();
+    std::fs::create_dir_all(clean_root.join("tests/conformance/closure_receipts")).unwrap();
+    std::fs::create_dir_all(clean_root.join(".beads")).unwrap();
+    std::fs::copy(
+        root.join("scripts/check_closure_gate.sh"),
+        clean_root.join("scripts/check_closure_gate.sh"),
+    )
+    .unwrap();
+    std::fs::copy(
+        schema_path(),
+        clean_root.join("tests/conformance/closure_evidence_schema.json"),
+    )
+    .unwrap();
+    copy_dir_all(
+        &f.dir.join("run"),
+        &clean_root.join("tests/conformance/closure_receipts/bd-isolated-result"),
+    );
+
+    let mut clean_matrix = f.matrix.clone();
+    clean_matrix["entries"][0]["labels"] = json!(["critique"]);
+    clean_matrix["entries"][0]["row"]["log_schema_refs"] =
+        json!(["tests/conformance/log_schema.json"]);
+    clean_matrix["entries"][0]["row"]["result_receipts"] =
+        json!(["tests/conformance/closure_receipts/bd-isolated-result/receipt.json"]);
+    std::fs::write(
+        clean_root.join("tests/conformance/verification_matrix.json"),
+        serde_json::to_vec_pretty(&clean_matrix).unwrap(),
+    )
+    .unwrap();
+    let mut clean_bead = f.bead.clone();
+    clean_bead["labels"] = json!(["critique"]);
+    std::fs::write(
+        clean_root.join(".beads/issues.jsonl"),
+        format!("{clean_bead}\n"),
+    )
+    .unwrap();
+    assert!(!clean_root.join("target").exists());
+
+    for source_mode in ["matrix", "beads"] {
+        let out = Command::new("bash")
+            .arg(clean_root.join("scripts/check_closure_gate.sh"))
+            .current_dir(&clean_root)
+            .env("FRANKENLIBC_CLOSURE_GATE_SOURCE", source_mode)
+            .env_remove("FRANKENLIBC_CLOSURE_MATRIX")
+            .env_remove("FRANKENLIBC_CLOSURE_SCHEMA")
+            .env_remove("FRANKENLIBC_BEADS_JSONL")
+            .env_remove("FRANKENLIBC_CLOSURE_CUTOFF")
+            .output()
+            .unwrap();
+        EvidenceFixture::assert_result(
+            out,
+            true,
+            "PASS bd-isolated-result: executed_unit; retained results verified",
+        );
+    }
+    let admit = Command::new("bash")
+        .arg(clean_root.join("scripts/check_closure_gate.sh"))
+        .args(["--admit", "bd-isolated-result"])
+        .current_dir(&clean_root)
+        .env_remove("FRANKENLIBC_CLOSURE_MATRIX")
+        .env_remove("FRANKENLIBC_CLOSURE_SCHEMA")
+        .env_remove("FRANKENLIBC_BEADS_JSONL")
+        .env_remove("FRANKENLIBC_CLOSURE_CUTOFF")
+        .output()
+        .unwrap();
+    EvidenceFixture::assert_result(
+        admit,
+        true,
+        "PASS bd-isolated-result: executed_unit; retained results verified",
+    );
+
+    // 1-byte tampering in the clean checkout must fail closed.
+    let tampered_stdout =
+        clean_root.join("tests/conformance/closure_receipts/bd-isolated-result/execution.stdout");
+    let mut bytes = std::fs::read(&tampered_stdout).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&tampered_stdout, bytes).unwrap();
+    let bad = Command::new("bash")
+        .arg(clean_root.join("scripts/check_closure_gate.sh"))
+        .current_dir(&clean_root)
+        .env_remove("FRANKENLIBC_CLOSURE_MATRIX")
+        .env_remove("FRANKENLIBC_CLOSURE_SCHEMA")
+        .env_remove("FRANKENLIBC_BEADS_JSONL")
+        .env_remove("FRANKENLIBC_CLOSURE_CUTOFF")
+        .output()
+        .unwrap();
+    EvidenceFixture::assert_result(bad, false, "missing_or_changed_execution_stdout");
+    println!(
+        "CONTROL relocated clean checkout: matrix + beads + --admit verified without build tree; 1-byte tamper rejected"
     );
 }
