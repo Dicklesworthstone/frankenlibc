@@ -1232,3 +1232,177 @@ fn host_arm_classifier_discriminates_the_golden_values_shape() {
         "let u = \"http://example.invalid\";\nunsafe extern \"C\" {\n    fn strchr(s: *const c_char, c: c_int) -> *mut c_char;\n}\n"
     )));
 }
+
+const KNOWN_FAILING_GATES: &[(&str, &str)] = &[(
+    "conformance_diff_ecvt_rounding.rs",
+    "bd-2g7oyh.101: glibc 2.42 deprecated ecvt/fcvt shortest-representation rounding \
+     is internally inconsistent on midpoint carries (2.5->2, 3.5->4, yet 99.5->99); \
+     ndigit<=0 and negative-ndigit parity are gated in conformance_diff_ecvt_ndigit0 \
+     and conformance_diff_fcvt_r_neg while ndigit>=1 stays explicitly known_failing.",
+)];
+
+#[test]
+fn symbol_and_differential_inventory_separates_implemented_executed_skipped_unproven_and_known_failing()
+ {
+    let matrix_raw =
+        std::fs::read_to_string("../../support_matrix.json").expect("read support_matrix.json");
+    let matrix: serde_json::Value =
+        serde_json::from_str(&matrix_raw).expect("parse support_matrix.json");
+    let symbols = matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols array");
+    assert!(!symbols.is_empty());
+
+    let mut implemented = 0usize;
+    let mut wraps_host = 0usize;
+    let mut stub = 0usize;
+    for row in symbols {
+        match row["status"].as_str().unwrap_or_default() {
+            "Implemented" | "RawSyscall" => implemented += 1,
+            "WrapsHostLibc" => wraps_host += 1,
+            "Stub" => stub += 1,
+            other => panic!("unexpected support_matrix status: {other}"),
+        }
+    }
+    let maint_raw = std::fs::read_to_string(
+        "../../tests/conformance/support_matrix_maintenance_report.v1.json",
+    )
+    .expect("read support_matrix_maintenance_report.v1.json");
+    let maint: serde_json::Value =
+        serde_json::from_str(&maint_raw).expect("parse support_matrix_maintenance_report.v1.json");
+    let fixture_linked = maint["summary"]["fixture_linked"]
+        .as_u64()
+        .expect("summary.fixture_linked") as usize;
+    let unproven_by_fixture = maint["summary"]["fixture_unlinked"]
+        .as_u64()
+        .expect("summary.fixture_unlinked") as usize;
+    assert_eq!(implemented + wraps_host + stub, symbols.len());
+    assert_eq!(fixture_linked + unproven_by_fixture, symbols.len());
+    // Never conflate symbol export or fixture linkage metadata with universal proof.
+    assert!(implemented > 0 && fixture_linked > 1100 && unproven_by_fixture > 0);
+
+    let dir = std::path::Path::new("tests");
+    let mut executed = 0usize;
+    let mut metamorphic_only = 0usize;
+    let mut known_failing = Vec::new();
+    let mut silent_skips = Vec::new();
+
+    for entry in std::fs::read_dir(dir).expect("read tests/") {
+        let path = entry.expect("dir entry").path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let is_diff = name.starts_with("conformance_diff_") && name.ends_with(".rs");
+        let is_native_plugin = name.starts_with("dlfcn_native_") && name.ends_with("_test.rs");
+        if !is_diff && !is_native_plugin {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path).expect("read test source");
+        let stripped = strip_rust_comments(&raw);
+        let test_attrs = stripped
+            .lines()
+            .filter(|line| line.trim().starts_with("#[test]"))
+            .count();
+        let ignore_attrs = stripped
+            .lines()
+            .filter(|line| line.trim().starts_with("#[ignore"))
+            .count();
+        let spawns_ignored_worker = stripped.contains("\"--ignored\"");
+
+        if let Some((_, reason)) = KNOWN_FAILING_GATES.iter().find(|(f, _)| *f == name) {
+            assert!(
+                reason.len() > 40,
+                "known_failing reason too short for {name}"
+            );
+            assert!(
+                ignore_attrs >= 1,
+                "{name} is listed in KNOWN_FAILING_GATES without #[ignore]; remove it if fixed"
+            );
+            known_failing.push(name);
+            continue;
+        }
+
+        if test_attrs == 0 || (ignore_attrs > 0 && !spawns_ignored_worker) {
+            silent_skips.push(format!(
+                "{name} (tests={test_attrs}, ignores={ignore_attrs}, spawns_worker={spawns_ignored_worker})"
+            ));
+            continue;
+        }
+
+        if INTERNAL_INVARIANT_GATES.iter().any(|(f, _)| *f == name) {
+            metamorphic_only += 1;
+        } else {
+            assert!(
+                gate_reaches_a_host_arm(&stripped),
+                "{name} is classified as executed differential coverage but reaches no host arm"
+            );
+            executed += 1;
+        }
+    }
+
+    assert!(
+        silent_skips.is_empty(),
+        "differential/native gates must not silently skip or carry zero active tests:\n{}",
+        silent_skips.join("\n")
+    );
+    assert_eq!(metamorphic_only, INTERNAL_INVARIANT_GATES.len());
+    assert_eq!(known_failing.len(), KNOWN_FAILING_GATES.len());
+    assert!(
+        executed > 650,
+        "expected >650 executed differential/native targets, got {executed}"
+    );
+    eprintln!(
+        "{{\"inventory\":\"bd-reality-202609-lx578q.7\",\"symbols_total\":{},\"implemented\":{implemented},\"wraps_host\":{wraps_host},\"stub\":{stub},\"fixture_linked\":{fixture_linked},\"unproven_by_fixture\":{unproven_by_fixture},\"executed_diff_targets\":{executed},\"metamorphic_only_targets\":{metamorphic_only},\"known_failing_targets\":{},\"silent_skipped_targets\":0}}",
+        symbols.len(),
+        known_failing.len()
+    );
+}
+
+#[test]
+fn mutated_or_self_aliased_arm_is_rejected() {
+    fn verify_distinct_and_equal<T: PartialEq + std::fmt::Debug>(
+        candidate_fn: usize,
+        oracle_fn: usize,
+        candidate_out: T,
+        oracle_out: T,
+    ) -> Result<(), &'static str> {
+        if candidate_fn == 0 || oracle_fn == 0 {
+            return Err("null provider address");
+        }
+        if candidate_fn == oracle_fn {
+            return Err("self-aliased provider arm");
+        }
+        if candidate_out != oracle_out {
+            return Err("behavioral divergence between candidate and oracle");
+        }
+        Ok(())
+    }
+
+    let fl_addr = frankenlibc_abi::string_abi::strlen as *const () as usize;
+    let host_addr = libc::strlen as *const () as usize;
+    let sample_ptr = std::hint::black_box(c"frankenlibc-parity".as_ptr());
+    let fl_len = unsafe { frankenlibc_abi::string_abi::strlen(sample_ptr) };
+    let host_len = unsafe { libc::strlen(sample_ptr) };
+
+    // Live distinct arms with matching behavior succeed.
+    assert_eq!(
+        verify_distinct_and_equal(fl_addr, host_addr, fl_len, host_len),
+        Ok(())
+    );
+    // Self-aliased arm (host collapsed onto fl) is rejected even when outputs match.
+    assert_eq!(
+        verify_distinct_and_equal(fl_addr, fl_addr, fl_len, fl_len),
+        Err("self-aliased provider arm")
+    );
+    // Mutated candidate return value or errno is rejected.
+    assert_eq!(
+        verify_distinct_and_equal(fl_addr, host_addr, (fl_len + 1, 0), (host_len, 0)),
+        Err("behavioral divergence between candidate and oracle")
+    );
+    assert_eq!(
+        verify_distinct_and_equal(fl_addr, host_addr, (fl_len, libc::EINVAL), (host_len, 0)),
+        Err("behavioral divergence between candidate and oracle")
+    );
+}

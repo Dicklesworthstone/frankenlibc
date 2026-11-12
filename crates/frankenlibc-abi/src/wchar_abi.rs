@@ -3806,6 +3806,73 @@ mod codec {
         }
     }
 
+    #[inline]
+    fn utf8_lead_expected_len(b0: u8) -> usize {
+        match b0 {
+            0xC2..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF7 => 4,
+            0xF8..=0xFB => 5,
+            0xFC..=0xFD => 6,
+            _ => 1,
+        }
+    }
+
+    /// Read at most one multibyte character's worth of bytes from `s` (`n >= 1`)
+    /// without forming an unbounded `slice::from_raw_parts(s, n)` or reading
+    /// past an already-invalid continuation byte into an unmapped guard page.
+    ///
+    /// # Safety
+    /// `s` must be non-null and readable up to the first complete character,
+    /// invalid byte, or `n` bytes (whichever comes first). `pending_prefix.len()`
+    /// must be `<= 5`.
+    #[inline]
+    pub(super) unsafe fn read_bounded_window<'a>(
+        s: *const u8,
+        n: usize,
+        pending_prefix: &[u8],
+        out: &'a mut [u8; 6],
+    ) -> &'a [u8] {
+        debug_assert!(n >= 1);
+        let pcount = pending_prefix.len();
+        let codec = active_multibyte_codec();
+        if !matches!(codec, MultibyteCodec::Utf8) {
+            if pcount > 0 {
+                out[..pcount].copy_from_slice(pending_prefix);
+                out[pcount] = unsafe { *s };
+                return &out[..=pcount];
+            }
+            out[0] = unsafe { *s };
+            return &out[..1];
+        }
+        if pcount == 0 {
+            let b0 = unsafe { *s };
+            out[0] = b0;
+            let limit = n.min(utf8_lead_expected_len(b0));
+            for idx in 1..limit {
+                let b = unsafe { *s.add(idx) };
+                out[idx] = b;
+                if (b & 0xC0) != 0x80 {
+                    return &out[..=idx];
+                }
+            }
+            &out[..limit]
+        } else {
+            out[..pcount].copy_from_slice(pending_prefix);
+            let expected = utf8_lead_expected_len(out[0]);
+            let needed = expected.saturating_sub(pcount).max(1);
+            let take = n.min(needed).min(6 - pcount);
+            for idx in 0..take {
+                let b = unsafe { *s.add(idx) };
+                out[pcount + idx] = b;
+                if (b & 0xC0) != 0x80 {
+                    return &out[..=(pcount + idx)];
+                }
+            }
+            &out[..pcount + take]
+        }
+    }
+
     /// Encode one character, as [`wchar_core::wctomb`].
     #[inline]
     pub(super) fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
@@ -3962,7 +4029,8 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
         // Zero bytes cannot constitute a complete multibyte character.
         return -1;
     }
-    let slice = unsafe { std::slice::from_raw_parts(s, n) };
+    let mut window = [0u8; 6];
+    let slice = unsafe { codec::read_bounded_window(s, n, &[], &mut window) };
     match codec::mblen(slice) {
         Some(0) => 0,
         Some(len) => len as c_int,
@@ -4683,22 +4751,25 @@ pub unsafe extern "C" fn mbrtowc(
     // decode DIRECTLY from `s`: skip the mbstate load and the reassembly-buffer copy
     // (nothing to reassemble). Byte-identical to the buffered path.
     let mut buf = [0u8; 8];
-    let max_width = crate::locale_abi::mb_cur_max();
+    let mut window = [0u8; 6];
     let (decode_slice, pcount): (&[u8], usize) = if no_pending {
-        // SAFETY: inspect no more than the active encoding can consume, bounded
-        // by the caller's n. A single-byte locale needs only its first byte.
+        // SAFETY: inspect only up to the character's lead-byte width (or first
+        // invalid continuation byte), bounded by `n`, never reading across a
+        // trailing unmapped guard page or calling `from_raw_parts(s, usize::MAX)`.
         (
-            unsafe { std::slice::from_raw_parts(s as *const u8, n.min(max_width)) },
+            unsafe { codec::read_bounded_window(s as *const u8, n, &[], &mut window) },
             0,
         )
     } else {
         // SAFETY: ps is a valid mbstate_t per the C contract.
         let pc = unsafe { mbstate_partial_load(ps, &mut buf) };
-        let take = n.min(8 - pc);
-        // SAFETY: caller guarantees `s` points to at least `n` (>= take) bytes.
-        let new_bytes = unsafe { std::slice::from_raw_parts(s as *const u8, take) };
-        buf[pc..pc + take].copy_from_slice(new_bytes);
-        (&buf[..pc + take], pc)
+        let pc_clamped = pc.min(5);
+        (
+            unsafe {
+                codec::read_bounded_window(s as *const u8, n, &buf[..pc_clamped], &mut window)
+            },
+            pc_clamped,
+        )
     };
     let total = decode_slice.len();
 

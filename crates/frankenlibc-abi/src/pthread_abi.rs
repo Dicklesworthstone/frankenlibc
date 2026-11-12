@@ -6697,13 +6697,12 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
         if !force_native_threading_enabled()
             && let Some(host_cancel) = resolved_thread_cancel_raw()
         {
-            let (target, is_self) = host_cancel_target(thread);
-            if is_self {
-                // A single-threaded process may cancel itself; glibc then
-                // treats the process as multi-threaded so that its next
-                // cancellation point acts. fl consults its own flag too.
-                crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
-            }
+            let (target, _is_self) = host_cancel_target(thread);
+            // Any host cancellation request (self-cancellation in a single-threaded
+            // process or peer cancellation on a host-spawned thread) means glibc
+            // treats the process as cancellable, so fl clears its own ST flag too
+            // so `cancellation_window_hook` never skips `pthread_setcanceltype`.
+            crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
             // SAFETY: `target` is glibc's handle for a live host thread.
             return unsafe { host_cancel(target) };
         }

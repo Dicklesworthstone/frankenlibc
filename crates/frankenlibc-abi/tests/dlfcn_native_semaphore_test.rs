@@ -147,6 +147,181 @@ int clockwait_deadlines(const char *unused) {
     CHECK(!sem_trywait(&s)&&!sem_destroy(&s));return 0;
 }
 
+struct cancel_case {
+    int kind;
+    int disable_cancel;
+    int deadline_mode;
+    sem_t sem;
+    sem_t followup;
+    _Atomic int cleaned;
+    _Atomic int followup_cleaned;
+    int returned;
+    int rc;
+    int err;
+};
+static void case_cleanup(void *p) {
+    struct cancel_case *c = p;
+    atomic_store(&c->cleaned, 1);
+}
+static void followup_cleanup(void *p) {
+    struct cancel_case *c = p;
+    atomic_store(&c->followup_cleaned, 1);
+}
+static void *cancel_case_worker(void *p) {
+    struct cancel_case *c = p;
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0)) return (void*)11;
+    if (pthread_cancel(pthread_self())) return (void*)12;
+    if (!c->disable_cancel) {
+        if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0)) return (void*)13;
+    }
+    struct timespec ts = {0, 0};
+    clockid_t clk = (c->kind == 3) ? CLOCK_MONOTONIC : CLOCK_REALTIME;
+    if (c->deadline_mode == 0) {
+        clock_gettime(clk, &ts);
+        ts.tv_sec += 3;
+    } else if (c->deadline_mode == 2) {
+        clock_gettime(clk, &ts);
+        ts.tv_nsec = -1;
+    } else if (c->deadline_mode == 3) {
+        clock_gettime(clk, &ts);
+        ts.tv_nsec = 1000000000L;
+    } else if (c->deadline_mode == 4) {
+        clk = CLOCK_BOOTTIME;
+    }
+    pthread_cleanup_push(case_cleanup, c);
+    errno = 0;
+    switch (c->kind) {
+        case 0: c->rc = sem_wait(&c->sem); break;
+        case 1: c->rc = sem_timedwait(&c->sem, &ts); break;
+        case 2: c->rc = sem_clockwait(&c->sem, clk, &ts); break;
+        case 3: c->rc = sem_clockwait(&c->sem, clk, &ts); break;
+        case 4: c->rc = sem_trywait(&c->sem); break;
+    }
+    c->err = errno;
+    c->returned = 1;
+    pthread_cleanup_pop(0);
+    if (c->disable_cancel) {
+        if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0)) return (void*)14;
+    }
+    pthread_cleanup_push(followup_cleanup, c);
+    sem_wait(&c->followup);
+    pthread_cleanup_pop(0);
+    return (void*)15;
+}
+static int run_cancel_case(int kind, unsigned int init_val, int disable_cancel, int deadline_mode, struct cancel_case *out, void **res_out) {
+    *out = (struct cancel_case){ .kind = kind, .disable_cancel = disable_cancel, .deadline_mode = deadline_mode };
+    CHECK(!sem_init(&out->sem, 0, init_val));
+    CHECK(!sem_init(&out->followup, 0, 1));
+    pthread_t t;
+    CHECK(!pthread_create(&t, 0, cancel_case_worker, out));
+    CHECK(!pthread_join(t, res_out));
+    return 0;
+}
+static int destroy_cancel_case(struct cancel_case *c) {
+    CHECK(!sem_post(&c->sem) && !sem_trywait(&c->sem));
+    CHECK(!sem_destroy(&c->sem) && !sem_destroy(&c->followup));
+    return 0;
+}
+int fastpath_pending_cancellation(const char *unused) {
+    (void)unused;
+    struct cancel_case c;
+    void *res = 0;
+    for (int k = 0; k < 5; k++) {
+        CHECK(!run_cancel_case(k, 1, 0, 0, &c, &res));
+        CHECK(res == PTHREAD_CANCELED && value(&c.followup) == 1);
+        if (k == 0 || k == 1) {
+            CHECK(!c.returned && atomic_load(&c.cleaned) == 1 && atomic_load(&c.followup_cleaned) == 0 && value(&c.sem) == 1);
+        } else {
+            CHECK(c.returned && c.rc == 0 && atomic_load(&c.cleaned) == 0 && atomic_load(&c.followup_cleaned) == 1 && value(&c.sem) == 0);
+        }
+        CHECK(!destroy_cancel_case(&c));
+    }
+    for (int dm = 2; dm <= 4; dm++) {
+        for (int k = 1; k <= 3; k++) {
+            if (dm == 4 && k == 1) continue;
+            CHECK(!run_cancel_case(k, 1, 0, dm, &c, &res));
+            CHECK(res == PTHREAD_CANCELED && c.returned && c.rc == -1 && c.err == EINVAL);
+            CHECK(atomic_load(&c.cleaned) == 0 && atomic_load(&c.followup_cleaned) == 1 && value(&c.sem) == 1 && value(&c.followup) == 1);
+            CHECK(!destroy_cancel_case(&c));
+        }
+    }
+    for (int exp = 0; exp <= 1; exp++) {
+        for (int k = 0; k < 5; k++) {
+            if (exp && (k == 0 || k == 4)) continue;
+            CHECK(!run_cancel_case(k, 0, 0, exp, &c, &res));
+            CHECK(res == PTHREAD_CANCELED && value(&c.sem) == 0 && value(&c.followup) == 1);
+            if (k == 4) {
+                CHECK(c.returned && c.rc == -1 && c.err == EAGAIN && atomic_load(&c.cleaned) == 0 && atomic_load(&c.followup_cleaned) == 1);
+            } else {
+                CHECK(!c.returned && atomic_load(&c.cleaned) == 1 && atomic_load(&c.followup_cleaned) == 0);
+            }
+            CHECK(!destroy_cancel_case(&c));
+        }
+    }
+    for (int k = 0; k < 5; k++) {
+        CHECK(!run_cancel_case(k, 1, 1, 0, &c, &res));
+        CHECK(res == PTHREAD_CANCELED && c.returned && c.rc == 0 && value(&c.sem) == 0);
+        CHECK(atomic_load(&c.cleaned) == 0 && atomic_load(&c.followup_cleaned) == 1 && value(&c.followup) == 1);
+        CHECK(!destroy_cancel_case(&c));
+    }
+    for (int k = 1; k <= 3; k++) {
+        CHECK(!run_cancel_case(k, 0, 1, 1, &c, &res));
+        CHECK(res == PTHREAD_CANCELED && c.returned && c.rc == -1 && c.err == ETIMEDOUT && value(&c.sem) == 0);
+        CHECK(atomic_load(&c.cleaned) == 0 && atomic_load(&c.followup_cleaned) == 1 && value(&c.followup) == 1);
+        CHECK(!destroy_cancel_case(&c));
+    }
+    return 0;
+}
+
+typedef int (*wait_fn_t)(sem_t *);
+typedef int (*timedwait_fn_t)(sem_t *, const struct timespec *);
+typedef int (*clockwait_fn_t)(sem_t *, clockid_t, const struct timespec *);
+struct internal_ctl {
+    wait_fn_t iwait;
+    timedwait_fn_t itimed;
+    clockwait_fn_t iclock;
+    sem_t s1, s2, s3, followup;
+    _Atomic int cleaned;
+    _Atomic int followup_cleaned;
+    int step;
+    int err3;
+};
+static void internal_cleanup(void *p) { struct internal_ctl *x = p; atomic_store(&x->cleaned, 1); }
+static void internal_followup_cleanup(void *p) { struct internal_ctl *x = p; atomic_store(&x->followup_cleaned, 1); }
+static void *internal_worker(void *p) {
+    struct internal_ctl *x = p;
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, 0)) return (void*)21;
+    if (pthread_cancel(pthread_self())) return (void*)22;
+    if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0)) return (void*)23;
+    struct timespec fut = deadline();
+    struct timespec past = {0, 0};
+    pthread_cleanup_push(internal_cleanup, x);
+    if (x->iwait(&x->s1) != 0) x->step = 1;
+    else if (x->itimed(&x->s2, &fut) != 0) x->step = 2;
+    else {
+        errno = 0;
+        if (x->iclock(&x->s3, CLOCK_MONOTONIC, &past) != -1) x->step = 3;
+        else { x->err3 = errno; x->step = 4; }
+    }
+    pthread_cleanup_pop(0);
+    pthread_cleanup_push(internal_followup_cleanup, x);
+    sem_wait(&x->followup);
+    pthread_cleanup_pop(0);
+    return (void*)24;
+}
+int internal_caller_control(wait_fn_t iw, timedwait_fn_t it, clockwait_fn_t ic) {
+    struct internal_ctl x = { .iwait = iw, .itimed = it, .iclock = ic };
+    CHECK(!sem_init(&x.s1, 0, 1) && !sem_init(&x.s2, 0, 1) && !sem_init(&x.s3, 0, 0) && !sem_init(&x.followup, 0, 1));
+    pthread_t t; void *res = 0;
+    CHECK(!pthread_create(&t, 0, internal_worker, &x));
+    CHECK(!pthread_join(t, &res));
+    CHECK(res == PTHREAD_CANCELED && x.step == 4 && x.err3 == ETIMEDOUT);
+    CHECK(atomic_load(&x.cleaned) == 0 && atomic_load(&x.followup_cleaned) == 1);
+    CHECK(value(&x.s1) == 0 && value(&x.s2) == 0 && value(&x.s3) == 0 && value(&x.followup) == 1);
+    CHECK(!sem_destroy(&x.s1) && !sem_destroy(&x.s2) && !sem_destroy(&x.s3) && !sem_destroy(&x.followup));
+    return 0;
+}
+
 void *lookup(int n,const char *v) { return v?dlvsym(RTLD_DEFAULT,names[n],v):dlsym(RTLD_DEFAULT,names[n]); }
 "#;
 
@@ -337,6 +512,61 @@ fn unnamed_waits_and_blocked_cancellation_preserve_state() {
         |native| {
             protocol(native, c"unnamed_and_cancellation");
             protocol(native, c"clockwait_deadlines");
+        },
+    );
+}
+#[inline(never)]
+unsafe extern "C-unwind" fn internal_sem_wait(s: *mut c_void) -> c_int {
+    unsafe { sem::sem_wait(s) }
+}
+#[inline(never)]
+unsafe extern "C-unwind" fn internal_sem_timedwait(
+    s: *mut c_void,
+    ts: *const libc::timespec,
+) -> c_int {
+    unsafe { sem::sem_timedwait(s, ts) }
+}
+#[inline(never)]
+unsafe extern "C-unwind" fn internal_sem_clockwait(
+    s: *mut c_void,
+    clk: c_int,
+    ts: *const libc::timespec,
+) -> c_int {
+    unsafe { glibc_internal_abi::sem_clockwait(s, clk, ts.cast()) }
+}
+#[test]
+fn fastpath_pending_disabled_and_internal_cancellation_preserve_state() {
+    isolated(
+        "fastpath_pending_disabled_and_internal_cancellation_preserve_state",
+        |native| {
+            protocol(native, c"fastpath_pending_cancellation");
+            if native {
+                type InternalWait = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+                type InternalTimed =
+                    unsafe extern "C-unwind" fn(*mut c_void, *const libc::timespec) -> c_int;
+                type InternalClock =
+                    unsafe extern "C-unwind" fn(*mut c_void, c_int, *const libc::timespec) -> c_int;
+                for got in [false, true] {
+                    let lib = Library::new(true, got);
+                    let run: unsafe extern "C" fn(
+                        InternalWait,
+                        InternalTimed,
+                        InternalClock,
+                    ) -> c_int =
+                        unsafe { std::mem::transmute(lib.symbol(c"internal_caller_control")) };
+                    assert_eq!(
+                        unsafe {
+                            run(
+                                internal_sem_wait,
+                                internal_sem_timedwait,
+                                internal_sem_clockwait,
+                            )
+                        },
+                        0,
+                        "internal_caller_control failed (got={got})"
+                    );
+                }
+            }
         },
     );
 }
