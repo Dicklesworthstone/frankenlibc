@@ -351,7 +351,7 @@ mod tests {
 
 #[cfg(feature = "frankentui-ui")]
 #[must_use]
-pub fn render_ftui(report: &SnapshotDiffReport, ansi: bool, width: u16) -> String {
+pub fn render_ftui_buffer(report: &SnapshotDiffReport, width: u16) -> ftui_render::buffer::Buffer {
     use ftui_core::geometry::Rect;
     use ftui_layout::Constraint;
     use ftui_render::cell::PackedRgba;
@@ -398,7 +398,11 @@ pub fn render_ftui(report: &SnapshotDiffReport, ansi: bool, width: u16) -> Strin
         })
         .collect();
 
-    let block_title = format!(" runtime_math snapshot diff ({}) ", report.mode.as_str());
+    let block_title = format!(
+        " runtime_math snapshot diff (mode={}, scenario={}) ",
+        report.mode.as_str(),
+        report.scenario_id
+    );
     let table = Table::new(
         rows,
         [
@@ -420,10 +424,40 @@ pub fn render_ftui(report: &SnapshotDiffReport, ansi: bool, width: u16) -> Strin
 
     let area = Rect::from_size(width, height);
     table.render(area, &mut frame);
+    frame.buffer
+}
 
+#[cfg(feature = "frankentui-ui")]
+#[must_use]
+pub fn render_ftui(report: &SnapshotDiffReport, ansi: bool, width: u16) -> String {
+    let buffer = render_ftui_buffer(report, width);
     if ansi {
-        ftui_harness::buffer_to_ansi(&frame.buffer)
+        ftui_harness::buffer_to_ansi(&buffer)
     } else {
-        ftui_harness::buffer_to_text(&frame.buffer)
+        ftui_harness::buffer_to_text(&buffer)
     }
+}
+
+#[cfg(feature = "frankentui-ui")]
+#[must_use]
+pub fn compute_ftui_snapshot_checksum(report: &SnapshotDiffReport, width: u16) -> String {
+    let buffer = render_ftui_buffer(report, width);
+    ftui_harness::golden::compute_buffer_checksum(&buffer)
+}
+
+#[cfg(feature = "frankentui-ui")]
+#[must_use]
+pub fn compare_ftui_snapshots(
+    frame_id: u32,
+    expected: &SnapshotDiffReport,
+    actual: &SnapshotDiffReport,
+    width: u16,
+) -> ftui_harness::frame_comparison::ComparisonResult {
+    let expected_buf = render_ftui_buffer(expected, width);
+    let actual_buf = render_ftui_buffer(actual, width);
+    ftui_harness::frame_comparison::FrameComparator::new().compare_buffers(
+        frame_id,
+        &expected_buf,
+        &actual_buf,
+    )
 }

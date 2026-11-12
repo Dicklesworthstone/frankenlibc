@@ -649,7 +649,7 @@ pub fn ln_1p_f64(x: f64) -> f64 {
         k += 1;
         scale_exp = k;
     }
-    let c = if scale_exp >= -1021 && scale_exp <= 1023 {
+    let c = if (-1021..=1023).contains(&scale_exp) {
         corr * f64::from_bits(((1023 - scale_exp) as u64) << 52) / m
     } else {
         corr / u
@@ -771,9 +771,7 @@ pub fn powf_f64(base: f64, exp: f64) -> f64 {
         return f64::NAN;
     }
     if base == 0.0 {
-        let odd_int = exp.is_finite()
-            && trunc_f64(exp) == exp
-            && trunc_f64(exp * 0.5) * 2.0 != exp;
+        let odd_int = exp.is_finite() && trunc_f64(exp) == exp && trunc_f64(exp * 0.5) * 2.0 != exp;
         let sign = if base.is_sign_negative() && odd_int {
             -1.0
         } else {
@@ -997,11 +995,7 @@ mod tests {
         }
         let to_ordered = |x: f64| -> i64 {
             let bits = x.to_bits() as i64;
-            if bits < 0 {
-                i64::MIN - bits
-            } else {
-                bits
-            }
+            if bits < 0 { i64::MIN - bits } else { bits }
         };
         to_ordered(a).abs_diff(to_ordered(b))
     }

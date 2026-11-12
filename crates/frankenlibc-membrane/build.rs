@@ -638,11 +638,10 @@ pub fn verify_barrier_against_sos_witness(
         .zip(sigma_coeffs.iter())
         .enumerate()
     {
-        for j in 0..i {
-            if barrier_row[j] != 0 {
+        for (j, &coeff) in barrier_row.iter().enumerate().take(i) {
+            if coeff != 0 {
                 return Err(format!(
-                    "non-canonical lower-triangular barrier coefficient at ({i}, {j}): {}",
-                    barrier_row[j]
+                    "non-canonical lower-triangular barrier coefficient at ({i}, {j}): {coeff}"
                 ));
             }
         }

@@ -12,7 +12,7 @@ unsafe_code = "forbid"
 doctest = false
 
 [features]
-default = ["asupersync-tooling"]
+default = ["asupersync-tooling", "frankentui-ui"]
 asupersync-tooling = ["dep:asupersync-conformance"]
 frankentui-ui = [
   "dep:ftui-harness",

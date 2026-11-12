@@ -282,6 +282,409 @@ pub fn classify_outcome(
     }
 }
 
+/// Mode controlling how `execute_seeded_lab_replay` resolves companion Lab tooling.
+#[derive(Debug, Clone)]
+pub enum LabToolingMode {
+    /// Use the compiled-in `asupersync-conformance` companion crate directly unless
+    /// an explicit `DetectionEnv` override disables it.
+    LinkedCrate { override_var: Option<String> },
+    /// Require external environment detection (`detect_asupersync_available`).
+    ExternalProbe(DetectionEnv),
+    /// Explicitly simulate unavailable Lab tooling for negative-control testing.
+    SimulatedUnavailable { detail: String },
+}
+
+/// Atomic concurrent step scheduled across worker queues during deterministic Lab replay.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LabTaskOp {
+    /// Pin the worker's `EbrHandle` in `frankenlibc_membrane::ebr::EbrCollector`.
+    PinEpoch,
+    /// Drop the worker's active `EbrGuard` if currently pinned.
+    UnpinEpoch,
+    /// Allocate/publish logical item `item_id` into shared state.
+    PublishItem { item_id: u64 },
+    /// Read logical item `item_id` while verifying it has not been reclaimed by EBR.
+    AccessItem { item_id: u64 },
+    /// Retire logical item `item_id` into `EbrCollector::retire` so its reclamation
+    /// callback marks `item_id` reclaimed only once a full 3-epoch grace period completes.
+    RetireItem { item_id: u64 },
+    /// Attempt `EbrCollector::try_advance()` on the collector.
+    TryAdvanceEpoch,
+}
+
+/// Result of executing a real seeded Lab schedule replay via `asupersync-conformance`.
+#[cfg(feature = "asupersync-tooling")]
+#[derive(Debug, Clone)]
+pub struct LabScheduleExecution {
+    pub virtual_time_seed: u64,
+    pub virtual_clock_ticks: u64,
+    pub schedule_trace: Vec<String>,
+    pub final_epoch: u64,
+    pub total_retired: u64,
+    pub total_reclaimed: u64,
+    pub outcome: ReplayOutcome,
+    pub shrunk_witness_jsonl: Option<String>,
+    pub suite: asupersync_conformance::SuiteResult,
+}
+
+#[cfg(feature = "asupersync-tooling")]
+#[inline]
+fn splitmix64_next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+#[cfg(feature = "asupersync-tooling")]
+#[derive(Debug, Clone)]
+struct RawInterleavingRun {
+    schedule_trace: Vec<String>,
+    ordered_steps: Vec<(usize, LabTaskOp)>,
+    virtual_clock_ticks: u64,
+    final_epoch: u64,
+    total_retired: u64,
+    total_reclaimed: u64,
+    violation: Option<String>,
+}
+
+#[cfg(feature = "asupersync-tooling")]
+fn run_concrete_ebr_steps(
+    ordered_steps: &[(usize, LabTaskOp)],
+    worker_count: usize,
+) -> RawInterleavingRun {
+    use frankenlibc_membrane::ebr::{EbrCollector, EbrGuard, EbrHandle};
+    use std::sync::{Arc, Mutex};
+
+    let collector = EbrCollector::new();
+    let handles: Vec<EbrHandle<'_>> = (0..worker_count).map(|_| collector.register()).collect();
+    let mut guards: Vec<Option<EbrGuard<'_>>> = (0..worker_count).map(|_| None).collect();
+
+    let published: Arc<Mutex<BTreeSet<u64>>> = Arc::new(Mutex::new(BTreeSet::new()));
+    let reclaimed: Arc<Mutex<BTreeSet<u64>>> = Arc::new(Mutex::new(BTreeSet::new()));
+
+    let mut schedule_trace = Vec::with_capacity(ordered_steps.len());
+    let mut executed_steps = Vec::with_capacity(ordered_steps.len());
+    let mut virtual_clock_ticks = 0u64;
+    let mut violation: Option<String> = None;
+
+    for &(worker, ref op) in ordered_steps {
+        virtual_clock_ticks = virtual_clock_ticks.saturating_add(1);
+        executed_steps.push((worker, op.clone()));
+        match op {
+            LabTaskOp::PinEpoch => {
+                if guards[worker].is_none() {
+                    guards[worker] = Some(handles[worker].pin());
+                }
+                schedule_trace.push(format!("vt={virtual_clock_ticks}:W{worker}:pin"));
+            }
+            LabTaskOp::UnpinEpoch => {
+                guards[worker] = None;
+                schedule_trace.push(format!("vt={virtual_clock_ticks}:W{worker}:unpin"));
+            }
+            LabTaskOp::PublishItem { item_id } => {
+                published.lock().expect("published lock").insert(*item_id);
+                schedule_trace.push(format!(
+                    "vt={virtual_clock_ticks}:W{worker}:publish({item_id})"
+                ));
+            }
+            LabTaskOp::AccessItem { item_id } => {
+                let is_reclaimed = reclaimed.lock().expect("reclaimed lock").contains(item_id);
+                let is_published = published.lock().expect("published lock").contains(item_id);
+                let pinned = guards[worker].is_some();
+                schedule_trace.push(format!(
+                    "vt={virtual_clock_ticks}:W{worker}:access({item_id},pinned={pinned})"
+                ));
+                if !is_published {
+                    violation = Some(format!(
+                        "ebr_access_unpublished(worker=W{worker},item={item_id},vt={virtual_clock_ticks})"
+                    ));
+                    break;
+                }
+                if is_reclaimed {
+                    violation = Some(format!(
+                        "ebr_use_after_reclaim(worker=W{worker},item={item_id},pinned={pinned},vt={virtual_clock_ticks})"
+                    ));
+                    break;
+                }
+            }
+            LabTaskOp::RetireItem { item_id } => {
+                let reclaimed_ref = Arc::clone(&reclaimed);
+                let id = *item_id;
+                collector.retire(move || {
+                    reclaimed_ref
+                        .lock()
+                        .expect("reclaimed callback lock")
+                        .insert(id);
+                });
+                schedule_trace.push(format!(
+                    "vt={virtual_clock_ticks}:W{worker}:retire({item_id})"
+                ));
+            }
+            LabTaskOp::TryAdvanceEpoch => {
+                let adv = collector.try_advance();
+                schedule_trace.push(format!(
+                    "vt={virtual_clock_ticks}:W{worker}:try_advance->{adv:?}"
+                ));
+            }
+        }
+    }
+
+    drop(guards);
+    drop(handles);
+    let diag = collector.diagnostics();
+    RawInterleavingRun {
+        schedule_trace,
+        ordered_steps: executed_steps,
+        virtual_clock_ticks,
+        final_epoch: diag.global_epoch,
+        total_retired: diag.total_retired,
+        total_reclaimed: diag.total_reclaimed,
+        violation,
+    }
+}
+
+#[cfg(feature = "asupersync-tooling")]
+fn violation_signature_key(violation: &str) -> &str {
+    violation
+        .split_once(",vt=")
+        .map_or(violation, |(prefix, _)| prefix)
+}
+
+#[cfg(feature = "asupersync-tooling")]
+fn shrink_failing_steps(
+    failing_steps: &[(usize, LabTaskOp)],
+    worker_count: usize,
+    expected_violation: &str,
+) -> Vec<(usize, LabTaskOp)> {
+    let target_key = violation_signature_key(expected_violation);
+    let mut current = failing_steps.to_vec();
+    let mut idx = 0usize;
+    while idx < current.len() {
+        let mut candidate = current.clone();
+        candidate.remove(idx);
+        let preserves_violation = !candidate.is_empty()
+            && run_concrete_ebr_steps(&candidate, worker_count)
+                .violation
+                .as_deref()
+                .is_some_and(|v| violation_signature_key(v) == target_key);
+        if preserves_violation {
+            current = candidate;
+        } else {
+            idx += 1;
+        }
+    }
+    current
+}
+
+/// Execute a deterministic seeded Lab schedule replay across `worker_queues` using
+/// `asupersync-conformance` structured logging, checkpoints, and witness shrinking.
+#[cfg(feature = "asupersync-tooling")]
+pub fn execute_seeded_lab_replay(
+    record: &ReplayRecord,
+    tooling_mode: &LabToolingMode,
+    worker_queues: &[Vec<LabTaskOp>],
+) -> Result<LabScheduleExecution, ReplayValidationError> {
+    use asupersync_conformance::logging::{ConformanceTestLogger, with_test_logger};
+    use asupersync_conformance::{
+        Checkpoint, SuiteResult, SuiteTestResult, TestCategory, TestResult,
+    };
+    use serde_json::json;
+
+    validate_replay(record)?;
+
+    let tool_unavailable_reason: Option<String> = match tooling_mode {
+        LabToolingMode::LinkedCrate { override_var } => {
+            match override_var.as_deref().map(str::trim) {
+                Some("0" | "false" | "no" | "off" | "") => Some(format!(
+                    "asupersync tool unavailable (trace_class={}; reason=env_override_disabled); cannot validate virtual-time replay",
+                    record.trace_class
+                )),
+                _ => None,
+            }
+        }
+        LabToolingMode::ExternalProbe(env) => {
+            let probe = detect_asupersync_available(env);
+            if probe.available {
+                None
+            } else {
+                Some(format!(
+                    "asupersync tool unavailable (trace_class={}; reason={}); cannot validate virtual-time replay",
+                    record.trace_class, probe.detection_reason
+                ))
+            }
+        }
+        LabToolingMode::SimulatedUnavailable { detail } => Some(format!(
+            "asupersync tool unavailable (trace_class={}; reason={detail}); cannot validate virtual-time replay",
+            record.trace_class
+        )),
+    };
+
+    let mut suite = SuiteResult::new(format!("asupersync-lab:{}", record.trace_class));
+    if let Some(reason) = tool_unavailable_reason {
+        return Ok(LabScheduleExecution {
+            virtual_time_seed: record.virtual_time_seed,
+            virtual_clock_ticks: 0,
+            schedule_trace: Vec::new(),
+            final_epoch: 0,
+            total_retired: 0,
+            total_reclaimed: 0,
+            outcome: ReplayOutcome::ToolFailure { reason },
+            shrunk_witness_jsonl: None,
+            suite,
+        });
+    }
+
+    let worker_count = worker_queues.len().max(1);
+    let mut cursors = vec![0usize; worker_queues.len()];
+    let mut rng_state = record.virtual_time_seed ^ 0xA55A_5EED_CAFE_BABEu64;
+    let mut scheduled_steps: Vec<(usize, LabTaskOp)> = Vec::new();
+
+    loop {
+        let runnable: Vec<usize> = cursors
+            .iter()
+            .enumerate()
+            .filter_map(|(w, &idx)| (idx < worker_queues[w].len()).then_some(w))
+            .collect();
+        if runnable.is_empty() {
+            break;
+        }
+        let pick_idx = (splitmix64_next(&mut rng_state) as usize) % runnable.len();
+        let chosen_worker = runnable[pick_idx];
+        let step_idx = cursors[chosen_worker];
+        cursors[chosen_worker] += 1;
+        scheduled_steps.push((
+            chosen_worker,
+            worker_queues[chosen_worker][step_idx].clone(),
+        ));
+    }
+
+    let logger = ConformanceTestLogger::new(&record.trace_class, "TSM::EBR::LabReplay");
+    logger.phase("seeded_lab_schedule");
+
+    let run = with_test_logger(&logger, || {
+        asupersync_conformance::checkpoint(
+            "lab.seed",
+            json!({
+                "trace_class": &record.trace_class,
+                "virtual_time_seed": record.virtual_time_seed,
+                "source_commit": &record.source_commit,
+                "worker_count": worker_queues.len(),
+                "total_ops": scheduled_steps.len(),
+            }),
+        );
+        let res = run_concrete_ebr_steps(&scheduled_steps, worker_count);
+        asupersync_conformance::checkpoint(
+            "lab.summary",
+            json!({
+                "virtual_clock_ticks": res.virtual_clock_ticks,
+                "final_epoch": res.final_epoch,
+                "total_retired": res.total_retired,
+                "total_reclaimed": res.total_reclaimed,
+                "violation": &res.violation,
+            }),
+        );
+        res
+    });
+
+    let checkpoints = vec![
+        Checkpoint::new(
+            "lab.seed",
+            json!({
+                "virtual_time_seed": record.virtual_time_seed,
+                "scheduled_ops": scheduled_steps.len(),
+            }),
+        ),
+        Checkpoint::new(
+            "lab.ebr_state",
+            json!({
+                "final_epoch": run.final_epoch,
+                "total_retired": run.total_retired,
+                "total_reclaimed": run.total_reclaimed,
+                "schedule_len": run.schedule_trace.len(),
+            }),
+        ),
+    ];
+
+    let (outcome, shrunk_witness_jsonl, mut test_result) =
+        if let Some(ref violation) = run.violation {
+            let shrunk = shrink_failing_steps(&run.ordered_steps, worker_count, violation);
+            let mut witness_lines = Vec::with_capacity(shrunk.len() + 1);
+            witness_lines.push(
+                json!({
+                    "schema_version": "frankenlibc.lab_witness.v1",
+                    "event": "witness_header",
+                    "trace_class": &record.trace_class,
+                    "virtual_time_seed": record.virtual_time_seed,
+                    "original_steps": run.ordered_steps.len(),
+                    "shrunk_steps": shrunk.len(),
+                    "violation": violation,
+                })
+                .to_string(),
+            );
+            for (step_no, (worker, op)) in shrunk.iter().enumerate() {
+                witness_lines.push(
+                    json!({
+                        "schema_version": "frankenlibc.lab_witness.v1",
+                        "event": "witness_step",
+                        "step": step_no,
+                        "worker": worker,
+                        "op": op,
+                    })
+                    .to_string(),
+                );
+            }
+            let sig = format!(
+                "{}::invariant_violation={};shrunk_steps={}",
+                record.trace_class,
+                violation,
+                shrunk.len()
+            );
+            (
+                ReplayOutcome::CodeFailure {
+                    signature: sig.clone(),
+                },
+                Some(witness_lines.join("\n")),
+                TestResult::failed(sig),
+            )
+        } else {
+            (ReplayOutcome::Pass, None, TestResult::passed())
+        };
+
+    test_result.checkpoints = checkpoints;
+    let passed = test_result.passed;
+    suite.results.push(SuiteTestResult {
+        test_id: format!(
+            "{}::seed={:#x}",
+            record.trace_class, record.virtual_time_seed
+        ),
+        test_name: record.trace_class.clone(),
+        category: TestCategory::Sync,
+        expected: "all EBR grace-period invariants hold across seeded interleaving".to_string(),
+        result: test_result,
+        events: logger.events(),
+    });
+    suite.total = 1;
+    if passed {
+        suite.passed = 1;
+    } else {
+        suite.failed = 1;
+    }
+
+    Ok(LabScheduleExecution {
+        virtual_time_seed: record.virtual_time_seed,
+        virtual_clock_ticks: run.virtual_clock_ticks,
+        schedule_trace: run.schedule_trace,
+        final_epoch: run.final_epoch,
+        total_retired: run.total_retired,
+        total_reclaimed: run.total_reclaimed,
+        outcome,
+        shrunk_witness_jsonl,
+        suite,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

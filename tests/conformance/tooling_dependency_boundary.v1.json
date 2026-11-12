@@ -71,7 +71,7 @@
     {
       "crate": "frankenlibc-harness",
       "manifest": "crates/frankenlibc-harness/Cargo.toml",
-      "expected_default_features": ["asupersync-tooling"],
+      "expected_default_features": ["asupersync-tooling", "frankentui-ui"],
       "optional_dependencies": [
         "asupersync-conformance",
         "ftui-harness",

@@ -1,50 +1,56 @@
 //! Diff rendering for fixture comparison.
 
+/// Render the raw companion `ftui_harness::diff_text` line delta when `frankentui-ui` is enabled.
+#[cfg(feature = "frankentui-ui")]
+#[must_use]
+pub fn render_ftui_raw_diff(expected: &str, actual: &str) -> String {
+    ftui_harness::diff_text(expected, actual)
+}
+
 /// Render a text diff between expected and actual output.
 #[must_use]
 pub fn render_diff(expected: &str, actual: &str) -> String {
     #[cfg(feature = "frankentui-ui")]
-    {
-        #[allow(clippy::needless_return)]
-        return ftui_harness::diff_text(expected, actual);
+    let ftui_raw = ftui_harness::diff_text(expected, actual);
+
+    #[cfg(feature = "frankentui-ui")]
+    if expected == actual && ftui_raw.is_empty() {
+        return String::from("[identical]");
     }
 
-    #[cfg(not(feature = "frankentui-ui"))]
-    {
-        if expected == actual {
-            return String::from("[identical]");
-        }
+    if expected == actual {
+        return String::from("[identical]");
+    }
 
-        let mut out = String::new();
-        out.push_str("--- expected\n");
-        out.push_str("+++ actual\n");
+    let mut out = String::new();
+    out.push_str("--- expected\n");
+    out.push_str("+++ actual\n");
 
-        let exp_lines: Vec<&str> = expected.lines().collect();
-        let act_lines: Vec<&str> = actual.lines().collect();
-        let max_lines = exp_lines.len().max(act_lines.len());
+    let exp_lines: Vec<&str> = expected.lines().collect();
+    let act_lines: Vec<&str> = actual.lines().collect();
+    let max_lines = exp_lines.len().max(act_lines.len());
 
-        for i in 0..max_lines {
-            let e = exp_lines.get(i).copied().unwrap_or("");
-            let a = act_lines.get(i).copied().unwrap_or("");
-            let e_missing = i >= exp_lines.len();
-            let a_missing = i >= act_lines.len();
+    for i in 0..max_lines {
+        let e = exp_lines.get(i).copied().unwrap_or("");
+        let a = act_lines.get(i).copied().unwrap_or("");
+        let e_missing = i >= exp_lines.len();
+        let a_missing = i >= act_lines.len();
 
-            if e != a || e_missing || a_missing {
-                out.push_str(&format!("@@ line {} @@\n", i + 1));
-                if a_missing {
-                    out.push_str(&format!("-{e}\n"));
-                    out.push_str("+[missing]\n");
-                } else if e_missing {
-                    out.push_str("-[missing]\n");
-                    out.push_str(&format!("+{a}\n"));
-                } else {
-                    out.push_str(&format!("-{e}\n"));
-                    out.push_str(&format!("+{a}\n"));
-                }
+        if e != a || e_missing || a_missing {
+            out.push_str(&format!("@@ line {} @@\n", i + 1));
+            if a_missing {
+                out.push_str(&format!("-{e}\n"));
+                out.push_str("+[missing]\n");
+            } else if e_missing {
+                out.push_str("-[missing]\n");
+                out.push_str(&format!("+{a}\n"));
+            } else {
+                out.push_str(&format!("-{e}\n"));
+                out.push_str(&format!("+{a}\n"));
             }
         }
-        out
     }
+    out
 }
 
 #[cfg(test)]
