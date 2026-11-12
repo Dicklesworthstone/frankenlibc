@@ -1116,14 +1116,28 @@ fn gate_reaches_a_host_arm(src: &str) -> bool {
 /// and nobody has said why. Without it, a new `conformance_diff_*` file that
 /// compares fl against frozen literals is counted as differential coverage by
 /// every audit downstream, which is precisely the promotion .7 forbids.
+fn repo_and_abi_tests_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    if cwd.join("support_matrix.json").is_file()
+        && cwd.join("crates/frankenlibc-abi/tests").is_dir()
+    {
+        return (cwd.clone(), cwd.join("crates/frankenlibc-abi/tests"));
+    }
+    if cwd.join("../../support_matrix.json").is_file() && cwd.join("tests").is_dir() {
+        return (cwd.join("../.."), cwd.join("tests"));
+    }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    (manifest.join("../.."), manifest.join("tests"))
+}
+
 #[test]
 fn every_differential_gate_reaches_a_host_arm_or_is_a_declared_invariant() {
-    let dir = std::path::Path::new("tests");
+    let (_repo_root, dir) = repo_and_abi_tests_dirs();
     let mut scanned = 0usize;
     let mut offenders: Vec<String> = Vec::new();
     let mut allowlisted: Vec<String> = Vec::new();
 
-    for entry in std::fs::read_dir(dir).expect("read tests/ -- test CWD is the package root") {
+    for entry in std::fs::read_dir(&dir).expect("read crates/frankenlibc-abi/tests") {
         let path = entry.expect("readable dir entry").path();
         let name = path
             .file_name()
@@ -1244,8 +1258,9 @@ const KNOWN_FAILING_GATES: &[(&str, &str)] = &[(
 #[test]
 fn symbol_and_differential_inventory_separates_implemented_executed_skipped_unproven_and_known_failing()
  {
-    let matrix_raw =
-        std::fs::read_to_string("../../support_matrix.json").expect("read support_matrix.json");
+    let (repo_root, dir) = repo_and_abi_tests_dirs();
+    let matrix_raw = std::fs::read_to_string(repo_root.join("support_matrix.json"))
+        .expect("read support_matrix.json");
     let matrix: serde_json::Value =
         serde_json::from_str(&matrix_raw).expect("parse support_matrix.json");
     let symbols = matrix["symbols"]
@@ -1265,7 +1280,7 @@ fn symbol_and_differential_inventory_separates_implemented_executed_skipped_unpr
         }
     }
     let maint_raw = std::fs::read_to_string(
-        "../../tests/conformance/support_matrix_maintenance_report.v1.json",
+        repo_root.join("tests/conformance/support_matrix_maintenance_report.v1.json"),
     )
     .expect("read support_matrix_maintenance_report.v1.json");
     let maint: serde_json::Value =
@@ -1281,13 +1296,12 @@ fn symbol_and_differential_inventory_separates_implemented_executed_skipped_unpr
     // Never conflate symbol export or fixture linkage metadata with universal proof.
     assert!(implemented > 0 && fixture_linked > 1100 && unproven_by_fixture > 0);
 
-    let dir = std::path::Path::new("tests");
     let mut executed = 0usize;
     let mut metamorphic_only = 0usize;
     let mut known_failing = Vec::new();
     let mut silent_skips = Vec::new();
 
-    for entry in std::fs::read_dir(dir).expect("read tests/") {
+    for entry in std::fs::read_dir(&dir).expect("read crates/frankenlibc-abi/tests") {
         let path = entry.expect("dir entry").path();
         let name = path
             .file_name()
