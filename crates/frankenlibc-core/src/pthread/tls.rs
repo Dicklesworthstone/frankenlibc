@@ -1213,6 +1213,10 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
         {
             syscall::sys_exit_group(127);
         }
+        // Keep the native handle registered through late C++ TLS callbacks
+        // created by POSIX key destructors. No signal may create new state
+        // between its final drain and reclamation.
+        super::thread::reclaim_native_runtime_tls(tid);
     }
 
     if registered {

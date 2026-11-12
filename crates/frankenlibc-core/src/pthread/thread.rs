@@ -32,7 +32,7 @@
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::syscall;
 
-use core::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
 pub use super::tls::CancellationWait;
 
@@ -114,6 +114,23 @@ const MAP_ANONYMOUS: usize = 0x20;
 /// Magic value for identifying a valid ThreadHandle.
 const THREAD_HANDLE_MAGIC: u32 = 0x5448_444c; // "THDL"
 
+/// ABI-owned dynamic TLS state attached to one native thread.
+///
+/// The ABI embeds this immutable header at the start of its allocation and
+/// publishes it through `ThreadHandle::runtime_tls`. The calling thread alone
+/// accesses the payload. `drain` removes callbacks before invoking them and
+/// permits those callbacks to access TLS or register further destructors.
+/// `reclaim` releases storage without invoking application code.
+#[repr(C)]
+pub struct RuntimeTlsState {
+    /// Drain C++/runtime TLS destructors while the native identity is live.
+    /// A true final-drain flag requires returning with signals blocked, even
+    /// if an application destructor changed its signal mask.
+    pub drain: unsafe fn(*mut RuntimeTlsState, bool),
+    /// Reclaim the allocation after the final drain, with signals blocked.
+    pub reclaim: unsafe fn(*mut RuntimeTlsState),
+}
+
 /// Per-thread control block. Allocated on the heap, pointed to by `pthread_t`.
 ///
 /// The `tid` field doubles as the join futex: `CLONE_CHILD_CLEARTID` tells the
@@ -178,6 +195,12 @@ pub struct ThreadHandle {
     /// Itanium C++ caught-exception pointer and uncaught-exception count.
     /// Native threads must not use the creator's compiler TLS for this state.
     pub cxa_eh_globals: core::cell::UnsafeCell<[usize; 2]>,
+
+    /// ABI dynamic TLS and destructor state. Atomic publication allows an
+    /// interrupted first access to lose initialization to a signal handler
+    /// without exposing a partially initialized allocation. The native owner
+    /// keeps this state across fork and reclaims it before retiring its TID.
+    pub runtime_tls: AtomicPtr<RuntimeTlsState>,
 
     /// Base address of the owned mapping, including its guard. Zero for a
     /// caller-provided stack, which this implementation must never unmap.
@@ -465,6 +488,10 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
 #[allow(unsafe_code)]
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
+    // Normal start-routine return needs the same cancellation exclusion as
+    // pthread_exit: cleanup callbacks must not restart the exit protocol.
+    unsafe { (*handle_ptr).exit_started.store(1, Ordering::Relaxed) };
+    drain_native_runtime_tls(tid);
     super::tls::teardown_native_thread_tls(tid);
 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return
@@ -802,6 +829,7 @@ pub unsafe fn create_thread_with_startup(
         unwind_stack_boundary: AtomicUsize::new(0),
         unwind_exception: core::cell::UnsafeCell::new([0; 2]),
         cxa_eh_globals: core::cell::UnsafeCell::new([0; 2]),
+        runtime_tls: AtomicPtr::new(core::ptr::null_mut()),
         stack_base,
         stack_total_size,
         stack_addr: stack.address,
@@ -1275,6 +1303,47 @@ pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
         return None;
     }
     handle_for_tid(syscall::sys_gettid())
+}
+
+/// Run the current native owner's ABI TLS callbacks before withdrawing its
+/// identity. The callback itself removes entries before invoking user code.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn drain_native_runtime_tls(tid: i32) {
+    let Some(handle) = handle_for_tid(tid) else {
+        return;
+    };
+    // SAFETY: exit runs on the owner and the registration keeps its handle
+    // live. Acquire observes the ABI's fully initialized immutable header.
+    let state = unsafe { (*handle).runtime_tls.load(Ordering::Acquire) };
+    if !state.is_null() {
+        // SAFETY: the published hook and payload belong to this live owner.
+        unsafe { ((*state).drain)(state, false) };
+    }
+}
+
+/// Finish ABI TLS teardown after POSIX key destructors, with signals blocked.
+/// A key destructor may have registered another C++ TLS destructor, so drain
+/// once more while lookup can still resolve the calling native thread.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn reclaim_native_runtime_tls(tid: i32) {
+    let Some(handle) = handle_for_tid(tid) else {
+        return;
+    };
+    // SAFETY: the native owner and its identity remain live. The final drain
+    // restores the blocked signal mask after each application callback.
+    let pending = unsafe { (*handle).runtime_tls.load(Ordering::Acquire) };
+    if !pending.is_null() {
+        unsafe { ((*pending).drain)(pending, true) };
+    }
+    // SAFETY: signals are blocked and this is the owner after all callbacks.
+    // Withdrawal transfers the unique allocation to its reclaim hook.
+    let state = unsafe {
+        (*handle).runtime_tls.swap(core::ptr::null_mut(), Ordering::AcqRel)
+    };
+    if !state.is_null() {
+        // SAFETY: reclaim does not run application callbacks or consult TLS.
+        unsafe { ((*state).reclaim)(state) };
+    }
 }
 
 /// Request cooperative cancellation of a live native thread without borrowing

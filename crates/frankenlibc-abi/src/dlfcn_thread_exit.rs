@@ -2,13 +2,23 @@
 //!
 //! Only native relocation scopes bind to this registration function. The host
 //! must never receive a native __dso_handle, nor may we register host callbacks
-//! in this queue. The Rust thread-exit hook merely schedules our owned drain.
+//! in this queue. Hosted threads use Rust/host exit hooks; native clone threads
+//! keep their state and exit hooks in their native ThreadHandle instead of
+//! their inherited compiler TLS.
 
+use std::alloc::Layout;
 use std::cell::{Cell, RefCell};
 use std::ffi::{c_int, c_void};
-use std::sync::OnceLock;
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
+use std::ptr::NonNull;
+use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
-use super::tls::Block;
+use frankenlibc_core::pthread::thread::{RuntimeTlsState, ThreadHandle, current_thread_handle};
+use frankenlibc_core::syscall;
+
+use super::tls::{Block, Module};
 use super::{NativeDso, OPERATIONS, lifecycle, registry};
 
 type Destructor = unsafe extern "C" fn(*mut c_void);
@@ -18,13 +28,250 @@ struct Entry {
     argument: *mut c_void,
     // Pin both the registering DSO and the callback provider. They can differ
     // (e.g. an inline C++ destructor preempted by another native library).
-    owners: Vec<usize>,
+    owners: [usize; 2],
+    owner_count: usize,
 }
+
+/// Anonymous storage for native TLS. Raw syscalls neither allocate from a
+/// host arena nor consult the creator's inherited errno/compiler TLS.
+pub(super) struct MappedAllocation {
+    base: NonNull<u8>,
+    data: NonNull<u8>,
+    len: usize,
+}
+
+impl MappedAllocation {
+    pub(super) fn new(layout: Layout) -> Option<Self> {
+        let len = layout.size().max(1).checked_add(layout.align() - 1)?;
+        // SAFETY: anonymous private read/write mapping, checked nonzero size.
+        let base = NonNull::new(unsafe {
+            syscall::sys_mmap(std::ptr::null_mut(), len, 3, 0x22, -1, 0).ok()?
+        })?;
+        let padding = base.as_ptr().align_offset(layout.align());
+        if padding > layout.align() - 1 {
+            // SAFETY: this unpublished mapping is exclusively owned.
+            let _ = unsafe { syscall::sys_munmap(base.as_ptr(), len) };
+            return None;
+        }
+        // SAFETY: padding and the complete layout fit within the mapping.
+        let data = unsafe { NonNull::new_unchecked(base.as_ptr().add(padding)) };
+        Some(Self { base, data, len })
+    }
+
+    pub(super) fn as_ptr(&self) -> *mut u8 {
+        self.data.as_ptr()
+    }
+}
+
+impl Drop for MappedAllocation {
+    fn drop(&mut self) {
+        // SAFETY: the owner dropped all values before releasing this map.
+        let _ = unsafe { syscall::sys_munmap(self.base.as_ptr(), self.len) };
+    }
+}
+
+/// Growable native-thread storage with no host allocator dependency.
+/// Copying the initialized prefix transfers ownership to a new mapping;
+/// unmapping the old allocation must not drop those moved values again.
+struct MappedVec<T> {
+    allocation: Option<MappedAllocation>,
+    len: usize,
+    capacity: usize,
+    element: std::marker::PhantomData<T>,
+}
+
+impl<T> MappedVec<T> {
+    fn new() -> Self {
+        Self { allocation: None, len: 0, capacity: 0, element: std::marker::PhantomData }
+    }
+
+    fn as_ptr(&self) -> *mut T {
+        self.allocation.as_ref().map_or_else(
+            || NonNull::<T>::dangling().as_ptr(),
+            |allocation| allocation.as_ptr().cast(),
+        )
+    }
+
+    fn try_reserve(&mut self, additional: usize) -> Option<()> {
+        let needed = self.len.checked_add(additional)?;
+        if needed <= self.capacity {
+            return Some(());
+        }
+        let capacity = self.capacity.checked_mul(2).unwrap_or(needed).max(needed).max(4);
+        let allocation = MappedAllocation::new(Layout::array::<T>(capacity).ok()?)?;
+        // SAFETY: aligned, nonoverlapping allocations; exactly len initialized
+        // elements move to the new map. The old map contains no owned values.
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.as_ptr(), allocation.as_ptr().cast(), self.len)
+        };
+        self.allocation = Some(allocation);
+        self.capacity = capacity;
+        Some(())
+    }
+
+    fn push_reserved(&mut self, value: T) {
+        assert!(self.len < self.capacity);
+        // SAFETY: callers reserve first; this slot is not yet initialized.
+        unsafe { self.as_ptr().add(self.len).write(value) };
+        self.len += 1;
+    }
+
+    fn pop(&mut self) -> Option<T> {
+        self.len = self.len.checked_sub(1)?;
+        // SAFETY: withdrawing the final initialized element transfers it to
+        // the caller and excludes it from future slice/drop operations.
+        Some(unsafe { self.as_ptr().add(self.len).read() })
+    }
+
+    fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
+        let mut index = 0;
+        while index < self.len {
+            // SAFETY: index is within the initialized prefix.
+            if keep(unsafe { &*self.as_ptr().add(index) }) {
+                index += 1;
+                continue;
+            }
+            // SAFETY: remove one value and move the suffix left. The reduced
+            // len excludes the duplicate bytes beyond the initialized prefix.
+            let removed = unsafe { self.as_ptr().add(index).read() };
+            unsafe {
+                std::ptr::copy(self.as_ptr().add(index + 1), self.as_ptr().add(index), self.len - index - 1)
+            };
+            self.len -= 1;
+            drop(removed);
+        }
+    }
+}
+
+impl<T> Deref for MappedVec<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: the aligned pointer covers len live elements, or is a
+        // correctly aligned dangling pointer for the empty slice.
+        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
+    }
+}
+
+impl<T> Drop for MappedVec<T> {
+    fn drop(&mut self) {
+        // SAFETY: drop the initialized prefix once, before allocation's Drop
+        // unmaps the memory containing the elements.
+        unsafe {
+            std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(self.as_ptr(), self.len))
+        };
+    }
+}
+
+pub(super) struct ThreadStorage<T> {
+    hosted: Vec<T>,
+    native: Option<MappedVec<T>>,
+}
+
+impl<T> Default for ThreadStorage<T> {
+    fn default() -> Self {
+        Self { hosted: Vec::new(), native: None }
+    }
+}
+
+impl<T> ThreadStorage<T> {
+    fn native() -> Self {
+        Self { hosted: Vec::new(), native: Some(MappedVec::new()) }
+    }
+
+    pub(super) fn try_reserve(&mut self, additional: usize) -> Option<()> {
+        match &mut self.native {
+            Some(native) => native.try_reserve(additional),
+            None => self.hosted.try_reserve(additional).ok(),
+        }
+    }
+
+    pub(super) fn push_reserved(&mut self, value: T) {
+        match &mut self.native {
+            Some(native) => native.push_reserved(value),
+            None => self.hosted.push(value),
+        }
+    }
+
+    fn pop(&mut self) -> Option<T> {
+        match &mut self.native {
+            Some(native) => native.pop(),
+            None => self.hosted.pop(),
+        }
+    }
+
+    pub(super) fn retain(&mut self, keep: impl FnMut(&T) -> bool) {
+        match &mut self.native {
+            Some(native) => native.retain(keep),
+            None => self.hosted.retain(keep),
+        }
+    }
+}
+
+impl<T> Deref for ThreadStorage<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        self.native.as_deref().unwrap_or(&self.hosted)
+    }
+}
+
+pub(super) type TemporaryTlsModules = Vec<(usize, Arc<Module>)>;
 
 #[derive(Default)]
 pub(super) struct ThreadState {
-    pub(super) blocks: RefCell<Vec<Block>>,
-    destructors: RefCell<Vec<Entry>>,
+    pub(super) blocks: RefCell<ThreadStorage<Block>>,
+    destructors: RefCell<ThreadStorage<Entry>>,
+    pub(super) native: bool,
+    // Borrowed only while an IFUNC Execution guard retains its Context.
+    // A thin atomic pointer keeps signal reentry from observing torn metadata.
+    pub(super) ifunc_modules: AtomicPtr<TemporaryTlsModules>,
+}
+
+#[repr(C)]
+struct NativeThreadState {
+    header: RuntimeTlsState,
+    state: ThreadState,
+    allocation: ManuallyDrop<MappedAllocation>,
+}
+
+fn native_state(handle: *mut ThreadHandle, initialize: bool) -> Option<*mut ThreadState> {
+    // SAFETY: current_thread_handle gives this caller its live native handle.
+    let slot = unsafe { &(*handle).runtime_tls };
+    let mut state = slot.load(Ordering::Acquire).cast::<NativeThreadState>();
+    if state.is_null() && initialize {
+        let allocation = MappedAllocation::new(Layout::new::<NativeThreadState>())?;
+        let initialized = allocation.as_ptr().cast::<NativeThreadState>();
+        // SAFETY: the aligned mapping covers the complete state. Nothing can
+        // observe the header/payload until the release publication below.
+        unsafe {
+            initialized.write(NativeThreadState {
+                header: RuntimeTlsState { drain: drain_native, reclaim: reclaim_native },
+                state: ThreadState {
+                    blocks: RefCell::new(ThreadStorage::native()),
+                    destructors: RefCell::new(ThreadStorage::native()),
+                    native: true,
+                    ifunc_modules: AtomicPtr::new(std::ptr::null_mut()),
+                },
+                allocation: ManuallyDrop::new(allocation),
+            })
+        };
+        state = match slot.compare_exchange(
+            std::ptr::null_mut(), initialized.cast(), Ordering::AcqRel, Ordering::Acquire,
+        ) {
+            Ok(_) => initialized,
+            Err(existing) => {
+                // SAFETY: a signal handler won initialization. The losing,
+                // unpublished state contains no entries and is exclusively ours.
+                unsafe { reclaim_native(initialized.cast()) };
+                existing.cast()
+            }
+        };
+    }
+    if state.is_null() {
+        None
+    } else {
+        // SAFETY: the owner retains this published allocation until core exit.
+        Some(unsafe { std::ptr::addr_of_mut!((*state).state) })
+    }
 }
 
 struct Cleanup;
@@ -38,6 +285,12 @@ std::thread_local! {
 }
 
 pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
+    if let Some(handle) = current_thread_handle() {
+        let state = native_state(handle, true)?;
+        // SAFETY: this native owner retains its independent state through all
+        // application destructors. OOM never falls back to inherited host TLS.
+        return callback(unsafe { &*state });
+    }
     STATE
         .try_with(|slot| {
             let mut state = slot.get();
@@ -70,6 +323,11 @@ pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) ->
 pub(super) fn with_existing_state<T>(
     callback: impl FnOnce(&ThreadState) -> Option<T>,
 ) -> Option<T> {
+    if let Some(handle) = current_thread_handle() {
+        let state = native_state(handle, false)?;
+        // SAFETY: this is the current native owner's existing live payload.
+        return callback(unsafe { &*state });
+    }
     STATE
         .try_with(|slot| {
             let state = slot.get();
@@ -85,26 +343,59 @@ pub(super) fn with_existing_state<T>(
 }
 
 fn drain_current() {
-    let _ = STATE.try_with(|slot| {
-        let state = slot.get();
-        if state.is_null() {
-            return;
-        }
-        loop {
-            // SAFETY: this thread owns state through the entire drain.
-            // Remove before invoking, with no borrow held across user code.
-            let next = unsafe { &*state }.destructors.borrow_mut().pop();
-            let Some(entry) = next else {
-                break;
-            };
-            unsafe { (entry.destructor)(entry.argument) };
-            release_pins(&entry.owners);
-        }
+    let _ = with_existing_state(|state| {
+        drain(state, false);
+        Some(())
     });
 }
 
+fn drain(state: &ThreadState, final_drain: bool) {
+    loop {
+        if final_drain {
+            let blocked = u64::MAX;
+            // SAFETY: Linux x86-64/AArch64 kernel sigsets are one u64. Repeat
+            // after every callback: application code may have unblocked them.
+            if unsafe {
+                syscall::sys_rt_sigprocmask(
+                    2, std::ptr::from_ref(&blocked).cast(), std::ptr::null_mut(),
+                    std::mem::size_of::<u64>(),
+                )
+            }.is_err() {
+                syscall::sys_exit_group(127);
+            }
+        }
+        // Remove before invoking, with no borrow or loader lock held across
+        // application code. A callback may register another entry to drain.
+        let next = state.destructors.borrow_mut().pop();
+        let Some(entry) = next else {
+            break;
+        };
+        // SAFETY: registration validated and pinned the callback and owner.
+        unsafe { (entry.destructor)(entry.argument) };
+        release_pins(&entry.owners[..entry.owner_count]);
+    }
+}
+
+unsafe fn drain_native(pointer: *mut RuntimeTlsState, final_drain: bool) {
+    // SAFETY: NativeThreadState embeds its header first. The native owner
+    // retains its allocation, identity and TLS blocks throughout this drain.
+    let state = unsafe { &(*pointer.cast::<NativeThreadState>()).state };
+    drain(state, final_drain);
+}
+
+unsafe fn reclaim_native(pointer: *mut RuntimeTlsState) {
+    let state = pointer.cast::<NativeThreadState>();
+    // SAFETY: core withdrew the pointer with signals blocked after the final
+    // drain, or initialization lost before publication. No callbacks remain.
+    let allocation = unsafe { ManuallyDrop::take(&mut (*state).allocation) };
+    unsafe { std::ptr::drop_in_place(state) };
+    drop(allocation);
+}
+
 pub(super) fn prepare_process_exit() {
-    PROCESS_EXIT.with(|flag| flag.set(true));
+    if current_thread_handle().is_none() {
+        PROCESS_EXIT.with(|flag| flag.set(true));
+    }
     drain_current();
 }
 
@@ -178,7 +469,7 @@ fn register(destructor: Destructor, argument: *mut c_void, dso_handle: *mut c_vo
     let _operation = OPERATIONS.lock();
     with_state(|state| {
         let mut entries = state.destructors.try_borrow_mut().ok()?;
-        entries.try_reserve(1).ok()?;
+        entries.try_reserve(1)?;
         let mut dsos = registry().lock().ok()?;
         let owner = dsos
             .iter()
@@ -191,25 +482,24 @@ fn register(destructor: Destructor, argument: *mut c_void, dso_handle: *mut c_vo
                     && lifecycle::executable_address(dso, destructor as *const () as usize)
             })?
             .id;
-        let mut owners = vec![owner];
-        if provider != owner {
-            owners.push(provider);
-        }
+        let owners = [owner, provider];
+        let owner_count = if provider == owner { 1 } else { 2 };
         // Check all counts before changing any resident state. Once pinned,
         // the reserved queue slot cannot fail and owns exactly these pins.
-        for id in &owners {
+        for id in &owners[..owner_count] {
             dsos.iter()
                 .find(|dso| dso.id == *id)?
                 .thread_exit_pins
                 .checked_add(1)?;
         }
-        for dso in dsos.iter_mut().filter(|dso| owners.contains(&dso.id)) {
+        for dso in dsos.iter_mut().filter(|dso| owners[..owner_count].contains(&dso.id)) {
             dso.thread_exit_pins += 1;
         }
-        entries.push(Entry {
+        entries.push_reserved(Entry {
             destructor,
             argument,
             owners,
+            owner_count,
         });
         Some(())
     })

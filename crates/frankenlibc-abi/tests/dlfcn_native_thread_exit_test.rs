@@ -1,15 +1,56 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Barrier};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use frankenlibc_abi::dlfcn_abi::{dlclose, dlopen, dlsym, native_dso_handle_for_tests};
+use frankenlibc_abi::dlfcn_abi::{dlclose, dlerror, dlopen, dlsym, native_dso_handle_for_tests};
+use frankenlibc_abi::pthread_abi;
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
+
+// The native workers in the new protocols execute only compiled fixture code
+// and owned TLS teardown. A Rust heap call there would reach System/host malloc
+// through inherited hardware TLS, even when an ordinary test happened to pass.
+static REJECT_NATIVE_HEAP: AtomicBool = AtomicBool::new(false);
+struct AuditedAllocator;
+
+fn check_native_heap() {
+    if REJECT_NATIVE_HEAP.load(Ordering::Relaxed)
+        && frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+    {
+        frankenlibc_core::syscall::sys_exit_group(93);
+    }
+}
+
+// SAFETY: every permitted allocation is forwarded unchanged to System. The
+// rejected native path terminates before touching the host allocator.
+unsafe impl GlobalAlloc for AuditedAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        check_native_heap();
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        check_native_heap();
+        unsafe { System.alloc_zeroed(layout) }
+    }
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        check_native_heap();
+        unsafe { System.dealloc(pointer, layout) };
+    }
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        check_native_heap();
+        unsafe { System.realloc(pointer, layout, size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: AuditedAllocator = AuditedAllocator;
 
 #[derive(Clone, Copy)]
 enum Loader {
@@ -91,6 +132,9 @@ impl Fixture {
         name.replace("event_push", &format!("{}_push", self.prefix))
     }
     fn compile(&self, name: &str, source: &str, cpp: bool) -> PathBuf {
+        self.compile_with_flags(name, source, cpp, &[])
+    }
+    fn compile_with_flags(&self, name: &str, source: &str, cpp: bool, flags: &[&str]) -> PathBuf {
         let source_path = self
             .dir
             .join(format!("{name}.{}", if cpp { "cc" } else { "c" }));
@@ -101,6 +145,7 @@ impl Fixture {
         if cpp {
             command.args(["-fno-exceptions", "-fno-rtti", "-fno-gnu-unique"]);
         }
+        command.args(flags);
         let output = command
             .arg(&source_path)
             .arg("-o")
@@ -367,5 +412,365 @@ fn native_tls_destructor_registration_rejects_invalid_owners_and_code() {
             .open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD)
             .is_null()
     );
+    loader.close(sink);
+}
+
+const NATIVE_WORKERS: usize = 8;
+const CONCURRENT_CPP_TLS: &str = r#"
+    #include <pthread.h>
+    #include <stdint.h>
+    #include <errno.h>
+    extern "C" {
+        void event_push(long);
+        int __cxa_thread_atexit_impl(void(*)(void*),void*,void*);
+        __attribute__((visibility("hidden"))) void *__dso_handle=&__dso_handle;
+        __attribute__((visibility("hidden"))) int __cxa_thread_atexit(void(*fn)(void*),void*arg,void*owner){
+            return __cxa_thread_atexit_impl(fn,arg,owner);
+        }
+    }
+    static __thread long marker=17;
+    static __thread long local_value __attribute__((tls_model("local-dynamic")))=29;
+    static __thread long aligned_value __attribute__((aligned(8192)))=23;
+    static __thread unsigned char zeroed[64];
+    static __thread long arguments[12];
+    static uintptr_t addresses[9][4], owners[8];
+    static unsigned arrived, released, errors, exit_mode;
+    static void check(int condition){if(!condition)__atomic_fetch_add(&errors,1,__ATOMIC_RELAXED);}
+    struct Item {
+        long tag;
+        Item(long value):tag(value){}
+        ~Item(){event_push(marker*100+tag);}
+    };
+    static thread_local Item first(1), second(2);
+    static void nested(void *pointer){event_push(9000+*(long*)pointer);}
+    static void callback(void *pointer){
+        long value=*(long*)pointer;
+        event_push(value);
+        if(value%100==11)check(__cxa_thread_atexit_impl(nested,&marker,__dso_handle)==0);
+    }
+    static void save_addresses(unsigned index){
+        addresses[index][0]=(uintptr_t)&marker;
+        addresses[index][1]=(uintptr_t)&local_value;
+        addresses[index][2]=(uintptr_t)&aligned_value;
+        addresses[index][3]=(uintptr_t)&zeroed;
+    }
+    extern "C" long warm_parent(void){
+        check(marker==17 && local_value==29 && aligned_value==23 && zeroed[0]==0);
+        marker=601;local_value=602;aligned_value=603;zeroed[0]=77;
+        save_addresses(8);return 0;
+    }
+    extern "C" long parent_ok(void){
+        return marker==601 && local_value==602 && aligned_value==603 && zeroed[0]==77;
+    }
+    extern "C" void select_exit(unsigned value){exit_mode=value;}
+    extern "C" void *worker(void *argument){
+        unsigned id=(unsigned)(uintptr_t)argument;
+        check(marker==17 && local_value==29 && aligned_value==23);
+        for(unsigned i=0;i<64;i++)check(zeroed[i]==0);
+        check(((uintptr_t)&aligned_value&8191)==0);
+        errno=700+(int)id;
+        marker=id;local_value=100+(long)id;aligned_value=200+(long)id;zeroed[0]=(unsigned char)id;
+        check(first.tag+second.tag==3);
+        for(unsigned i=0;i<12;i++){
+            arguments[i]=1000+(long)id*100+i;
+            check(__cxa_thread_atexit_impl(callback,&arguments[i],__dso_handle)==0);
+        }
+        save_addresses(id-1);
+        owners[id-1]=(uintptr_t)pthread_self();
+        __atomic_fetch_add(&arrived,1,__ATOMIC_RELEASE);
+        while(!__atomic_load_n(&released,__ATOMIC_ACQUIRE)){}
+        check(marker==(long)id && local_value==100+(long)id && aligned_value==200+(long)id);
+        check(zeroed[0]==id && errno==700+(int)id);
+        if(exit_mode==1)pthread_exit(argument);
+        if(exit_mode==2){pthread_cancel(pthread_self());pthread_testcancel();return (void*)999;}
+        return argument;
+    }
+    extern "C" unsigned ready(void){return __atomic_load_n(&arrived,__ATOMIC_ACQUIRE);}
+    extern "C" void release_workers(void){__atomic_store_n(&released,1,__ATOMIC_RELEASE);}
+    extern "C" unsigned failure_count(void){return __atomic_load_n(&errors,__ATOMIC_RELAXED);}
+    extern "C" uintptr_t slot_address(unsigned thread,unsigned slot){return addresses[thread][slot];}
+    extern "C" uintptr_t owner(unsigned thread){return owners[thread];}
+    __attribute__((destructor)) static void fini(void){event_push(99);}
+"#;
+
+type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+type CreateThread = unsafe extern "C" fn(
+    *mut libc::pthread_t,
+    *const libc::pthread_attr_t,
+    Option<StartRoutine>,
+    *mut c_void,
+) -> c_int;
+type JoinThread = unsafe extern "C-unwind" fn(libc::pthread_t, *mut *mut c_void) -> c_int;
+
+fn thread_backend(loader: Loader) -> (CreateThread, JoinThread) {
+    match loader {
+        Loader::Native => {
+            pthread_abi::pthread_threading_force_native_for_tests();
+            (pthread_abi::pthread_create, pthread_abi::pthread_join)
+        }
+        // SAFETY: these signatures match the resolved host pthread ABIs;
+        // host_fn rejects an oracle that aliases FrankenLibC's definitions.
+        Loader::Host => unsafe {
+            (
+                dlsym_oracle::host_fn(c"pthread_create", pthread_abi::pthread_create as *const ()),
+                dlsym_oracle::host_fn(c"pthread_join", pthread_abi::pthread_join as *const ()),
+            )
+        },
+    }
+}
+
+fn concurrent_native_tls_protocol(exit_mode: u32) {
+    for loader in [Loader::Host, Loader::Native] {
+        for dialect in ["gnu", "gnu2"] {
+            let fixture = Fixture::new();
+            let sink = fixture.sink(loader);
+            let flag = format!("-mtls-dialect={dialect}");
+            let path = fixture.compile_with_flags("concurrent", CONCURRENT_CPP_TLS, true, &[&flag, "-O2"]);
+            let object = frankenlibc_core::elf::ElfLoader::new(0)
+                .parse(&std::fs::read(&path).unwrap()).unwrap();
+            assert!(object.needed_libraries.is_empty(), "fixture acquired a host dependency");
+            assert!(object.tls_segment.is_some());
+            if dialect == "gnu2" {
+                assert!(object.rela_dyn.iter().chain(&object.rela_plt)
+                    .any(|relocation| relocation.reloc_type().to_u32() == 36),
+                    "GNU2 fixture emitted no TLSDESC relocation");
+            }
+            let handle = loader.open(&path, libc::RTLD_NOW);
+            assert!(!handle.is_null());
+            assert_eq!(loader.value(handle, "warm_parent"), 0);
+            let worker: StartRoutine = unsafe { std::mem::transmute(loader.symbol(handle, "worker")) };
+            let ready: unsafe extern "C" fn() -> u32 = unsafe { std::mem::transmute(loader.symbol(handle, "ready")) };
+            let release: unsafe extern "C" fn() = unsafe { std::mem::transmute(loader.symbol(handle, "release_workers")) };
+            let select_exit: unsafe extern "C" fn(u32) = unsafe { std::mem::transmute(loader.symbol(handle, "select_exit")) };
+            let failures: unsafe extern "C" fn() -> u32 = unsafe { std::mem::transmute(loader.symbol(handle, "failure_count")) };
+            let address: unsafe extern "C" fn(u32, u32) -> usize = unsafe { std::mem::transmute(loader.symbol(handle, "slot_address")) };
+            let owner: unsafe extern "C" fn(u32) -> usize = unsafe { std::mem::transmute(loader.symbol(handle, "owner")) };
+            let (create, join) = thread_backend(loader);
+            unsafe { select_exit(exit_mode) };
+            let mut threads = [0 as libc::pthread_t; NATIVE_WORKERS];
+            REJECT_NATIVE_HEAP.store(true, Ordering::Release);
+            for (index, thread) in threads.iter_mut().enumerate() {
+                assert_eq!(unsafe { create(thread, std::ptr::null(), Some(worker), (index + 1) as *mut c_void) }, 0);
+            }
+            while unsafe { ready() } != NATIVE_WORKERS as u32 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            // All callbacks are pinned before close. Both GNU and native
+            // loaders must retain code/data until each real worker exits.
+            loader.close(handle);
+            let retained = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+            assert_eq!(retained, handle);
+            loader.close(retained);
+            unsafe { release() };
+            let mut values = [std::ptr::null_mut(); NATIVE_WORKERS];
+            for (index, thread) in threads.iter().enumerate() {
+                assert_eq!(unsafe { join(*thread, &mut values[index]) }, 0);
+            }
+            REJECT_NATIVE_HEAP.store(false, Ordering::Release);
+            assert_eq!(unsafe { failures() }, 0, "TLS/errno/template isolation failed for {dialect}");
+            assert_eq!(loader.value(handle, "parent_ok"), 1);
+            for (index, thread) in threads.iter().enumerate() {
+                assert_eq!(unsafe { owner(index as u32) }, *thread as usize);
+                assert_eq!(values[index] as usize, if exit_mode == 2 { usize::MAX } else { index + 1 });
+                for slot in 0..4 {
+                    let own = unsafe { address(index as u32, slot) };
+                    assert_ne!(own, 0);
+                    assert_ne!(own, unsafe { address(NATIVE_WORKERS as u32, slot) });
+                    for previous in 0..index {
+                        assert_ne!(own, unsafe { address(previous as u32, slot) });
+                    }
+                }
+            }
+            let events = fixture.events(loader, sink);
+            assert_eq!(events.len(), NATIVE_WORKERS * 15);
+            for id in 1..=NATIVE_WORKERS as i64 {
+                let own: Vec<_> = events.iter().copied().filter(|value| {
+                    if *value >= 9000 { *value - 9000 == id }
+                    else if *value >= 1000 { (*value - 1000) / 100 == id }
+                    else { *value / 100 == id }
+                }).collect();
+                let mut expected = vec![1000 + id * 100 + 11, 9000 + id];
+                expected.extend((0..11).rev().map(|offset| 1000 + id * 100 + offset));
+                expected.extend([id * 100 + 2, id * 100 + 1]);
+                assert_eq!(own, expected, "thread {id}: C++ TLS destructor order");
+            }
+            let retained = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+            assert_eq!(retained, handle);
+            loader.close(retained);
+            let events = fixture.events(loader, sink);
+            assert_eq!(events.len(), NATIVE_WORKERS * 15 + 1);
+            assert_eq!(events.last(), Some(&99));
+            assert!(loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null());
+            loader.close(sink);
+        }
+    }
+}
+
+#[test]
+fn native_clone_dynamic_tls_and_cpp_destructors_on_return() {
+    if child_case("native_clone_dynamic_tls_and_cpp_destructors_on_return") {
+        concurrent_native_tls_protocol(0);
+    }
+}
+
+#[test]
+fn native_clone_dynamic_tls_and_cpp_destructors_on_pthread_exit() {
+    if child_case("native_clone_dynamic_tls_and_cpp_destructors_on_pthread_exit") {
+        concurrent_native_tls_protocol(1);
+    }
+}
+
+#[test]
+fn native_clone_dynamic_tls_and_cpp_destructors_on_cancellation() {
+    if child_case("native_clone_dynamic_tls_and_cpp_destructors_on_cancellation") {
+        concurrent_native_tls_protocol(2);
+    }
+}
+
+struct ReloadProbe {
+    first: unsafe extern "C" fn() -> *mut i64,
+    replacement: AtomicUsize,
+    phase: AtomicU32,
+}
+
+unsafe extern "C" fn reload_worker(argument: *mut c_void) -> *mut c_void {
+    // SAFETY: the parent retains the probe until join, and waits until the
+    // first DSO call has returned before unloading that code and template.
+    let probe = unsafe { &*argument.cast::<ReloadProbe>() };
+    let first = unsafe { (probe.first)() };
+    let mut failure = if first.is_null() || unsafe { *first } != 17 { 1 } else { 0 };
+    if !first.is_null() {
+        unsafe { *first = 41 };
+    }
+    probe.phase.store(1, Ordering::Release);
+    while probe.phase.load(Ordering::Acquire) != 2 {
+        std::hint::spin_loop();
+    }
+    let replacement: unsafe extern "C" fn() -> *mut i64 =
+        unsafe { std::mem::transmute(probe.replacement.load(Ordering::Acquire)) };
+    let next = unsafe { replacement() };
+    if next.is_null() || unsafe { *next } != 17 {
+        failure = 2;
+    }
+    failure as *mut c_void
+}
+
+#[test]
+fn native_clone_tls_unload_reload_prunes_without_host_heap_reclamation() {
+    if !child_case("native_clone_tls_unload_reload_prunes_without_host_heap_reclamation") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let path = fixture.compile("reload", r#"
+        static __thread long value=17;
+        long *tls_address(void){return &value;}
+    "#, false);
+    let loader = Loader::Native;
+    let first = loader.open(&path, libc::RTLD_NOW);
+    assert!(!first.is_null());
+    let probe = ReloadProbe {
+        first: unsafe { std::mem::transmute(loader.symbol(first, "tls_address")) },
+        replacement: AtomicUsize::new(0),
+        phase: AtomicU32::new(0),
+    };
+    let (create, join) = thread_backend(loader);
+    let mut thread = 0;
+    REJECT_NATIVE_HEAP.store(true, Ordering::Release);
+    assert_eq!(unsafe {
+        create(&mut thread, std::ptr::null(), Some(reload_worker), std::ptr::from_ref(&probe).cast_mut().cast())
+    }, 0);
+    while probe.phase.load(Ordering::Acquire) != 1 {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    loader.close(first);
+    assert!(!native_dso_handle_for_tests(first));
+    let replacement = loader.open(&path, libc::RTLD_NOW);
+    assert!(!replacement.is_null());
+    assert_ne!(first, replacement, "native module IDs must not be reused");
+    probe.replacement.store(loader.symbol(replacement, "tls_address") as usize, Ordering::Release);
+    probe.phase.store(2, Ordering::Release);
+    let mut result = std::ptr::null_mut();
+    assert_eq!(unsafe { join(thread, &mut result) }, 0);
+    REJECT_NATIVE_HEAP.store(false, Ordering::Release);
+    assert!(result.is_null(), "reloaded TLS reused an expired template: {result:?}");
+    loader.close(replacement);
+}
+
+#[test]
+fn native_clone_posix_keys_retain_tls_and_late_runtime_destructors() {
+    if !child_case("native_clone_posix_keys_retain_tls_and_late_runtime_destructors") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let loader = Loader::Native;
+    let sink = fixture.sink(loader);
+    let path = fixture.compile("late", r#"
+        #define _GNU_SOURCE
+        #include <pthread.h>
+        #include <signal.h>
+        #include <dlfcn.h>
+        extern void event_push(long);
+        extern int __cxa_thread_atexit_impl(void(*)(void*),void*,void*);
+        static int owner;
+        static pthread_key_t key;
+        static __thread long value=31;
+        static void last(void *pointer){
+            sigset_t old, empty={0};
+            if(pthread_sigmask(SIG_SETMASK,0,&old))event_push(901);
+            if(!(((unsigned long*)&old)[0]&(1UL<<(SIGUSR1-1))))event_push(902);
+            event_push(*(long*)pointer==146 ? 4 : 903);
+            /* The final empty-queue check must block these again too. */
+            if(pthread_sigmask(SIG_SETMASK,&empty,0))event_push(904);
+        }
+        static void late(void *pointer){
+            sigset_t empty={0};
+            event_push(*(long*)pointer==73 ? 3 : 905);
+            *(long*)pointer=146;
+            if(pthread_sigmask(SIG_SETMASK,&empty,0))event_push(906);
+            if(__cxa_thread_atexit_impl(last,pointer,&owner))event_push(907);
+        }
+        static void key_destructor(void *pointer){
+            event_push(*(long*)pointer==73 ? 2 : 908);
+            if(__cxa_thread_atexit_impl(late,pointer,&owner))event_push(909);
+        }
+        static void early(void *pointer){event_push(*(long*)pointer==73 ? 1 : 910);}
+        void *mask_provider(void){return (void*)pthread_sigmask;}
+        long initialize(void){
+            if(dlsym(RTLD_DEFAULT,"pthread_sigmask")!=(void*)pthread_sigmask)return 101;
+            if(dlvsym(RTLD_DEFAULT,"pthread_sigmask","GLIBC_2.2.5")!=(void*)pthread_sigmask)return 102;
+            if(dlvsym(RTLD_DEFAULT,"pthread_sigmask","GLIBC_2.32")!=(void*)pthread_sigmask)return 103;
+            if(dlvsym(RTLD_DEFAULT,"pthread_sigmask","GLIBC_2.34"))return 104;
+            if(!dlerror())return 105;
+            return pthread_key_create(&key,key_destructor);
+        }
+        long finish(void){return pthread_key_delete(key);}
+        void *worker(void *argument){
+            (void)argument;value=73;
+            if(pthread_setspecific(key,&value))return (void*)1;
+            if(__cxa_thread_atexit_impl(early,&value,&owner))return (void*)2;
+            return 0;
+        }
+    "#, false);
+    let handle = loader.open(&path, libc::RTLD_NOW);
+    assert!(!handle.is_null(), "late TLS fixture rejected: {:?}", unsafe {
+        let error = dlerror();
+        (!error.is_null()).then(|| CStr::from_ptr(error).to_string_lossy().into_owned())
+    });
+    let provider: unsafe extern "C" fn() -> *mut c_void =
+        unsafe { std::mem::transmute(loader.symbol(handle, "mask_provider")) };
+    assert_eq!(unsafe { provider() }, frankenlibc_abi::signal_abi::pthread_sigmask as *const () as *mut c_void);
+    assert_eq!(loader.value(handle, "initialize"), 0);
+    let worker: StartRoutine = unsafe { std::mem::transmute(loader.symbol(handle, "worker")) };
+    let (create, join) = thread_backend(loader);
+    let mut thread = 0;
+    REJECT_NATIVE_HEAP.store(true, Ordering::Release);
+    assert_eq!(unsafe { create(&mut thread, std::ptr::null(), Some(worker), std::ptr::null_mut()) }, 0);
+    let mut result = std::ptr::null_mut();
+    assert_eq!(unsafe { join(thread, &mut result) }, 0);
+    REJECT_NATIVE_HEAP.store(false, Ordering::Release);
+    assert!(result.is_null());
+    assert_eq!(fixture.events(loader, sink), [1, 2, 3, 4]);
+    assert_eq!(loader.value(handle, "finish"), 0);
+    loader.close(handle);
     loader.close(sink);
 }
