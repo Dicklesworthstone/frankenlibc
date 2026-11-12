@@ -3683,8 +3683,9 @@ use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
 /// what makes that state unrepresentable.
 ///
 /// UTF-8 retains the core implementation. C rejects non-ASCII bytes, while a
-/// named single-byte locale uses its immutable native iconv mapping. Undefined
-/// bytes are errors immediately: only UTF-8 can accumulate a partial sequence.
+/// named locale uses its immutable native iconv mapping. Stateless multibyte
+/// codecs share the restartable prefix storage used by UTF-8; single-byte
+/// codecs reject undefined bytes immediately instead of retaining a prefix.
 mod codec {
     use super::wchar_core;
     use crate::locale_abi::{MultibyteCodec, active_multibyte_codec};
@@ -3692,28 +3693,7 @@ mod codec {
 
     #[inline]
     pub(super) fn ascii_compatible() -> bool {
-        match active_multibyte_codec() {
-            MultibyteCodec::SingleByte(codec) => codec.is_ascii_compatible(),
-            MultibyteCodec::Ascii | MultibyteCodec::Utf8 => true,
-        }
-    }
-
-    #[inline]
-    fn decode_byte(codec: MultibyteCodec, byte: u8) -> Option<u32> {
-        match codec {
-            MultibyteCodec::SingleByte(codec) => codec.decode(byte),
-            MultibyteCodec::Ascii | MultibyteCodec::Utf8 => {
-                (byte < 0x80).then_some(u32::from(byte))
-            }
-        }
-    }
-
-    #[inline]
-    fn encode_byte(codec: MultibyteCodec, wc: u32) -> Option<u8> {
-        match codec {
-            MultibyteCodec::SingleByte(codec) => codec.encode(wc),
-            MultibyteCodec::Ascii | MultibyteCodec::Utf8 => (wc < 0x80).then_some(wc as u8),
-        }
+        active_multibyte_codec().is_ascii_compatible()
     }
 
     /// Decode one character, as [`wchar_core::utf8_decode_step`].
@@ -3725,27 +3705,16 @@ mod codec {
     /// never more to ask for.
     #[inline]
     pub(super) fn utf8_decode_step(bytes: &[u8]) -> Utf8Step {
-        let codec = active_multibyte_codec();
-        if matches!(codec, MultibyteCodec::Utf8) {
-            return wchar_core::utf8_decode_step(bytes);
-        }
-        match bytes.first() {
-            None => Utf8Step::Incomplete,
-            Some(&byte) => match decode_byte(codec, byte) {
-                Some(wc) => Utf8Step::Char { wc, len: 1 },
-                None => Utf8Step::Invalid,
-            },
-        }
+        active_multibyte_codec().decode(bytes)
     }
 
     /// Decode one character, as [`wchar_core::mbtowc`].
     #[inline]
     pub(super) fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
-        let codec = active_multibyte_codec();
-        if matches!(codec, MultibyteCodec::Utf8) {
-            return wchar_core::mbtowc(src);
+        match active_multibyte_codec().decode(src) {
+            Utf8Step::Char { wc, len } => Some((wc, len)),
+            Utf8Step::Incomplete | Utf8Step::Invalid => None,
         }
-        decode_byte(codec, *src.first()?).map(|wc| (wc, 1))
     }
 
     /// Width of the next character, as [`wchar_core::mblen`].
@@ -3759,14 +3728,10 @@ mod codec {
     /// ASCII path reachable. Keep the two guards ahead of the width test.
     #[inline]
     pub(super) fn mblen(src: &[u8]) -> Option<usize> {
-        let codec = active_multibyte_codec();
-        if matches!(codec, MultibyteCodec::Utf8) {
-            return wchar_core::mblen(src);
-        }
         match src.first() {
             None => Some(0),
             Some(&0) => Some(0),
-            Some(&byte) => decode_byte(codec, byte).map(|_| 1),
+            Some(_) => mbtowc(src).map(|(_, len)| len),
         }
     }
 
@@ -3790,19 +3755,24 @@ mod codec {
             return wchar_core::mbstowcs(dest, src);
         }
         let mut count = 0usize;
-        for &b in src {
+        let mut consumed = 0usize;
+        while consumed < src.len() {
             // A full destination ends conversion before the next character
             // is examined. Sizing uses mbs_decoded_len instead of this path.
             if count == dest.len() {
                 return Some(count);
             }
-            dest[count] = decode_byte(codec, b)?;
-            if b == 0 {
+            let Utf8Step::Char { wc, len } = codec.decode(&src[consumed..]) else {
+                return None;
+            };
+            dest[count] = wc;
+            if wc == 0 {
                 // The terminator is written but not counted, matching the
                 // UTF-8 path and POSIX.
                 return Some(count);
             }
             count += 1;
+            consumed += len;
         }
         Some(count)
     }
@@ -3810,24 +3780,7 @@ mod codec {
     /// Convert a NUL-terminated wide string, as [`wchar_core::wcstombs`].
     #[inline]
     pub(super) fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
-        let codec = active_multibyte_codec();
-        if matches!(codec, MultibyteCodec::Utf8) {
-            return wchar_core::wcstombs(dest, src);
-        }
-        let mut count = 0usize;
-        for &wc in src {
-            // No next character is converted once all output bytes are used.
-            // Count-only requests have their separate whole-input validator.
-            if count == dest.len() {
-                return Some(count);
-            }
-            dest[count] = encode_byte(codec, wc)?;
-            if wc == 0 {
-                return Some(count);
-            }
-            count += 1;
-        }
-        Some(count)
+        active_multibyte_codec().encode_prefix(dest, src)
     }
 
     /// Count-mode decode, as [`wchar_core::mbs_decoded_len`].
@@ -3838,12 +3791,16 @@ mod codec {
             return wchar_core::mbs_decoded_len(src);
         }
         let mut count = 0usize;
-        for &b in src {
-            if b == 0 {
+        let mut consumed = 0usize;
+        while consumed < src.len() {
+            let Utf8Step::Char { wc, len } = codec.decode(&src[consumed..]) else {
+                return None;
+            };
+            if wc == 0 {
                 return Some(count);
             }
-            decode_byte(codec, b)?;
             count += 1;
+            consumed += len;
         }
         Some(count)
     }
@@ -3855,10 +3812,12 @@ mod codec {
         if matches!(codec, MultibyteCodec::Utf8) {
             return wchar_core::wcs_encoded_len(src);
         }
+        let mut count = 0usize;
+        let mut encoded = [0u8; 4];
         for &wc in src {
-            encode_byte(codec, wc)?;
+            count += codec.encode(wc, &mut encoded)?;
         }
-        Some(src.len())
+        Some(count)
     }
 
     // Preserve the SIMD ASCII prefixes only when both encoding directions
@@ -4541,8 +4500,15 @@ pub unsafe extern "C" fn btowc(c: c_int) -> u32 {
     if !(c_int::from(i8::MIN)..=c_int::from(u8::MAX)).contains(&c) || c == libc::EOF {
         return u32::MAX;
     }
-    match codec::mbtowc(&[c as u8]) {
-        Some((wc, 1)) => wc,
+    let codec = crate::locale_abi::active_multibyte_codec();
+    // GNU's btowc symbol preserves ASCII for these CJK locale families even
+    // in SHIFT_JIS, where mbrtowc maps 0x5c/0x7e to yen/overline. Keep that
+    // single-byte API behavior separate from the actual external decoder.
+    if (0..0x80).contains(&c) && matches!(codec, crate::locale_abi::MultibyteCodec::Stateless(_)) {
+        return c as u32;
+    }
+    match codec.decode(&[c as u8]) {
+        wchar_core::Utf8Step::Char { wc, len: 1 } => wc,
         _ => u32::MAX,
     }
 }
@@ -6532,19 +6498,26 @@ pub(crate) unsafe fn printf_multibyte_prefix(
 }
 
 /// Carry a validated narrow printf prefix into the renderer's UTF-8 transport.
-/// The prefix scanner already checked UTF-8/ASCII; named single-byte codecs
+/// The prefix scanner already checked UTF-8/ASCII; other named codecs
 /// still need transcoding even when the FILE itself is bound to UTF-8.
 pub(crate) fn printf_multibyte_utf8(bytes: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
-    let crate::locale_abi::MultibyteCodec::SingleByte(codec) =
-        crate::locale_abi::active_multibyte_codec()
-    else {
+    let codec = crate::locale_abi::active_multibyte_codec();
+    if matches!(
+        codec,
+        crate::locale_abi::MultibyteCodec::Ascii | crate::locale_abi::MultibyteCodec::Utf8
+    ) {
         return Some(std::borrow::Cow::Borrowed(bytes));
-    };
+    }
     let mut utf8 = Vec::with_capacity(bytes.len());
-    for &byte in bytes {
-        let character = char::from_u32(codec.decode(byte)?)?;
+    let mut consumed = 0;
+    while consumed < bytes.len() {
+        let wchar_core::Utf8Step::Char { wc, len } = codec.decode(&bytes[consumed..]) else {
+            return None;
+        };
+        let character = char::from_u32(wc)?;
         let mut encoded = [0; 4];
         utf8.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+        consumed += len;
     }
     Some(std::borrow::Cow::Owned(utf8))
 }
@@ -7775,8 +7748,8 @@ unsafe fn write_wprintf_rendered(
         // locking. The guard also releases it during cancellation unwind.
         let _lock = unsafe { super::stdio_abi::StdioLockGuard::acquire(stream) };
 
-        // The remaining codecs encode each scalar in exactly one byte.
-        // Keep staging bounded, including for arbitrarily long renderings.
+        // Keep staging bounded, including for arbitrarily long renderings,
+        // and retain complete external characters at every chunk boundary.
         let mut chunk = [0u8; 1024];
         let mut offset = 0;
         while offset < rendered.len() {
@@ -7790,14 +7763,19 @@ unsafe fn write_wprintf_rendered(
                 };
                 // Match fputwc's replacement policy in this same codec;
                 // '?' itself is not necessarily byte 0x3f (for example EBCDIC).
-                let encoded = codec
-                    .encode(wc, &mut chunk[used..used + 1])
-                    .or_else(|| codec.encode(u32::from(b'?'), &mut chunk[used..used + 1]));
-                if encoded != Some(1) {
+                let mut encoded = [0u8; 4];
+                let Some(encoded_len) = codec
+                    .encode(wc, &mut encoded)
+                    .or_else(|| codec.encode(u32::from(b'?'), &mut encoded))
+                else {
                     unsafe { set_abi_errno(libc::EILSEQ) };
                     return -1;
+                };
+                if encoded_len > chunk.len() - used {
+                    break;
                 }
-                used += 1;
+                chunk[used..used + encoded_len].copy_from_slice(&encoded[..encoded_len]);
+                used += encoded_len;
                 // NUL is an ordinary output character with a one-byte
                 // transport step; never treat it as a string terminator here.
                 offset += len;

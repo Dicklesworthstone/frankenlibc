@@ -13,6 +13,8 @@
 # this does not establish that the complete standalone product builds or passes.
 # With no FRANKENLIBC_LIB, this mode builds the production module using RUSTC
 # (default rustc) and FRANKENLIBC_UNWIND_LIBC_RLIB from the repository toolchain.
+# For split metadata, supply FRANKENLIBC_UNWIND_LIBC_RMETA from the same Cargo
+# compiler-artifact message; a same-name sibling remains the local fallback.
 # Build that small dependency with `cargo build -p libc --release` if necessary.
 #
 # Exit 0 = PASS, nonzero = FAIL
@@ -144,10 +146,16 @@ if [[ -z "${LIB_PATH}" && "${FRANKENLIBC_UNWIND_COMPONENT:-0}" == 1 ]]; then
     exit 1
   fi
   LIBC_ARGS=(--extern "libc=${LIBC_RLIB}")
-  # Newer Cargo can emit a separate metadata sidecar beside an otherwise
-  # metadata-only rlib. Pass it when present; ordinary rlibs need no sidecar.
-  if [[ -f "${LIBC_RLIB%.rlib}.rmeta" ]]; then
-    LIBC_ARGS+=(--extern "libc=${LIBC_RLIB%.rlib}.rmeta")
+  # Cargo can publish liblibc.rlib at the profile root while retaining its
+  # full metadata and hashed link artifact in a different output directory.
+  # Use the matching filename Cargo reported, not a guessed top-level sidecar.
+  LIBC_RMETA="${FRANKENLIBC_UNWIND_LIBC_RMETA:-${LIBC_RLIB%.rlib}.rmeta}"
+  if [[ -n "${FRANKENLIBC_UNWIND_LIBC_RMETA:-}" && ! -f "${LIBC_RMETA}" ]]; then
+    echo "FAIL: FRANKENLIBC_UNWIND_LIBC_RMETA does not name an existing metadata artifact"
+    exit 1
+  fi
+  if [[ -f "${LIBC_RMETA}" ]]; then
+    LIBC_ARGS+=(--extern "libc=${LIBC_RMETA}" -L "dependency=$(dirname "${LIBC_RMETA}")")
   fi
   COMPONENT_SOURCE="${OUT_DIR}/owned_unwind_component.rs"
   LIB_PATH="${OUT_DIR}/libowned_unwind_component.so"

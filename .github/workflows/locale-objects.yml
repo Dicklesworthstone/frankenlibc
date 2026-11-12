@@ -43,6 +43,10 @@ jobs:
           sudo apt-get install -y locales locales-all
           sudo localedef -i de_DE -f UTF-8 de_DE.UTF-8
           sudo localedef -i fr_FR -f UTF-8 fr_FR.UTF-8
+          mkdir -p artifacts/locale-results/locales
+          localedef --no-archive --no-warnings=ascii -i ja_JP -f SHIFT_JIS artifacts/locale-results/locales/ja_JP.SJIS
+          localedef --no-archive -i ja_JP -f EUC-JP artifacts/locale-results/locales/ja_JP.EUC-JP
+          localedef --no-archive -i zh_CN -f GB18030 artifacts/locale-results/locales/zh_CN.GB18030
       - name: Preserve reproducible offline diagnosis inputs
         if: github.run_number == 1
         run: |
@@ -62,7 +66,7 @@ jobs:
         run: |
           mkdir -p artifacts/locale-results
           cargo build -p frankenlibc-abi --release
-          cc -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_locale_objects.c -o artifacts/locale-results/probe
+          cc -O2 -fno-builtin -Wall -Wextra -Werror -pthread tests/integration/fixture_locale_objects.c -o artifacts/locale-results/probe -ldl
       - name: Compare independent host and deployed strict and hardened cases
         shell: bash
         run: |
@@ -75,6 +79,28 @@ jobs:
               cat "artifacts/locale-results/$case.$mode"
             done
           done
+          exit "$failed"
+      - name: Compare named multibyte state, bulk conversion, and wide streams
+        run: |
+          export LOCPATH="$PWD/artifacts/locale-results/locales"
+          probe="$PWD/artifacts/locale-results/probe"
+          candidate="$(realpath target/release/libfrankenlibc_abi.so)"
+          host="$("$probe" provider)"
+          failed=0
+          for case in multibyte-sjis multibyte-eucjp multibyte-gb18030; do
+            host_log="artifacts/locale-results/$case.host"
+            if ! timeout 30 "$probe" "$case" "$host" > "$host_log" 2>&1; then failed=1; fi
+            if ! grep -Eq '^multibyte-(SHIFT_JIS|EUC-JP|GB18030): ok$' "$host_log"; then failed=1; fi
+            for mode in strict hardened; do
+              log="artifacts/locale-results/$case.$mode"
+              if ! timeout 30 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$candidate" "$probe" "$case" "$candidate" > "$log" 2>&1; then failed=1; fi
+              if ! diff -u "$host_log" "$log"; then failed=1; fi
+              cat "$log"
+            done
+          done
+          status=0
+          env -u LD_PRELOAD -u LD_AUDIT "$probe" multibyte-sjis "$candidate" > artifacts/locale-results/multibyte-provider-negative.log 2>&1 || status=$?
+          if [[ "$status" -ne 86 ]] || ! grep -Fxq 'locale-codec:provider-mismatch:newlocale' artifacts/locale-results/multibyte-provider-negative.log; then failed=1; fi
           exit "$failed"
       - name: Check named single-byte conversion and locale selection
         run: |

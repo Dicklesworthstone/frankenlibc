@@ -149,7 +149,7 @@ fn category_charset(cat: c_int) -> Charset {
 /// This is `LC_CTYPE` specifically, not "the locale": POSIX puts character
 /// classification and multibyte conversion under `LC_CTYPE`, so a program that
 /// sets only `LC_NUMERIC` to `C.UTF-8` must NOT get a UTF-8 codec. Conversion
-/// entrypoints use `active_multibyte_codec` to include named single-byte data.
+/// entrypoints use `active_multibyte_codec` to include named encoding data.
 #[inline]
 pub(crate) fn active_charset() -> Charset {
     if let Some(category) = thread_category(locale_core::LC_CTYPE) {
@@ -166,10 +166,13 @@ pub(crate) use frankenlibc_core::iconv::MultibyteCodec;
 pub(crate) fn active_multibyte_codec() -> MultibyteCodec {
     let category = thread_category(locale_core::LC_CTYPE)
         .or_else(|| global_named(locale_core::LC_CTYPE).map(Resolved::Named));
-    if let Some(Resolved::Named(named)) = category
-        && let Some(codec) = named.single_byte_codec.as_ref()
-    {
-        return MultibyteCodec::SingleByte(codec);
+    if let Some(Resolved::Named(named)) = category {
+        if let Some(codec) = named.single_byte_codec.as_ref() {
+            return MultibyteCodec::SingleByte(codec);
+        }
+        if let Some(codec) = named.multibyte_codec {
+            return MultibyteCodec::Stateless(codec);
+        }
     }
     let charset =
         category.map_or_else(|| category_charset(locale_core::LC_CTYPE), resolved_charset);
@@ -329,6 +332,8 @@ struct NamedCategory {
     /// For a supported single-byte LC_CTYPE: native byte/Unicode conversion.
     /// Classification tables alone do not describe the external encoding.
     single_byte_codec: Option<frankenlibc_core::iconv::SingleByteCodec>,
+    /// For a supported stateless multibyte LC_CTYPE: one scalar per character.
+    multibyte_codec: Option<frankenlibc_core::iconv::StatelessMultibyteCodec>,
     /// For LC_COLLATE: lazily parsed collation tables.
     collate: OnceLock<Option<frankenlibc_core::locale::collate::CollateTables<'static>>>,
 }
@@ -710,23 +715,30 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     let mut stored = Vec::with_capacity(name.len() + 1);
     stored.extend_from_slice(name);
     stored.push(0);
-    let single_byte_codec = if category == locale_core::LC_CTYPE {
+    let (single_byte_codec, multibyte_codec) = if category == locale_core::LC_CTYPE {
         let codeset = blob.string(14)?;
         if codeset.eq_ignore_ascii_case(b"UTF-8") {
-            None
+            (None, None)
+        } else if blob.word(13)? == 1 {
+            (
+                Some(frankenlibc_core::iconv::SingleByteCodec::from_name(
+                    codeset,
+                )?),
+                None,
+            )
         } else {
             // An accepted locale must have a working conversion engine, not
-            // merely a CODESET string. Other multibyte/stateful engines need
-            // their own mbstate_t integration; never silently treat them as C.
-            if blob.word(13)? != 1 {
+            // merely a CODESET string. Only stateless engines whose partial
+            // prefix fits mbstate_t are admitted; shift-state and decomposing
+            // encodings still need their own restart-state representation.
+            let codec = frankenlibc_core::iconv::StatelessMultibyteCodec::from_name(codeset)?;
+            if blob.word(13)? as usize != codec.max_width() {
                 return None;
             }
-            Some(frankenlibc_core::iconv::SingleByteCodec::from_name(
-                codeset,
-            )?)
+            (None, Some(codec))
         }
     } else {
-        None
+        (None, None)
     };
     let (ctype, bytes) = if category == locale_core::LC_CTYPE {
         (
@@ -743,6 +755,7 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
         ctype,
         bytes,
         single_byte_codec,
+        multibyte_codec,
         collate: OnceLock::new(),
     }));
     if loaded.is_empty() {
@@ -1094,6 +1107,7 @@ pub(crate) fn mb_cur_max() -> libc::size_t {
     match active_multibyte_codec() {
         MultibyteCodec::Ascii | MultibyteCodec::SingleByte(_) => 1,
         MultibyteCodec::Utf8 => 6,
+        MultibyteCodec::Stateless(codec) => codec.max_width(),
     }
 }
 

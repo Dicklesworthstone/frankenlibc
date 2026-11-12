@@ -91,16 +91,21 @@ jobs:
             > artifacts/owned-unwind/dependency-build.jsonl
           python3 - <<'PY'
           import json, os
-          libraries = set()
+          artifacts = []
           with open('artifacts/owned-unwind/dependency-build.jsonl', encoding='utf-8') as source:
               for line in source:
                   message = json.loads(line)
                   if message.get('reason') == 'compiler-artifact' and message['target']['name'] == 'libc':
-                      libraries.update(path for path in message['filenames'] if path.endswith('.rlib'))
-          if len(libraries) != 1:
-              raise SystemExit(f'expected one libc rlib, got {sorted(libraries)}')
+                      artifacts.append(message['filenames'])
+          if len(artifacts) != 1:
+              raise SystemExit(f'expected one libc compiler artifact, got {artifacts}')
+          libraries = [path for path in artifacts[0] if path.endswith('.rlib')]
+          metadata = [path for path in artifacts[0] if path.endswith('.rmeta')]
+          if len(libraries) != 1 or len(metadata) != 1:
+              raise SystemExit(f'expected matching libc rlib and full rmeta, got {artifacts[0]}')
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as environment:
-              environment.write('FRANKENLIBC_UNWIND_LIBC_RLIB=' + libraries.pop() + '\n')
+              environment.write('FRANKENLIBC_UNWIND_LIBC_RLIB=' + libraries[0] + '\n')
+              environment.write('FRANKENLIBC_UNWIND_LIBC_RMETA=' + metadata[0] + '\n')
           PY
       - name: Execute owned cleanup and forced-unwind contracts without a host unwinder
         shell: bash

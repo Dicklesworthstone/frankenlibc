@@ -2933,6 +2933,7 @@ pub enum MultibyteCodec {
     Ascii,
     Utf8,
     SingleByte(&'static SingleByteCodec),
+    Stateless(StatelessMultibyteCodec),
 }
 
 impl MultibyteCodec {
@@ -2945,13 +2946,16 @@ impl MultibyteCodec {
         if matches!(self, Self::Utf8) {
             return utf8_decode_step(bytes);
         }
+        if let Self::Stateless(codec) = self {
+            return codec.decode(bytes);
+        }
         let Some(&byte) = bytes.first() else {
             return Utf8Step::Incomplete;
         };
         let character = match self {
             Self::Ascii => (byte < 0x80).then_some(u32::from(byte)),
             Self::SingleByte(codec) => codec.decode(byte),
-            Self::Utf8 => unreachable!(),
+            Self::Utf8 | Self::Stateless(_) => unreachable!(),
         };
         match character {
             Some(wc) => Utf8Step::Char { wc, len: 1 },
@@ -2965,6 +2969,7 @@ impl MultibyteCodec {
     pub fn encode(self, wc: u32, destination: &mut [u8]) -> Option<usize> {
         let byte = match self {
             Self::Utf8 => return crate::string::wchar::wctomb(wc, destination),
+            Self::Stateless(codec) => return codec.encode(wc, destination),
             Self::Ascii => (wc < 0x80).then_some(wc as u8)?,
             Self::SingleByte(codec) => codec.encode(wc)?,
         };
@@ -2978,6 +2983,27 @@ impl MultibyteCodec {
     pub fn encode_prefix(self, destination: &mut [u8], source: &[u32]) -> Option<usize> {
         if matches!(self, Self::Utf8) {
             return crate::string::wchar::wcstombs(destination, source);
+        }
+        if let Self::Stateless(codec) = self {
+            let mut written = 0;
+            let mut encoded = [0u8; 4];
+            for &wc in source {
+                // A full destination ends conversion before the next input
+                // character is examined, including an invalid character.
+                if written == destination.len() {
+                    break;
+                }
+                let length = codec.encode(wc, &mut encoded)?;
+                if length > destination.len() - written {
+                    break;
+                }
+                destination[written..written + length].copy_from_slice(&encoded[..length]);
+                if wc == 0 {
+                    break;
+                }
+                written += length;
+            }
+            return Some(written);
         }
         let mut written = 0;
         for &wc in source.iter().take(destination.len()) {
@@ -2996,7 +3022,73 @@ impl MultibyteCodec {
         match self {
             Self::Ascii | Self::Utf8 => true,
             Self::SingleByte(codec) => codec.is_ascii_compatible(),
+            Self::Stateless(codec) => codec.is_ascii_compatible(),
         }
+    }
+}
+
+/// A locale codec whose only restart state is an incomplete character prefix.
+///
+/// These native iconv engines map each external character to exactly one wide
+/// character, use a single NUL byte, and have no shift state. Stateful and
+/// decomposing encodings require a different `mbstate_t` representation and
+/// are deliberately not admitted by this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatelessMultibyteCodec {
+    encoding: Encoding,
+    max_width: usize,
+    ascii_compatible: bool,
+}
+
+impl StatelessMultibyteCodec {
+    /// Resolve a supported stateless locale encoding or one of its aliases.
+    #[must_use]
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        let encoding = classify_encoding(name).encoding?;
+        let max_width = match encoding {
+            Encoding::ShiftJis => 2,
+            Encoding::EucJp => 3,
+            Encoding::Gb18030 => 4,
+            _ => return None,
+        };
+        Some(Self {
+            encoding,
+            max_width,
+            ascii_compatible: pair_is_ascii_identity(encoding, encoding),
+        })
+    }
+
+    /// Maximum number of external bytes in a complete character.
+    #[inline]
+    #[must_use]
+    pub const fn max_width(self) -> usize {
+        self.max_width
+    }
+
+    /// Decode exactly one character with the native iconv mapping.
+    #[inline]
+    #[must_use]
+    pub fn decode(self, bytes: &[u8]) -> crate::string::wchar::Utf8Step {
+        use crate::string::wchar::Utf8Step;
+        match decode_char(self.encoding, bytes) {
+            Ok((ch, len)) => Utf8Step::Char { wc: ch as u32, len },
+            Err(DecodeError::Incomplete) => Utf8Step::Incomplete,
+            Err(DecodeError::Invalid) => Utf8Step::Invalid,
+        }
+    }
+
+    /// Encode one scalar without replacement, transliteration or partial output.
+    #[inline]
+    #[must_use]
+    pub fn encode(self, wc: u32, destination: &mut [u8]) -> Option<usize> {
+        encode_char(self.encoding, char::from_u32(wc)?, destination).ok()
+    }
+
+    /// Whether all ASCII bytes and characters are identical in both directions.
+    #[inline]
+    #[must_use]
+    pub const fn is_ascii_compatible(self) -> bool {
+        self.ascii_compatible
     }
 }
 
@@ -51431,6 +51523,94 @@ mod tests {
             Some(3)
         );
         assert_eq!(bytes, [0xc1, 0xc2, 0xc3]);
+    }
+
+    #[test]
+    fn stateless_locale_codecs_preserve_character_boundaries() {
+        use crate::string::wchar::Utf8Step;
+        let cases: &[(&[u8], usize, u32, &[u8])] = &[
+            (b"SHIFT_JIS", 2, 0x3042, &[0x82, 0xa0]),
+            (b"EUC-JP", 3, 0x2d8, &[0x8f, 0xa2, 0xaf]),
+            (b"GB18030", 4, 0x1f600, &[0x94, 0x39, 0xfc, 0x36]),
+        ];
+        for &(name, maximum, wc, external) in cases {
+            let codec = StatelessMultibyteCodec::from_name(name).unwrap();
+            assert_eq!(codec.max_width(), maximum);
+            let codec = MultibyteCodec::Stateless(codec);
+            for length in 0..external.len() {
+                assert_eq!(codec.decode(&external[..length]), Utf8Step::Incomplete);
+                let mut short = [0xa5; 4];
+                assert_eq!(codec.encode(wc, &mut short[..length]), None);
+                assert_eq!(short, [0xa5; 4], "short output must not split a character");
+            }
+            assert_eq!(
+                codec.decode(external),
+                Utf8Step::Char {
+                    wc,
+                    len: external.len()
+                }
+            );
+            assert_eq!(codec.decode(&[0xff]), Utf8Step::Invalid);
+            assert_eq!(codec.decode(&[external[0], 0]), Utf8Step::Invalid);
+            let mut bytes = [0xa5; 6];
+            assert_eq!(codec.encode(wc, &mut bytes), Some(external.len()));
+            assert_eq!(&bytes[..external.len()], external);
+            assert_eq!(bytes[external.len()], 0xa5);
+            assert_eq!(codec.encode(0xd800, &mut bytes), None);
+            assert_eq!(codec.encode(0x110000, &mut bytes), None);
+
+            let mut prefix = [0xa5; 8];
+            assert_eq!(
+                codec.encode_prefix(&mut prefix[..maximum], &[b'A' as u32, wc, 0]),
+                Some(1)
+            );
+            assert_eq!(prefix[0], b'A');
+            assert_eq!(&prefix[1..], &[0xa5; 7]);
+            assert_eq!(
+                codec.encode_prefix(&mut prefix[..maximum], &[wc, 0x110000]),
+                Some(maximum)
+            );
+            assert_eq!(codec.encode_prefix(&mut prefix, &[wc, 0]), Some(maximum));
+            assert_eq!(&prefix[..maximum], external);
+            assert_eq!(prefix[maximum], 0);
+        }
+    }
+
+    #[test]
+    fn stateless_locale_codec_selection_keeps_nonidentity_and_stateful_encodings_distinct() {
+        use crate::string::wchar::Utf8Step;
+        let sjis = StatelessMultibyteCodec::from_name(b"SJIS").unwrap();
+        assert_eq!(
+            sjis,
+            StatelessMultibyteCodec::from_name(b"SHIFT_JIS").unwrap()
+        );
+        assert!(!sjis.is_ascii_compatible());
+        assert_eq!(sjis.decode(&[0x5c]), Utf8Step::Char { wc: 0xa5, len: 1 });
+        assert_eq!(sjis.decode(&[0x7e]), Utf8Step::Char { wc: 0x203e, len: 1 });
+        let mut byte = [0];
+        assert_eq!(sjis.encode(0xa5, &mut byte), Some(1));
+        assert_eq!(byte, [0x5c]);
+        assert!(
+            StatelessMultibyteCodec::from_name(b"EUC-JP")
+                .unwrap()
+                .is_ascii_compatible()
+        );
+        assert!(
+            StatelessMultibyteCodec::from_name(b"GB18030")
+                .unwrap()
+                .is_ascii_compatible()
+        );
+        for name in [
+            b"ISO-2022-JP".as_slice(),
+            b"HZ",
+            b"SHIFT_JISX0213",
+            b"EUC-JISX0213",
+            b"UTF-16",
+            b"ISO-8859-1",
+            b"GB18030//IGNORE",
+        ] {
+            assert_eq!(StatelessMultibyteCodec::from_name(name), None, "{name:?}");
+        }
     }
 
     #[test]
