@@ -599,7 +599,7 @@ fn concurrent_wide_strings_and_formatting_keep_each_record_intact() {
         assert_eq!(data.len(), WRITERS * RECORDS * (WIDTH + 1) + 1);
         assert_eq!(data.last(), Some(&0));
         let mut counts = [0; WRITERS];
-        for record in data[..data.len() - 1].chunks_exact(WIDTH + 1) {
+        for record in data[..data.len() - 1].as_chunks::<{ WIDTH + 1 }>().0 {
             assert_eq!(record[WIDTH], u32::from(b'\n'));
             let value = record[0];
             assert!((0x3a9..0x3a9 + WRITERS as u32).contains(&value));

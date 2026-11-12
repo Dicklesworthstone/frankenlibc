@@ -82,17 +82,26 @@ fn isolated(name: &str, scenario: fn(Api)) {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
             .env("FRANKENLIBC_MAPPING_CHILD", mode)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         let start = Instant::now();
         loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                assert!(status.success(), "{name}: {mode}: {status}");
+            if child.try_wait().unwrap().is_some() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "{name}: {mode}: {}\nstdout:\n{}\nstderr:\n{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 break;
             }
             if start.elapsed() > Duration::from_secs(40) {
                 child.kill().unwrap();
-                child.wait().unwrap();
+                let _ = child.wait_with_output();
                 panic!("{name}: {mode}: timeout");
             }
             std::thread::sleep(Duration::from_millis(10));

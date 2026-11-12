@@ -247,10 +247,10 @@ The committed curated preload snapshot has 348 pass / 0 fail / 4 optional skips 
 ### Known broken or not yet freshly evidenced under preload
 
 - Multi-threaded allocation throughput and per-thread cache architecture remain open (`bd-rc0923-epic-eeuy4f.26`).
-- `fork`/exit and fork/exec remain materially slower than glibc (`bd-rc0923-epic-eeuy4f.25`).
-- Native-loader metadata/TLS closure is incomplete even though common libc-linked pathname loads now delegate safely to the host loader (`bd-rc0923-epic-eeuy4f.3`).
+- `fork`/exit and fork/exec page-fault overhead was reduced via zero-initialized `.bss` allocator slots (`bd-rc0923-epic-eeuy4f.25`, resolved), though strict `fork`/exit remains ~1.4x–1.5x glibc.
+- Pathname `dlopen` host-fallback and `dladdr`/`dlinfo`/`dl_iterate_phdr` metadata routing are wired (`bd-rc0923-epic-eeuy4f.3`, resolved), though standalone host-free dynamic linking (`CRT`/loader ownership) remains outside interpose scope (`bd-reality-202609-lx578q.6.1`).
 - Complete blocked-cancellation-point coverage remains open (`bd-rc0923-epic-eeuy4f.24`).
-- Support-matrix source/proof promotion reconciliation (`bd-rc0923-epic-eeuy4f.37`) and durable post-cutoff closure-receipt backfill (`bd-rc0923-epic-eeuy4f.51`) remain active.
+- Support-matrix source/proof promotion reconciliation remains open (`bd-rc0923-epic-eeuy4f.37`).
 
 ---
 
@@ -316,9 +316,9 @@ The committed curated preload snapshot has 348 pass / 0 fail / 4 optional skips 
 
 | Crate | Purpose | Approx size |
 |---|---|---:|
-| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 115 Rust source files, ~216 kLOC |
-| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~82 kLOC |
-| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 201 Rust source files, ~1.16 MLOC including generated codec tables |
+| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 125 Rust source files, ~243 kLOC |
+| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~86 kLOC |
+| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 204 Rust source files, ~1.17 MLOC including generated codec tables |
 | `frankenlibc-harness` | Conformance CLI, fixture capture/verify, reports, evidence tooling | 44 files, ~34 kLOC |
 | `frankenlibc-bench` | Criterion benches | 1 module, ~25 kLOC |
 | `frankenlibc-fuzz` | 66 `cargo-fuzz` targets | — |
@@ -1555,7 +1555,7 @@ The remaining hard areas are difficult for real systems reasons, not because the
 
 - The current shipping artifact is the **interpose** shared library, not a fully standalone libc replacement.
 - The deployment model is `LD_PRELOAD`; setuid/setgid binaries are out of scope because the kernel loader ignores `LD_PRELOAD` for them.
-- The preload smoke battery (`scripts/ld_preload_smoke.sh`), measured 2026-10-06 at 7fafe5bee: 310 pass / 15 fail / 4 optional skips across strict and hardened. All 15 failures are strict-mode perf-ratio checks (a short-lived process over 2.0x glibc's wall time); which cases cross the line changes from run to run with machine load. No correctness case fails. See `docs/planning/COMPATIBILITY.md` for workload status details.
+- The preload smoke battery (`scripts/ld_preload_smoke.sh`), recorded in `tests/conformance/ld_preload_smoke_summary.v1.json` (`run 20261111T134243Z-2744068`, source `44a61541…`), reports 348 pass / 0 fail / 4 optional skips / 0 xfail across strict and hardened modes, though strict-mode short-process wall ratios remain sensitive to machine load. See `docs/planning/COMPATIBILITY.md` for workload status details.
 - Hardened protections stop at signal handlers. Inside a handler, string and memory calls are not bounds-checked and a free of a pointer fl does not own goes to the host allocator (glibc aborts on it, as it would without fl): the interrupted frame may hold arena locks or a pinned reclamation epoch, so the handler must not re-enter the membrane (bd-na6ede; `string_abi.rs` `enter_string_membrane_guard`). A `memcpy` past a 16-byte heap block is clamped and logged in the main program but overflows inside a SIGALRM handler.
 - Hardened mode is fixture-and-oracle-verified for the defined healing taxonomy; that is not a blanket production-readiness claim for arbitrary workloads.
 - Performance: strict-mode overhead is budgeted at < 20 ns/call and hardened-mode at < 200 ns/call; perf gates measure rather than assume, and regressions surface in `scripts/check_perf_regression_gate.sh`.
@@ -3968,9 +3968,9 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,822 native/direct-syscall rows (68.5%), 1,279 host-backed wrapper rows (31.1%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,902 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 242,538 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 242,739 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 85,536 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,796 lines including generated codec tables |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,799 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |

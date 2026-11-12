@@ -289,66 +289,6 @@ fn truncate(s: &str, width: usize) -> String {
     format!("{}...", &s[..(width - 3)])
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use frankenlibc_membrane::{RuntimeMathKernel, SafetyLevel};
-
-    fn fixture_with_snapshot(snapshot: RuntimeKernelSnapshot) -> RuntimeKernelSnapshotFixtureV1 {
-        RuntimeKernelSnapshotFixtureV1 {
-            version: String::from("v1"),
-            scenario: crate::kernel_snapshot::KernelSnapshotScenarioV1 {
-                id: String::from("snapshot-diff-test"),
-                seed: 0,
-                steps: 1,
-                families: vec![String::from("allocator")],
-            },
-            strict: Some(ModeSnapshotV1 {
-                mode: String::from("strict"),
-                snapshot,
-            }),
-            hardened: None,
-        }
-    }
-
-    #[test]
-    fn snapshot_field_map_preserves_scalar_and_array_values() {
-        let kernel = RuntimeMathKernel::new();
-        let snapshot = kernel.snapshot(SafetyLevel::Strict);
-        let fields = snapshot_field_map(&snapshot);
-
-        assert_eq!(
-            fields.get("schema_version"),
-            Some(&snapshot.schema_version.to_string())
-        );
-        assert_eq!(
-            fields.get("policy_action_dist"),
-            Some(&serde_json::to_string(&snapshot.policy_action_dist).expect("array serializes"))
-        );
-    }
-
-    #[test]
-    fn diff_kernel_snapshots_uses_structured_snapshot_payloads() {
-        let kernel = RuntimeMathKernel::new();
-        let golden_snapshot = kernel.snapshot(SafetyLevel::Strict);
-        let mut current_snapshot = golden_snapshot;
-        current_snapshot.full_validation_trigger_ppm += 25_000;
-
-        let golden = fixture_with_snapshot(golden_snapshot);
-        let current = fixture_with_snapshot(current_snapshot);
-        let report =
-            diff_kernel_snapshots(&golden, &current, DiffMode::Strict, false).expect("diff works");
-
-        let row = report
-            .rows
-            .iter()
-            .find(|row| row.field == "full_validation_trigger_ppm")
-            .expect("key field should be present");
-        assert_eq!(row.status, DiffStatus::Alert);
-        assert_eq!(row.delta, Some(25_000.0));
-    }
-}
-
 #[cfg(feature = "frankentui-ui")]
 #[must_use]
 pub fn render_ftui_buffer(report: &SnapshotDiffReport, width: u16) -> ftui_render::buffer::Buffer {
@@ -460,4 +400,64 @@ pub fn compare_ftui_snapshots(
         &expected_buf,
         &actual_buf,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use frankenlibc_membrane::{RuntimeMathKernel, SafetyLevel};
+
+    fn fixture_with_snapshot(snapshot: RuntimeKernelSnapshot) -> RuntimeKernelSnapshotFixtureV1 {
+        RuntimeKernelSnapshotFixtureV1 {
+            version: String::from("v1"),
+            scenario: crate::kernel_snapshot::KernelSnapshotScenarioV1 {
+                id: String::from("snapshot-diff-test"),
+                seed: 0,
+                steps: 1,
+                families: vec![String::from("allocator")],
+            },
+            strict: Some(ModeSnapshotV1 {
+                mode: String::from("strict"),
+                snapshot,
+            }),
+            hardened: None,
+        }
+    }
+
+    #[test]
+    fn snapshot_field_map_preserves_scalar_and_array_values() {
+        let kernel = RuntimeMathKernel::new();
+        let snapshot = kernel.snapshot(SafetyLevel::Strict);
+        let fields = snapshot_field_map(&snapshot);
+
+        assert_eq!(
+            fields.get("schema_version"),
+            Some(&snapshot.schema_version.to_string())
+        );
+        assert_eq!(
+            fields.get("policy_action_dist"),
+            Some(&serde_json::to_string(&snapshot.policy_action_dist).expect("array serializes"))
+        );
+    }
+
+    #[test]
+    fn diff_kernel_snapshots_uses_structured_snapshot_payloads() {
+        let kernel = RuntimeMathKernel::new();
+        let golden_snapshot = kernel.snapshot(SafetyLevel::Strict);
+        let mut current_snapshot = golden_snapshot;
+        current_snapshot.full_validation_trigger_ppm += 25_000;
+
+        let golden = fixture_with_snapshot(golden_snapshot);
+        let current = fixture_with_snapshot(current_snapshot);
+        let report =
+            diff_kernel_snapshots(&golden, &current, DiffMode::Strict, false).expect("diff works");
+
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.field == "full_validation_trigger_ppm")
+            .expect("key field should be present");
+        assert_eq!(row.status, DiffStatus::Alert);
+        assert_eq!(row.delta, Some(25_000.0));
+    }
 }

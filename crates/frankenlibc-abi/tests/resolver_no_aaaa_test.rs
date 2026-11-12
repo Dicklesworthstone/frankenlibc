@@ -65,6 +65,7 @@ struct Observation {
     response: Vec<u8>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn observe(
     query: Query,
     send: Send,

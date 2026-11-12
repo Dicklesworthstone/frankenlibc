@@ -771,17 +771,26 @@ fn isolated_with_environment(
             .args(["--exact", name, "--nocapture"])
             .env("FRANKENLIBC_MEMORY_CHILD", mode)
             .envs(environment.iter().copied())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         let start = Instant::now();
         loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                assert!(status.success(), "{name}: {mode}: {status}");
+            if child.try_wait().unwrap().is_some() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "{name}: {mode}: {}\nstdout:\n{}\nstderr:\n{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 break;
             }
             if start.elapsed() > Duration::from_secs(40) {
                 child.kill().unwrap();
-                child.wait().unwrap();
+                let _ = child.wait_with_output();
                 panic!("{name}: {mode}: timeout");
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -1086,7 +1095,7 @@ fn memory_runtime_rejects_malformed_unwind_metadata_before_publication() {
         |api| {
             use frankenlibc_core::elf::ProgramType;
 
-            for case in 0..9 {
+            for case in 0..10 {
                 let fixture = Fixture::new(&[]);
                 // This gate tests failed native admission. A no-DT_NEEDED
                 // plugin importing host symbols deliberately qualifies for
@@ -1173,6 +1182,14 @@ fn memory_runtime_rejects_malformed_unwind_metadata_before_publication() {
                         bytes[frame + 8..frame + 24].copy_from_slice(&[
                             1, b'z', b'S', b'R', 0, 1, 0x78, 16, 1, 0x1b, 0, 0, 0, 0, 0, 0,
                         ]);
+                    }
+                    9 => {
+                        // Over-counted PT_GNU_EH_FRAME fde_count must fail
+                        // closed instead of publishing truncated unwind frames.
+                        assert_eq!(original[at + 2], 0x03, "fixture uses udata4 fde_count");
+                        let fde_count =
+                            u32::from_le_bytes(original[at + 8..at + 12].try_into().unwrap());
+                        bytes[at + 8..at + 12].copy_from_slice(&(fde_count + 1).to_le_bytes());
                     }
                     _ => unreachable!(),
                 }
@@ -1434,6 +1451,8 @@ fn memory_runtime_protection_changes_fault_on_write() {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", NAME, "--nocapture"])
             .env("FRANKENLIBC_MEMORY_FAULT_CHILD", mode)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         let start = Instant::now();

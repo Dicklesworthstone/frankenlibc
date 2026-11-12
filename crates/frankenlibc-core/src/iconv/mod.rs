@@ -627,6 +627,9 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
+// Compile-time-only input to `const fn pack_codec_table()`; keeping this `const`
+// avoids `.data.rel.ro` pointer-table relocations in `libfrankenlibc_abi.so`.
+#[allow(clippy::large_const_arrays)]
 const PHASE1_CODEC_TABLE: [CodecSpec; 302] = [
     CodecSpec {
         encoding: Encoding::Utf8,
