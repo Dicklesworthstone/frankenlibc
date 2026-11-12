@@ -53,12 +53,39 @@ jobs:
           set -euo pipefail
           cargo test -p frankenlibc-membrane --lib -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/membrane-lib.log
           grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/membrane-lib.log
-      - name: Execute runtime math interposition and routing regressions
+      - name: Prepare production-library integration targets
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p frankenlibc-membrane --test runtime_math_dual_mode_e2e_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e.log
-          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e.log
+          mkdir -p artifacts/access/runtime-integration
+          # These targets use the ordinary library. Their small caller manifest
+          # avoids compiling unrelated conformance/UI dev dependencies twice,
+          # including an optimized copy for the release interposition checks.
+          cat > artifacts/access/runtime-integration/Cargo.toml <<EOF
+          [package]
+          name = "frankenlibc-runtime-integration"
+          version = "0.0.0"
+          edition = "2024"
+          [workspace]
+          [dependencies]
+          frankenlibc-membrane = { path = "$PWD/crates/frankenlibc-membrane" }
+          serde_json = "1"
+          libc = "0.2"
+          libm = "0.2.16"
+          [[test]]
+          name = "runtime_math_dual_mode_e2e_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs"
+          [[test]]
+          name = "allocator_quarantine_feedback_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/allocator_quarantine_feedback_test.rs"
+          EOF
+          cp Cargo.lock artifacts/access/runtime-integration/Cargo.lock
+      - name: Execute runtime math and real quarantine feedback regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e.log
+          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e.log)" -eq 2
       - name: Execute access verdict and lifetime regressions in both modes
         shell: bash
         run: |
@@ -162,8 +189,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p frankenlibc-membrane --release --test runtime_math_dual_mode_e2e_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e-release.log
-          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e-release.log
+          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --release --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e-release.log
+          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e-release.log)" -eq 2
           cargo build -p frankenlibc-membrane --release --lib --message-format=json > artifacts/access/membrane-build.jsonl
           python3 - <<'PY'
           import json, subprocess

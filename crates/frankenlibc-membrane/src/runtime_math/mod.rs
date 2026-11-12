@@ -276,7 +276,9 @@ use crate::mean_field_game::{MeanFieldGameController, MfgState};
 use crate::padic_valuation::{PadicState, PadicValuationMonitor};
 use crate::persistence::{PersistenceDetector, TopologicalState};
 use crate::pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};
-use crate::quarantine_controller::{QuarantineController, current_depth, publish_depth};
+use crate::quarantine_controller::{
+    QuarantineController, QuarantineSnapshot, current_depth, publish_depth,
+};
 use crate::risk_engine::{CallFamily, RiskDecision, RiskEngine};
 use crate::rough_path::{RoughPathMonitor, SignatureState};
 use crate::schrodinger_bridge::{BridgeState, SchrodingerBridgeController};
@@ -4757,15 +4759,6 @@ impl RuntimeMathKernel {
             }
         }
 
-        // Feed allocator frees into primal-dual quarantine controller.
-        if matches!(family, ApiFamily::Allocator) {
-            let mut quarantine = self.quarantine.lock();
-            let updated = quarantine.record_free(estimated_cost_ns, adverse);
-            if updated {
-                publish_depth(&quarantine);
-            }
-        }
-
         // For non-pointer families we only have coarse stage-exit information.
         // PointerValidation feeds exact stage exits via `note_check_order_outcome`.
         if !matches!(family, ApiFamily::PointerValidation) {
@@ -4793,6 +4786,49 @@ impl RuntimeMathKernel {
                 Ordering::Relaxed,
             );
         }
+    }
+
+    /// Feed an actual completed arena free into the quarantine controller.
+    ///
+    /// This bypasses generic ABI observation sampling and certificate shortcuts.
+    /// Every successful retirement and every detected double free contributes
+    /// once to the rate denominator; only double frees contribute to its hit
+    /// numerator. Allocation failures and integrity corruption are not UAF hits.
+    /// The fixed-window percentile and depth update run once per 256 attempts.
+    pub fn observe_allocator_free(
+        &self,
+        mode: SafetyLevel,
+        result: crate::arena::FreeResult,
+        estimated_cost_ns: u64,
+    ) {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED
+            || !matches!(mode, SafetyLevel::Hardened)
+            || !self.validation_feedback_enabled()
+        {
+            return;
+        }
+        let was_quarantine_hit = match result {
+            crate::arena::FreeResult::Freed
+            | crate::arena::FreeResult::FreedWithCanaryCorruption
+            | crate::arena::FreeResult::FreedWithFingerprintCorruption => false,
+            crate::arena::FreeResult::DoubleFree => true,
+            crate::arena::FreeResult::ForeignPointer | crate::arena::FreeResult::InvalidPointer => {
+                return;
+            }
+        };
+        let _floating_environment = floating_environment::Guard::enter();
+        // NoPoisonMutex uses raw futex syscalls, and the fixed-size controller
+        // update allocates nothing: neither path changes the caller's errno.
+        let mut quarantine = self.quarantine.lock();
+        if quarantine.record_free(estimated_cost_ns, was_quarantine_hit) {
+            publish_depth(&quarantine);
+        }
+    }
+
+    /// Exact retirement feedback counts and the resulting local controller state.
+    #[must_use]
+    pub fn quarantine_snapshot(&self) -> QuarantineSnapshot {
+        self.quarantine.lock().snapshot()
     }
 
     /// Record overlap information for cross-shard consistency checks.

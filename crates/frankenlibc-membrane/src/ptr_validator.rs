@@ -2254,6 +2254,13 @@ impl ValidationPipeline {
             let _ = self.collector.try_advance();
         }
 
+        // Report the real outcome after arena and retirement locks are gone.
+        // The ABI observer skips healthy allocations and certified frees, so
+        // it cannot drive this controller. Keep its existing 20 ns cost proxy;
+        // retirement counts, quarantine hits and contention are live signals.
+        self.runtime_math
+            .observe_allocator_free(safety_level(), result, 20);
+
         (result, user_size)
     }
 

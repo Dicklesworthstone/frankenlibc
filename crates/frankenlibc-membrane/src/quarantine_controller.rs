@@ -117,6 +117,23 @@ impl Default for ContentionSignal {
 /// Global contention signal instance.
 pub static CONTENTION: ContentionSignal = ContentionSignal::new();
 
+/// Observed arena retirement feedback and the controller state it produced.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QuarantineSnapshot {
+    /// Current recommended per-shard quarantine depth.
+    pub depth: usize,
+    /// Successful retirements plus attempts to free an already quarantined block.
+    pub retirement_attempts: u64,
+    /// Blocks actually retired, including blocks with corrupted integrity tags.
+    pub successful_frees: u64,
+    /// Attempts to free an already quarantined block; corruption is not a hit.
+    pub quarantine_hits: u64,
+    /// Completed 256-attempt controller epochs.
+    pub epochs: u64,
+    /// EWMA of observed quarantine hits / retirement attempts, not escape probability.
+    pub quarantine_hit_rate_ewma: f64,
+}
+
 /// The quarantine controller state.
 pub struct QuarantineController {
     /// Current quarantine depth.
@@ -133,10 +150,12 @@ pub struct QuarantineController {
     latency_count: usize,
     /// Quarantine hits (UAF attempts caught) this epoch.
     hits_this_epoch: u64,
-    /// Total frees this epoch.
+    /// Qualifying retirement attempts this epoch, including quarantine hits.
     frees_this_epoch: u64,
     /// Total epochs completed.
     epochs: u64,
+    /// Qualifying retirement attempts across all epochs.
+    total_attempts: u64,
     /// Total quarantine hits.
     total_hits: u64,
     /// Running estimate of UAF escape rate.
@@ -156,6 +175,7 @@ impl QuarantineController {
             hits_this_epoch: 0,
             frees_this_epoch: 0,
             epochs: 0,
+            total_attempts: 0,
             total_hits: 0,
             estimated_escape_rate: 0.0,
         }
@@ -166,7 +186,12 @@ impl QuarantineController {
         self.depth
     }
 
-    /// Record a free operation with its latency.
+    /// Record one completed arena retirement attempt with its cost estimate.
+    ///
+    /// Successful frees (including integrity corruption) set `was_quarantine_hit`
+    /// to false. An attempt to free an already quarantined block sets it to true.
+    /// Foreign and invalid pointers are excluded. Every qualifying attempt must
+    /// be recorded: sampling only successes would bias the epoch's hit rate.
     ///
     /// Returns `true` if an epoch boundary was crossed and the depth was updated.
     pub fn record_free(&mut self, latency_ns: u64, was_quarantine_hit: bool) -> bool {
@@ -178,9 +203,10 @@ impl QuarantineController {
         }
 
         self.frees_this_epoch += 1;
+        self.total_attempts = self.total_attempts.saturating_add(1);
         if was_quarantine_hit {
             self.hits_this_epoch += 1;
-            self.total_hits += 1;
+            self.total_hits = self.total_hits.saturating_add(1);
         }
 
         // Check epoch boundary
@@ -271,8 +297,10 @@ impl QuarantineController {
         }
 
         let n = self.latency_count;
-        let mut sorted: Vec<u64> = self.latencies[..n].to_vec();
-        sorted.sort_unstable();
+        // Updating the controller runs inside the allocator's completed-free
+        // hook while its mutex is held. A Vec here could reenter that allocator.
+        let mut sorted = self.latencies;
+        sorted[..n].sort_unstable();
 
         let p99_idx = crate::util::ceil_f64((n as f64) * 0.99) as usize;
         sorted[p99_idx.min(n - 1)] as f64
@@ -296,6 +324,18 @@ impl QuarantineController {
     /// Returns the number of epochs completed.
     pub fn epochs(&self) -> u64 {
         self.epochs
+    }
+
+    /// Read the exact event counts separately from the controller's rate estimate.
+    pub fn snapshot(&self) -> QuarantineSnapshot {
+        QuarantineSnapshot {
+            depth: self.depth,
+            retirement_attempts: self.total_attempts,
+            successful_frees: self.total_attempts.saturating_sub(self.total_hits),
+            quarantine_hits: self.total_hits,
+            epochs: self.epochs,
+            quarantine_hit_rate_ewma: self.estimated_escape_rate,
+        }
     }
 }
 
@@ -348,6 +388,26 @@ mod tests {
         for _ in 0..100 {
             let updated = ctrl.record_free(1000, false);
             assert!(!updated);
+        }
+    }
+
+    #[test]
+    fn stack_percentile_matches_sorted_active_window() {
+        let mut ctrl = QuarantineController::new();
+        assert_eq!(ctrl.compute_p99(), 0.0);
+        for index in 0..LATENCY_WINDOW * 2 {
+            let latency = ((index * 37 + 11) % 101) as u64;
+            assert!(!ctrl.record_free(latency, false));
+            let n = ctrl.latency_count;
+            let mut reference = ctrl.latencies[..n].to_vec();
+            reference.sort_unstable();
+            let expected = if n < 2 {
+                0.0
+            } else {
+                let index = crate::util::ceil_f64(n as f64 * 0.99) as usize;
+                reference[index.min(n - 1)] as f64
+            };
+            assert_eq!(ctrl.compute_p99(), expected, "window after {index} events");
         }
     }
 
