@@ -467,7 +467,7 @@ fn committed_libarchive_qualification_bundle_relocation_tamper_and_s22_docs_e2e(
     );
     for line in &obs_lines {
         let rec: Value = serde_json::from_str(line).expect("valid JSONL observation record");
-        assert!(rec.get("milestone").is_some() || rec.get("event").is_some());
+        assert!(rec.get("case_id").is_some() && rec.get("dimensions").is_some());
     }
 
     let s22_doc: Value = serde_json::from_str(
