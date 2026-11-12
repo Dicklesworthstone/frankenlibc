@@ -6,7 +6,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Barrier};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::dlfcn_abi::{dlclose, dlerror, dlopen, dlsym, native_dso_handle_for_tests};
@@ -18,11 +18,17 @@ mod dlsym_oracle;
 // and owned TLS teardown. A Rust heap call there would reach System/host malloc
 // through inherited hardware TLS, even when an ordinary test happened to pass.
 static REJECT_NATIVE_HEAP: AtomicBool = AtomicBool::new(false);
+// Keep auditing detached cleanup after the native identity table retires it.
+static REJECT_NATIVE_TID: AtomicI32 = AtomicI32::new(0);
 struct AuditedAllocator;
 
 fn check_native_heap() {
-    if REJECT_NATIVE_HEAP.load(Ordering::Relaxed)
-        && frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+    if !REJECT_NATIVE_HEAP.load(Ordering::Relaxed) {
+        return;
+    }
+    let detached_tid = REJECT_NATIVE_TID.load(Ordering::Acquire);
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+        || (detached_tid > 0 && frankenlibc_core::syscall::sys_gettid() == detached_tid)
     {
         frankenlibc_core::syscall::sys_exit_group(93);
     }
@@ -773,4 +779,162 @@ fn native_clone_posix_keys_retain_tls_and_late_runtime_destructors() {
     assert_eq!(loader.value(handle, "finish"), 0);
     loader.close(handle);
     loader.close(sink);
+}
+
+#[repr(C)]
+struct DetachedProbe {
+    tid: AtomicI32,
+    released: AtomicU32,
+    callbacks_done: AtomicU32,
+}
+
+fn assert_mapping_pages(base: usize, length: usize, mapped: bool) {
+    assert_ne!(base, 0);
+    assert_ne!(length, 0);
+    let first = base & !4095usize;
+    let last = base.checked_add(length - 1).unwrap() & !4095usize;
+    for page in (first..=last).step_by(4096) {
+        let mut resident = 0u8;
+        // SAFETY: mincore inspects numeric mapping addresses without accessing
+        // their contents; one output byte covers this one-page request.
+        let result = unsafe {
+            frankenlibc_core::syscall::sys_mincore(page, 4096, &mut resident)
+        };
+        assert_eq!(result, if mapped { Ok(()) } else { Err(libc::ENOMEM) },
+            "mapping page {page:#x}, expected mapped={mapped}");
+    }
+}
+
+const DETACHED_CPP_TLS: &str = r#"
+    extern "C" {
+        void event_push(long);
+        int __cxa_thread_atexit_impl(void(*)(void*),void*,void*);
+        __attribute__((visibility("hidden"))) void *__dso_handle=&__dso_handle;
+        __attribute__((visibility("hidden"))) int __cxa_thread_atexit(void(*fn)(void*),void*arg,void*owner){
+            return __cxa_thread_atexit_impl(fn,arg,owner);
+        }
+    }
+    struct Probe { int tid; unsigned released, callbacks_done; };
+    static __thread Probe *progress;
+    static __thread long value=17;
+    struct Item {
+        long tag;
+        Item(long x):tag(x){}
+        ~Item(){
+            event_push(value==71 ? tag : 900+tag);
+            if(tag==1)__atomic_store_n(&progress->callbacks_done,1,__ATOMIC_RELEASE);
+        }
+    };
+    static thread_local Item first(1),second(2);
+    static void manual(void *pointer){
+        event_push(*(long*)pointer==71 && value==71 ? 3 : 903);
+    }
+    extern "C" void *worker(void *argument){
+        progress=(Probe*)argument;
+        value=71;
+        if(first.tag+second.tag!=3)event_push(904);
+        if(__cxa_thread_atexit_impl(manual,&value,__dso_handle))event_push(905);
+        long tid;
+        __asm__ volatile("syscall" : "=a"(tid) : "0"(186L) : "rcx","r11","memory","cc");
+        __atomic_store_n(&progress->tid,(int)tid,__ATOMIC_RELEASE);
+        while(!__atomic_load_n(&progress->released,__ATOMIC_ACQUIRE)){}
+        return 0;
+    }
+    __attribute__((destructor)) static void fini(void){event_push(99);}
+"#;
+
+#[test]
+fn native_detached_cpp_threads_reclaim_owned_handles_and_stacks() {
+    if !child_case("native_detached_cpp_threads_reclaim_owned_handles_and_stacks") {
+        return;
+    }
+    use frankenlibc_core::pthread::thread::{ThreadHandle, create_thread, detach_thread};
+    use frankenlibc_core::syscall::{sys_getpid, sys_tgkill};
+
+    for detach_after_exit in [false, true] {
+        let fixture = Fixture::new();
+        let loader = Loader::Native;
+        let sink = fixture.sink(loader);
+        let path = fixture.compile_with_flags("detached", DETACHED_CPP_TLS, true, &["-O2"]);
+        let library = loader.open(&path, libc::RTLD_NOW);
+        assert!(!library.is_null(), "detached C++ fixture rejected");
+        let worker = loader.symbol(library, "worker") as usize;
+        let probe = DetachedProbe {
+            tid: AtomicI32::new(0),
+            released: AtomicU32::new(0),
+            callbacks_done: AtomicU32::new(0),
+        };
+        REJECT_NATIVE_HEAP.store(true, Ordering::Release);
+        // SAFETY: the C entry point has the core start-routine ABI, and the
+        // probe and DSO remain live until kernel-observed worker termination.
+        let thread = unsafe {
+            create_thread(worker, std::ptr::from_ref(&probe) as usize, 0)
+        }.unwrap();
+        let ready_deadline = Instant::now() + Duration::from_secs(10);
+        let tid = loop {
+            let tid = probe.tid.load(Ordering::Acquire);
+            if tid != 0 {
+                break tid;
+            }
+            assert!(Instant::now() < ready_deadline, "detached worker did not reach its gate");
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(tid > 0);
+        REJECT_NATIVE_TID.store(tid, Ordering::Release);
+
+        // Copy all coordinates while the joinable worker is held at its gate.
+        // Never dereference its handle after either successful detach.
+        let handle_address = thread as usize;
+        let handle_length = std::mem::size_of::<ThreadHandle>();
+        let (stack_address, stack_length, handle_tid) = unsafe {
+            ((*thread).stack_base, (*thread).stack_total_size,
+                (*thread).self_tid.load(Ordering::Acquire))
+        };
+        assert_eq!(handle_tid, tid, "fixture must execute on the native clone");
+        assert_mapping_pages(handle_address, handle_length, true);
+        assert_mapping_pages(stack_address, stack_length, true);
+        loader.close(library);
+        assert!(native_dso_handle_for_tests(library), "pending TLS callbacks must pin the DSO");
+        assert!(fixture.events(loader, sink).is_empty());
+
+        if !detach_after_exit {
+            // SAFETY: the gated worker is still joinable. Core detach performs
+            // no allocating ABI bookkeeping after later reclamation.
+            assert_eq!(unsafe { detach_thread(thread) }, Ok(()));
+        }
+        probe.released.store(1, Ordering::Release);
+        let death_deadline = Instant::now() + Duration::from_secs(10);
+        let process = sys_getpid();
+        loop {
+            match sys_tgkill(process, tid, 0) {
+                Err(libc::ESRCH) => break,
+                Ok(()) => {}
+                Err(error) => panic!("tgkill({tid}, 0) failed: {error}"),
+            }
+            assert!(Instant::now() < death_deadline, "detached worker remained alive");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(probe.callbacks_done.load(Ordering::Acquire), 1);
+        if detach_after_exit {
+            // Kernel death alone must not reclaim a joinable thread's storage.
+            assert_mapping_pages(handle_address, handle_length, true);
+            assert_mapping_pages(stack_address, stack_length, true);
+            // SAFETY: no prior detach/join consumed this finished handle.
+            assert_eq!(unsafe { detach_thread(thread) }, Ok(()));
+        }
+        // No allocating parent work occurs between detach/death and these
+        // checks, so unrelated mappings cannot reuse the retired addresses.
+        assert_mapping_pages(handle_address, handle_length, false);
+        assert_mapping_pages(stack_address, stack_length, false);
+        REJECT_NATIVE_HEAP.store(false, Ordering::Release);
+        REJECT_NATIVE_TID.store(0, Ordering::Release);
+
+        assert_eq!(fixture.events(loader, sink), [3, 2, 1]);
+        let retained = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(retained, library);
+        loader.close(retained);
+        assert_eq!(fixture.events(loader, sink), [3, 2, 1, 99]);
+        assert!(loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null());
+        loader.close(sink);
+    }
 }

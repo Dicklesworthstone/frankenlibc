@@ -131,7 +131,7 @@ pub struct RuntimeTlsState {
     pub reclaim: unsafe fn(*mut RuntimeTlsState),
 }
 
-/// Per-thread control block. Allocated on the heap, pointed to by `pthread_t`.
+/// Per-thread control block. Owned anonymous mapping, pointed to by `pthread_t`.
 ///
 /// The `tid` field doubles as the join futex: `CLONE_CHILD_CLEARTID` tells the
 /// kernel to set `*child_tid = 0` and `futex_wake(child_tid)` when the thread
@@ -220,7 +220,7 @@ pub struct ThreadHandle {
     pub guard_size: usize,
 
     /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
-    /// heap-allocated ThreadHandle so clone-based threads never need malloc.
+    /// owned ThreadHandle mapping so clone-based threads never need malloc.
     pub tls_values: [super::tls::TlsEntry; super::tls::PTHREAD_KEYS_MAX],
 }
 
@@ -456,17 +456,17 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
     // that is no longer accessible by any joiner.
     let handle = unsafe { &*handle_ptr };
 
-    // CRITICAL: Before freeing the handle, tell the kernel not to write to the
-    // TID address on thread exit. Otherwise CLONE_CHILD_CLEARTID would write 0
-    // to freed memory.
-    let _ = syscall::sys_set_tid_address(0);
-
     let stack_base = handle.stack_base;
     let stack_total_size = handle.stack_total_size;
 
-    // SAFETY: `handle_ptr` was allocated via Box::into_raw in create_thread and
-    // detached threads own their final cleanup path.
-    unsafe { drop(Box::from_raw(handle_ptr)) };
+    // The kernel still owns the clear-TID address until this succeeds. If a
+    // sandbox denies the syscall, retain the handle mapping through SYS_exit:
+    // a late kernel store must never target unmapped or recycled storage.
+    if syscall::sys_set_tid_address(0) > 0 {
+        // SAFETY: this detached owner has completed TLS teardown and disabled
+        // the kernel's final access. No joiner can retain this handle.
+        unsafe { free_thread_handle(handle_ptr) };
+    }
 
     if stack_base != 0 && stack_total_size != 0 {
         unsafe { unmapself_and_exit(stack_base, stack_total_size) };
@@ -711,6 +711,28 @@ fn free_thread_stack(base: usize, total_size: usize) {
     let _ = unsafe { syscall::sys_munmap(base as *mut u8, total_size) };
 }
 
+/// Reclaim the control block after its owner and kernel have released it.
+///
+/// Native exit may run after identity removal, when inherited compiler TLS
+/// still belongs to the creator. Reclamation therefore uses only raw munmap,
+/// never a host allocator or a TLS-dependent runtime path.
+///
+/// # Safety
+///
+/// The pointer must be an exclusively owned, initialized ThreadHandle mapping.
+/// The kernel must no longer retain its clear-TID address.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+unsafe fn free_thread_handle(handle: *mut ThreadHandle) {
+    // All fields are native values or non-owning pointers. ABI dynamic TLS is
+    // drained and reclaimed before a native thread releases its identity.
+    unsafe { core::ptr::drop_in_place(handle) };
+    // SAFETY: mmap provided a page-aligned base and this exact extent.
+    let _ = unsafe {
+        syscall::sys_munmap(handle.cast::<u8>(), core::mem::size_of::<ThreadHandle>())
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Thread creation (public API for ABI layer)
 // ---------------------------------------------------------------------------
@@ -812,8 +834,37 @@ pub unsafe fn create_thread_with_startup(
     let stack_total_size = stack.mapping_size;
     let stack_top = stack.top;
 
-    // Allocate the ThreadHandle on the heap (Box).
-    let handle = Box::new(ThreadHandle {
+    // The control block must be reclaimable by a detached native child without
+    // using its creator's host allocator/TLS. Its fixed alignment fits every
+    // supported Linux page size; allocation failure also releases our stack.
+    const { assert!(core::mem::align_of::<ThreadHandle>() <= GUARD_PAGE_SIZE) };
+    let mapping = match unsafe {
+        syscall::sys_mmap(
+            core::ptr::null_mut(),
+            core::mem::size_of::<ThreadHandle>(),
+            (PROT_READ | PROT_WRITE) as i32,
+            (MAP_PRIVATE | MAP_ANONYMOUS) as i32,
+            -1,
+            0,
+        )
+    } {
+        Ok(mapping) => mapping,
+        Err(error) => {
+            free_thread_stack(stack_base, stack_total_size);
+            return Err(error);
+        }
+    };
+    if mapping.is_null() {
+        // A null pthread handle cannot be published, even if mmap succeeded.
+        let _ = unsafe {
+            syscall::sys_munmap(mapping, core::mem::size_of::<ThreadHandle>())
+        };
+        free_thread_stack(stack_base, stack_total_size);
+        return Err(12); // ENOMEM
+    }
+    let handle_ptr = mapping.cast::<ThreadHandle>();
+    // SAFETY: the fresh mapping is aligned, writable, and exclusively owned.
+    unsafe { handle_ptr.write(ThreadHandle {
         magic: THREAD_HANDLE_MAGIC,
         tid: AtomicI32::new(0),
         self_tid: AtomicI32::new(0),
@@ -836,8 +887,7 @@ pub unsafe fn create_thread_with_startup(
         stack_size: stack.size,
         guard_size: stack.guard_size,
         tls_values: [super::tls::TlsEntry::default(); super::tls::PTHREAD_KEYS_MAX],
-    });
-    let handle_ptr = Box::into_raw(handle);
+    }) };
 
     // Prepare ThreadStartArgs on the child stack.
     // The args struct goes near the top of the stack, and the trampoline
@@ -857,7 +907,7 @@ pub unsafe fn create_thread_with_startup(
         )
     } {
         // SAFETY: clone has not run and handle_ptr is exclusively ours.
-        unsafe { drop(Box::from_raw(handle_ptr)) };
+        unsafe { free_thread_handle(handle_ptr) };
         free_thread_stack(stack_base, stack_total_size);
         return Err(error);
     }
@@ -911,7 +961,7 @@ pub unsafe fn create_thread_with_startup(
     let child_sp = trampoline_frame;
 
     // parent_tid: kernel writes child TID here via CLONE_PARENT_SETTID.
-    // SAFETY: handle_ptr was just created via Box::into_raw and is valid.
+    // SAFETY: handle_ptr names our initialized, exclusively owned mapping.
     let parent_tid_ptr = unsafe { &(*handle_ptr).tid as *const AtomicI32 as *mut i32 };
     // child_tid: kernel clears this to 0 and futex-wakes on thread exit
     // via CLONE_CHILD_CLEARTID.
@@ -965,9 +1015,9 @@ pub unsafe fn create_thread_with_startup(
             }
         }
         Err(errno) => {
-            // Clone failed — clean up.
-            // SAFETY: handle_ptr was just created via Box::into_raw.
-            unsafe { drop(Box::from_raw(handle_ptr)) };
+            // Clone failed — the kernel retains neither mapping.
+            // SAFETY: handle_ptr is initialized and exclusively ours.
+            unsafe { free_thread_handle(handle_ptr) };
             free_thread_stack(stack_base, stack_total_size);
             Err(errno)
         }
@@ -1174,8 +1224,8 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
     // Thread is gone. Reclaim its resources.
     free_thread_stack(stack_base, stack_total_size);
 
-    // SAFETY: handle_ptr was created via Box::into_raw in create_thread.
-    unsafe { drop(Box::from_raw(handle_ptr)) };
+    // SAFETY: the kernel has cleared tid and this caller owns reclamation.
+    unsafe { free_thread_handle(handle_ptr) };
 
     Ok(retval)
 }
@@ -1273,8 +1323,8 @@ pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
     // Thread is gone. Reclaim its resources.
     free_thread_stack(stack_base, stack_total_size);
 
-    // SAFETY: handle_ptr was created via Box::into_raw in create_thread.
-    unsafe { drop(Box::from_raw(handle_ptr)) };
+    // SAFETY: the kernel has cleared tid and this caller owns reclamation.
+    unsafe { free_thread_handle(handle_ptr) };
 
     Ok(())
 }
@@ -2172,5 +2222,5 @@ mod tests {
 
     // Note: concurrent double-join is undefined behavior per POSIX (pthread_join
     // on an already-joined thread). We don't test it because the losing joiner
-    // would access freed memory after the winner calls Box::from_raw.
+    // would access unmapped memory after the winner reclaims the handle.
 }
