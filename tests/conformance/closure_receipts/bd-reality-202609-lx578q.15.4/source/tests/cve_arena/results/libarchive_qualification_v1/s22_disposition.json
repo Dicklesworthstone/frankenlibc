@@ -1,0 +1,45 @@
+{
+  "acceptance_vector": {
+    "S03": true,
+    "S05": true,
+    "S07": true,
+    "S09": true,
+    "S10": true,
+    "S11": true,
+    "S12": true,
+    "S14": true,
+    "S15": false,
+    "S17": true,
+    "S19": true,
+    "S20": true,
+    "S21": true,
+    "S23": true,
+    "S24": true,
+    "VR.8.4": true
+  },
+  "conjunction_satisfied": false,
+  "profile_id": "libarchive-confined-archive-worker-v1",
+  "profile_qualification": "not_qualified",
+  "required_keys": [
+    "S03",
+    "S05",
+    "S07",
+    "S11",
+    "S12",
+    "S14",
+    "S15",
+    "S17",
+    "S19",
+    "S20",
+    "S21",
+    "S23",
+    "S24",
+    "VR.8.4"
+  ],
+  "scope_exclusions": [
+    "strict mode (FRANKENLIBC_MODE=strict) does not clamp out-of-bounds memcpy and exhibited baseline harm in S09 and S14",
+    "compiler-inlined direct pointer stores bypassing libc symbols are not prevented pre-write (S23_holdout_boundary_inlined_direct_write_bypass -> unsupported)",
+    "clamped overlong ZIP pathnames require external supervisor validation and non-publication (S11)",
+    "both primary CVE cases come from upstream libarchive (distinct write vs read directions); cross-application claims require separate qualification"
+  ]
+}

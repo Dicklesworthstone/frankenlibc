@@ -1,0 +1,1176 @@
+{
+  "all_passed": true,
+  "cases": [
+    {
+      "arms": {
+        "F": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "F",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "correct_completion",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 7169
+          },
+          "input_sha256": "73626cc0a04ba8b763b3cff9e6f27c34470d6eda6aec7835340a48ae9232ad4b",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 6,
+            "disarmed_count": 6,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 0,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "independent_validator_failed",
+            "staged_sha256": "f5e31d77276fca64f79c767b23ea947aaa898985dfdefa4e04db8f56a779bfe1"
+          },
+          "unobserved": {
+            "exit_code": 0,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 6053.998
+          }
+        },
+        "H": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "H",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "observed_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "correct_completion",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "73626cc0a04ba8b763b3cff9e6f27c34470d6eda6aec7835340a48ae9232ad4b",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 6,
+            "disarmed_count": 5,
+            "first_fault_rip": "0x7b2207d97bd8",
+            "hit_count": 1,
+            "raw_exit_code": 0,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": true
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "published": false,
+            "reason": "independent_validator_failed",
+            "staged_sha256": "f5e31d77276fca64f79c767b23ea947aaa898985dfdefa4e04db8f56a779bfe1"
+          },
+          "unobserved": {
+            "exit_code": 0,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 214.262
+          }
+        },
+        "P": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "P",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "73626cc0a04ba8b763b3cff9e6f27c34470d6eda6aec7835340a48ae9232ad4b",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 3,
+            "disarmed_count": 3,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 11,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "observed_entries": [],
+            "published": false,
+            "reason": "entry_manifest_mismatch_after_clamp_or_truncation",
+            "staged_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
+          },
+          "unobserved": {
+            "exit_code": 11,
+            "signal": null,
+            "stderr_bytes": 56,
+            "stderr_preview": "write header rejected: Pathname too long for ZIP format\n",
+            "stderr_sha256": "32c0b7ea0da3cfb050562fa5e95393da1387f0a97f3fc3bb1738682156a7a7bb",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 29.973
+          }
+        },
+        "PF": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "PF",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 7443
+          },
+          "input_sha256": "73626cc0a04ba8b763b3cff9e6f27c34470d6eda6aec7835340a48ae9232ad4b",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 3,
+            "disarmed_count": 3,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 11,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "observed_entries": [],
+            "published": false,
+            "reason": "entry_manifest_mismatch_after_clamp_or_truncation",
+            "staged_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
+          },
+          "unobserved": {
+            "exit_code": 11,
+            "signal": null,
+            "stderr_bytes": 56,
+            "stderr_preview": "write header rejected: Pathname too long for ZIP format\n",
+            "stderr_sha256": "32c0b7ea0da3cfb050562fa5e95393da1387f0a97f3fc3bb1738682156a7a7bb",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 6552.735
+          }
+        },
+        "S": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "S",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "observed_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "correct_completion",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 1
+          },
+          "input_sha256": "73626cc0a04ba8b763b3cff9e6f27c34470d6eda6aec7835340a48ae9232ad4b",
+          "mode": "strict",
+          "oracle": {
+            "armed_count": 6,
+            "disarmed_count": 5,
+            "first_fault_rip": "0x71dc035b108b",
+            "hit_count": 1,
+            "raw_exit_code": 0,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": true
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "independent_validator_failed",
+            "staged_sha256": "f5e31d77276fca64f79c767b23ea947aaa898985dfdefa4e04db8f56a779bfe1"
+          },
+          "unobserved": {
+            "exit_code": 0,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 28.525
+          }
+        }
+      },
+      "attribution_supported": true,
+      "baseline_harm_observed": true,
+      "case_id": "S23_holdout_zip_boundary_plus_one_65537",
+      "chunk_size": 4096,
+      "family": "zip_cd_heap_overwrite",
+      "hardened_harm_excluded": true,
+      "holdout_expectation_met": true,
+      "input_sha256": "73626cc0a04ba8b763b3cff9e6f27c34470d6eda6aec7835340a48ae9232ad4b",
+      "pathname_length": 65537,
+      "prefix_entries": 0,
+      "strict_ablation_harm_observed": true,
+      "unpublished_corrupt_output_enforced": true
+    },
+    {
+      "arms": {
+        "F": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "F",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 2,
+            "total_events": 8193
+          },
+          "input_sha256": "9e026e7fdb3efd927fb7a883bf7d46fe20128f66a6fe8158c5356364e05a1ff8",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 6,
+            "disarmed_count": 6,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 15,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "independent_validator_failed",
+            "staged_sha256": "f150e1cb554ca7b7c13e922d452bc491b91f3154e1bf933f1f5ffdfb47e9c34c"
+          },
+          "unobserved": {
+            "exit_code": 15,
+            "signal": null,
+            "stderr_bytes": 31,
+            "stderr_preview": "write close error: Write error\n",
+            "stderr_sha256": "134dde263345eed267d88c4efafc5ccc5ef7efe72647cb5b4f39208c6de8ff77",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 6447.107
+          }
+        },
+        "H": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "H",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "detected_after_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "crash",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "9e026e7fdb3efd927fb7a883bf7d46fe20128f66a6fe8158c5356364e05a1ff8",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 5,
+            "disarmed_count": 1,
+            "first_fault_rip": "0x70ada2397bca",
+            "hit_count": 1,
+            "raw_exit_code": 134,
+            "raw_term_signal": 6,
+            "watchpoint_triggered": true
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "published": false,
+            "reason": "staged_size_out_of_bounds"
+          },
+          "unobserved": {
+            "exit_code": 134,
+            "signal": 6,
+            "stderr_bytes": 29,
+            "stderr_preview": "malloc(): corrupted top size\n",
+            "stderr_sha256": "263f2b14d176fdbf03468d6761670cb681454c8b9cc98b93f4e5b19af426b5cd",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 231.365
+          }
+        },
+        "P": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "P",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "9e026e7fdb3efd927fb7a883bf7d46fe20128f66a6fe8158c5356364e05a1ff8",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 4,
+            "disarmed_count": 4,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 11,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "observed_entries": [
+              {
+                "data_fnv1a64": "811a36b07696e2da",
+                "path_fnv1a64": "088e039f233d2bf4",
+                "path_len": 13,
+                "size": 512
+              },
+              {
+                "data_fnv1a64": "c1a9ee267af9959f",
+                "path_fnv1a64": "060ce6a9a9dca023",
+                "path_len": 13,
+                "size": 512
+              }
+            ],
+            "published": false,
+            "reason": "entry_manifest_mismatch_after_clamp_or_truncation",
+            "staged_sha256": "804f817e0f958b03de0eb2f8ec862c48097d5feab5606248dc31487ed6b42f89"
+          },
+          "unobserved": {
+            "exit_code": 11,
+            "signal": null,
+            "stderr_bytes": 56,
+            "stderr_preview": "write header rejected: Pathname too long for ZIP format\n",
+            "stderr_sha256": "32c0b7ea0da3cfb050562fa5e95393da1387f0a97f3fc3bb1738682156a7a7bb",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 15.579
+          }
+        },
+        "PF": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "PF",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 7169
+          },
+          "input_sha256": "9e026e7fdb3efd927fb7a883bf7d46fe20128f66a6fe8158c5356364e05a1ff8",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 4,
+            "disarmed_count": 4,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 11,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "observed_entries": [
+              {
+                "data_fnv1a64": "811a36b07696e2da",
+                "path_fnv1a64": "088e039f233d2bf4",
+                "path_len": 13,
+                "size": 512
+              },
+              {
+                "data_fnv1a64": "c1a9ee267af9959f",
+                "path_fnv1a64": "060ce6a9a9dca023",
+                "path_len": 13,
+                "size": 512
+              }
+            ],
+            "published": false,
+            "reason": "entry_manifest_mismatch_after_clamp_or_truncation",
+            "staged_sha256": "804f817e0f958b03de0eb2f8ec862c48097d5feab5606248dc31487ed6b42f89"
+          },
+          "unobserved": {
+            "exit_code": 11,
+            "signal": null,
+            "stderr_bytes": 56,
+            "stderr_preview": "write header rejected: Pathname too long for ZIP format\n",
+            "stderr_sha256": "32c0b7ea0da3cfb050562fa5e95393da1387f0a97f3fc3bb1738682156a7a7bb",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 5952.557
+          }
+        },
+        "S": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "S",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "detected_after_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "crash",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "9e026e7fdb3efd927fb7a883bf7d46fe20128f66a6fe8158c5356364e05a1ff8",
+          "mode": "strict",
+          "oracle": {
+            "armed_count": 5,
+            "disarmed_count": 1,
+            "first_fault_rip": "0x7fe7afdb0fed",
+            "hit_count": 1,
+            "raw_exit_code": 134,
+            "raw_term_signal": 6,
+            "watchpoint_triggered": true
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "staged_size_out_of_bounds"
+          },
+          "unobserved": {
+            "exit_code": 134,
+            "signal": 6,
+            "stderr_bytes": 29,
+            "stderr_preview": "malloc(): corrupted top size\n",
+            "stderr_sha256": "263f2b14d176fdbf03468d6761670cb681454c8b9cc98b93f4e5b19af426b5cd",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 265.921
+          }
+        }
+      },
+      "attribution_supported": true,
+      "baseline_harm_observed": true,
+      "case_id": "S23_holdout_zip_multi_entry_reordered_72000",
+      "chunk_size": 1024,
+      "family": "zip_cd_heap_overwrite",
+      "hardened_harm_excluded": true,
+      "holdout_expectation_met": true,
+      "input_sha256": "9e026e7fdb3efd927fb7a883bf7d46fe20128f66a6fe8158c5356364e05a1ff8",
+      "pathname_length": 72000,
+      "prefix_entries": 2,
+      "strict_ablation_harm_observed": true,
+      "unpublished_corrupt_output_enforced": true
+    },
+    {
+      "arms": {
+        "F": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "F",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 11265
+          },
+          "input_sha256": "5585aef1611fa15037f178ebae8b25c8da13301750f05776df89984a2242ee28",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 6,
+            "disarmed_count": 6,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 15,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "independent_validator_failed",
+            "staged_sha256": "7cb3b7b3f35ca0063098b5b05623c5b369333df75b4e3e88be97942a3c7520ae"
+          },
+          "unobserved": {
+            "exit_code": 15,
+            "signal": null,
+            "stderr_bytes": 31,
+            "stderr_preview": "write close error: Write error\n",
+            "stderr_sha256": "134dde263345eed267d88c4efafc5ccc5ef7efe72647cb5b4f39208c6de8ff77",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 10171.061
+          }
+        },
+        "H": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "H",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "detected_after_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "crash",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "5585aef1611fa15037f178ebae8b25c8da13301750f05776df89984a2242ee28",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 5,
+            "disarmed_count": 1,
+            "first_fault_rip": "0x7e5a56997bca",
+            "hit_count": 1,
+            "raw_exit_code": 134,
+            "raw_term_signal": 6,
+            "watchpoint_triggered": true
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "published": false,
+            "reason": "staged_size_out_of_bounds"
+          },
+          "unobserved": {
+            "exit_code": 134,
+            "signal": 6,
+            "stderr_bytes": 29,
+            "stderr_preview": "malloc(): corrupted top size\n",
+            "stderr_sha256": "263f2b14d176fdbf03468d6761670cb681454c8b9cc98b93f4e5b19af426b5cd",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 188.927
+          }
+        },
+        "P": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "P",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "5585aef1611fa15037f178ebae8b25c8da13301750f05776df89984a2242ee28",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 4,
+            "disarmed_count": 4,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 11,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "observed_entries": [
+              {
+                "data_fnv1a64": "811a36b07696e2da",
+                "path_fnv1a64": "088e039f233d2bf4",
+                "path_len": 13,
+                "size": 512
+              }
+            ],
+            "published": false,
+            "reason": "entry_manifest_mismatch_after_clamp_or_truncation",
+            "staged_sha256": "90e5ad580c57e9130d367911bbbe13331d056f41c88e216a714b2e3e6503b266"
+          },
+          "unobserved": {
+            "exit_code": 11,
+            "signal": null,
+            "stderr_bytes": 56,
+            "stderr_preview": "write header rejected: Pathname too long for ZIP format\n",
+            "stderr_sha256": "32c0b7ea0da3cfb050562fa5e95393da1387f0a97f3fc3bb1738682156a7a7bb",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 15.711
+          }
+        },
+        "PF": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "PF",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 12289
+          },
+          "input_sha256": "5585aef1611fa15037f178ebae8b25c8da13301750f05776df89984a2242ee28",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 4,
+            "disarmed_count": 4,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 11,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "observed_entries": [
+              {
+                "data_fnv1a64": "811a36b07696e2da",
+                "path_fnv1a64": "088e039f233d2bf4",
+                "path_len": 13,
+                "size": 512
+              }
+            ],
+            "published": false,
+            "reason": "entry_manifest_mismatch_after_clamp_or_truncation",
+            "staged_sha256": "90e5ad580c57e9130d367911bbbe13331d056f41c88e216a714b2e3e6503b266"
+          },
+          "unobserved": {
+            "exit_code": 11,
+            "signal": null,
+            "stderr_bytes": 56,
+            "stderr_preview": "write header rejected: Pathname too long for ZIP format\n",
+            "stderr_sha256": "32c0b7ea0da3cfb050562fa5e95393da1387f0a97f3fc3bb1738682156a7a7bb",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 10686.514
+          }
+        },
+        "S": {
+          "application_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+          "arm": "S",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "detected_after_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "crash",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "5585aef1611fa15037f178ebae8b25c8da13301750f05776df89984a2242ee28",
+          "mode": "strict",
+          "oracle": {
+            "armed_count": 5,
+            "disarmed_count": 1,
+            "first_fault_rip": "0x762abd5b0fed",
+            "hit_count": 1,
+            "raw_exit_code": 134,
+            "raw_term_signal": 6,
+            "watchpoint_triggered": true
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "staged_size_out_of_bounds"
+          },
+          "unobserved": {
+            "exit_code": 134,
+            "signal": 6,
+            "stderr_bytes": 29,
+            "stderr_preview": "malloc(): corrupted top size\n",
+            "stderr_sha256": "263f2b14d176fdbf03468d6761670cb681454c8b9cc98b93f4e5b19af426b5cd",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 285.738
+          }
+        }
+      },
+      "attribution_supported": true,
+      "baseline_harm_observed": true,
+      "case_id": "S23_holdout_zip_large_segment_100000",
+      "chunk_size": 16384,
+      "family": "zip_cd_heap_overwrite",
+      "hardened_harm_excluded": true,
+      "holdout_expectation_met": true,
+      "input_sha256": "5585aef1611fa15037f178ebae8b25c8da13301750f05776df89984a2242ee28",
+      "pathname_length": 100000,
+      "prefix_entries": 1,
+      "strict_ablation_harm_observed": true,
+      "unpublished_corrupt_output_enforced": true
+    },
+    {
+      "arms": {
+        "F": {
+          "application_commit": "8a7a9cc527fd1d6d8664315d3bed47c4259479cc",
+          "arm": "F",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 2,
+            "total_events": 242
+          },
+          "input_sha256": "0e7c36127ad7fcf87d08886ce2e25eee2f883d7d412681332232e6c29a8e0e32",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 2,
+            "disarmed_count": 2,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 12,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "malformed_rar_rejected_unpublished"
+          },
+          "rar_summary": {
+            "bytes_extracted": 0,
+            "entries": 1,
+            "fnv1a64": "cbf29ce484222325",
+            "marker_disclosed": false,
+            "status_code": 12
+          },
+          "synthetic_marker_disclosed": false,
+          "unobserved": {
+            "exit_code": 12,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 35.837
+          }
+        },
+        "H": {
+          "application_commit": "8a7a9cc527fd1d6d8664315d3bed47c4259479cc",
+          "arm": "H",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "observed_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "0e7c36127ad7fcf87d08886ce2e25eee2f883d7d412681332232e6c29a8e0e32",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 2,
+            "disarmed_count": 1,
+            "first_fault_rip": "0x7b3decd97ae9",
+            "hit_count": 1,
+            "raw_exit_code": 12,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": true
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "published": false,
+            "reason": "malformed_rar_rejected_unpublished"
+          },
+          "rar_summary": {
+            "bytes_extracted": 0,
+            "entries": 1,
+            "fnv1a64": "cbf29ce484222325",
+            "marker_disclosed": false,
+            "status_code": 12
+          },
+          "synthetic_marker_disclosed": false,
+          "unobserved": {
+            "exit_code": 12,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 35.925
+          }
+        },
+        "P": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "P",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [],
+            "canary_events": 0,
+            "clamp_size_events": 0,
+            "total_events": 0
+          },
+          "input_sha256": "0e7c36127ad7fcf87d08886ce2e25eee2f883d7d412681332232e6c29a8e0e32",
+          "mode": "none",
+          "oracle": {
+            "armed_count": 2,
+            "disarmed_count": 2,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 12,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "host_glibc",
+          "publication": {
+            "published": false,
+            "reason": "malformed_rar_rejected_unpublished"
+          },
+          "rar_summary": {
+            "bytes_extracted": 0,
+            "entries": 1,
+            "fnv1a64": "cbf29ce484222325",
+            "marker_disclosed": false,
+            "status_code": 12
+          },
+          "synthetic_marker_disclosed": false,
+          "unobserved": {
+            "exit_code": 12,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 14.385
+          }
+        },
+        "PF": {
+          "application_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+          "arm": "PF",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "excluded_within_declared_observation",
+            "label": "safe_rejection_in_tested_case",
+            "output": "rejected_and_unpublished",
+            "qualification": "profile_accepted",
+            "qualified_card": true,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 239
+          },
+          "input_sha256": "0e7c36127ad7fcf87d08886ce2e25eee2f883d7d412681332232e6c29a8e0e32",
+          "mode": "hardened",
+          "oracle": {
+            "armed_count": 2,
+            "disarmed_count": 2,
+            "first_fault_rip": "0x0",
+            "hit_count": 0,
+            "raw_exit_code": 12,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": false
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "malformed_rar_rejected_unpublished"
+          },
+          "rar_summary": {
+            "bytes_extracted": 0,
+            "entries": 1,
+            "fnv1a64": "cbf29ce484222325",
+            "marker_disclosed": false,
+            "status_code": 12
+          },
+          "synthetic_marker_disclosed": false,
+          "unobserved": {
+            "exit_code": 12,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 41.298
+          }
+        },
+        "S": {
+          "application_commit": "8a7a9cc527fd1d6d8664315d3bed47c4259479cc",
+          "arm": "S",
+          "dimensions": {
+            "attribution": "supported_for_stated_mechanism",
+            "baseline": "nominated_harm_observed",
+            "candidate_memory_effect": "nominated_harm_observed",
+            "label": "observed_harm",
+            "output": "rejected_and_unpublished",
+            "qualification": "experiment_only",
+            "qualified_card": false,
+            "response": "controlled_rejection",
+            "setup": "admitted"
+          },
+          "healing_telemetry": {
+            "actions": [
+              "ClampSize"
+            ],
+            "canary_events": 0,
+            "clamp_size_events": 1,
+            "total_events": 1
+          },
+          "input_sha256": "0e7c36127ad7fcf87d08886ce2e25eee2f883d7d412681332232e6c29a8e0e32",
+          "mode": "strict",
+          "oracle": {
+            "armed_count": 2,
+            "disarmed_count": 1,
+            "first_fault_rip": "0x7a3b885b2d97",
+            "hit_count": 1,
+            "raw_exit_code": 12,
+            "raw_term_signal": 0,
+            "watchpoint_triggered": true
+          },
+          "provider": "frankenlibc",
+          "publication": {
+            "published": false,
+            "reason": "malformed_rar_rejected_unpublished"
+          },
+          "rar_summary": {
+            "bytes_extracted": 0,
+            "entries": 1,
+            "fnv1a64": "cbf29ce484222325",
+            "marker_disclosed": false,
+            "status_code": 12
+          },
+          "synthetic_marker_disclosed": false,
+          "unobserved": {
+            "exit_code": 12,
+            "signal": null,
+            "stderr_bytes": 0,
+            "stderr_preview": "",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stdout_bytes": 0,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "timed_out": false,
+            "wall_ms": 19.563
+          }
+        }
+      },
+      "attribution_supported": true,
+      "baseline_harm_observed": true,
+      "case_id": "S23_holdout_rar_padded_trailer_mutation",
+      "family": "rar_lzss_window_oob_read",
+      "hardened_harm_excluded": true,
+      "holdout_expectation_met": true,
+      "input_sha256": "0e7c36127ad7fcf87d08886ce2e25eee2f883d7d412681332232e6c29a8e0e32",
+      "strict_ablation_harm_observed": true
+    },
+    {
+      "case_id": "S23_holdout_boundary_inlined_direct_write_bypass",
+      "dimensions": {
+        "attribution": "unresolved",
+        "baseline": "nominated_harm_observed",
+        "candidate_memory_effect": "nominated_harm_observed",
+        "label": "observed_harm",
+        "output": "rejected_and_unpublished",
+        "qualification": "unsupported",
+        "qualified_card": false,
+        "response": "correct_completion",
+        "setup": "admitted"
+      },
+      "family": "inlined_direct_write_non_coverage_boundary",
+      "holdout_expectation_met": true,
+      "honest_non_promotion_verified": true,
+      "oracle": {
+        "armed_count": 314,
+        "disarmed_count": 313,
+        "first_fault_rip": "0x5d9d6e9a28da",
+        "hit_count": 1,
+        "raw_exit_code": 0,
+        "raw_term_signal": 0,
+        "watchpoint_triggered": true
+      },
+      "post_corruption_free_canary_telemetry": {
+        "actions": [
+          "ClampSize"
+        ],
+        "canary_events": 0,
+        "clamp_size_events": 2,
+        "total_events": 2
+      }
+    }
+  ]
+}

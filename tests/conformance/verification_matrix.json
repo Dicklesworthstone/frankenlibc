@@ -35172,7 +35172,7 @@
         "close_blockers": [],
         "notes": "Verified and recorded via check_closure_gate.sh at commit e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca.",
         "result_receipts": [
-          "target/closure_receipts/wave4_20261112/bd-reality-202609-lx578q.6.4/receipt.json"
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.4/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Export 224-byte release _IO_2_1_stdin_/stdout_/stderr_ ABI objects at GLIBC_2.2.5 with copy-relocation-safe GOT resolution, implement owned DWARF _Unwind_ForcedUnwind and _Unwind_GetCFA with RSP-based CFA landing-pad installation, and restore nested pthread_cleanup_push_defer_np cancellation types",
@@ -35362,7 +35362,7 @@
         "close_blockers": [],
         "notes": "Verified and recorded via check_closure_gate.sh at commit e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca.",
         "result_receipts": [
-          "target/closure_receipts/wave4_20261112/bd-reality-202609-lx578q.6.5/receipt.json"
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.5/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Verify release .dynsym 224-byte _IO_2_1_std*_ OBJECT exports, copy-relocated and GOT-bound C stdio fixtures under LD_DEBUG=bindings in strict and hardened modes, and libgcc_s-denied multi-frame C++ RAII + Rust Drop + POSIX cleanup LIFO unwinding on pthread_exit and pthread_cancel",
@@ -35627,6 +35627,200 @@
             "result_format": "libtest",
             "required_tests": [
               "libarchive_confined_4arm_qualification_bundle_relocation_and_revocation_e2e"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.15.4",
+      "title": "[SQ M3-M4: S18-S20,S22-S24] Verify clean-room portable evidence bundle, holdout/revocation controls, and bounded SECURITY.md/DEPLOYMENT.md S22 disposition",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "m3",
+        "m4",
+        "reality-check-202611",
+        "security-qualification",
+        "verification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.15.3"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Clean-room S18-S19 bundle relocation, S24 1-byte tamper revocation/supersession, S23 holdout, and S22 docs truth"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "report.sh --qualification --verify + negative tamper controls"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "observations.jsonl retained and validated"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test libarchive_security_qualification_e2e_test -- --exact committed_libarchive_qualification_bundle_relocation_tamper_and_s22_docs_e2e"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "tests/cve_arena/report.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/cve_arena/results/libarchive_qualification_v1/observations.jsonl"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 3,
+        "complete": 3,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.15.4",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test libarchive_security_qualification_e2e_test -- --exact committed_libarchive_qualification_bundle_relocation_tamper_and_s22_docs_e2e"
+        ],
+        "e2e_cmds": [
+          "bash tests/cve_arena/report.sh --qualification tests/cve_arena/results/libarchive_qualification_v1 --verify"
+        ],
+        "expected_assertions": [
+          "Relocated portable bundle verifies with 0 local paths, 1-byte tamper triggers superseded/revoked, holdouts and raw JSONL are retained, and S22 honest disposition + scope exclusions match SECURITY.md, DEPLOYMENT.md, and docs/gentoo/security-validation.md"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "SECURITY.md",
+          "DEPLOYMENT.md",
+          "docs/gentoo/security-validation.md",
+          "tests/cve_arena/report.sh",
+          "tests/cve_arena/results/libarchive_qualification_v1/REPORT.md",
+          "tests/cve_arena/results/libarchive_qualification_v1/bundle_index.json",
+          "tests/cve_arena/results/libarchive_qualification_v1/holdout_s23.json",
+          "tests/cve_arena/results/libarchive_qualification_v1/observations.jsonl",
+          "tests/cve_arena/results/libarchive_qualification_v1/s22_disposition.json",
+          "crates/frankenlibc-harness/tests/libarchive_security_qualification_e2e_test.rs",
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.15.4/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit dfcce49404b6c0e51b25614e1ffc04e302b75801.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.15.4/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Verify clean-room portable libarchive qualification bundle relocation (S18-S19), 1-byte tamper supersession and revocation (S24), holdout/demo JSONL retention (S20, S23), and honest S22 disposition in SECURITY.md, DEPLOYMENT.md, and docs/gentoo/security-validation.md",
+          "acceptance_sha256": "6ff74ae573f4e17978cfd8a6cd0a0a4882e9d6cb94a28044a8608c08a80736d9",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "SECURITY.md",
+            "DEPLOYMENT.md",
+            "docs/gentoo/security-validation.md",
+            "tests/cve_arena/report.sh",
+            "tests/cve_arena/results/libarchive_qualification_v1/REPORT.md",
+            "tests/cve_arena/results/libarchive_qualification_v1/bundle_index.json",
+            "tests/cve_arena/results/libarchive_qualification_v1/holdout_s23.json",
+            "tests/cve_arena/results/libarchive_qualification_v1/observations.jsonl",
+            "tests/cve_arena/results/libarchive_qualification_v1/s22_disposition.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/libarchive_security_qualification_e2e_test.rs"
+          ],
+          "source": {
+            "commit": "dfcce49404b6c0e51b25614e1ffc04e302b75801",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "DEPLOYMENT.md": "e7aeea84c3edd41cb0cf2d6fdd92efbeb83537ee3ced1b86362f27e47f141b72",
+              "SECURITY.md": "a56558a5eea55dace9069648ba406472b3b69e630f70c099b8310c2ecdf257bf",
+              "crates/frankenlibc-harness/tests/libarchive_security_qualification_e2e_test.rs": "83c86394507944842b585f098e193752f3080190afac343e9cb83daf8ea94842",
+              "docs/gentoo/security-validation.md": "8ca89121108a83df75b69b57d2dbaeddd890571e106f9367d31ddc6c923551b6",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "tests/cve_arena/report.sh": "67256ca9617977536bc70cd4cfd9ebf462e03c7cc6aaa6ec97f4d7073d6d01f7",
+              "tests/cve_arena/results/libarchive_qualification_v1/REPORT.md": "9a8f5812a3fa56934585b796ce27e1db1a6cb831043bffa494ead74350602944",
+              "tests/cve_arena/results/libarchive_qualification_v1/bundle_index.json": "a7035a50b175da2116cfcc3ba91ec465ca20bcbef0bbb49640e65954c88b6ff1",
+              "tests/cve_arena/results/libarchive_qualification_v1/holdout_s23.json": "cb91dc914ba548a627dd7f016b76d4a3cc39a919ee05a1ac7cc764c53d101c4f",
+              "tests/cve_arena/results/libarchive_qualification_v1/observations.jsonl": "fe2f18a60ec591ebbb83d35b8e9cea23e4343458df995fe7f0d8ad7c63b1d22b",
+              "tests/cve_arena/results/libarchive_qualification_v1/s22_disposition.json": "84f35de276ba2e84178893bc3456d0ff738eac92de6d894830227e98d2c9bf67"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-12T03:51:03+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/07ae624914842bd0/out/libarchive_security_qualification_e2e_test-07ae624914842bd0",
+              "--exact",
+              "committed_libarchive_qualification_bundle_relocation_tamper_and_s22_docs_e2e"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "libarchive_security_qualification_e2e_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/07ae624914842bd0/out/libarchive_security_qualification_e2e_test-07ae624914842bd0"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "committed_libarchive_qualification_bundle_relocation_tamper_and_s22_docs_e2e"
             ]
           }
         }
