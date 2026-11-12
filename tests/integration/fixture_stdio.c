@@ -1929,7 +1929,7 @@ static int test_internal_line_reads(void) {
  * still leave ordinary operations blocked. */
 enum stream_lock_operation {
     LOCK_FGETC, LOCK_GETC, LOCK_FGETS, LOCK_FREAD,
-    LOCK_FPUTC, LOCK_PUTC, LOCK_FPUTS, LOCK_FWRITE, LOCK_FFLUSH,
+    LOCK_FPUTC, LOCK_PUTC, LOCK_FPUTS, LOCK_FWRITE, LOCK_FFLUSH, LOCK_FFLUSH_ALL,
     LOCK_FSEEK, LOCK_FTELL, LOCK_REWIND, LOCK_FGETPOS, LOCK_FSETPOS,
     LOCK_FEOF, LOCK_FERROR, LOCK_CLEARERR, LOCK_UNGETC, LOCK_SETVBUF,
     LOCK_FCLOSE, LOCK_FREOPEN, LOCK_FPRINTF, LOCK_FSCANF, LOCK_GETLINE,
@@ -1976,6 +1976,7 @@ static void *run_stream_lock_operation(void *opaque) {
     case LOCK_FPUTS: state->failed |= fputs("xyz", fp) == EOF; break;
     case LOCK_FWRITE: state->failed |= fwrite("xyz", 1, 3, fp) != 3; break;
     case LOCK_FFLUSH: state->failed |= fflush(fp) != 0; break;
+    case LOCK_FFLUSH_ALL: state->failed |= fflush(NULL) != 0; break;
     case LOCK_FSEEK: state->failed |= fseek(fp, 0, SEEK_SET) != 0; break;
     case LOCK_FTELL: state->failed |= ftell(fp) != 0; break;
     case LOCK_REWIND: rewind(fp); break;
@@ -2204,6 +2205,9 @@ static int test_stream_lock_case(const struct stream_lock_case *test, int lockin
         .stream = fp, .operation = test->operation, .ready_fd = ready[1], .done_fd = done[1],
     };
     if (test->operation == LOCK_FSETPOS && fgetpos(fp, &state.position)) return 1;
+    /* Global flush may skip streams with no pending output. Give this case
+     * real buffered work before requiring it to honor the public FILE lock. */
+    if (test->operation == LOCK_FFLUSH_ALL && fputc('x', fp) != 'x') return 1;
     flockfile(fp);
     flockfile(fp);
     pthread_t thread;
@@ -2293,13 +2297,89 @@ static int test_puts_records_are_atomic(void) {
     return failed != 0;
 }
 
+
+struct flush_snapshot_group;
+struct flush_snapshot_cookie {
+    struct flush_snapshot_group *group;
+    int index, writes, closes;
+    char buffer[128];
+};
+
+struct flush_snapshot_group {
+    FILE *streams[2], *replacement;
+    struct flush_snapshot_cookie cookies[2];
+    int armed, changed, failed;
+};
+
+static ssize_t flush_snapshot_write(void *opaque, const char *bytes, size_t size) {
+    struct flush_snapshot_cookie *cookie = opaque;
+    struct flush_snapshot_group *group = cookie->group;
+    ++cookie->writes;
+    group->failed |= size != 1 || bytes[0] != 'a' + cookie->index;
+    if (group->armed && !group->changed) {
+        /* Whichever stream the provider visits first closes the other one.
+         * This drives the same lifetime transition for GNU's linked list and
+         * the candidate's sorted snapshot without assuming iteration order. */
+        group->changed = 1;
+        int other = 1 - cookie->index;
+        FILE *closing = group->streams[other];
+        group->streams[other] = NULL;
+        group->failed |= fclose(closing) != 0;
+        group->replacement = tmpfile();
+        if (!group->replacement) group->failed = 1;
+        else {
+            /* A stale cell must not clear flags or publish its buffer into a
+             * replacement FILE occupying the old slot. */
+            group->failed |= fgetc(group->replacement) != EOF;
+            group->failed |= !feof(group->replacement) || ferror(group->replacement);
+        }
+    }
+    return (ssize_t)size;
+}
+
+static int flush_snapshot_close(void *opaque) {
+    struct flush_snapshot_cookie *cookie = opaque;
+    ++cookie->closes;
+    return 0;
+}
+
+static int test_flush_all_snapshot_lifetime(void) {
+    struct flush_snapshot_group group = {0};
+    cookie_io_functions_t functions = {
+        .write = flush_snapshot_write, .close = flush_snapshot_close,
+    };
+    for (int i = 0; i < 2; ++i) {
+        group.cookies[i].group = &group;
+        group.cookies[i].index = i;
+        group.streams[i] = fopencookie(&group.cookies[i], "w", functions);
+        if (!group.streams[i]) return 1;
+        group.failed |= setvbuf(group.streams[i], group.cookies[i].buffer,
+                               _IOFBF, sizeof(group.cookies[i].buffer)) != 0;
+        group.failed |= fputc('a' + i, group.streams[i]) != 'a' + i;
+        group.failed |= group.cookies[i].writes != 0;
+    }
+    group.armed = 1;
+    group.failed |= fflush(NULL) != 0;
+    group.failed |= !group.changed || !group.replacement;
+    if (group.replacement) {
+        group.failed |= !feof(group.replacement) || ferror(group.replacement);
+        group.failed |= fclose(group.replacement) != 0;
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (group.streams[i]) group.failed |= fclose(group.streams[i]) != 0;
+        group.failed |= group.cookies[i].writes != 1 || group.cookies[i].closes != 1;
+    }
+    printf("locks global flush snapshot lifetime: %s\n", group.failed ? "FAIL" : "PASS");
+    return group.failed != 0;
+}
+
 static int test_stream_locking(void) {
     const struct stream_lock_case cases[] = {
 #define LOCK_CASE(op) {#op, LOCK_##op, 0, 0}
 #define UNLOCK_CASE(op) {#op "_UNLOCKED", UNLOCK_##op, 1, 0}
         LOCK_CASE(FGETC), LOCK_CASE(GETC), LOCK_CASE(FGETS), LOCK_CASE(FREAD),
         LOCK_CASE(FPUTC), LOCK_CASE(PUTC), LOCK_CASE(FPUTS), LOCK_CASE(FWRITE),
-        LOCK_CASE(FFLUSH), LOCK_CASE(FSEEK), LOCK_CASE(FTELL), LOCK_CASE(REWIND),
+        LOCK_CASE(FFLUSH), LOCK_CASE(FFLUSH_ALL), LOCK_CASE(FSEEK), LOCK_CASE(FTELL), LOCK_CASE(REWIND),
         LOCK_CASE(FGETPOS), LOCK_CASE(FSETPOS), LOCK_CASE(FEOF), LOCK_CASE(FERROR),
         LOCK_CASE(CLEARERR), LOCK_CASE(UNGETC), LOCK_CASE(SETVBUF), LOCK_CASE(FCLOSE),
         LOCK_CASE(FREOPEN), LOCK_CASE(FPRINTF), LOCK_CASE(FSCANF), LOCK_CASE(GETLINE),
@@ -2363,10 +2443,11 @@ static int test_stream_locking(void) {
         failed += test_stream_lock_case(&caller_cases[i], FSETLOCKING_INTERNAL);
     }
     failed += test_puts_records_are_atomic();
+    failed += test_flush_all_snapshot_lifetime();
     alarm(0);
     printf("fixture_stdio locks: %s (%zu cases, %d failed)\n",
            failed ? "FAIL" : "PASS",
-           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 1,
+           sizeof(cases) / sizeof(cases[0]) + 2 * sizeof(caller_cases) / sizeof(caller_cases[0]) + 2,
            failed);
     return failed != 0;
 }

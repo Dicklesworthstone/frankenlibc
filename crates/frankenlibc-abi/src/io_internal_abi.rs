@@ -1831,6 +1831,13 @@ impl NativeStreamRegistry {
         }
     }
 
+    /// Resolve an occupied handle while the caller holds the registry lock.
+    /// Global flush uses this together with the stream registry to acquire a
+    /// FILE lock before a concurrent close can retire or reuse its slot.
+    pub(crate) fn get_by_handle(&self, handle: *const c_void) -> Option<&NativeFile> {
+        self.handle_slot(handle).and_then(|index| self.get(index))
+    }
+
     /// Flush all writable streams. Returns the number of streams that failed to flush.
     ///
     /// This implements `fflush(NULL)` semantics: flush every open output stream.

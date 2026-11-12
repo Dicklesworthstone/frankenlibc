@@ -2474,6 +2474,70 @@ fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
     ids
 }
 
+/// A global-flush snapshot owns the Rust cell, but not the reusable FILE
+/// slot. Acquire the public FILE lock and the cell only while both registries
+/// still identify this exact stream. A close or reopen that won the race
+/// makes the old snapshot entry a no-op, including when it reused the address.
+///
+/// The field order is deliberate: publish flags and buffer windows while the
+/// FILE lock is still held, then release that lock.
+struct SnapshotStreamGuard<'a> {
+    stream: StreamGuard<'a>,
+    _file_lock: StdioLockGuard,
+}
+
+impl std::ops::Deref for SnapshotStreamGuard<'_> {
+    type Target = StdioStream;
+
+    fn deref(&self) -> &StdioStream {
+        &self.stream
+    }
+}
+
+impl std::ops::DerefMut for SnapshotStreamGuard<'_> {
+    fn deref_mut(&mut self) -> &mut StdioStream {
+        &mut self.stream
+    }
+}
+
+fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGuard<'_>> {
+    loop {
+        if let Some(native) = io_internal_abi::try_lock_native_stream_registry()
+            && let Ok(reg) = registry().try_lock()
+        {
+            if !reg.streams.get(&id).is_some_and(|live| Arc::ptr_eq(live, cell)) {
+                return None;
+            }
+            let handle = resolve_flags_word(cell.flags_word);
+            let file_lock = if handle == 0 {
+                // Legacy cells have no public FILE object to retire.
+                Some(StdioLockGuard(std::ptr::null_mut()))
+            } else {
+                let file = native.get_by_handle(handle as *const c_void)?;
+                file.try_explicit_lock()
+                    .then(|| StdioLockGuard(handle as *mut c_void))
+            };
+            if let Some(file_lock) = file_lock {
+                let stream = cell.try_lock();
+                // Never wait for a FILE/cell lock, or resolve funlockfile,
+                // while holding either registry. A thread owning flockfile
+                // must remain able to close/reopen this stream or open another.
+                drop(reg);
+                drop(native);
+                if let Some(stream) = stream {
+                    return Some(SnapshotStreamGuard {
+                        stream,
+                        _file_lock: file_lock,
+                    });
+                }
+                drop(file_lock);
+            }
+        }
+        raw_syscall::sys_sched_yield();
+    }
+}
+
+
 /// The stdio registries held across `fork` (bd-rc0923-epic-eeuy4f.5), as glibc
 /// holds its stream-list lock: a stream operation in another thread at the
 /// instant of the clone otherwise leaves a registry locked forever in the
@@ -4822,14 +4886,11 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, failed);
             return if failed { libc::EOF } else { 0 };
         }
-        // Snapshot cells under one short try-lock, then flush per stream. Streams
+        // Snapshot cells under one short lock, then flush per stream. Streams
         // opened AFTER the snapshot are not flushed — same semantics as the old
         // whole-registry hold (they could not have been registered mid-hold either).
         let snapshot: Vec<(usize, StreamCell)> = {
-            let Ok(reg) = registry().try_lock() else {
-                // Lock held by dead thread (fork) or reentrant. Fail safe.
-                return libc::EOF;
-            };
+            let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
             sorted_stream_ids(&reg)
                 .into_iter()
                 .filter_map(|id| reg.streams.get(&id).cloned().map(|c| (id, c)))
@@ -4837,7 +4898,9 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         };
         let mut any_fail = false;
         for (id, cell) in snapshot {
-            let mut s_guard = cell.lock();
+            let Some(mut s_guard) = lock_snapshot_stream(id, &cell) else {
+                continue;
+            };
             let s = &mut *s_guard;
             let ok = if is_cookie_stream(id) {
                 let _ = sync_fast_fixed_mem_read_to_stream(id, s);
