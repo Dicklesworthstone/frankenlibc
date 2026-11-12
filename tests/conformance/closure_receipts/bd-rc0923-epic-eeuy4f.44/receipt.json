@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.44",
+  "contract": {
+    "behavior": "check_closure_gate.sh enforces source/build-bound nonzero execution receipts, lower evidence classes, portable repo-relative receipt paths, and relocated clean-checkout verification",
+    "acceptance_sha256": "75606d0c865f9115e8657e098ced4500554578a97767166d14c3bf7a856b2b75",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "scripts/check_closure_gate.sh",
+      "tests/conformance/closure_evidence_schema.json"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/closure_gate_test.rs"
+    ],
+    "source": {
+      "commit": "4756646d57432b8caa8a1b7a3407cb819597aae8",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/closure_gate_test.rs": "847c487477e173f03f1c82ad1641e2a8e4943a1f054c6f995c442c4283c6d33c",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/check_closure_gate.sh": "8963e042033e90f28c032352e3d4f998dc525ef737ea38d1cb050298a5492129",
+        "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-20T22:14:24.463480Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "closure_gate_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "actual_gate_consumes_nonzero_results_and_rejects_receipt_corruption",
+        "actual_gate_rejects_zero_tests_compile_failure_and_wrong_implementation",
+        "actual_gate_distinguishes_compiled_from_executed_evidence",
+        "actual_gate_keeps_source_checks_and_historical_exemptions_explicit",
+        "actual_gate_rejects_non_portable_existing_receipt_paths_and_member_escapes",
+        "relocated_clean_checkout_verifies_cargo_receipt_without_build_tree"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "closure_gate_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T13:15:41.879966+00:00",
+    "finished_at": "2026-11-12T13:15:43.161675+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "0c53fcac8cdc6feb0672f59d76587a23b69098ad0682efaa6aa619f0100480f2",
+    "stderr_sha256": "2320a8df34098b5ad669cd6c80015d87c3976b325bcf0c4ebf4d903613b96e09",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T13:15:43.164955+00:00",
+    "finished_at": "2026-11-12T13:15:55.462699+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "ff7c3a811402d9fe46b98ac1eb7f25735d98b96cda4c202930a45d242a54c830",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 16
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57": "db5958c698e453c0c1816a22e6b89fafb34aafcccc6566d159320882261ef037"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/closure_gate_test.rs": "847c487477e173f03f1c82ad1641e2a8e4943a1f054c6f995c442c4283c6d33c",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/check_closure_gate.sh": "8963e042033e90f28c032352e3d4f998dc525ef737ea38d1cb050298a5492129",
+    "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e"
+  },
+  "executable_sha256": "db5958c698e453c0c1816a22e6b89fafb34aafcccc6566d159320882261ef037"
+}

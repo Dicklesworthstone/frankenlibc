@@ -269,8 +269,8 @@
         "missing": 61
       },
       "e2e_scripts": {
-        "required": 109,
-        "complete": 74,
+        "required": 110,
+        "complete": 75,
         "partial": 0,
         "missing": 35
       },
@@ -287,8 +287,8 @@
         "missing": 26
       },
       "conformance_fixtures": {
-        "required": 61,
-        "complete": 25,
+        "required": 60,
+        "complete": 24,
         "partial": 0,
         "missing": 36
       },
@@ -15045,58 +15045,60 @@
       "bead_id": "bd-rc0923-epic-eeuy4f.44",
       "title": "[RC-1020 tests] Reject fabricated, stale and zero-test closure evidence",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [],
-      "dependencies": [],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f.43"
+      ],
       "obligations": {
         "unit_tests": {
           "required": true,
-          "scope": "happy-path, negative, adversarial, regression"
+          "scope": "check_closure_gate.sh enforces source/build-bound nonzero execution receipts, lower evidence classes, portable repo-relative receipt paths, and relocated clean-checkout verification"
         },
         "e2e_scripts": {
-          "required": false,
-          "scope": ""
+          "required": true,
+          "scope": "bash scripts/check_closure_gate.sh; FRANKENLIBC_CLOSURE_GATE_SOURCE=beads bash scripts/check_closure_gate.sh"
         },
         "structured_logs": {
           "required": true,
-          "scope": "JSONL with trace_id, mode, symbol, outcome, errno, timing"
+          "scope": "JSONL execution receipt"
         },
         "perf_evidence": {
           "required": false,
           "scope": ""
         },
         "conformance_fixtures": {
-          "required": true,
-          "scope": "fixture packs with spec traceability"
+          "required": false,
+          "scope": ""
         },
         "golden_artifacts": {
           "required": true,
-          "scope": "SHA256-verified golden output files"
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.44/receipt.json"
         }
       },
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "scripts/check_closure_gate.sh, crates/frankenlibc-harness/tests/closure_gate_test.rs"
+          "artifacts": "cargo test -p frankenlibc-harness --test closure_gate_test"
         },
         "e2e_scripts": {
-          "status": "not_required"
+          "status": "complete",
+          "artifacts": "bash scripts/check_closure_gate.sh"
         },
         "structured_logs": {
           "status": "complete",
-          "artifacts": "scripts/check_closure_gate.sh, crates/frankenlibc-harness/tests/closure_gate_test.rs"
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.44/receipt.json"
         },
         "perf_evidence": {
           "status": "not_required"
         },
         "conformance_fixtures": {
-          "status": "complete",
-          "artifacts": "scripts/check_closure_gate.sh, crates/frankenlibc-harness/tests/closure_gate_test.rs"
+          "status": "not_required"
         },
         "golden_artifacts": {
           "status": "complete",
-          "artifacts": "scripts/check_closure_gate.sh, crates/frankenlibc-harness/tests/closure_gate_test.rs"
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.44/receipt.json"
         }
       },
       "coverage_summary": {
@@ -15118,18 +15120,97 @@
           "FRANKENLIBC_CLOSURE_GATE_SOURCE=beads bash scripts/check_closure_gate.sh"
         ],
         "expected_assertions": [
-          "check_closure_gate.sh rejects fabricated/stale/zero-test/non-portable receipt evidence and verifies relocated clean checkouts"
+          "check_closure_gate.sh enforces source/build-bound nonzero execution receipts, lower evidence classes, portable repo-relative receipt paths, and relocated clean-checkout verification"
         ],
         "log_schema_refs": [
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
           "scripts/check_closure_gate.sh",
-          "crates/frankenlibc-harness/tests/closure_gate_test.rs"
+          "tests/conformance/closure_evidence_schema.json",
+          "crates/frankenlibc-harness/tests/closure_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.44/receipt.json"
         ],
         "perf_proof_refs": [],
         "close_blockers": [],
-        "notes": "Auto-backfilled row for bd-rc0923-epic-eeuy4f.44; refine commands/artifacts as implementation evidence lands."
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 4756646d57432b8caa8a1b7a3407cb819597aae8.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.44/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "check_closure_gate.sh enforces source/build-bound nonzero execution receipts, lower evidence classes, portable repo-relative receipt paths, and relocated clean-checkout verification",
+          "acceptance_sha256": "75606d0c865f9115e8657e098ced4500554578a97767166d14c3bf7a856b2b75",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "scripts/check_closure_gate.sh",
+            "tests/conformance/closure_evidence_schema.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/closure_gate_test.rs"
+          ],
+          "source": {
+            "commit": "4756646d57432b8caa8a1b7a3407cb819597aae8",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/tests/closure_gate_test.rs": "847c487477e173f03f1c82ad1641e2a8e4943a1f054c6f995c442c4283c6d33c",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_closure_gate.sh": "8963e042033e90f28c032352e3d4f998dc525ef737ea38d1cb050298a5492129",
+              "tests/conformance/closure_evidence_schema.json": "b24d33085e27e2920b771439aea866d6ca18264635847c2c88a07c817623d74e"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:24.463480Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "closure_gate_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/93740e1df9cc6c57/out/closure_gate_test-93740e1df9cc6c57"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "actual_gate_consumes_nonzero_results_and_rejects_receipt_corruption",
+              "actual_gate_rejects_zero_tests_compile_failure_and_wrong_implementation",
+              "actual_gate_distinguishes_compiled_from_executed_evidence",
+              "actual_gate_keeps_source_checks_and_historical_exemptions_explicit",
+              "actual_gate_rejects_non_portable_existing_receipt_paths_and_member_escapes",
+              "relocated_clean_checkout_verifies_cargo_receipt_without_build_tree"
+            ]
+          }
+        }
       }
     },
     {
