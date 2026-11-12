@@ -3969,7 +3969,7 @@ Selected project health snapshot:
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,902 |
 | `crates/frankenlibc-abi/src/` | 125 Rust files, 245,838 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 85,719 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 86,186 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,994 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |

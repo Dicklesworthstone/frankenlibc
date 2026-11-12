@@ -497,11 +497,11 @@ impl AllocationArena {
     /// Alignment must be a power of 2.
     /// Returns the allocation metadata on success.
     pub fn allocate_aligned(&self, user_size: usize, align: usize) -> Option<AllocationResult> {
-        // Ensure alignment is at least 32 (>= FINGERPRINT_SIZE=24, power of 2) and power of 2
-        let align = align.max(32);
+        // Validate caller alignment BEFORE clamping up to 32 (>= FINGERPRINT_SIZE=24).
         if !align.is_power_of_two() {
             return None;
         }
+        let align = align.max(32);
 
         let offset = align;
         let total_size = offset

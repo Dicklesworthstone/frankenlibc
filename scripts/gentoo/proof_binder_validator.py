@@ -34,7 +34,7 @@ def utc_now() -> str:
 
 def file_sha256(path: Path) -> Optional[str]:
     """Compute SHA-256 hash of a file."""
-    if not path.exists():
+    if not path.is_file():
         return None
     h = hashlib.sha256()
     h.update(path.read_bytes())
@@ -494,7 +494,7 @@ def validate_binder(
     """Validate the complete proof obligations binder."""
     report = BinderValidationReport(timestamp=utc_now(), dry_run=dry_run)
 
-    if not binder_path.exists():
+    if not binder_path.is_file():
         report.binder_valid = False
         return report
 

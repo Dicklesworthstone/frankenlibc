@@ -3251,10 +3251,63 @@ mod tests {
         let ptr = pipeline.allocate(64).expect("alloc");
         let addr = ptr as usize;
 
-        // Full validation path (strict) should produce info + warn + trace.
+        // Cold full validation emits trace + debug (cache miss) + info (terminal).
+        // In Strict mode (budget = 20ns), modeled cold stage latency (~52ns) also
+        // naturally emits warn ("validation_budget_overrun"); in Hardened mode
+        // (budget = 200ns), 52ns is within budget and must NOT emit a false overrun warn.
         let _ = pipeline.validate(addr);
-        // Cache hit path should produce debug.
+        // Warm TLS cache hit emits debug ("validation_cache_hit").
         let _ = pipeline.validate(addr);
+
+        let active_mode = safety_level();
+        if active_mode == SafetyLevel::Hardened {
+            let pre_warn_jsonl = pipeline.export_validation_log_jsonl();
+            for line in pre_warn_jsonl.lines().filter(|l| !l.trim().is_empty()) {
+                let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
+                assert_ne!(
+                    row.get("event").and_then(Value::as_str),
+                    Some("validation_budget_overrun"),
+                    "in-budget hardened validation must not emit validation_budget_overrun"
+                );
+            }
+            let trace = pipeline
+                .begin_validation_trace(ValidationSecurityContext::allow_pointer_validation());
+            pipeline.emit_budget_warning_if_needed(
+                &trace,
+                SafetyLevel::Hardened,
+                "post_pipeline",
+                "pipeline::post::validated",
+                "FullValidate",
+                HARDENED_VALIDATION_BUDGET_NS,
+                true,
+                true,
+                false,
+                false,
+                0,
+                0,
+                0,
+            );
+            let at_budget_jsonl = pipeline.export_validation_log_jsonl();
+            assert!(
+                !at_budget_jsonl.contains("\"event\":\"validation_budget_overrun\""),
+                "latency equal to HARDENED_VALIDATION_BUDGET_NS (200ns) must not warn"
+            );
+            pipeline.emit_budget_warning_if_needed(
+                &trace,
+                SafetyLevel::Hardened,
+                "post_pipeline",
+                "pipeline::post::validated",
+                "FullValidate",
+                HARDENED_VALIDATION_BUDGET_NS + 1,
+                true,
+                true,
+                false,
+                false,
+                0,
+                0,
+                0,
+            );
+        }
 
         // Corrupt canary before free so validator emits an invariant-violation error.
         // SAFETY: Intentional corruption to exercise validation error logging.
@@ -3278,6 +3331,8 @@ mod tests {
         assert!(levels.contains("info"));
         assert!(levels.contains("warn"));
         assert!(levels.contains("error"));
+
+        let _ = pipeline.free(ptr);
     }
 
     #[test]
@@ -3638,5 +3693,417 @@ mod tests {
             *((addr_hdr - FINGERPRINT_SIZE) as *mut u8) = saved;
         }
         assert_eq!(pipeline.free(ptr_hdr), FreeResult::Freed);
+    }
+
+    #[test]
+    fn validation_budget_warning_respects_mode_thresholds() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+        let trace =
+            pipeline.begin_validation_trace(ValidationSecurityContext::allow_pointer_validation());
+
+        // Strict budget = 20ns: 20ns silent, 21ns warns.
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Strict,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "Allow",
+            STRICT_VALIDATION_BUDGET_NS,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Strict,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "Allow",
+            STRICT_VALIDATION_BUDGET_NS + 1,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(
+            pipeline.export_validation_log_jsonl().lines().count(),
+            1,
+            "21ns in Strict mode must emit one budget warning"
+        );
+
+        // Hardened budget = 200ns: 200ns silent, 201ns warns; Off never warns.
+        pipeline.clear_validation_logs();
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Hardened,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "FullValidate",
+            HARDENED_VALIDATION_BUDGET_NS,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Off,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "Allow",
+            u64::MAX,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.emit_budget_warning_if_needed(
+            &trace,
+            SafetyLevel::Hardened,
+            "post_pipeline",
+            "pipeline::post::validated",
+            "FullValidate",
+            HARDENED_VALIDATION_BUDGET_NS + 1,
+            true,
+            true,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+        let jsonl = pipeline.export_validation_log_jsonl();
+        assert_eq!(jsonl.lines().count(), 1);
+        assert!(jsonl.contains("\"mode\":\"hardened\""));
+        assert!(jsonl.contains("\"event\":\"validation_budget_overrun\""));
+    }
+
+    #[test]
+    fn spatial_size_arithmetic_overflow_fails_closed() {
+        let pipeline = ValidationPipeline::new();
+        for bad_size in [
+            usize::MAX,
+            usize::MAX - 1,
+            usize::MAX - 15,
+            usize::MAX - 31,
+            usize::MAX - 63,
+            usize::MAX - 64,
+            isize::MAX as usize + 1,
+        ] {
+            assert!(
+                pipeline.allocate(bad_size).is_none(),
+                "allocate({bad_size:#x}) must fail closed without wrapping"
+            );
+            assert!(
+                pipeline.allocate_aligned(bad_size, 64).is_none(),
+                "allocate_aligned({bad_size:#x}, 64) must fail closed"
+            );
+        }
+        for bad_align in [0usize, 3, 24, 48, usize::MAX] {
+            assert!(
+                pipeline.allocate_aligned(64, bad_align).is_none(),
+                "non-power-of-two align {bad_align} must fail closed"
+            );
+        }
+        let max_outcome = pipeline.validate(usize::MAX);
+        assert!(
+            matches!(
+                max_outcome,
+                ValidationOutcome::Foreign(_) | ValidationOutcome::Bypassed
+            ),
+            "validate(usize::MAX) must not overflow or panic: {max_outcome:?}"
+        );
+    }
+
+    #[test]
+    fn temporal_boundary_quarantine_drain_and_forced_same_address_reuse() {
+        use crate::arena::{CachedIntegrityVerdict, TRAILING_REDZONE_SIZE};
+
+        let pipeline = ValidationPipeline::new();
+        let metrics = global_metrics();
+
+        // Phase 1: Live owned base, interior, and trailing-redzone spatial bounds.
+        let mut candidates = Vec::with_capacity(64);
+        for _ in 0..64 {
+            let p = pipeline.allocate(64).expect("alloc 64");
+            candidates.push((p, p as usize));
+        }
+        let (p0, addr0) = candidates[0];
+        let v_base = pipeline.validate(addr0);
+        let abs0 = v_base.access_abstraction().expect("live abstraction");
+        assert_eq!(abs0.state, SafetyState::Valid);
+        assert_eq!(abs0.remaining, Some(64));
+
+        let v_interior = pipeline.validate(addr0 + 20);
+        assert_eq!(
+            v_interior.access_abstraction().and_then(|a| a.remaining),
+            Some(44),
+            "interior pointer must report exact remaining suffix"
+        );
+        for redzone_off in [64usize, 64 + TRAILING_REDZONE_SIZE - 1] {
+            let v_past = pipeline.validate(addr0 + redzone_off);
+            assert!(
+                matches!(v_past, ValidationOutcome::Invalid(_)),
+                "offset {redzone_off} in trailing redzone must report Invalid: {v_past:?}"
+            );
+            assert_eq!(
+                v_past.access_abstraction().and_then(|a| a.remaining),
+                Some(0)
+            );
+        }
+
+        let slot0 = pipeline.arena.lookup(addr0).expect("arena slot for p0");
+        let gen0 = slot0.generation;
+        let slot_idx0 = slot0.slot_idx;
+        let shard0 = ((addr0 >> 12) & (crate::arena::NUM_SHARDS - 1)) as u8;
+        let epoch_before_free = crate::tls_cache::current_shard_epoch(shard0 as usize);
+
+        // Phase 2: Pre-reuse quarantine guarantees (TemporalViolation + remaining=Some(0) + DoubleFree).
+        for &(p, _) in &candidates {
+            assert_eq!(pipeline.free(p), FreeResult::Freed);
+        }
+        let v_quar = pipeline.validate(addr0);
+        assert!(
+            matches!(v_quar, ValidationOutcome::TemporalViolation(_)),
+            "quarantined block must report TemporalViolation: {v_quar:?}"
+        );
+        let abs_quar = v_quar.access_abstraction().expect("quarantined access abs");
+        assert_eq!(abs_quar.state, SafetyState::Quarantined);
+        assert_eq!(
+            abs_quar.remaining,
+            Some(0),
+            "quarantined access_abstraction must expose 0 usable bytes"
+        );
+        assert_eq!(pipeline.free(p0), FreeResult::DoubleFree);
+
+        // Internal stale cache metadata check: old epoch/generation is rejected immediately.
+        assert_eq!(
+            pipeline.arena.verify_cached_slot_integrity(
+                addr0,
+                64,
+                gen0,
+                slot_idx0,
+                shard0,
+                epoch_before_free,
+                0,
+                0,
+            ),
+            CachedIntegrityVerdict::EpochStale
+        );
+
+        // Phase 3: Drain quarantine past 64 MiB + RETIRE_BATCH and advance EBR so the
+        // candidates transition out of quarantine -> Foreign / ForeignPointer.
+        let filler = pipeline
+            .allocate(63 * 1024 * 1024)
+            .expect("alloc 63 MiB quarantine filler");
+        assert_eq!(pipeline.free(filler), FreeResult::Freed);
+
+        // Free >= 2 MiB across pages so every shard holding candidates drains and retires.
+        let mut flushers = Vec::new();
+        for _ in 0..32 {
+            if let Some(q) = pipeline.allocate(256 * 1024) {
+                flushers.push(q);
+            }
+        }
+        for q in flushers {
+            assert_eq!(pipeline.free(q), FreeResult::Freed);
+        }
+        // Flush any parked retire_pending entries in candidate shards by cycling 64 frees per shard.
+        let mut shard_flush = Vec::with_capacity(1024);
+        for _ in 0..1024 {
+            if let Some(q) = pipeline.allocate(1536) {
+                shard_flush.push(q);
+            }
+        }
+        for q in shard_flush {
+            let _ = pipeline.free(q);
+        }
+        for _ in 0..8 {
+            let _ = pipeline.collector.try_advance();
+        }
+
+        // At least p0 (and candidates whose shards drained) are now completely out of arena index.
+        if pipeline.arena.lookup(addr0).is_none() {
+            let v_drained = pipeline.validate(addr0);
+            assert!(
+                matches!(v_drained, ValidationOutcome::Foreign(_)),
+                "drained pre-reuse block must classify as Foreign: {v_drained:?}"
+            );
+            assert_eq!(
+                v_drained.access_abstraction().and_then(|a| a.remaining),
+                None
+            );
+            assert_eq!(pipeline.free(p0), FreeResult::ForeignPointer);
+        }
+
+        // Phase 4: Forced/observed same-address reuse boundary (generation G2 > G1).
+        // Allocate new 48-byte blocks (smaller user_size than original 64 bytes) and check
+        // any recycled user_base, PLUS verify header generation mismatch detection directly.
+        let old_addrs: HashSet<usize> = candidates.iter().map(|&(_, a)| a).collect();
+        let mut new_blocks = Vec::with_capacity(256);
+        let mut reused_pair: Option<(*mut u8, usize)> = None;
+        for _ in 0..256 {
+            let np = pipeline.allocate(48).expect("alloc 48");
+            let na = np as usize;
+            if reused_pair.is_none() && old_addrs.contains(&na) {
+                reused_pair = Some((np, na));
+            }
+            new_blocks.push(np);
+        }
+
+        // Whether the host allocator recycled one of the 64 addresses in 256 draws or chose
+        // fresh addresses, test the generation-boundary invariant on a live 48B allocation:
+        let target_ptr = reused_pair.map(|(p, _)| p).unwrap_or(new_blocks[0]);
+        let target_addr = target_ptr as usize;
+        let live_lookup = pipeline.arena.lookup(target_addr).expect("live new slot");
+        assert!(
+            live_lookup.generation > gen0,
+            "new generation {} must strictly exceed prior generation {}",
+            live_lookup.generation,
+            gen0
+        );
+
+        // (4a) Unadorned C-ABI raw address resolves to the current live 48B allocation:
+        //      spatial overflow at +56 (valid under old 64B size, out-of-bounds under new 48B size)
+        //      IS caught as Invalid, while [0, 48) validates as the current object.
+        let v_reused_base = pipeline.validate(target_addr);
+        assert_eq!(
+            v_reused_base.access_abstraction().and_then(|a| a.remaining),
+            Some(48)
+        );
+        let v_stale_old_tail = pipeline.validate(target_addr + 56);
+        assert!(
+            matches!(v_stale_old_tail, ValidationOutcome::Invalid(_)),
+            "stale offset 56 past new 48B allocation must be caught as Invalid: {v_stale_old_tail:?}"
+        );
+
+        // (4b) Internal header/slot generation mismatch (stale header gen0 vs live slot G2)
+        //      IS deterministically rejected as TemporalViolation.
+        let stale_hdr = AllocationFingerprint::compute(target_addr, 48, gen0).to_bytes();
+        let mut saved_hdr = [0u8; FINGERPRINT_SIZE];
+        #[allow(unsafe_code)]
+        unsafe {
+            let hdr_ptr = (target_addr - FINGERPRINT_SIZE) as *mut u8;
+            std::ptr::copy_nonoverlapping(hdr_ptr, saved_hdr.as_mut_ptr(), FINGERPRINT_SIZE);
+            std::ptr::copy_nonoverlapping(stale_hdr.as_ptr(), hdr_ptr, FINGERPRINT_SIZE);
+        }
+        crate::tls_cache::bump_tls_cache_epoch();
+        let fp_before = MembraneMetrics::get(&metrics.fingerprint_failures);
+        let v_gen_mismatch = pipeline.validate(target_addr);
+        assert!(
+            matches!(v_gen_mismatch, ValidationOutcome::TemporalViolation(_)),
+            "header carrying stale generation must fail with TemporalViolation: {v_gen_mismatch:?}"
+        );
+        assert!(MembraneMetrics::get(&metrics.fingerprint_failures) > fp_before);
+        #[allow(unsafe_code)]
+        unsafe {
+            let hdr_ptr = (target_addr - FINGERPRINT_SIZE) as *mut u8;
+            std::ptr::copy_nonoverlapping(saved_hdr.as_ptr(), hdr_ptr, FINGERPRINT_SIZE);
+        }
+        crate::tls_cache::bump_tls_cache_epoch();
+
+        for np in new_blocks {
+            assert_eq!(pipeline.free(np), FreeResult::Freed);
+        }
+    }
+
+    #[test]
+    fn concurrent_free_and_validate_linearizes_lookup_and_invalidates_tls_cache() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let pipeline = Arc::new(ValidationPipeline::new());
+
+        for round in 0..32 {
+            let ptr = pipeline.allocate(96).expect("alloc 96");
+            let addr = ptr as usize;
+
+            // Snapshot obtained BEFORE free demonstrates the documented post-return TOCTOU limit:
+            // ValidationOutcome is a value snapshot, not a lock held across caller dereference.
+            let pre_free_snapshot = pipeline.validate(addr);
+            assert!(pre_free_snapshot.can_write());
+
+            let start_barrier = Arc::new(Barrier::new(5));
+            let post_free_barrier = Arc::new(Barrier::new(5));
+            let mut handles = Vec::with_capacity(4);
+
+            for _ in 0..4 {
+                let p_ref = Arc::clone(&pipeline);
+                let sb = Arc::clone(&start_barrier);
+                let pfb = Arc::clone(&post_free_barrier);
+                handles.push(thread::spawn(move || {
+                    // Warm this thread's TLS cache before racing.
+                    assert_eq!(
+                        p_ref
+                            .validate(addr)
+                            .access_abstraction()
+                            .and_then(|a| a.remaining),
+                        Some(96)
+                    );
+                    sb.wait();
+                    for _ in 0..64 {
+                        let out = p_ref.validate(addr);
+                        assert!(
+                            matches!(
+                                out,
+                                ValidationOutcome::Validated(_)
+                                    | ValidationOutcome::CachedValid(_)
+                                    | ValidationOutcome::TemporalViolation(_)
+                                    | ValidationOutcome::Foreign(_)
+                            ),
+                            "round {round}: unexpected concurrent verdict {out:?}"
+                        );
+                        let _ = p_ref.try_validate_cached_remaining(addr);
+                    }
+                    pfb.wait();
+                    // Once `free` has completed (Barrier happens-before), no thread may
+                    // serve a stale live `Some(96)` bound from TLS cache or full lookup.
+                    let post_cached = p_ref.try_validate_cached_remaining(addr);
+                    assert_ne!(
+                        post_cached,
+                        Some(Some(96)),
+                        "round {round}: stale TLS cache survived post-free epoch bump"
+                    );
+                    let post_full = p_ref.validate(addr);
+                    assert!(
+                        matches!(
+                            post_full,
+                            ValidationOutcome::TemporalViolation(_) | ValidationOutcome::Foreign(_)
+                        ),
+                        "round {round}: post-free lookup must be Quarantined or Foreign, got {post_full:?}"
+                    );
+                }));
+            }
+
+            start_barrier.wait();
+            assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+            post_free_barrier.wait();
+            // Pre-free value snapshot still reports `can_write() == true` after `free` returned,
+            // confirming empirically that `ValidationOutcome` is a point-in-time verdict.
+            assert!(pre_free_snapshot.can_write());
+
+            for h in handles {
+                h.join().expect("validator thread panicked");
+            }
+        }
     }
 }
