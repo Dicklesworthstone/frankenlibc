@@ -228,10 +228,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 214,
-    "total_entries": 214,
+    "total_critique_beads": 216,
+    "total_entries": 216,
     "by_coverage_status": {
-      "complete": 152,
+      "complete": 154,
       "partial": 1,
       "missing": 61
     },
@@ -243,8 +243,8 @@
         "missing": 16
       },
       "P1": {
-        "total": 116,
-        "complete": 99,
+        "total": 118,
+        "complete": 101,
         "partial": 0,
         "missing": 17
       },
@@ -263,20 +263,20 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 213,
-        "complete": 152,
+        "required": 215,
+        "complete": 154,
         "partial": 0,
         "missing": 61
       },
       "e2e_scripts": {
-        "required": 113,
-        "complete": 78,
+        "required": 115,
+        "complete": 80,
         "partial": 0,
         "missing": 35
       },
       "structured_logs": {
-        "required": 144,
-        "complete": 71,
+        "required": 146,
+        "complete": 73,
         "partial": 0,
         "missing": 73
       },
@@ -293,16 +293,16 @@
         "missing": 36
       },
       "golden_artifacts": {
-        "required": 134,
-        "complete": 60,
+        "required": 136,
+        "complete": 62,
         "partial": 0,
         "missing": 74
       }
     },
     "by_stream": {
       "abi": {
-        "total": 27,
-        "complete": 27,
+        "total": 28,
+        "complete": 28,
         "partial": 0,
         "missing": 0
       },
@@ -319,8 +319,8 @@
         "missing": 15
       },
       "e2e": {
-        "total": 78,
-        "complete": 69,
+        "total": 79,
+        "complete": 70,
         "partial": 1,
         "missing": 8
       },
@@ -13576,6 +13576,181 @@
       }
     },
     {
+      "bead_id": "bd-rc0923-epic-eeuy4f.33",
+      "title": "[RC-1020] Implement remaining GNU printf registration and size formatter semantics",
+      "priority": 1,
+      "status": "in_progress",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "GNU register_printf_* 248-slot ENOSPC cap, multi-arg arginfo/ExtensionPlan capacity, printf_size* layout, and contended-lock errno preservation across default and owned-tls-cache"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.33/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-abi --test glibc_internal_abi_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.33/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.33/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.33",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-abi --test glibc_internal_abi_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_closure_gate.sh"
+        ],
+        "expected_assertions": [
+          "GNU register_printf_* 248-slot ENOSPC cap, multi-arg arginfo/ExtensionPlan capacity, printf_size* layout, and contended-lock errno preservation across default and owned-tls-cache"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+          "crates/frankenlibc-abi/src/owned_tls_cache.rs",
+          "crates/frankenlibc-abi/src/util.rs",
+          "crates/frankenlibc-membrane/src/util.rs",
+          "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.33/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 9c11a56f130b921463943d60131ee415aaf513f5.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.33/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "GNU register_printf_* 248-slot ENOSPC cap, multi-arg arginfo/ExtensionPlan capacity, printf_size* layout, and contended-lock errno preservation across default and owned-tls-cache",
+          "acceptance_sha256": "c0bd8ee5b2d8c964a3e63c9db7fab1ff71013d75d9f856762bf4601079e6e79a",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/stdio_abi.rs",
+            "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+            "crates/frankenlibc-abi/src/owned_tls_cache.rs",
+            "crates/frankenlibc-abi/src/util.rs",
+            "crates/frankenlibc-membrane/src/util.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs"
+          ],
+          "source": {
+            "commit": "9c11a56f130b921463943d60131ee415aaf513f5",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/glibc_internal_abi.rs": "3fbe1bb75f70277ab0def86b673ba9bf569dededebb0bb2678b24e8f0b1b41a6",
+              "crates/frankenlibc-abi/src/owned_tls_cache.rs": "760e692df3b3082da0f73deea5a2c9d19c8c0a364ea7871fa0446e319f8bda05",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "eda5ce490db3c04052162352e58542dc579c3b957c93b1da102dc63fe9afb0be",
+              "crates/frankenlibc-abi/src/util.rs": "643a489199c592c37edeb9a84c01fa8967a9c8b6b96dec326fe71947ff49d48f",
+              "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs": "dcec484e1dbf89c0060b37f04a927b0c2731ab0eed5b809b3f89090734b02efd",
+              "crates/frankenlibc-membrane/src/util.rs": "c8c32772870abb29d85898f1d9fa7f9761878d9a372243326e0d4972a452d916",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:19.685536Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-20bf978f3d55bce8c86c3173a5803734/debug/build/frankenlibc-abi/05d26e6a4dbc5660/out/glibc_internal_abi_test-05d26e6a4dbc5660"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-20bf978f3d55bce8c86c3173a5803734",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "glibc_internal_abi_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-20bf978f3d55bce8c86c3173a5803734/debug/build/frankenlibc-abi/05d26e6a4dbc5660/out/glibc_internal_abi_test-05d26e6a4dbc5660"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "register_printf_callbacks_render_and_parse",
+              "printf_size_info_gnu_layout_and_single_slot",
+              "printf_fp_wide_concurrent_wmemstream_preserves_errno"
+            ]
+          }
+        }
+      }
+    },
+    {
       "bead_id": "bd-rc0923-epic-eeuy4f.33.1",
       "title": "[printf] Honor active rounding modes in extended formatting and size callbacks",
       "priority": 1,
@@ -14217,6 +14392,186 @@
             "result_format": "libtest",
             "required_tests": [
               "snprintf_chk_truncates"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.34",
+      "title": "[RC-1020 tests] Verify custom printf callbacks, registration and size formatter behavior",
+      "priority": 1,
+      "status": "open",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f.33",
+        "bd-rc0923-epic-eeuy4f.33.4"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Verify GNU custom printf registration, printf_size*, 142-case C++ callback unwind, and contended wmemstream errno preservation"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.34/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-abi --test glibc_internal_abi_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.34/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.34/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.34",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-abi --test glibc_internal_abi_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_closure_gate.sh"
+        ],
+        "expected_assertions": [
+          "Verify GNU custom printf registration, printf_size*, 142-case C++ callback unwind, and contended wmemstream errno preservation"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "tests/integration/fixture_stdio_printf.c",
+          "tests/integration/fixture_callback_unwind.cpp",
+          "scripts/check_stdio_native.sh",
+          "scripts/ld_preload_smoke.sh",
+          "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.34/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 9c11a56f130b921463943d60131ee415aaf513f5.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.34/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Verify GNU custom printf registration, printf_size*, 142-case C++ callback unwind, and contended wmemstream errno preservation",
+          "acceptance_sha256": "48f06dafb84d1f74049fb443e7f1b8225234d84f9f9cf2c66dc3d84eb2036ee6",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/stdio_abi.rs",
+            "tests/integration/fixture_stdio_printf.c",
+            "tests/integration/fixture_callback_unwind.cpp",
+            "scripts/check_stdio_native.sh",
+            "scripts/ld_preload_smoke.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs"
+          ],
+          "source": {
+            "commit": "9c11a56f130b921463943d60131ee415aaf513f5",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "eda5ce490db3c04052162352e58542dc579c3b957c93b1da102dc63fe9afb0be",
+              "crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs": "dcec484e1dbf89c0060b37f04a927b0c2731ab0eed5b809b3f89090734b02efd",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_stdio_native.sh": "e5163fabac3827f8d4ff560c41745ed66ad648c5109ff84faa86453a68789d2b",
+              "scripts/ld_preload_smoke.sh": "0e22cf94b6d3f89e09a520b91a3399e4e5c2eed5eaacf38b03813b95a785f356",
+              "tests/integration/fixture_callback_unwind.cpp": "e4284af2e7750661746b743ccab179b588d0e36c9d8ee73fbdf1bc4727a0f28d",
+              "tests/integration/fixture_stdio_printf.c": "1046c753f0fff4f787bbfc541c97e712e1e95b1544a06f7f4f195ee8013e7a32"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:20.069512Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-20bf978f3d55bce8c86c3173a5803734/debug/build/frankenlibc-abi/05d26e6a4dbc5660/out/glibc_internal_abi_test-05d26e6a4dbc5660",
+              "printf"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-20bf978f3d55bce8c86c3173a5803734",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "glibc_internal_abi_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1149989-pool-20bf978f3d55bce8c86c3173a5803734/debug/build/frankenlibc-abi/05d26e6a4dbc5660/out/glibc_internal_abi_test-05d26e6a4dbc5660"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "register_printf_callbacks_render_and_parse",
+              "register_printf_type_rejects_null",
+              "printf_size_info_counts_without_storage",
+              "printf_fp_wide_concurrent_wmemstream_preserves_errno"
             ]
           }
         }

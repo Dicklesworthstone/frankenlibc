@@ -51,10 +51,7 @@ where
 
     pub(crate) fn with<R>(&'static self, f: impl FnOnce(&mut T) -> R) -> R {
         let tid = syscall::sys_gettid();
-        let mut slots = self
-            .slots
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut slots = crate::runtime_policy::lock_std_mutex_preserving_errno(&self.slots);
         // Publish before initialization or growing the Box/Vec: those
         // allocations can enter ABI policy again. Drop the marker before
         // releasing the mutex, including when the callback unwinds.

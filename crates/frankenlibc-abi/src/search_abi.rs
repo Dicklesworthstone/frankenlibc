@@ -118,7 +118,7 @@ static GLOBAL_HTAB: Mutex<Option<HashTable>> = Mutex::new(None);
 /// POSIX `hcreate` — create a global hash table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hcreate(nel: usize) -> c_int {
-    let mut guard = GLOBAL_HTAB.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(&GLOBAL_HTAB);
     if guard.is_some() {
         return 0;
     }
@@ -137,7 +137,7 @@ pub unsafe extern "C" fn hsearch(item: Entry, action: c_int) -> *mut Entry {
         return std::ptr::null_mut();
     }
 
-    let mut guard = GLOBAL_HTAB.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(&GLOBAL_HTAB);
     let ht = match guard.as_mut() {
         Some(ht) => ht,
         None => return std::ptr::null_mut(),
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn hsearch(item: Entry, action: c_int) -> *mut Entry {
 /// POSIX `hdestroy` — destroy the global hash table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hdestroy() {
-    let mut guard = GLOBAL_HTAB.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(&GLOBAL_HTAB);
     *guard = None;
 }
 

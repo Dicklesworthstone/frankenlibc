@@ -95,13 +95,17 @@ fn wide_memstream_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, Wid
     REGISTRY.get_or_init(|| Mutex::new(Some(artifact_hash_map())))
 }
 
+#[inline]
+fn lock_wide_memstream_registry()
+-> std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, WideMemStreamSync>>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(wide_memstream_registry())
+}
+
 /// A registered swprintf uses the same wide stream as callbacks, with its
 /// caller's capacity enforced before output can reach a later directive.
 pub(crate) fn limit_open_wmemstream(stream: *mut c_void, capacity: usize) -> bool {
     let id = crate::stdio_abi::stream_id_from_handle(stream);
-    let mut guard = wide_memstream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_wide_memstream_registry();
     let Some(info) = guard.as_mut().and_then(|map| map.get_mut(&id)) else {
         return false;
     };
@@ -118,9 +122,7 @@ pub(crate) fn reserve_wide_output(stream: *mut c_void, requested: usize) -> Opti
         return None;
     }
     let id = crate::stdio_abi::stream_id_from_handle(stream);
-    let mut guard = wide_memstream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_wide_memstream_registry();
     let info = guard.as_mut()?.get_mut(&id)?;
     let Some(remaining) = info.remaining_output.as_mut() else {
         return Some((requested, false));
@@ -135,9 +137,7 @@ pub(crate) unsafe fn sync_open_wmemstream_to_caller(
     stream: &mut StdioStream,
     closing: bool,
 ) -> bool {
-    let guard = wide_memstream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let guard = lock_wide_memstream_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
     {
@@ -182,9 +182,7 @@ pub(crate) unsafe fn sync_open_wmemstream_to_caller(
 }
 
 pub(crate) fn unregister_open_wmemstream(id: usize) {
-    let mut guard = wide_memstream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_wide_memstream_registry();
     if let Some(ref mut map) = *guard
         && map.remove(&id).is_some()
     {
@@ -194,9 +192,7 @@ pub(crate) fn unregister_open_wmemstream(id: usize) {
 
 pub(crate) fn fwide_orientation(stream: *mut c_void) -> Option<c_int> {
     let id = crate::stdio_abi::stream_id_from_handle(stream);
-    let guard = wide_memstream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let guard = lock_wide_memstream_registry();
     guard
         .as_ref()
         .and_then(|map| map.contains_key(&id).then_some(1))
@@ -10541,9 +10537,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         return std::ptr::null_mut();
     }
     let id = crate::stdio_abi::stream_id_from_handle(handle);
-    let mut guard = wide_memstream_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_wide_memstream_registry();
     let map = guard.get_or_insert_with(artifact_hash_map);
     map.insert(
         id,

@@ -1995,7 +1995,7 @@ pub(crate) fn republish_read_window(stream: *mut c_void) {
         // The bare stream lock: a StreamGuard would re-mirror EOF/ERR from
         // the core stream on release, clobbering the flags of streams whose
         // state lives elsewhere (fmemopen's fast cursor sets EOF itself).
-        let mut s = cell.stream.lock();
+        let mut s = crate::runtime_policy::lock_parking_lot_preserving_errno(&cell.stream);
         absorb_read_window(&mut s);
         publish_read_window(&s);
     }
@@ -4995,9 +4995,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
             crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, true)
         };
         // Remove sync metadata for open_memstream.
-        let mut sync_guard = mem_sync_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut sync_guard = lock_mem_sync_registry();
         if let Some(ref mut map) = *sync_guard {
             map.remove(&id);
         }
@@ -8133,15 +8131,18 @@ pub(crate) fn printf_extensions_active() -> bool {
     PRINTF_EXTENSIONS_ACTIVE.load(Ordering::Acquire)
 }
 
+#[inline]
+fn lock_printf_extensions() -> std::sync::MutexGuard<'static, Option<PrintfExtensions>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&PRINTF_EXTENSIONS)
+}
+
 fn printf_extensions_snapshot() -> PrintfExtensions {
     // Never retain this guard across user code. Each call owns a coherent
     // snapshot, so a callback can register/replace a conversion or recursively
     // format without deadlocking or changing this call's argument layout.
     // As with the GNU API, the registrant must keep callback code loaded while
     // calls using it can still be in flight; unregistering is not dlclose.
-    PRINTF_EXTENSIONS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+    lock_printf_extensions()
         .as_ref()
         .cloned()
         .unwrap_or_else(PrintfExtensions::new)
@@ -8158,7 +8159,7 @@ pub(crate) fn register_printf_conversion(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let mut guard = PRINTF_EXTENSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_printf_extensions();
     let extensions = guard.get_or_insert_with(PrintfExtensions::new);
     extensions.conversions[spec as usize] =
         (!render.is_null() || !arginfo.is_null()).then_some(PrintfConversion {
@@ -8200,7 +8201,7 @@ pub(crate) unsafe fn register_printf_modifier_impl(modifier: *const libc::wchar_
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let mut guard = PRINTF_EXTENSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_printf_extensions();
     let extensions = guard.get_or_insert_with(PrintfExtensions::new);
     if extensions.modifiers.len() == 16 {
         unsafe { set_abi_errno(errno::ENOSPC) };
@@ -8223,16 +8224,15 @@ pub(crate) fn register_printf_type_impl(reader: *mut c_void) -> c_int {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let mut guard = PRINTF_EXTENSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_printf_extensions();
     let extensions = guard.get_or_insert_with(PrintfExtensions::new);
-    let Ok(kind) = c_int::try_from(extensions.types.len()).map(|n| n.checked_add(8)) else {
+    // GNU <printf.h> reserves PA_FLAG_MASK = 0xff00 for length/pointer flags,
+    // leaving 248 custom type slots (PA_LAST = 8 through 255 inclusive).
+    if extensions.types.len() >= 256 - 8 {
         unsafe { set_abi_errno(errno::ENOSPC) };
         return -1;
-    };
-    let Some(kind) = kind else {
-        unsafe { set_abi_errno(errno::ENOSPC) };
-        return -1;
-    };
+    }
+    let kind = (extensions.types.len() + 8) as c_int;
     if extensions.types.try_reserve(1).is_err() {
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;
@@ -8273,6 +8273,7 @@ struct ExtensionPlan<'a> {
     segments: Vec<ExtensionSegment<'a>>,
     types: Vec<Option<PrintfArgType>>,
     count: usize,
+    parse_count: usize,
 }
 
 fn extension_decimal(bytes: &[u8], pos: &mut usize) -> Result<usize, c_int> {
@@ -8384,9 +8385,11 @@ unsafe fn extension_plan<'a>(
         segments: Vec::new(),
         types: Vec::new(),
         count: 0,
+        parse_count: 0,
     };
     let mut pos = 0;
     let mut next = 0usize;
+    let mut max_ref_arg = 0usize;
     while pos < bytes.len() {
         let start = pos;
         while pos < bytes.len() && bytes[pos] != b'%' {
@@ -8403,6 +8406,7 @@ unsafe fn extension_plan<'a>(
         pos += 1;
         let value_position = extension_position(bytes, &mut pos)?;
         if let Some(index) = value_position {
+            max_ref_arg = max_ref_arg.max(index.checked_add(1).ok_or(errno::EOVERFLOW)?);
             extension_record_type(&mut plan, index, None, capacity)?;
         }
         let mut flags = FormatFlags::default();
@@ -8436,11 +8440,15 @@ unsafe fn extension_plan<'a>(
             }
             let value = if bytes.get(pos) == Some(&b'*') {
                 pos += 1;
-                let index = extension_position(bytes, &mut pos)?.unwrap_or_else(|| {
-                    let index = next;
-                    next += 1;
+                let star_position = extension_position(bytes, &mut pos)?;
+                let index = if let Some(index) = star_position {
+                    max_ref_arg = max_ref_arg.max(index.checked_add(1).ok_or(errno::EOVERFLOW)?);
                     index
-                });
+                } else {
+                    let index = next;
+                    next = next.checked_add(1).ok_or(errno::EOVERFLOW)?;
+                    index
+                };
                 extension_record_type(
                     &mut plan,
                     index,
@@ -8592,12 +8600,14 @@ unsafe fn extension_plan<'a>(
             native_conversion,
             None,
         );
+        let first_arg = value_position.unwrap_or(next);
         let mut conversion = extensions
             .conversions
             .get(specifier as usize)
             .copied()
             .flatten();
         let mut kinds = Vec::new();
+        let mut arg_count = 0usize;
         if let Some(callback) = conversion.filter(|c| c.arginfo != 0) {
             let mut kind = 0;
             let mut size = 0;
@@ -8606,55 +8616,81 @@ unsafe fn extension_plan<'a>(
             if n < 0 {
                 conversion = None;
             } else if n == 1 {
+                arg_count = 1;
                 kinds.push(PrintfArgType {
                     kind,
                     size: size.max(0) as usize,
                 });
             } else if n > 1 {
                 let n = n as usize;
-                let mut types = Vec::new();
-                let mut sizes = Vec::new();
-                types.try_reserve(n).map_err(|_| errno::ENOMEM)?;
-                sizes.try_reserve(n).map_err(|_| errno::ENOMEM)?;
-                types.resize(n, 0);
-                sizes.resize(n, 0);
-                // SAFETY: both arrays have precisely the declared capacity.
-                let actual = unsafe {
-                    extension_arginfo(callback, &info, n, types.as_mut_ptr(), sizes.as_mut_ptr())
-                };
-                if actual != n as c_int {
-                    return Err(errno::EINVAL);
+                arg_count = n;
+                // Match GNU parse_printf_format: when none of this directive's
+                // argument slots fall within the caller's requested type array
+                // (e.g. count-only queries with capacity == 0), do not invoke
+                // the multi-argument arginfo callback a second time.
+                if first_arg < capacity {
+                    let mut types = Vec::new();
+                    let mut sizes = Vec::new();
+                    types.try_reserve(n).map_err(|_| errno::ENOMEM)?;
+                    sizes.try_reserve(n).map_err(|_| errno::ENOMEM)?;
+                    types.resize(n, 0);
+                    sizes.resize(n, 0);
+                    // SAFETY: both arrays have precisely the declared capacity.
+                    let actual = unsafe {
+                        extension_arginfo(
+                            callback,
+                            &info,
+                            n,
+                            types.as_mut_ptr(),
+                            sizes.as_mut_ptr(),
+                        )
+                    };
+                    if actual != n as c_int {
+                        return Err(errno::EINVAL);
+                    }
+                    kinds.extend(
+                        types
+                            .into_iter()
+                            .zip(sizes)
+                            .map(|(kind, size)| PrintfArgType {
+                                kind,
+                                size: size.max(0) as usize,
+                            }),
+                    );
                 }
-                kinds.extend(
-                    types
-                        .into_iter()
-                        .zip(sizes)
-                        .map(|(kind, size)| PrintfArgType {
-                            kind,
-                            size: size.max(0) as usize,
-                        }),
-                );
             }
         } else if let Some(kind) = extension_native_type(conversion_byte, length) {
+            arg_count = 1;
             kinds.push(kind);
         }
         if conversion.is_none()
-            && kinds.is_empty()
+            && arg_count == 0
             && let Some(kind) = extension_native_type(conversion_byte, length)
         {
+            arg_count = 1;
             kinds.push(kind);
         }
-        let first_arg = value_position.unwrap_or(next);
-        for (offset, kind) in kinds.iter().copied().enumerate() {
+        if !kinds.is_empty() {
+            for (offset, kind) in kinds.iter().copied().enumerate() {
+                extension_record_type(
+                    &mut plan,
+                    first_arg.checked_add(offset).ok_or(errno::EOVERFLOW)?,
+                    Some(kind),
+                    capacity,
+                )?;
+            }
+        } else if arg_count != 0 {
             extension_record_type(
                 &mut plan,
-                first_arg.checked_add(offset).ok_or(errno::EOVERFLOW)?,
-                Some(kind),
+                first_arg
+                    .checked_add(arg_count - 1)
+                    .ok_or(errno::EOVERFLOW)?,
+                None,
                 capacity,
             )?;
         }
         if value_position.is_none() {
-            next = next.checked_add(kinds.len()).ok_or(errno::EOVERFLOW)?;
+            next = next.checked_add(arg_count).ok_or(errno::EOVERFLOW)?;
         }
         plan.segments.push(ExtensionSegment::Spec(ExtensionSpec {
             info,
@@ -8662,12 +8698,13 @@ unsafe fn extension_plan<'a>(
             width_arg,
             precision_arg,
             first_arg,
-            arg_count: kinds.len(),
+            arg_count,
             conversion,
             raw_start,
             raw_end: pos,
         }));
     }
+    plan.parse_count = next.max(max_ref_arg);
     Ok(plan)
 }
 
@@ -8703,7 +8740,7 @@ pub(crate) unsafe fn parse_printf_extensions(bytes: &[u8], n: usize, types: *mut
                     unsafe { *types.add(index) = kind.kind };
                 }
             }
-            plan.count
+            plan.parse_count
         }
         Err(error) => {
             unsafe { set_abi_errno(error) };
@@ -8741,15 +8778,42 @@ unsafe fn extension_read_argument(
     ap: *mut c_void,
     extensions: &PrintfExtensions,
 ) -> Result<ExtensionArgument, c_int> {
+    if kind.kind < 0 || (kind.kind & !0xffff) != 0 {
+        return Err(errno::EINVAL);
+    }
     let mut arg = ExtensionArgument {
         bits: 0,
         storage: Vec::new(),
         extended: false,
     };
+    let base = kind.kind & 0xff;
     if kind.kind & 0x800 != 0 {
         // SAFETY: PA_FLAG_PTR is a pointer regardless of its base type.
         arg.bits = unsafe { va_read_one_gp(ap) };
-    } else if kind.kind == (7 | 0x100) {
+    } else if base >= 8 {
+        let reader = extensions
+            .types
+            .get((base - 8) as usize)
+            .copied()
+            .ok_or(errno::EINVAL)?;
+        if kind.size == 0 {
+            return Err(errno::EINVAL);
+        }
+        let words = kind.size.div_ceil(std::mem::size_of::<u128>());
+        arg.storage
+            .try_reserve_exact(words)
+            .map_err(|_| errno::ENOMEM)?;
+        arg.storage.resize(words, 0);
+        type ReadArgument = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void);
+        // SAFETY: register_printf_type takes a printf_va_arg_function. On
+        // both supported LP64 ABIs ap addresses the actual va_list object,
+        // not a pointer variable holding its address.
+        let callback: ReadArgument = unsafe { std::mem::transmute(reader) };
+        unsafe { callback(arg.storage.as_mut_ptr().cast(), ap) };
+        // GNU's argument union holds a POINTER to custom storage, and the
+        // renderer's args array points to that pointer slot (one extra level).
+        arg.bits = arg.storage.as_ptr() as u64;
+    } else if matches!(kind.kind, 0x106 | 0x107) {
         let spec = FormatSpec::new(
             FormatFlags::default(),
             Width::None,
@@ -8792,30 +8856,6 @@ unsafe fn extension_read_argument(
         if kind.kind == 0x400 {
             arg.bits = (arg.bits as i16 as i64) as u64;
         }
-    } else {
-        let reader = kind
-            .kind
-            .checked_sub(8)
-            .and_then(|index| extensions.types.get(index as usize))
-            .copied()
-            .ok_or(errno::EINVAL)?;
-        if kind.size == 0 {
-            return Err(errno::EINVAL);
-        }
-        let words = kind.size.div_ceil(std::mem::size_of::<u128>());
-        arg.storage
-            .try_reserve_exact(words)
-            .map_err(|_| errno::ENOMEM)?;
-        arg.storage.resize(words, 0);
-        type ReadArgument = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void);
-        // SAFETY: register_printf_type takes a printf_va_arg_function. On
-        // both supported LP64 ABIs ap addresses the actual va_list object,
-        // not a pointer variable holding its address.
-        let callback: ReadArgument = unsafe { std::mem::transmute(reader) };
-        unsafe { callback(arg.storage.as_mut_ptr().cast(), ap) };
-        // GNU's argument union holds a POINTER to custom storage, and the
-        // renderer's args array points to that pointer slot (one extra level).
-        arg.bits = arg.storage.as_ptr() as u64;
     }
     Ok(arg)
 }
@@ -17671,11 +17711,16 @@ fn popen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
     id as *mut c_void
 }
 
+#[inline]
+fn lock_popen_pids() -> std::sync::MutexGuard<'static, PopenPidTable> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&POPEN_PIDS)
+}
+
 fn close_stream_descriptor(id: usize, fd: c_int) -> (Option<i32>, Result<(), c_int>) {
     if ACTIVE_POPEN_COUNT.load(Ordering::Acquire) == 0 {
         return (None, raw_syscall::sys_close(fd));
     }
-    let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_popen_pids();
     let child = guard.remove(id);
     if child.is_none() {
         // An ordinary descriptor can have a blocking close (e.g. SO_LINGER).
@@ -17804,7 +17849,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         return std::ptr::null_mut();
     }
     let id = canonical_stream_id(fp);
-    let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = lock_popen_pids();
     // Reserve the entry before forking so the parent publication cannot
     // allocate after a child has started. pid 0 denotes this unpublished child.
     guard.insert(id, PopenChild { pid: 0, fd: our_fd });
@@ -17915,7 +17960,7 @@ pub unsafe extern "C-unwind" fn pclose(stream: *mut c_void) -> c_int {
 
     let id = canonical_stream_id(stream);
     let is_process_stream = {
-        let pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+        let pids = lock_popen_pids();
         pids.contains_key(id)
     };
     if !is_process_stream {
@@ -18576,7 +18621,7 @@ unsafe fn cookie_stream_position(id: usize, whence: c_int) -> Option<i64> {
         };
         (info.cookie, info.funcs.seek)
     } else {
-        let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = lock_cookie_registry();
         let Some(info) = guard.as_ref().and_then(|map| map.get(&id)) else {
             unsafe { set_abi_errno(errno::EBADF) };
             return None;

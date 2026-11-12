@@ -219,6 +219,9 @@ fi
 if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
   cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
     -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl -lm -pthread
+  "${CXX:-c++}" -D_GNU_SOURCE -std=c++17 -O2 -Wall -Wextra -Werror \
+    "${ROOT}/tests/integration/fixture_callback_unwind.cpp" \
+    -o "${BIN_DIR}/fixture_callback_unwind.bin" -ldl -pthread
 fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
   for style in copy got; do
@@ -322,7 +325,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds gnu-register-limits gnu-register-concurrent; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -342,11 +345,25 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
       completion=wide
     elif [[ "${scenario}" == gnu-register-wide-bounds ]]; then
       completion=wide-bounds
+    elif [[ "${scenario}" == gnu-register-limits ]]; then
+      completion=limits
+    elif [[ "${scenario}" == gnu-register-concurrent ]]; then
+      completion=concurrent
     fi
     if [[ "$(grep -xc "reg:complete:${completion}" "${oracle_stdout}")" -ne 1 ]]; then
       echo "FAIL: GNU registration oracle did not complete ${scenario}" >&2
       exit 1
     fi
+  fi
+  if [[ "${scenario}" == gnu-register-limits ]] &&
+     [[ "$(grep -c '^reg:limit:' "${oracle_stdout}")" -ne 9 ]]; then
+    echo "FAIL: incomplete registration limits oracle" >&2
+    exit 1
+  fi
+  if [[ "${scenario}" == gnu-register-concurrent ]] &&
+     [[ "$(grep -Ec '^reg:concurrent:(formatter|mutator):[0-3]:ok$' "${oracle_stdout}")" -ne 6 ]]; then
+    echo "FAIL: incomplete registration concurrency oracle" >&2
+    exit 1
   fi
   if [[ "${scenario}" == gnu-register-wide-bounds ]] &&
      [[ "$(grep -c '^reg:wide-bounds:' "${oracle_stdout}")" -ne 80 ]]; then
@@ -371,7 +388,7 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: incomplete precision input-span oracle" >&2
     exit 1
   fi
-  if [[ "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
+  if [[ "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-register-limits || "${scenario}" == gnu-register-concurrent || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
     negative_status=0
     env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="${LIB}" \
       "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" \
@@ -428,11 +445,47 @@ for mode in strict hardened; do
   cat "${oracle_stdout}" "${actual_stdout}" >>"${TEST_LOG}"
 done
 
+# Foreign C++ exception propagation through all 48 printf/wprintf/fortify/obstack
+# entrypoints across render, arginfo and custom-type reader callback boundaries.
+scenario=printf-callback-unwind
+oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
+oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
+env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
+  "${BIN_DIR}/fixture_callback_unwind.bin" --printf-all >"${oracle_stdout}" 2>"${oracle_stderr}"
+if [[ "$(grep -xc 'printf-callback-unwind-all:PASS (142 cases)' "${oracle_stdout}")" -ne 1 ]]; then
+  echo "FAIL: GNU printf callback unwind oracle did not complete 142 cases" >&2
+  exit 1
+fi
+unwind_neg_status=0
+env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="${LIB}" \
+  "${BIN_DIR}/fixture_callback_unwind.bin" --printf snprintf 0 \
+  >"${OUT_DIR}/${scenario}.wrong-provider.stdout.log" \
+  2>"${OUT_DIR}/${scenario}.wrong-provider.stderr.log" || unwind_neg_status=$?
+if [[ "${unwind_neg_status}" -ne 88 ]] ||
+   ! grep -q 'printf-callback-unwind: wrong provider' "${OUT_DIR}/${scenario}.wrong-provider.stderr.log"; then
+  echo "FAIL: printf callback unwind probe accepted the wrong provider (status=${unwind_neg_status})" >&2
+  exit 1
+fi
+for mode in strict hardened; do
+  actual_stdout="${OUT_DIR}/${scenario}.${mode}.stdout.log"
+  actual_stderr="${OUT_DIR}/${scenario}.${mode}.stderr.log"
+  start_ns="$(date +%s%N)"
+  FRANKENLIBC_MODE="${mode}" FRANKENLIBC_TEST_LIBRARY="${LIB}" LD_PRELOAD="${LIB}" \
+    "${BIN_DIR}/fixture_callback_unwind.bin" --printf-all >"${actual_stdout}" 2>"${actual_stderr}"
+  latency_ns="$(( $(date +%s%N) - start_ns ))"
+  if ! cmp -s "${oracle_stdout}" "${actual_stdout}" || ! cmp -s "${oracle_stderr}" "${actual_stderr}"; then
+    echo "FAIL: ${scenario} (${mode}) differs from live GNU oracle; see ${OUT_DIR}" >&2
+    exit 1
+  fi
+  echo "${scenario} (${mode}): 142 callback-unwind cases passed" >>"${TEST_LOG}"
+  emit_log_row "${scenario}" "${mode}" "stdio" "pass" "${latency_ns}" "${COMMON_REFS}"
+done
+
 if [[ "${GNU_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":10,"ordinary_wide_boundary_cases_per_mode":408,"wide_locale_cases_per_mode":400,"precision_input_span_cases_per_mode":256,"wide_registration_boundary_cases_per_mode":80,"wide_registration_boundary_provider_negative":"pass","gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
+{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":11,"ordinary_wide_boundary_cases_per_mode":408,"wide_locale_cases_per_mode":400,"precision_input_span_cases_per_mode":256,"wide_registration_boundary_cases_per_mode":80,"registration_limit_cases_per_mode":12,"registration_concurrent_threads_per_mode":6,"callback_unwind_printf_cases_per_mode":142,"callback_unwind_printf_provider_negative":"pass","wide_registration_boundary_provider_negative":"pass","gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
 JSON
-  echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection and 10 original printf cases per mode; full stdio gate not run)"
+  echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection/limits/concurrency/unwind and 11 original printf cases per mode; full stdio gate not run)"
   exit 0
 fi
 

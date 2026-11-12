@@ -35,11 +35,11 @@ type SharedDirState = Arc<Mutex<DirState>>;
 static DIR_REGISTRY: Mutex<Option<ArtifactHashMap<usize, SharedDirState>>> = Mutex::new(None);
 
 fn lock_registry() -> MutexGuard<'static, Option<ArtifactHashMap<usize, SharedDirState>>> {
-    DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&DIR_REGISTRY)
 }
 
 fn lock_state(state: &SharedDirState) -> MutexGuard<'_, DirState> {
-    state.lock().unwrap_or_else(|e| e.into_inner())
+    crate::runtime_policy::lock_std_mutex_preserving_errno(state)
 }
 
 fn lookup_dir_state(handle: usize) -> Option<SharedDirState> {

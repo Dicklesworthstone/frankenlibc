@@ -4,6 +4,7 @@
 // cannot be unwound through aborts the whole process instead.
 #include <dirent.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <fts.h>
 #include <ftw.h>
@@ -336,6 +337,113 @@ static int printf_callback_case(const char *name, int stage) {
   }
   static const char ok[] = "printf-callback-unwind:PASS\n";
   printf_check(write(1, ok, sizeof ok - 1) == sizeof ok - 1);
+  return 0;
+}
+
+static std::string resolve_printf_batch_provider() {
+  if (const char *explicit_lib = getenv("FRANKENLIBC_TEST_LIBRARY");
+      explicit_lib && *explicit_lib) {
+    return explicit_lib;
+  }
+  if (const char *preload = getenv("LD_PRELOAD"); preload && *preload) {
+    const char *end = preload;
+    while (*end && *end != ':' && *end != ' ') ++end;
+    if (end > preload) return std::string(preload, static_cast<size_t>(end - preload));
+  }
+  void *addr = dlsym(RTLD_DEFAULT, "snprintf");
+  Dl_info info{};
+  struct stat st{};
+  if (addr && dladdr(addr, &info) && info.dli_fname && stat(info.dli_fname, &st) == 0) {
+    return info.dli_fname;
+  }
+  return {};
+}
+
+static int printf_batch_cases(bool full_matrix) {
+  static const char *all_symbols[] = {
+      "printf", "_IO_printf", "vprintf",
+      "fprintf", "_IO_fprintf", "vfprintf", "_IO_vfprintf",
+      "sprintf", "_IO_sprintf", "vsprintf", "_IO_vsprintf",
+      "snprintf", "vsnprintf", "__vsnprintf",
+      "dprintf", "vdprintf",
+      "asprintf", "__asprintf", "vasprintf",
+      "wprintf", "vwprintf", "fwprintf", "vfwprintf", "swprintf", "vswprintf",
+      "__printf_chk", "__vprintf_chk", "__fprintf_chk", "__vfprintf_chk",
+      "__sprintf_chk", "__vsprintf_chk", "__snprintf_chk", "__vsnprintf_chk",
+      "__dprintf_chk", "__vdprintf_chk", "__asprintf_chk", "__vasprintf_chk",
+      "__wprintf_chk", "__vwprintf_chk", "__fwprintf_chk", "__vfwprintf_chk",
+      "__swprintf_chk", "__vswprintf_chk",
+      "obstack_printf", "obstack_vprintf", "__obstack_printf_chk", "__obstack_vprintf_chk",
+      "parse_printf_format",
+  };
+  static const char *smoke_symbols[] = {
+      "snprintf", "vsnprintf", "asprintf", "__asprintf",
+      "fprintf", "dprintf", "swprintf", "fwprintf",
+      "__snprintf_chk", "__fwprintf_chk", "obstack_printf", "parse_printf_format",
+  };
+
+  alarm(full_matrix ? 120 : 45);
+  std::string provider = resolve_printf_batch_provider();
+  if (provider.empty()) {
+    dprintf(2, "printf-callback-unwind: unable to resolve batch provider\n");
+    return 87;
+  }
+
+  const char *const *symbols = full_matrix ? all_symbols : smoke_symbols;
+  size_t symbol_count = full_matrix
+      ? (sizeof(all_symbols) / sizeof(all_symbols[0]))
+      : (sizeof(smoke_symbols) / sizeof(smoke_symbols[0]));
+
+  unsigned executed = 0;
+  fflush(nullptr);
+  for (size_t i = 0; i < symbol_count; ++i) {
+    const char *sym = symbols[i];
+    bool parse_only = !strcmp(sym, "parse_printf_format");
+    for (int stage = 0; stage < 3; ++stage) {
+      if (parse_only && stage != 1) continue;
+      int out_pipe[2];
+      if (pipe(out_pipe) != 0) return 90;
+      pid_t child = fork();
+      if (child < 0) return 90;
+      if (child == 0) {
+        close(out_pipe[0]);
+        if (dup2(out_pipe[1], 1) < 0) _exit(91);
+        close(out_pipe[1]);
+        setenv("FRANKENLIBC_TEST_LIBRARY", provider.c_str(), 1);
+        _exit(printf_callback_case(sym, stage));
+      }
+      close(out_pipe[1]);
+      char captured[64];
+      size_t got = 0;
+      while (got < sizeof(captured) - 1) {
+        ssize_t n = read(out_pipe[0], captured + got, sizeof(captured) - 1 - got);
+        if (n < 0) {
+          if (errno == EINTR) continue;
+          break;
+        }
+        if (n == 0) break;
+        got += static_cast<size_t>(n);
+      }
+      captured[got] = '\0';
+      close(out_pipe[0]);
+
+      int status = 0;
+      pid_t waited;
+      do {
+        waited = waitpid(child, &status, 0);
+      } while (waited < 0 && errno == EINTR);
+      if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+          strcmp(captured, "printf-callback-unwind:PASS\n") != 0) {
+        dprintf(2, "printf-callback-unwind: FAIL %s stage=%d status=0x%x out=[%s]\n",
+                sym, stage, status, captured);
+        return 1;
+      }
+      ++executed;
+    }
+  }
+  alarm(0);
+  printf("printf-callback-unwind-%s:PASS (%u cases)\n",
+         full_matrix ? "all" : "smoke", executed);
   return 0;
 }
 
@@ -766,6 +874,8 @@ int main(int argc, char **argv) {
     return result;
   }
   if (argc == 4 && !strcmp(argv[1], "--printf")) return printf_callback_case(argv[2], atoi(argv[3]));
+  if (argc == 2 && !strcmp(argv[1], "--printf-smoke")) return printf_batch_cases(false);
+  if (argc == 2 && !strcmp(argv[1], "--printf-all")) return printf_batch_cases(true);
   if (argc != 1) return 2;
   run_case("qsort", [] { qsort(ints, 5, sizeof(int), cmp_throw); });
   run_case("qsort_r", [] { qsort_r(ints, 5, sizeof(int), cmp_r_throw, nullptr); });

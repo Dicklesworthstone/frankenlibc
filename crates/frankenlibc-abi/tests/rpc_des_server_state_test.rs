@@ -14,6 +14,17 @@ mod io_abi {
     }
 }
 
+#[allow(dead_code)]
+mod runtime_policy {
+    use std::sync::{Mutex, MutexGuard};
+
+    pub fn lock_std_mutex_preserving_errno<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+        mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 use std::ffi::{c_char, c_int, c_void};
 
 #[repr(C)]

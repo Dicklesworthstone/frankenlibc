@@ -1,0 +1,1691 @@
+#!/usr/bin/env bash
+# LD_PRELOAD smoke harness for real binaries under strict + hardened modes.
+#
+# Runs a curated set of commands and captures deterministic diagnostics for
+# any non-zero/timeout outcome.
+set -euo pipefail
+
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" ) ]]; then
+  echo "usage: $0 [--performance-only]" >&2
+  exit 2
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_ROOT="${FRANKENLIBC_SMOKE_OUT_ROOT:-${ROOT}/target/ld_preload_smoke}"
+RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+case "${RUN_ID}" in
+  ""|*[!A-Za-z0-9._-]*)
+    echo "ld_preload_smoke: invalid FRANKENLIBC_SMOKE_RUN_ID='${RUN_ID}'" >&2
+    exit 2
+    ;;
+esac
+RUN_DIR="${OUT_ROOT}/${RUN_ID}"
+BIN_DIR="${RUN_DIR}/bin"
+: "${CARGO_TARGET_DIR:=${TMPDIR:-/tmp}/rch_target_frankenlibc_ld_preload_smoke_${RUN_ID}}"
+export CARGO_TARGET_DIR
+case ",${RCH_ENV_ALLOWLIST:-}," in
+  *,CARGO_TARGET_DIR,*)
+    ;;
+  ,,)
+    export RCH_ENV_ALLOWLIST="CARGO_TARGET_DIR"
+    ;;
+  *)
+    export RCH_ENV_ALLOWLIST="${RCH_ENV_ALLOWLIST},CARGO_TARGET_DIR"
+    ;;
+esac
+export RCH_REQUIRE_REMOTE=1
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
+STRESS_ITERS="${STRESS_ITERS:-5}"
+ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES:-strict,hardened}"
+ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES:-strict}"
+PERF_RATIO_MAX_PPM="${PERF_RATIO_MAX_PPM:-2000000}"
+VALGRIND_POLICY="${VALGRIND_POLICY:-auto}" # auto|off|required
+MAX_BSS_BYTES="${FRANKENLIBC_SMOKE_MAX_BSS_BYTES:-2097152}"
+MAX_TLS_BYTES="${FRANKENLIBC_SMOKE_MAX_TLS_BYTES:-4096}"
+MAX_VMDATA_KB="${FRANKENLIBC_SMOKE_MAX_VMDATA_KB:-4096}"
+
+require_non_negative_integer() {
+  local name="$1" value="$2"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "ld_preload_smoke: ${name} must be a non-negative integer, got '${value}'" >&2
+    exit 2
+  fi
+}
+
+require_positive_integer() {
+  local name="$1" value="$2"
+  require_non_negative_integer "${name}" "${value}"
+  if [[ "$((10#${value}))" -le 0 ]]; then
+    echo "ld_preload_smoke: ${name} must be a positive integer, got '${value}'" >&2
+    exit 2
+  fi
+}
+
+require_positive_integer "TIMEOUT_SECONDS" "${TIMEOUT_SECONDS}"
+require_non_negative_integer "STRESS_ITERS" "${STRESS_ITERS}"
+require_positive_integer "PERF_RATIO_MAX_PPM" "${PERF_RATIO_MAX_PPM}"
+require_positive_integer "FRANKENLIBC_SMOKE_MAX_BSS_BYTES" "${MAX_BSS_BYTES}"
+require_positive_integer "FRANKENLIBC_SMOKE_MAX_TLS_BYTES" "${MAX_TLS_BYTES}"
+require_positive_integer "FRANKENLIBC_SMOKE_MAX_VMDATA_KB" "${MAX_VMDATA_KB}"
+TRACE_FILE="${RUN_DIR}/trace.jsonl"
+CASE_TSV="${RUN_DIR}/abi_compat_cases.tsv"
+REPORT_FILE="${RUN_DIR}/abi_compat_report.json"
+ELF_GEOMETRY_FILE="${RUN_DIR}/elf_vm_geometry.json"
+TROUBLESHOOT_FILE="${RUN_DIR}/startup_troubleshooting.md"
+BEAD_ID="${BEAD_ID:-bd-1ah8}"
+FAILURE_SIGNATURE_DENYLIST="${FAILURE_SIGNATURE_DENYLIST:-startup_timeout,startup_segv,startup_abort,startup_symbol_lookup_error,startup_loader_missing_library,startup_glibc_version_mismatch,startup_elf_class_mismatch}"
+
+LIB_CANDIDATES=(
+  "${FRANKENLIBC_SMOKE_LIB_PATH:-}"
+  "${ROOT}/target/release/libfrankenlibc_abi.so"
+  "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
+)
+LIB_CANDIDATES+=(
+  "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+  "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
+)
+
+LIB_PATH=""
+for candidate in "${LIB_CANDIDATES[@]}"; do
+  if [[ -f "${candidate}" ]]; then
+    LIB_PATH="${candidate}"
+    break
+  fi
+done
+
+mkdir -p "${OUT_ROOT}"
+if ! mkdir "${RUN_DIR}"; then
+  echo "ld_preload_smoke: a fresh run directory is required: ${RUN_DIR}" >&2
+  exit 2
+fi
+mkdir -p "${BIN_DIR}"
+: > "${TRACE_FILE}"
+printf 'mode\tlabel\tstatus\tworkload\tstartup_path\tfailure_signature\tsignature_guard_triggered\tparity_required\tparity_pass\tperf_required\tperf_pass\tlatency_ratio_ppm\tbaseline_rc\tpreload_rc\tstdout_match\tstderr_match\tbaseline_latency_ns\tpreload_latency_ns\tvalgrind_checked\tvalgrind_pass\n' > "${CASE_TSV}"
+
+if [[ -z "${LIB_PATH}" ]]; then
+  echo "ld_preload_smoke: building frankenlibc-abi release artifact..."
+  if ! command -v rch >/dev/null 2>&1; then
+    echo "ld_preload_smoke: rch is required for cargo build offload but was not found in PATH" >&2
+    exit 2
+  fi
+  rch exec -- cargo build -p frankenlibc-abi --release
+  for candidate in "${LIB_CANDIDATES[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      LIB_PATH="${candidate}"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${LIB_PATH}" ]]; then
+  echo "ld_preload_smoke: could not locate libfrankenlibc_abi.so" >&2
+  exit 2
+fi
+
+run_deployed_overhead() {
+  # The same provider-pinned deployed runner is used by the bench crate.
+  # These hardened budgets are mandatory, independent of ENFORCE_PERF_MODES
+  # (which controls the older per-command startup timings below).
+  python3 "${ROOT}/scripts/check_membrane_access.py" "${LIB_PATH}" \
+    --benchmark --output "${RUN_DIR}/deployed-overhead"
+}
+
+if [[ "${1:-}" == "--performance-only" ]]; then
+  # Scoped invocation: never label it a pass of the whole functional corpus.
+  run_deployed_overhead
+  exit 0
+fi
+
+if ! command -v cc >/dev/null 2>&1; then
+  echo "ld_preload_smoke: required compiler 'cc' not found" >&2
+  exit 2
+fi
+
+INTEGRATION_BIN="${BIN_DIR}/link_test"
+cc -O2 "${ROOT}/tests/integration/link_test.c" -o "${INTEGRATION_BIN}"
+
+# Real-world corpus (bd-rc0923-epic-eeuy4f.4). The curated battery above only
+# ran trivial programs, so git/sed (FILE* layout), every C++ binary (locale_t,
+# _dl_find_object), Python C extensions (pathname dlopen) and tar -z (nested
+# fork) were all broken under preload while it stayed green. Fixtures are
+# prepared once WITHOUT the preload so baseline and preload runs are
+# read-only and deterministic.
+CORPUS_DIR="${RUN_DIR}/corpus"
+mkdir -p "${CORPUS_DIR}/tree/sub"
+printf 'alpha one\nbravo two\nalpha three\n' > "${CORPUS_DIR}/tree/a.txt"
+printf 'caf\xc3\xa9 \xe2\x82\xac \xc2\xab ok \xc2\xbb \xef\xbc\xa1\n' > "${CORPUS_DIR}/tree/u8.txt"
+printf 'banana\nApple\napple\n\xc3\x84pfel\nzebra\nZebra\n\xc3\xa9clair\neclair\n_under\n-dash\n10\n9\na b\nab\nfile-2\nfile_1\nFile3\n' > "${CORPUS_DIR}/tree/collate.txt"
+mkdir -p "${CORPUS_DIR}/tree/collate_dir"
+for name in apple Banana cherry "\xc3\x84pfel" Zulu "\xc3\xa9clair" eclair 10 9 file-2 file_1 File3 README readme; do
+  touch "${CORPUS_DIR}/tree/collate_dir/$(printf "${name}")"
+done
+printf 'charlie\n' > "${CORPUS_DIR}/tree/sub/b.txt"
+printf 'all:\n\t@echo made-$(words a b c)\n' > "${CORPUS_DIR}/Makefile"
+touch -t 202603230101.01 "${CORPUS_DIR}/tree" "${CORPUS_DIR}/tree/a.txt" \
+  "${CORPUS_DIR}/tree/sub" "${CORPUS_DIR}/tree/sub/b.txt"
+CORPUS_GIT_READY=0
+if command -v git >/dev/null 2>&1; then
+  (
+    cd "${CORPUS_DIR}/tree" &&
+      export GIT_AUTHOR_NAME=fl GIT_AUTHOR_EMAIL=fl@example.invalid \
+        GIT_COMMITTER_NAME=fl GIT_COMMITTER_EMAIL=fl@example.invalid \
+        GIT_AUTHOR_DATE='2026-03-23T01:01:01Z' GIT_COMMITTER_DATE='2026-03-23T01:01:01Z' &&
+      git init -q -b main . && git add a.txt && git commit -q -m first &&
+      git add sub/b.txt && git commit -q -m second &&
+      printf 'alpha changed\n' >> a.txt
+  ) >/dev/null 2>&1 && CORPUS_GIT_READY=1
+fi
+CXX_BIN=""
+if command -v c++ >/dev/null 2>&1; then
+  CXX_BIN="${BIN_DIR}/fixture_cxx_runtime"
+  c++ -O2 -pthread "${ROOT}/tests/integration/fixture_cxx_runtime.cpp" -o "${CXX_BIN}" || CXX_BIN=""
+fi
+CALLBACK_UNWIND_BIN=""
+if command -v c++ >/dev/null 2>&1; then
+  CALLBACK_UNWIND_BIN="${BIN_DIR}/fixture_callback_unwind"
+  c++ -O2 -pthread "${ROOT}/tests/integration/fixture_callback_unwind.cpp" -o "${CALLBACK_UNWIND_BIN}" || CALLBACK_UNWIND_BIN=""
+fi
+CANCEL_UNWIND_BIN=""
+if command -v c++ >/dev/null 2>&1; then
+  CANCEL_UNWIND_BIN="${BIN_DIR}/fixture_cancel_forced_unwind"
+  c++ -O2 -pthread "${ROOT}/tests/integration/fixture_cancel_forced_unwind.cpp" -o "${CANCEL_UNWIND_BIN}" || CANCEL_UNWIND_BIN=""
+fi
+FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
+cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+ENVIRON_BIN="${BIN_DIR}/fixture_environ"
+cc -O2 "${ROOT}/tests/integration/fixture_environ.c" -o "${ENVIRON_BIN}"
+STATIC_MUTEX_BIN="${BIN_DIR}/fixture_static_mutex"
+cc -O2 "${ROOT}/tests/integration/fixture_static_mutex.c" -o "${STATIC_MUTEX_BIN}" -lpthread
+CATOPEN_BIN="${BIN_DIR}/fixture_catopen"
+cc -O2 "${ROOT}/tests/integration/fixture_catopen.c" -o "${CATOPEN_BIN}"
+GETOPT_DIAG_BIN="${BIN_DIR}/fixture_getopt_long_diag"
+cc -O2 "${ROOT}/tests/integration/fixture_getopt_long_diag.c" -o "${GETOPT_DIAG_BIN}"
+SCANF_MALLOC_BIN="${BIN_DIR}/fixture_scanf_malloc"
+cc -O2 "${ROOT}/tests/integration/fixture_scanf_malloc.c" -o "${SCANF_MALLOC_BIN}"
+MAIN_NEG_BIN="${BIN_DIR}/fixture_main_negative_return"
+cc -O2 "${ROOT}/tests/integration/fixture_main_negative_return.c" -o "${MAIN_NEG_BIN}"
+FILE_WINDOW_BIN="${BIN_DIR}/fixture_file_buffer_window"
+cc -O2 "${ROOT}/tests/integration/fixture_file_buffer_window.c" -o "${FILE_WINDOW_BIN}"
+FLUSH_POINTS_BIN="${BIN_DIR}/fixture_stdio_flush_points"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_flush_points.c" -o "${FLUSH_POINTS_BIN}"
+REALPATH_FD_BIN="${BIN_DIR}/fixture_realpath_fd_links"
+cc -O2 "${ROOT}/tests/integration/fixture_realpath_fd_links.c" -o "${REALPATH_FD_BIN}"
+FCNTL64_BIN="${BIN_DIR}/fixture_fcntl64_args"
+cc -O2 "${ROOT}/tests/integration/fixture_fcntl64_args.c" -o "${FCNTL64_BIN}"
+CUSTOM_MALLOC_BIN="${BIN_DIR}/fixture_custom_malloc_init"
+cc -O2 "${ROOT}/tests/integration/fixture_custom_malloc_init.c" -o "${CUSTOM_MALLOC_BIN}" -lpthread
+RANDOM_MB_BIN="${BIN_DIR}/fixture_random_multibyte"
+cc -O2 "${ROOT}/tests/integration/fixture_random_multibyte.c" -o "${RANDOM_MB_BIN}"
+TZ_GLOBALS_BIN="${BIN_DIR}/fixture_time_zone_globals"
+cc -O2 "${ROOT}/tests/integration/fixture_time_zone_globals.c" -o "${TZ_GLOBALS_BIN}"
+STDIO_POSITIONS_BIN="${BIN_DIR}/fixture_stdio_positions"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_positions.c" -o "${STDIO_POSITIONS_BIN}"
+KEY_DTOR_BIN="${BIN_DIR}/fixture_pthread_key_destructors"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -o "${KEY_DTOR_BIN}"
+EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
+cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -o "${EXIT_SEQUENCE_BIN}"
+STRICT_STRING_OVERFLOW_BIN="${BIN_DIR}/fixture_strict_string_overflow"
+cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_strict_string_overflow.c" -o "${STRICT_STRING_OVERFLOW_BIN}"
+HARDENED_UAF_HEAL_BIN="${BIN_DIR}/fixture_hardened_uaf_heal"
+cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_hardened_uaf_heal.c" -o "${HARDENED_UAF_HEAL_BIN}" -ldl
+FIXTURE_MALLOC_PROBE_BIN="${BIN_DIR}/fixture_malloc_probe"
+cc -O0 -fno-builtin -Wall -Wextra "${ROOT}/tests/integration/fixture_malloc.c" -ldl -o "${FIXTURE_MALLOC_PROBE_BIN}"
+MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
+cc -O2 "${ROOT}/tests/integration/fixture_malloc_misuse.c" -o "${MALLOC_MISUSE_BIN}"
+SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_small_stack_threads.c" -o "${SMALL_STACK_BIN}"
+LOCALTIME_TZ_BIN="${BIN_DIR}/fixture_localtime_tz"
+cc -O2 "${ROOT}/tests/integration/fixture_localtime_tz.c" -o "${LOCALTIME_TZ_BIN}"
+ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
+cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
+STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
+cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
+cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
+GLOB_RESET_BIN="${BIN_DIR}/fixture_glob_reset"
+cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -ldl -o "${GLOB_RESET_BIN}"
+MEMCHR_PAGE_BOUNDARY_BIN="${BIN_DIR}/fixture_memchr_page_boundary"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_memchr_page_boundary.c" -o "${MEMCHR_PAGE_BOUNDARY_BIN}"
+REMOVE_DIR_FTELL_EBADF_BIN="${BIN_DIR}/fixture_remove_dir_ftell_ebadf"
+cc -O2 -Wno-unused-result "${ROOT}/tests/integration/fixture_remove_dir_ftell_ebadf.c" -o "${REMOVE_DIR_FTELL_EBADF_BIN}"
+STDIO_OFFSETS_CLOSE_FLAGS_BIN="${BIN_DIR}/fixture_stdio_offsets_close_flags"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_offsets_close_flags.c" -o "${STDIO_OFFSETS_CLOSE_FLAGS_BIN}"
+COREUTILS_GNULIB_MISC_BIN="${BIN_DIR}/fixture_coreutils_gnulib_misc"
+cc -O2 -Wno-format "${ROOT}/tests/integration/fixture_coreutils_gnulib_misc.c" -o "${COREUTILS_GNULIB_MISC_BIN}"
+STDIO_CLOSED_STD_READ_ERRORS_BIN="${BIN_DIR}/fixture_stdio_closed_std_read_errors"
+cc -O2 -Wno-unused-result "${ROOT}/tests/integration/fixture_stdio_closed_std_read_errors.c" -o "${STDIO_CLOSED_STD_READ_ERRORS_BIN}"
+GETCWD_DEEP_BIN="${BIN_DIR}/fixture_getcwd_deep"
+cc -O2 "${ROOT}/tests/integration/fixture_getcwd_deep.c" -o "${GETCWD_DEEP_BIN}"
+RWLOCK_WRITER_PREFERENCE_BIN="${BIN_DIR}/fixture_rwlock_writer_preference"
+cc -O2 "${ROOT}/tests/integration/fixture_rwlock_writer_preference.c" -o "${RWLOCK_WRITER_PREFERENCE_BIN}" -lpthread
+LOCALE_DECIMAL_COMMA_BIN="${BIN_DIR}/fixture_locale_decimal_comma"
+cc -O2 "${ROOT}/tests/integration/fixture_locale_decimal_comma.c" -o "${LOCALE_DECIMAL_COMMA_BIN}"
+# A decimal-comma locale for it (glibc and fl both honor LOCPATH); without
+# localedef or the de_DE source the fixture prints its skip line on both sides.
+DECIMAL_COMMA_LOCPATH="${BIN_DIR}/locpath"
+mkdir -p "${DECIMAL_COMMA_LOCPATH}"
+localedef -i de_DE -f UTF-8 "${DECIMAL_COMMA_LOCPATH}/de_DE.UTF-8" >/dev/null 2>&1 || true
+LOCALE_L_VARIANTS_BIN="${BIN_DIR}/fixture_locale_l_variants"
+cc -O2 "${ROOT}/tests/integration/fixture_locale_l_variants.c" -o "${LOCALE_L_VARIANTS_BIN}"
+STDIO_READ_WINDOW_BIN="${BIN_DIR}/fixture_stdio_read_window"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_read_window.c" -o "${STDIO_READ_WINDOW_BIN}"
+REGEX_UTF8_BIN="${BIN_DIR}/fixture_regex_utf8"
+cc -O2 "${ROOT}/tests/integration/fixture_regex_utf8.c" -o "${REGEX_UTF8_BIN}"
+APP_MALLOC_SPAWNS_THREAD_BIN="${BIN_DIR}/fixture_app_malloc_spawns_thread"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_malloc_spawns_thread.c" -o "${APP_MALLOC_SPAWNS_THREAD_BIN}" -lpthread
+LANGINFO_TIME_MBRTOWC_NULL_BIN="${BIN_DIR}/fixture_langinfo_time_mbrtowc_null"
+cc -O2 "${ROOT}/tests/integration/fixture_langinfo_time_mbrtowc_null.c" -o "${LANGINFO_TIME_MBRTOWC_NULL_BIN}"
+FPURGE_FREOPEN_BIN="${BIN_DIR}/fixture_fpurge_freopen"
+cc -O2 "${ROOT}/tests/integration/fixture_fpurge_freopen.c" -o "${FPURGE_FREOPEN_BIN}"
+MALLOC_ENOMEM_BIN="${BIN_DIR}/fixture_malloc_enomem"
+cc -O2 "${ROOT}/tests/integration/fixture_malloc_enomem.c" -o "${MALLOC_ENOMEM_BIN}"
+GNU_REGEX_API_BIN="${BIN_DIR}/fixture_gnu_regex_api"
+cc -O2 "${ROOT}/tests/integration/fixture_gnu_regex_api.c" -o "${GNU_REGEX_API_BIN}"
+APP_SBRK_MALLOC_BIN="${BIN_DIR}/fixture_app_sbrk_malloc"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_sbrk_malloc.c" -o "${APP_SBRK_MALLOC_BIN}"
+SIGNAL_HANDLER_REALLOC_BIN="${BIN_DIR}/fixture_signal_handler_realloc"
+cc -O2 "${ROOT}/tests/integration/fixture_signal_handler_realloc.c" -o "${SIGNAL_HANDLER_REALLOC_BIN}"
+LONG_DOUBLE_MATH_BIN="${BIN_DIR}/fixture_long_double_math"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_long_double_math.c" -o "${LONG_DOUBLE_MATH_BIN}" -lm
+THREAD_KEY_DTOR_TEARDOWN_BIN="${BIN_DIR}/fixture_thread_key_dtor_teardown"
+cc -O2 -fno-builtin -pthread "${ROOT}/tests/integration/fixture_thread_key_dtor_teardown.c" -o "${THREAD_KEY_DTOR_TEARDOWN_BIN}"
+SEM_TIMEDWAIT_WAKE_BIN="${BIN_DIR}/fixture_sem_timedwait_wake"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_sem_timedwait_wake.c" -o "${SEM_TIMEDWAIT_WAKE_BIN}"
+ARG_PASSTHROUGH_BIN="${BIN_DIR}/fixture_arg_passthrough"
+cc -O2 "${ROOT}/tests/integration/fixture_arg_passthrough.c" -o "${ARG_PASSTHROUGH_BIN}"
+VM_ADVICE_BIN="${BIN_DIR}/fixture_vm_advice"
+cc -O2 "${ROOT}/tests/integration/fixture_vm_advice.c" -o "${VM_ADVICE_BIN}"
+LSEEK_SPARSE_BIN="${BIN_DIR}/fixture_lseek_sparse"
+cc -O2 -Wall -Wextra -Werror "${ROOT}/tests/integration/fixture_lseek_sparse.c" -ldl -o "${LSEEK_SPARSE_BIN}"
+SOCKET_FAMILIES_BIN="${BIN_DIR}/fixture_socket_families"
+cc -O2 "${ROOT}/tests/integration/fixture_socket_families.c" -o "${SOCKET_FAMILIES_BIN}"
+SIGNAL_BACKTRACE_BIN="${BIN_DIR}/fixture_signal_backtrace"
+cc -O2 -rdynamic "${ROOT}/tests/integration/fixture_signal_backtrace.c" -o "${SIGNAL_BACKTRACE_BIN}"
+SIGNAL_WAITS_BIN="${BIN_DIR}/fixture_signal_waits"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_signal_waits.c" -o "${SIGNAL_WAITS_BIN}"
+THREAD_STACK_BOUNDS_BIN="${BIN_DIR}/fixture_thread_stack_bounds"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_thread_stack_bounds.c" -o "${THREAD_STACK_BOUNDS_BIN}"
+WCSCOLL_LOCALE_BIN="${BIN_DIR}/fixture_wcscoll_locale"
+cc -O2 "${ROOT}/tests/integration/fixture_wcscoll_locale.c" -o "${WCSCOLL_LOCALE_BIN}"
+GETTEXT_CATALOGS_BIN="${BIN_DIR}/fixture_gettext_catalogs"
+cc -O2 "${ROOT}/tests/integration/fixture_gettext_catalogs.c" -o "${GETTEXT_CATALOGS_BIN}"
+WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
+cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
+FORK_MT_BIN="${BIN_DIR}/fixture_fork_mt"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_fork_mt.c" -o "${FORK_MT_BIN}"
+PTHREAD_ROBUST_BIN="${BIN_DIR}/fixture_pthread_robust"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_robust.c" -o "${PTHREAD_ROBUST_BIN}"
+PTHREAD_PSHARED_IPC_BIN="${BIN_DIR}/fixture_pthread_pshared_ipc"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_pshared_ipc.c" -o "${PTHREAD_PSHARED_IPC_BIN}"
+PTHREAD_MUTEX_DESTROYED_BIN="${BIN_DIR}/fixture_pthread_mutex_destroyed"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_mutex_destroyed.c" -o "${PTHREAD_MUTEX_DESTROYED_BIN}"
+DLOPEN_CTOR_THREADS_BIN="${BIN_DIR}/fixture_dlopen_ctor_threads"
+DLOPEN_CTOR_THREADS_LIB="${BIN_DIR}/libfixture_dlopen_ctor_threads.so"
+cc -O1 -fPIC -shared -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads_lib.c" -o "${DLOPEN_CTOR_THREADS_LIB}"
+cc -O1 -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads.c" -o "${DLOPEN_CTOR_THREADS_BIN}" -ldl
+DLCLOSE_TLS_SLOT_FREE_BIN="${BIN_DIR}/fixture_dlclose_tls_slot_free"
+DLCLOSE_TLS_SLOT_FREE_LIB="${BIN_DIR}/libfixture_dlclose_tls_slot_free.so"
+cc -O1 -fPIC -shared "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free_lib.c" -o "${DLCLOSE_TLS_SLOT_FREE_LIB}" -lm
+cc -O1 "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free.c" -o "${DLCLOSE_TLS_SLOT_FREE_BIN}" -ldl
+LIBM_SPECIAL_VALUES_BIN="${BIN_DIR}/fixture_libm_special_values"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_libm_special_values.c" -o "${LIBM_SPECIAL_VALUES_BIN}" -lm -ldl
+LIBM_F32_SAMPLE_BIN="${BIN_DIR}/fixture_libm_f32_sample"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_libm_f32_sample.c" -o "${LIBM_F32_SAMPLE_BIN}" -lm -ldl
+GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
+cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
+RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_rlimit_as_first.c" -o "${RLIMIT_AS_FIRST_BIN}"
+FLOCKFILE_THREADS_BIN="${BIN_DIR}/fixture_flockfile_threads"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_flockfile_threads.c" -o "${FLOCKFILE_THREADS_BIN}"
+PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
+PTHREAD_MAIN_HANDLE_BIN="${BIN_DIR}/fixture_pthread_main_handle"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_main_handle.c" -o "${PTHREAD_MAIN_HANDLE_BIN}"
+SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
+cc -O2 -D_FORTIFY_SOURCE=2 "${ROOT}/tests/integration/fixture_setjmp_guard.c" -o "${SETJMP_GUARD_BIN}"
+ARGP_BIN="${BIN_DIR}/fixture_argp"
+cc -O2 "${ROOT}/tests/integration/fixture_argp.c" -o "${ARGP_BIN}"
+FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
+REGEX_CTX_BIN="${BIN_DIR}/fixture_regex_search_context"
+cc -O2 "${ROOT}/tests/integration/fixture_regex_search_context.c" -o "${REGEX_CTX_BIN}"
+SPAWN_FORK_BIN="${BIN_DIR}/fixture_spawn_concurrent_fork"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_spawn_concurrent_fork.c" -o "${SPAWN_FORK_BIN}"
+MALLOC_SIGNAL_BIN="${BIN_DIR}/fixture_malloc_signal_reentry"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_malloc_signal_reentry.c" -o "${MALLOC_SIGNAL_BIN}"
+
+NONTRIVIAL_BIN=""
+NONTRIVIAL_DESC=""
+if command -v python3 >/dev/null 2>&1; then
+  NONTRIVIAL_BIN="python3"
+  NONTRIVIAL_DESC="python3 -c 'print(1)'"
+elif command -v busybox >/dev/null 2>&1; then
+  NONTRIVIAL_BIN="busybox"
+  NONTRIVIAL_DESC="busybox uname -a"
+else
+  echo "ld_preload_smoke: requires python3 or busybox for non-trivial dynamic binary check" >&2
+  exit 2
+fi
+
+passes=0
+fails=0
+skips=0
+
+csv_has_token() {
+  local needle="$1"
+  local csv="$2"
+  local raw
+  IFS=',' read -r -a raw <<< "${csv}"
+  for token in "${raw[@]}"; do
+    token="${token//[[:space:]]/}"
+    if [[ -n "${token}" && "${token}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+mode_requires_parity() {
+  local mode="$1"
+  local csv="$2"
+  csv_has_token "${mode}" "${csv}"
+}
+
+case_workload() {
+  local label="$1"
+  case "${label}" in
+    integration_*|stress_link_*)
+      echo "integration"
+      ;;
+    stress_*)
+      echo "stress"
+      ;;
+    *)
+      echo "smoke"
+      ;;
+  esac
+}
+
+case_startup_path() {
+  local label="$1"
+  case "${label}" in
+    integration_*|stress_link_*)
+      echo "integration_c_fixture_startup"
+      ;;
+    python3_*|stress_python_*)
+      echo "python_runtime_startup"
+      ;;
+    busybox_*|sqlite_*|redis_*|nginx_*)
+      echo "dynamic_binary_startup"
+      ;;
+    *)
+      echo "coreutils_dynamic_startup"
+      ;;
+  esac
+}
+
+classify_failure_signature() {
+  local preload_rc="$1"
+  local preload_stderr="$2"
+  local parity_required="$3"
+  local parity_pass="$4"
+  local perf_required="$5"
+  local perf_pass="$6"
+  local valgrind_checked="$7"
+  local valgrind_pass="$8"
+
+  if [[ "${preload_rc}" -eq 124 || "${preload_rc}" -eq 125 ]]; then
+    echo "startup_timeout"
+    return 0
+  fi
+
+  if [[ "${preload_rc}" -ge 128 ]]; then
+    local signal_num=$((preload_rc - 128))
+    case "${signal_num}" in
+      11)
+        echo "startup_segv"
+        ;;
+      6)
+        echo "startup_abort"
+        ;;
+      4)
+        echo "startup_illegal_instruction"
+        ;;
+      7)
+        echo "startup_bus_error"
+        ;;
+      *)
+        echo "startup_signal_${signal_num}"
+        ;;
+    esac
+    return 0
+  fi
+
+  if [[ "${preload_rc}" -ne 0 ]]; then
+    if grep -qi 'symbol lookup error' "${preload_stderr}" 2>/dev/null; then
+      echo "startup_symbol_lookup_error"
+    elif grep -qi 'cannot open shared object file' "${preload_stderr}" 2>/dev/null; then
+      echo "startup_loader_missing_library"
+    elif grep -Eqi 'version .*GLIBC_.* not found' "${preload_stderr}" 2>/dev/null; then
+      echo "startup_glibc_version_mismatch"
+    elif grep -Eqi 'wrong ELF class|ELFCLASS' "${preload_stderr}" 2>/dev/null; then
+      echo "startup_elf_class_mismatch"
+    elif grep -qi 'undefined symbol' "${preload_stderr}" 2>/dev/null; then
+      echo "startup_undefined_symbol"
+    else
+      echo "startup_exit_nonzero_rc${preload_rc}"
+    fi
+    return 0
+  fi
+
+  if [[ "${parity_required}" -eq 1 && "${parity_pass}" -ne 1 ]]; then
+    echo "startup_strict_parity_mismatch"
+    return 0
+  fi
+
+  if [[ "${perf_required}" -eq 1 && "${perf_pass}" -ne 1 ]]; then
+    echo "startup_perf_regression"
+    return 0
+  fi
+
+  if [[ "${valgrind_checked}" -eq 1 && "${valgrind_pass}" -ne 1 ]]; then
+    echo "startup_valgrind_error"
+    return 0
+  fi
+
+  echo "none"
+}
+
+signature_is_guarded() {
+  local failure_signature="$1"
+  if [[ "${failure_signature}" == "none" ]]; then
+    return 1
+  fi
+  csv_has_token "${failure_signature}" "${FAILURE_SIGNATURE_DENYLIST}"
+}
+
+emit_trace() {
+  local level="$1"
+  local event="$2"
+  local mode="$3"
+  local label="$4"
+  local status="$5"
+  local decision_path="${6:-orchestration}"
+  local healing_action="${7:-None}"
+  local errno_value="${8:-0}"
+  local latency_ns="${9:-0}"
+  local artifact_refs_json="${10:-[]}"
+  local workload="${11:-suite}"
+  local startup_path="${12:-orchestration}"
+  local failure_signature="${13:-none}"
+  local timing_total_ns="${14:-0}"
+  local signature_guard_value="${15:-0}"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  local trace_id="${BEAD_ID}::${RUN_ID}::${mode}::${label}"
+  printf '{"timestamp":"%s","trace_id":"%s","level":"%s","event":"%s","bead_id":"%s","run_id":"%s","mode":"%s","case":"%s","status":"%s","api_family":"abi-interposition","symbol":"%s","decision_path":"%s","healing_action":"%s","errno":%s,"latency_ns":%s,"artifact_refs":%s,"workload":"%s","startup_path":"%s","failure_signature":"%s","timing":{"total_ns":%s},"signature_guard_triggered":%s}\n' \
+    "${ts}" \
+    "${trace_id}" \
+    "${level}" \
+    "${event}" \
+    "${BEAD_ID}" \
+    "${RUN_ID}" \
+    "${mode}" \
+    "${label}" \
+    "${status}" \
+    "${label}" \
+    "${decision_path}" \
+    "${healing_action}" \
+    "${errno_value}" \
+    "${latency_ns}" \
+    "${artifact_refs_json}" \
+    "${workload}" \
+    "${startup_path}" \
+    "${failure_signature}" \
+    "${timing_total_ns}" \
+    "${signature_guard_value}" \
+    >> "${TRACE_FILE}"
+}
+
+append_case_row() {
+  local mode="$1"
+  local label="$2"
+  local status="$3"
+  local workload="$4"
+  local startup_path="$5"
+  local failure_signature="$6"
+  local signature_guard_triggered="$7"
+  local parity_required="$8"
+  local parity_pass="$9"
+  local perf_required="${10}"
+  local perf_pass="${11}"
+  local latency_ratio_ppm="${12}"
+  local baseline_rc="${13}"
+  local preload_rc="${14}"
+  local stdout_match="${15}"
+  local stderr_match="${16}"
+  local baseline_latency_ns="${17}"
+  local preload_latency_ns="${18}"
+  local valgrind_checked="${19}"
+  local valgrind_pass="${20}"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${mode}" \
+    "${label}" \
+    "${status}" \
+    "${workload}" \
+    "${startup_path}" \
+    "${failure_signature}" \
+    "${signature_guard_triggered}" \
+    "${parity_required}" \
+    "${parity_pass}" \
+    "${perf_required}" \
+    "${perf_pass}" \
+    "${latency_ratio_ppm}" \
+    "${baseline_rc}" \
+    "${preload_rc}" \
+    "${stdout_match}" \
+    "${stderr_match}" \
+    "${baseline_latency_ns}" \
+    "${preload_latency_ns}" \
+    "${valgrind_checked}" \
+    "${valgrind_pass}" \
+    >> "${CASE_TSV}"
+}
+
+record_failure_bundle() {
+  local case_dir="$1"
+  local mode="$2"
+  local label="$3"
+  local rc="$4"
+  local failure_signature="$5"
+  local workload="$6"
+  local startup_path="$7"
+  local signature_guard_triggered="$8"
+
+  {
+    echo "mode=${mode}"
+    echo "case=${label}"
+    echo "exit_code=${rc}"
+    echo "failure_signature=${failure_signature}"
+    echo "workload=${workload}"
+    echo "startup_path=${startup_path}"
+    echo "signature_guard_triggered=${signature_guard_triggered}"
+    echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "lib_path=${LIB_PATH}"
+    echo "timeout_seconds=${TIMEOUT_SECONDS}"
+    echo "kernel=$(uname -a)"
+  } > "${case_dir}/bundle.meta"
+
+  env | sort > "${case_dir}/env.txt"
+  cat /proc/self/maps > "${case_dir}/proc_self_maps.txt" || true
+}
+
+run_case() {
+  local mode="$1"
+  local label="$2"
+  shift 2
+  local case_dir="${RUN_DIR}/${mode}/${label}"
+  local workload
+  workload="$(case_workload "${label}")"
+  local startup_path
+  startup_path="$(case_startup_path "${label}")"
+  mkdir -p "${case_dir}"
+
+  printf '%q ' "$@" > "${case_dir}/command.shline"
+  echo "" >> "${case_dir}/command.shline"
+
+  local baseline_stdout="${case_dir}/baseline.stdout.txt"
+  local baseline_stderr="${case_dir}/baseline.stderr.txt"
+  local preload_stdout="${case_dir}/stdout.txt"
+  local preload_stderr="${case_dir}/stderr.txt"
+  local valgrind_stdout="${case_dir}/valgrind.stdout.txt"
+  local valgrind_stderr="${case_dir}/valgrind.stderr.txt"
+
+  # Spawn baseline through the same `timeout -> env -> "$@"` wrapper chain as
+  # preload so single-shot `PERF_RATIO_MAX_PPM=2000000` (`2.0x`) measures
+  # `LD_PRELOAD` overhead rather than `/usr/bin/env` startup asymmetry (on
+  # Ubuntu 25.10, `uutils/coreutils` `/usr/bin/env` alone costs ~12 ms vs
+  # `libfrankenlibc_abi.so`'s `0.05 ms` `LD_DEBUG=statistics` relocation/init
+  # cost, turning 11 ms single-shot fixtures into `2.01x-2.44x` false ratios).
+  local baseline_start_ns
+  baseline_start_ns="$(date +%s%N)"
+  set +e
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" env "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
+  local baseline_rc=$?
+  set -e
+  local baseline_end_ns
+  baseline_end_ns="$(date +%s%N)"
+  local baseline_latency_ns=$((baseline_end_ns - baseline_start_ns))
+
+  local preload_start_ns
+  preload_start_ns="$(date +%s%N)"
+  set +e
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
+    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
+    > "${preload_stdout}" 2> "${preload_stderr}"
+  local preload_rc=$?
+  set -e
+  local preload_end_ns
+  preload_end_ns="$(date +%s%N)"
+  local preload_latency_ns=$((preload_end_ns - preload_start_ns))
+
+  printf '%s\n' "${baseline_rc}" > "${case_dir}/baseline.exit_code"
+  printf '%s\n' "${preload_rc}" > "${case_dir}/preload.exit_code"
+  printf '%s\n' "${baseline_latency_ns}" > "${case_dir}/baseline.latency_ns"
+  printf '%s\n' "${preload_latency_ns}" > "${case_dir}/preload.latency_ns"
+
+  local stdout_match=1
+  local stderr_match=1
+  local compare_baseline_stdout="${baseline_stdout}"
+  local compare_preload_stdout="${preload_stdout}"
+  if [[ "${label}" == "coreutils_env" ]]; then
+    local baseline_stdout_normalized="${case_dir}/baseline.stdout.normalized.txt"
+    local preload_stdout_normalized="${case_dir}/stdout.normalized.txt"
+    grep -Ev '^(FRANKENLIBC_MODE|LD_PRELOAD)=' "${baseline_stdout}" > "${baseline_stdout_normalized}" || true
+    grep -Ev '^(FRANKENLIBC_MODE|LD_PRELOAD)=' "${preload_stdout}" > "${preload_stdout_normalized}" || true
+    compare_baseline_stdout="${baseline_stdout_normalized}"
+    compare_preload_stdout="${preload_stdout_normalized}"
+  fi
+  cmp -s "${compare_baseline_stdout}" "${compare_preload_stdout}" || stdout_match=0
+  cmp -s "${baseline_stderr}" "${preload_stderr}" || stderr_match=0
+
+  local parity_required=0
+  if mode_requires_parity "${mode}" "${ENFORCE_PARITY_MODES}"; then
+    parity_required=1
+  fi
+
+  local perf_required=0
+  if mode_requires_parity "${mode}" "${ENFORCE_PERF_MODES}"; then
+    perf_required=1
+  fi
+
+  local latency_ratio_ppm=0
+  if [[ "${baseline_latency_ns}" -gt 0 ]]; then
+    latency_ratio_ppm=$((preload_latency_ns * 1000000 / baseline_latency_ns))
+  fi
+
+  local parity_pass=1
+  if [[ "${baseline_rc}" -ne "${preload_rc}" || "${stdout_match}" -ne 1 || "${stderr_match}" -ne 1 ]]; then
+    parity_pass=0
+  fi
+
+  local perf_pass=1
+  if [[ "${perf_required}" -eq 1 && "${latency_ratio_ppm}" -gt "${PERF_RATIO_MAX_PPM}" ]]; then
+    perf_pass=0
+  fi
+
+  local valgrind_checked=0
+  local valgrind_pass=1
+  local valgrind_rc=0
+  if [[ "${mode}" == "strict" && "${label}" != stress_* ]]; then
+    case "${VALGRIND_POLICY}" in
+      off)
+        ;;
+      auto|required)
+        if command -v valgrind >/dev/null 2>&1; then
+          valgrind_checked=1
+          set +e
+          # --trace-children=yes is REQUIRED: valgrind's guest here is `env`, which
+          # execve()s the real target. With the default --trace-children=no valgrind
+          # does not follow that exec, so the preloaded target would run
+          # un-instrumented and this gate would inspect only `env` (always clean).
+          timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
+            valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet \
+            --trace-children=yes \
+            env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
+            > "${valgrind_stdout}" 2> "${valgrind_stderr}"
+          valgrind_rc=$?
+          set -e
+          if [[ "${valgrind_rc}" -ne 0 ]]; then
+            valgrind_pass=0
+          fi
+        elif [[ "${VALGRIND_POLICY}" == "required" ]]; then
+          echo "ld_preload_smoke: VALGRIND_POLICY=required but valgrind is not installed" >&2
+          exit 2
+        fi
+        ;;
+      *)
+        echo "ld_preload_smoke: invalid VALGRIND_POLICY='${VALGRIND_POLICY}' (expected auto|off|required)" >&2
+        exit 2
+        ;;
+    esac
+  fi
+
+  local status="pass"
+  if [[ "${preload_rc}" -ne 0 ]]; then
+    status="fail"
+  elif [[ "${parity_required}" -eq 1 && "${parity_pass}" -ne 1 ]]; then
+    status="fail"
+  elif [[ "${perf_required}" -eq 1 && "${perf_pass}" -ne 1 ]]; then
+    status="fail"
+  elif [[ "${valgrind_checked}" -eq 1 && "${valgrind_pass}" -ne 1 ]]; then
+    status="fail"
+  fi
+
+  local failure_signature
+  failure_signature="$(classify_failure_signature \
+    "${preload_rc}" \
+    "${preload_stderr}" \
+    "${parity_required}" \
+    "${parity_pass}" \
+    "${perf_required}" \
+    "${perf_pass}" \
+    "${valgrind_checked}" \
+    "${valgrind_pass}")"
+
+  local signature_guard_triggered=0
+  if signature_is_guarded "${failure_signature}"; then
+    signature_guard_triggered=1
+    status="fail"
+  fi
+
+  local decision_path="baseline_vs_preload"
+  if [[ "${preload_rc}" -ne 0 ]]; then
+    decision_path="preload_exit_nonzero"
+  elif [[ "${parity_required}" -eq 1 && "${parity_pass}" -ne 1 ]]; then
+    decision_path="strict_parity_mismatch"
+  elif [[ "${perf_required}" -eq 1 && "${perf_pass}" -ne 1 ]]; then
+    decision_path="perf_ratio_exceeded"
+  elif [[ "${valgrind_checked}" -eq 1 && "${valgrind_pass}" -ne 1 ]]; then
+    decision_path="valgrind_error"
+  fi
+  if [[ "${signature_guard_triggered}" -eq 1 ]]; then
+    decision_path="failure_signature_guard"
+  fi
+
+  local errno_value=0
+  if [[ "${preload_rc}" -ne 0 ]]; then
+    errno_value="${preload_rc}"
+  fi
+
+  local artifact_refs_json
+  artifact_refs_json=$(printf '["%s/%s/baseline.stdout.txt","%s/%s/baseline.stderr.txt","%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/command.shline"%s]' \
+    "${mode}" "${label}" \
+    "${mode}" "${label}" \
+    "${mode}" "${label}" \
+    "${mode}" "${label}" \
+    "${mode}" "${label}" \
+    "$([[ "${valgrind_checked}" -eq 1 ]] && printf ',"%s/%s/valgrind.stdout.txt","%s/%s/valgrind.stderr.txt"' "${mode}" "${label}" "${mode}" "${label}")")
+
+  if [[ "${status}" == "pass" ]]; then
+    passes=$((passes + 1))
+    append_case_row \
+      "${mode}" "${label}" "${status}" "${workload}" "${startup_path}" "${failure_signature}" "${signature_guard_triggered}" "${parity_required}" "${parity_pass}" \
+      "${perf_required}" "${perf_pass}" "${latency_ratio_ppm}" \
+      "${baseline_rc}" "${preload_rc}" "${stdout_match}" "${stderr_match}" \
+      "${baseline_latency_ns}" "${preload_latency_ns}" "${valgrind_checked}" "${valgrind_pass}"
+    emit_trace "info" "case_pass" "${mode}" "${label}" "${status}" "${decision_path}" "None" "${errno_value}" "${preload_latency_ns}" "${artifact_refs_json}" "${workload}" "${startup_path}" "${failure_signature}" "${preload_latency_ns}" "${signature_guard_triggered}"
+    echo "[PASS] mode=${mode} case=${label}"
+    return 0
+  fi
+
+  fails=$((fails + 1))
+  append_case_row \
+    "${mode}" "${label}" "${status}" "${workload}" "${startup_path}" "${failure_signature}" "${signature_guard_triggered}" "${parity_required}" "${parity_pass}" \
+    "${perf_required}" "${perf_pass}" "${latency_ratio_ppm}" \
+    "${baseline_rc}" "${preload_rc}" "${stdout_match}" "${stderr_match}" \
+    "${baseline_latency_ns}" "${preload_latency_ns}" "${valgrind_checked}" "${valgrind_pass}"
+  emit_trace "error" "case_fail" "${mode}" "${label}" "${status}" "${decision_path}" "None" "${errno_value}" "${preload_latency_ns}" "${artifact_refs_json}" "${workload}" "${startup_path}" "${failure_signature}" "${preload_latency_ns}" "${signature_guard_triggered}"
+  if [[ "${signature_guard_triggered}" -eq 1 ]]; then
+    echo "[FAIL] mode=${mode} case=${label} (guarded failure signature: ${failure_signature})"
+  elif [[ "${preload_rc}" -eq 124 || "${preload_rc}" -eq 125 ]]; then
+    echo "[FAIL] mode=${mode} case=${label} (timeout ${TIMEOUT_SECONDS}s)"
+  elif [[ "${parity_required}" -eq 1 && "${parity_pass}" -ne 1 ]]; then
+    echo "[FAIL] mode=${mode} case=${label} (strict parity mismatch)"
+  elif [[ "${perf_required}" -eq 1 && "${perf_pass}" -ne 1 ]]; then
+    echo "[FAIL] mode=${mode} case=${label} (perf ratio ${latency_ratio_ppm}ppm > ${PERF_RATIO_MAX_PPM}ppm)"
+  elif [[ "${valgrind_checked}" -eq 1 && "${valgrind_pass}" -ne 1 ]]; then
+    echo "[FAIL] mode=${mode} case=${label} (valgrind failure rc=${valgrind_rc})"
+  else
+    echo "[FAIL] mode=${mode} case=${label} (exit ${preload_rc})"
+  fi
+  record_failure_bundle "${case_dir}" "${mode}" "${label}" "${preload_rc}" "${failure_signature}" "${workload}" "${startup_path}" "${signature_guard_triggered}"
+  return 1
+}
+
+run_preload_probe_case() {
+  local mode="$1"
+  local label="$2"
+  shift 2
+  local case_dir="${RUN_DIR}/${mode}/${label}"
+  local workload
+  workload="$(case_workload "${label}")"
+  local startup_path
+  startup_path="$(case_startup_path "${label}")"
+  mkdir -p "${case_dir}"
+
+  printf '%q ' "$@" > "${case_dir}/command.shline"
+  echo "" >> "${case_dir}/command.shline"
+
+  local preload_stdout="${case_dir}/stdout.txt"
+  local preload_stderr="${case_dir}/stderr.txt"
+  local preload_start_ns
+  preload_start_ns="$(date +%s%N)"
+  set +e
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
+    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
+    > "${preload_stdout}" 2> "${preload_stderr}"
+  local preload_rc=$?
+  set -e
+  local preload_end_ns
+  preload_end_ns="$(date +%s%N)"
+  local preload_latency_ns=$((preload_end_ns - preload_start_ns))
+
+  printf '%s\n' "${preload_rc}" > "${case_dir}/preload.exit_code"
+  printf '%s\n' "${preload_latency_ns}" > "${case_dir}/preload.latency_ns"
+
+  local status="pass"
+  if [[ "${preload_rc}" -ne 0 ]] || ! grep -q '"status":"pass"' "${preload_stdout}" 2>/dev/null; then
+    status="fail"
+    if [[ "${preload_rc}" -eq 0 ]]; then
+      preload_rc=1
+    fi
+  fi
+
+  local failure_signature
+  failure_signature="$(classify_failure_signature "${preload_rc}" "${preload_stderr}" 0 1 0 1 0 1)"
+  local signature_guard_triggered=0
+  if signature_is_guarded "${failure_signature}"; then
+    signature_guard_triggered=1
+    status="fail"
+  fi
+
+  local artifact_refs_json
+  artifact_refs_json=$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/command.shline"]' \
+    "${mode}" "${label}" "${mode}" "${label}" "${mode}" "${label}")
+
+  if [[ "${status}" == "pass" ]]; then
+    passes=$((passes + 1))
+    append_case_row \
+      "${mode}" "${label}" "${status}" "${workload}" "${startup_path}" "${failure_signature}" "${signature_guard_triggered}" \
+      "0" "1" "0" "1" "0" "0" "${preload_rc}" "1" "1" "0" "${preload_latency_ns}" "0" "1"
+    emit_trace "info" "case_pass" "${mode}" "${label}" "${status}" "preload_probe" "None" "0" "${preload_latency_ns}" \
+      "${artifact_refs_json}" "${workload}" "${startup_path}" "${failure_signature}" "${preload_latency_ns}" "${signature_guard_triggered}"
+    echo "[PASS] mode=${mode} case=${label}"
+    return 0
+  fi
+
+  fails=$((fails + 1))
+  append_case_row \
+    "${mode}" "${label}" "${status}" "${workload}" "${startup_path}" "${failure_signature}" "${signature_guard_triggered}" \
+    "0" "1" "0" "1" "0" "0" "${preload_rc}" "1" "1" "0" "${preload_latency_ns}" "0" "1"
+  emit_trace "error" "case_fail" "${mode}" "${label}" "${status}" "preload_probe_failed" "None" "${preload_rc}" "${preload_latency_ns}" \
+    "${artifact_refs_json}" "${workload}" "${startup_path}" "${failure_signature}" "${preload_latency_ns}" "${signature_guard_triggered}"
+  echo "[FAIL] mode=${mode} case=${label} (exit ${preload_rc})"
+  record_failure_bundle "${case_dir}" "${mode}" "${label}" "${preload_rc}" "${failure_signature}" "${workload}" "${startup_path}" "${signature_guard_triggered}"
+  return 1
+}
+
+run_optional_case() {
+  local required_binary="$1"
+  local mode="$2"
+  local label="$3"
+  shift 3
+
+  if ! command -v "${required_binary}" >/dev/null 2>&1; then
+    local workload
+    workload="$(case_workload "${label}")"
+    local startup_path
+    startup_path="$(case_startup_path "${label}")"
+    skips=$((skips + 1))
+    append_case_row \
+      "${mode}" "${label}" "skip" "${workload}" "${startup_path}" "none" "0" "0" "1" "0" "1" "0" \
+      "-1" "-1" "1" "1" \
+      "0" "0" "0" "1"
+    emit_trace "warn" "case_skip_optional_binary_missing" "${mode}" "${label}" "skip" \
+      "optional_binary_missing" "None" "0" "0" "[]" \
+      "${workload}" "${startup_path}" "none" "0" "0"
+    echo "[SKIP] mode=${mode} case=${label} (missing optional binary: ${required_binary})"
+    return 0
+  fi
+
+  run_case "${mode}" "${label}" "$@"
+}
+
+# Known failures, each tied to an open bead: "mode:label=bead ...". A listed
+# case that fails is reported as XFAIL (not PASS, not a gate failure); a listed
+# case that PASSES fails the run, so the entry must be removed with the fix.
+# Tracked known failures: "mode:case=bead". Each must fail; an unexpected pass
+# is XPASS (a failure) so the entry is removed once fixed.
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
+xfails=0
+
+known_failure_bead() {
+  local key="$1:$2" entry
+  for entry in ${KNOWN_FAILING_CASES}; do
+    if [[ "${entry%%=*}" == "${key}" ]]; then
+      echo "${entry#*=}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_corpus_case() {
+  local mode="$1"
+  local label="$2"
+  local bead
+  if bead="$(known_failure_bead "${mode}" "${label}")"; then
+    if run_case "$@"; then
+      echo "[XPASS] mode=${mode} case=${label} passed but is listed as known-failing (${bead}); remove it from KNOWN_FAILING_CASES"
+      passes=$((passes - 1))
+      fails=$((fails + 1))
+      return 1
+    fi
+    fails=$((fails - 1))
+    xfails=$((xfails + 1))
+    # Relabel the row just appended by run_case.
+    python3 - "${CASE_TSV}" "${bead}" <<'PYX'
+import sys
+path, bead = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines()
+cols = lines[-1].split("\t")
+cols[2] = "xfail"
+lines[-1] = "\t".join(cols)
+open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYX
+    emit_trace "warn" "case_xfail" "${mode}" "${label}" "xfail" "known_failure" "None" "0" "0" "[]" \
+      "$(case_workload "${label}")" "$(case_startup_path "${label}")" "known_failure:${bead}" "0" "0"
+    echo "[XFAIL] mode=${mode} case=${label} (known failure tracked by ${bead})"
+    return 0
+  fi
+  run_case "$@"
+}
+
+run_suite_for_mode() {
+  local mode="$1"
+  local mode_failed=0
+  local fixture="${RUN_DIR}/fixture.input.txt"
+  local ls_fixture_dir="${RUN_DIR}/ls_fixture"
+  cat > "${fixture}" <<'EOF'
+charlie
+alpha
+bravo
+alpha
+EOF
+  mkdir -p "${ls_fixture_dir}/nested"
+  printf 'fixture\n' > "${ls_fixture_dir}/alpha.txt"
+  printf 'second\n' > "${ls_fixture_dir}/nested/beta.txt"
+  touch -t 202603230101.01 "${ls_fixture_dir}" "${ls_fixture_dir}/alpha.txt" \
+    "${ls_fixture_dir}/nested" "${ls_fixture_dir}/nested/beta.txt"
+
+  run_case "${mode}" "coreutils_ls_fixture" /bin/ls -la "${ls_fixture_dir}" || mode_failed=1
+  run_case "${mode}" "coreutils_cat_hosts" /bin/cat /etc/hosts || mode_failed=1
+  run_case "${mode}" "coreutils_echo" /bin/echo "frankenlibc_smoke" || mode_failed=1
+  run_case "${mode}" "coreutils_env" /usr/bin/env || mode_failed=1
+  run_case "${mode}" "integration_link_test" "${INTEGRATION_BIN}" || mode_failed=1
+  run_case "${mode}" "coreutils_sort_fixture" /usr/bin/env LC_ALL=C /bin/sort "${fixture}" || mode_failed=1
+  run_case "${mode}" "coreutils_wc_fixture" /usr/bin/env LC_ALL=C /usr/bin/wc -l "${fixture}" || mode_failed=1
+
+  if [[ "${NONTRIVIAL_BIN}" == "python3" ]]; then
+    run_case "${mode}" "python3_print" python3 -c "print(1)" || mode_failed=1
+  else
+    run_case "${mode}" "busybox_uname" busybox uname -a || mode_failed=1
+  fi
+
+  run_optional_case "busybox" "${mode}" "busybox_help" busybox --help || mode_failed=1
+  run_optional_case "sqlite3" "${mode}" "sqlite_memory_select" sqlite3 :memory: "select 41 + 1;" || mode_failed=1
+  # rustc statically links jemalloc, which calls readlink("/etc/malloc.conf")
+  # while holding its init lock; fl's post-op telemetry built the runtime
+  # kernel there, allocating through jemalloc's malloc: deadlock.
+  # Hardened still deadlocks: the membrane's per-thread validation cache is
+  # created lazily through the process calloc from inside jemalloc's
+  # memset callers.
+  if [[ "${mode}" == "strict" ]]; then
+    run_optional_case "rustc" "${mode}" "rustc_version_static_jemalloc" rustc --version || mode_failed=1
+  fi
+  run_optional_case "redis-cli" "${mode}" "redis_cli_version" redis-cli --version || mode_failed=1
+  run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
+  # Its getopt_long table lacks the NULL terminator: works only if main's
+  # stack starts zeroed, as glibc's startup leaves it (segfaulted under fl).
+  # It exits 1 by design; the wrapper prints that status (139 on the crash)
+  # so the case itself exits 0 and the status is compared as output.
+  run_optional_case "aa-features-abi" "${mode}" "aa_features_abi_unknown_option" \
+    /bin/sh -c 'aa-features-abi --version; echo "exit=$?"' || mode_failed=1
+
+  # --- real-world corpus (bd-rc0923-epic-eeuy4f.4) ---
+  local tree="${CORPUS_DIR}/tree"
+  for layout_case in fopen fdopen tmpfile fmemopen open_memstream popen fopencookie error freopen reuse; do
+    run_corpus_case "${mode}" "stdio_file_layout_${layout_case}" "${FILE_LAYOUT_BIN}" "${layout_case}" || mode_failed=1
+  done
+  run_corpus_case "${mode}" "hardened_first_heal_no_deadlock" "${FIRST_HEAL_BIN}" || mode_failed=1
+  # exit sequence: handler order, on_exit status, destructors after handlers,
+  # via exit(main()) and via an explicit exit() (bd-fr97mh).
+  run_corpus_case "${mode}" "exit_sequence" "${EXIT_SEQUENCE_BIN}" || mode_failed=1
+  # pthread key destructors on host-created threads (bd-v6cz9v).
+  run_corpus_case "${mode}" "pthread_key_destructors" "${KEY_DTOR_BIN}" || mode_failed=1
+  # FILE positions: "a+", ftell on a pipe, fflush syncing a read stream's fd,
+  # open_memstream close, stdout buffering into a pipe.
+  run_corpus_case "${mode}" "stdio_positions" "${STDIO_POSITIONS_BIN}" || mode_failed=1
+  # tzname/daylight/timezone per localtime instant; strftime %s/%Z/%z.
+  run_corpus_case "${mode}" "time_zone_globals" "${TZ_GLOBALS_BIN}" || mode_failed=1
+  # PRNG sequences/state buffers and multibyte conversions.
+  run_corpus_case "${mode}" "random_multibyte" "${RANDOM_MB_BIN}" || mode_failed=1
+  # environ ownership, putenv aliasing, clearenv (environ = NULL).
+  run_corpus_case "${mode}" "environ_semantics" "${ENVIRON_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "static_mutex_kinds" "${STATIC_MUTEX_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "catopen_nlspath_search" "${CATOPEN_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "getopt_long_diagnostics" "${GETOPT_DIAG_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "scanf_m_allocation" "${SCANF_MALLOC_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "main_negative_return" "${MAIN_NEG_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "file_buffer_window" "${FILE_WINDOW_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "stdio_flush_points" "${FLUSH_POINTS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "realpath_fd_links" "${REALPATH_FD_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "fcntl64_args" "${FCNTL64_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "custom_malloc_init" "${CUSTOM_MALLOC_BIN}" || mode_failed=1
+  # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
+  # heals it by design (bd-rc0923-epic-eeuy4f.8).
+  if [[ "${mode}" == "strict" ]]; then
+    run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
+    run_corpus_case "${mode}" "strict_string_overflow_parity" "${STRICT_STRING_OVERFLOW_BIN}" || mode_failed=1
+    run_preload_probe_case "${mode}" "canary_case_intact" "${FIXTURE_MALLOC_PROBE_BIN}" --canary-case intact "${LIB_PATH}" || mode_failed=1
+    run_preload_probe_case "${mode}" "errno_fenv_transparency" "${FIXTURE_MALLOC_PROBE_BIN}" --errno-fenv-case membrane-churn "${LIB_PATH}" || mode_failed=1
+  else
+    # String/memory ops through a quarantined (freed) block heal to zero length.
+    run_corpus_case "${mode}" "hardened_uaf_heal" "${HARDENED_UAF_HEAL_BIN}" || mode_failed=1
+    # Dual-key domain-separated tail canaries, warm-TLS canary/header checks, and fork/exec CSPRNG seeding (bd-reality-202609-lx578q.8.3/.8.4).
+    for canary_case in intact corrupt-legacy-fold corrupt-symmetric-pair corrupt-header \
+      corrupt-after-warm-tls-write corrupt-header-after-warm-tls fork-preserves-canary-exec-reseeds; do
+      run_preload_probe_case "${mode}" "canary_case_${canary_case//-/_}" "${FIXTURE_MALLOC_PROBE_BIN}" --canary-case "${canary_case}" "${LIB_PATH}" || mode_failed=1
+    done
+    # Membrane pure-Rust transcendental errno/FPU transparency across QuarantineController epochs (bd-reality-202609-lx578q.4.1/.4.2).
+    run_preload_probe_case "${mode}" "errno_fenv_transparency" "${FIXTURE_MALLOC_PROBE_BIN}" --errno-fenv-case membrane-churn "${LIB_PATH}" || mode_failed=1
+  fi
+  run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
+  # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.
+  run_corpus_case "${mode}" "thread_stack_bounds" "${THREAD_STACK_BOUNDS_BIN}" || mode_failed=1
+  # pthread_kill/sigqueue at the main thread; EINTR from semaphore waits.
+  run_corpus_case "${mode}" "signal_waits" "${SIGNAL_WAITS_BIN}" || mode_failed=1
+  # backtrace() inside signal handlers unwinds through fl's restorer.
+  run_corpus_case "${mode}" "signal_backtrace" "${SIGNAL_BACKTRACE_BIN}" || mode_failed=1
+  # socket()/socketpair() leave family and type to the kernel.
+  run_corpus_case "${mode}" "socket_families" "${SOCKET_FAMILIES_BIN}" || mode_failed=1
+  # lseek SEEK_DATA/SEEK_HOLE (sparse-file copies).
+  run_corpus_case "${mode}" "lseek_sparse" "${LSEEK_SPARSE_BIN}" || mode_failed=1
+  # madvise/mmap/msync values the kernel accepts are not rewritten.
+  run_corpus_case "${mode}" "vm_advice" "${VM_ADVICE_BIN}" || mode_failed=1
+  # sigaction queries, mkostemp flags, waitpid __WALL, listen(-1).
+  run_corpus_case "${mode}" "arg_passthrough" "${ARG_PASSTHROUGH_BIN}" || mode_failed=1
+  # sem_post wakes sem_timedwait waiters (thread and process) at once.
+  run_corpus_case "${mode}" "sem_timedwait_wake" "${SEM_TIMEDWAIT_WAKE_BIN}" || mode_failed=1
+  # qsort keeps equal keys in input order, as glibc's merge sort does.
+  run_corpus_case "${mode}" "qsort_stable" "${QSORT_STABLE_BIN}" || mode_failed=1
+  # Key destructors run after thread-locals are gone; memmove there must not abort.
+  run_corpus_case "${mode}" "thread_key_dtor_teardown" "${THREAD_KEY_DTOR_TEARDOWN_BIN}" || mode_failed=1
+  # long double math: x87 argument slots in, ST(0) out (floorl, frexpl, sincosl, ...).
+  run_corpus_case "${mode}" "long_double_math" "${LONG_DOUBLE_MATH_BIN}" || mode_failed=1
+  # realloc of pre-signal memory inside a signal handler (perl POSIX::SigAction).
+  run_corpus_case "${mode}" "signal_handler_realloc" "${SIGNAL_HANDLER_REALLOC_BIN}" || mode_failed=1
+  # An application's own sbrk-based malloc (bash's lib/malloc) beside fl's.
+  run_corpus_case "${mode}" "app_sbrk_malloc" "${APP_SBRK_MALLOC_BIN}" || mode_failed=1
+  # glob resets glob_t on every return (make globfrees unconditionally).
+  run_corpus_case "${mode}" "glob_reset" "${GLOB_RESET_BIN}" || mode_failed=1
+  # GNU re_compile_pattern/re_search: newline_anchor, regs growth, errors (sed).
+  run_corpus_case "${mode}" "gnu_regex_api" "${GNU_REGEX_API_BIN}" || mode_failed=1
+  # Every failed allocation leaves errno == ENOMEM (gnulib test-*-gnu).
+  run_corpus_case "${mode}" "malloc_enomem" "${MALLOC_ENOMEM_BIN}" || mode_failed=1
+  # memchr/memccpy stop at the first match before an unmapped page (gnulib test-memchr).
+  run_corpus_case "${mode}" "memchr_page_boundary" "${MEMCHR_PAGE_BOUNDARY_BIN}" || mode_failed=1
+  # __fpurge position and freopen(stderr) identity (gnulib test-fpurge/-perror2).
+  run_corpus_case "${mode}" "fpurge_freopen" "${FPURGE_FREOPEN_BIN}" || mode_failed=1
+  # remove() of an empty dir; ftello EBADF on a closed fd (gnulib canonicalize/ftello4).
+  run_corpus_case "${mode}" "remove_dir_ftell_ebadf" "${REMOVE_DIR_FTELL_EBADF_BIN}" || mode_failed=1
+  # LC_TIME items 50..158 (ALTMON, wide names); mbrtowc(pwc, NULL) (gnulib).
+  run_corpus_case "${mode}" "langinfo_time_mbrtowc_null" "${LANGINFO_TIME_MBRTOWC_NULL_BIN}" || mode_failed=1
+  # coreutils gnulib-tests: stdio offsets/close/_flags, printf %b/%wN, getopt,
+  # strtod, fnmatch, futimens, rwlock writer preference.
+  run_corpus_case "${mode}" "stdio_offsets_close_flags" "${STDIO_OFFSETS_CLOSE_FLAGS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "coreutils_gnulib_misc" "${COREUTILS_GNULIB_MISC_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "rwlock_writer_preference" "${RWLOCK_WRITER_PREFERENCE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "getcwd_deep" "${GETCWD_DEEP_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "app_malloc_spawns_thread" "${APP_MALLOC_SPAWNS_THREAD_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "regex_utf8" "${REGEX_UTF8_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "stdio_read_window" "${STDIO_READ_WINDOW_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "locale_l_variants" env TZ=UTC "${LOCALE_L_VARIANTS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "locale_decimal_comma" env LOCPATH="${DECIMAL_COMMA_LOCPATH}" "${LOCALE_DECIMAL_COMMA_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "stdio_closed_std_read_errors" "${STDIO_CLOSED_STD_READ_ERRORS_BIN}" || mode_failed=1
+  # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
+  run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
+import faulthandler, subprocess, sys
+faulthandler.dump_c_stack(open("/dev/null", "w"))
+r = subprocess.run([sys.executable, "-X", "faulthandler", "-c", "import faulthandler; faulthandler._sigsegv()"],
+                   capture_output=True, text=True)
+print("rc", r.returncode, "c-stack frames" , r.stderr.count("Binary file") > 2, "ext-modules", "Extension modules:" in r.stderr)' || mode_failed=1
+  # CPython 3.14 sizes its C stack from pthread_getattr_np; wrong bounds made
+  # every finished thread leak its arguments (refcounts stayed raised).
+  run_optional_case "python3" "${mode}" "python_thread_refcounts" python3 -c '
+import sys, _thread, threading, time
+class B: pass
+b = B()
+for _ in range(3):
+    _thread.start_new_thread(lambda a: None, (b,))
+    time.sleep(0.1)
+t = threading.Thread(target=lambda a: None, args=(b,)); t.start(); t.join()
+print("refcount", sys.getrefcount(b), "thread", sys.getrefcount(t))
+print(eval("(" * 190 + ")" * 190))' || mode_failed=1
+  run_optional_case "node" "${mode}" "node_eval" node -e 'console.log([1, 2, 3].map((x) => x * 7).join(","))' || mode_failed=1
+  # Local time (bd-rc0923-epic-eeuy4f.11): zone files, POSIX rules, edge values.
+  local tz_case=0
+  for tz_value in America/New_York Europe/London Australia/Sydney Asia/Kolkata \
+    'CET-1CEST,M3.5.0,M10.5.0/3' '<+0530>-5:30' UTC ''; do
+    tz_case=$((tz_case + 1))
+    run_corpus_case "${mode}" "localtime_tz_${tz_case}" /usr/bin/env "TZ=${tz_value}" "${LOCALTIME_TZ_BIN}" || mode_failed=1
+  done
+  # Every transition 1900-2100 in 44 zones, bisected to the second (~7.9k lines).
+  run_corpus_case "${mode}" "localtime_tz_transition_sweep" "${LOCALTIME_TZ_BIN}" sweep || mode_failed=1
+  # Named locales (bd-rc0923-epic-eeuy4f.10): LC_TIME formatting.
+  run_corpus_case "${mode}" "strftime_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "strftime_locale_c_utf8" /usr/bin/env LANG=C.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
+  # LC_MESSAGES: .mo catalogs, plural rules, LANGUAGE, codeset conversion.
+  run_corpus_case "${mode}" "gettext_catalogs_en_us" /usr/bin/env LANG=en_US.UTF-8 "${GETTEXT_CATALOGS_BIN}" || mode_failed=1
+  # LC_COLLATE for wide strings: wcscoll signs and wcsxfrm key order.
+  run_corpus_case "${mode}" "wcscoll_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${WCSCOLL_LOCALE_BIN}" || mode_failed=1
+  run_optional_case "dpkg" "${mode}" "gettext_dpkg_help_en_us" /usr/bin/env LANG=en_US.UTF-8 dpkg --help || mode_failed=1
+  # LC_CTYPE: wide classification/case/width, every code point.
+  for wide_locale in C C.UTF-8 en_US.UTF-8; do
+    run_corpus_case "${mode}" "wide_ctype_${wide_locale//[.-]/_}" "${WIDE_CTYPE_BIN}" "${wide_locale}" || mode_failed=1
+  done
+  # LC_COLLATE: sort and ls order by the locale's collation.
+  run_corpus_case "${mode}" "sort_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 sort "${tree}/collate.txt" || mode_failed=1
+  run_corpus_case "${mode}" "ls_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 ls "${tree}/collate_dir" || mode_failed=1
+  # setjmp/longjmp (bd-rc0923-epic-eeuy4f.12): glibc pointer mangling of the
+  # saved rbp/rsp/rip and __longjmp_chk's stack-direction check.
+  run_corpus_case "${mode}" "setjmp_guard" "${SETJMP_GUARD_BIN}" || mode_failed=1
+  # Thread cancellation at blocking points + cleanup handlers, static condvars
+  # (bd-rc0923-epic-eeuy4f.24).
+  run_corpus_case "${mode}" "pthread_cancel" "${PTHREAD_CANCEL_BIN}" || mode_failed=1
+  # Another thread's calls on the main thread's pthread_t (bd-5aw3u6).
+  run_corpus_case "${mode}" "pthread_main_handle" "${PTHREAD_MAIN_HANDLE_BIN}" || mode_failed=1
+  # Cancellation as a C++ forced unwind: destructors, abi::__forced_unwind.
+  if [[ -n "${CANCEL_UNWIND_BIN}" ]]; then
+    run_corpus_case "${mode}" "cxx_cancel_forced_unwind" "${CANCEL_UNWIND_BIN}" || mode_failed=1
+  fi
+  # Process-shared, robust and PI mutexes; process-shared condvars
+  # (bd-rc0923-epic-eeuy4f.15).
+  run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "pthread_pshared_ipc" "${PTHREAD_PSHARED_IPC_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "dlopen_ctor_threads" "${DLOPEN_CTOR_THREADS_BIN}" "${DLOPEN_CTOR_THREADS_LIB}" || mode_failed=1
+  run_corpus_case "${mode}" "dlclose_tls_slot_free" "${DLCLOSE_TLS_SLOT_FREE_BIN}" "${DLCLOSE_TLS_SLOT_FREE_LIB}" || mode_failed=1
+  # strncpy guard page, fstatat NULL, popen with stdio closed, glob slash
+  # runs, UTF-8 fnmatch, huge printf fields, printf EINVAL/ENOMEM (found by
+  # a gnulib testdir).
+  run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
+  # libm NaN/inf/domain-error results and FE_INVALID, double and float.
+  run_corpus_case "${mode}" "libm_special_values" "${LIBM_SPECIAL_VALUES_BIN}" || mode_failed=1
+  # Float libm results vs glibc's correctly rounded f32 functions (bd-li7fb3).
+  run_corpus_case "${mode}" "libm_f32_sample" "${LIBM_F32_SAMPLE_BIN}" || mode_failed=1
+  # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
+  run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
+  # RLIMIT_DATA = 10 MiB (ulimit -d 10240) across setrlimit+dprintf/fprintf and fresh ld.so execs (bd-rc0923-epic-eeuy4f.49/.50, bd-4n397c).
+  run_corpus_case "${mode}" "rlimit_data_10mb_fixture" "${RLIMIT_AS_FIRST_BIN}" rlimit_data || mode_failed=1
+  run_corpus_case "${mode}" "rlimit_data_10mb_shell_tools" bash -c "ulimit -d 10240 && /bin/echo echo_ok && /usr/bin/env LC_ALL=C /bin/grep -c alpha '${tree}/a.txt'" || mode_failed=1
+  # flockfile(stdout) + putc from several threads: flockfile held the stream
+  # registry lock while blocking on the stream lock (deadlock).
+  run_corpus_case "${mode}" "flockfile_threads" "${FLOCKFILE_THREADS_BIN}" || mode_failed=1
+  # fork/popen/system/posix_spawn while other threads are in malloc and stdio
+  # (bd-rc0923-epic-eeuy4f.5).
+  run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1
+  # GNU argp (bd-rc0923-epic-eeuy4f.7): parser protocol, help layout, and
+  # glibc's own argp tools.
+  run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "argp_help_layout" "${ARGP_BIN}" help || mode_failed=1
+  # glibc's own argp tools: lines that fill the right margin exactly, where
+  # glibc's wrap depends on its buffer's leftover bytes (bd-l60w8w) -- one
+  # keeps the last word (gencat), one wraps it (localedef).
+  run_corpus_case "${mode}" "argp_gencat_help" /usr/bin/gencat --help || mode_failed=1
+  run_corpus_case "${mode}" "argp_localedef_help" /usr/bin/localedef --help || mode_failed=1
+  # re_search/REG_STARTEND from an offset keep the preceding bytes as ^/\</\b
+  # context (sed s///g restarts).
+  run_corpus_case "${mode}" "regex_search_context" "${REGEX_CTX_BIN}" || mode_failed=1
+  # malloc/free from a signal handler while every thread allocates.
+  run_corpus_case "${mode}" "malloc_signal_reentry" "${MALLOC_SIGNAL_BIN}" || mode_failed=1
+  # posix_spawn while another thread forks long-lived children.
+  run_corpus_case "${mode}" "spawn_concurrent_fork" "${SPAWN_FORK_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
+  run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
+  run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1
+  # getent initgroups sizes its list through glibc's private
+  # __libc_dynarray_resize and the getgrouplist(user, g, NULL, &n) size query;
+  # both failed under fl ("Could not allocate group list").
+  run_corpus_case "${mode}" "getent_initgroups" bash -c 'LC_ALL=C getent initgroups root daemon nobody 2>&1; echo "rc=$?"' || mode_failed=1
+  # gencat creates, then merges into, a catalog through glibc's private
+  # __open_catalog and __libc_scratch_buffer_set_array_size.
+  # Keep both catalogs and inputs beside the captured case output.
+  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d "$1/gencat.XXXXXX") && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat' smoke-gencat "${RUN_DIR}/${mode}/gencat_create_merge" || mode_failed=1
+  # /etc/hosts semantics: every address of the family, aliases merged across
+  # lines (bd-rc0923-epic-eeuy4f.21).
+  run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1
+  run_corpus_case "${mode}" "getent_ahosts_localhost" /usr/bin/env LC_ALL=C getent ahosts localhost || mode_failed=1
+  # Reverse, own-hostname, curl and ssh lookups through nsswitch hosts: (bd-rc0923-epic-eeuy4f.19).
+  run_corpus_case "${mode}" "getent_hosts_reverse_loopback" /usr/bin/env LC_ALL=C getent hosts 127.0.0.1 || mode_failed=1
+  run_corpus_case "${mode}" "getent_ahostsv4_hostname" /usr/bin/env LC_ALL=C getent ahostsv4 "$(hostname)" || mode_failed=1
+  run_optional_case "curl" "${mode}" "curl_file_localhost" curl -fsS "file://localhost${tree}/a.txt" || mode_failed=1
+  run_optional_case "ssh" "${mode}" "ssh_canonicalize_localhost" bash -c "LC_ALL=C ssh -G -o CanonicalizeHostname=always localhost | grep -E '^(hostname|port) '" || mode_failed=1
+  run_corpus_case "${mode}" "getent_help" /usr/bin/env LC_ALL=C getent --help || mode_failed=1
+  # Exits 64 (EX_USAGE); the status is part of the compared output.
+  run_corpus_case "${mode}" "getent_usage_error" bash -c 'LC_ALL=C getent -z passwd 2>&1; echo "rc=$?"' || mode_failed=1
+  run_corpus_case "${mode}" "iconv_usage" /usr/bin/env LC_ALL=C iconv --usage || mode_failed=1
+  # iconv //TRANSLIT, //IGNORE and iconv(1) itself (bd-rc0923-epic-eeuy4f.22).
+  run_corpus_case "${mode}" "iconv_flags" "${ICONV_FLAGS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "iconv_prog_translit" /usr/bin/env LC_ALL=C iconv -f UTF-8 -t ASCII//TRANSLIT "${tree}/u8.txt" || mode_failed=1
+  run_corpus_case "${mode}" "iconv_prog_omit_invalid" bash -c "LC_ALL=C iconv -c -f UTF-8 -t ASCII '${tree}/u8.txt' 2>&1; echo rc=\$?" || mode_failed=1
+  run_corpus_case "${mode}" "iconv_prog_list" /usr/bin/env LC_ALL=C iconv -l || mode_failed=1
+  run_corpus_case "${mode}" "date_tz_new_york" /usr/bin/env TZ=America/New_York LC_ALL=C date -d @1700000000 || mode_failed=1
+  run_corpus_case "${mode}" "ls_long_tz_sydney" /usr/bin/env TZ=Australia/Sydney LC_ALL=C ls -l "${tree}/a.txt" "${tree}/sub" || mode_failed=1
+  run_corpus_case "${mode}" "sed_substitute" /usr/bin/env LC_ALL=C sed -e 's/alpha/ALPHA/g' "${tree}/a.txt" || mode_failed=1
+  run_corpus_case "${mode}" "grep_recursive" /usr/bin/env LC_ALL=C grep -rn alpha "${tree}/a.txt" "${tree}/sub" || mode_failed=1
+  run_optional_case "awk" "${mode}" "awk_fields" awk '{n+=length($2)} END {print NR, n}' "${tree}/a.txt" || mode_failed=1
+  run_corpus_case "${mode}" "find_sorted" bash -c "find '${tree}' -name '*.txt' | LC_ALL=C sort" || mode_failed=1
+  run_corpus_case "${mode}" "tar_gzip_roundtrip" /usr/bin/env TZ=UTC bash -c "tar --owner=0 --group=0 -czf - -C '${tree}' a.txt sub | tar -tzvf -" || mode_failed=1
+  run_optional_case "xz" "${mode}" "tar_xz_roundtrip" /usr/bin/env TZ=UTC bash -c "tar --owner=0 --group=0 -cJf - -C '${tree}' a.txt sub | tar -tJvf -" || mode_failed=1
+  run_corpus_case "${mode}" "gzip_roundtrip" bash -c "gzip -9c '${tree}/a.txt' | gzip -dc" || mode_failed=1
+  run_optional_case "make" "${mode}" "make_tiny" make -s -C "${CORPUS_DIR}" -f "${CORPUS_DIR}/Makefile" || mode_failed=1
+  run_optional_case "perl" "${mode}" "perl_regex" perl -ne 'print "$1\n" if /^(\w+) t/' "${tree}/a.txt" || mode_failed=1
+  if [[ "${CORPUS_GIT_READY}" -eq 1 ]]; then
+    run_corpus_case "${mode}" "git_log_stat" /usr/bin/env LC_ALL=C git -C "${tree}" log --stat --format='%H %s' || mode_failed=1
+    run_corpus_case "${mode}" "git_status" /usr/bin/env LC_ALL=C git -C "${tree}" status --short || mode_failed=1
+    run_corpus_case "${mode}" "git_diff" /usr/bin/env LC_ALL=C git -C "${tree}" diff --no-color || mode_failed=1
+  fi
+  if [[ -n "${CXX_BIN}" ]]; then
+    run_corpus_case "${mode}" "cxx_runtime" "${CXX_BIN}" || mode_failed=1
+  fi
+  # C++ exceptions through libc callback frames (bd-rc0923-epic-eeuy4f.6 / .33 / .34).
+  if [[ -n "${CALLBACK_UNWIND_BIN}" ]]; then
+    run_corpus_case "${mode}" "cxx_callback_unwind" "${CALLBACK_UNWIND_BIN}" || mode_failed=1
+    run_corpus_case "${mode}" "cxx_callback_unwind_printf" "${CALLBACK_UNWIND_BIN}" --printf-smoke || mode_failed=1
+  fi
+  if [[ "${NONTRIVIAL_BIN}" == "python3" ]]; then
+    run_corpus_case "${mode}" "python3_c_extensions" python3 -c "import sqlite3, ssl, ctypes, decimal, json, hashlib, readline, zlib; print(sqlite3.connect(':memory:').execute('select 6*7').fetchone()[0], hashlib.sha256(b'x').hexdigest()[:8], decimal.Decimal('1.1') + decimal.Decimal('2.2'))" || mode_failed=1
+    run_corpus_case "${mode}" "python3_subprocess" python3 -c "import subprocess; print(subprocess.run(['echo', 'sub'], capture_output=True, text=True).stdout.strip())" || mode_failed=1
+  fi
+
+  for i in $(seq 1 "${STRESS_ITERS}"); do
+    run_case "${mode}" "stress_link_${i}" "${INTEGRATION_BIN}" || mode_failed=1
+    run_case "${mode}" "stress_echo_${i}" /bin/echo "iteration_${i}" || mode_failed=1
+    run_case "${mode}" "stress_sort_${i}" /usr/bin/env LC_ALL=C /bin/sort "${fixture}" || mode_failed=1
+    if command -v python3 >/dev/null 2>&1; then
+      run_case "${mode}" "stress_python_${i}" python3 -c "print(sum(range(100)))" || mode_failed=1
+    fi
+  done
+
+  return "${mode_failed}"
+}
+
+echo "=== LD_PRELOAD smoke ==="
+echo "run_dir=${RUN_DIR}"
+echo "lib=${LIB_PATH}"
+echo "nontrivial=${NONTRIVIAL_DESC}"
+echo "timeout_seconds=${TIMEOUT_SECONDS}"
+echo "stress_iters=${STRESS_ITERS}"
+echo "enforce_parity_modes=${ENFORCE_PARITY_MODES}"
+echo "enforce_perf_modes=${ENFORCE_PERF_MODES}"
+echo "perf_ratio_max_ppm=${PERF_RATIO_MAX_PPM}"
+echo "valgrind_policy=${VALGRIND_POLICY}"
+
+check_elf_vm_geometry() {
+  python3 - "${LIB_PATH}" "${ELF_GEOMETRY_FILE}" "${TRACE_FILE}" "${RUN_ID}" "${MAX_BSS_BYTES}" "${MAX_TLS_BYTES}" "${MAX_VMDATA_KB}" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+lib_path = sys.argv[1]
+out_path = Path(sys.argv[2])
+trace_path = Path(sys.argv[3])
+run_id = sys.argv[4]
+max_bss_bytes = int(sys.argv[5])
+max_tls_bytes = int(sys.argv[6])
+max_vmdata_kb = int(sys.argv[7])
+
+readelf_out = subprocess.check_output(["readelf", "-SW", lib_path], text=True)
+sec_re = re.compile(r"^\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+")
+sections = {}
+for line in readelf_out.splitlines():
+    m = sec_re.match(line)
+    if m:
+        sections[m.group(1)] = int(m.group(2), 16)
+
+bss_bytes = sections.get(".bss", 0)
+tbss_bytes = sections.get(".tbss", 0)
+tdata_bytes = sections.get(".tdata", 0)
+tls_bytes = tbss_bytes + tdata_bytes
+relr_bytes = sections.get(".relr.dyn", 0)
+rela_bytes = sections.get(".rela.dyn", 0)
+
+def probe_vmdata_kb(mode: str) -> int:
+    env = os.environ.copy()
+    env["FRANKENLIBC_MODE"] = mode
+    env["LD_PRELOAD"] = lib_path
+    proc = subprocess.run(
+        ["/bin/grep", "^VmData:", "/proc/self/status"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return 1 << 30
+    parts = proc.stdout.strip().split()
+    return int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else (1 << 30)
+
+vm_data_kb_strict = probe_vmdata_kb("strict")
+vm_data_kb_hardened = probe_vmdata_kb("hardened")
+
+passed = (
+    bss_bytes <= max_bss_bytes
+    and tls_bytes <= max_tls_bytes
+    and vm_data_kb_strict < max_vmdata_kb
+    and vm_data_kb_hardened < max_vmdata_kb
+)
+geom = {
+    "bss_bytes": bss_bytes,
+    "tbss_bytes": tbss_bytes,
+    "tdata_bytes": tdata_bytes,
+    "tls_bytes": tls_bytes,
+    "relr_bytes": relr_bytes,
+    "rela_bytes": rela_bytes,
+    "vm_data_kb_strict": vm_data_kb_strict,
+    "vm_data_kb_hardened": vm_data_kb_hardened,
+    "max_bss_bytes": max_bss_bytes,
+    "max_tls_bytes": max_tls_bytes,
+    "max_vmdata_kb": max_vmdata_kb,
+    "passed": passed,
+}
+out_path.write_text(json.dumps(geom, indent=2) + "\n", encoding="utf-8")
+
+trace_event = {
+    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "level": "info" if passed else "error",
+    "event": "elf_vm_geometry",
+    "mode": "all",
+    "case": "elf_vm_geometry",
+    "status": "pass" if passed else "fail",
+    "run_id": run_id,
+    **geom,
+}
+with trace_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(trace_event) + "\n")
+
+if not passed:
+    print(
+        f"ld_preload_smoke: elf_vm_geometry FAILED: bss={bss_bytes} (max {max_bss_bytes}), "
+        f"tls={tls_bytes} (max {max_tls_bytes}), vm_data_kb=({vm_data_kb_strict}, {vm_data_kb_hardened}) "
+        f"(max <{max_vmdata_kb})",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+}
+
+emit_trace "info" "suite_start" "all" "all" "running" \
+  "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
+overall_failed=0
+check_elf_vm_geometry || overall_failed=1
+run_suite_for_mode strict || overall_failed=1
+run_suite_for_mode hardened || overall_failed=1
+deployed_overhead_exit=0
+run_deployed_overhead || deployed_overhead_exit=$?
+if [[ "${deployed_overhead_exit}" -ne 0 ]]; then
+  overall_failed=1
+fi
+emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && echo "pass" || echo "fail")" \
+  "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
+
+export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_ELF_GEOMETRY_FILE="${ELF_GEOMETRY_FILE}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT="${deployed_overhead_exit}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT="${RUN_DIR}/deployed-overhead/benchmark.json"
+export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
+export LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES}"
+export LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES}"
+export LD_PRELOAD_SMOKE_FAILS="${fails}"
+export LD_PRELOAD_SMOKE_FAILURE_SIGNATURE_DENYLIST="${FAILURE_SIGNATURE_DENYLIST}"
+export LD_PRELOAD_SMOKE_LIB_PATH="${LIB_PATH}"
+export LD_PRELOAD_SMOKE_OVERALL_FAILED="${overall_failed}"
+export LD_PRELOAD_SMOKE_PASSES="${passes}"
+export LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM="${PERF_RATIO_MAX_PPM}"
+export LD_PRELOAD_SMOKE_REPORT_FILE="${REPORT_FILE}"
+export LD_PRELOAD_SMOKE_RUN_ID="${RUN_ID}"
+export LD_PRELOAD_SMOKE_SKIPS="${skips}"
+export LD_PRELOAD_SMOKE_XFAILS="${xfails}"
+export LD_PRELOAD_SMOKE_STRESS_ITERS="${STRESS_ITERS}"
+export LD_PRELOAD_SMOKE_TIMEOUT_SECONDS="${TIMEOUT_SECONDS}"
+export LD_PRELOAD_SMOKE_TRACE_FILE="${TRACE_FILE}"
+export LD_PRELOAD_SMOKE_TROUBLESHOOT_FILE="${TROUBLESHOOT_FILE}"
+export LD_PRELOAD_SMOKE_VALGRIND_POLICY="${VALGRIND_POLICY}"
+
+python3 - <<'PY'
+import csv
+import json
+import os
+from collections import Counter
+from pathlib import Path
+
+cases = []
+env = os.environ
+
+with open(env["LD_PRELOAD_SMOKE_CASE_TSV"], "r", encoding="utf-8") as fh:
+    reader = csv.DictReader(fh, delimiter="\t")
+    for row in reader:
+        cases.append(
+            {
+                "mode": row["mode"],
+                "case": row["label"],
+                "status": row["status"],
+                "workload": row["workload"],
+                "startup_path": row["startup_path"],
+                "failure_signature": row["failure_signature"],
+                "signature_guard_triggered": bool(int(row["signature_guard_triggered"])),
+                "parity_required": bool(int(row["parity_required"])),
+                "parity_pass": bool(int(row["parity_pass"])),
+                "perf_required": bool(int(row["perf_required"])),
+                "perf_pass": bool(int(row["perf_pass"])),
+                "latency_ratio_ppm": int(row["latency_ratio_ppm"]),
+                "baseline_rc": int(row["baseline_rc"]),
+                "preload_rc": int(row["preload_rc"]),
+                "stdout_match": bool(int(row["stdout_match"])),
+                "stderr_match": bool(int(row["stderr_match"])),
+                "baseline_latency_ns": int(row["baseline_latency_ns"]),
+                "preload_latency_ns": int(row["preload_latency_ns"]),
+                "valgrind_checked": bool(int(row["valgrind_checked"])),
+                "valgrind_pass": bool(int(row["valgrind_pass"])),
+            }
+        )
+
+modes = {}
+# A tracked known failure (status "xfail") counts only in xfails, for every
+# failure kind, matching check_ld_preload_smoke_regeneration.sh.
+tracked = [c for c in cases if c["status"] != "xfail"]
+for mode in ("strict", "hardened"):
+    mode_cases = [c for c in cases if c["mode"] == mode]
+    mode_tracked = [c for c in tracked if c["mode"] == mode]
+    mode_signature_counts = Counter(
+        c["failure_signature"] for c in mode_cases if c["failure_signature"] != "none"
+    )
+    modes[mode] = {
+        "total_cases": len(mode_cases),
+        "passes": sum(1 for c in mode_cases if c["status"] == "pass"),
+        "fails": sum(1 for c in mode_cases if c["status"] == "fail"),
+        "xfails": sum(1 for c in mode_cases if c["status"] == "xfail"),
+        "skips": sum(1 for c in mode_cases if c["status"] == "skip"),
+        "signature_guard_failures": sum(1 for c in mode_tracked if c["signature_guard_triggered"]),
+        "strict_parity_failures": sum(
+            1
+            for c in mode_tracked
+            if c["parity_required"] and not c["parity_pass"]
+        ),
+        "perf_failures": sum(
+            1
+            for c in mode_tracked
+            if c["perf_required"] and not c["perf_pass"]
+        ),
+        "valgrind_failures": sum(
+            1
+            for c in mode_tracked
+            if c["valgrind_checked"] and not c["valgrind_pass"]
+        ),
+        "failure_signature_counts": dict(mode_signature_counts),
+    }
+
+failure_signature_counts = Counter(
+    c["failure_signature"] for c in cases if c["failure_signature"] != "none"
+)
+
+payload = {
+    "schema_version": "v1",
+    "bead_id": env["LD_PRELOAD_SMOKE_BEAD_ID"],
+    "run_id": env["LD_PRELOAD_SMOKE_RUN_ID"],
+    "lib_path": env["LD_PRELOAD_SMOKE_LIB_PATH"],
+    "timeout_seconds": int(env["LD_PRELOAD_SMOKE_TIMEOUT_SECONDS"]),
+    "stress_iters": int(env["LD_PRELOAD_SMOKE_STRESS_ITERS"]),
+    "enforce_parity_modes": [
+        m.strip()
+        for m in env["LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES"].split(",")
+        if m.strip()
+    ],
+    "enforce_perf_modes": [
+        m.strip()
+        for m in env["LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES"].split(",")
+        if m.strip()
+    ],
+    "perf_ratio_max_ppm": int(env["LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM"]),
+    "deployed_overhead": {
+        "required": True,
+        "modes": ["strict", "hardened"],
+        "exit_code": int(env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"]),
+        "passed": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"] == "0",
+        "report": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT"],
+    },
+    "elf_vm_geometry": json.loads(
+        Path(env["LD_PRELOAD_SMOKE_ELF_GEOMETRY_FILE"]).read_text(encoding="utf-8")
+    )
+    if Path(env["LD_PRELOAD_SMOKE_ELF_GEOMETRY_FILE"]).exists()
+    else {},
+    "valgrind_policy": env["LD_PRELOAD_SMOKE_VALGRIND_POLICY"],
+    "summary": {
+        "total_cases": len(cases),
+        "passes": int(env["LD_PRELOAD_SMOKE_PASSES"]),
+        "fails": int(env["LD_PRELOAD_SMOKE_FAILS"]),
+        "skips": int(env["LD_PRELOAD_SMOKE_SKIPS"]),
+        "xfails": int(env.get("LD_PRELOAD_SMOKE_XFAILS", "0")),
+        "signature_guard_failures": sum(1 for c in tracked if c["signature_guard_triggered"]),
+        "perf_failures": sum(1 for c in tracked if c["perf_required"] and not c["perf_pass"]),
+        "valgrind_failures": sum(1 for c in tracked if c["valgrind_checked"] and not c["valgrind_pass"]),
+        "failure_signature_counts": dict(failure_signature_counts),
+        "overall_failed": bool(int(env["LD_PRELOAD_SMOKE_OVERALL_FAILED"])),
+    },
+    "modes": modes,
+    "cases": cases,
+}
+
+Path(env["LD_PRELOAD_SMOKE_REPORT_FILE"]).write_text(
+    json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+)
+
+denylist = {
+    token.strip()
+    for token in env["LD_PRELOAD_SMOKE_FAILURE_SIGNATURE_DENYLIST"].split(",")
+    if token.strip()
+}
+guidance = {
+    "startup_timeout": "Check loader deadlock or unresolved startup path; inspect stderr and command.shline, then rerun the single case with TIMEOUT_SECONDS increased for detail.",
+    "startup_segv": "Collect bundle.meta + proc_self_maps.txt, then inspect the failing binary and the interposed symbol path around first faulting call.",
+    "startup_abort": "Inspect stderr for panic/assert text and correlate with trace decision_path; this is usually a deterministic contract violation.",
+    "startup_symbol_lookup_error": "Verify exported symbols/version script coverage and check stderr for the missing symbol name.",
+    "startup_loader_missing_library": "Verify library search path (LD_LIBRARY_PATH/DT_RPATH) and ensure runtime dependencies are present.",
+    "startup_glibc_version_mismatch": "Check host glibc symbol version requirements and confirm compatibility with the produced ABI artifact.",
+    "startup_elf_class_mismatch": "Validate architecture/bitness alignment between test binary and preload library.",
+    "startup_undefined_symbol": "Inspect stderr + symbol tables (nm/readelf) for unresolved symbol ownership.",
+    "startup_strict_parity_mismatch": "Inspect baseline/preload stdout+stderr diffs; strict mode must preserve externally visible behavior.",
+    "startup_perf_regression": "Inspect latency_ratio_ppm in report and compare against PERF_RATIO_MAX_PPM budget.",
+    "startup_valgrind_error": "Open valgrind.stderr.txt and fix reported invalid memory actions before re-running.",
+}
+
+failing_cases = [c for c in cases if c["status"] == "fail"]
+lines = []
+lines.append(f"# Startup Troubleshooting ({'FAIL' if failing_cases else 'PASS'})")
+lines.append("")
+lines.append(f"- bead_id: {env['LD_PRELOAD_SMOKE_BEAD_ID']}")
+lines.append(f"- run_id: {env['LD_PRELOAD_SMOKE_RUN_ID']}")
+lines.append(f"- report_json: {Path(env['LD_PRELOAD_SMOKE_REPORT_FILE']).name}")
+lines.append(f"- trace_jsonl: {Path(env['LD_PRELOAD_SMOKE_TRACE_FILE']).name}")
+lines.append(f"- case_tsv: {Path(env['LD_PRELOAD_SMOKE_CASE_TSV']).name}")
+lines.append("")
+
+if not failing_cases:
+    lines.append("No startup failures detected in this run.")
+else:
+    lines.append("## Failure Signature Summary")
+    lines.append("")
+    for signature, count in sorted(
+        failure_signature_counts.items(), key=lambda item: (-item[1], item[0])
+    ):
+        guarded = "yes" if signature in denylist else "no"
+        lines.append(f"- {signature}: {count} case(s), guarded={guarded}")
+    lines.append("")
+    lines.append("## Guided Triage")
+    lines.append("")
+    for signature, count in sorted(
+        failure_signature_counts.items(), key=lambda item: (-item[1], item[0])
+    ):
+        affected = [c for c in failing_cases if c["failure_signature"] == signature]
+        lines.append(f"### {signature} ({count} case(s))")
+        lines.append(
+            guidance.get(
+                signature,
+                "Inspect stderr.txt + bundle.meta + trace.jsonl for the specific case and classify root cause.",
+            )
+        )
+        lines.append("Affected cases:")
+        for case in affected[:8]:
+            lines.append(
+                f"- {case['mode']}/{case['case']} workload={case['workload']} startup_path={case['startup_path']}"
+            )
+        if len(affected) > 8:
+            lines.append(f"- ... and {len(affected) - 8} more case(s)")
+        lines.append("")
+
+Path(env["LD_PRELOAD_SMOKE_TROUBLESHOOT_FILE"]).write_text(
+    "\n".join(lines).rstrip() + "\n", encoding="utf-8"
+)
+PY
+
+{
+  echo "run_id=${RUN_ID}"
+  echo "lib_path=${LIB_PATH}"
+  echo "nontrivial=${NONTRIVIAL_DESC}"
+  echo "timeout_seconds=${TIMEOUT_SECONDS}"
+  echo "stress_iters=${STRESS_ITERS}"
+  echo "enforce_parity_modes=${ENFORCE_PARITY_MODES}"
+  echo "enforce_perf_modes=${ENFORCE_PERF_MODES}"
+  echo "perf_ratio_max_ppm=${PERF_RATIO_MAX_PPM}"
+  echo "valgrind_policy=${VALGRIND_POLICY}"
+  echo "passes=${passes}"
+  echo "fails=${fails}"
+  echo "skips=${skips}"
+  echo "overall_failed=${overall_failed}"
+  echo "report_json=${REPORT_FILE}"
+  echo "trace_jsonl=${TRACE_FILE}"
+  echo "startup_troubleshooting=${TROUBLESHOOT_FILE}"
+} > "${RUN_DIR}/summary.txt"
+
+echo ""
+echo "Summary: passes=${passes} fails=${fails} skips=${skips} xfails=${xfails}"
+echo "Artifacts: ${RUN_DIR}"
+echo "Report: ${REPORT_FILE}"
+echo "Startup troubleshooting: ${TROUBLESHOOT_FILE}"
+
+if [[ "${overall_failed}" -ne 0 ]]; then
+  echo "ld_preload_smoke: FAILED (see diagnostics bundles under ${RUN_DIR})" >&2
+  exit 1
+fi
+
+echo "ld_preload_smoke: PASS"

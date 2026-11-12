@@ -1044,7 +1044,7 @@ fn current_tz(recheck: bool) -> &'static TzState {
     if !cur.is_null() && (!recheck || unsafe { (*cur).key.as_deref() } == tz_env_bytes()) {
         return unsafe { &*cur };
     }
-    let _guard = TZ_UPDATE.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = crate::runtime_policy::lock_std_mutex_preserving_errno(&TZ_UPDATE);
     let env = tz_env_bytes();
     let cur = TZ_CURRENT.load(Ordering::Acquire);
     if !cur.is_null() && unsafe { (*cur).key.as_deref() } == env {

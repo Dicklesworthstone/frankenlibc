@@ -265,10 +265,12 @@ impl<T> AbiReentrantMutex<T> {
 
 #[inline]
 fn current_tid() -> usize {
-    crate::glibc_internal_abi::note_current_thread_activity();
     #[cfg(not(test))]
-    if let Some(owner_key) = crate::malloc_abi::fast_thread_owner_key() {
-        return owner_key;
+    {
+        crate::glibc_internal_abi::note_current_thread_activity();
+        if let Some(owner_key) = crate::malloc_abi::fast_thread_owner_key() {
+            return owner_key;
+        }
     }
     (frankenlibc_core::syscall::sys_gettid().max(1) as usize) << 1
 }
@@ -758,6 +760,7 @@ impl<T: 'static> TlsHeapCell<T> {
         Some(f(unsafe { &*ptr }))
     }
 
+    #[cfg_attr(feature = "owned-tls-cache", allow(dead_code))]
     #[inline]
     pub(crate) fn with_zeroed<R>(
         &self,
@@ -768,6 +771,7 @@ impl<T: 'static> TlsHeapCell<T> {
             .unwrap_or_else(|| std::process::abort())
     }
 
+    #[cfg_attr(feature = "owned-tls-cache", allow(dead_code))]
     #[inline]
     pub(crate) fn try_with_zeroed<R>(
         &self,

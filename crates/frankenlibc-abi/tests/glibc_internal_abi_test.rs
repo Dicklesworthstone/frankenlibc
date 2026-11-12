@@ -2979,6 +2979,7 @@ fn register_printf_callbacks_render_and_parse() {
 
     use frankenlibc_abi::stdio_abi::{asprintf, fprintf, snprintf};
     use std::ffi::{CStr, c_char, c_int, c_void};
+    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
     #[repr(C)]
     struct Info {
@@ -3016,12 +3017,16 @@ fn register_printf_callbacks_render_and_parse() {
         unsafe { fprintf(stream, c"[%u]".as_ptr(), value as libc::c_uint) }
     }
 
+    static PAIR_INFO_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static LAST_CUSTOM_TYPE: AtomicI32 = AtomicI32::new(0);
+
     unsafe extern "C" fn pair_info(
         _: *const Info,
         n: usize,
         types: *mut c_int,
         sizes: *mut c_int,
     ) -> c_int {
+        PAIR_INFO_CALLS.fetch_add(1, Ordering::Relaxed);
         for (i, kind) in [0, 3].into_iter().enumerate().take(n) {
             // SAFETY: both outputs have n slots under the sized arginfo ABI.
             unsafe {
@@ -3030,6 +3035,39 @@ fn register_printf_callbacks_render_and_parse() {
             }
         }
         2
+    }
+
+    unsafe extern "C" fn sentinel_type_reader(mem: *mut c_void, _ap: *mut c_void) {
+        // SAFETY: custom_type_info declares sizeof(u64) bytes of custom storage.
+        unsafe { *mem.cast::<u64>() = 0x5eed_cafe_1234_5678 };
+    }
+
+    unsafe extern "C" fn custom_type_info(
+        _: *const Info,
+        n: usize,
+        types: *mut c_int,
+        sizes: *mut c_int,
+    ) -> c_int {
+        if n != 0 {
+            unsafe {
+                *types = LAST_CUSTOM_TYPE.load(Ordering::Relaxed);
+                if !sizes.is_null() {
+                    *sizes = std::mem::size_of::<u64>() as c_int;
+                }
+            }
+        }
+        1
+    }
+
+    unsafe extern "C" fn custom_type_render(
+        stream: *mut c_void,
+        _: *const Info,
+        args: *const *const c_void,
+    ) -> c_int {
+        // SAFETY: custom storage pointer sits behind one extra indirection level.
+        let ptr_to_val = unsafe { *(*args).cast::<*const u64>() };
+        let val = unsafe { *ptr_to_val };
+        unsafe { fprintf(stream, c"%llx".as_ptr(), val as libc::c_ulonglong) }
     }
 
     unsafe extern "C" fn pair_render(
@@ -3093,10 +3131,24 @@ fn register_printf_callbacks_render_and_parse() {
         );
 
         let mut types = [-77; 4];
+        PAIR_INFO_CALLS.store(0, Ordering::Relaxed);
+        assert_eq!(parse_printf_format(c"%R".as_ptr(), 0, ptr::null_mut()), 2);
+        assert_eq!(PAIR_INFO_CALLS.load(Ordering::Relaxed), 1);
+
+        PAIR_INFO_CALLS.store(0, Ordering::Relaxed);
+        assert_eq!(
+            parse_printf_format(c"%2$R".as_ptr(), 1, types.as_mut_ptr()),
+            2
+        );
+        assert_eq!(PAIR_INFO_CALLS.load(Ordering::Relaxed), 1);
+        assert_eq!(types[0], -77);
+
+        PAIR_INFO_CALLS.store(0, Ordering::Relaxed);
         assert_eq!(
             parse_printf_format(c"%2$R|%1$d".as_ptr(), 3, types.as_mut_ptr()),
-            3
+            2
         );
+        assert_eq!(PAIR_INFO_CALLS.load(Ordering::Relaxed), 2);
         assert_eq!(types, [0, 0, 3, -77]);
         let mut native_types = [-77; 11];
         assert_eq!(
@@ -3201,6 +3253,44 @@ fn register_printf_callbacks_render_and_parse() {
         );
         assert_eq!(snprintf(buf.as_mut_ptr(), buf.len(), c"%Q".as_ptr()), 2);
         assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"%Q");
+
+        // Exhaust all 16 modifier slots and verify ENOSPC on the 17th.
+        let mod_name = [b'z' as libc::wchar_t, 0];
+        for slot in 0..16 {
+            let bit = register_printf_modifier(mod_name.as_ptr());
+            assert_eq!(bit, 1 << slot);
+        }
+        *__errno_location() = 0;
+        assert_eq!(register_printf_modifier(mod_name.as_ptr()), -1);
+        assert_eq!(*__errno_location(), libc::ENOSPC);
+
+        // Exhaust all 248 custom type slots (8..=255) and verify ENOSPC at 256
+        // so custom type codes never collide with PA_FLAG_MASK (0xff00).
+        for expected_kind in 8..=255 {
+            let kind = register_printf_type(sentinel_type_reader as *const () as *mut c_void);
+            assert_eq!(kind, expected_kind);
+            LAST_CUSTOM_TYPE.store(kind, Ordering::Relaxed);
+        }
+        *__errno_location() = 0;
+        assert_eq!(
+            register_printf_type(sentinel_type_reader as *const () as *mut c_void),
+            -1
+        );
+        assert_eq!(*__errno_location(), libc::ENOSPC);
+
+        assert_eq!(
+            register_printf_specifier(
+                b'Z' as c_int,
+                custom_type_render as *const () as *mut c_void,
+                custom_type_info as *const () as *mut c_void
+            ),
+            0
+        );
+        assert_eq!(
+            snprintf(buf.as_mut_ptr(), buf.len(), c"%Z".as_ptr(), 0 as c_int),
+            16
+        );
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"5eedcafe12345678");
     }
 }
 
@@ -7983,4 +8073,70 @@ fn thread_db_rtld_global_constants_are_zero_placeholders() {
     assert_eq!(_thread_db_rtld_global__dl_stack_used, 0);
     assert_eq!(_thread_db_rtld_global__dl_stack_user, 0);
     assert_eq!(_thread_db_rtld_global__dl_tls_dtv_slotinfo_list, 0);
+}
+
+#[test]
+fn printf_fp_wide_concurrent_wmemstream_preserves_errno() {
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+    let mut handles = Vec::with_capacity(6);
+    for tid in 0..6usize {
+        let barrier = std::sync::Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            let api = FpOracleApi::new(true);
+            let info = FpCallbackInfo {
+                precision: 6,
+                width: 12,
+                spec: i32::from(b'f'),
+                flags: 1 << 10, // wide = 1
+                user: 0,
+                pad: i32::from(b' '),
+            };
+            barrier.wait();
+            for iter in 0..200usize {
+                let val: f64 = -1234.56789 + ((tid * 200 + iter) as f64) * 0.125;
+                unsafe {
+                    *(api.errno)() = libc::E2BIG;
+                }
+                let mut buffer = ptr::null_mut();
+                let mut length = 0usize;
+                let stream = unsafe { (api.wide_memory)(&mut buffer, &mut length) };
+                assert!(!stream.is_null());
+                assert_eq!(
+                    unsafe { *(api.errno)() },
+                    libc::E2BIG,
+                    "open_wmemstream clobbered errno on thread {tid} iter {iter}"
+                );
+                let args = [(&raw const val).cast::<c_void>()];
+                let rc = unsafe {
+                    (api.render)(stream, (&raw const info).cast::<c_void>(), args.as_ptr())
+                };
+                assert!(rc >= 12);
+                assert_eq!(
+                    unsafe { *(api.errno)() },
+                    libc::E2BIG,
+                    "__printf_fp on wide stream clobbered errno on thread {tid} iter {iter}"
+                );
+                assert_eq!(unsafe { (api.flush)(stream) }, 0);
+                assert_eq!(
+                    unsafe { *(api.errno)() },
+                    libc::E2BIG,
+                    "fflush on wide stream clobbered errno on thread {tid} iter {iter}"
+                );
+                assert_eq!(unsafe { (api.close)(stream) }, 0);
+                assert_eq!(
+                    unsafe { *(api.errno)() },
+                    libc::E2BIG,
+                    "fclose on wide stream clobbered errno on thread {tid} iter {iter}"
+                );
+                assert!(!buffer.is_null());
+                assert_eq!(length, rc as usize);
+                unsafe { (api.free)(buffer.cast()) };
+            }
+        }));
+    }
+    for handle in handles {
+        handle
+            .join()
+            .expect("wide __printf_fp errno worker panicked");
+    }
 }

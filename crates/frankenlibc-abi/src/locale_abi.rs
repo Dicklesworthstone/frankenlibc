@@ -237,7 +237,7 @@ fn lc_all_report() -> *const c_char {
         return first.as_ptr() as *const c_char;
     }
 
-    let mut buf = COMPOSITE_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    let mut buf = crate::runtime_policy::lock_std_mutex_preserving_errno(&COMPOSITE_BUF);
     buf.clear();
     for (index, (name, cat)) in locale_core::COMPOSITE_ORDER.iter().enumerate() {
         if index > 0 {
@@ -576,7 +576,7 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     if name.contains(&b'/') || name == b"." || name == b".." {
         return None;
     }
-    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut loaded = crate::runtime_policy::lock_std_mutex_preserving_errno(&LOADED);
     if let Some(hit) = loaded
         .iter()
         .find(|n| n.category == category && n.name[..n.name.len() - 1] == *name)
@@ -2145,7 +2145,7 @@ fn converted_entry(
         offset,
         target.to_vec(),
     );
-    let mut cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = lock_catalog_cache();
     if let Some(hit) = cache.converted.get(&key) {
         return *hit;
     }
@@ -2191,6 +2191,11 @@ fn catalog_cache() -> &'static Mutex<CatalogCache> {
     CACHE.get_or_init(Mutex::default)
 }
 
+#[inline]
+fn lock_catalog_cache() -> std::sync::MutexGuard<'static, CatalogCache> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(catalog_cache())
+}
+
 fn load_catalog(cache: &mut CatalogCache, path: Vec<u8>) -> Option<&'static LoadedCatalog> {
     if let Some(hit) = cache.files.get(&path) {
         return *hit;
@@ -2230,7 +2235,7 @@ fn catalogs_for(
         key.extend_from_slice(part);
         key.push(0);
     }
-    let mut cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = lock_catalog_cache();
     if let Some(hit) = cache.searches.get(&key) {
         return hit;
     }
@@ -2329,7 +2334,7 @@ unsafe fn lookup_translation(
     }
     let key = (msgid.to_vec(), domain.to_vec(), category, locale.to_vec());
     {
-        let cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+        let cache = lock_catalog_cache();
         if let Some(&(stamp, entry, rule)) = cache.translations.get(&key)
             && stamp == catalog_counter().load(Ordering::Relaxed)
         {
@@ -2338,7 +2343,7 @@ unsafe fn lookup_translation(
     }
     let found = search_catalogs(msgid, domain, category_dir, locale)?;
     let stamp = catalog_counter().load(Ordering::Relaxed);
-    let mut cache = catalog_cache().lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = lock_catalog_cache();
     cache.translations.insert(key, (stamp, found.0, found.1));
     Some(found)
 }
@@ -2351,9 +2356,8 @@ fn search_catalogs(
     locale: &[u8],
 ) -> Option<(&'static [u8], &'static mo::PluralRule)> {
     let (dir, codeset) = {
-        let bindings = locale_dir_bindings()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let bindings =
+            crate::runtime_policy::lock_std_mutex_preserving_errno(locale_dir_bindings());
         // SAFETY: bound strings are NUL-terminated and kept alive in `pool`.
         let owned = |ptr: &*mut c_char| unsafe { CStr::from_ptr(*ptr) }.to_bytes().to_vec();
         let dir = bindings.current_by_domain.get(domain).map_or_else(
@@ -2484,17 +2488,14 @@ fn locale_dir_bindings() -> &'static Mutex<LocaleDirState> {
 /// integration tests that exercise `textdomain`/`bindtextdomain`.
 #[doc(hidden)]
 pub fn locale_reset_gettext_state_for_tests() {
-    let _domains = text_domain_storage()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let _domains = crate::runtime_policy::lock_std_mutex_preserving_errno(text_domain_storage());
     TEXT_DOMAIN_CURRENT.store(
         DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char,
         Ordering::Release,
     );
 
-    let mut bindings = locale_dir_bindings()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut bindings =
+        crate::runtime_policy::lock_std_mutex_preserving_errno(locale_dir_bindings());
     bindings.current_by_domain.clear();
     bindings.codeset_by_domain.clear();
     bindings.pool.clear();
@@ -2516,8 +2517,7 @@ pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
     let Some(name) = (unsafe { read_bounded_cstr(domainname) }) else {
         return TEXT_DOMAIN_CURRENT.load(Ordering::Acquire);
     };
-    let storage = text_domain_storage();
-    let mut state = storage.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = crate::runtime_policy::lock_std_mutex_preserving_errno(text_domain_storage());
     if name.is_empty() {
         let default = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
         TEXT_DOMAIN_CURRENT.store(default, Ordering::Release);
@@ -2551,8 +2551,8 @@ pub unsafe extern "C" fn bindtextdomain(
     if domain.is_empty() {
         return std::ptr::null_mut();
     }
-    let storage = locale_dir_bindings();
-    let mut bindings = storage.lock().unwrap_or_else(|e| e.into_inner());
+    let mut bindings =
+        crate::runtime_policy::lock_std_mutex_preserving_errno(locale_dir_bindings());
 
     if dirname.is_null() {
         if let Some(bound) = bindings.current_by_domain.get(&domain) {
@@ -2595,9 +2595,8 @@ pub(crate) unsafe fn bind_textdomain_codeset_impl(
     if domain.is_empty() {
         return std::ptr::null_mut();
     }
-    let mut bindings = locale_dir_bindings()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut bindings =
+        crate::runtime_policy::lock_std_mutex_preserving_errno(locale_dir_bindings());
     if codeset.is_null() {
         return bindings
             .codeset_by_domain
@@ -2812,7 +2811,7 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
         return Some(categories);
     }
     let (found, live_epoch) = {
-        let objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+        let objects = crate::runtime_policy::lock_std_mutex_preserving_errno(locale_objects());
         let live_epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Relaxed);
         let found = objects.iter().find_map(|object| {
             let address = (&**object as *const LocaleObject)
@@ -2961,7 +2960,7 @@ fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
         abi.ctype_toupper = tables.toupper.as_ptr().wrapping_add(128);
         abi.ctype_tolower = tables.tolower.as_ptr().wrapping_add(128);
     }
-    let mut objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+    let mut objects = crate::runtime_policy::lock_std_mutex_preserving_errno(locale_objects());
     objects.try_reserve(1).map_err(|_| libc::ENOMEM)?;
     let layout = std::alloc::Layout::new::<LocaleObject>();
     // SAFETY: allocate a correctly aligned object, initialize it exactly once,
@@ -2979,7 +2978,7 @@ fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
 
 fn retire_locale(handle: LocaleT) {
     let retired = {
-        let mut objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+        let mut objects = crate::runtime_policy::lock_std_mutex_preserving_errno(locale_objects());
         let removed = objects
             .iter()
             .position(|object| {
@@ -3270,7 +3269,7 @@ fn next_catalog_id(registry: &mut CatalogRegistry) -> nl_catd {
 /// locale ABI tests.
 #[doc(hidden)]
 pub fn locale_reset_catalog_state_for_tests() {
-    let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut registry = crate::runtime_policy::lock_std_mutex_preserving_errno(catalog_registry());
     registry.next_id = 1;
     registry.open.clear();
 }
@@ -3332,7 +3331,7 @@ pub unsafe extern "C" fn catopen(name: *const c_char, oflag: c_int) -> nl_catd {
             }
         };
 
-    let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut registry = crate::runtime_policy::lock_std_mutex_preserving_errno(catalog_registry());
     let id = next_catalog_id(&mut registry);
     registry.open.insert(id, catalog);
     id
@@ -3353,7 +3352,7 @@ pub unsafe extern "C" fn catgets(
         return s;
     }
 
-    let registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let registry = crate::runtime_policy::lock_std_mutex_preserving_errno(catalog_registry());
     let Some(catalog) = registry.open.get(&catd) else {
         unsafe { set_abi_errno(libc::EBADF) };
         return s;
@@ -3378,7 +3377,7 @@ pub unsafe extern "C" fn catclose(catd: nl_catd) -> c_int {
         return -1;
     }
 
-    let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut registry = crate::runtime_policy::lock_std_mutex_preserving_errno(catalog_registry());
     if registry.open.remove(&catd).is_some() {
         0
     } else {

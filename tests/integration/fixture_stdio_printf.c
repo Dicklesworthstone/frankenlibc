@@ -1687,6 +1687,276 @@ static int many_printf_arguments(void) {
     return 0;
 }
 
+static volatile int reg_limit_arginfo_calls;
+static volatile int reg_limit_custom_type;
+
+static int reg_limit_multi_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info;
+    ++reg_limit_arginfo_calls;
+    /* Note: GNU parse_printf_format passes &spec.size (a single int) as sizes,
+     * so portable callbacks only touch sizes[0]. */
+    if (n > 0 && sizes) sizes[0] = sizeof(int);
+    for (size_t i = 0; i < n && i < 3; ++i) types[i] = PA_INT;
+    return 3;
+}
+
+static int reg_limit_mod_print(FILE *stream, const struct printf_info *info,
+                               const void *const *args) {
+    int val = *(const int *)args[0];
+    unsigned flags = (unsigned)info->is_char | ((unsigned)info->is_short << 1) |
+                     ((unsigned)info->is_long << 2) | ((unsigned)info->is_long_double << 3);
+    return fprintf(stream, "M{%d,%u,%x}", val, (unsigned)info->user, flags);
+}
+
+static void reg_limit_u64_read(void *memory, va_list *ap) {
+    *(uint64_t *)memory = va_arg(*ap, uint64_t);
+}
+
+static int reg_limit_type_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info;
+    if (n > 0) {
+        types[0] = reg_limit_custom_type;
+        if (sizes) sizes[0] = (int)sizeof(uint64_t);
+    }
+    return 1;
+}
+
+static int reg_limit_type_print(FILE *stream, const struct printf_info *info,
+                                const void *const *args) {
+    (void)info;
+    if (reg_limit_custom_type & PA_FLAG_PTR) {
+        const uint64_t *ptr = *(const uint64_t *const *)args[0];
+        return fprintf(stream, "P{%016llx}", (unsigned long long)*ptr);
+    }
+    const uint64_t *value = *(const uint64_t *const *)args[0];
+    return fprintf(stream, "C{%016llx}", (unsigned long long)*value);
+}
+
+static int gnu_registration_limits(void) {
+    alarm(20);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    static const char *providers[] = {
+        "register_printf_specifier", "register_printf_modifier",
+        "register_printf_type", "parse_printf_format", "snprintf"
+    };
+    for (size_t i = 0; i < sizeof providers / sizeof providers[0]; ++i)
+        REG_CHECK(check_gnu_provider(providers[i]) == 0);
+
+    errno = 0;
+    int r_neg = register_printf_specifier(-1, reg_limit_mod_print, reg_limit_multi_info);
+    printf("reg:limit:spec-neg:%d:%d\n", r_neg, errno);
+    REG_CHECK(r_neg == -1 && errno == EINVAL);
+
+    errno = 0;
+    int r_hi = register_printf_specifier(256, reg_limit_mod_print, reg_limit_multi_info);
+    printf("reg:limit:spec-hi:%d:%d\n", r_hi, errno);
+    REG_CHECK(r_hi == -1 && errno == EINVAL);
+
+    /* Multi-argument arginfo negotiation side-effects across capacity bounds */
+    REG_CHECK(register_printf_specifier('N', reg_limit_mod_print, reg_limit_multi_info) == 0);
+    int ptypes[8];
+    const char *fmt_n = "%N";
+    const char *fmt_pos_n = "%2$N";
+
+    reg_limit_arginfo_calls = 0;
+    size_t pn0 = parse_printf_format(fmt_n, 0, NULL);
+    printf("reg:limit:parse0:%zu:%d\n", pn0, (int)reg_limit_arginfo_calls);
+    REG_CHECK(pn0 == 3 && reg_limit_arginfo_calls == 1);
+
+    for (size_t i = 0; i < 8; ++i) ptypes[i] = -77;
+    reg_limit_arginfo_calls = 0;
+    size_t pn_pos = parse_printf_format(fmt_pos_n, 1, ptypes);
+    printf("reg:limit:parse-pos1:%zu:%d:%d\n", pn_pos, (int)reg_limit_arginfo_calls, ptypes[0]);
+    REG_CHECK(pn_pos == 2 && reg_limit_arginfo_calls == 1 && ptypes[0] == -77);
+
+    for (size_t i = 0; i < 8; ++i) ptypes[i] = -77;
+    reg_limit_arginfo_calls = 0;
+    size_t pn_pos_mix = parse_printf_format("%2$N|%1$d", 4, ptypes);
+    printf("reg:limit:parse-pos4:%zu:%d:%d:%d:%d:%d:%d\n",
+           pn_pos_mix, (int)reg_limit_arginfo_calls,
+           ptypes[0], ptypes[1], ptypes[2], ptypes[3], ptypes[4]);
+    REG_CHECK(pn_pos_mix == 2 && reg_limit_arginfo_calls == 2 && ptypes[4] == -77);
+
+    for (size_t i = 0; i < 8; ++i) ptypes[i] = -77;
+    reg_limit_arginfo_calls = 0;
+    size_t pn2 = parse_printf_format(fmt_n, 2, ptypes);
+    printf("reg:limit:parse2:%zu:%d:%d:%d:%d\n",
+           pn2, (int)reg_limit_arginfo_calls, ptypes[0], ptypes[1], ptypes[2]);
+    REG_CHECK(pn2 == 3 && reg_limit_arginfo_calls == 2);
+
+    for (size_t i = 0; i < 8; ++i) ptypes[i] = -77;
+    reg_limit_arginfo_calls = 0;
+    size_t pn8 = parse_printf_format(fmt_n, 8, ptypes);
+    printf("reg:limit:parse8:%zu:%d:%d:%d:%d:%d\n",
+           pn8, (int)reg_limit_arginfo_calls, ptypes[0], ptypes[1], ptypes[2], ptypes[3]);
+    REG_CHECK(pn8 == 3 && reg_limit_arginfo_calls == 2);
+
+    /* Modifier longest-match, non-chaining, and 16-slot exhaustion */
+    int m1 = register_printf_modifier(L"z");
+    int m2 = register_printf_modifier(L"zz");
+    int m3 = register_printf_modifier(L"xy");
+    REG_CHECK(m1 == 1 && m2 == 2 && m3 == 4);
+    int (*legacy_reg)(int, printf_function *, printf_arginfo_function *) =
+        (int (*)(int, printf_function *, printf_arginfo_function *))dlsym(
+            RTLD_DEFAULT, "register_printf_function");
+    REG_CHECK(legacy_reg && legacy_reg('M', reg_limit_mod_print, reg_legacy_info) == 0);
+    char buffer[256];
+    const char *fmt_mod = "%zM|%zzM|%zxyM|%zzlM";
+    int rc = snprintf(buffer, sizeof buffer, fmt_mod, 10, 20, 30, 40);
+    reg_row("mod-combo", rc, 0, buffer, strlen(buffer));
+
+    int mod_count = 3;
+    while (mod_count < 32) {
+        errno = 0;
+        int m = register_printf_modifier(L"q");
+        if (m < 0) {
+            printf("reg:limit:modifiers:%d:%d:%d\n", mod_count, m, errno);
+            REG_CHECK(mod_count == 16 && m == -1 && errno == ENOSPC);
+            break;
+        }
+        ++mod_count;
+    }
+
+    /* Custom type 248-slot table (PA_LAST=8..255) exhaustion and formatting */
+    int type_first = -1, type_last = -1, type_count = 0;
+    while (type_count < 300) {
+        errno = 0;
+        int t = register_printf_type(reg_limit_u64_read);
+        if (t < 0) {
+            printf("reg:limit:types:%d:%d:%d:%d:%d\n",
+                   type_count, type_first, type_last, t, errno);
+            REG_CHECK(type_count == 248 && type_first == PA_LAST &&
+                      type_last == 255 && t == -1 && errno == ENOSPC);
+            break;
+        }
+        if (type_count == 0) type_first = t;
+        type_last = t;
+        ++type_count;
+    }
+
+    REG_CHECK(register_printf_specifier('C', reg_limit_type_print, reg_limit_type_info) == 0);
+    const char *fmt_c = "%C";
+    uint64_t payload = 0x0123456789abcdefULL;
+
+    reg_limit_custom_type = type_last;
+    rc = snprintf(buffer, sizeof buffer, fmt_c, payload);
+    reg_row("type-255", rc, type_last, buffer, strlen(buffer));
+
+    reg_limit_custom_type = type_first | PA_FLAG_PTR;
+    rc = snprintf(buffer, sizeof buffer, fmt_c, &payload);
+    reg_row("type-ptr-flag", rc, reg_limit_custom_type, buffer, strlen(buffer));
+
+    puts("reg:complete:limits");
+    alarm(0);
+    return 0;
+}
+
+static atomic_int reg_conc_stop;
+
+static int reg_w_v1(FILE *stream, const struct printf_info *info, const void *const *args) {
+    int v = *(const int *)args[0];
+    return info->wide ? fwprintf(stream, L"W1{%d}", v) : fprintf(stream, "W1{%d}", v);
+}
+
+static int reg_w_v2(FILE *stream, const struct printf_info *info, const void *const *args) {
+    int v = *(const int *)args[0];
+    return info->wide ? fwprintf(stream, L"W2{%d}", v) : fprintf(stream, "W2{%d}", v);
+}
+
+static int reg_w_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info;
+    if (n > 0) {
+        types[0] = PA_INT;
+        if (sizes) sizes[0] = sizeof(int);
+    }
+    return 1;
+}
+
+static void *reg_conc_formatter_worker(void *arg) {
+    unsigned id = (unsigned)(uintptr_t)arg;
+    struct reg_pair pair = { (int)(100 + id), 2.5 };
+    const char *nfmt = "%Q|%Y|%T|%U|%W%n";
+    const wchar_t *wfmt = L"%Q|%Y|%T|%U|%W%n";
+    for (unsigned iter = 0; iter < 200; ++iter) {
+        char nbuf[256];
+        int ncount = -1;
+        int nrc = snprintf(nbuf, sizeof nbuf, nfmt,
+                           (int)iter, "ok", 9, pair, 1.25, 77, &ncount);
+        if (nrc <= 0 || ncount != nrc || (size_t)nrc != strlen(nbuf)) return (void *)1;
+        if (strstr(nbuf, "|W1{77}") == NULL && strstr(nbuf, "|W2{77}") == NULL) return (void *)2;
+
+        wchar_t wbuf[256];
+        int wcount = -1;
+        int wrc = swprintf(wbuf, 256, wfmt,
+                           (int)iter, "ok", 9, pair, 1.25, 88, &wcount);
+        if (wrc <= 0 || wcount != wrc || (size_t)wrc != wcslen(wbuf)) return (void *)3;
+        if (wcsstr(wbuf, L"|W1{88}") == NULL && wcsstr(wbuf, L"|W2{88}") == NULL) return (void *)4;
+
+        int ptypes[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+        size_t pn = parse_printf_format(nfmt, 8, ptypes);
+        if (pn != 7 || ptypes[0] != PA_INT || ptypes[1] != PA_STRING || ptypes[3] != reg_pair_type)
+            return (void *)5;
+    }
+    return NULL;
+}
+
+static void *reg_conc_mutator_worker(void *arg) {
+    (void)arg;
+    unsigned step = 0;
+    while (!atomic_load_explicit(&reg_conc_stop, memory_order_relaxed)) {
+        printf_function *fn = (step & 1U) ? reg_w_v2 : reg_w_v1;
+        if (register_printf_specifier('W', fn, reg_w_info) != 0) return (void *)6;
+        /* Also exercise concurrent registration/unregistration on a disjoint slot */
+        if ((step & 3U) == 0) {
+            if (register_printf_specifier('J', reg_letter, reg_noargs) != 0) return (void *)7;
+        } else if ((step & 3U) == 2) {
+            if (register_printf_specifier('J', NULL, NULL) != 0) return (void *)8;
+        }
+        ++step;
+        if ((step & 15U) == 0) sched_yield();
+    }
+    return NULL;
+}
+
+static int gnu_registration_concurrent(void) {
+    alarm(30);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    reg_setup();
+    REG_CHECK(register_printf_specifier('W', reg_w_v1, reg_w_info) == 0);
+    atomic_store(&reg_conc_stop, 0);
+
+    pthread_t formatters[4];
+    pthread_t mutators[2];
+    for (unsigned i = 0; i < 2; ++i)
+        REG_CHECK(pthread_create(&mutators[i], NULL, reg_conc_mutator_worker, NULL) == 0);
+    for (unsigned i = 0; i < 4; ++i)
+        REG_CHECK(pthread_create(&formatters[i], NULL, reg_conc_formatter_worker,
+                                 (void *)(uintptr_t)i) == 0);
+
+    for (unsigned i = 0; i < 4; ++i) {
+        void *res = NULL;
+        REG_CHECK(pthread_join(formatters[i], &res) == 0 && res == NULL);
+        printf("reg:concurrent:formatter:%u:ok\n", i);
+    }
+    atomic_store(&reg_conc_stop, 1);
+    for (unsigned i = 0; i < 2; ++i) {
+        void *res = NULL;
+        REG_CHECK(pthread_join(mutators[i], &res) == 0 && res == NULL);
+        printf("reg:concurrent:mutator:%u:ok\n", i);
+    }
+
+    /* Post-stress sanity check: replace W with v2 and verify deterministic output */
+    REG_CHECK(register_printf_specifier('W', reg_w_v2, reg_w_info) == 0);
+    REG_CHECK(register_printf_specifier('J', NULL, NULL) == 0);
+    char final_buf[64];
+    const char *final_fmt = "%W|[%J]";
+    int rc = snprintf(final_buf, sizeof final_buf, final_fmt, 99);
+    reg_row("concurrent-final", rc, 0, final_buf, strlen(final_buf));
+    puts("reg:complete:concurrent");
+    alarm(0);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--many-printf-args") == 0) {
         int rc = many_printf_arguments();
@@ -1699,6 +1969,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide-bounds") == 0) return gnu_registration_wide_bounds();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-limits") == 0) return gnu_registration_limits();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-concurrent") == 0) return gnu_registration_concurrent();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-combined-fallback") == 0) return gnu_registration_combined_fallback();
     if (argc == 2 && strcmp(argv[1], "--gnu-types") == 0) return gnu_types();
     if (argc == 2 && strcmp(argv[1], "--gnu-size") == 0) return gnu_sizes();

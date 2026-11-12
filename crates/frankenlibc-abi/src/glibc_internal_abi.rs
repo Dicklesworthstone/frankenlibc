@@ -3497,7 +3497,9 @@ pub unsafe extern "C" fn inet_nsap_ntoa(
     // across concurrent NULL-buf callers (bd-o15jc).
     static NSAP_BUF: std::sync::Mutex<[u8; 512]> = std::sync::Mutex::new([0u8; 512]);
     let mut nsap_guard: Option<std::sync::MutexGuard<'_, [u8; 512]>> = if buf.is_null() {
-        Some(NSAP_BUF.lock().unwrap_or_else(|e| e.into_inner()))
+        Some(crate::runtime_policy::lock_std_mutex_preserving_errno(
+            &NSAP_BUF,
+        ))
     } else {
         None
     };
@@ -8258,7 +8260,7 @@ fn v7_pattern_to_bre(pat: &[u8]) -> Vec<u8> {
 /// NULL pattern reuses the previously compiled one (error if none yet).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_comp(pattern: *const c_char) -> *mut c_char {
-    let mut buf = RE_COMPILED_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    let mut buf = crate::runtime_policy::lock_std_mutex_preserving_errno(&RE_COMPILED_BUF);
     let buf_ptr = buf.0.as_mut_ptr() as *mut c_void;
     if pattern.is_null() {
         // GNU: reuse the previous pattern. The re_pattern_buffer's first field
@@ -8285,7 +8287,7 @@ pub unsafe extern "C" fn re_exec(string: *const c_char) -> c_int {
     if string.is_null() {
         return -1;
     }
-    let buf = RE_COMPILED_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    let buf = crate::runtime_policy::lock_std_mutex_preserving_errno(&RE_COMPILED_BUF);
     let buf_ptr = buf.0.as_ptr() as *const c_void;
     let len = unsafe { std::ffi::CStr::from_ptr(string).to_bytes().len() } as c_int;
     // re_search returns the match offset (>=0), -1 (no match) or -2 (error).

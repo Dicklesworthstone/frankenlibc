@@ -82,13 +82,11 @@ fn handles() -> &'static Mutex<ArtifactHashMap<usize, IconvHandle>> {
 }
 
 fn lock_handles() -> MutexGuard<'static, ArtifactHashMap<usize, IconvHandle>> {
-    handles()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+    crate::runtime_policy::lock_std_mutex_preserving_errno(handles())
 }
 
 fn lock_descriptor(handle: &IconvHandle) -> MutexGuard<'_, IconvDescriptor> {
-    handle.lock().unwrap_or_else(|poison| poison.into_inner())
+    crate::runtime_policy::lock_std_mutex_preserving_errno(handle)
 }
 
 /// What an `iconv_t` points at: glibc's `struct __gconv_info` with one

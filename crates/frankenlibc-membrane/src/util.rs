@@ -1,12 +1,9 @@
 //! Shared utilities for the membrane crate.
 
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
-use std::sync::{
-    RwLock as StdRwLock, RwLockReadGuard as StdRwLockReadGuard,
-    RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
-};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 /// Deterministic, integer-fast hasher for the crate's internal maps.
 ///
@@ -145,6 +142,23 @@ fn futex_wake_one(word: &AtomicU32) {
     unsafe { futex_syscall(word.as_ptr() as usize, FUTEX_WAKE_PRIVATE, 1) };
 }
 
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[allow(unsafe_code)]
+fn futex_wake_all(word: &AtomicU32) {
+    const FUTEX_WAKE_PRIVATE: usize = 129;
+    // SAFETY: futex wake on a live, aligned u32.
+    unsafe {
+        futex_syscall(
+            word.as_ptr() as usize,
+            FUTEX_WAKE_PRIVATE,
+            i32::MAX as usize,
+        )
+    };
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[allow(unsafe_code)]
 unsafe fn futex_syscall(uaddr: usize, op: usize, val: usize) {
@@ -201,47 +215,387 @@ fn futex_wait(_word: &AtomicU32, _expected: u32) {
 )))]
 fn futex_wake_one(_word: &AtomicU32) {}
 
-/// RwLock wrapper that recovers poisoned locks instead of panicking.
-#[derive(Debug)]
-pub(crate) struct NoPoisonRwLock<T>(StdRwLock<T>);
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+fn futex_wake_all(_word: &AtomicU32) {}
 
-pub(crate) type NoPoisonRwLockReadGuard<'a, T> = StdRwLockReadGuard<'a, T>;
-pub(crate) type NoPoisonRwLockWriteGuard<'a, T> = StdRwLockWriteGuard<'a, T>;
+const RW_UNLOCKED: u32 = 0;
+const RW_READER_UNIT: u32 = 1;
+const RW_READER_MASK: u32 = (1 << 29) - 1;
+const RW_WRITER_ACTIVE: u32 = 1 << 29;
+const RW_WRITER_WAITING: u32 = 1 << 30;
+const RW_WAITERS_PARKED: u32 = 1 << 31;
+
+#[inline]
+const fn rw_tagged(generation: u32, low: u32) -> u64 {
+    ((generation as u64) << 32) | (low as u64)
+}
+
+#[inline]
+const fn rw_generation(word: u64) -> u32 {
+    (word >> 32) as u32
+}
+
+#[inline]
+const fn rw_low(word: u64) -> u32 {
+    word as u32
+}
+
+/// Fork-aware, non-poisoning reader/writer lock backed by raw inline-asm futex
+/// syscalls so contended waits never invoke `libc::syscall` or mutate `errno`.
+pub(crate) struct NoPoisonRwLock<T> {
+    /// Upper 32 bits: fork generation; lower 32 bits: reader count / writer flags.
+    state: AtomicU64,
+    /// Separate 32-bit futex word incremented before waking parked waiters.
+    wake_sequence: AtomicU32,
+    value: UnsafeCell<T>,
+}
+
+// SAFETY: shared readers require `T: Sync` and exclusive writers require `T: Send`.
+// Fork takeover follows the same single-threaded post-fork child contract as `NoPoisonMutex`.
+#[allow(unsafe_code)]
+unsafe impl<T: Send + Sync> Sync for NoPoisonRwLock<T> {}
+// SAFETY: moving the lock transfers ownership of `T`.
+#[allow(unsafe_code)]
+unsafe impl<T: Send> Send for NoPoisonRwLock<T> {}
+
+impl<T> std::fmt::Debug for NoPoisonRwLock<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NoPoisonRwLock").finish_non_exhaustive()
+    }
+}
+
+pub(crate) struct NoPoisonRwLockReadGuard<'a, T> {
+    lock: &'a NoPoisonRwLock<T>,
+    generation: u32,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+#[allow(unsafe_code)]
+unsafe impl<T: Sync> Sync for NoPoisonRwLockReadGuard<'_, T> {}
+
+pub(crate) struct NoPoisonRwLockWriteGuard<'a, T> {
+    lock: &'a NoPoisonRwLock<T>,
+    generation: u32,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+#[allow(unsafe_code)]
+unsafe impl<T: Sync> Sync for NoPoisonRwLockWriteGuard<'_, T> {}
 
 impl<T> NoPoisonRwLock<T> {
     pub(crate) const fn new(value: T) -> Self {
-        Self(StdRwLock::new(value))
+        Self {
+            state: AtomicU64::new(0),
+            wake_sequence: AtomicU32::new(0),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    #[inline]
+    fn read_guard(&self, generation: u32) -> NoPoisonRwLockReadGuard<'_, T> {
+        NoPoisonRwLockReadGuard {
+            lock: self,
+            generation,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    fn write_guard(&self, generation: u32) -> NoPoisonRwLockWriteGuard<'_, T> {
+        NoPoisonRwLockWriteGuard {
+            lock: self,
+            generation,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+
+    fn try_read_in_generation(&self, generation: u32) -> Option<NoPoisonRwLockReadGuard<'_, T>> {
+        let mut current = self.state.load(Ordering::Relaxed);
+        loop {
+            if rw_generation(current) != generation {
+                match self.state.compare_exchange_weak(
+                    current,
+                    rw_tagged(generation, RW_READER_UNIT),
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return Some(self.read_guard(generation)),
+                    Err(actual) => {
+                        current = actual;
+                        continue;
+                    }
+                }
+            }
+            let low = rw_low(current);
+            if (low & (RW_WRITER_ACTIVE | RW_WRITER_WAITING)) != 0 {
+                return None;
+            }
+            let readers = low & RW_READER_MASK;
+            if readers == RW_READER_MASK {
+                return None;
+            }
+            let next_low = (low & RW_WAITERS_PARKED) | (readers + 1);
+            match self.state.compare_exchange_weak(
+                current,
+                rw_tagged(generation, next_low),
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(self.read_guard(generation)),
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    fn read_in_generation(&self, generation: u32) -> NoPoisonRwLockReadGuard<'_, T> {
+        if let Some(guard) = self.try_read_in_generation(generation) {
+            return guard;
+        }
+        self.read_contended(generation)
+    }
+
+    #[cold]
+    fn read_contended(&self, generation: u32) -> NoPoisonRwLockReadGuard<'_, T> {
+        loop {
+            let sequence = self.wake_sequence.load(Ordering::Acquire);
+            let current = self.state.load(Ordering::Relaxed);
+            if rw_generation(current) != generation {
+                if self
+                    .state
+                    .compare_exchange(
+                        current,
+                        rw_tagged(generation, RW_READER_UNIT),
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    return self.read_guard(generation);
+                }
+                continue;
+            }
+            let low = rw_low(current);
+            let readers = low & RW_READER_MASK;
+            if (low & (RW_WRITER_ACTIVE | RW_WRITER_WAITING)) == 0 && readers < RW_READER_MASK {
+                let next_low = (low & RW_WAITERS_PARKED) | (readers + 1);
+                if self
+                    .state
+                    .compare_exchange(
+                        current,
+                        rw_tagged(generation, next_low),
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    return self.read_guard(generation);
+                }
+                continue;
+            }
+            if (low & RW_WAITERS_PARKED) == 0
+                && self
+                    .state
+                    .compare_exchange(
+                        current,
+                        rw_tagged(generation, low | RW_WAITERS_PARKED),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_err()
+            {
+                continue;
+            }
+            futex_wait(&self.wake_sequence, sequence);
+        }
+    }
+
+    fn try_write_in_generation(&self, generation: u32) -> Option<NoPoisonRwLockWriteGuard<'_, T>> {
+        let current = self.state.load(Ordering::Relaxed);
+        if rw_generation(current) == generation && rw_low(current) != RW_UNLOCKED {
+            return None;
+        }
+        self.state
+            .compare_exchange(
+                current,
+                rw_tagged(generation, RW_WRITER_ACTIVE),
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            )
+            .ok()
+            .map(|_| self.write_guard(generation))
+    }
+
+    fn write_in_generation(&self, generation: u32) -> NoPoisonRwLockWriteGuard<'_, T> {
+        if let Some(guard) = self.try_write_in_generation(generation) {
+            return guard;
+        }
+        self.write_contended(generation)
+    }
+
+    #[cold]
+    fn write_contended(&self, generation: u32) -> NoPoisonRwLockWriteGuard<'_, T> {
+        loop {
+            let sequence = self.wake_sequence.load(Ordering::Acquire);
+            let current = self.state.load(Ordering::Relaxed);
+            if rw_generation(current) != generation || rw_low(current) == RW_UNLOCKED {
+                if self
+                    .state
+                    .compare_exchange(
+                        current,
+                        rw_tagged(generation, RW_WRITER_ACTIVE),
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    return self.write_guard(generation);
+                }
+                continue;
+            }
+            let low = rw_low(current);
+            let wanted = low | RW_WRITER_WAITING | RW_WAITERS_PARKED;
+            if low != wanted
+                && self
+                    .state
+                    .compare_exchange(
+                        current,
+                        rw_tagged(generation, wanted),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_err()
+            {
+                continue;
+            }
+            futex_wait(&self.wake_sequence, sequence);
+        }
+    }
+
+    fn unlock_read(&self, generation: u32) {
+        let mut current = self.state.load(Ordering::Relaxed);
+        loop {
+            if rw_generation(current) != generation {
+                return;
+            }
+            let low = rw_low(current);
+            let readers = low & RW_READER_MASK;
+            if readers == 0 {
+                return;
+            }
+            let next_low = if readers == 1 {
+                RW_UNLOCKED
+            } else {
+                (low & !RW_READER_MASK) | (readers - 1)
+            };
+            match self.state.compare_exchange_weak(
+                current,
+                rw_tagged(generation, next_low),
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    if readers == 1 && (low & RW_WAITERS_PARKED) != 0 {
+                        self.wake_sequence.fetch_add(1, Ordering::Release);
+                        futex_wake_all(&self.wake_sequence);
+                    }
+                    return;
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    fn unlock_write(&self, generation: u32) {
+        let mut current = self.state.load(Ordering::Relaxed);
+        loop {
+            if rw_generation(current) != generation {
+                return;
+            }
+            let low = rw_low(current);
+            if (low & RW_WRITER_ACTIVE) == 0 {
+                return;
+            }
+            match self.state.compare_exchange_weak(
+                current,
+                rw_tagged(generation, RW_UNLOCKED),
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    if (low & RW_WAITERS_PARKED) != 0 {
+                        self.wake_sequence.fetch_add(1, Ordering::Release);
+                        futex_wake_all(&self.wake_sequence);
+                    }
+                    return;
+                }
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     pub(crate) fn read(&self) -> NoPoisonRwLockReadGuard<'_, T> {
-        match self.0.read() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
+        self.read_in_generation(FORK_GENERATION.load(Ordering::Acquire))
     }
 
     #[allow(dead_code)]
     pub(crate) fn try_read(&self) -> Option<NoPoisonRwLockReadGuard<'_, T>> {
-        match self.0.try_read() {
-            Ok(guard) => Some(guard),
-            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-            Err(TryLockError::WouldBlock) => None,
-        }
+        self.try_read_in_generation(FORK_GENERATION.load(Ordering::Acquire))
     }
 
     pub(crate) fn write(&self) -> NoPoisonRwLockWriteGuard<'_, T> {
-        match self.0.write() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
+        self.write_in_generation(FORK_GENERATION.load(Ordering::Acquire))
     }
 
     pub(crate) fn try_write(&self) -> Option<NoPoisonRwLockWriteGuard<'_, T>> {
-        match self.0.try_write() {
-            Ok(guard) => Some(guard),
-            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-            Err(TryLockError::WouldBlock) => None,
+        self.try_write_in_generation(FORK_GENERATION.load(Ordering::Acquire))
+    }
+}
+
+impl<T> std::ops::Deref for NoPoisonRwLockReadGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the guard holds shared read ownership in `self.generation`;
+        // post-fork child takeover excludes dereferencing pre-fork guards.
+        #[allow(unsafe_code)]
+        unsafe {
+            &*self.lock.value.get()
         }
+    }
+}
+
+impl<T> Drop for NoPoisonRwLockReadGuard<'_, T> {
+    fn drop(&mut self) {
+        self.lock.unlock_read(self.generation);
+    }
+}
+
+impl<T> std::ops::Deref for NoPoisonRwLockWriteGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the guard holds exclusive write ownership in `self.generation`.
+        #[allow(unsafe_code)]
+        unsafe {
+            &*self.lock.value.get()
+        }
+    }
+}
+
+impl<T> std::ops::DerefMut for NoPoisonRwLockWriteGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: the guard holds exclusive write ownership in `self.generation`.
+        #[allow(unsafe_code)]
+        unsafe {
+            &mut *self.lock.value.get()
+        }
+    }
+}
+
+impl<T> Drop for NoPoisonRwLockWriteGuard<'_, T> {
+    fn drop(&mut self) {
+        self.lock.unlock_write(self.generation);
     }
 }
 
@@ -1149,5 +1503,126 @@ mod tests {
             );
         }
         assert!(powf_f64(-2.0, 0.5).is_nan());
+    }
+
+    #[test]
+    fn rwlock_shared_exclusive_and_panic_recovery() {
+        use super::NoPoisonRwLock;
+
+        let lock = NoPoisonRwLock::new(11usize);
+        let r1 = lock.read();
+        let r2 = lock.try_read().expect("second shared reader");
+        assert_eq!(*r1, 11);
+        assert_eq!(*r2, 11);
+        assert!(lock.try_write().is_none());
+        drop(r1);
+        assert!(lock.try_write().is_none());
+        drop(r2);
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut w = lock.write();
+            *w = 29;
+            panic!("injected writer panic");
+        }));
+        assert!(panicked.is_err());
+        assert_eq!(*lock.read(), 29);
+    }
+
+    #[test]
+    fn rwlock_fork_generation_takeover_ignores_inherited_read_and_write_guards() {
+        use super::NoPoisonRwLock;
+
+        let lock = NoPoisonRwLock::new(5usize);
+        let inherited_r1 = lock.try_read_in_generation(3).expect("parent r1");
+        let inherited_r2 = lock.try_read_in_generation(3).expect("parent r2");
+        assert_eq!(*inherited_r1 + *inherited_r2, 10);
+
+        // Child generation 4 takes over despite two orphaned parent readers.
+        let mut child_w = lock.try_write_in_generation(4).expect("child write");
+        *child_w = 42;
+        drop(inherited_r1);
+        drop(inherited_r2);
+        assert!(lock.try_read_in_generation(4).is_none());
+        assert_eq!(*child_w, 42);
+        drop(child_w);
+
+        // Now model an orphaned parent writer taken over by child generation 5.
+        let inherited_w = lock.try_write_in_generation(4).expect("parent write");
+        let child_r = lock.try_read_in_generation(5).expect("child read");
+        assert_eq!(*child_r, 42);
+        drop(inherited_w);
+        assert!(lock.try_write_in_generation(5).is_none());
+        drop(child_r);
+        assert!(lock.try_write_in_generation(5).is_some());
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn rwlock_contended_readers_and_writers_preserve_errno() {
+        use super::NoPoisonRwLock;
+
+        const READERS: usize = 4;
+        const WRITERS: usize = 2;
+        const ITERS: usize = 400;
+
+        let lock = Arc::new(NoPoisonRwLock::new(0usize));
+        let start = Arc::new(std::sync::Barrier::new(READERS + WRITERS));
+        let mut handles = Vec::with_capacity(READERS + WRITERS);
+
+        for tid in 0..READERS {
+            let lock = Arc::clone(&lock);
+            let start = Arc::clone(&start);
+            handles.push(std::thread::spawn(move || {
+                let sentinel = libc::E2BIG + (tid as i32);
+                start.wait();
+                // Set errno strictly after Barrier::wait(), whose own std futex
+                // park may return EAGAIN and write TLS errno before the loop.
+                // SAFETY: thread-local errno pointer is valid for this OS thread.
+                unsafe { *libc::__errno_location() = sentinel };
+                let mut observed = 0usize;
+                for i in 0..ITERS {
+                    let g = lock.read_in_generation(11);
+                    observed = observed.wrapping_add(*g);
+                    if i % 17 == 0 {
+                        for _ in 0..32 {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    drop(g);
+                    let err = unsafe { *libc::__errno_location() };
+                    assert_eq!(err, sentinel, "reader {tid} iter {i} clobbered errno");
+                }
+                observed
+            }));
+        }
+
+        for wid in 0..WRITERS {
+            let lock = Arc::clone(&lock);
+            let start = Arc::clone(&start);
+            handles.push(std::thread::spawn(move || {
+                let sentinel = libc::EDOM + (wid as i32);
+                start.wait();
+                // SAFETY: thread-local errno pointer is valid for this OS thread.
+                unsafe { *libc::__errno_location() = sentinel };
+                for i in 0..ITERS {
+                    let mut g = lock.write_in_generation(11);
+                    *g += 1;
+                    if i % 23 == 0 {
+                        for _ in 0..32 {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    drop(g);
+                    let err = unsafe { *libc::__errno_location() };
+                    assert_eq!(err, sentinel, "writer {wid} iter {i} clobbered errno");
+                }
+                0usize
+            }));
+        }
+
+        for handle in handles {
+            let _ = handle.join().expect("rwlock worker");
+        }
+        assert_eq!(*lock.read_in_generation(11), WRITERS * ITERS);
     }
 }

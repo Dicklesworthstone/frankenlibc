@@ -1,0 +1,35 @@
+
+running 30 tests
+test obstack_printf_chk_rejects_null_inputs ... ok
+test parse_printf_format_length_modifiers ... ok
+test parse_printf_format_positional_slots_and_write_bounds ... ok
+test parse_printf_format_percent_literal_not_counted ... ok
+test parse_printf_format_null_argtypes_just_counts ... ok
+test parse_printf_format_null_fmt_returns_zero ... ok
+test parse_printf_format_no_value_positions_preserve_holes ... ok
+test parse_printf_format_simple_types ... ok
+test obstack_vprintf_chk_delegates_to_native_formatter ... ok
+test parse_printf_format_star_width_and_precision ... ok
+test obstack_printf_chk_formats_into_current_object ... ok
+test printf_fp_returns_negative ... ok
+test printf_fp_stream_errors_match_live_gnu ... ok
+test printf_size_info_counts_without_storage ... ok
+test asprintf_internal_forwards_variadic_arguments ... ok
+test parse_printf_format_wide_aliases_and_count_pointers ... ok
+test printf_size_returns_negative ... ok
+test printf_size_info_gnu_layout_and_single_slot ... ok
+test register_printf_modifier_rejects_null ... ok
+test register_printf_function_rejects_invalid_specifier ... ok
+test register_printf_type_rejects_null ... ok
+test register_printf_specifier_rejects_invalid_specifier ... ok
+test printf_fp_localized_width_counts_characters_and_returns_bytes ... ok
+test register_printf_callbacks_render_and_parse ... ok
+test printf_fp_wide_padding_matches_gnu_byte_conversion ... ok
+test printf_fp_binary128_keeps_bits_beyond_double_precision ... ok
+test printf_fp_obeys_all_rounding_modes ... ok
+test printf_fp_wide_concurrent_wmemstream_preserves_errno ... ok
+test printf_fp_long_double_preserves_extended_range_and_precision ... ok
+test printf_fp_double_formats_match_live_gnu ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 287 filtered out; finished in 0.91s
+

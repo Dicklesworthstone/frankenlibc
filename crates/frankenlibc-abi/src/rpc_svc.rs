@@ -328,7 +328,7 @@ static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
 static SIMPLE_REGISTERING: AtomicBool = AtomicBool::new(false);
 static EXIT_EPOCH: AtomicU64 = AtomicU64::new(0);
 fn registry() -> MutexGuard<'static, Registry> {
-    REGISTRY.lock().unwrap_or_else(|p| p.into_inner())
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&REGISTRY)
 }
 fn lookup(x: *mut SvcXprt) -> Option<Arc<Transport>> {
     let socket = registry()

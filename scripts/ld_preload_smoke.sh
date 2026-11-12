@@ -1293,9 +1293,10 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   if [[ -n "${CXX_BIN}" ]]; then
     run_corpus_case "${mode}" "cxx_runtime" "${CXX_BIN}" || mode_failed=1
   fi
-  # C++ exceptions through libc callback frames (bd-rc0923-epic-eeuy4f.6).
+  # C++ exceptions through libc callback frames (bd-rc0923-epic-eeuy4f.6 / .33 / .34).
   if [[ -n "${CALLBACK_UNWIND_BIN}" ]]; then
     run_corpus_case "${mode}" "cxx_callback_unwind" "${CALLBACK_UNWIND_BIN}" || mode_failed=1
+    run_corpus_case "${mode}" "cxx_callback_unwind_printf" "${CALLBACK_UNWIND_BIN}" --printf-smoke || mode_failed=1
   fi
   if [[ "${NONTRIVIAL_BIN}" == "python3" ]]; then
     run_corpus_case "${mode}" "python3_c_extensions" python3 -c "import sqlite3, ssl, ctypes, decimal, json, hashlib, readline, zlib; print(sqlite3.connect(':memory:').execute('select 6*7').fetchone()[0], hashlib.sha256(b'x').hexdigest()[:8], decimal.Decimal('1.1') + decimal.Decimal('2.2'))" || mode_failed=1
